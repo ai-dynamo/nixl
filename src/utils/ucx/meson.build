@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+ucx_utils_dep = [ ucx_dep ]
+if cuda_dep.found()
+    ucx_utils_dep += [ cuda_dep ]
+endif
+
+ucx_utils_lib = library('ucx_utils',
+           'ucx_utils.cpp', 'ucx_utils.h',
+           dependencies: ucx_utils_dep,
+           include_directories: inc_dir,
+           install: true)
+
+if get_option('buildtype') != 'release'
+
+    ucx_worker_bin = executable('ucx_worker_test',
+               'ucx_worker_test.cpp',
+               dependencies: [ ucx_dep ],
+               include_directories: inc_dir,
+               link_with: ucx_utils_lib,
+               install: true)
+
+    ucx_am_bin = executable('ucx_am_test',
+               'ucx_am_test.cpp',
+               dependencies: [ ucx_dep ],
+               include_directories: inc_dir,
+               link_with: ucx_utils_lib,
+               install: true)
+
+    if cuda_dep.found()
+        ucx_worker_cuda_bin = executable('ucx_worker_test_cuda',
+                       'ucx_worker_test.cpp',
+                       dependencies: ucx_utils_dep,
+                       include_directories: inc_dir,
+                       cpp_args : '-DUSE_VRAM',
+                       link_with: ucx_utils_lib,
+                       install: true)
+
+        ucx_am_cuda_bin = executable('ucx_am_test_cuda',
+                       'ucx_am_test.cpp',
+                       dependencies: ucx_utils_dep,
+                       include_directories: inc_dir,
+                       cpp_args : '-DUSE_VRAM',
+                       link_with: ucx_utils_lib,
+                       install: true)
+
+    endif
+
+endif
