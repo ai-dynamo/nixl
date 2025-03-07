@@ -86,4 +86,4 @@ export PYTHONPATH=$PYTHONPATH:<path to install>/lib64/python3.9/site-packages/
 ```
 
 ## License
-TBD
+Apache 2.0

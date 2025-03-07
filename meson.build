@@ -10,7 +10,7 @@
 # provided with the software product.
 #
 
-project('nixl', 'CPP',
+project('nixl', 'CPP', version: '0.1.0',
     default_options: ['buildtype=debug',
                 'werror=true',
                 'cpp_std=c++11',
