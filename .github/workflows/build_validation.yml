@@ -1,0 +1,50 @@
+name: NVIDIA Test Lab Validation
+
+on:
+  push:
+    branches:
+    - main
+
+  pull_request:
+
+jobs:
+  mirror_repo:
+    name: Mirror Repository to GitLab
+    environment: GITLAB
+    runs-on: self-hosted
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Sync Mirror Repository
+      run: ./.github/workflows/mirror_repo.sh ${{ secrets.TOKEN }} ${{ secrets.MIRROR_URL }}
+
+  trigger-ci:
+    name: Trigger CI Pipeline
+    environment: GITLAB
+    needs: mirror_repo
+    runs-on: self-hosted
+    steps:
+    - name: Trigger Pipeline
+      run: |
+        #!/bin/bash -e
+        declare -A ci_variables
+
+        # Add variables to be passed to the pipeline
+        ci_args=""
+        for key in "${!ci_variables[@]}"; do
+          ci_args+="--form variables[$key]=${ci_variables[$key]} "
+        done
+
+        echo "Running Pipeline with Variables: $ci_args"
+
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          REF="${{ github.event.pull_request.head.ref }}"
+        else
+          REF="${{ github.ref }}"
+        fi
+        curl --fail-with-body \
+          --request POST \
+          --form token=${{ secrets.PIPELINE_TOKEN }} \
+          --form ref=${REF} \
+          $ci_args \
+          "${{ secrets.PIPELINE_URL }}"
