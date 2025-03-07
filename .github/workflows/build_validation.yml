@@ -16,7 +16,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
     - name: Sync Mirror Repository
-      run: ./.github/workflows/mirror_repo.sh ${{ secrets.TOKEN }} ${{ secrets.MIRROR_URL }}
+      run: ./.github/workflows/mirror_repo.sh ${{ secrets.MIRROR_TOKEN }} ${{ secrets.MIRROR_URL }}
 
   trigger-ci:
     name: Trigger CI Pipeline
