@@ -1,4 +1,4 @@
-name: NVIDIA Test Lab Validation
+name: NVIDIA NIXL Validation
 
 on:
   push:
