@@ -39,11 +39,13 @@ else
                cpp_args : compile_flags + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir)
-    custom_target('copy_ucx_plugin',
-                 input: ucx_backend_lib,
-                 output: 'copied_ucx_plugin',
-                 command: ['cp', '@INPUT@', plugin_build_dir / 'libplugin_UCX.so'],
-                 build_by_default: true)
+
+    if get_option('buildtype') == 'debug'
+        run_command('sh', '-c',
+                    'echo "UCX=' + ucx_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+                    check: true
+                )
+    endif
 endif
 
 ucx_backend_interface = declare_dependency(link_with: ucx_backend_lib)
