@@ -19,18 +19,6 @@ repos:
       - id: mypy
         files: \.py$
 
-  - repo: https://github.com/pre-commit/mirrors-meson
-    rev: v0.58.2
-    hooks:
-      - id: meson-lint
-        files: ^(.*/)?(meson\.build|.*\.meson)$
-
-  - repo: https://github.com/pre-commit/mirrors-dockerfile-lint
-    rev: v0.5.2
-    hooks:
-      - id: dockerfile_lint
-        files: Dockerfile$
-
   - repo: https://github.com/timothycrosley/isort
     rev: 5.12.0
     hooks:
