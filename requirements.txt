@@ -4,5 +4,5 @@ flake8
 isort
 mypy
 codespell
-toml  
+toml
 tomli
