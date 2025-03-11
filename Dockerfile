@@ -140,7 +140,7 @@ ENV PKG_CONFIG_PATH=/usr/local/ompi/lib/pkgconfig:$PKG_CONFIG_PATH
 ARG USERNAME
 ARG PASSWORD
 
-RUN git clone https://${USERNAME}:${PASSWORD}@gitlab-master.nvidia.com/adv-dev-team/nixl.git && cd nixl && git branch
+RUN git clone https://${USERNAME}:${PASSWORD}@github.com/ai-dynamo/nixl.git && cd nixl && git branch
 RUN cd nixl && mkdir build && meson setup build/ --prefix=/usr/local/nixl && cd build/ && ninja && ninja install
 
 RUN cd nixl && pip3 install --break-system-packages .
