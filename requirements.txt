@@ -1,0 +1,10 @@
+pre-commit
+isort
+black
+flake8
+mypy
+meson-lint
+dockerfile-lint
+codespell
+toml  
+tomli
