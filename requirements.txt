@@ -1,8 +1,8 @@
-pre-commit
 black
+codespell
 flake8
 isort
 mypy
-codespell
+pre-commit
 toml
 tomli
