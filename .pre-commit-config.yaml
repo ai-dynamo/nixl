@@ -12,75 +12,70 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+repos:
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.15.0
+    hooks:
+      - id: mypy
+        files: \.py$
 
-- repo: https://github.com/pre-commit/mirrors-mypy
-  rev: v1.15.0
-  hooks:
-    - id: mypy
-      files: \.py$
+  - repo: https://github.com/pre-commit/mirrors-meson
+    rev: v0.58.2
+    hooks:
+      - id: meson-lint
+        files: ^(.*/)?(meson\.build|.*\.meson)$
 
-- repo: https://github.com/pre-commit/mirrors-meson
-  rev: v0.58.2
-  hooks:
-    - id: meson-lint
-      files: ^(.*/)?(meson\.build|.*\.meson)$
+  - repo: https://github.com/pre-commit/mirrors-dockerfile-lint
+    rev: v0.5.2
+    hooks:
+      - id: dockerfile_lint
+        files: Dockerfile$
 
-- repo: https://github.com/pre-commit/mirrors-dockerfile-lint
-  rev: v0.5.2
-  hooks:
-    - id: dockerfile_lint
-      files: Dockerfile$
-      
-- repo: https://github.com/timothycrosley/isort
-  rev: 5.12.0
-  hooks:
-    - id: isort
-      additional_dependencies: [toml]
+  - repo: https://github.com/timothycrosley/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
 
-- repo: https://github.com/psf/black
-  rev: 23.1.0
-  hooks:
-    - id: black
-      types_or: [python, cython]
-    
-- repo: https://github.com/PyCQA/flake8
-  rev: 5.0.4
-  hooks:
-    - id: flake8
-      args: [--max-line-length=88, --select=C,E,F,W,B,B950, --extend-ignore=E203,E501]
-      types_or: [python, cython]
+  - repo: https://github.com/psf/black
+    rev: 23.1.0
+    hooks:
+      - id: black
+        types_or: [python, cython]
 
-- repo: https://github.com/pre-commit/mirrors-clang-format
-  rev: v16.0.5
-  hooks:
-    - id: clang-format
-      types_or: [c, c++, cuda, proto, textproto, java]
-      args: ["-fallback-style=none", "-style=file", "-i"]
-      files: \.(cpp|h|cc|c)$
+  - repo: https://github.com/PyCQA/flake8
+    rev: 5.0.4
+    hooks:
+      - id: flake8
+        args: [--max-line-length=88, --select=C,E,F,W,B,B950, --extend-ignore=E203,E501]
+        types_or: [python, cython]
 
-- repo: https://github.com/codespell-project/codespell
-  rev: v2.2.4
-  hooks:
-    - id: codespell
-      additional_dependencies: [tomli]
-      args: ["--toml", "pyproject.toml"]
-      exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$)
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v16.0.5
+    hooks:
+      - id: clang-format
+        types_or: [c, c++, cuda, proto, textproto, java]
+        args: ["-fallback-style=none", "-style=file", "-i"]
+        files: \.(cpp|h|cc|c)$
 
-# More details about these pre-commit hooks here:
-# https://pre-commit.com/hooks.html
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.2.4
+    hooks:
+      - id: codespell
+        args: ["--toml", "pyproject.toml"]
+        exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$)
 
-- repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v4.4.0
-  hooks:
-    - id: check-case-conflict
-    - id: check-executables-have-shebangs
-    - id: check-merge-conflict
-    - id: check-json
-    - id: check-toml
-    - id: check-yaml
-    - id: check-shebang-scripts-are-executable
-    - id: end-of-file-fixer
-      types_or: [c, c++, cuda, proto, textproto, java, python]
-    - id: mixed-line-ending
-    - id: requirements-txt-fixer
-    - id: trailing-whitespace
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: check-shebang-scripts-are-executable
+      - id: end-of-file-fixer
+        types_or: [c, c++, cuda, proto, textproto, java, python]
+      - id: mixed-line-ending
+      - id: requirements-txt-fixer
+      - id: trailing-whitespace
