@@ -17,24 +17,27 @@
 #ifndef __AGENT_DATA_H_
 #define __AGENT_DATA_H_
 
+#include "str_tools.h"
 #include "mem_section.h"
 
 class nixlAgentData {
     private:
-        std::string                                  name;
-        nixlAgentConfig                              config;
+        std::string     name;
+        nixlAgentConfig config;
 
         // some handle that can be used to instantiate and object from the lib
-        std::map<std::string, void*>                 backendLibs;
+        std::map<std::string, void*>                           backendLibs;
 
-        std::map<nixl_backend_t, nixlBackendH*>      backendHandles;
-        std::map<nixl_backend_t, nixlBackendEngine*> backendEngines;
-        std::map<nixl_backend_t, std::string>        connMD; // Local info
+        std::unordered_map<nixl_backend_t, nixlBackendH*>      backendHandles;
+        std::unordered_map<nixl_backend_t, nixlBackendEngine*> backendEngines;
+        std::unordered_map<nixl_backend_t, std::string>        connMD; // Local info
 
-        nixlLocalSection                             memorySection;
+        nixlLocalSection                                       memorySection;
 
-        std::map<std::string, nixlRemoteSection*>    remoteSections;
-        std::map<std::string, backend_set_t>         remoteBackends;
+        std::unordered_map<std::string, nixlRemoteSection*,
+                           std::hash<std::string>, strEqual>   remoteSections;
+        std::unordered_map<std::string, backend_set_t,
+                           std::hash<std::string>, strEqual>   remoteBackends;
 
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();

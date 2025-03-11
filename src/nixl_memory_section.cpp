@@ -23,15 +23,7 @@
 
 /*** Class nixlMemSection implementation ***/
 
-// For full polymorphic, we can make it dynamic allocation.
-nixlMemSection::nixlMemSection () {
-    memToBackendMap[DRAM_SEG] = std::set<nixl_backend_t>();
-    memToBackendMap[VRAM_SEG] = std::set<nixl_backend_t>();
-    memToBackendMap[BLK_SEG]  = std::set<nixl_backend_t>();
-    memToBackendMap[FILE_SEG] = std::set<nixl_backend_t>();
-}
-
-// It's pure virtual, but base also class needs a destructor due to its memebrs.
+// It's pure virtual, but base also class needs a destructor due to its members.
 nixlMemSection::~nixlMemSection () {}
 
 nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
@@ -185,8 +177,12 @@ nixlBackendEngine* nixlLocalSection::findQuery(
                        const backend_set_t &remote_backends,
                        nixl_meta_dlist_t &resp) const {
 
-    auto it = memToBackendMap.find(query.getType());
-    if (it==memToBackendMap.end())
+    nixl_mem_t q_mem = query.getType();
+    if (q_mem>FILE_SEG)
+        return nullptr;
+
+    const backend_set_t* backend_set = &memToBackendMap.at(q_mem);
+    if (backend_set->empty())
         return nullptr;
 
     // Decision making based on supported local backends for this
@@ -195,7 +191,7 @@ nixlBackendEngine* nixlLocalSection::findQuery(
     // complete option (overkill) is to try all possible scenarios and
     // see which populates on both side are successful and then decide
 
-    for (auto & elm : it->second) {
+    for (auto & elm : *backend_set) {
         // If populate fails, it clears the resp before return
         if (populate(query, elm, resp) == NIXL_SUCCESS)
             return backendToEngineMap.at(elm);
@@ -237,7 +233,7 @@ nixlLocalSection::~nixlLocalSection() {
 
 nixlRemoteSection::nixlRemoteSection (
                    const std::string &agent_name,
-                   const std::map<nixl_backend_t, nixlBackendEngine*> &engine_map) {
+                   backend_map_t &engine_map) {
     this->agentName    = agent_name;
     backendToEngineMap = engine_map;
 }
@@ -267,7 +263,7 @@ nixl_status_t nixlRemoteSection::addDescList (
     nixl_status_t ret;
     for (int i=0; i<mem_elms.descCount(); ++i) {
         // TODO: remote might change the metadata, have to keep stringDesc to compare
-        //       if we support partial updates. Also Can add overlap checks (erronous)
+        //       if we support partial updates. Also Can add overlap checks (erroneous)
         if (target->getIndex((const nixlBasicDesc) mem_elms[i]) < 0) {
             ret = backend->loadRemoteMD(mem_elms[i], nixl_mem, agentName, out.metadataP);
             // In case of errors, no need to remove the previous entries

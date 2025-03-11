@@ -77,7 +77,7 @@ public:
 
 class nixlGdsEngine : public nixlBackendEngine {
     gdsUtil                      *gds_utils;
-    std::map<int, gdsFileHandle> gds_file_map;
+    std::unordered_map<int, gdsFileHandle> gds_file_map;
 
 public:
     nixlGdsEngine(const nixlBackendInitParams* init_params);

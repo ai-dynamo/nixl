@@ -14,15 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __BACKEND_ENGINE_H_
-#define __BACKEND_ENGINE_H_
+#ifndef __BACKEND_ENGINE_H
+#define __BACKEND_ENGINE_H
 
 #include <mutex>
 #include <string>
 #include "nixl_types.h"
 #include "backend_aux.h"
 
-// Base backend engine class for different backend implementaitons
+// Base backend engine class for different backend implementations
 class nixlBackendEngine {
     private:
         nixl_backend_t backendType;
@@ -55,7 +55,7 @@ class nixlBackendEngine {
         }
 
         virtual ~nixlBackendEngine () = default;
-        
+
         bool getInitErr() { return initErr; }
 
         // *** Pure virtual methods that need to be implemented by any backend *** //

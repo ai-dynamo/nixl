@@ -80,3 +80,8 @@ plugin_test = executable('test_plugin',
                         dependencies: [nixl_dep, cuda_dep],
                         include_directories: [inc_dir],
                         install: true)
+
+map_perf_test = executable('map_perf_test',
+                           'map_perf.cpp',
+                           include_directories: [inc_dir],
+                           install: true)

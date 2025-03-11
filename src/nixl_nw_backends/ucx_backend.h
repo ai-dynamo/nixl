@@ -25,6 +25,7 @@
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
+#include "utils/sys/str_tools.h"
 
 // Local includes
 #include <nixl_time.h>
@@ -121,7 +122,8 @@ class nixlUcxEngine : public nixlBackendEngine {
         notif_list_t notifPthrPriv, notifPthr;
 
         // Map of agent name to saved nixlUcxConnection info
-        std::map<std::string, nixlUcxConnection> remoteConnMap;
+        std::unordered_map<std::string, nixlUcxConnection,
+                           std::hash<std::string>, strEqual> remoteConnMap;
 
 		class nixlUcxBckndReq : public nixlLinkElem<nixlUcxBckndReq>, public nixlBackendReqH {
             private:
