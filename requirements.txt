@@ -3,7 +3,6 @@ black
 flake8
 isort
 mypy
-dockerfile-lint
 codespell
 toml  
 tomli
