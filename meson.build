@@ -69,14 +69,12 @@ endif
 
 # Define a specific plugin directory
 plugin_install_dir = join_paths(get_option('libdir'), 'plugins')
-plugin_build_dir = meson.current_build_dir() / 'plugins'
-
-# Create plugin directory
-run_command('rm', '-f', plugin_build_dir, check: false)
-run_command('mkdir', '-p', plugin_build_dir, check: true)
+plugin_build_dir = meson.current_build_dir()
 
 # Add to global args so plugin managers can find it
-add_project_arguments('-DNIXL_DEFAULT_PLUGIN_DIR="' + plugin_build_dir + '"', language: 'cpp')
+if get_option('buildtype') == 'debug'
+    add_project_arguments('-DNIXL_USE_PLUGIN_FILE="' + plugin_build_dir + '/pluginlist"',  language: 'cpp')
+endif
 
 inc_dir = include_directories('include', 'include/internal', 'include/backend',
                               'src', 'src/utils/serdes', 'src/utils/data_structures',

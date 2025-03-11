@@ -74,6 +74,10 @@ public:
     nixlPluginManager(const nixlPluginManager&) = delete;
     nixlPluginManager& operator=(const nixlPluginManager&) = delete;
 
+    std::shared_ptr<nixlPluginHandle> loadPluginFromPath(const std::string& plugin_path);
+
+    void loadPluginsFromList(const std::string& filename);
+
     // Load a specific plugin
     std::shared_ptr<nixlPluginHandle> loadPlugin(const std::string& plugin_name);
 

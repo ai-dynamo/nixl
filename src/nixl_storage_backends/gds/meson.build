@@ -44,11 +44,12 @@ else
                     cpp_args : ['-fPIC'],
                     name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                     install_dir: plugin_install_dir)
-  custom_target('copy_gds_plugin',
-               input: gds_backend_lib,
-               output: 'copied_gds_plugin',
-               command: ['cp', '@INPUT@', plugin_build_dir / 'libplugin_GDS.so'],
-               build_by_default: true)
+  if get_option('buildtype') == 'debug'
+        run_command('sh', '-c',
+                    'echo "GDS=' + gds_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+                    check: true
+                )
+    endif
 endif
 
 gds_backend_interface = declare_dependency(link_with: gds_backend_lib)

@@ -23,6 +23,10 @@
 #include <dirent.h>
 #include <unistd.h>  // For access() and F_OK
 #include <cstdlib>  // For getenv
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <map>
 
 // pluginHandle implementation
 nixlPluginHandle::nixlPluginHandle(void* handle, nixlBackendPlugin* plugin)
@@ -72,13 +76,111 @@ const char* nixlPluginHandle::getVersion() {
     return "unknown";
 }
 
+std::map<std::string, std::string> loadPluginList(const std::string& filename) {
+    std::map<std::string, std::string> plugins;
+    std::ifstream file(filename);
+
+    if (!file.is_open()) {
+        std::cerr << "Failed to open plugin list file: " << filename << std::endl;
+        return plugins;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        // Skip empty lines and comments
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+
+        // Find the equals sign
+        size_t pos = line.find('=');
+        if (pos != std::string::npos) {
+            std::string name = line.substr(0, pos);
+            std::string path = line.substr(pos + 1);
+
+            auto trim = [](std::string& s) {
+                s.erase(0, s.find_first_not_of(" \t"));
+                s.erase(s.find_last_not_of(" \t") + 1);
+            };
+            trim(name);
+            trim(path);
+
+            // Add to map
+            plugins[name] = path;
+            std::cout << "Found plugin: " << name << " at path: " << path << std::endl;
+        }
+    }
+
+    return plugins;
+}
+
+std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPluginFromPath(const std::string& plugin_path) {
+    // Open the plugin file
+    void* handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!handle) {
+        std::cerr << "Failed to load plugin from " << plugin_path <<
+                     ": " << dlerror() << std::endl;
+        return nullptr;
+    }
+
+    // Get the initialization function
+    typedef nixlBackendPlugin* (*init_func_t)();
+    init_func_t init = (init_func_t) dlsym(handle, "nixl_plugin_init");
+    if (!init) {
+        std::cerr << "Failed to find nixl_plugin_init in " << plugin_path
+                    << ": " << dlerror() << std::endl;
+        dlclose(handle);
+        return nullptr;
+    }
+
+    // Call the initialization function
+    nixlBackendPlugin* plugin = init();
+    if (!plugin) {
+        std::cerr << "Plugin initialization failed for " << plugin_path << std::endl;
+        dlclose(handle);
+        return nullptr;
+    }
+
+    // Check API version
+    if (plugin->api_version != NIXL_PLUGIN_API_VERSION) {
+        std::cerr << "Plugin API version mismatch for " << plugin_path
+                    << ": expected " << NIXL_PLUGIN_API_VERSION
+                    << ", got " << plugin->api_version << std::endl;
+        dlclose(handle);
+        return nullptr;
+    }
+
+    // Create and store the plugin handle
+    auto plugin_handle = std::make_shared<nixlPluginHandle>(handle, plugin);
+
+    return plugin_handle;
+}
+
+void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
+    auto plugins = loadPluginList(filename);
+
+    for (const auto& pair : plugins) {
+        const std::string& name = pair.first;
+        const std::string& path = pair.second;
+
+        auto plugin_handle = loadPluginFromPath(path);
+        if (plugin_handle) {
+            loaded_plugins_[name] = plugin_handle;
+
+            std::cout << "Successfully loaded plugin '" << name << "'"
+                << " version " << plugin_handle->getVersion()
+                << " from " << path << std::endl;
+        }
+    }
+}
+
 // PluginManager implementation
 nixlPluginManager::nixlPluginManager() {
-#ifdef NIXL_DEFAULT_PLUGIN_DIR
-    std::string default_plugin_dir = NIXL_DEFAULT_PLUGIN_DIR;
-    if (!default_plugin_dir.empty()) {
-        std::cout << "Using default plugin directory: " << default_plugin_dir << std::endl;
-        plugin_dirs_.push_back(default_plugin_dir);
+#ifdef NIXL_USE_PLUGIN_FILE
+    std::string plugin_file = NIXL_USE_PLUGIN_FILE;
+    if (!plugin_file.empty()) {
+        std::cout << "Using plugin file: " << plugin_file << std::endl;
+        loadPluginsFromList(plugin_file);
     }
 #endif
 
@@ -175,50 +277,10 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
             continue;
         }
 
-        // Try to open the plugin
-        void* handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL);
-        if (!handle) {
-            std::cerr << "Failed to load plugin " << plugin_name
-                      << " from " << plugin_path << ": " << dlerror() << std::endl;
-            continue;
+        auto plugin_handle = loadPluginFromPath(plugin_path);
+        if (plugin_handle) {
+            return plugin_handle;
         }
-
-        // Get the initialization function
-        typedef nixlBackendPlugin* (*init_func_t)();
-        init_func_t init = (init_func_t) dlsym(handle, "nixl_plugin_init");
-        if (!init) {
-            std::cerr << "Failed to find nixl_plugin_init in " << plugin_path
-                      << ": " << dlerror() << std::endl;
-            dlclose(handle);
-            continue;
-        }
-
-        // Call the initialization function
-        nixlBackendPlugin* plugin = init();
-        if (!plugin) {
-            std::cerr << "Plugin initialization failed for " << plugin_path << std::endl;
-            dlclose(handle);
-            continue;
-        }
-
-        // Check API version
-        if (plugin->api_version != NIXL_PLUGIN_API_VERSION) {
-            std::cerr << "Plugin API version mismatch for " << plugin_path
-                      << ": expected " << NIXL_PLUGIN_API_VERSION
-                      << ", got " << plugin->api_version << std::endl;
-            dlclose(handle);
-            continue;
-        }
-
-        // Create and store the plugin handle
-        auto plugin_handle = std::make_shared<nixlPluginHandle>(handle, plugin);
-        loaded_plugins_[plugin_name] = plugin_handle;
-
-        std::cout << "Successfully loaded plugin '" << plugin_name << "'"
-                  << " version " << plugin_handle->getVersion()
-                  << " from " << plugin_path << std::endl;
-
-        return plugin_handle;
     }
 
     // Failed to load the plugin
