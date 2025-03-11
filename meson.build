@@ -72,7 +72,7 @@ plugin_install_dir = join_paths(get_option('libdir'), 'plugins')
 plugin_build_dir = meson.current_build_dir() / 'plugins'
 
 # Create plugin directory
-run_command('rm', '-f', plugin_build_dir, check: true)
+run_command('rm', '-f', plugin_build_dir, check: false)
 run_command('mkdir', '-p', plugin_build_dir, check: true)
 
 # Add to global args so plugin managers can find it
