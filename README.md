@@ -108,4 +108,4 @@ pip install .
 ```
 
 ## License
-TBD
+Apache 2.0
