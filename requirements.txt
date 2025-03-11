@@ -1,9 +1,8 @@
 pre-commit
-isort
 black
 flake8
+isort
 mypy
-meson-lint
 dockerfile-lint
 codespell
 toml  
