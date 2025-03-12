@@ -60,6 +60,8 @@ nixlAgent::~nixlAgent() {
 nixl_b_params_t nixlAgent::getBackendOptions (const nixl_backend_t &type) {
     nixl_b_params_t params;
 
+    // TODO: unify to uppercase/lowercase and do ltrim/rtrim
+
     // First try to get options from a loaded plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
     auto plugin_handle = plugin_manager.getPlugin(type);

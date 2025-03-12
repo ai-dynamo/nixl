@@ -54,7 +54,7 @@ class nixlBasicDesc {
 // String next to each BasicDesc, used for extra info for memory registrartion
 class nixlStringDesc : public nixlBasicDesc {
     public:
-        std::string metaInfo;
+        std::string metaInfo; // Or nixl_blob_t?
 
         // Reuse parent constructor without the extra info
         using nixlBasicDesc::nixlBasicDesc;
