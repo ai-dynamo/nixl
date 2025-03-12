@@ -49,6 +49,7 @@ $global:copyright_matchers = @(
     files = @('.cpp', '.h')
     found_missing = $false
     matches = @(
+      '/*'
       '* SPDX-FileCopyrightText: Copyright (c) ' + $date_key + ' NVIDIA CORPORATION & AFFILIATES. All rights reserved.'
       '* SPDX-License-Identifier: Apache-2.0'
       '* Licensed under the Apache License, Version 2.0 (the "License");'
@@ -60,6 +61,7 @@ $global:copyright_matchers = @(
       '* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.'
       '* See the License for the specific language governing permissions and'
       '* limitations under the License.'
+      '*/'
     )
     name = 'c-code'
     regex = $null
