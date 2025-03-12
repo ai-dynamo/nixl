@@ -18,25 +18,29 @@
 #define __MEM_SECTION_H
 
 #include <vector>
+#include <unordered_map>
 #include <map>
+#include <array>
 #include <string>
 #include <set>
 #include "nixl_descriptors.h"
 #include "nixl.h"
 #include "backend/backend_engine.h"
 
-typedef std::pair<nixl_mem_t, nixl_backend_t> section_key_t;
-typedef std::set<nixl_backend_t>              backend_set_t;
+typedef std::pair<nixl_mem_t, nixl_backend_t>                  section_key_t;
+typedef std::set<nixl_backend_t>                               backend_set_t;
+typedef std::unordered_map<nixl_backend_t, nixlBackendEngine*> backend_map_t;
+
 
 class nixlMemSection {
     protected:
-        std::map<nixl_mem_t,     backend_set_t>      memToBackendMap;
-        std::map<section_key_t,  nixl_meta_dlist_t*> sectionMap;
+        std::array<backend_set_t, FILE_SEG+1>         memToBackendMap;
+        std::map<section_key_t,   nixl_meta_dlist_t*> sectionMap;
         // Replica of what Agent has, but tiny in size and helps with modularity
-        std::map<nixl_backend_t, nixlBackendEngine*> backendToEngineMap;
+        backend_map_t backendToEngineMap;
 
     public:
-        nixlMemSection ();
+        nixlMemSection () {};
 
         nixl_status_t populate (const nixl_xfer_dlist_t &query,
                                 const nixl_backend_t &nixl_backend,
@@ -44,6 +48,7 @@ class nixlMemSection {
 
         virtual ~nixlMemSection () = 0; // Making the class abstract
 };
+
 
 class nixlLocalSection : public nixlMemSection {
     private:
@@ -73,6 +78,7 @@ class nixlLocalSection : public nixlMemSection {
         ~nixlLocalSection();
 };
 
+
 class nixlRemoteSection : public nixlMemSection {
     private:
         std::string agentName;
@@ -82,8 +88,7 @@ class nixlRemoteSection : public nixlMemSection {
                            nixlBackendEngine *backend);
     public:
         nixlRemoteSection (const std::string &agent_name,
-                           const std::map<nixl_backend_t,
-                           nixlBackendEngine*> &engine_map);
+                           backend_map_t &engine_map);
 
         nixl_status_t loadRemoteData (nixlSerDes* deserializer);
 

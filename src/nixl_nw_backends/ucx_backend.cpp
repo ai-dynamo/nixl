@@ -16,7 +16,6 @@
  */
 #include "ucx_backend.h"
 #include "serdes.h"
-#include "str_tools.h"
 #include <cassert>
 
 class nixlUcxCudaCtx {
@@ -219,7 +218,7 @@ void nixlUcxEngine::progressFunc()
         //     }
         //     cnt++;
         // }
-        
+
         /* Wait for predefined number of */
         us_t start = getUs();
         while( (start + pthrDelay) > getUs()) {
@@ -599,7 +598,7 @@ nixl_status_t nixlUcxEngine::loadLocalMD (nixlBackendMD* input,
     size_t size = input_md->rkeyStr.size();
     char *addr = new char[size];
     nixlSerDes::_stringToBytes(addr, input_md->rkeyStr, size);
-    
+
     int ret = uw->rkeyImport(conn.ep, addr, size, md->rkey);
     if (ret) {
         // TODO: error out. Should we indicate which desc failed or unroll everything prior

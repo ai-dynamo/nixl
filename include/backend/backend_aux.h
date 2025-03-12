@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __BACKEND_TYPES_H_
-#define __BACKEND_TYPES_H_
+#ifndef __BACKEND_AUX_H_
+#define __BACKEND_AUX_H_
 
 #include <mutex>
 #include <string>

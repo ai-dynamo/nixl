@@ -22,6 +22,9 @@
 #include "nixl.h"
 #include "ucx_backend.h"
 
+std::string agent1("Agent001");
+std::string agent2("Agent002");
+
 void check_buf(void* buf, size_t len) {
 
     // Do some checks on the data.
@@ -38,7 +41,6 @@ bool equal_buf (void* buf1, void* buf2, size_t len) {
             return false;
     return true;
 }
-
 
 void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBackendH* backend2){
 
@@ -95,14 +97,14 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     assert(meta2.size() > 0);
 
     std::string remote_name = A1->loadRemoteMD(meta2);
-    assert(remote_name == "Agent2");
+    assert(remote_name == agent2);
 
     std::cout << "perf setup done\n";
 
     gettimeofday(&start_time, NULL);
 
     for(int i = 0; i<n_iters; i++) {
-        status = A1->prepXferSide(dst_list, "Agent2", backend, dst_side[i]);
+        status = A1->prepXferSide(dst_list, agent2, backend, dst_side[i]);
         assert(status == NIXL_SUCCESS);
 
         status = A1->prepXferSide(src_list, "", backend, src_side[i]);
@@ -206,7 +208,7 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     assert(meta2.size() > 0);
 
     std::string remote_name = A1->loadRemoteMD(meta2);
-    assert(remote_name == "Agent2");
+    assert(remote_name == agent2);
 
     std::cout << "Ready to prepare side\n";
 
@@ -314,15 +316,13 @@ int main()
 
     // Example: assuming two agents running on the same machine,
     // with separate memory regions in DRAM
-    std::string agent1("Agent1");
-    std::string agent2("Agent2");
 
     nixlAgentConfig cfg(true);
     nixl_b_params_t init1, init2;
-    // populate required/desired inits
 
-    nixlAgent A1("Agent1", cfg);
-    nixlAgent A2("Agent2", cfg);
+    // populate required/desired inits
+    nixlAgent A1(agent1, cfg);
+    nixlAgent A2(agent2, cfg);
 
     init1 = A1.getBackendOptions("UCX");
     init2 = A2.getBackendOptions("UCX");
@@ -334,8 +334,8 @@ int main()
     nixlBackendH* ucx2 = A2.createBackend("UCX", init2);
 
     // // One side gets to listen, one side to initiate. Same string is passed as the last 2 steps
-    // ret1 = A1->makeConnection("Agent2", 0);
-    // ret2 = A2->makeConnection("Agent1", 1);
+    // ret1 = A1->makeConnection(agent2, 0);
+    // ret2 = A2->makeConnection(agent1, 1);
 
     // assert(ret1 == NIXL_SUCCESS);
     // assert(ret2 == NIXL_SUCCESS);
@@ -467,8 +467,8 @@ int main()
     ret2 = A2.deregisterMem(dlist2, ucx2);
 
     //only initiator should call invalidate
-    A1.invalidateRemoteMD("Agent2");
-    //A2.invalidateRemoteMD("Agent1");
+    A1.invalidateRemoteMD(agent2);
+    //A2.invalidateRemoteMD(agent1);
 
     std::cout << "Test done\n";
 }

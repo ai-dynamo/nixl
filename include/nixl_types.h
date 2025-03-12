@@ -18,13 +18,14 @@
 #define _NIXL_TYPES_H
 #include <vector>
 #include <string>
-#include <map>
+#include <unordered_map>
 
-typedef std::map <std::string, std::string> nixl_b_params_t;
-typedef std::map<std::string, std::vector<std::string>> nixl_notifs_t;
+typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
+typedef std::unordered_map<std::string, std::vector<std::string>> nixl_notifs_t;
 
 typedef std::string nixl_backend_t;
 
+//FILE_SEG must be last
 typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, FILE_SEG} nixl_mem_t;
 
 typedef enum {NIXL_XFER_INIT, NIXL_XFER_PROC,

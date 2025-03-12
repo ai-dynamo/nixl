@@ -18,7 +18,7 @@
 #include <iostream>
 #include <cufile.h>
 #include "gds_backend.h"
-#include "str_tools.h"
+#include "utils/sys/str_tools.h"
 
 #define  GDS_BATCH_LIMIT 128
 
