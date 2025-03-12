@@ -49,23 +49,26 @@ $global:copyright_matchers = @(
     files = @('.cpp', '.h')
     found_missing = $false
     matches = @(
-      '/*'
-      '* SPDX-FileCopyrightText: Copyright (c) ' + $date_key + ' NVIDIA CORPORATION & AFFILIATES. All rights reserved.'
-      '* SPDX-License-Identifier: Apache-2.0'
-      '* Licensed under the Apache License, Version 2.0 (the "License");'
-      '* you may not use this file except in compliance with the License.'
-      '* You may obtain a copy of the License at'
-      '* http://www.apache.org/licenses/LICENSE-2.0'
-      '* Unless required by applicable law or agreed to in writing, software'
-      '* distributed under the License is distributed on an "AS IS" BASIS,'
-      '* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.'
-      '* See the License for the specific language governing permissions and'
-      '* limitations under the License.'
-      '*/'
+       '/*'
+       ' * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.'
+       ' * SPDX-License-Identifier: Apache-2.0'
+       ' *'
+       ' * Licensed under the Apache License, Version 2.0 (the "License");'
+       ' * you may not use this file except in compliance with the License.'
+       ' * You may obtain a copy of the License at'
+       ' *'
+       ' * http://www.apache.org/licenses/LICENSE-2.0'
+       ' *'
+       ' * Unless required by applicable law or agreed to in writing, software'
+       ' * distributed under the License is distributed on an "AS IS" BASIS,'
+       ' * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.'
+       ' * See the License for the specific language governing permissions and'
+       ' * limitations under the License.'
+       ' */'
     )
     name = 'c-code'
-    regex = '/\*[\n\r\s]+SPDX-FileCopyrightText:\s+Copyright\s+\(c\)\s+(?>(?>\d{4})-)?(?<year>\d{4})\s+NVIDIA\s+CORPORATION\s+&\s+AFFILIATES\.\s+All\s+rights\s+reserved\.[\n\r\s]+SPDX-License-Identifier:\s+Apache-2\.0[\n\r\s]+Licensed\s+under\s+the\s+Apache\s+License,\s+Version\s+2\.0\s+\(the\s+"License"\);[\n\r\s]+you\s+may\s+not\s+use\s+this\s+file\s+except\s+in\s+compliance\s+with\s+the\s+License\.[\n\r\s]+You\s+may\s+obtain\s+a\s+copy\s+of\s+the\s+License\s+at[\n\r\s]+https?://www\.apache\.org/licenses/LICENSE-2\.0[\n\r\s]+Unless\s+required\s+by\s+applicable\s+law\s+or\s+agreed\s+to\s+in\s+writing,\s+software[\n\r\s]+distributed\s+under\s+the\s+License\s+is\s+distributed\s+on\s+an\s+"AS\s+IS"\s+BASIS,[\n\r\s]+WITHOUT\s+WARRANTIES\s+OR\s+CONDITIONS\s+OF\s+ANY\s+KIND,\s+either\s+express\s+or\s+implied\.[\n\r\s]+See\s+the\s+License\s+for\s+the\s+specific\s+language\s+governing\s+permissions\s+and[\n\r\s]+limitations\s+under\s+the\s+License\.[\n\r\s]+\*/'
-    vertical_spacer = '*'
+    regex = $null
+    vertical_spacer = ' *'
   }
   @{
     files = @('.json')
