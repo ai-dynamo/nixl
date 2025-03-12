@@ -92,7 +92,7 @@ nixlBackendH* nixlAgent::createBackend(const nixl_backend_t &type,
     nixl_status_t ret;
     std::string str;
 
-    // Registring same type of backend is not supported, unlikey and prob error
+    // Registering same type of backend is not supported, unlikely and prob error
     if (data->backendEngines.count(type)!=0)
         return nullptr;
 
@@ -116,7 +116,7 @@ nixlBackendH* nixlAgent::createBackend(const nixl_backend_t &type,
     }
 
     if (backend!=nullptr) {
-        if (backend->initErr) {
+        if (backend->getInitErr()) {
             delete backend;
             return nullptr;
         }
@@ -447,7 +447,7 @@ nixl_status_t nixlAgent::makeXferReq (const nixlXferSideH* local_side,
     // }
 
     // Populate has been already done, no benefit in having sorted descriptors
-    // which will be overwritten by [] assignement operator.
+    // which will be overwritten by [] assignment operator.
     nixlXferReqH *handle = new nixlXferReqH;
     handle->initiatorDescs = new nixl_meta_dlist_t (
                                      local_side->descs->getType(),

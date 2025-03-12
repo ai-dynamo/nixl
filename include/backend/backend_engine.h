@@ -25,10 +25,51 @@
 // Base backend engine class for different backend implementations
 class nixlBackendEngine {
     private:
-        nixl_backend_t backendType;
+        // Members that cannot be modified by a child backend and parent bookkeep
+        nixl_backend_t   backendType;
+        nixl_b_params_t* customParams;
+
+    protected:
+        // Members that can be accessed by the child (localAgent cannot be modified)
+        bool              initErr;
+        const std::string localAgent;
+
+        nixl_status_t setInitParam(const std::string &key, const std::string &value) {
+            if (customParams->count(key)==0) {
+                (*customParams)[key] = value;
+                return NIXL_SUCCESS;
+            } else {
+                return NIXL_ERR_NOT_ALLOWED;
+            }
+        }
+
+        std::string getInitParam(const std::string &key) {
+            if (customParams->count(key)==0)
+                return "";
+            else
+                return (*customParams)[key];
+        }
 
     public:
+        nixlBackendEngine (const nixlBackendInitParams* init_params)
+            : localAgent(init_params->localAgent) {
+
+            this->backendType  = init_params->type;
+            this->initErr      = false;
+            this->customParams = new nixl_b_params_t(*(init_params->customParams));
+        }
+
+        virtual ~nixlBackendEngine () {
+            delete customParams;
+        }
+
+        bool getInitErr() { return initErr; }
         nixl_backend_t getType () const { return backendType; }
+        nixl_b_params_t getCustomParams () const { return *customParams; }
+
+        // The support function determine which methods are necessary by the child backend, and
+        // if they're called by mistake, they will return error if not implemented by backend.
+
         // Determines if a backend supports remote operations
         virtual bool supportsRemote () const = 0;
 
@@ -42,21 +83,6 @@ class nixlBackendEngine {
         // Determines if a backend supports progress thread.
         virtual bool supportsProgTh () const = 0;
 
-        // The support function determine which methods are necessary by the child backend, and
-        // if they're called by mistake, they will return error if not implemented by backend.
-
-        std::string    localAgent;
-        bool           initErr;
-
-        nixlBackendEngine (const nixlBackendInitParams* init_params) {
-            this->backendType = init_params->type;
-            this->localAgent  = init_params->localAgent;
-            this->initErr     = false;
-        }
-
-        virtual ~nixlBackendEngine () = default;
-
-        bool getInitErr() { return initErr; }
 
         // *** Pure virtual methods that need to be implemented by any backend *** //
 
