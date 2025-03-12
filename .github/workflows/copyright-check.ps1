@@ -26,7 +26,7 @@ $timer = [System.Diagnostics.Stopwatch]::StartNew()
 
 $global:copyright_matchers = @(
   @{
-    files = @('.containerfile', '.dockerignore', '.pbtxt', '.ps1', '.py', '.sh', '.toml', '.tpl', '.txt', '.yaml', '.yml', 'Dockerfile', '.cpp', '.build', '.h')
+    files = @('.containerfile', '.dockerignore', '.pbtxt', '.ps1', '.py', '.sh', '.toml', '.tpl', '.txt', '.yaml', '.yml', 'Dockerfile', '.build')
     found_missing = $false
     matches = @(
       '# SPDX-FileCopyrightText: Copyright (c) ' + $date_key + ' NVIDIA CORPORATION & AFFILIATES. All rights reserved.'
@@ -44,6 +44,26 @@ $global:copyright_matchers = @(
     name = 'basic'
     regex = $null
     vertical_spacer = '#'
+  }
+  @{
+    files = @('.cpp', '.h')
+    found_missing = $false
+    matches = @(
+      '* SPDX-FileCopyrightText: Copyright (c)' + $date_key + ' NVIDIA CORPORATION & AFFILIATES. All rights reserved.'
+      '* SPDX-License-Identifier: Apache-2.0'
+      '* Licensed under the Apache License, Version 2.0 (the "License");'
+      '* you may not use this file except in compliance with the License.'
+      '* You may obtain a copy of the License at'
+      '* http://www.apache.org/licenses/LICENSE-2.0'
+      '* Unless required by applicable law or agreed to in writing, software'
+      '* distributed under the License is distributed on an "AS IS" BASIS,'
+      '* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.'
+      '* See the License for the specific language governing permissions and'
+      '* limitations under the License.'
+    )
+    name = 'c-code'
+    regex = $null
+    vertical_spacer = '*'
   }
   @{
     files = @('.json')
