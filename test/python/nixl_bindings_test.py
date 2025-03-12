@@ -15,12 +15,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import nixl_bindings as nixl
-import nixl_utils
 import pickle
 
-def test_list():
+import nixl._bindings as nixl
+import nixl._utils as nixl_utils
 
+
+def test_list():
     descs = [(1000, 105, 0), (2000, 30, 0), (1010, 20, 0)]
     test_list = nixl.nixlXferDList(nixl.DRAM_SEG, descs, True, False)
 
@@ -38,10 +39,10 @@ def test_list():
 
     assert test_list.getType() == nixl.DRAM_SEG
     assert test_list.isUnifiedAddr()
-    
+
     print(test_list.descCount())
     assert test_list.descCount() == 3
-   
+
     test_list.remDesc(1)
     assert test_list.descCount() == 2
 
@@ -53,8 +54,8 @@ def test_list():
 
     test_list.addDesc((2000, 100, 0))
 
-def test_agent():
 
+def test_agent():
     name1 = "Agent1"
     name2 = "Agent2"
 
@@ -71,7 +72,7 @@ def test_agent():
     addr2 = nixl_utils.malloc_passthru(size)
 
     nixl_utils.ba_buf(addr1, size)
-    
+
     reg_list1 = nixl.nixlRegDList(nixl.DRAM_SEG, True, False)
     reg_list1.addDesc((addr1, size, 0, "dead"))
 
@@ -93,9 +94,9 @@ def test_agent():
     print(meta2)
 
     ret_name = agent1.loadRemoteMD(meta2)
-    assert ret_name.decode(encoding='UTF-8') == name2
+    assert ret_name.decode(encoding="UTF-8") == name2
     ret_name = agent2.loadRemoteMD(meta1)
-    assert ret_name.decode(encoding='UTF-8') == name1
+    assert ret_name.decode(encoding="UTF-8") == name1
 
     offset = 8
     req_size = 8
@@ -114,11 +115,13 @@ def test_agent():
     print(src_list)
     print(dst_list)
 
-    handle = agent1.createXferReq(src_list, dst_list, name2, noti_str, nixl.NIXL_WR_NOTIF);
+    handle = agent1.createXferReq(
+        src_list, dst_list, name2, noti_str, nixl.NIXL_WR_NOTIF
+    )
     assert handle != 0
 
     print(handle)
-    
+
     ret = agent1.postXferReq(handle)
     assert ret != nixl.NIXL_XFER_ERR
 
@@ -135,7 +138,7 @@ def test_agent():
             notifMap = agent2.getNotifs(notifMap)
 
         assert status != nixl.NIXL_XFER_ERR
-    
+
     nixl_utils.verify_transfer(addr1 + offset, addr2 + offset, req_size)
     assert len(notifMap[name1]) == 1
     print(notifMap[name1][0])
@@ -151,12 +154,13 @@ def test_agent():
     ret = agent2.deregisterMem(reg_list2, ucx2)
     assert ret == nixl.NIXL_SUCCESS
 
-    #Only initiator should call invalidate
+    # Only initiator should call invalidate
     agent1.invalidateRemoteMD(name2)
-    #agent2.invalidateRemoteMD(name1)
+    # agent2.invalidateRemoteMD(name1)
 
     nixl_utils.free_passthru(addr1)
     nixl_utils.free_passthru(addr2)
+
 
 test_list()
 test_agent()

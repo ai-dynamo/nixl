@@ -26,10 +26,10 @@
 
 namespace py = pybind11;
 
-PYBIND11_MODULE(nixl_bindings, m) {
+PYBIND11_MODULE(_bindings, m) {
 
     //TODO: each nixl class and/or function can be documented in place
-    m.doc() = "pybind11 NIXL plugin: Implements NIXL desciptors and lists, soon Agent API as well";
+    m.doc() = "pybind11 NIXL plugin: Implements NIXL descriptors and lists, soon Agent API as well";
 
     //cast types
     py::enum_<nixl_mem_t>(m, "nixl_mem_t")
@@ -146,7 +146,6 @@ PYBIND11_MODULE(nixl_bindings, m) {
                 size_t size = desc[1].cast<size_t>();
                 uint32_t dev_id = desc[2].cast<uint32_t>();
                 std::string meta = desc[3].cast<std::string>();
-                
                 nixlStringDesc newDesc(addr, size, dev_id, meta);
 
                 list.addDesc(newDesc);
@@ -188,7 +187,6 @@ PYBIND11_MODULE(nixl_bindings, m) {
         .def("deregisterMem", [](nixlAgent &agent, nixl_reg_dlist_t descs, uintptr_t backend) -> nixl_status_t {
                     return agent.deregisterMem(descs, (nixlBackendH*) backend);
                 })
-         
         .def("makeConnection", &nixlAgent::makeConnection)
         //note: slight API change, python cannot receive values by passing refs, so handle must be returned
         .def("createXferReq", [](nixlAgent &agent,
@@ -202,7 +200,7 @@ PYBIND11_MODULE(nixl_bindings, m) {
                     nixl_status_t ret = agent.createXferReq(local_descs, remote_descs, remote_agent, notif_msg, operation, handle, (nixlBackendH*) backend);
                     if (ret != NIXL_SUCCESS) return (uintptr_t) nullptr;
                     else return (uintptr_t) handle;
-                }, py::arg("local_descs"), 
+                }, py::arg("local_descs"),
                    py::arg("remote_descs"), py::arg("remote_agent"),
                    py::arg("notif_msg"), py::arg("operation"),
                    py::arg("backend") = ((uintptr_t) nullptr))
@@ -264,7 +262,6 @@ PYBIND11_MODULE(nixl_bindings, m) {
                                               const std::string &msg,
                                               uintptr_t backend) {
                     return agent.genNotif(remote_agent, msg, (nixlBackendH*) backend);
-                    
                 })
         .def("getLocalMD", [](nixlAgent &agent) {
                     //python can only interpret text strings

@@ -15,16 +15,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from nixl_wrapper import nixl_wrapper
-import nixl_utils
 import torch
 
-if __name__ == "__main__":
+import nixl._utils as nixl_utils
+from nixl._api import nixl_agent
 
+if __name__ == "__main__":
     buf_size = 256
     # Allocate memory and register with NIXL
-    nixl_agent1 = nixl_wrapper("target", None)
-    addr1 = nixl_utils.malloc_passthru(buf_size*2)
+    nixl_agent1 = nixl_agent("target", None)
+    addr1 = nixl_utils.malloc_passthru(buf_size * 2)
     addr2 = addr1 + buf_size
 
     agent1_addrs = [(addr1, buf_size, 0), (addr2, buf_size, 0)]
@@ -38,10 +38,10 @@ if __name__ == "__main__":
     agent1_tensor_reg_descs = nixl_agent1.get_reg_descs(tensors)
     agent1_tensor_xfer_descs = nixl_agent1.get_xfer_descs(tensors)
 
-    assert (nixl_agent1.register_memory(agent1_reg_descs) != None)
+    assert nixl_agent1.register_memory(agent1_reg_descs) is not None
 
-    nixl_agent2 = nixl_wrapper("initiator", None)
-    addr3 = nixl_utils.malloc_passthru(buf_size*2)
+    nixl_agent2 = nixl_agent("initiator", None)
+    addr3 = nixl_utils.malloc_passthru(buf_size * 2)
     addr4 = addr3 + buf_size
 
     agent2_addrs = [(addr3, buf_size, 0), (addr4, buf_size, 0)]
@@ -51,20 +51,21 @@ if __name__ == "__main__":
     agent2_xfer_descs = nixl_agent1.get_xfer_descs(agent2_addrs, "DRAM", True)
 
     agent2_descs = nixl_agent2.register_memory(agent2_reg_descs, True)
-    assert (agent2_descs != None)
+    assert agent2_descs is not None
 
     # Exchange metadata
     meta = nixl_agent1.get_agent_metadata()
     remote_name = nixl_agent2.add_remote_agent(meta)
-    print ("Loaded name from metadata:", remote_name)
+    print("Loaded name from metadata:", remote_name)
 
-    ser = nixl_agent1.get_serialized_descs(agent1_reg_descs)
-    src_descs_recvd = nixl_agent2.deserialize_descs(ser)
-    assert (src_descs_recvd == agent1_reg_descs)
+    serdes = nixl_agent1.get_serialized_descs(agent1_reg_descs)
+    src_descs_recvd = nixl_agent2.deserialize_descs(serdes)
+    assert src_descs_recvd == agent1_reg_descs
 
     # initialize transfer mode
-    xfer_handle_1 = nixl_agent2.initialize_xfer(agent2_xfer_descs, agent1_xfer_descs,
-                                              remote_name, "UUID1", "READ")
+    xfer_handle_1 = nixl_agent2.initialize_xfer(
+        agent2_xfer_descs, agent1_xfer_descs, remote_name, "UUID1", "READ"
+    )
     if not xfer_handle_1:
         print("Creating transfer failed.")
         exit()
@@ -78,31 +79,32 @@ if __name__ == "__main__":
     while (not init_done) or (not target_done):
         if not init_done:
             state = nixl_agent2.check_xfer_state(xfer_handle_1)
-            if (state == "ERR"):
+            if state == "ERR":
                 print("Transfer got to Error state.")
                 exit()
-            elif (state == "DONE"):
+            elif state == "DONE":
                 init_done = True
-                print ("Initiator done")
+                print("Initiator done")
 
         if not target_done:
             if nixl_agent1.check_remote_xfer_done("initiator", "UUID1"):
                 target_done = True
-                print ("Target done")
+                print("Target done")
 
     # prep transfer mode
-    local_prep_handle  = nixl_agent2.prep_xfer_side("",
-                                                    [(addr3, buf_size, 0),
-                                                    (addr4, buf_size, 0)],
-                                                    "DRAM", True)
-    remote_prep_handle = nixl_agent2.prep_xfer_side(remote_name, agent1_xfer_descs, "DRAM")
+    local_prep_handle = nixl_agent2.prep_xfer_side(
+        "", [(addr3, buf_size, 0), (addr4, buf_size, 0)], "DRAM", True
+    )
+    remote_prep_handle = nixl_agent2.prep_xfer_side(
+        remote_name, agent1_xfer_descs, "DRAM"
+    )
 
     assert local_prep_handle != 0
     assert remote_prep_handle != 0
 
-    xfer_handle_2      = nixl_agent2.make_prepped_xfer(local_prep_handle, [0,1],
-                                                       remote_prep_handle, [1,0],
-                                                       "UUID2", "WRITE")
+    xfer_handle_2 = nixl_agent2.make_prepped_xfer(
+        local_prep_handle, [0, 1], remote_prep_handle, [1, 0], "UUID2", "WRITE"
+    )
     if not local_prep_handle or not remote_prep_handle:
         print("Preparing transfer side handles failed.")
         exit()
@@ -120,17 +122,17 @@ if __name__ == "__main__":
     while (not init_done) or (not target_done):
         if not init_done:
             state = nixl_agent2.check_xfer_state(xfer_handle_2)
-            if (state == "ERR"):
+            if state == "ERR":
                 print("Transfer got to Error state.")
                 exit()
-            elif (state == "DONE"):
+            elif state == "DONE":
                 init_done = True
-                print ("Initiator done")
+                print("Initiator done")
 
         if not target_done:
             if nixl_agent1.check_remote_xfer_done("initiator", "UUID2"):
                 target_done = True
-                print ("Target done")
+                print("Target done")
 
     nixl_agent2.abort_xfer(xfer_handle_1)
     nixl_agent2.abort_xfer(xfer_handle_2)
@@ -143,4 +145,4 @@ if __name__ == "__main__":
     nixl_utils.free_passthru(addr1)
     nixl_utils.free_passthru(addr3)
 
-    print ("Test Complete.")
+    print("Test Complete.")
