@@ -825,11 +825,10 @@ void nixlUcxEngine::releaseReqH(nixlBackendReqH* handle)
             req = head;
             head = req->unlink();
             requestReset(req);
-            if (done) {
-                uw->reqRelease((nixlUcxReq)req);
-            } else {
+            if (!done) {
                 uw->reqCancel((nixlUcxReq)req);
             }
+            uw->reqRelease((nixlUcxReq)req);
         }
     } else {
         /* All requests have been completed.
