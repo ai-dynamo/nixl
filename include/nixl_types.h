@@ -41,7 +41,8 @@ typedef enum {
     NIXL_ERR_NOT_FOUND = -3,
     NIXL_ERR_NYI = -4,
     NIXL_ERR_MISMATCH = -5,
-    NIXL_ERR_BAD = -6
+    NIXL_ERR_BAD = -6,
+    NIXL_ERR_NOT_ALLOWED = -7
 } nixl_status_t;
 
 class nixlSerDes;
