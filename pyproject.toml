@@ -29,4 +29,4 @@ authors = [
 ]
 
 [tool.meson-python.args]
-setup = ['-Ddisable_gds_backend=true', '-Dinstall_headers=false']
+setup = ['-Ddisable_gds_backend=true', '-Dinstall_headers=false', '-Dstatic_plugins=UCX']

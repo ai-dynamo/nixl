@@ -177,7 +177,7 @@ class nixl_agent:
             handle = self.agent.createXferReq(
                 local_descs, remote_descs, remote_agent, notif_msg, op
             )
-            return handle  # In case of error it will be None
+            return handle  # In case of error it will be 0
         else:
             return None
 
@@ -201,7 +201,10 @@ class nixl_agent:
         else:
             # Or use same logic that we used in register_memory
             handle = self.agent.prepXferSide(descs, remote_agent, self.backends["UCX"])
-        return handle  # In case of error it will be None
+        if handle == 0:
+            return None
+
+        return handle
 
     def make_prepped_xfer(
         self,
@@ -222,7 +225,10 @@ class nixl_agent:
                 notif_msg,
                 op,
             )
-            return handle  # In case of error it will be None
+            if handle == 0:
+                return None
+
+            return handle
         else:
             return None
 
