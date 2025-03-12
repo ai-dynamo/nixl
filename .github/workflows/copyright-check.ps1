@@ -64,7 +64,7 @@ $global:copyright_matchers = @(
       '*/'
     )
     name = 'c-code'
-    regex = $null
+    regex = '/\*[\n\r\s]+SPDX-FileCopyrightText:\s+Copyright\s+\(c\)\s+(?>(?>\d{4})-)?(?<year>\d{4})\s+NVIDIA\s+CORPORATION\s+&\s+AFFILIATES\.\s+All\s+rights\s+reserved\.[\n\r\s]+SPDX-License-Identifier:\s+Apache-2\.0[\n\r\s]+Licensed\s+under\s+the\s+Apache\s+License,\s+Version\s+2\.0\s+\(the\s+"License"\);[\n\r\s]+you\s+may\s+not\s+use\s+this\s+file\s+except\s+in\s+compliance\s+with\s+the\s+License\.[\n\r\s]+You\s+may\s+obtain\s+a\s+copy\s+of\s+the\s+License\s+at[\n\r\s]+https?://www\.apache\.org/licenses/LICENSE-2\.0[\n\r\s]+Unless\s+required\s+by\s+applicable\s+law\s+or\s+agreed\s+to\s+in\s+writing,\s+software[\n\r\s]+distributed\s+under\s+the\s+License\s+is\s+distributed\s+on\s+an\s+"AS\s+IS"\s+BASIS,[\n\r\s]+WITHOUT\s+WARRANTIES\s+OR\s+CONDITIONS\s+OF\s+ANY\s+KIND,\s+either\s+express\s+or\s+implied\.[\n\r\s]+See\s+the\s+License\s+for\s+the\s+specific\s+language\s+governing\s+permissions\s+and[\n\r\s]+limitations\s+under\s+the\s+License\.[\n\r\s]+\*/'
     vertical_spacer = '*'
   }
   @{
