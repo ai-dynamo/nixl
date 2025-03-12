@@ -26,7 +26,7 @@ $timer = [System.Diagnostics.Stopwatch]::StartNew()
 
 $global:copyright_matchers = @(
   @{
-    files = @('.containerfile', '.dockerignore', '.pbtxt', '.ps1', '.py', '.sh', '.toml', '.tpl', '.txt', '.yaml', '.yml', 'Dockerfile')
+    files = @('.containerfile', '.dockerignore', '.pbtxt', '.ps1', '.py', '.sh', '.toml', '.tpl', '.txt', '.yaml', '.yml', 'Dockerfile', '.cpp', '.build', '.h')
     found_missing = $false
     matches = @(
       '# SPDX-FileCopyrightText: Copyright (c) ' + $date_key + ' NVIDIA CORPORATION & AFFILIATES. All rights reserved.'
@@ -122,7 +122,7 @@ $global:copyright_results = @{
 
 $ignored_files = @('.clang-format', '.gitattributes', '.gitignore', '.gitkeep', '.patch', 'Cargo.lock', 'LICENSE', 'uv.lock', 'rust-toolchain.toml', 'codespell.txt')
 write-debug "<copyright-check> ignored_files = ['$($ignored_files -join "','")']."
-$ignored_paths = @('.github', '.mypy_cache', '.pytest_cache', 'lib/llm/tests/data/sample-models')
+$ignored_paths = @('.github', '.mypy_cache', '.pytest_cache')
 write-debug "<copyright-check> ignored_paths = ['$($ignored_paths -join "','")']."
 $ignored_types = @('.bat', '.gif', '.ico', '.ipynb', '.jpg', '.jpeg', '.patch', '.png', '.pyc', '.pyi', '.rst', '.zip', '.md')
 write-debug "<copyright-check> ignored_types = ['$($ignored_types -join "', '")']."
