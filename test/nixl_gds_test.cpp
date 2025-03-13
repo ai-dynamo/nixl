@@ -130,9 +130,9 @@ int main(int argc, char *argv[])
         std::cout << " GDS File IO has been posted\n";
         std::cout << " Waiting for completion\n";
 
-        while (status != NIXL_XFER_DONE) {
+        while (status != NIXL_SUCCESS) {
             status = agent.getXferStatus(treq);
-            assert(status != NIXL_XFER_ERR);
+            assert(status >= 0);
         }
         std::cout <<" Completed writing data using GDS backend\n";
         agent.invalidateXferReq(treq);

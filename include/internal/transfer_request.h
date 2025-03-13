@@ -31,7 +31,7 @@ class nixlXferReqH {
         std::string        notifMsg;
 
         nixl_xfer_op_t     backendOp;
-        nixl_xfer_state_t  state;
+        nixl_status_t      state;
 
     public:
         inline nixlXferReqH() {

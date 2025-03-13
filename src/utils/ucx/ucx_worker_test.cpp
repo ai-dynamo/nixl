@@ -56,10 +56,10 @@ static void nixlUcxRequestInit(void *request)
     req->initialized = 1;
 }
 
-void completeRequest(nixlUcxWorker w[2], std::string op, bool is_flush, nixl_xfer_state_t ret,  nixlUcxReq &req)
+void completeRequest(nixlUcxWorker w[2], std::string op, bool is_flush, nixl_status_t ret,  nixlUcxReq &req)
 {
-    assert( ret == NIXL_XFER_DONE || ret == NIXL_XFER_PROC);
-    if (ret == NIXL_XFER_DONE) {
+    assert( ret == NIXL_SUCCESS || ret == NIXL_IN_PROG);
+    if (ret == NIXL_SUCCESS) {
         if (!is_flush) {
             cout << "WARNING: " << op << " request completed immmediately - no testing non-inline path" << endl;
         }
@@ -69,12 +69,12 @@ void completeRequest(nixlUcxWorker w[2], std::string op, bool is_flush, nixl_xfe
         }
         assert( ((requestData *)req)->initialized == 1);
 
-        ret = NIXL_XFER_PROC;
+        ret = NIXL_IN_PROG;
         do {
             ret = w[0].test(req);
             w[1].progress();
-        } while( ret == NIXL_XFER_PROC);
-        assert(ret == NIXL_XFER_DONE);
+        } while( ret == NIXL_IN_PROG);
+        assert(ret == NIXL_SUCCESS);
         w[0].reqRelease(req);
     }
 }
@@ -100,7 +100,7 @@ int main()
     nixlUcxReq req;
     uint8_t *buffer[2];
     uint8_t *chk_buffer;
-    nixl_xfer_state_t ret;
+    nixl_status_t ret;
     size_t buf_size = 128 * 1024 * 1024; /* Use large buffer to ensure non-inline transfer */
     size_t i;
 
