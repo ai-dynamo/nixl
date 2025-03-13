@@ -51,7 +51,7 @@ private:
     unsigned int        batch_size;
 
 public:
-    nixlGdsIOBatch(int size);
+    nixlGdsIOBatch(unsigned int size);
     ~nixlGdsIOBatch();
 
     nixl_status_t       addToBatch(CUfileHandle_t fh,  void *buffer,
@@ -69,8 +69,8 @@ public:
 
    nixlGdsBackendReqH() {}
    ~nixlGdsBackendReqH() {
-	for (auto obj : batch_io_list)
-            delete obj;
+   for (auto obj : batch_io_list)
+       delete obj;
    }
 };
 

@@ -61,7 +61,7 @@ void completeRequest(nixlUcxWorker w[2], std::string op, bool is_flush, nixl_xfe
     assert( ret == NIXL_XFER_DONE || ret == NIXL_XFER_PROC);
     if (ret == NIXL_XFER_DONE) {
         if (!is_flush) {
-            cout << "WARNING: " << op << " request completed immmediately - no testing non-inline path" << endl;
+            cout << "WARNING: " << op << " request completed immediately - no testing non-inline path" << endl;
         }
     } else {
         if (!is_flush) {
@@ -212,5 +212,5 @@ int main()
     free(buffer[0]);
     free(buffer[1]);
 #endif
-
+    free(chk_buffer);
 }

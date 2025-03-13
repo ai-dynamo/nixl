@@ -190,7 +190,7 @@ int main(int argc, char *argv[]) {
 
     } else {
 
-        std::cout << " Recieve metadaat from Target \n";
+        std::cout << " Receive metadaat from Target \n";
         std::cout << " \t -- To be handled by runtime - currently received via a TCP Stream\n";
         std::string rrstr = recvFromTarget(initiator_port);
 
@@ -198,7 +198,7 @@ int main(int argc, char *argv[]) {
         tgt_md_init = tokens[0];
         remote_desc = tokens[1];
 
-        std::cout << " Verfiy Deserialized Target's Desc List at Initiator\n";
+        std::cout << " Verify Deserialized Target's Desc List at Initiator\n";
         remote_serdes = new nixlSerDes();
         remote_serdes->importStr(remote_desc);
         nixl_xfer_dlist_t dram_target_ucx(remote_serdes);
@@ -235,5 +235,8 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < NUM_TRANSFERS; i++) {
         free(addr[i]);
     }
+    delete serdes;
+    delete remote_serdes;
+
     return 0;
 }

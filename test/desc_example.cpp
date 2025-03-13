@@ -65,6 +65,8 @@ void testPerf(){
     time_per_desc = ((diff_time.tv_sec * 1000000) + diff_time.tv_usec);
     time_per_desc /=  (24*64*1024) ;
     std::cout << "time per desc " << time_per_desc << "us\n";
+
+    free(buf);
  }
 
 int main()
@@ -307,6 +309,9 @@ int main()
     dlist25.print();
 
     testPerf();
+
+    delete ser_des;
+    delete ser_des2;
 
     return 0;
 }
