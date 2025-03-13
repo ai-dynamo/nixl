@@ -26,9 +26,9 @@ if 'UCX' in static_plugins
                'ucx_backend.cpp', 'ucx_backend.h', 'ucx_plugin.cpp',
                dependencies: [ucx_utils_dep, nixl_dep, serdes_interface, cuda_dep, ucx_dep],
                include_directories: inc_dir,
-               install: true,
+               install: false,
                cpp_args : compile_flags,
-               name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
+               name_prefix: 'libplugin_') # Custom prefix for plugin libraries
                #install_dir: plugin_install_dir)
 else
     ucx_backend_lib = shared_library('UCX',

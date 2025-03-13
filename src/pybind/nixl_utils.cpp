@@ -39,7 +39,7 @@ void verify_transfer(uintptr_t addr1, uintptr_t addr2, int size) {
     for(int i = 0; i<size; i++) assert(((uint8_t*) addr1)[i] == ((uint8_t*) addr2)[i]);
 }
 
-PYBIND11_MODULE(nixl_utils, m) {
+PYBIND11_MODULE(_utils, m) {
     m.def("malloc_passthru", &malloc_passthru);
     m.def("free_passthru", &free_passthru);
     m.def("ba_buf", &ba_buf);
