@@ -51,6 +51,12 @@ typedef struct {
     // Used in createBackend/prepXferFull/prepXferSide/GenNotif
     // as suggestion to limit the list of backends to be explored.
     std::vector<nixlBackendH*> suggestedBackends;
+
+    nixl_xfer_op_t operation;
+    bool validOp    = false;
+
+    nixl_blob_t &notif_msg;
+    bool validNotif = false;
 } nixl_xfer_params_t;
 
 
