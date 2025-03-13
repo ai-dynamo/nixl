@@ -22,7 +22,7 @@
 
 #define  GDS_BATCH_LIMIT 128
 
-nixlGdsIOBatch::nixlGdsIOBatch(int size)
+nixlGdsIOBatch::nixlGdsIOBatch(unsigned int size)
 {
     max_reqs            = size;
     io_batch_events     = new CUfileIOEvents_t[size];

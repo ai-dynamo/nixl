@@ -523,6 +523,8 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
 
     remoteConnMap[remote_agent] = conn;
 
+    delete[] addr;
+
     return NIXL_SUCCESS;
 }
 
@@ -607,6 +609,8 @@ nixl_status_t nixlUcxEngine::loadLocalMD (nixlBackendMD* input,
 
     output = (nixlBackendMD*) md;
 
+    delete[] addr;
+
     return NIXL_SUCCESS;
 }
 
@@ -639,6 +643,8 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlStringDesc &input,
         return NIXL_ERR_BACKEND;
     }
     output = (nixlBackendMD*) md;
+
+    delete[] addr;
 
     return NIXL_SUCCESS;
 }

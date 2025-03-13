@@ -294,6 +294,11 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     A1->invalidateXferSide(src_side);
     A1->invalidateXferSide(dst_side);
 
+    for(int i = 0; i<n_bufs; i++) {
+        free(src_bufs[i]);
+        free(dst_bufs[i]);
+    }
+
     return NIXL_SUCCESS;
 }
 
@@ -469,6 +474,10 @@ int main()
     //only initiator should call invalidate
     A1.invalidateRemoteMD(agent2);
     //A2.invalidateRemoteMD(agent1);
+
+    free(addr1);
+    free(addr2);
+    free(addr3);
 
     std::cout << "Test done\n";
 }
