@@ -85,18 +85,18 @@ nixl_b_params_t nixlAgent::getBackendOptions (const nixl_backend_t &type) {
     return params;
 }
 
-nixl_status_t nixlAgent::createBackend(const nixl_backend_t &type,
-                                       const nixl_b_params_t &params,
-                                       nixlBackendH* &handle) {
+nixlBackendH* nixlAgent::createBackend(const nixl_backend_t &type,
+                                       const nixl_b_params_t &params) {
 
     nixlBackendInitParams init_params;
     nixlBackendEngine* backend = nullptr;
+    nixlBackendH* handle;
     nixl_status_t ret;
     std::string str;
 
     // Registering same type of backend is not supported, unlikely and prob error
     if (data->backendEngines.count(type)!=0)
-        return NIXL_ERR_INVALID_PARAM;
+        return nullptr;
 
     init_params.localAgent   = data->name;
     init_params.type         = type;
@@ -114,20 +114,20 @@ nixl_status_t nixlAgent::createBackend(const nixl_backend_t &type,
     } else {
         // Fallback to built-in backends
         std::cout << "Unsupported backend: " << type << std::endl;
-        return NIXL_ERR_NOT_FOUND;
+        return nullptr;
     }
 
     if (backend!=nullptr) {
         if (backend->getInitErr()) {
             delete backend;
-            return NIXL_ERR_BACKEND;
+            return nullptr;
         }
 
         if (backend->supportsRemote()) {
             str = backend->getConnInfo();
             if (str=="") {
                 delete backend;
-                return NIXL_ERR_BACKEND;
+                return nullptr;
             }
             data->connMD[type] = str;
         }
@@ -137,14 +137,14 @@ nixl_status_t nixlAgent::createBackend(const nixl_backend_t &type,
 
             if (NIXL_SUCCESS != ret) {
                 delete backend;
-                return ret;
+                return nullptr;
             }
         }
 
         handle = new nixlBackendH(backend);
         if (handle == nullptr) {
             delete backend;
-            return NIXL_ERR_BACKEND;
+            return nullptr;
         }
 
         data->backendEngines[type] = backend;
@@ -154,7 +154,7 @@ nixl_status_t nixlAgent::createBackend(const nixl_backend_t &type,
         // TODO: Check if backend supports ProgThread when threading is in agent
     }
 
-    return NIXL_SUCCESS; 
+    return handle; // nullptr in case of error
 }
 
 nixl_status_t nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
@@ -302,18 +302,18 @@ void nixlAgent::invalidateXferReq(nixlXferReqH *req) {
     delete req;
 }
 
-nixl_status_t nixlAgent::postXferReq(nixlXferReqH *req) {
-    nixl_status_t ret;
+nixl_xfer_state_t nixlAgent::postXferReq(nixlXferReqH *req) {
+    nixl_xfer_state_t ret;
 
     if (req==nullptr)
-        return NIXL_ERR_INVALID_PARAM;
+        return NIXL_XFER_ERR;
 
     // We can't repost while a request is in progress
-    if (req->state == NIXL_IN_PROG) {
+    if (req->state == NIXL_XFER_PROC) {
         req->state = req->engine->checkXfer(req->backendHandle);
-        if (req->state == NIXL_IN_PROG) {
+        if (req->state == NIXL_XFER_PROC) {
             delete req;
-            return NIXL_ERR_NOT_ALLOWED;
+            return NIXL_XFER_ERR;
         }
     }
 
@@ -334,7 +334,7 @@ nixl_status_t nixlAgent::postXferReq(nixlXferReqH *req) {
     return ret;
 }
 
-nixl_status_t nixlAgent::getXferStatus (nixlXferReqH *req) {
+nixl_xfer_state_t nixlAgent::getXferStatus (nixlXferReqH *req) {
     // // The remote was invalidated
     // if (data->remoteBackends.count(req->remoteAgent)==0)
     //     delete req;
@@ -342,7 +342,7 @@ nixl_status_t nixlAgent::getXferStatus (nixlXferReqH *req) {
     // }
 
     // If the state is done, no need to recheck.
-    if (req->state != NIXL_SUCCESS)
+    if (req->state != NIXL_XFER_DONE)
         req->state = req->engine->checkXfer(req->backendHandle);
 
     return req->state;
@@ -405,7 +405,7 @@ nixl_status_t nixlAgent::makeXferReq (const nixlXferSideH* local_side,
                                       const std::vector<int> &local_indices,
                                       const nixlXferSideH* remote_side,
                                       const std::vector<int> &remote_indices,
-                                      const nixl_blob_t &notif_msg,
+                                      const std::string &notif_msg,
                                       const nixl_xfer_op_t &operation,
                                       nixlXferReqH* &req_handle) const {
     req_handle     = nullptr;
@@ -504,7 +504,7 @@ nixl_status_t nixlAgent::makeXferReq (const nixlXferSideH* local_side,
     handle->remoteAgent = remote_side->remoteAgent;
     handle->notifMsg    = notif_msg;
     handle->backendOp   = operation;
-    handle->state       = NIXL_IN_PROG;
+    handle->state       = NIXL_XFER_INIT;
 
     req_handle = handle;
     return NIXL_SUCCESS;
@@ -515,7 +515,7 @@ void nixlAgent::invalidateXferSide(nixlXferSideH* side_handle) const {
 }
 
 nixl_status_t nixlAgent::genNotif(const std::string &remote_agent,
-                                  const nixl_blob_t &msg,
+                                  const std::string &msg,
                                   nixlBackendH* backend) {
     if (backend!=nullptr)
         return backend->engine->genNotif(remote_agent, msg);
@@ -568,7 +568,7 @@ int nixlAgent::getNotifs(nixl_notifs_t &notif_map) {
         return tot;
 }
 
-nixl_blob_t nixlAgent::getLocalMD () const {
+std::string nixlAgent::getLocalMD () const {
     // data->connMD was populated when the backend was created
     size_t conn_cnt = data->connMD.size();
     nixl_backend_t nixl_backend;
@@ -600,41 +600,37 @@ nixl_blob_t nixlAgent::getLocalMD () const {
     return sd.exportStr();
 }
 
-nixl_status_t nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
-                                       std::string &agent_name) {
+std::string nixlAgent::loadRemoteMD (const std::string &remote_metadata) {
     int count = 0;
     nixlSerDes sd;
     size_t conn_cnt;
     std::string conn_info;
     nixl_backend_t nixl_backend;
     nixlBackendEngine* eng;
-    nixl_status_t ret;
 
-    ret = sd.importStr(remote_metadata);
-    if(ret)
-        return ret;
+    if (sd.importStr(remote_metadata)<0)
+        return "";
 
     std::string remote_agent = sd.getStr("Agent");
     if (remote_agent.size()==0)
-        return NIXL_ERR_MISMATCH;
+        return "";
 
     if (remote_agent == data->name)
-        return NIXL_ERR_INVALID_PARAM;
+        return "";
 
-    ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if(ret)
-        return ret;
+    if (sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt)))
+        return "";
 
     if (conn_cnt<1)
-        return NIXL_ERR_INVALID_PARAM;
+        return "";
 
     for (size_t i=0; i<conn_cnt; ++i) {
         nixl_backend = sd.getStr("t");
         if (nixl_backend.size()==0)
-            return NIXL_ERR_MISMATCH;
+            return "";
         conn_info = sd.getStr("c");
         if (conn_info.size()==0) // Fine if doing marginal updates
-            return NIXL_ERR_MISMATCH;
+            return "";
 
         // Current agent might not support a remote backend
         if (data->backendEngines.count(nixl_backend)!=0) {
@@ -648,20 +644,20 @@ nixl_status_t nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
             eng = data->backendEngines[nixl_backend];
             if (eng->supportsRemote()) {
-                ret = eng->loadRemoteConnInfo(remote_agent, conn_info);
-                if(ret)
-                    return ret; // Error in load
+                if (eng->loadRemoteConnInfo(remote_agent, conn_info)
+                                            != NIXL_SUCCESS)
+                    return ""; // Error in load
                 count++;
                 data->remoteBackends[remote_agent].insert(nixl_backend);
             } else {
-                return NIXL_ERR_UNKNOWN; // This is an erroneous case
+                return ""; // This is an erroneous case
             }
         }
     }
 
     // No common backend, no point in loading the rest, unexpected
     if (count == 0)
-        return NIXL_ERR_UNKNOWN;
+        return "";
 
     // If there was an issue and we return -1 while some connections
     // are loaded, they will be deleted in backend destructor.
@@ -670,27 +666,24 @@ nixl_status_t nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     // It's just a check, not introducing section_info
     conn_info = sd.getStr("");
     if (conn_info != "MemSection")
-        return NIXL_ERR_MISMATCH;
+        return "";
 
     if (data->remoteSections.count(remote_agent) == 0)
         data->remoteSections[remote_agent] = new nixlRemoteSection(
                             remote_agent, data->backendEngines);
 
-    ret = data->remoteSections[remote_agent]->loadRemoteData(&sd);
-
-    if(ret) {
+    if (data->remoteSections[remote_agent]->loadRemoteData(&sd)<0) {
         delete data->remoteSections[remote_agent];
         data->remoteSections.erase(remote_agent);
-        return ret;
+        return "";
     }
 
-    agent_name = remote_name;
-    return NIXL_SUCCESS;
+    return remote_agent;
 }
 
 nixl_status_t nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
     if (remote_agent == data->name)
-        return NIXL_ERR_UNKNOWN;
+        return NIXL_ERR_BAD;
 
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
     if (data->remoteSections.count(remote_agent)!=0) {

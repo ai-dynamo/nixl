@@ -36,9 +36,9 @@ typedef enum {
     NIXL_ERR_NOT_FOUND = -3,
     NIXL_ERR_NYI = -4,
     NIXL_ERR_MISMATCH = -5,
-    NIXL_ERR_UNKNOWN = -6,
+    NIXL_ERR_BAD = -6,
     NIXL_ERR_NOT_ALLOWED = -7,
-    NIXL_ERR_NOT_POSTED = -8
+    NIXL_NOT_POSTED = -8
 } nixl_status_t;
 
 
@@ -47,19 +47,19 @@ typedef enum {
 // std::string supports \0 natively, as long as c_str() is not called.
 // To clarify the API, a wrapper around it is creatd. It can be looked
 // as a void* of data, with specified length.
-//class stringWrapper {
-//    private:
-//        std::string str;
-//
-//   public:
-//        stringWrapper (const std::string& from_str = "")
-//            : str(from_str) {}
-//        size_t length() const { return str.length(); }
-//        const char* data() const { return str.data(); }
-//        std::string toString() const { return str; }
-//}
+class stringWrapper {
+    private:
+        std::string str;
 
-#define NIXL_NO_MSG std::string("")
+    public:
+        stringWrapper (const std::string& from_str = "")
+            : str(from_str) {}
+        size_t length() const { return str.length(); }
+        const char* data() const { return str.data(); }
+        std::string toString() const { return str; }
+}
+
+#define NIXL_NO_MSG stringWrapper("")
 #define NIXL_INIT_AGENT ""
 
 typedef struct {
@@ -68,10 +68,10 @@ typedef struct {
     std::vector<nixlBackendH*> suggestedBackends;
 } nixl_xfer_params_t;
 
-typedef std::string nixl_backend_t;
-typedef std::string nixl_blob_t;
 typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
-typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
+typedef std::unordered_map<std::string, std::vector<std::string>> nixl_notifs_t;
+typedef std::string nixl_backend_t;
+typedef stringWrapper nixl_blob_t;
 
 /*** Forward class declarations ***/
 class nixlSerDes;
