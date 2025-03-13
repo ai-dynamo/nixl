@@ -14,7 +14,7 @@
 # limitations under the License.
 
 nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: inc_dir)
-ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [inc_dir, '../../src/nixl_nw_backends'])
+ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [inc_dir, '../../src/plugins/ucx'])
 
 if cuda_dep.found()
     cuda_dependencies = [cuda_dep]
@@ -40,7 +40,7 @@ md_streamer = executable('md_streamer',
 agent_example = executable('agent_example',
            'agent_example.cpp',
            dependencies: [nixl_dep, ucx_backend_dep, ucx_dep] + cuda_dependencies,
-           include_directories: [inc_dir, '../../src/utils/serdes', '../../src/nixl_nw_backends'],
+           include_directories: [inc_dir, '../../src/utils/serdes', '../../src/plugins/ucx'],
            link_with: [serdes_lib],
            install: true)
 

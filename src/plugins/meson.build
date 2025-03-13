@@ -13,7 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-nixl_dep_storage = declare_dependency(link_with: nixl_infra, include_directories: inc_dir)
-if cuda_dep.found() and not disable_gds_backend
-    subdir('gds')
+subdir('ucx')
+
+if cuda_dep.found()
+    nixl_lib_deps += [ cuda_dep ]
 endif
+
+disable_gds_backend = get_option('disable_gds_backend')
+if not disable_gds_backend and cuda_dep.found()
+    subdir('cuda_gds')
+endif
+

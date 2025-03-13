@@ -14,7 +14,7 @@
 # limitations under the License.
 
 nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: inc_dir)
-ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [inc_dir, '../../../../src/nixl_nw_backends'])
+ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [inc_dir, '../../../../src/plugins/ucx'])
 
 if cuda_dep.found()
     cuda_dependencies = [cuda_dep]
@@ -27,11 +27,11 @@ endif
 ucx_backend_test = executable('ucx_backend_test',
         'ucx_backend_test.cpp',
         dependencies: [nixl_dep, ucx_backend_dep, ucx_dep] + cuda_dependencies,
-        include_directories: [inc_dir, '../../../../src/nixl_nw_backends'],
+        include_directories: [inc_dir, '../../../../src/plugins/ucx'],
         install: true)
 
 ucx_backend_multi = executable('ucx_backend_multi',
            'ucx_backend_multi.cpp',
            dependencies: [nixl_dep, ucx_backend_dep, ucx_dep] + cuda_dependencies,
-           include_directories: [inc_dir, '../../../../src/nixl_nw_backends'],
+           include_directories: [inc_dir, '../../../../src/plugins/ucx'],
            install: true)

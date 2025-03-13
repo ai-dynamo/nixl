@@ -14,17 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#include <iostream>
 #include "nixl.h"
-#include "ucx_backend.h"
 #include "utils/serdes/serdes.h"
 #include "backend/backend_engine.h"
 #include "internal/transfer_request.h"
 #include "internal/agent_data.h"
 #include "internal/plugin_manager.h"
-
-#ifndef DISABLE_GDS_BACKEND
-#include "gds_backend.h"
-#endif
 
 nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :

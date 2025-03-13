@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = declare_dependency(link_with: ucx_utils_lib, include_directories: inc_dir)
 nixl_dep = declare_dependency(link_with: nixl_infra, include_directories: inc_dir)
 
 compile_flags = []
@@ -28,8 +27,7 @@ if 'UCX' in static_plugins
                include_directories: inc_dir,
                install: false,
                cpp_args : compile_flags,
-               name_prefix: 'libplugin_') # Custom prefix for plugin libraries
-               #install_dir: plugin_install_dir)
+               name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     ucx_backend_lib = shared_library('UCX',
                'ucx_backend.cpp', 'ucx_backend.h', 'ucx_plugin.cpp',
