@@ -43,7 +43,7 @@ nixlGdsIOBatch::~nixlGdsIOBatch()
         current_status == NIXL_ERR_NOT_POSTED) {
             delete io_batch_events;
             delete io_batch_params;
-	    cuFileBatchIODestroy(batch_handle);
+        cuFileBatchIODestroy(batch_handle);
     } else {
             std::cerr<<"Attempting to delete a batch before completion\n";
     }
@@ -151,25 +151,25 @@ nixl_status_t nixlGdsEngine::registerMem (const nixlStringDesc &mem,
     nixlGdsMetadata *md  = new nixlGdsMetadata();
 
     if (nixl_mem == FILE_SEG) {
-	// if the same file is reused - no need to re-register
+    // if the same file is reused - no need to re-register
         auto it = gds_file_map.find(mem.devId);
         if (it != gds_file_map.end()) {
                md->handle.cu_fhandle   = it->second.cu_fhandle;
-	       md->handle.fd           = mem.devId;
-	       md->handle.size         = mem.len;
-	       md->handle.metadata     = mem.metaInfo;
-	       md->type                = nixl_mem;
-	       status		       = NIXL_SUCCESS;
-	} else {
-	       status = gds_utils->registerFileHandle(mem.devId, mem.len,
+           md->handle.fd           = mem.devId;
+           md->handle.size         = mem.len;
+           md->handle.metadata     = mem.metaInfo;
+           md->type                = nixl_mem;
+           status               = NIXL_SUCCESS;
+    } else {
+           status = gds_utils->registerFileHandle(mem.devId, mem.len,
                                              mem.metaInfo, md->handle);
-	       if (NIXL_SUCCESS != status) {
-		    delete md;
-	            return status;
-	       }
-	       md->type                = nixl_mem;
-	       gds_file_map[mem.devId] = md->handle;
-	}
+           if (NIXL_SUCCESS != status) {
+            delete md;
+                return status;
+           }
+           md->type                = nixl_mem;
+           gds_file_map[mem.devId] = md->handle;
+    }
 
     } else if (nixl_mem == VRAM_SEG) {
         status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
@@ -189,7 +189,7 @@ nixl_status_t nixlGdsEngine::registerMem (const nixlStringDesc &mem,
     return status;
 }
 
-void nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
+nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
 {
     nixlGdsMetadata *md = (nixlGdsMetadata *)meta;
     if (md->type == FILE_SEG) {
@@ -197,7 +197,7 @@ void nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     } else {
         gds_utils->deregisterBufHandle(md->buf.base);
     }
-    return;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
@@ -214,10 +214,10 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
     size_t              buf_cnt  = local.descCount();
     size_t              file_cnt = remote.descCount();
     nixl_status_t       ret = NIXL_ERR_NOT_POSTED;
-    int			full_batches = 1;
-    int			total_batches = 1;
-    int			remainder = 0;
-    int			curr_buf_cnt = 0;
+    int            full_batches = 1;
+    int            total_batches = 1;
+    int            remainder = 0;
+    int            curr_buf_cnt = 0;
     gdsFileHandle       fh;
     nixlGdsBackendReqH  *gds_handle;
 
@@ -237,18 +237,18 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    full_batches	= buf_cnt / GDS_BATCH_LIMIT;
-    remainder		= buf_cnt % GDS_BATCH_LIMIT;
-    total_batches	= full_batches + ((remainder > 0) ? 1 : 0);
+    full_batches    = buf_cnt / GDS_BATCH_LIMIT;
+    remainder        = buf_cnt % GDS_BATCH_LIMIT;
+    total_batches    = full_batches + ((remainder > 0) ? 1 : 0);
 
     gds_handle = new nixlGdsBackendReqH();
     for (int j = 0; j < total_batches; j++) {
-	    int req_cnt = (j < full_batches) ? GDS_BATCH_LIMIT :
-		    remainder;
+        int req_cnt = (j < full_batches) ? GDS_BATCH_LIMIT :
+            remainder;
             nixlGdsIOBatch *batch_ios = new nixlGdsIOBatch(req_cnt);
             for (int i = curr_buf_cnt;
-		 i < (curr_buf_cnt + req_cnt);
-		 i++) {
+         i < (curr_buf_cnt + req_cnt);
+         i++) {
                 if (local.getType() == VRAM_SEG) {
                     addr = (void *) local[i].addr;
                     size = local[i].len;
@@ -259,7 +259,7 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
                         fh = it->second;
                     } else {
                         ret = NIXL_ERR_NOT_FOUND;
-            			goto err_exit;
+                        goto err_exit;
                    }
                 } else if (local.getType() == FILE_SEG) {
                     addr        = (void *) remote[i].addr;
@@ -283,11 +283,11 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
                     goto err_exit;
                 }
         }
-	    curr_buf_cnt += req_cnt;
+        curr_buf_cnt += req_cnt;
         rc = batch_ios->submitBatch(0);
         if (rc != 0) {
-	        ret = NIXL_ERR_BACKEND;
-	        goto err_exit;
+            ret = NIXL_ERR_BACKEND;
+            goto err_exit;
         }
         gds_handle->batch_io_list.push_back(batch_ios);
     }
@@ -340,13 +340,13 @@ nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle)
     return status;
 }
 
-void nixlGdsEngine::releaseReqH(nixlBackendReqH* handle)
+nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle)
 {
 
     nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *) handle;
 
     delete gds_handle;
-    return;
+    return NIXL_SUCCESS;
 }
 
 nixlGdsEngine::~nixlGdsEngine() {

@@ -359,8 +359,9 @@ nixl_status_t nixlUcxEngine::endConn(const std::string &remote_agent) {
     return NIXL_SUCCESS;
 }
 
-std::string nixlUcxEngine::getConnInfo() const {
-    return nixlSerDes::_bytesToString(workerAddr, workerSize);
+nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
+    str = nixlSerDes::_bytesToString(workerAddr, workerSize);
+    return NIXL_SUCCESS;
 }
 
 ucs_status_t
@@ -566,17 +567,19 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlStringDesc &mem,
     return NIXL_SUCCESS; // Or errors
 }
 
-void nixlUcxEngine::deregisterMem (nixlBackendMD* meta)
+nixl_status_t nixlUcxEngine::deregisterMem (nixlBackendMD* meta)
 {
-    nixlUcxPrivateMetadata *priv = (nixlUcxPrivateMetadata*) meta; //typecast?
-
+    nixlUcxPrivateMetadata *priv = (nixlUcxPrivateMetadata*) meta;
     uw->memDereg(priv->mem);
     delete priv;
+    return NIXL_SUCCESS;
 }
 
-std::string nixlUcxEngine::getPublicData (const nixlBackendMD* meta) const {
+nixl_status_t nixlUcxEngine::getPublicData (const nixlBackendMD* meta,
+                                            std::string &str) const {
     const nixlUcxPrivateMetadata *priv = (nixlUcxPrivateMetadata*) meta;
-    return priv->get();
+    str = priv->get();
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlUcxEngine::loadLocalMD (nixlBackendMD* input,
@@ -813,7 +816,7 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
     return out_ret;
 }
 
-void nixlUcxEngine::releaseReqH(nixlBackendReqH* handle)
+nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle)
 {
     nixlUcxBckndReq *head = (nixlUcxBckndReq *)handle;
     nixlUcxBckndReq *req = head;
@@ -838,6 +841,7 @@ void nixlUcxEngine::releaseReqH(nixlBackendReqH* handle)
            Only release the head request */
         uw->reqRelease((nixlUcxReq)head);
     }
+    return NIXL_SUCCESS;
 }
 
 int nixlUcxEngine::progress() {
@@ -957,17 +961,19 @@ void nixlUcxEngine::notifProgress()
     notifProgressCombineHelper(notifPthrPriv, notifPthr);
 }
 
-int nixlUcxEngine::getNotifs(notif_list_t &notif_list)
+nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list,
+                                       int &new_notifs)
 {
     if (notif_list.size()!=0)
-        return -1;
+        return NIXL_ERR_INVALID_PARAM;
 
     if(!pthrOn) while(progress());
 
     notifCombineHelper(notifMainList, notif_list);
     notifProgressCombineHelper(notifPthr, notif_list);
 
-    return notif_list.size();
+    new_notifs = notif_list.size();
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)

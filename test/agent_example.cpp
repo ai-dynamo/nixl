@@ -93,10 +93,14 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     status = A2->registerMem(mem_list2, backend2);
     assert(status == NIXL_SUCCESS);
 
-    std::string meta2 = A2->getLocalMD();
+    std::string meta2;
+    status = A2->getLocalMD(meta2);
+    assert(status == NIXL_SUCCESS);
     assert(meta2.size() > 0);
 
-    std::string remote_name = A1->loadRemoteMD(meta2);
+    std::string remote_name;
+    status = A1->loadRemoteMD(meta2, remote_name);
+    assert(status == NIXL_SUCCESS);
     assert(remote_name == agent2);
 
     std::cout << "perf setup done\n";
@@ -141,8 +145,10 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     status = A1->makeXferReq(src_side[0], indices, dst_side[0], indices, "test", NIXL_WRITE, reqh2);
     assert(status == NIXL_SUCCESS);
 
-    A1->invalidateXferReq(reqh1);
-    A1->invalidateXferReq(reqh2);
+    status = A1->invalidateXferReq(reqh1);
+    assert(status == NIXL_SUCCESS);
+    status = A1->invalidateXferReq(reqh2);
+    assert(status == NIXL_SUCCESS);
 
     status = A1->deregisterMem(mem_list1, backend);
     assert(status == NIXL_SUCCESS);
@@ -150,8 +156,10 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     assert(status == NIXL_SUCCESS);
 
     for(int i = 0; i<n_iters; i++){
-        A1->invalidateXferSide(src_side[i]);
-        A1->invalidateXferSide(dst_side[i]);
+        status = A1->invalidateXferSide(src_side[i]);
+        assert(status == NIXL_SUCCESS);
+        status = A1->invalidateXferSide(dst_side[i]);
+        assert(status == NIXL_SUCCESS);
     }
 
     free(src_buf);
@@ -161,8 +169,10 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
 nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handle, nixlBackendH* dst_backend){
     std::cout << "Starting sideXferTest\n";
 
-    nixlBackendH* src_backend = A1->getXferBackend(src_handle);
+    nixlBackendH* src_backend;
+    nixl_status_t status = A1->getXferBackend(src_handle, src_backend);
 
+    assert(status == NIXL_SUCCESS);
     assert(src_backend);
 
     std::cout << "Got backend\n";
@@ -171,7 +181,6 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     int n_bufs = 4; //must be even
     size_t len = 1024;
-    nixl_status_t status;
     void* src_bufs[n_bufs], *dst_bufs[n_bufs];
 
     nixl_reg_dlist_t mem_list1(DRAM_SEG), mem_list2(DRAM_SEG);
@@ -204,10 +213,14 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     status = A2->registerMem(mem_list2, dst_backend);
     assert(status == NIXL_SUCCESS);
 
-    std::string meta2 = A2->getLocalMD();
+    std::string meta2;
+    status = A2->getLocalMD(meta2);
+    assert(status == NIXL_SUCCESS);
     assert(meta2.size() > 0);
 
-    std::string remote_name = A1->loadRemoteMD(meta2);
+    std::string remote_name;
+    status = A1->loadRemoteMD(meta2, remote_name);
+    assert(status == NIXL_SUCCESS);
     assert(remote_name == agent2);
 
     std::cout << "Ready to prepare side\n";
@@ -282,17 +295,22 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     std::cout << "transfer 3 done\n";
 
-    A1->invalidateXferReq(req1);
-    A1->invalidateXferReq(req2);
-    A1->invalidateXferReq(req3);
+    status = A1->invalidateXferReq(req1);
+    assert(status == NIXL_SUCCESS);
+    status = A1->invalidateXferReq(req2);
+    assert(status == NIXL_SUCCESS);
+    status = A1->invalidateXferReq(req3);
+    assert(status == NIXL_SUCCESS);
 
     status = A1->deregisterMem(mem_list1, src_backend);
     assert(status == NIXL_SUCCESS);
     status = A2->deregisterMem(mem_list2, dst_backend);
     assert(status == NIXL_SUCCESS);
 
-    A1->invalidateXferSide(src_side);
-    A1->invalidateXferSide(dst_side);
+    status = A1->invalidateXferSide(src_side);
+    assert(status == NIXL_SUCCESS);
+    status = A1->invalidateXferSide(dst_side);
+    assert(status == NIXL_SUCCESS);
 
     for(int i = 0; i<n_bufs; i++) {
         free(src_bufs[i]);
@@ -329,14 +347,42 @@ int main()
     nixlAgent A1(agent1, cfg);
     nixlAgent A2(agent2, cfg);
 
-    init1 = A1.getBackendOptions("UCX");
-    init2 = A2.getBackendOptions("UCX");
+    std::vector<nixl_backend_t> plugins;
 
+    ret1 = A1.getAvailPlugins(plugins);
+    assert(ret1 == NIXL_SUCCESS);
+
+    std::cout << "Available plugins:\n";
+
+    for (nixl_backend_t b: plugins)
+        std::cout << b << "\n";
+
+    ret1 = A1.getPluginOptions("UCX", init1);
+    ret2 = A2.getPluginOptions("UCX", init2);
+
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
+
+    std::cout << "Params before init:\n";
     printParams(init1);
     printParams(init2);
 
-    nixlBackendH* ucx1 = A1.createBackend("UCX", init1);
-    nixlBackendH* ucx2 = A2.createBackend("UCX", init2);
+    nixlBackendH* ucx1, *ucx2;
+    ret1 = A1.createBackend("UCX", init1, ucx1);
+    ret2 = A2.createBackend("UCX", init2, ucx2);
+
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
+
+    ret1 = A1.getBackendOptions(ucx1, init1);
+    ret2 = A2.getBackendOptions(ucx2, init2);
+
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
+
+    std::cout << "Params after init:\n";
+    printParams(init1);
+    printParams(init2);
 
     // // One side gets to listen, one side to initiate. Same string is passed as the last 2 steps
     // ret1 = A1->makeConnection(agent2, 0);
@@ -382,14 +428,22 @@ int main()
     assert(ret1 == NIXL_SUCCESS);
     assert(ret2 == NIXL_SUCCESS);
 
-    std::string meta1 = A1.getLocalMD();
-    std::string meta2 = A2.getLocalMD();
+    std::string meta1;
+    ret1 = A1.getLocalMD(meta1);
+    std::string meta2;
+    ret2 = A2.getLocalMD(meta2);
+
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
 
     std::cout << "Agent1's Metadata: " << meta1 << "\n";
     std::cout << "Agent2's Metadata: " << meta2 << "\n";
 
-    ret_s1 = A1.loadRemoteMD (meta2);
-    ret_s2 = A2.loadRemoteMD (meta1);
+    ret1 = A1.loadRemoteMD (meta2, ret_s1);
+    ret2 = A2.loadRemoteMD (meta1, ret_s2);
+
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
 
     size_t req_size = 8;
     size_t dst_offset = 8;
@@ -430,8 +484,9 @@ int main()
 
     while(status != NIXL_SUCCESS || n_notifs == 0) {
         if(status != NIXL_SUCCESS) status = A1.getXferStatus(req_handle);
-        if(n_notifs == 0) n_notifs = A2.getNotifs(notif_map);
+        if(n_notifs == 0) ret2 = A2.getNotifs(notif_map, n_notifs);
         assert(status >= 0);
+        assert(ret2 == NIXL_SUCCESS);
         assert(n_notifs >= 0);
     }
 
@@ -456,8 +511,9 @@ int main()
 
     while(status != NIXL_SUCCESS || n_notifs == 0) {
         if(status != NIXL_SUCCESS) status = A1.getXferStatus(req_handle2);
-        if(n_notifs == 0) n_notifs = A1.getNotifs(notif_map);
+        if(n_notifs == 0) ret2 = A1.getNotifs(notif_map, n_notifs);
         assert(status >= 0);
+        assert(ret2 == NIXL_SUCCESS);
         assert(n_notifs >= 0);
     }
 
@@ -466,14 +522,23 @@ int main()
     assert(agent1_notifs.front() == "local_notif");
     assert(equal_buf((void*) req_src.addr, (void*) req_ldst.addr, req_size) == true);
 
-    A1.invalidateXferReq(req_handle);
-    A1.invalidateXferReq(req_handle2);
+    ret1 = A1.invalidateXferReq(req_handle);
+    ret2 = A1.invalidateXferReq(req_handle2);
+
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
+
     ret1 = A1.deregisterMem(dlist1, ucx1);
     ret2 = A2.deregisterMem(dlist2, ucx2);
 
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
+
     //only initiator should call invalidate
-    A1.invalidateRemoteMD(agent2);
+    ret1 = A1.invalidateRemoteMD(agent2);
     //A2.invalidateRemoteMD(agent1);
+
+    assert(ret1 == NIXL_SUCCESS);
 
     free(addr1);
     free(addr2);

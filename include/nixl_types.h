@@ -20,10 +20,11 @@
 #include <string>
 #include <unordered_map>
 
-typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
-typedef std::unordered_map<std::string, std::vector<std::string>> nixl_notifs_t;
-
 typedef std::string nixl_backend_t;
+typedef std::string nixl_blob_t;
+
+typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
+typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
 
 //FILE_SEG must be last
 typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, FILE_SEG} nixl_mem_t;

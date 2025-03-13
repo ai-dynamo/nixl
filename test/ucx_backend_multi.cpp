@@ -54,7 +54,7 @@ void test_thread(int id)
 
     if(!USE_PTHREAD) ucx->progress();
 
-    conn_info[id] = ucx->getConnInfo();
+    ucx->getConnInfo(conn_info[id]);
 
     ready[id] = true;
     //wait for other

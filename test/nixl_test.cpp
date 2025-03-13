@@ -124,7 +124,7 @@ int main(int argc, char *argv[]) {
     /** Common to both Initiator and Target */
     std::cout << "Starting Agent for "<< role << "\n";
     nixlAgent     agent(role, cfg);
-    ucx         = agent.createBackend("UCX", params);
+    agent.createBackend("UCX", params, ucx);
     serdes      = new nixlSerDes();
 
     for (int i = 0; i < NUM_TRANSFERS; i++) {
@@ -150,7 +150,7 @@ int main(int argc, char *argv[]) {
     /** Register memory in both initiator and target */
     agent.registerMem(dram_for_ucx, ucx);
     if (role == "target") {
-        tgt_metadata = agent.getLocalMD();
+        agent.getLocalMD(tgt_metadata);
     }
 
     std::cout << " Start Control Path metadata exchanges \n";
@@ -198,14 +198,17 @@ int main(int argc, char *argv[]) {
         tgt_md_init = tokens[0];
         remote_desc = tokens[1];
 
+        std::string target_name;
+
         std::cout << " Verify Deserialized Target's Desc List at Initiator\n";
         remote_serdes = new nixlSerDes();
         remote_serdes->importStr(remote_desc);
         nixl_xfer_dlist_t dram_target_ucx(remote_serdes);
         nixl_xfer_dlist_t dram_initiator_ucx = dram_for_ucx.trim();
         dram_target_ucx.print();
-        agent.loadRemoteMD(tgt_md_init);
+        agent.loadRemoteMD(tgt_md_init, target_name);
 
+        std::cout << " Got metadata from " << target_name << " \n";
         std::cout << " End Control Path metadata exchanges \n";
         std::cout << " Start Data Path Exchanges \n\n";
         std::cout << " Create transfer request with UCX backend\n ";

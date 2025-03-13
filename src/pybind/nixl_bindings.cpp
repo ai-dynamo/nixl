@@ -176,7 +176,10 @@ PYBIND11_MODULE(_bindings, m) {
     py::class_<nixlAgent>(m, "nixlAgent")
         .def(py::init<std::string, nixlAgentConfig>())
         .def("createBackend", [](nixlAgent &agent, nixl_backend_t type, nixl_b_params_t initParams) -> uintptr_t {
-                    return (uintptr_t) agent.createBackend(type, initParams);
+                    nixlBackendH* backend;
+                    nixl_status_t ret = agent.createBackend(type, initParams, backend);
+                    if(ret < 0) return (uintptr_t) nullptr;
+                    return (uintptr_t) backend;
             })
         .def("registerMem", [](nixlAgent &agent, nixl_reg_dlist_t descs, uintptr_t backend) -> nixl_status_t {
                     return agent.registerMem(descs, (nixlBackendH*) backend);
@@ -202,7 +205,10 @@ PYBIND11_MODULE(_bindings, m) {
                    py::arg("notif_msg"), py::arg("operation"),
                    py::arg("backend") = ((uintptr_t) nullptr))
         .def("getXferBackend", [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {
-                    return (uintptr_t) agent.getXferBackend((nixlXferReqH*) reqh);
+                    nixlBackendH* handle;
+                    nixl_status_t ret = agent.getXferBackend((nixlXferReqH*) reqh, handle);
+                    if(ret < 0) return (uintptr_t) nullptr;
+                    return (uintptr_t) handle;
             })
         .def("prepXferSide", [](nixlAgent &agent,
                                 const nixl_xfer_dlist_t &descs,
@@ -227,11 +233,11 @@ PYBIND11_MODULE(_bindings, m) {
                     if (ret != NIXL_SUCCESS) return (uintptr_t) nullptr;
                     else return (uintptr_t) handle;
                 })
-        .def("invalidateXferReq", [](nixlAgent &agent, uintptr_t reqh) -> void {
-                    agent.invalidateXferReq((nixlXferReqH*) reqh);
+        .def("invalidateXferReq", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
+                    return agent.invalidateXferReq((nixlXferReqH*) reqh);
                 })
-        .def("invalidateXferSide", [](nixlAgent &agent, uintptr_t handle) -> void {
-                    agent.invalidateXferSide((nixlXferSideH*) handle);
+        .def("invalidateXferSide", [](nixlAgent &agent, uintptr_t handle) -> nixl_status_t {
+                    return agent.invalidateXferSide((nixlXferSideH*) handle);
                 })
         .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                     return agent.postXferReq((nixlXferReqH*) reqh);
@@ -240,8 +246,10 @@ PYBIND11_MODULE(_bindings, m) {
                     return agent.getXferStatus((nixlXferReqH*) reqh);
                 })
         .def("getNotifs", [](nixlAgent &agent, nixl_notifs_t notif_map) -> nixl_notifs_t {
-                    int n_new  = agent.getNotifs(notif_map);
-                    if (n_new == 0) return notif_map;
+                    int n_new;
+                    nixl_status_t ret = agent.getNotifs(notif_map, n_new);
+
+                    if (ret != NIXL_SUCCESS || n_new == 0) return notif_map;
 
                     nixl_notifs_t ret_map;
                     for (const auto& pair : notif_map) {
@@ -260,13 +268,19 @@ PYBIND11_MODULE(_bindings, m) {
                                               uintptr_t backend) {
                     return agent.genNotif(remote_agent, msg, (nixlBackendH*) backend);
                 })
-        .def("getLocalMD", [](nixlAgent &agent) {
+        .def("getLocalMD", [](nixlAgent &agent) -> py::bytes {
                     //python can only interpret text strings
-                    return py::bytes(agent.getLocalMD());
+                    std::string ret_str;
+                    nixl_status_t ret = agent.getLocalMD(ret_str);
+                    if(ret != NIXL_SUCCESS) return "";
+                    return py::bytes(ret_str);
                 })
-        .def("loadRemoteMD", [](nixlAgent &agent, const std::string &remote_metadata) {
+        .def("loadRemoteMD", [](nixlAgent &agent, const std::string &remote_metadata) -> py::bytes {
                     //python can only interpret text strings
-                    return py::bytes(agent.loadRemoteMD(remote_metadata));
+                    std::string remote_name;
+                    nixl_status_t ret = agent.loadRemoteMD(remote_metadata, remote_name);
+                    if(ret != NIXL_SUCCESS) return "";
+                    return py::bytes(remote_name);
                 })
         .def("invalidateRemoteMD", &nixlAgent::invalidateRemoteMD);
 }

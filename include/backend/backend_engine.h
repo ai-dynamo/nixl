@@ -43,11 +43,13 @@ class nixlBackendEngine {
             }
         }
 
-        std::string getInitParam(const std::string &key) {
-            if (customParams->count(key)==0)
-                return "";
-            else
-                return (*customParams)[key];
+        nixl_status_t getInitParam(const std::string &key, std::string &value) {
+            if (customParams->count(key)==0) {
+                return NIXL_ERR_INVALID_PARAM;
+            } else {
+                value = (*customParams)[key];
+                return NIXL_SUCCESS;
+            }
         }
 
     public:
@@ -90,7 +92,7 @@ class nixlBackendEngine {
         virtual nixl_status_t registerMem (const nixlStringDesc &mem,
                                            const nixl_mem_t &nixl_mem,
                                            nixlBackendMD* &out) = 0;
-        virtual void deregisterMem (nixlBackendMD* meta) = 0;
+        virtual nixl_status_t deregisterMem (nixlBackendMD* meta) = 0;
 
         // Make connection to a remote node identified by the name into loaded conn infos
         // Child might just return 0, if making proactive connections are not necessary.
@@ -113,16 +115,17 @@ class nixlBackendEngine {
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) = 0;
 
         //Backend aborts the transfer if necessary, and destructs the relevant objects
-        virtual void releaseReqH(nixlBackendReqH* handle) = 0;
+        virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) = 0;
 
 
         // *** Needs to be implemented if supportsRemote() is true *** //
 
         // Gets serialized form of public metadata
-        virtual std::string getPublicData (const nixlBackendMD* meta) const { return ""; };
+        virtual nixl_status_t getPublicData (const nixlBackendMD* meta,
+                                             std::string &str) const { return NIXL_ERR_BACKEND; };
 
         // Provide the required connection info for remote nodes, should be non-empty
-        virtual std::string getConnInfo() const { return ""; }
+        virtual nixl_status_t getConnInfo(std::string &str) const { return NIXL_ERR_BACKEND; }
 
         // Deserialize from string the connection info for a remote node, if supported
         // The generated data should be deleted in nixlBackendEngine destructor
@@ -152,7 +155,7 @@ class nixlBackendEngine {
         // *** Needs to be implemented if supportsNotif() is true *** //
 
         // Populate an empty received notif list. Elements are released within backend then.
-        virtual int getNotifs(notif_list_t &notif_list) { return NIXL_ERR_BACKEND; }
+        virtual nixl_status_t getNotifs(notif_list_t &notif_list, int &count) { return NIXL_ERR_BACKEND; }
 
         // Generates a standalone notification, not bound to a transfer.
         virtual nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) {
