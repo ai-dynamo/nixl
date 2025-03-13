@@ -13,24 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-pybind_dep = dependency('pybind11')
-
-nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: inc_dir)
-
 py = import('python').find_installation('python3', pure: false)
-
-py.extension_module('_bindings',
-           'nixl_bindings.cpp',
-           subdir: ('nixl'),
-           dependencies: [nixl_dep, serdes_interface, pybind_dep],
-           include_directories: [inc_dir],
-           install: true)
-
-py.extension_module('_utils',
-           'nixl_utils.cpp',
-           subdir: ('nixl'),
-           dependencies: [pybind_dep],
-           install: true)
 
 py.install_sources('_api.py', subdir: ('nixl'))
 py.install_sources('__init__.py', subdir: ('nixl'))

@@ -38,4 +38,6 @@ nixl_lib   = library('nixl',
                      'nixl_plugin_manager.cpp',
                       include_directories: [ nixl_inc_dirs ],
                       dependencies: [ nixl_lib_deps, ucx_dep ], install: true)
-subdir('pybind')
+
+subdir('bindings')
+subdir('api')

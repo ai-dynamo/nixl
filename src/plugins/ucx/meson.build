@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+ucx_utils_dep = declare_dependency(link_with: ucx_utils_lib, include_directories: inc_dir)
 nixl_dep = declare_dependency(link_with: nixl_infra, include_directories: inc_dir)
 
 compile_flags = []
