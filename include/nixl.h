@@ -149,7 +149,7 @@ class nixlAgent {
 
         // Load other agent's metadata and unpack it internally.
         // Received agent name can be checked through agent_name.
-        nixl_status_t loadRemoteMD (const nixl_blobl_t &remote_metadata,
+        nixl_status_t loadRemoteMD (const nixl_blob_t &remote_metadata,
                                     std::string &agent_name);
 
         // Invalidate the remote agent metadata cached locally, and disconnect from it.
