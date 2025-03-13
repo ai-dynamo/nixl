@@ -64,11 +64,10 @@ class nixlAgent {
 
         /*** Transfer Request Prepration ***/
 
-        // Method 1, single step and automatic backend detection
-
-        // Prepares a full transfer request from descriptor lists of both sides.
-        // Providing a backend in extra_params is optional, as nixl can
-        // automatically decide.
+        // Method 1, for when memory addresses of the transfer is not known
+        // beforehand, and the transfer request is prepared with information
+        // from both sides. The backend is selected automatically by NIXL,
+        // while user can provide a list of backends as hints in extra_params.
         nixl_status_t prepXferFull (
                           const nixl_xfer_dlist_t &local_descs,
                           const nixl_xfer_dlist_t &remote_descs,
@@ -76,22 +75,24 @@ class nixlAgent {
                           nixlXferReqH* &req_handle,
                           const nixl_xfer_params_t* extra_params = nullptr) const;
 
-        // Method 2, two steps, initial individual side preparations, followed by a
-        // selection by indices to prepare a full transfer request. Useful when memory
-        // locations are pre-known, but mapping for transfers are known in run time.
+        // Method 2, for when memory blocks used in transfers are pre-known, but
+        // selection of blocks for transfers are determined in run time.
+        // There are two steps, initial preparations for each side, followed by a
+        // selection by indices to prepare a full transfer request.
 
-        // Prepares descriptors for one side of a transfer request. The backend
-        // needs to be specified. For local initiator side, remote_agent should
-        // be passed as NIXL_INIT_AGENT. For local target side in local transfers
-        // agent's own name is passed as remote_agent.
+        // Prepares descriptors for one side of a transfer request. For local
+        // initiator side, remote_agent should be passed as NIXL_INIT_AGENT.
+        // For local target side in local transfers agent's own name is passed as
+        // remote_agent. User can provide a list of backends as hints in
+        // extra_params to limit preparations to those backends.
         nixl_status_t prepXferSide (
                           const nixl_xfer_dlist_t &descs,
                           const std::string &remote_agent,
-                          const nixlBackendH* backend,
                           nixlXferSideH* &side_handle,
                           const nixl_xfer_params_t* extra_params = nullptr) const;
 
-        // Makes a full transfer request by selecting indices from already prepared sides
+        // Makes a full transfer request by selecting indices from already prepared sides.
+        // NIXL automatically determines the backend that can perform the transfer.
         nixl_status_t selectXferSides (
                           const nixlXferSideH* local_side,
                           const std::vector<int> &local_indices,

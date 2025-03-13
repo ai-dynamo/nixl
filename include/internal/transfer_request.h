@@ -54,9 +54,8 @@ class nixlXferReqH {
 
 class nixlXferSideH {
     private:
-        nixl_meta_dlist_t* descs;
+        std::unordered_map<nixl_backend_t, nixl_meta_dlist_t*> descs;
 
-        nixlBackendEngine* engine;
         std::string        remoteAgent;
         bool               isLocal;
 

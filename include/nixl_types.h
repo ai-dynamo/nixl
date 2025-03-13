@@ -63,8 +63,9 @@ class stringWrapper {
 #define NIXL_INIT_AGENT ""
 
 typedef struct {
-    // Used in createXferReq/GenNotif if the backend is already known.
-    nixlBackendH* backend = nullptr;
+    // Used in prepXferFull/prepXferSide/GenNotif as suggestion to limit
+    // the list of backends to be explored.
+    std::vector<nixlBackendH*> suggestedBackends;
 } nixl_xfer_params_t;
 
 typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
