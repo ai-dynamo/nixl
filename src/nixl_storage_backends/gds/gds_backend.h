@@ -46,7 +46,7 @@ private:
     CUfileIOEvents_t    *io_batch_events;
     CUfileIOParams_t    *io_batch_params;
     CUfileError_t       init_err;
-    nixl_xfer_state_t   current_status;
+    nixl_status_t       current_status;
     unsigned int        entries_completed;
     unsigned int        batch_size;
 
@@ -58,7 +58,7 @@ public:
                                    size_t size, size_t file_offset,
                                    size_t ptr_offset, CUfileOpcode_t type);
     nixl_status_t       submitBatch(int flags);
-    nixl_xfer_state_t   checkStatus();
+    nixl_status_t       checkStatus();
     nixl_status_t       cancelBatch();
     void                destroyBatch();
 };
@@ -124,14 +124,14 @@ public:
                               nixlBackendMD* &out);
     void deregisterMem (nixlBackendMD *meta);
 
-    nixl_xfer_state_t postXfer (const nixl_meta_dlist_t &local,
-                                const nixl_meta_dlist_t &remote,
-                                const nixl_xfer_op_t &op,
-                                const std::string &remote_agent,
-                                const std::string &notif_msg,
-                                nixlBackendReqH* &handle);
+    nixl_status_t postXfer (const nixl_meta_dlist_t &local,
+                            const nixl_meta_dlist_t &remote,
+                            const nixl_xfer_op_t &op,
+                            const std::string &remote_agent,
+                            const std::string &notif_msg,
+                            nixlBackendReqH* &handle);
 
-    nixl_xfer_state_t checkXfer (nixlBackendReqH* handle);
+    nixl_status_t checkXfer (nixlBackendReqH* handle);
     void releaseReqH(nixlBackendReqH* handle);
 };
 #endif

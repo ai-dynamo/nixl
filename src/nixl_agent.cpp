@@ -288,7 +288,7 @@ nixl_status_t nixlAgent::createXferReq(const nixl_xfer_dlist_t &local_descs,
     handle->remoteAgent = remote_agent;
     handle->notifMsg    = notif_msg;
     handle->backendOp   = operation;
-    handle->state       = NIXL_XFER_INIT;
+    handle->status      = NIXL_ERR_NOT_POSTED;
 
     req_handle = handle;
 
@@ -300,18 +300,18 @@ void nixlAgent::invalidateXferReq(nixlXferReqH *req) {
     delete req;
 }
 
-nixl_xfer_state_t nixlAgent::postXferReq(nixlXferReqH *req) {
-    nixl_xfer_state_t ret;
+nixl_status_t nixlAgent::postXferReq(nixlXferReqH *req) {
+    nixl_status_t ret;
 
     if (req==nullptr)
-        return NIXL_XFER_ERR;
+        return NIXL_ERR_INVALID_PARAM;
 
     // We can't repost while a request is in progress
-    if (req->state == NIXL_XFER_PROC) {
-        req->state = req->engine->checkXfer(req->backendHandle);
-        if (req->state == NIXL_XFER_PROC) {
+    if (req->status == NIXL_IN_PROG) {
+        req->status = req->engine->checkXfer(req->backendHandle);
+        if (req->status == NIXL_IN_PROG) {
             delete req;
-            return NIXL_XFER_ERR;
+            return NIXL_ERR_REPOST_ACTIVE;
         }
     }
 
@@ -321,29 +321,29 @@ nixl_xfer_state_t nixlAgent::postXferReq(nixlXferReqH *req) {
     //     return NIXL_ERR_BAD;
     // }
 
-    // If state is NIXL_XFER_INIT or NIXL_XFER_DONE we can repost,
+    // If status is not NIXL_IN_PROG we can repost,
     ret = (req->engine->postXfer (*req->initiatorDescs,
                                    *req->targetDescs,
                                    req->backendOp,
                                    req->remoteAgent,
                                    req->notifMsg,
                                    req->backendHandle));
-    req->state = ret;
+    req->status = ret;
     return ret;
 }
 
-nixl_xfer_state_t nixlAgent::getXferStatus (nixlXferReqH *req) {
+nixl_status_t nixlAgent::getXferStatus (nixlXferReqH *req) {
     // // The remote was invalidated
     // if (data->remoteBackends.count(req->remoteAgent)==0)
     //     delete req;
     //     return NIXL_ERR_BAD;
     // }
 
-    // If the state is done, no need to recheck.
-    if (req->state != NIXL_XFER_DONE)
-        req->state = req->engine->checkXfer(req->backendHandle);
+    // If the status is done, no need to recheck.
+    if (req->status != NIXL_SUCCESS)
+        req->status = req->engine->checkXfer(req->backendHandle);
 
-    return req->state;
+    return req->status;
 }
 
 
@@ -502,7 +502,7 @@ nixl_status_t nixlAgent::makeXferReq (const nixlXferSideH* local_side,
     handle->remoteAgent = remote_side->remoteAgent;
     handle->notifMsg    = notif_msg;
     handle->backendOp   = operation;
-    handle->state       = NIXL_XFER_INIT;
+    handle->status      = NIXL_ERR_NOT_POSTED;
 
     req_handle = handle;
     return NIXL_SUCCESS;
@@ -681,7 +681,7 @@ std::string nixlAgent::loadRemoteMD (const std::string &remote_metadata) {
 
 nixl_status_t nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
     if (remote_agent == data->name)
-        return NIXL_ERR_BAD;
+        return NIXL_ERR_INVALID_PARAM;
 
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
     if (data->remoteSections.count(remote_agent)!=0) {

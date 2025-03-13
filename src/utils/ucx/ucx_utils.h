@@ -67,8 +67,8 @@ public:
 
     typedef void req_cb_t(void *request);
     nixlUcxContext(std::vector<std::string> devices,
-                    size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
-                    nixl_ucx_mt_t mt_type);
+                   size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
+                   nixl_ucx_mt_t mt_type);
     ~nixlUcxContext();
 
     static bool mtLevelIsSupproted(nixl_ucx_mt_t mt_type);
@@ -103,29 +103,28 @@ public:
 
     /* Active message handling */
     int regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void* arg);
-    nixl_xfer_state_t sendAm(nixlUcxEp &ep, unsigned msg_id,
-                             void* hdr, size_t hdr_len,
-                             void* buffer, size_t len,
-                             uint32_t flags, nixlUcxReq &req);
+    nixl_status_t sendAm(nixlUcxEp &ep, unsigned msg_id,
+                         void* hdr, size_t hdr_len,
+                         void* buffer, size_t len,
+                         uint32_t flags, nixlUcxReq &req);
     int getRndvData(void* data_desc, void* buffer, size_t len,
                     const ucp_request_param_t *param, nixlUcxReq &req);
 
     /* Data access */
     int progress();
-    nixl_xfer_state_t flushEp(nixlUcxEp &ep, nixlUcxReq &req);
-    nixl_xfer_state_t read(nixlUcxEp &ep,
-                           uint64_t raddr, nixlUcxRkey &rk,
-                           void *laddr, nixlUcxMem &mem,
-                           size_t size, nixlUcxReq &req);
-    nixl_xfer_state_t write(nixlUcxEp &ep,
-                            void *laddr, nixlUcxMem &mem,
-                            uint64_t raddr, nixlUcxRkey &rk,
-                            size_t size, nixlUcxReq &req);
-    nixl_xfer_state_t test(nixlUcxReq req);
+    nixl_status_t flushEp(nixlUcxEp &ep, nixlUcxReq &req);
+    nixl_status_t read(nixlUcxEp &ep,
+                       uint64_t raddr, nixlUcxRkey &rk,
+                       void *laddr, nixlUcxMem &mem,
+                       size_t size, nixlUcxReq &req);
+    nixl_status_t write(nixlUcxEp &ep,
+                        void *laddr, nixlUcxMem &mem,
+                        uint64_t raddr, nixlUcxRkey &rk,
+                        size_t size, nixlUcxReq &req);
+    nixl_status_t test(nixlUcxReq req);
 
     void reqRelease(nixlUcxReq req);
     void reqCancel(nixlUcxReq req);
 };
 
 #endif
-
