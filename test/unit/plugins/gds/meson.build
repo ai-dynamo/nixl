@@ -13,13 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = [ ucx_dep ]
+nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: inc_dir)
+ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [inc_dir, '../../../../src/nixl_nw_backends'])
+
 if cuda_dep.found()
-    ucx_utils_dep += [ cuda_dep ]
+    cuda_dependencies = [cuda_dep]
+    cpp_args = '-DUSE_VRAM'
+else
+    cuda_dependencies = []
+    cpp_args = '-UUSE_VRAM'
 endif
 
-ucx_utils_lib = library('ucx_utils',
-           'ucx_utils.cpp', 'ucx_utils.h',
-           dependencies: ucx_utils_dep,
-           include_directories: inc_dir,
-           install: true)
+disable_gds_backend = get_option('disable_gds_backend')
+if not disable_gds_backend
+    nixl_gds_app = executable('nixl_gds_test', 'nixl_gds_test.cpp',
+                              dependencies: [nixl_dep, cuda_dep],
+                              include_directories: [inc_dir, '../../../../src/utils/serdes'],
+                              install: true)
+endif
+
+

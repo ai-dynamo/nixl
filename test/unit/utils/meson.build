@@ -13,9 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-serdes_lib = library('serdes',
-           'serdes.cpp', 'serdes.h',
-           include_directories: inc_dir,
-           install: true)
-
-serdes_interface = declare_dependency(link_with: serdes_lib)
+#subdir('cuda')
+#subdir('data_structures')
+subdir('serdes')
+subdir('ucx')

@@ -1,3 +1,4 @@
+
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -13,9 +14,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-serdes_lib = library('serdes',
-           'serdes.cpp', 'serdes.h',
-           include_directories: inc_dir,
-           install: true)
+subdir('ucx')
+subdir('gds')
 
-serdes_interface = declare_dependency(link_with: serdes_lib)
+nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: inc_dir)
+
+#if cuda_dep.found()
+#    cuda_dependencies = [cuda_dep]
+#    cpp_args = '-DUSE_VRAM'
+#else
+#    cuda_dependencies = []
+#    cpp_args = '-UUSE_VRAM'
+#endif
+
+plugin_test = executable('test_plugin',
+                        'test_plugin.cpp',
+                        dependencies: [nixl_dep],
+                        include_directories: [inc_dir],
+                        install: true)

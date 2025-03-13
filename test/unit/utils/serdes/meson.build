@@ -12,10 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+if get_option('buildtype') != 'release'
 
-serdes_lib = library('serdes',
-           'serdes.cpp', 'serdes.h',
-           include_directories: inc_dir,
-           install: true)
-
-serdes_interface = declare_dependency(link_with: serdes_lib)
+  serdes_test_bin = executable('serdes_test',
+             'serdes_test.cpp',
+             include_directories: inc_dir,
+             link_with: serdes_lib,
+             install: true)
+endif
