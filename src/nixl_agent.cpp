@@ -290,7 +290,7 @@ nixl_status_t nixlAgent::createXferReq(const nixl_xfer_dlist_t &local_descs,
     handle->remoteAgent = remote_agent;
     handle->notifMsg    = notif_msg;
     handle->backendOp   = operation;
-    handle->state       = NIXL_ERR_NOT_POSTED;
+    handle->state       = NIXL_XFER_INIT;
 
     req_handle = handle;
 
@@ -323,7 +323,7 @@ nixl_status_t nixlAgent::postXferReq(nixlXferReqH *req) {
     //     return NIXL_ERR_BAD;
     // }
 
-    // If state is not NIXL_IN_PROG we can repost,
+    // If state is NIXL_XFER_INIT or NIXL_XFER_DONE we can repost,
     ret = (req->engine->postXfer (*req->initiatorDescs,
                                    *req->targetDescs,
                                    req->backendOp,

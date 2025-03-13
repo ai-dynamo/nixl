@@ -293,7 +293,7 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
                      nixl_xfer_op_t op, bool progress_ucx2)
 {
     int ret2;
-    nixl_status_t ret3;
+    nixl_xfer_state_t ret3;
     nixlBackendReqH* handle;
     void *chkptr1, *chkptr2;
 
@@ -308,20 +308,20 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
     // or an ID that later can be used to check the status as a new method
     // Also maybe we would remove the WRITE and let the backend class decide the op
     ret3 = ucx1->postXfer(req_src_descs, req_dst_descs, op, remote_agent, test_str, handle);
-    assert( ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
+    assert( ret3 == NIXL_XFER_DONE || ret3 == NIXL_XFER_PROC);
 
 
-    if (ret3 == NIXL_SUCCESS) {
+    if (ret3 == NIXL_XFER_DONE) {
         cout << "\t\tWARNING: Tansfer request completed immmediately - no testing non-inline path" << endl;
     } else {
         cout << "\t\tNOTE: Testing non-inline Transfer path!" << endl;
 
-        while(ret3 == NIXL_IN_PROG) {
+        while(ret3 == NIXL_XFER_PROC) {
             ret3 = ucx1->checkXfer(handle);
             if(progress_ucx2){
                 ucx2->progress();
             }
-            assert( ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
+            assert( ret3 == NIXL_XFER_DONE || ret3 == NIXL_XFER_PROC);
         }
         ucx1->releaseReqH(handle);
     }

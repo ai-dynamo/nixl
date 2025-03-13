@@ -39,6 +39,13 @@ PYBIND11_MODULE(nixl_bindings, m) {
         .value("FILE_SEG", FILE_SEG)
         .export_values();
 
+    py::enum_<nixl_xfer_state_t>(m, "nixl_xfer_state_t")
+        .value("NIXL_XFER_INIT", NIXL_XFER_INIT)
+        .value("NIXL_XFER_PROC", NIXL_XFER_PROC)
+        .value("NIXL_XFER_DONE", NIXL_XFER_DONE)
+        .value("NIXL_XFER_ERR", NIXL_XFER_ERR)
+        .export_values();
+
     py::enum_<nixl_xfer_op_t>(m, "nixl_xfer_op_t")
         .value("NIXL_READ", NIXL_READ)
         .value("NIXL_RD_NOTIF", NIXL_RD_NOTIF)
@@ -47,16 +54,12 @@ PYBIND11_MODULE(nixl_bindings, m) {
         .export_values();
 
     py::enum_<nixl_status_t>(m, "nixl_status_t")
-        .value("NIXL_SUCCESS", NIXL_IN_PROG)
         .value("NIXL_SUCCESS", NIXL_SUCCESS)
         .value("NIXL_ERR_INVALID_PARAM", NIXL_ERR_INVALID_PARAM)
         .value("NIXL_ERR_BACKEND", NIXL_ERR_BACKEND)
         .value("NIXL_ERR_NOT_FOUND", NIXL_ERR_NOT_FOUND)
         .value("NIXL_ERR_NYI", NIXL_ERR_NYI)
-        .value("NIXL_ERR_MISMACH", NIXL_ERR_MISMATCH)
-        .value("NIXL_ERR_UNKNOWN", NIXL_ERR_UNKNOWN)
-        .value("NIXL_ERR_NOT_ALLOWED", NIXL_ERR_NOT_ALLOWED)
-        .value("NIXL_ERR_NOT_POSTED", NIXL_ERR_NOT_POSTED)
+        .value("NIXL_ERR_BAD", NIXL_ERR_BAD)
         .export_values();
 
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
@@ -235,10 +238,10 @@ PYBIND11_MODULE(nixl_bindings, m) {
         .def("invalidateXferSide", [](nixlAgent &agent, uintptr_t handle) -> void {
                     agent.invalidateXferSide((nixlXferSideH*) handle);
                 })
-        .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
+        .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_state_t {
                     return agent.postXferReq((nixlXferReqH*) reqh);
                 })
-        .def("getXferStatus", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
+        .def("getXferStatus", [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_state_t {
                     return agent.getXferStatus((nixlXferReqH*) reqh);
                 })
         .def("getNotifs", [](nixlAgent &agent, nixl_notifs_t notif_map) -> nixl_notifs_t {

@@ -370,10 +370,10 @@ int nixlUcxWorker::regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, voi
     return 0;
 }
 
-nixl_status_t nixlUcxWorker::sendAm(nixlUcxEp &ep, unsigned msg_id,
-                                    void* hdr, size_t hdr_len,
-                                    void* buffer, size_t len,
-                                    uint32_t flags, nixlUcxReq &req)
+nixl_xfer_state_t nixlUcxWorker::sendAm(nixlUcxEp &ep, unsigned msg_id,
+                                        void* hdr, size_t hdr_len,
+                                        void* buffer, size_t len,
+                                        uint32_t flags, nixlUcxReq &req)
 {
     ucs_status_ptr_t request;
     ucp_request_param_t param = {0};
@@ -384,15 +384,15 @@ nixl_status_t nixlUcxWorker::sendAm(nixlUcxEp &ep, unsigned msg_id,
     request = ucp_am_send_nbx(ep.eph, msg_id, hdr, hdr_len, buffer, len, &param);
 
     if (request == NULL ) {
-        return NIXL_SUCCESS;
+        return NIXL_XFER_DONE;
     } else if (UCS_PTR_IS_ERR(request)) {
         /* TODO: MSW_NET_ERROR(priv->net, "unable to complete UCX request (%s)\n",
                          ucs_status_string(UCS_PTR_STATUS(request))); */
-        return NIXL_ERR_BACKEND;
+        return NIXL_XFER_ERR;
     }
 
     req = (void*)request;
-    return NIXL_IN_PROG;
+    return NIXL_XFER_PROC;
 }
 
 int nixlUcxWorker::getRndvData(void* data_desc, void* buffer, size_t len, const ucp_request_param_t *param, nixlUcxReq &req)
@@ -419,10 +419,10 @@ int nixlUcxWorker::progress()
     return ucp_worker_progress(worker);
 }
 
-nixl_status_t nixlUcxWorker::read(nixlUcxEp &ep,
-                                  uint64_t raddr, nixlUcxRkey &rk,
-                                  void *laddr, nixlUcxMem &mem,
-                                  size_t size, nixlUcxReq &req)
+nixl_xfer_state_t nixlUcxWorker::read(nixlUcxEp &ep,
+                                      uint64_t raddr, nixlUcxRkey &rk,
+                                      void *laddr, nixlUcxMem &mem,
+                                      size_t size, nixlUcxReq &req)
 {
     ucs_status_ptr_t request;
 
@@ -433,18 +433,18 @@ nixl_status_t nixlUcxWorker::read(nixlUcxEp &ep,
 
     request = ucp_get_nbx(ep.eph, laddr, size, raddr, rk.rkeyh, &param);
     if (request == NULL ) {
-        return NIXL_SUCCESS;
+        return NIXL_XFER_DONE;
     } else if (UCS_PTR_IS_ERR(request)) {
         /* TODO: MSW_NET_ERROR(priv->net, "unable to complete UCX request (%s)\n",
                          ucs_status_string(UCS_PTR_STATUS(request))); */
-        return NIXL_ERR_BACKEND;
+        return NIXL_XFER_ERR;
     }
 
     req = (void*)request;
-    return NIXL_IN_PROG;
+    return NIXL_XFER_PROC;
 }
 
-nixl_status_t nixlUcxWorker::write(nixlUcxEp &ep,
+nixl_xfer_state_t nixlUcxWorker::write(nixlUcxEp &ep,
                                        void *laddr, nixlUcxMem &mem,
                                        uint64_t raddr, nixlUcxRkey &rk,
                                        size_t size, nixlUcxReq &req)
@@ -458,40 +458,40 @@ nixl_status_t nixlUcxWorker::write(nixlUcxEp &ep,
 
     request = ucp_put_nbx(ep.eph, laddr, size, raddr, rk.rkeyh, &param);
     if (request == NULL ) {
-        return NIXL_SUCCESS;
+        return NIXL_XFER_DONE;
     } else if (UCS_PTR_IS_ERR(request)) {
         /* TODO: MSW_NET_ERROR(priv->net, "unable to complete UCX request (%s)\n",
                          ucs_status_string(UCS_PTR_STATUS(request))); */
-        return NIXL_ERR_BACKEND;
+        return NIXL_XFER_ERR;
     }
 
     req = (void*)request;
-    return NIXL_IN_PROG;
+    return NIXL_XFER_PROC;
 }
 
-nixl_status_t nixlUcxWorker::test(nixlUcxReq req)
+nixl_xfer_state_t nixlUcxWorker::test(nixlUcxReq req)
 {
     ucs_status_t status;
 
     if(req == NULL) {
-        return NIXL_SUCCESS;
+        return NIXL_XFER_DONE;
     }
 
     ucp_worker_progress(worker);
     status = ucp_request_check_status(req);
     if (status == UCS_INPROGRESS) {
-        return NIXL_IN_PROG;
+        return NIXL_XFER_PROC;
     }
 
     if (status == UCS_OK ) {
-        return NIXL_SUCCESS;
+        return NIXL_XFER_DONE;
     } else {
         //TODO: error
-        return NIXL_ERR_BACKEND;
+        return NIXL_XFER_ERR;
     }
 }
 
-nixl_status_t nixlUcxWorker::flushEp(nixlUcxEp &ep, nixlUcxReq &req)
+nixl_xfer_state_t nixlUcxWorker::flushEp(nixlUcxEp &ep, nixlUcxReq &req)
 {
     ucp_request_param_t param;
     ucs_status_ptr_t request;
@@ -500,15 +500,15 @@ nixl_status_t nixlUcxWorker::flushEp(nixlUcxEp &ep, nixlUcxReq &req)
     request = ucp_ep_flush_nbx(ep.eph, &param);
 
     if (request == NULL ) {
-        return NIXL_SUCCESS;
+        return NIXL_XFER_DONE;
     } else if (UCS_PTR_IS_ERR(request)) {
         /* TODO: MSW_NET_ERROR(priv->net, "unable to complete UCX request (%s)\n",
                          ucs_status_string(UCS_PTR_STATUS(request))); */
-        return NIXL_ERR_BACKEND;
+        return NIXL_XFER_ERR;
     }
 
     req = (void*)request;
-    return NIXL_IN_PROG;
+    return NIXL_XFER_PROC;
 }
 
 void nixlUcxWorker::reqRelease(nixlUcxReq req)

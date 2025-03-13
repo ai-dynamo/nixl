@@ -222,9 +222,9 @@ int main(int argc, char *argv[]) {
         std::cout << " Initiator posted Data Path transfer\n";
         std::cout << " Waiting for completion\n";
 
-        while (status != NIXL_SUCCESS) {
+        while (status != NIXL_XFER_DONE) {
             status = agent.getXferStatus(treq);
-            assert(status >= 0);
+            assert(status != NIXL_XFER_ERR);
         }
         std::cout << " Completed Sending Data using UCX backend\n";
         agent.invalidateXferReq(treq);

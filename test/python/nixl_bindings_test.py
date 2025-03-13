@@ -120,21 +120,21 @@ def test_agent():
     print(handle)
     
     ret = agent1.postXferReq(handle)
-    assert ret >= 0
+    assert ret != nixl.NIXL_XFER_ERR
 
     print("Transfer posted")
 
     status = 0
     notifMap = {}
 
-    while status != nixl.NIXL_SUCCESS or len(notifMap) == 0:
-        if status != nixl.NIXL_SUCCESS:
+    while status != nixl.NIXL_XFER_DONE or len(notifMap) == 0:
+        if status != nixl.NIXL_XFER_DONE:
             status = agent1.getXferStatus(handle)
 
         if len(notifMap) == 0:
             notifMap = agent2.getNotifs(notifMap)
 
-        assert status >= 0
+        assert status != nixl.NIXL_XFER_ERR
     
     nixl_utils.verify_transfer(addr1 + offset, addr2 + offset, req_size)
     assert len(notifMap[name1]) == 1

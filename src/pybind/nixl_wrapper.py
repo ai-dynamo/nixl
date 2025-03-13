@@ -201,9 +201,9 @@ class nixl_wrapper:
 
     def transfer(self, handle):
         status = self.agent.postXferReq(handle)
-        if status < 0:
+        if status==nixl.NIXL_XFER_ERR:
             return "ERR"
-        elif (status == nixl.NIXL_IN_PROG):
+        elif (status!=nixl.NIXL_XFER_DONE):
             return "PROC"
         else:
             return "DONE"
@@ -211,9 +211,9 @@ class nixl_wrapper:
 
     def check_xfer_state (self, handle):
         status = self.agent.getXferStatus(handle)
-        if status < 0:
+        if status==nixl.NIXL_XFER_ERR:
             return "ERR"
-        elif (status == nixl.NIXL_IN_PROG):
+        elif (status!=nixl.NIXL_XFER_DONE):
             return "PROC"
         else:
             return "DONE"

@@ -103,7 +103,7 @@ public:
 
     /* Active message handling */
     int regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void* arg);
-    nixl_status_t sendAm(nixlUcxEp &ep, unsigned msg_id,
+    nixl_xfer_state_t sendAm(nixlUcxEp &ep, unsigned msg_id,
                              void* hdr, size_t hdr_len,
                              void* buffer, size_t len,
                              uint32_t flags, nixlUcxReq &req);
@@ -112,16 +112,16 @@ public:
 
     /* Data access */
     int progress();
-    nixl_status_t flushEp(nixlUcxEp &ep, nixlUcxReq &req);
-    nixl_status_t read(nixlUcxEp &ep,
+    nixl_xfer_state_t flushEp(nixlUcxEp &ep, nixlUcxReq &req);
+    nixl_xfer_state_t read(nixlUcxEp &ep,
                            uint64_t raddr, nixlUcxRkey &rk,
                            void *laddr, nixlUcxMem &mem,
                            size_t size, nixlUcxReq &req);
-    nixl_status_t write(nixlUcxEp &ep,
+    nixl_xfer_state_t write(nixlUcxEp &ep,
                             void *laddr, nixlUcxMem &mem,
                             uint64_t raddr, nixlUcxRkey &rk,
                             size_t size, nixlUcxReq &req);
-    nixl_status_t test(nixlUcxReq req);
+    nixl_xfer_state_t test(nixlUcxReq req);
 
     void reqRelease(nixlUcxReq req);
     void reqCancel(nixlUcxReq req);
