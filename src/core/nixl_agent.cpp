@@ -17,7 +17,7 @@
 
 #include <iostream>
 #include "nixl.h"
-#include "utils/serdes/serdes.h"
+#include "serdes.h"
 #include "backend/backend_engine.h"
 #include "internal/transfer_request.h"
 #include "internal/agent_data.h"

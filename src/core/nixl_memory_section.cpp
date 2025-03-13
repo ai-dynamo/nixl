@@ -17,9 +17,9 @@
 #include <map>
 #include "nixl.h"
 #include "nixl_descriptors.h"
-#include "internal/mem_section.h"
+#include "mem_section.h"
 #include "backend/backend_engine.h"
-#include "utils/serdes/serdes.h"
+#include "serdes.h"
 
 /*** Class nixlMemSection implementation ***/
 

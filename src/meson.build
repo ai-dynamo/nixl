@@ -14,30 +14,8 @@
 # limitations under the License.
 
 subdir('utils')
-nixl_infra = library('nixl_build',
-           'nixl_descriptors.cpp',
-           'nixl_memory_section.cpp',
-           'nixl_metadata_stream.cpp',
-            include_directories: ['../include', '../include/internal',
-                                  './utils/serdes', './utils/data_structures',
-                                   './utils/sys/'],
-            dependencies: [serdes_interface],
-            install: true)
 
-nixl_lib_deps = [serdes_interface]
-nixl_inc_dirs = ['../include', '../include/internal',
-                 './utils/serdes', './utils/data_structures', './utils/sys/',
-                 './utils/ucx/']
+subdir('core')
 subdir('plugins')
-
-nixl_lib   = library('nixl',
-                     'nixl_descriptors.cpp',
-                     'nixl_memory_section.cpp',
-                     'nixl_agent.cpp',
-                     'nixl_metadata_stream.cpp',
-                     'nixl_plugin_manager.cpp',
-                      include_directories: [ nixl_inc_dirs ],
-                      dependencies: [ nixl_lib_deps, ucx_dep ], install: true)
-
 subdir('bindings')
 subdir('api')
