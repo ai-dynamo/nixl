@@ -20,7 +20,12 @@
 #include <string>
 #include <unordered_map>
 
-/*** Enums of memory type, operation and status ***/
+typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
+typedef std::unordered_map<std::string, std::vector<std::string>> nixl_notifs_t;
+typedef std::string nixl_backend_t;
+
+#define NIXL_NO_MSG stringWrapper("")
+#define NIXL_INIT_AGENT ""
 
 // FILE_SEG must be last
 typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG} nixl_mem_t;
@@ -42,38 +47,13 @@ typedef enum {
 } nixl_status_t;
 
 
-/*** Types defined for NIXL API function arguments ***/
-
-// std::string supports \0 natively, as long as c_str() is not called.
-// To clarify the API, a wrapper around it is creatd. It can be looked
-// as a void* of data, with specified length.
-class stringWrapper {
-    private:
-        std::string str;
-
-    public:
-        stringWrapper (const std::string& from_str = "")
-            : str(from_str) {}
-        size_t length() const { return str.length(); }
-        const char* data() const { return str.data(); }
-        std::string toString() const { return str; }
-}
-
-#define NIXL_NO_MSG stringWrapper("")
-#define NIXL_INIT_AGENT ""
-
 typedef struct {
-    // Used in prepXferFull/prepXferSide/GenNotif as suggestion to limit
-    // the list of backends to be explored.
+    // Used in createBackend/prepXferFull/prepXferSide/GenNotif
+    // as suggestion to limit the list of backends to be explored.
     std::vector<nixlBackendH*> suggestedBackends;
 } nixl_xfer_params_t;
 
-typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
-typedef std::unordered_map<std::string, std::vector<std::string>> nixl_notifs_t;
-typedef std::string nixl_backend_t;
-typedef stringWrapper nixl_blob_t;
 
-/*** Forward class declarations ***/
 class nixlSerDes;
 class nixlBackendH;
 class nixlXferReqH;

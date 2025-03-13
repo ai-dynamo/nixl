@@ -51,10 +51,49 @@ class nixlBasicDesc {
 };
 
 
+// std::string supports \0 natively, as long as c_str() is not called.
+// To clarify the API, a wrapper around it is creatd.
+// It can be looked as a void* of data, with specified length.
+class nixlStringWrapper {
+    private:
+        std::string str;
+
+    public:
+        inline stringWrapper (const std::string& from_str = "")
+            : str(from_str) {}
+        inline stringWrapper(const stringWrapper &other)
+            : str(other.str) {}
+        inline stringWrapper& operator=(const stringWrapper &other) {
+            if (this!= &other)
+                str = other.str;
+            return *this;
+        }
+        ~stringWrapper  = default;
+
+        inline size_t length() const { return str.length(); }
+        inline const char* data() const { return str.data(); }
+        inline std::string toString() const { return str; }
+
+        friend inline bool operator==(const stringWrapper &lhs,
+                               const stringWrapper &rhs) {
+            return (lhs.str==rhs.str);
+        }
+        friend inline bool operator!=(const stringWrapper &lhs,
+                               const stringWrapper &rhs) {
+            return (lhs.str!=rhs.str);
+        }
+
+        inline void clear() { return str.clear() };
+        inline bool empty() { return str.empty() };
+}
+
+typedef nixlStringWrapper nixl_blob_t;
+
+
 // String next to each BasicDesc, used for extra info for memory registrartion
 class nixlStringDesc : public nixlBasicDesc {
     public:
-        std::string metaInfo; // Or nixl_blob_t?
+        nixl_blob_t metaInfo;
 
         // Reuse parent constructor without the extra info
         using nixlBasicDesc::nixlBasicDesc;
