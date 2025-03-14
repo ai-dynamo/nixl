@@ -46,7 +46,6 @@ class nixlBackendInitParams {
 // Pure virtual class to have a common pointer type
 class nixlBackendReqH {
 public:
-    bool prepped;
     nixlBackendReqH() { }
     ~nixlBackendReqH() { }
 };

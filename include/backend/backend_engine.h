@@ -165,7 +165,7 @@ class nixlBackendEngine {
         // *** Needs to be implemented if supportsNotif() is true *** //
 
         // Populate an empty received notif list. Elements are released within backend then.
-        virtual nixl_status_t getNotifs(notif_list_t &notif_list, int &count) { return NIXL_ERR_BACKEND; }
+        virtual nixl_status_t getNotifs(notif_list_t &notif_list) { return NIXL_ERR_BACKEND; }
 
         // Generates a standalone notification, not bound to a transfer.
         virtual nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) {

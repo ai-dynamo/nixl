@@ -55,7 +55,7 @@ class nixlAgent {
                           nixl_b_params_t &params) const;
 
         // Register a memory with NIXL. User can provide a list of backends
-        // to specify which backends are targetted for a memory, otherwise
+        // to specify which backends are targeted for a memory, otherwise
         // NIXL will register with all backends that support the memory type.
         nixl_status_t registerMem (
                           const nixl_reg_dlist_t &descs,
@@ -142,10 +142,8 @@ class nixlAgent {
 
         /*** Notification Handling ***/
 
-        // Add entries to the passed received notifications list (can be
-        // non-empty). Number of new entries can be checked through new_notifs.
-        // Elements are released within the Agent after this call.
-        nixl_status_t getNotifs (nixl_notifs_t &notif_map, int &new_notifs);
+        // Populates an empty notification map, and releases them within the agent.
+        nixl_status_t getNotifs (nixl_notifs_t &notif_map);
 
         // Generate a notification, not bound to a transfer, e.g., for control.
         // Can be used after the remote metadata is exchanged. Will be received

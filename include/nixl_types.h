@@ -24,6 +24,12 @@ typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
 typedef std::unordered_map<std::string, std::vector<std::string>> nixl_notifs_t;
 typedef std::string nixl_backend_t;
 
+// std::string supports \0 natively, as long as c_str() is not called.
+// So it can be looked as a void* of data, with specified length.
+// Giving it a new name to be clear in the API and avoid users to
+// think it's a string and call c_str().
+typedef std::string nixl_blob_t;
+
 #define NIXL_NO_MSG stringWrapper("")
 #define NIXL_INIT_AGENT ""
 
