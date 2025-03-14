@@ -111,10 +111,8 @@ class nixlAgent {
         /*** Notification Handling ***/
 
         // Add entries to the passed received notifications list (can be
-        // non-empty), and return number of added entries, or -1 if there was
-        // an error. Elements are released within the Agent after this call.
-        nixl_status_t getNotifs (nixl_notifs_t &notif_map,
-                                 int &new_notifs);
+        // non-empty). Elements are released within the Agent after this call.
+        nixl_status_t getNotifs (nixl_notifs_t &notif_map);
 
         // Generate a notification, not bound to a transfer, e.g., for control.
         // Can be used after the remote metadata is exchanged. Will be received

@@ -340,13 +340,18 @@ nixl_status_t nixlAgent::postXferReq(nixlXferReqH *req) {
     //     return NIXL_ERR_BAD;
     // }
 
+    nixl_opt_b_args_t opt_args;
+    if ((req->backendOp == NIXL_WR_NOTIF) ||
+        (req->backendOp == NIXL_RD_NOTIF))
+        opt_args.notifMsg = req->notifMsg;
+
     // If status is not NIXL_IN_PROG we can repost,
-    ret = (req->engine->postXfer (*req->initiatorDescs,
-                                   *req->targetDescs,
-                                   req->backendOp,
-                                   req->remoteAgent,
-                                   req->notifMsg,
-                                   req->backendHandle));
+    ret = req->engine->postXfer (req->backendOp,
+                                *req->initiatorDescs,
+                                *req->targetDescs,
+                                 req->remoteAgent,
+                                 req->backendHandle,
+                                 &opt_args);
     req->status = ret;
     return ret;
 }
@@ -551,12 +556,10 @@ nixl_status_t nixlAgent::genNotif(const std::string &remote_agent,
     return NIXL_ERR_NOT_FOUND;
 }
 
-nixl_status_t nixlAgent::getNotifs(nixl_notifs_t &notif_map, int &new_notifs) {
+nixl_status_t nixlAgent::getNotifs(nixl_notifs_t &notif_map) {
     notif_list_t backend_list;
     nixl_status_t ret, bad_ret=NIXL_SUCCESS;
-    int n_new;
     bool any_backend = false;
-    new_notifs = 0;
 
     // Doing best effort, if any backend errors out we return
     // error but proceed with the rest. We can add metadata about
@@ -565,11 +568,11 @@ nixl_status_t nixlAgent::getNotifs(nixl_notifs_t &notif_map, int &new_notifs) {
         if (eng.second->supportsNotif()) {
             any_backend = true;
             backend_list.clear();
-            ret = eng.second->getNotifs(backend_list, n_new);
+            ret = eng.second->getNotifs(backend_list);
             if (ret<0)
                 bad_ret=ret;
 
-            if (n_new==0)
+            if (backend_list.size()==0)
                 continue;
 
             for (auto & elm: backend_list) {
@@ -577,7 +580,6 @@ nixl_status_t nixlAgent::getNotifs(nixl_notifs_t &notif_map, int &new_notifs) {
                     notif_map[elm.first] = std::vector<std::string>();
 
                 notif_map[elm.first].push_back(elm.second);
-                new_notifs++;
             }
         }
     }

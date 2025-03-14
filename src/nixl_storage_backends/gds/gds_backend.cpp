@@ -200,12 +200,23 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
+nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
+                                       const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
-                                       const nixl_xfer_op_t &operation,
                                        const std::string &remote_agent,
-                                       const std::string &notif_msg,
-                                       nixlBackendReqH* &handle)
+                                       nixlBackendReqH* &handle,
+                                       const nixl_opt_b_args_t* opt_args)
+{
+    // TODO: Determine the batches and prepare most of the handle
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
+                                       const nixl_meta_dlist_t &local,
+                                       const nixl_meta_dlist_t &remote,
+                                       const std::string &remote_agent,
+                                       nixlBackendReqH* &handle,
+                                       const nixl_opt_b_args_t* opt_args)
 {
     void                *addr;
     size_t              size;
@@ -214,10 +225,10 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
     size_t              buf_cnt  = local.descCount();
     size_t              file_cnt = remote.descCount();
     nixl_status_t       ret = NIXL_ERR_NOT_POSTED;
-    int            full_batches = 1;
-    int            total_batches = 1;
-    int            remainder = 0;
-    int            curr_buf_cnt = 0;
+    int                 full_batches = 1;
+    int                 total_batches = 1;
+    int                 remainder = 0;
+    int                 curr_buf_cnt = 0;
     gdsFileHandle       fh;
     nixlGdsBackendReqH  *gds_handle;
 
@@ -247,8 +258,8 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
             remainder;
             nixlGdsIOBatch *batch_ios = new nixlGdsIOBatch(req_cnt);
             for (int i = curr_buf_cnt;
-         i < (curr_buf_cnt + req_cnt);
-         i++) {
+                     i < (curr_buf_cnt + req_cnt);
+                     i++) {
                 if (local.getType() == VRAM_SEG) {
                     addr = (void *) local[i].addr;
                     size = local[i].len;

@@ -27,8 +27,16 @@
 // level direction or so.
 typedef std::vector<std::pair<std::string, std::string>> notif_list_t;
 
-// A base class to point to backend initialization data
 
+class nixlBackendOptionalParams {
+    public:
+        nixl_blob_t notifMsg;
+};
+
+typedef nixlBackendOptionalParams nixl_opt_b_args_t;
+
+
+// A base class to point to backend initialization data
 // User doesn't know about fields such as local_agent but can access it
 // after the backend is initialized by agent. If we needed to make it private
 // from the user, we should make nixlBackendEngine/nixlAgent friend classes.
