@@ -67,6 +67,9 @@ class nixlAgent {
         // Submit a transfer request, which populates the req async handler.
         nixl_status_t postXferReq (nixlXferReqH* req);
 
+        //SAMPLE ONLY
+        nixl_status_t postXferReq_wParams (nixlXferReqH* req, nixl_fn_params_t* params);
+
         // Check the status of transfer requests
         nixl_status_t getXferStatus (nixlXferReqH* req);
 

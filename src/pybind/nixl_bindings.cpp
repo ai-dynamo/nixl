@@ -59,6 +59,19 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_ERR_UNKNOWN", NIXL_ERR_UNKNOWN)
         .export_values();
 
+    /* Python can set this class as expected:
+     *
+     *  params_t = nixl.nixl_fn_params_t()
+     *  params_t.sample_handle = handle
+     *  params_t.sample_msg = "hello"
+     *
+     *  agent.postXferReq_wParams(reqh, params_t)
+     *  */
+    py::class_<nixlMethodParams>(m, "nixl_fn_params_t")
+        .def(py::init<>()) //empty constructor for now
+        .def_readwrite("sample_handle", &nixlMethodParams::sample_handle)
+        .def_readwrite("sample_msg", &nixlMethodParams::sample_msg);
+
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
         .def(py::init<nixl_mem_t, bool, bool, int>(), py::arg("type"), py::arg("unifiedAddr")=true, py::arg("sorted")=false, py::arg("init_size")=0)
         .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool unifiedAddr, bool sorted) {
@@ -235,6 +248,9 @@ PYBIND11_MODULE(_bindings, m) {
                 })
         .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                     return agent.postXferReq((nixlXferReqH*) reqh);
+                })
+        .def("postXferReq_wParams", [](nixlAgent &agent, uintptr_t reqh, nixl_fn_params_t params) -> nixl_status_t {
+                    return agent.postXferReq_wParams((nixlXferReqH*) reqh, &params);
                 })
         .def("getXferStatus", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                     return agent.getXferStatus((nixlXferReqH*) reqh);

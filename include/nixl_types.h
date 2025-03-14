@@ -18,6 +18,7 @@
 #define _NIXL_TYPES_H
 #include <vector>
 #include <string>
+#include <cstdint>
 #include <unordered_map>
 
 typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
@@ -49,5 +50,10 @@ class nixlBackendH;
 class nixlXferReqH;
 class nixlXferSideH;
 class nixlAgentData;
+
+typedef struct nixlMethodParams {
+    uintptr_t     sample_handle;
+    std::string   sample_msg;
+} nixl_fn_params_t;
 
 #endif
