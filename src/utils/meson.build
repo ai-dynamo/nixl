@@ -15,3 +15,4 @@
 
 subdir('ucx')
 subdir('serdes')
+subdir('stream')
