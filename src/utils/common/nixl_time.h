@@ -19,8 +19,6 @@
 
 #include <chrono>
 
-
-
 namespace nixlTime {
 
     using namespace std::chrono;

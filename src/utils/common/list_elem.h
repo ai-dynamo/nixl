@@ -32,7 +32,7 @@ public:
         _next = NULL;;
     }
 
-    /* Link this element into the chain afer "elem" */
+    /* Link this element into the chain after "elem" */
     void link(T *elem)
     {
         elem->_next = _next;
