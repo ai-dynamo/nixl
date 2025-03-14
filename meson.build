@@ -85,6 +85,7 @@ subdir('src')
 
 if get_option('buildtype') != 'release'
   subdir('test')
+  meson.add_install_script('maketest_symlinks.sh')
 endif
 
 if get_option('install_headers')
