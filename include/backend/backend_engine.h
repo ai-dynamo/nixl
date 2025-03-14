@@ -89,7 +89,7 @@ class nixlBackendEngine {
         // *** Pure virtual methods that need to be implemented by any backend *** //
 
         // Register and deregister local memory
-        virtual nixl_status_t registerMem (const nixlStringDesc &mem,
+        virtual nixl_status_t registerMem (const nixlBlobDesc &mem,
                                            const nixl_mem_t &nixl_mem,
                                            nixlBackendMD* &out) = 0;
         virtual nixl_status_t deregisterMem (nixlBackendMD* meta) = 0;
@@ -135,7 +135,7 @@ class nixlBackendEngine {
         }
 
         // Load remtoe metadata, if supported.
-        virtual nixl_status_t loadRemoteMD (const nixlStringDesc &input,
+        virtual nixl_status_t loadRemoteMD (const nixlBlobDesc &input,
                                             const nixl_mem_t &nixl_mem,
                                             const std::string &remote_agent,
                                             nixlBackendMD* &output) {

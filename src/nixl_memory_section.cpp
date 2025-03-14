@@ -46,7 +46,7 @@ nixl_reg_dlist_t nixlLocalSection::getStringDesc (
                              const nixlBackendEngine* backend,
                              const nixl_meta_dlist_t &d_list) const {
     nixl_status_t ret;
-    nixlStringDesc element;
+    nixlBlobDesc element;
     nixlBasicDesc *p = &element;
     nixl_reg_dlist_t output_desclist(d_list.getType(),
                                      d_list.isUnifiedAddr(),

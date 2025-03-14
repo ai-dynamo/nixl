@@ -55,8 +55,8 @@ int main(int argc, char *argv[])
 
         nixlAgentConfig         cfg(true);
         nixl_b_params_t         params;
-        nixlStringDesc          buf[NUM_TRANSFERS];
-        nixlStringDesc          ftrans[NUM_TRANSFERS];
+        nixlBlobDesc            buf[NUM_TRANSFERS];
+        nixlBlobDesc            ftrans[NUM_TRANSFERS];
         nixlBackendH            *gds;
 
         nixl_reg_dlist_t        vram_for_gds(VRAM_SEG);

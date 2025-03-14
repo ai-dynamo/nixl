@@ -52,23 +52,23 @@ class nixlBasicDesc {
 
 
 // String next to each BasicDesc, used for extra info for memory registrartion
-class nixlStringDesc : public nixlBasicDesc {
+class nixlBlobDesc : public nixlBasicDesc {
     public:
-        std::string metaInfo;
+        nixl_blob_t metaInfo;
 
         // Reuse parent constructor without the extra info
         using nixlBasicDesc::nixlBasicDesc;
 
-        nixlStringDesc(const uintptr_t &addr, const size_t &len,
-                       const uint32_t &dev_id, const std::string &meta_info);
-        nixlStringDesc(const nixlBasicDesc &desc, const std::string &meta_info);
-        nixlStringDesc(const std::string &str); // Deserializer
+        nixlBlobDesc(const uintptr_t &addr, const size_t &len,
+                     const uint32_t &dev_id, const std::string &meta_info);
+        nixlBlobDesc(const nixlBasicDesc &desc, const std::string &meta_info);
+        nixlBlobDesc(const std::string &str); // Deserializer
 
-        friend bool operator==(const nixlStringDesc &lhs,
-                               const nixlStringDesc &rhs);
+        friend bool operator==(const nixlBlobDesc &lhs,
+                               const nixlBlobDesc &rhs);
 
         std::string serialize() const;
-        void copyMeta (const nixlStringDesc &info);
+        void copyMeta (const nixlBlobDesc &info);
         void print(const std::string &suffix) const;
 };
 
@@ -127,7 +127,7 @@ class nixlDescList {
         void print() const;
 };
 
-typedef nixlDescList<nixlBasicDesc>  nixl_xfer_dlist_t;
-typedef nixlDescList<nixlStringDesc> nixl_reg_dlist_t;
+typedef nixlDescList<nixlBasicDesc> nixl_xfer_dlist_t;
+typedef nixlDescList<nixlBlobDesc>  nixl_reg_dlist_t;
 
 #endif

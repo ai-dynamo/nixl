@@ -220,7 +220,7 @@ void *releaseValidationPtr(nixl_mem_t mem_type, void *addr)
 void allocateAndRegister(nixlBackendEngine *ucx, int dev_id, nixl_mem_t mem_type,
                          void* &addr, size_t len, nixlBackendMD* &md)
 {
-    nixlStringDesc desc;
+    nixlBlobDesc desc;
 
     allocateBuffer(mem_type, dev_id, len, addr);
 
@@ -244,7 +244,7 @@ void loadRemote(nixlBackendEngine *ucx, int dev_id, std::string agent,
                 nixl_mem_t mem_type, void *addr, size_t len,
                 nixlBackendMD* &lmd, nixlBackendMD* &rmd)
 {
-    nixlStringDesc info;
+    nixlBlobDesc info;
     info.addr     = (uintptr_t) addr;
     info.len      = len;
     info.devId    = dev_id;

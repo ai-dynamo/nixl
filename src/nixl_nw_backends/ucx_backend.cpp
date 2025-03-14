@@ -532,7 +532,7 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
 /****************************************
  * Memory management
 *****************************************/
-nixl_status_t nixlUcxEngine::registerMem (const nixlStringDesc &mem,
+nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
                                           const nixl_mem_t &nixl_mem,
                                           nixlBackendMD* &out)
 {
@@ -618,7 +618,7 @@ nixl_status_t nixlUcxEngine::loadLocalMD (nixlBackendMD* input,
 }
 
 // To be cleaned up
-nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlStringDesc &input,
+nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
                                            const nixl_mem_t &nixl_mem,
                                            const std::string &remote_agent,
                                            nixlBackendMD* &output) {

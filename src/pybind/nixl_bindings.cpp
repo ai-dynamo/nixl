@@ -115,7 +115,7 @@ PYBIND11_MODULE(_bindings, m) {
         .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool unifiedAddr, bool sorted) {
                 nixl_reg_dlist_t new_list(mem, unifiedAddr, sorted, descs.size());
                 for(long unsigned int i = 0; i<descs.size(); i++)
-                    new_list[i] = nixlStringDesc(descs[i][0].cast<uintptr_t>(), descs[i][1].cast<size_t>(), descs[i][2].cast<uint32_t>(), descs[i][3].cast<std::string>());
+                    new_list[i] = nixlBlobDesc(descs[i][0].cast<uintptr_t>(), descs[i][1].cast<size_t>(), descs[i][2].cast<uint32_t>(), descs[i][3].cast<std::string>());
                 if (sorted) new_list.verifySorted();
                 return new_list;
             }), py::arg("type"), py::arg("descs"), py::arg("unifiedAddr")=true, py::arg("sorted")=false)
@@ -128,7 +128,7 @@ PYBIND11_MODULE(_bindings, m) {
         .def("__getitem__", [](nixl_reg_dlist_t &list, unsigned int i) ->
               std::tuple<uintptr_t, size_t, uint32_t, std::string> {
                     std::tuple<uintptr_t, size_t, uint32_t, std::string> ret;
-                    nixlStringDesc desc = list[i];
+                    nixlBlobDesc desc = list[i];
                     std::get<0>(ret) = desc.addr;
                     std::get<1>(ret) = desc.len;
                     std::get<2>(ret) = desc.devId;
@@ -136,14 +136,14 @@ PYBIND11_MODULE(_bindings, m) {
                     return ret;
               })
         .def("__setitem__", [](nixl_reg_dlist_t &list, unsigned int i, const py::tuple &desc) {
-                list[i] = nixlStringDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint32_t>(), desc[3].cast<std::string>());
+                list[i] = nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint32_t>(), desc[3].cast<std::string>());
             })
         .def("addDesc", [](nixl_reg_dlist_t &list, const py::tuple &desc) {
                 uintptr_t addr = desc[0].cast<uintptr_t>();
                 size_t size = desc[1].cast<size_t>();
                 uint32_t dev_id = desc[2].cast<uint32_t>();
                 std::string meta = desc[3].cast<std::string>();
-                nixlStringDesc newDesc(addr, size, dev_id, meta);
+                nixlBlobDesc newDesc(addr, size, dev_id, meta);
 
                 list.addDesc(newDesc);
             })

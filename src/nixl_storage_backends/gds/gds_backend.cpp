@@ -143,7 +143,7 @@ nixlGdsEngine::nixlGdsEngine (const nixlBackendInitParams* init_params)
 }
 
 
-nixl_status_t nixlGdsEngine::registerMem (const nixlStringDesc &mem,
+nixl_status_t nixlGdsEngine::registerMem (const nixlBlobDesc &mem,
                                           const nixl_mem_t &nixl_mem,
                                           nixlBackendMD* &out)
 {

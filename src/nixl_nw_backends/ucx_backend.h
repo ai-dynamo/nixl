@@ -216,7 +216,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         nixl_status_t connect(const std::string &remote_agent);
         nixl_status_t disconnect(const std::string &remote_agent);
 
-        nixl_status_t registerMem (const nixlStringDesc &mem,
+        nixl_status_t registerMem (const nixlBlobDesc &mem,
                                    const nixl_mem_t &nixl_mem,
                                    nixlBackendMD* &out);
         nixl_status_t deregisterMem (nixlBackendMD* meta);
@@ -224,7 +224,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         nixl_status_t loadLocalMD (nixlBackendMD* input,
                                    nixlBackendMD* &output);
 
-        nixl_status_t loadRemoteMD (const nixlStringDesc &input,
+        nixl_status_t loadRemoteMD (const nixlBlobDesc &input,
                                     const nixl_mem_t &nixl_mem,
                                     const std::string &remote_agent,
                                     nixlBackendMD* &output);

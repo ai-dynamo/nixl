@@ -61,8 +61,8 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     void* dst_buf = malloc(n_mems*descs_per_mem*8);
 
     for(int i = 0; i<n_mems; i++) {
-        nixlStringDesc src_desc((uintptr_t) src_buf + i*descs_per_mem*8, descs_per_mem*8, 0);
-        nixlStringDesc dst_desc((uintptr_t) dst_buf + i*descs_per_mem*8, descs_per_mem*8, 0);
+        nixlBlobDesc src_desc((uintptr_t) src_buf + i*descs_per_mem*8, descs_per_mem*8, 0);
+        nixlBlobDesc dst_desc((uintptr_t) dst_buf + i*descs_per_mem*8, descs_per_mem*8, 0);
 
         mem_list1.addDesc(src_desc);
         mem_list2.addDesc(dst_desc);
@@ -185,7 +185,7 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     nixl_reg_dlist_t mem_list1(DRAM_SEG), mem_list2(DRAM_SEG);
     nixl_xfer_dlist_t src_list(DRAM_SEG), dst_list(DRAM_SEG);
-    nixlStringDesc src_desc[4], dst_desc[4];
+    nixlBlobDesc src_desc[4], dst_desc[4];
     for(int i = 0; i<n_bufs; i++) {
 
         src_bufs[i] = calloc(1, len);
@@ -393,7 +393,7 @@ int main()
 
     // User allocates memories, and passes the corresponding address
     // and length to register with the backend
-    nixlStringDesc buff1, buff2, buff3;
+    nixlBlobDesc buff1, buff2, buff3;
     nixl_reg_dlist_t dlist1(DRAM_SEG), dlist2(DRAM_SEG);
     size_t len = 256;
     void* addr1 = calloc(1, len);
