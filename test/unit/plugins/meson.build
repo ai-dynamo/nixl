@@ -16,9 +16,3 @@
 
 subdir('ucx')
 subdir('gds')
-
-plugin_test = executable('test_plugin',
-                        'test_plugin.cpp',
-                        dependencies: [nixl_dep, cuda_dep],
-                        include_directories: [nixl_inc_dirs, utils_inc_dirs],
-                        install: true)
