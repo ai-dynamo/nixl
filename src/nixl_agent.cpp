@@ -65,6 +65,8 @@ nixl_status_t nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) 
 
 nixl_status_t nixlAgent::getPluginOptions (const nixl_backend_t &type,
                                            nixl_b_params_t &params) {
+    // TODO: unify to uppercase/lowercase and do ltrim/rtrim for type
+
     // First try to get options from a loaded plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
     auto plugin_handle = plugin_manager.getPlugin(type);

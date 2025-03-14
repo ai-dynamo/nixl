@@ -110,13 +110,13 @@ int main()
     assert (buff1.covers(buff7));
     assert (!buff7.covers(buff1));
 
-    nixlStringDesc stringd1;
+    nixlBlobDesc stringd1;
     stringd1.addr   = 2392382;
     stringd1.len    = 23;
     stringd1.devId  = 4;
     stringd1.metaInfo = std::string("567");
 
-    nixlStringDesc importStringD(stringd1.serialize());
+    nixlBlobDesc importStringD(stringd1.serialize());
     assert(stringd1 == importStringD);
 
     std::cout << "\nSerDes Desc tests:\n";
@@ -129,7 +129,7 @@ int main()
     importStringD.print("");
     std::cout << "\n";
 
-    nixlStringDesc stringd2;
+    nixlBlobDesc stringd2;
     stringd2.addr     = 1010;
     stringd2.len      = 31;
     stringd2.devId    = 0;
@@ -209,13 +209,13 @@ int main()
 
     // Populate and unifiedAddr test
     std::cout << "\n\n";
-    nixlStringDesc s1 (10070, 43, 0);
+    nixlBlobDesc s1 (10070, 43, 0);
     s1.metaInfo = "s1";
-    nixlStringDesc s2 (900, 43, 2);
+    nixlBlobDesc s2 (900, 43, 2);
     s2.metaInfo = "s2";
-    nixlStringDesc s3 (500, 43, 1);
+    nixlBlobDesc s3 (500, 43, 1);
     s3.metaInfo = "s3";
-    nixlStringDesc s4 (100, 43, 3);
+    nixlBlobDesc s4 (100, 43, 3);
     s4.metaInfo = "s4";
 
     nixlBasicDesc b1 (10075, 30, 0);

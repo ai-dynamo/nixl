@@ -90,7 +90,7 @@ int main(int argc, char *argv[]) {
     /** Agent and backend creation parameters */
     nixlAgentConfig cfg(true);
     nixl_b_params_t params;
-    nixlStringDesc  buf[NUM_TRANSFERS];
+    nixlBlobDesc    buf[NUM_TRANSFERS];
     nixlBackendH    *ucx;
 
     /** Serialization/Deserialization object to create a blob */

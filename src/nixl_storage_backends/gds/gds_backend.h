@@ -119,7 +119,7 @@ public:
     nixl_status_t unloadMD (nixlBackendMD* input) {
         return NIXL_SUCCESS;
     }
-    nixl_status_t registerMem(const nixlStringDesc &mem,
+    nixl_status_t registerMem(const nixlBlobDesc &mem,
                               const nixl_mem_t &nixl_mem,
                               nixlBackendMD* &out);
     nixl_status_t deregisterMem (nixlBackendMD *meta);

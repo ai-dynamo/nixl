@@ -84,23 +84,23 @@ void nixlBasicDesc::print(const std::string &suffix) const {
 }
 
 
-/*** Class nixlStringDesc implementation ***/
+/*** Class nixlBlobDesc implementation ***/
 
-nixlStringDesc::nixlStringDesc(const uintptr_t &addr,
-                               const size_t &len,
-                               const uint32_t &dev_id,
-                               const std::string &meta_info) :
-                               nixlBasicDesc(addr, len, dev_id) {
+nixlBlobDesc::nixlBlobDesc(const uintptr_t &addr,
+                           const size_t &len,
+                           const uint32_t &dev_id,
+                           const std::string &meta_info) :
+                           nixlBasicDesc(addr, len, dev_id) {
     this->metaInfo = meta_info;
 }
 
-nixlStringDesc::nixlStringDesc(const nixlBasicDesc &desc,
-                               const std::string &meta_info) :
-                               nixlBasicDesc(desc) {
+nixlBlobDesc::nixlBlobDesc(const nixlBasicDesc &desc,
+                           const std::string &meta_info) :
+                           nixlBasicDesc(desc) {
     this->metaInfo = meta_info;
 }
 
-nixlStringDesc::nixlStringDesc(const std::string &str) {
+nixlBlobDesc::nixlBlobDesc(const std::string &str) {
     size_t meta_size = str.size() - sizeof(nixlBasicDesc);
     if (meta_size>0) {
         metaInfo.resize(meta_size);
@@ -115,32 +115,32 @@ nixlStringDesc::nixlStringDesc(const std::string &str) {
     }
 }
 
-bool operator==(const nixlStringDesc &lhs, const nixlStringDesc &rhs) {
+bool operator==(const nixlBlobDesc &lhs, const nixlBlobDesc &rhs) {
     return (((nixlBasicDesc)lhs == (nixlBasicDesc)rhs) &&
                   (lhs.metaInfo == rhs.metaInfo));
 }
 
-std::string nixlStringDesc::serialize() const {
+std::string nixlBlobDesc::serialize() const {
     return nixlBasicDesc::serialize() + metaInfo;
 }
 
-void nixlStringDesc::copyMeta (const nixlStringDesc &info){
+void nixlBlobDesc::copyMeta (const nixlBlobDesc &info){
     this->metaInfo = info.metaInfo;
 }
 
-void nixlStringDesc::print(const std::string &suffix) const {
+void nixlBlobDesc::print(const std::string &suffix) const {
     nixlBasicDesc::print(", Metadata: " + metaInfo + suffix);
 }
 
 /*** Class nixlDescList implementation ***/
 
-// The template is used to select from nixlBasicDesc/nixlMetaDesc/nixlStringDesc
+// The template is used to select from nixlBasicDesc/nixlMetaDesc/nixlBlobDesc
 // There are no virtual functions, so the object is all data, no pointers.
 
 template <class T>
 nixlDescList<T>::nixlDescList (const nixl_mem_t &type, const bool &unified_addr,
                                const bool &sorted, const int &init_size) {
-    static_assert(std::is_base_of<nixlBasicDesc, T>::value);
+    static_assert (std::is_base_of<nixlBasicDesc, T>::value);
     this->type        = type;
     this->unifiedAddr = unified_addr;
     this->sorted      = sorted;
@@ -182,7 +182,7 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
         descs.resize(n_desc);
         str.copy(reinterpret_cast<char*>(descs.data()), str.size());
 
-    } else if(std::is_same<nixlStringDesc, T>::value) {
+    } else if (std::is_same<nixlBlobDesc, T>::value) {
         if (str!="nixlSDList")
             return;
         for (size_t i=0; i<n_desc; ++i) {
@@ -332,7 +332,7 @@ template <class T>
 nixl_status_t nixlDescList<T>::populate (const nixlDescList<nixlBasicDesc> &query,
                                          nixlDescList<T> &resp) const {
     // Populate only makes sense when there is extra metadata
-    if(std::is_same<nixlBasicDesc, T>::value)
+    if (std::is_same<nixlBasicDesc, T>::value)
         return NIXL_ERR_INVALID_PARAM;
 
     if ((type != query.getType()) || (type != resp.type))
@@ -478,12 +478,12 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     size_t n_desc = descs.size();
 
     // nixlMetaDesc should be internal and not be serialized
-    if(std::is_same<nixlMetaDesc, T>::value)
+    if (std::is_same<nixlMetaDesc, T>::value)
         return NIXL_ERR_INVALID_PARAM;
 
     if (std::is_same<nixlBasicDesc, T>::value)
         ret = serializer->addStr("nixlDList", "nixlBDList");
-    else if (std::is_same<nixlStringDesc, T>::value)
+    else if (std::is_same<nixlBlobDesc, T>::value)
         ret = serializer->addStr("nixlDList", "nixlSDList");
     else
         return NIXL_ERR_INVALID_PARAM;
@@ -511,10 +511,10 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
                                  reinterpret_cast<const char*>(descs.data()),
                                  n_desc * sizeof(nixlBasicDesc)));
         if (ret) return ret;
-    } else { // already checked it can be only nixlStringDesc
-        for(auto & elm : descs) {
+    } else { // already checked it can be only nixlBlobDesc
+        for (auto & elm : descs) {
             ret = serializer->addStr("", elm.serialize());
-            if(ret) return ret;
+            if (ret) return ret;
         }
     }
 
@@ -549,11 +549,11 @@ bool operator==(const nixlDescList<T> &lhs, const nixlDescList<T> &rhs) {
 // Since we implement a template class declared in a header files, this is necessary
 template class nixlDescList<nixlBasicDesc>;
 template class nixlDescList<nixlMetaDesc>;
-template class nixlDescList<nixlStringDesc>;
+template class nixlDescList<nixlBlobDesc>;
 
 template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
                                          const nixlDescList<nixlBasicDesc> &rhs);
 template bool operator==<nixlMetaDesc>  (const nixlDescList<nixlMetaDesc> &lhs,
                                          const nixlDescList<nixlMetaDesc> &rhs);
-template bool operator==<nixlStringDesc>(const nixlDescList<nixlStringDesc> &lhs,
-                                         const nixlDescList<nixlStringDesc> &rhs);
+template bool operator==<nixlBlobDesc>(const nixlDescList<nixlBlobDesc> &lhs,
+                                       const nixlDescList<nixlBlobDesc> &rhs);
