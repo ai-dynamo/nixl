@@ -125,7 +125,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         std::unordered_map<std::string, nixlUcxConnection,
                            std::hash<std::string>, strEqual> remoteConnMap;
 
-		class nixlUcxBckndReq : public nixlLinkElem<nixlUcxBckndReq>, public nixlBackendReqH {
+        class nixlUcxBckndReq : public nixlLinkElem<nixlUcxBckndReq>, public nixlBackendReqH {
             private:
                 int _completed;
             public:
@@ -207,8 +207,9 @@ class nixlUcxEngine : public nixlBackendEngine {
         bool supportsProgTh () const { return pthrOn; }
 
         /* Object management */
-        std::string getPublicData (const nixlBackendMD* meta) const;
-        std::string getConnInfo() const;
+        nixl_status_t getPublicData (const nixlBackendMD* meta,
+                                     std::string &str) const;
+        nixl_status_t getConnInfo(std::string &str) const;
         nixl_status_t loadRemoteConnInfo (const std::string &remote_agent,
                                           const std::string &remote_conn_info);
 
@@ -218,7 +219,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         nixl_status_t registerMem (const nixlStringDesc &mem,
                                    const nixl_mem_t &nixl_mem,
                                    nixlBackendMD* &out);
-        void deregisterMem (nixlBackendMD* meta);
+        nixl_status_t deregisterMem (nixlBackendMD* meta);
 
         nixl_status_t loadLocalMD (nixlBackendMD* input,
                                    nixlBackendMD* &output);
@@ -237,11 +238,11 @@ class nixlUcxEngine : public nixlBackendEngine {
                                 const std::string &notif_msg,
                                 nixlBackendReqH* &handle);
         nixl_status_t checkXfer (nixlBackendReqH* handle);
-        void releaseReqH(nixlBackendReqH* handle);
+        nixl_status_t releaseReqH(nixlBackendReqH* handle);
 
         int progress();
 
-        int getNotifs(notif_list_t &notif_list);
+        nixl_status_t getNotifs(notif_list_t &notif_list, int &new_notifs);
         nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg);
 
         //public function for UCX worker to mark connections as connected

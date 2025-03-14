@@ -248,7 +248,7 @@ void loadRemote(nixlBackendEngine *ucx, int dev_id, std::string agent,
     info.addr     = (uintptr_t) addr;
     info.len      = len;
     info.devId    = dev_id;
-    info.metaInfo = ucx->getPublicData(lmd);
+    ucx->getPublicData(lmd, info.metaInfo);
 
     assert(info.metaInfo.size() > 0);
 
@@ -337,7 +337,8 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
             ret2 = 0;
 
             while(ret2 == 0){
-                ret2 = ucx2->getNotifs(target_notifs);
+                ret3 = ucx2->getNotifs(target_notifs, ret2);
+                assert(ret3 == NIXL_SUCCESS);
             }
 
             assert(ret2 == 1);
@@ -386,7 +387,9 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t
     assert(ucx->supportsLocal());
 
     //connection info is still a string
-    std::string conn_info1 = ucx->getConnInfo();
+    std::string conn_info1;
+    ret1 = ucx->getConnInfo(conn_info1);
+    assert(ret1 == NIXL_SUCCESS);
     ret1 = ucx->loadRemoteConnInfo (agent1, conn_info1);
     assert(ret1 == NIXL_SUCCESS);
 
@@ -459,8 +462,11 @@ void test_inter_agent_transfer(bool p_thread,
 
     // We get the required connection info from UCX to be put on the central
     // location and ask for it for a remote node
-    std::string conn_info1 = ucx1->getConnInfo();
-    std::string conn_info2 = ucx2->getConnInfo();
+    std::string conn_info1, conn_info2;
+    ret = ucx1->getConnInfo(conn_info1);
+    assert(ret == NIXL_SUCCESS);
+    ret = ucx2->getConnInfo(conn_info2);
+    assert(ret == NIXL_SUCCESS);
 
     // We assumed we put them to central location and now receiving it on the other process
     ret = ucx1->loadRemoteConnInfo (agent2, conn_info2);
@@ -521,8 +527,11 @@ void test_inter_agent_transfer(bool p_thread,
         cout << "\t\tChecking notification flow: " << flush;
         ret = 0;
 
+        nixl_status_t ret2;
+
         while(ret == 0){
-            ret = ucx2->getNotifs(target_notifs);
+            ret2 = ucx2->getNotifs(target_notifs, ret);
+            assert(ret2 == NIXL_SUCCESS);
         }
 
         assert(ret == 1);

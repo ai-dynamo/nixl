@@ -34,7 +34,7 @@ int gpu_id = 0;
 
 static void checkCudaError(cudaError_t result, const char *message) {
     if (result != cudaSuccess) {
-	std::cerr << message << " (Error code: " << result << " - "
+    std::cerr << message << " (Error code: " << result << " - "
                    << cudaGetErrorString(result) << ")" << std::endl;
         exit(EXIT_FAILURE);
     }

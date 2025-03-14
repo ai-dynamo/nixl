@@ -35,12 +35,21 @@ class nixlAgent {
         nixlAgent (const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgent ();
 
-        // Prints the supported configs with their default or initialized values
-        nixl_b_params_t getBackendOptions (const nixl_backend_t &type);
+        // Returns the available plugins found in the paths.
+        nixl_status_t getAvailPlugins (std::vector<nixl_backend_t> &plugins);
+
+        // Returns the supported configs with their default values
+        nixl_status_t getPluginOptions (const nixl_backend_t &type,
+                                        nixl_b_params_t &params);
+
+        // returns the backend parameters after instantiation
+        nixl_status_t getBackendOptions (const nixlBackendH* backend,
+                                         nixl_b_params_t &params);
 
         // Instantiate BackendEngine objects, based on corresponding params
-        nixlBackendH* createBackend (const nixl_backend_t &type,
-                                          const nixl_b_params_t &params);
+        nixl_status_t createBackend (const nixl_backend_t &type,
+                                     const nixl_b_params_t &params,
+                                     nixlBackendH* &backend);
 
         // Register with the backend and populate memory_section
         nixl_status_t registerMem (const nixl_reg_dlist_t &descs,
@@ -59,7 +68,7 @@ class nixlAgent {
         nixl_status_t createXferReq (const nixl_xfer_dlist_t &local_descs,
                                      const nixl_xfer_dlist_t &remote_descs,
                                      const std::string &remote_agent,
-                                     const std::string &notif_msg,
+                                     const nixl_blob_t &notif_msg,
                                      const nixl_xfer_op_t &operation,
                                      nixlXferReqH* &req_handle,
                                      const nixlBackendH* backend = nullptr) const;
@@ -72,13 +81,14 @@ class nixlAgent {
 
         // Invalidate transfer request if we no longer need it.
         // Will also abort a running transfer.
-        void invalidateXferReq (nixlXferReqH* req);
+        nixl_status_t invalidateXferReq (nixlXferReqH* req);
 
 
         /*** Alternative method to create transfer handle manually ***/
 
         // User can ask for backend chosen for a XferReq to use it for prepXferSide.
-        nixlBackendH* getXferBackend(const nixlXferReqH* req_handle) const;
+        nixl_status_t getXferBackend(const nixlXferReqH* req_handle,
+                                     nixlBackendH* &backend) const;
 
         // Prepares descriptors for one side of a transfer with given backend.
         // Empty string for remote_agent means it's local side.
@@ -92,36 +102,37 @@ class nixlAgent {
                                    const std::vector<int> &local_indices,
                                    const nixlXferSideH* remote_side,
                                    const std::vector<int> &remote_indices,
-                                   const std::string &notif_msg,
+                                   const nixl_blob_t &notif_msg,
                                    const nixl_xfer_op_t &operation,
                                    nixlXferReqH* &req_handle) const;
 
-        void invalidateXferSide (nixlXferSideH* side_handle) const;
+        nixl_status_t invalidateXferSide (nixlXferSideH* side_handle) const;
 
         /*** Notification Handling ***/
 
         // Add entries to the passed received notifications list (can be
         // non-empty), and return number of added entries, or -1 if there was
         // an error. Elements are released within the Agent after this call.
-        int getNotifs (nixl_notifs_t &notif_map);
+        nixl_status_t getNotifs (nixl_notifs_t &notif_map,
+                                 int &new_notifs);
 
         // Generate a notification, not bound to a transfer, e.g., for control.
         // Can be used after the remote metadata is exchanged. Will be received
         // in notif list. Nixl will choose a backend if null is passed.
         nixl_status_t genNotif (const std::string &remote_agent,
-                                const std::string &msg,
+                                const nixl_blob_t &msg,
                                 nixlBackendH* backend = nullptr);
-
 
         /*** Metadata handling through side channel ***/
 
         // Get nixl_metadata for this agent. Empty string means error.
         // The std::string used for serialized MD can have \0 values.
-        std::string getLocalMD () const;
+        nixl_status_t getLocalMD (nixl_blob_t &str) const;
 
         // Load other agent's metadata and unpack it internally.
         // Returns the found agent name in metadata, or "" in case of error.
-        std::string loadRemoteMD (const std::string &remote_metadata);
+        nixl_status_t loadRemoteMD (const nixl_blob_t &remote_metadata,
+                                    std::string &agent_name);
 
         // Invalidate the remote section information cached locally
         nixl_status_t invalidateRemoteMD (const std::string &remote_agent);

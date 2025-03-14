@@ -57,7 +57,7 @@ int main(int argc, char *argv[])
         nixl_b_params_t         params;
         nixlStringDesc          buf[NUM_TRANSFERS];
         nixlStringDesc          ftrans[NUM_TRANSFERS];
-        nixlBackendH	        *gds;
+        nixlBackendH            *gds;
 
         nixl_reg_dlist_t        vram_for_gds(VRAM_SEG);
         nixl_reg_dlist_t        file_for_gds(FILE_SEG, false);
@@ -67,11 +67,11 @@ int main(int argc, char *argv[])
         std::cout << "Starting Agent for " << "GDS Test Agent" << "\n";
         nixlAgent agent("GDSTester", cfg);
 
-        gds          = agent.createBackend("GDS", params);
+        agent.createBackend("GDS", params, gds);
         if (gds == nullptr) {
-		std::cerr <<"Error creating a new backend\n";
-		exit(-1);
-	}
+        std::cerr <<"Error creating a new backend\n";
+        exit(-1);
+    }
         /** Argument Parsing */
         if (argc < 2) {
                 std::cout <<"Enter the required arguments\n" << std::endl;
@@ -82,21 +82,21 @@ int main(int argc, char *argv[])
         for (i = 0; i < NUM_TRANSFERS; i++) {
                 cudaMalloc((void **)&addr[i], SIZE);
                 cudaMemset(addr[i], 'A', SIZE);
-		name = generate_timestamped_filename("testfile");
-	        std::string path = std::string(argv[1]);
-		name = path +"/"+ name +"_"+ std::to_string(i);
+        name = generate_timestamped_filename("testfile");
+            std::string path = std::string(argv[1]);
+        name = path +"/"+ name +"_"+ std::to_string(i);
 
-		std::cout << "Opening File " << name << std::endl;
-		fd[i] = open(name.c_str(), O_RDWR|O_CREAT, 0744);
-	        if (fd[i] < 0) {
-		   std::cerr<<"Error: "<<strerror(errno)<<std::endl;
-		   std::cerr<<"Open call failed to open file\n";
-	           std::cerr<<"Cannot run tests\n";
-	           return 1;
-		}
-	        std::cout << "Opened File " << name << std::endl;
+        std::cout << "Opening File " << name << std::endl;
+        fd[i] = open(name.c_str(), O_RDWR|O_CREAT, 0744);
+            if (fd[i] < 0) {
+           std::cerr<<"Error: "<<strerror(errno)<<std::endl;
+           std::cerr<<"Open call failed to open file\n";
+               std::cerr<<"Cannot run tests\n";
+               return 1;
+        }
+            std::cout << "Opened File " << name << std::endl;
 
-		std::cout << "Allocating for src buffer : "
+        std::cout << "Allocating for src buffer : "
                           << addr[i] << ","
                           << "Setting to As "
                           << std::endl;

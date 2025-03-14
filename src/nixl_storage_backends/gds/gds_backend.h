@@ -122,7 +122,7 @@ public:
     nixl_status_t registerMem(const nixlStringDesc &mem,
                               const nixl_mem_t &nixl_mem,
                               nixlBackendMD* &out);
-    void deregisterMem (nixlBackendMD *meta);
+    nixl_status_t deregisterMem (nixlBackendMD *meta);
 
     nixl_status_t postXfer (const nixl_meta_dlist_t &local,
                             const nixl_meta_dlist_t &remote,
@@ -132,6 +132,6 @@ public:
                             nixlBackendReqH* &handle);
 
     nixl_status_t checkXfer (nixlBackendReqH* handle);
-    void releaseReqH(nixlBackendReqH* handle);
+    nixl_status_t releaseReqH(nixlBackendReqH* handle);
 };
 #endif

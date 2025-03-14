@@ -45,6 +45,7 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
 nixl_reg_dlist_t nixlLocalSection::getStringDesc (
                              const nixlBackendEngine* backend,
                              const nixl_meta_dlist_t &d_list) const {
+    nixl_status_t ret;
     nixlStringDesc element;
     nixlBasicDesc *p = &element;
     nixl_reg_dlist_t output_desclist(d_list.getType(),
@@ -55,7 +56,13 @@ nixl_reg_dlist_t nixlLocalSection::getStringDesc (
     // required serialized metadata provided by the backend
     for (int i=0; i<d_list.descCount(); ++i) {
         *p = (nixlBasicDesc) d_list[i];
-        element.metaInfo = backend->getPublicData(d_list[i].metadataP);
+        ret = backend->getPublicData(d_list[i].metadataP, element.metaInfo);
+        if(ret != NIXL_SUCCESS){
+            //something has gone wrong
+            output_desclist.clear();
+            return output_desclist;
+        }
+
         output_desclist.addDesc(element);
     }
     return output_desclist;
