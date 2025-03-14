@@ -13,21 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#if cuda_dep.found()
-#    cuda_dependencies = [cuda_dep]
-#    cpp_args = '-DUSE_VRAM'
-#else
-#    cuda_dependencies = []
-#    cpp_args = '-UUSE_VRAM'
-#endif
+stream_lib = library('stream',
+           'metadata_stream.cpp', 'metadata_stream.h',
+           include_directories: nixl_inc_dirs,
+           install: true)
 
-p2p_socket = executable('p2p_test',
-            'p2p_socket_test.cpp',
-            dependencies: [nixl_dep, nixl_infra, stream_interface] + cuda_dependencies,
-            include_directories: [nixl_inc_dirs, utils_inc_dirs],
-            install: true)
-
-map_perf_test = executable('map_perf_test',
-                           'map_perf.cpp',
-                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
-                           install: true)
+stream_interface = declare_dependency(link_with: stream_lib)

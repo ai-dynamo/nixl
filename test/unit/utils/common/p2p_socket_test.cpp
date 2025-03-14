@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "metadata_stream.h"
+#include "stream/metadata_stream.h"
 #include <iostream>
 #include <string>
 #include <algorithm>

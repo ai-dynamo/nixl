@@ -15,4 +15,5 @@
 
 subdir('common')
 subdir('serdes')
+subdir('stream')
 subdir('ucx')
