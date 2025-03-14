@@ -78,7 +78,7 @@ if get_option('buildtype') == 'debug'
     add_project_arguments('-DNIXL_USE_PLUGIN_FILE="' + plugin_build_dir + '/pluginlist"',  language: 'cpp')
 endif
 
-nixl_inc_dirs = include_directories('src/api/cpp', 'src/core')
+nixl_inc_dirs = include_directories('src/api/cpp', 'src/infra', 'src/core')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')
@@ -98,5 +98,5 @@ if get_option('install_headers')
   install_headers('src/api/cpp/backend/backend_aux.h', install_dir: prefix_inc + '/backend')
   install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
-  install_headers('src/core/mem_section.h', install_dir: prefix_inc)
+  install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
 endif

@@ -15,10 +15,6 @@
 
 subdir('ucx')
 
-if cuda_dep.found()
-    nixl_lib_deps += [ cuda_dep ]
-endif
-
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and cuda_dep.found()
     subdir('cuda_gds')

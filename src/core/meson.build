@@ -13,22 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-nixl_lib_deps = [serdes_interface]
+nixl_lib_deps = [nixl_infra, serdes_interface]
 
-nixl_infra = library('nixl_build',
-           'nixl_descriptors.cpp',
-           'nixl_memory_section.cpp',
-           'nixl_metadata_stream.cpp',
-            include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-            dependencies: [serdes_interface],
-            install: true)
+if 'UCX' in static_plugins
+    nixl_lib_deps += [ ucx_backend_interface, cuda_dep ]
+endif
+
+disable_gds_backend = get_option('disable_gds_backend')
+if not disable_gds_backend and cuda_dep.found()
+    nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
+endif
 
 nixl_lib = library('nixl',
-                   'nixl_descriptors.cpp',
-                   'nixl_memory_section.cpp',
                    'nixl_agent.cpp',
-                   'nixl_metadata_stream.cpp',
                    'nixl_plugin_manager.cpp',
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-                   dependencies: [ serdes_interface ],
+                   dependencies: nixl_lib_deps,
                    install: true)
+
+nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)

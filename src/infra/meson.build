@@ -13,4 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-inc = include_directories('.')
+nixl_build_lib = library('nixl_build',
+                        'nixl_descriptors.cpp',
+                        'nixl_memory_section.cpp',
+                        'nixl_metadata_stream.cpp',
+                        include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
+                        dependencies: [serdes_interface],
+                        install: true)
+
+nixl_infra = declare_dependency(link_with: nixl_build_lib)

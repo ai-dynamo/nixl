@@ -27,18 +27,17 @@ if 'GDS' in static_plugins
                     'gds_utils.cpp', 'gds_utils.h',
                     'gds_backend.cpp', 'gds_backend.h',
                     'gds_plugin.cpp',
-                    dependencies: [nixl_dep, cuda_dep, cufile_dep],
-                    include_directories: [nixl_inc_dirs,utils_inc_dirs],
-                    install: true,
+                    dependencies: [ nixl_infra, cuda_dep, cufile_dep],
+                    include_directories: [ucx_utils_dep, nixl_inc_dirs,utils_inc_dirs],
+                    install: false,
                     cpp_args : compile_flags,
-                    name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
-                    install_dir: plugin_install_dir)
+                    name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
   gds_backend_lib = shared_library('GDS',
                     'gds_utils.cpp', 'gds_utils.h',
                     'gds_backend.cpp', 'gds_backend.h',
                     'gds_plugin.cpp',
-                    dependencies: [nixl_dep, cuda_dep, cufile_dep],
+                      dependencies: [nixl_infra, cuda_dep, cufile_dep],
                     include_directories: [nixl_inc_dirs,utils_inc_dirs],
                     install: true,
                     cpp_args : ['-fPIC'],

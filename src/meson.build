@@ -18,6 +18,7 @@ subdir('api')
 subdir('utils')
 
 #subdir('arch')
-subdir('core')
+subdir('infra')
 subdir('plugins')
+subdir('core')
 subdir('bindings')

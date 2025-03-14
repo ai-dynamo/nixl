@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)
-
 if cuda_dep.found()
     cuda_dependencies = [cuda_dep]
     cpp_args = '-DUSE_VRAM'
@@ -26,7 +24,7 @@ endif
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend
     nixl_gds_app = executable('nixl_gds_test', 'nixl_gds_test.cpp',
-                              dependencies: [nixl_dep, cuda_dep],
+                              dependencies: [nixl_dep, nixl_infra, cuda_dep],
                               include_directories: [nixl_inc_dirs, utils_inc_dirs],
                               install: true)
 endif
