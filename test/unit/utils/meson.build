@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#subdir('cuda')
-#subdir('data_structures')
 subdir('common')
 subdir('serdes')
 subdir('ucx')

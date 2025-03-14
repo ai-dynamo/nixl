@@ -340,8 +340,10 @@ void nixlPluginManager::registerBuiltinPlugins() {
     #endif
 
     #ifdef STATIC_PLUGIN_GDS
+    #ifndef DISABLE_GDS_BACKEND
         extern nixlBackendPlugin* createStaticGdsPlugin();
         std::cout << "Registering static GDS plugin" << std::endl;
         registerStaticPlugin("GDS", createStaticGdsPlugin);
+    #endif
     #endif
 }

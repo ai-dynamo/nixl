@@ -31,3 +31,9 @@ map_perf_test = executable('map_perf_test',
                            'map_perf.cpp',
                            include_directories: [nixl_inc_dirs, utils_inc_dirs],
                            install: true)
+
+md_streamer = executable('md_streamer',
+            'metadata_streamer.cpp',
+            dependencies: [nixl_dep, cuda_dependencies, nixl_infra],
+            include_directories: [nixl_inc_dirs, utils_inc_dirs],
+            install: true)

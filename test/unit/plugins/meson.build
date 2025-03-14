@@ -15,4 +15,8 @@
 # limitations under the License.
 
 subdir('ucx')
-subdir('gds')
+
+disable_gds_backend = get_option('disable_gds_backend')
+if not disable_gds_backend
+    subdir('cuda_gds')
+endif

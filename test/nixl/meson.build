@@ -30,12 +30,6 @@ desc_example = executable('desc_example',
            link_with: [serdes_lib],
            install: true)
 
-md_streamer = executable('md_streamer',
-            'metadata_streamer.cpp',
-            dependencies: [nixl_dep, cuda_dependencies, nixl_infra],
-            include_directories: [nixl_inc_dirs, utils_inc_dirs],
-            install: true)
-
 agent_example = executable('agent_example',
            'agent_example.cpp',
            dependencies: [nixl_dep, nixl_infra, ucx_backend_dep, ucx_dep] + cuda_dependencies,
