@@ -111,7 +111,8 @@ class nixlBackendEngine {
                                         const nixl_meta_dlist_t &remote,
                                         const std::string &remote_agent,
                                         nixlBackendReqH* &handle,
-                                        const nixl_blob_t &notif_msg=NIXL_NO_MSG)=0;
+                                        const nixl_opt_b_args_t* opt_args=nullptr
+                                       ) = 0;
 
         // Posting a request, which completes the async handle creation and posts it
         virtual nixl_status_t postXfer (const nixl_xfer_op_t &operation,
@@ -119,7 +120,8 @@ class nixlBackendEngine {
                                         const nixl_meta_dlist_t &remote,
                                         const std::string &remote_agent,
                                         nixlBackendReqH* &handle,
-                                        const nixl_blob_t &notif_msg=NIXL_NO_MSG)=0;
+                                        const nixl_opt_b_args_t* opt_args=nullptr
+                                       ) = 0;
 
         // Use a handle to progress backend engine and see if a transfer is completed or not
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) = 0;

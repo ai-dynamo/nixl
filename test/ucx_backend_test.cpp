@@ -303,11 +303,13 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
 
     std::string test_str("test");
     std::cout << "\t" << op2string(op) << " from " << addr1 << " to " << addr2 << "\n";
+    nixl_opt_b_args_t opt_args;
+    opt_args.notifMsg = test_str;
 
     // Posting a request, to be updated to return an async handler,
     // or an ID that later can be used to check the status as a new method
     // Also maybe we would remove the WRITE and let the backend class decide the op
-    ret3 = ucx1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, test_str);
+    ret3 = ucx1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
     assert( ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
 
 

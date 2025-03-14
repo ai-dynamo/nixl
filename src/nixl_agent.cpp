@@ -340,13 +340,18 @@ nixl_status_t nixlAgent::postXferReq(nixlXferReqH *req) {
     //     return NIXL_ERR_BAD;
     // }
 
+    nixl_opt_b_args_t opt_args;
+    if ((req->backendOp == NIXL_WR_NOTIF) ||
+        (req->backendOp == NIXL_RD_NOTIF))
+        opt_args.notifMsg = req->notifMsg;
+
     // If status is not NIXL_IN_PROG we can repost,
     ret = req->engine->postXfer (req->backendOp,
                                 *req->initiatorDescs,
                                 *req->targetDescs,
                                  req->remoteAgent,
                                  req->backendHandle,
-                                 req->notifMsg);
+                                 &opt_args);
     req->status = ret;
     return ret;
 }

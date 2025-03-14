@@ -200,23 +200,23 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &op,
+nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
-                                       const nixl_blob_t &notif_msg)
+                                       const nixl_opt_b_args_t* opt_args)
 {
     // TODO: Determine the batches and prepare most of the handle
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &op,
+nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
-                                       const nixl_blob_t &notif_msg)
+                                       const nixl_opt_b_args_t* opt_args)
 {
     void                *addr;
     size_t              size;
@@ -233,7 +233,7 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &op,
     nixlGdsBackendReqH  *gds_handle;
 
     if ((buf_cnt != file_cnt) ||
-            ((op != NIXL_READ) && (op != NIXL_WRITE)))  {
+            ((operation != NIXL_READ) && (operation != NIXL_WRITE)))  {
         std::cerr <<"Error in count or operation selection\n";
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -285,10 +285,10 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &op,
                         goto err_exit;
                     }
                 }
-                CUfileOpcode_t operation = (op == NIXL_READ) ?
+                CUfileOpcode_t op = (operation == NIXL_READ) ?
                                      CUFILE_READ : CUFILE_WRITE;
                 rc = batch_ios->addToBatch(fh.cu_fhandle, addr,
-                                     size, offset, 0, operation);
+                                           size, offset, 0, op);
                 if (rc != 0) {
                     ret = NIXL_ERR_BACKEND;
                     goto err_exit;

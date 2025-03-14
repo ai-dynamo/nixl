@@ -131,19 +131,19 @@ class nixlGdsEngine : public nixlBackendEngine {
                                   nixlBackendMD* &out);
         nixl_status_t deregisterMem (nixlBackendMD *meta);
 
-        nixl_status_t prepXfer (const nixl_xfer_op_t &op,
+        nixl_status_t prepXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_blob_t &notif_msg=NIXL_NO_MSG);
+                                const nixl_opt_b_args_t* opt_args=nullptr);
 
-        nixl_status_t postXfer (const nixl_xfer_op_t &op,
+        nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_blob_t &notif_msg=NIXL_NO_MSG);
+                                const nixl_opt_b_args_t* opt_args=nullptr);
 
         nixl_status_t checkXfer (nixlBackendReqH* handle);
         nixl_status_t releaseReqH(nixlBackendReqH* handle);

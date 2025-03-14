@@ -692,23 +692,23 @@ nixl_status_t nixlUcxEngine::retHelper(nixl_status_t ret, nixlUcxBckndReq *head,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &op,
+nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
-                                       const nixl_blob_t &notif_msg)
+                                       const nixl_opt_b_args_t* opt_args)
 {
     // No preprations needed
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &op,
+nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
-                                       const nixl_blob_t &notif_msg)
+                                       const nixl_opt_b_args_t* opt_args)
 {
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
@@ -739,7 +739,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &op,
 
         // TODO: remote_agent and msg should be cached in nixlUCxReq or another way
 
-        switch (op) {
+        switch (operation) {
         case NIXL_READ:
         case NIXL_RD_NOTIF:
             ret = uw->read(rmd->conn.ep, (uint64_t) raddr, rmd->rkey, laddr, lmd->mem, lsize, req);
@@ -763,10 +763,13 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &op,
         return ret;
     }
 
-    switch (op) {
+    switch (operation) {
         case NIXL_RD_NOTIF:
         case NIXL_WR_NOTIF:
-            ret = notifSendPriv(remote_agent, notif_msg, req);
+            if (opt_args==nullptr)
+                return NIXL_ERR_INVALID_PARAM;
+
+            ret = notifSendPriv(remote_agent, opt_args->notifMsg, req);
             if (retHelper(ret, head, req)) {
                 return ret;
             }
