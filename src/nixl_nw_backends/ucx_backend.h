@@ -206,6 +206,8 @@ class nixlUcxEngine : public nixlBackendEngine {
         bool supportsNotif () const { return true; }
         bool supportsProgTh () const { return pthrOn; }
 
+        nixl_status_t getSupportedMems (std::vector<nixl_mem_t> &mems) const;
+
         /* Object management */
         nixl_status_t getPublicData (const nixlBackendMD* meta,
                                      std::string &str) const;
@@ -231,18 +233,26 @@ class nixlUcxEngine : public nixlBackendEngine {
         nixl_status_t unloadMD (nixlBackendMD* input);
 
         // Data transfer
-        nixl_status_t postXfer (const nixl_meta_dlist_t &local,
+        nixl_status_t prepXfer (const nixl_xfer_op_t &op,
+                                const nixl_meta_dlist_t &local,
                                 const nixl_meta_dlist_t &remote,
-                                const nixl_xfer_op_t &op,
                                 const std::string &remote_agent,
-                                const std::string &notif_msg,
-                                nixlBackendReqH* &handle);
+                                nixlBackendReqH* &handle,
+                                const nixl_blob_t &notif_msg=NIXL_NO_MSG);
+
+        nixl_status_t postXfer (const nixl_xfer_op_t &op,
+                                const nixl_meta_dlist_t &local,
+                                const nixl_meta_dlist_t &remote,
+                                const std::string &remote_agent,
+                                nixlBackendReqH* &handle,
+                                const nixl_blob_t &notif_msg=NIXL_NO_MSG);
+
         nixl_status_t checkXfer (nixlBackendReqH* handle);
         nixl_status_t releaseReqH(nixlBackendReqH* handle);
 
         int progress();
 
-        nixl_status_t getNotifs(notif_list_t &notif_list, int &new_notifs);
+        nixl_status_t getNotifs(notif_list_t &notif_list);
         nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg);
 
         //public function for UCX worker to mark connections as connected

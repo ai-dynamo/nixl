@@ -20,11 +20,17 @@
 #include <string>
 #include <unordered_map>
 
-typedef std::string nixl_backend_t;
+// std::string supports \0 natively, So it can be looked as a void* of data,
+// with specified length. Giving it a new name to be clear in the API and
+// preventing users to think it's a string and call c_str().
 typedef std::string nixl_blob_t;
 
+typedef std::string nixl_backend_t;
 typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
 typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
+
+#define NIXL_NO_MSG     ""
+#define NIXL_INIT_AGENT ""
 
 //FILE_SEG must be last
 typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, FILE_SEG} nixl_mem_t;

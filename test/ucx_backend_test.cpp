@@ -307,7 +307,7 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
     // Posting a request, to be updated to return an async handler,
     // or an ID that later can be used to check the status as a new method
     // Also maybe we would remove the WRITE and let the backend class decide the op
-    ret3 = ucx1->postXfer(req_src_descs, req_dst_descs, op, remote_agent, test_str, handle);
+    ret3 = ucx1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, test_str);
     assert( ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
 
 
@@ -337,7 +337,8 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
             ret2 = 0;
 
             while(ret2 == 0){
-                ret3 = ucx2->getNotifs(target_notifs, ret2);
+                ret3 = ucx2->getNotifs(target_notifs);
+                ret2 = target_notifs.size();
                 assert(ret3 == NIXL_SUCCESS);
             }
 
@@ -530,7 +531,8 @@ void test_inter_agent_transfer(bool p_thread,
         nixl_status_t ret2;
 
         while(ret == 0){
-            ret2 = ucx2->getNotifs(target_notifs, ret);
+            ret2 = ucx2->getNotifs(target_notifs);
+            ret = target_notifs.size();
             assert(ret2 == NIXL_SUCCESS);
         }
 

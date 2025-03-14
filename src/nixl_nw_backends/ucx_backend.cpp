@@ -312,6 +312,12 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     progressThreadStart();
 }
 
+nixl_status_t nixlUcxEngine::getSupportedMems (std::vector<nixl_mem_t> &mems) const {
+    mems.push_back(DRAM_SEG);
+    mems.push_back(VRAM_SEG);
+    return NIXL_SUCCESS;
+}
+
 // Through parent destructor the unregister will be called.
 nixlUcxEngine::~nixlUcxEngine () {
     // per registered memory deregisters it, which removes the corresponding metadata too
@@ -686,12 +692,23 @@ nixl_status_t nixlUcxEngine::retHelper(nixl_status_t ret, nixlUcxBckndReq *head,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlUcxEngine::postXfer (const nixl_meta_dlist_t &local,
+nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &op,
+                                       const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
-                                       const nixl_xfer_op_t &op,
                                        const std::string &remote_agent,
-                                       const std::string &notif_msg,
-                                       nixlBackendReqH* &handle)
+                                       nixlBackendReqH* &handle,
+                                       const nixl_blob_t &notif_msg)
+{
+    // No preprations needed
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &op,
+                                       const nixl_meta_dlist_t &local,
+                                       const nixl_meta_dlist_t &remote,
+                                       const std::string &remote_agent,
+                                       nixlBackendReqH* &handle,
+                                       const nixl_blob_t &notif_msg)
 {
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
@@ -961,8 +978,7 @@ void nixlUcxEngine::notifProgress()
     notifProgressCombineHelper(notifPthrPriv, notifPthr);
 }
 
-nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list,
-                                       int &new_notifs)
+nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
 {
     if (notif_list.size()!=0)
         return NIXL_ERR_INVALID_PARAM;
@@ -972,7 +988,6 @@ nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list,
     notifCombineHelper(notifMainList, notif_list);
     notifProgressCombineHelper(notifPthr, notif_list);
 
-    new_notifs = notif_list.size();
     return NIXL_SUCCESS;
 }
 

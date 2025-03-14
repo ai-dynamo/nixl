@@ -246,10 +246,9 @@ PYBIND11_MODULE(_bindings, m) {
                     return agent.getXferStatus((nixlXferReqH*) reqh);
                 })
         .def("getNotifs", [](nixlAgent &agent, nixl_notifs_t notif_map) -> nixl_notifs_t {
-                    int n_new;
-                    nixl_status_t ret = agent.getNotifs(notif_map, n_new);
+                    nixl_status_t ret = agent.getNotifs(notif_map);
 
-                    if (ret != NIXL_SUCCESS || n_new == 0) return notif_map;
+                    if (ret != NIXL_SUCCESS || notif_map.size() == 0) return notif_map;
 
                     nixl_notifs_t ret_map;
                     for (const auto& pair : notif_map) {

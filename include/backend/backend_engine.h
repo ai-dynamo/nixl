@@ -85,6 +85,8 @@ class nixlBackendEngine {
         // Determines if a backend supports progress thread.
         virtual bool supportsProgTh () const = 0;
 
+        virtual nixl_status_t getSupportedMems (std::vector<nixl_mem_t> &mems) const = 0;
+
 
         // *** Pure virtual methods that need to be implemented by any backend *** //
 
@@ -103,13 +105,21 @@ class nixlBackendEngine {
         // Remove loaded local or remtoe metadata for target
         virtual nixl_status_t unloadMD (nixlBackendMD* input) = 0;
 
-        // Posting a request, which returns populates the async handle.
-        virtual nixl_status_t postXfer (const nixl_meta_dlist_t &local,
+        // Preparing a request, which populates the async handle as desired
+        virtual nixl_status_t prepXfer (const nixl_xfer_op_t &operation,
+                                        const nixl_meta_dlist_t &local,
                                         const nixl_meta_dlist_t &remote,
-                                        const nixl_xfer_op_t &operation,
                                         const std::string &remote_agent,
-                                        const std::string &notif_msg,
-                                        nixlBackendReqH* &handle) = 0;
+                                        nixlBackendReqH* &handle,
+                                        const nixl_blob_t &notif_msg=NIXL_NO_MSG)=0;
+
+        // Posting a request, which completes the async handle creation and posts it
+        virtual nixl_status_t postXfer (const nixl_xfer_op_t &operation,
+                                        const nixl_meta_dlist_t &local,
+                                        const nixl_meta_dlist_t &remote,
+                                        const std::string &remote_agent,
+                                        nixlBackendReqH* &handle,
+                                        const nixl_blob_t &notif_msg=NIXL_NO_MSG)=0;
 
         // Use a handle to progress backend engine and see if a transfer is completed or not
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) = 0;
@@ -122,10 +132,14 @@ class nixlBackendEngine {
 
         // Gets serialized form of public metadata
         virtual nixl_status_t getPublicData (const nixlBackendMD* meta,
-                                             std::string &str) const { return NIXL_ERR_BACKEND; };
+                                             std::string &str) const {
+            return NIXL_ERR_BACKEND;
+        };
 
         // Provide the required connection info for remote nodes, should be non-empty
-        virtual nixl_status_t getConnInfo(std::string &str) const { return NIXL_ERR_BACKEND; }
+        virtual nixl_status_t getConnInfo(std::string &str) const {
+            return NIXL_ERR_BACKEND;
+        }
 
         // Deserialize from string the connection info for a remote node, if supported
         // The generated data should be deleted in nixlBackendEngine destructor
@@ -155,7 +169,7 @@ class nixlBackendEngine {
         // *** Needs to be implemented if supportsNotif() is true *** //
 
         // Populate an empty received notif list. Elements are released within backend then.
-        virtual nixl_status_t getNotifs(notif_list_t &notif_list, int &count) { return NIXL_ERR_BACKEND; }
+        virtual nixl_status_t getNotifs(notif_list_t &notif_list) { return NIXL_ERR_BACKEND; }
 
         // Generates a standalone notification, not bound to a transfer.
         virtual nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) {

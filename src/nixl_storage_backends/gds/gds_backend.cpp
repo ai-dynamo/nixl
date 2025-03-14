@@ -200,12 +200,23 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
+nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &op,
+                                       const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
-                                       const nixl_xfer_op_t &operation,
                                        const std::string &remote_agent,
-                                       const std::string &notif_msg,
-                                       nixlBackendReqH* &handle)
+                                       nixlBackendReqH* &handle,
+                                       const nixl_blob_t &notif_msg)
+{
+    // TODO: Determine the batches and prepare most of the handle
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &op,
+                                       const nixl_meta_dlist_t &local,
+                                       const nixl_meta_dlist_t &remote,
+                                       const std::string &remote_agent,
+                                       nixlBackendReqH* &handle,
+                                       const nixl_blob_t &notif_msg)
 {
     void                *addr;
     size_t              size;
@@ -214,15 +225,15 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
     size_t              buf_cnt  = local.descCount();
     size_t              file_cnt = remote.descCount();
     nixl_status_t       ret = NIXL_ERR_NOT_POSTED;
-    int            full_batches = 1;
-    int            total_batches = 1;
-    int            remainder = 0;
-    int            curr_buf_cnt = 0;
+    int                 full_batches = 1;
+    int                 total_batches = 1;
+    int                 remainder = 0;
+    int                 curr_buf_cnt = 0;
     gdsFileHandle       fh;
     nixlGdsBackendReqH  *gds_handle;
 
     if ((buf_cnt != file_cnt) ||
-            ((operation != NIXL_READ) && (operation != NIXL_WRITE)))  {
+            ((op != NIXL_READ) && (op != NIXL_WRITE)))  {
         std::cerr <<"Error in count or operation selection\n";
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -247,8 +258,8 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
             remainder;
             nixlGdsIOBatch *batch_ios = new nixlGdsIOBatch(req_cnt);
             for (int i = curr_buf_cnt;
-         i < (curr_buf_cnt + req_cnt);
-         i++) {
+                     i < (curr_buf_cnt + req_cnt);
+                     i++) {
                 if (local.getType() == VRAM_SEG) {
                     addr = (void *) local[i].addr;
                     size = local[i].len;
@@ -274,10 +285,10 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_meta_dlist_t &local,
                         goto err_exit;
                     }
                 }
-                CUfileOpcode_t op = (operation == NIXL_READ) ?
+                CUfileOpcode_t operation = (op == NIXL_READ) ?
                                      CUFILE_READ : CUFILE_WRITE;
                 rc = batch_ios->addToBatch(fh.cu_fhandle, addr,
-                                           size, offset, 0, op);
+                                     size, offset, 0, operation);
                 if (rc != 0) {
                     ret = NIXL_ERR_BACKEND;
                     goto err_exit;
