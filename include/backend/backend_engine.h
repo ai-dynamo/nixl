@@ -102,15 +102,15 @@ class nixlBackendEngine {
         virtual nixl_status_t unloadMD (nixlBackendMD* input) = 0;
 
         // Posting a request, which returns populates the async handle.
-        virtual nixl_xfer_state_t postXfer (const nixl_meta_dlist_t &local,
-                                            const nixl_meta_dlist_t &remote,
-                                            const nixl_xfer_op_t &operation,
-                                            const std::string &remote_agent,
-                                            const std::string &notif_msg,
-                                            nixlBackendReqH* &handle) = 0;
+        virtual nixl_status_t postXfer (const nixl_meta_dlist_t &local,
+                                        const nixl_meta_dlist_t &remote,
+                                        const nixl_xfer_op_t &operation,
+                                        const std::string &remote_agent,
+                                        const std::string &notif_msg,
+                                        nixlBackendReqH* &handle) = 0;
 
         // Use a handle to progress backend engine and see if a transfer is completed or not
-        virtual nixl_xfer_state_t checkXfer(nixlBackendReqH* handle) = 0;
+        virtual nixl_status_t checkXfer(nixlBackendReqH* handle) = 0;
 
         //Backend aborts the transfer if necessary, and destructs the relevant objects
         virtual void releaseReqH(nixlBackendReqH* handle) = 0;

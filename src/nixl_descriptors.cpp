@@ -158,7 +158,7 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
     if (str.size()==0)
         return;
 
-    // nixlMetaDesc should be internall and not be serialized
+    // nixlMetaDesc should be internal and not be serialized
     if ((str == "nixlMDList") || (std::is_same<nixlMetaDesc, T>::value))
         return;
 
@@ -370,7 +370,7 @@ nixl_status_t nixlDescList<T>::populate (const nixlDescList<nixlBasicDesc> &quer
             return NIXL_SUCCESS;
         } else {
             resp.clear();
-            return NIXL_ERR_BAD;
+            return NIXL_ERR_UNKNOWN;
         }
     } else {
         if (q_sorted) {
@@ -391,7 +391,7 @@ nixl_status_t nixlDescList<T>::populate (const nixlDescList<nixlBasicDesc> &quer
                     // if ((descAddrCompare(*q, descs[s_index], unifiedAddr)) ||
                     if (s_index==size) {
                         resp.clear();
-                        return NIXL_ERR_BAD;
+                        return NIXL_ERR_UNKNOWN;
                     }
                 }
             }
@@ -427,7 +427,7 @@ nixl_status_t nixlDescList<T>::populate (const nixlDescList<nixlBasicDesc> &quer
                     resp.descs[i] = new_elm;
                 } else {
                     resp.clear();
-                    return NIXL_ERR_BAD;
+                    return NIXL_ERR_UNKNOWN;
                 }
             }
             resp.sorted = query.isSorted(); // Update as resize resets it
@@ -457,18 +457,18 @@ int nixlDescList<T>::getIndex(const nixlBasicDesc &query) const {
     if (!sorted) {
         auto itr = std::find(descs.begin(), descs.end(), query);
         if (itr == descs.end())
-            return -1; // not found
+            return NIXL_ERR_NOT_FOUND; // not found
         return itr - descs.begin();
     } else {
         auto itr = std::lower_bound(descs.begin(), descs.end(),
                                     query, desc_comparator_f);
         if (itr == descs.end())
-            return -1; // not found
+            return NIXL_ERR_NOT_FOUND; // not found
         // As desired, becomes nixlBasicDesc on both sides
         if (*itr == query)
             return itr - descs.begin();
     }
-    return -1;
+    return NIXL_ERR_NOT_FOUND;
 }
 
 template <class T>
@@ -477,7 +477,7 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     nixl_status_t ret;
     size_t n_desc = descs.size();
 
-    // nixlMetaDesc should be internall and not be serialized
+    // nixlMetaDesc should be internal and not be serialized
     if(std::is_same<nixlMetaDesc, T>::value)
         return NIXL_ERR_INVALID_PARAM;
 

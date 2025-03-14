@@ -238,21 +238,21 @@ class nixl_agent:
 
     def transfer(self, handle):
         status = self.agent.postXferReq(handle)
-        if status == nixlBind.NIXL_XFER_ERR:
-            return "ERR"
-        elif status != nixlBind.NIXL_XFER_DONE:
+        if status == nixlBind.NIXL_SUCCESS:
+            return "DONE"
+        elif status == nixlBind.NIXL_IN_PROG:
             return "PROC"
         else:
-            return "DONE"
+            return "ERR"
 
     def check_xfer_state(self, handle):
         status = self.agent.getXferStatus(handle)
-        if status == nixlBind.NIXL_XFER_ERR:
-            return "ERR"
-        elif status != nixlBind.NIXL_XFER_DONE:
+        if status == nixlBind.NIXL_SUCCESS:
+            return "DONE"
+        elif status == nixlBind.NIXL_IN_PROG:
             return "PROC"
         else:
-            return "DONE"
+            return "ERR"
 
     # Only removes the specific notification from self.notifs
     def check_remote_xfer_done(self, remote_agent_name, lookup_msg):

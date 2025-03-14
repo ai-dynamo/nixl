@@ -155,7 +155,7 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_meta_dlist_t &mem_elms,
         // registering back what was deregistered is not meaningful.
         // Can be secured by going through all the list then deregister
         if (index<0)
-            return NIXL_ERR_BAD;
+            return NIXL_ERR_UNKNOWN;
 
         backend->deregisterMem
             ((*(const nixl_meta_dlist_t*)target)[index].metadataP);
@@ -242,7 +242,7 @@ nixl_status_t nixlRemoteSection::addDescList (
                                  const nixl_reg_dlist_t& mem_elms,
                                  nixlBackendEngine* backend) {
     if (!backend->supportsRemote())
-        return NIXL_ERR_BAD;
+        return NIXL_ERR_UNKNOWN;
 
     // Less checks than LocalSection, as it's private and called by loadRemoteData
     // In RemoteSection, if we support updates, value for a key gets overwritten
@@ -293,7 +293,7 @@ nixl_status_t nixlRemoteSection::loadRemoteData (nixlSerDes* deserializer) {
             return NIXL_ERR_INVALID_PARAM;
         nixl_reg_dlist_t s_desc(deserializer);
         if (s_desc.descCount()==0) // can be used for entry removal in future
-            return NIXL_ERR_NYI;
+            return NIXL_ERR_NOT_FOUND;
         ret = addDescList(s_desc, backendToEngineMap[nixl_backend]);
         if (ret) return ret;
     }
@@ -305,7 +305,7 @@ nixl_status_t nixlRemoteSection::loadLocalData (
                                  nixlBackendEngine* backend) {
 
     if (mem_elms.descCount()==0) // Shouldn't happen
-        return NIXL_ERR_BAD;
+        return NIXL_ERR_UNKNOWN;
 
     nixl_mem_t     nixl_mem     = mem_elms.getType();
     nixl_backend_t nixl_backend = backend->getType();

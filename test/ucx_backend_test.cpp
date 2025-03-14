@@ -133,7 +133,7 @@ void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
         checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
         checkCudaError(cudaMalloc(&addr, len), "Failed to allocate CUDA buffer 0");
         cudaQueryAddr(addr, is_dev, dev, ctx);
-        std::cout << "CUDA addr: " << std::hex << addr << " dev=" << std::dec << dev 
+        std::cout << "CUDA addr: " << std::hex << addr << " dev=" << std::dec << dev
             << " ctx=" << std::hex << ctx << std::dec << std::endl;
         break;
     }
@@ -289,11 +289,11 @@ static string op2string(nixl_xfer_op_t op)
 void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
                      nixl_meta_dlist_t &req_src_descs,
                      nixl_meta_dlist_t &req_dst_descs,
-                     void* addr1, void* addr2, size_t len, 
+                     void* addr1, void* addr2, size_t len,
                      nixl_xfer_op_t op, bool progress_ucx2)
 {
     int ret2;
-    nixl_xfer_state_t ret3;
+    nixl_status_t ret3;
     nixlBackendReqH* handle;
     void *chkptr1, *chkptr2;
 
@@ -308,20 +308,20 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
     // or an ID that later can be used to check the status as a new method
     // Also maybe we would remove the WRITE and let the backend class decide the op
     ret3 = ucx1->postXfer(req_src_descs, req_dst_descs, op, remote_agent, test_str, handle);
-    assert( ret3 == NIXL_XFER_DONE || ret3 == NIXL_XFER_PROC);
+    assert( ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
 
 
-    if (ret3 == NIXL_XFER_DONE) {
-        cout << "\t\tWARNING: Tansfer request completed immmediately - no testing non-inline path" << endl;
+    if (ret3 == NIXL_SUCCESS) {
+        cout << "\t\tWARNING: Tansfer request completed immediately - no testing non-inline path" << endl;
     } else {
         cout << "\t\tNOTE: Testing non-inline Transfer path!" << endl;
 
-        while(ret3 == NIXL_XFER_PROC) {
+        while(ret3 == NIXL_IN_PROG) {
             ret3 = ucx1->checkXfer(handle);
             if(progress_ucx2){
                 ucx2->progress();
             }
-            assert( ret3 == NIXL_XFER_DONE || ret3 == NIXL_XFER_PROC);
+            assert( ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
         }
         ucx1->releaseReqH(handle);
     }
@@ -359,7 +359,7 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
 
     // Perform correctness check.
     for(size_t i = 0; i < len; i++){
-        assert( ((uint8_t*) chkptr1)[i] == ((uint8_t*) chkptr2)[i]);    
+        assert( ((uint8_t*) chkptr1)[i] == ((uint8_t*) chkptr2)[i]);
     }
 
     releaseValidationPtr(req_src_descs.getType(), chkptr1);
@@ -373,7 +373,7 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t
 
     std::cout << std::endl << std::endl;
     std::cout << "****************************************************" << std::endl;
-    std::cout << "   Intra-agent memory transfer test: " << 
+    std::cout << "   Intra-agent memory transfer test: " <<
             "P-Thr=" << (p_thread ? "ON" : "OFF") << ", " << memType2Str(mem_type) << std::endl;
     std::cout << "****************************************************" << std::endl;
     std::cout << std::endl << std::endl;
@@ -382,7 +382,7 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t
     nixl_status_t ret1;
 
     int iter = 10;
-    
+
     assert(ucx->supportsLocal());
 
     //connection info is still a string
@@ -393,9 +393,9 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t
     std::cout << "Local connection complete\n";
 
     // Number of transfer descriptors
-    int desc_cnt = 16; 
-    // Size of a single descriptor 
-    size_t desc_size = 32 * 1024 * 1024; 
+    int desc_cnt = 16;
+    // Size of a single descriptor
+    size_t desc_size = 32 * 1024 * 1024;
     size_t len = desc_cnt * desc_size;
 
     void *addr1, *addr2;
@@ -403,7 +403,7 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t
     allocateAndRegister(ucx, 0, mem_type, addr1, len, lmd1);
     allocateAndRegister(ucx, 0, mem_type, addr2, len, lmd2);
 
-    //string descs unneccessary, convert meta locally
+    //string descs unnecessary, convert meta locally
     nixlBackendMD* rmd2;
     ret1 = ucx->loadLocalMD (lmd2, rmd2);
     assert(ret1 == NIXL_SUCCESS);
@@ -422,7 +422,7 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t
             /* Init data */
             doMemset(mem_type, 0, addr1, 0xbb, len);
             doMemset(mem_type, 0, addr2, 0, len);
-        
+
             /* Test */
             performTransfer(ucx, ucx, req_src_descs, req_dst_descs,
                                  addr1, addr2, len, ops[i], p_thread);
@@ -436,7 +436,7 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t
     ucx->disconnect(agent1);
 }
 
-void test_inter_agent_transfer(bool p_thread, 
+void test_inter_agent_transfer(bool p_thread,
                                 nixlBackendEngine *ucx1, nixl_mem_t src_mem_type, int src_dev_id,
                                 nixlBackendEngine *ucx2, nixl_mem_t dst_mem_type, int dst_dev_id)
 {
@@ -445,9 +445,9 @@ void test_inter_agent_transfer(bool p_thread,
 
     std::cout << std::endl << std::endl;
     std::cout << "****************************************************" << std::endl;
-    std::cout << "    Inter-agent memory transfer test P-Thr=" <<          
+    std::cout << "    Inter-agent memory transfer test P-Thr=" <<
                         (p_thread ? "ON" : "OFF") << std::endl;
-    std::cout << "         (" << memType2Str(src_mem_type) << " -> " 
+    std::cout << "         (" << memType2Str(src_mem_type) << " -> "
                 << memType2Str(dst_mem_type) << ")" << std::endl;
     std::cout << "****************************************************" << std::endl;
     std::cout << std::endl << std::endl;
@@ -465,16 +465,16 @@ void test_inter_agent_transfer(bool p_thread,
     // We assumed we put them to central location and now receiving it on the other process
     ret = ucx1->loadRemoteConnInfo (agent2, conn_info2);
     assert(ret == NIXL_SUCCESS);
-    
+
     // TODO: Causes race condition - investigate conn management implementation
     // ret = ucx2->loadRemoteConnInfo (agent1, conn_info1);
 
     std::cout << "Synchronous handshake complete\n";
 
     // Number of transfer descriptors
-    int desc_cnt = 16; 
-    // Size of a single descriptor 
-    size_t desc_size = 32 * 1024 * 1024; 
+    int desc_cnt = 16;
+    // Size of a single descriptor
+    size_t desc_size = 32 * 1024 * 1024;
     size_t len = desc_cnt * desc_size;
 
     void *addr1 = NULL, *addr2 = NULL;
@@ -500,7 +500,7 @@ void test_inter_agent_transfer(bool p_thread,
             /* Init data */
             doMemset(src_mem_type, src_dev_id, addr1, 0xbb, len);
             doMemset(dst_mem_type, dst_dev_id, addr2, 0xda, len);
-        
+
             /* Test */
             performTransfer(ucx1, ucx2, req_src_descs, req_dst_descs,
                             addr1, addr2, len, ops[i], !p_thread);
@@ -541,7 +541,7 @@ void test_inter_agent_transfer(bool p_thread,
     // Release memory regions
     deallocateAndDeregister(ucx1, src_dev_id, src_mem_type, addr1, lmd1);
     deallocateAndDeregister(ucx2, dst_dev_id, dst_mem_type, addr2, lmd2);
-    
+
     // Test one-sided disconnect (initiator only)
     ucx1->disconnect(agent2);
 
@@ -586,7 +586,7 @@ int main()
     }
 
     for(int i = 0; i < 2; i++) {
-        test_inter_agent_transfer(thread_on[i], 
+        test_inter_agent_transfer(thread_on[i],
                                 ucx[i][0], DRAM_SEG, 0,
                                 ucx[i][1], DRAM_SEG, 0);
 #ifdef USE_VRAM

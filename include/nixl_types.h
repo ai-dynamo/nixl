@@ -28,21 +28,20 @@ typedef std::string nixl_backend_t;
 //FILE_SEG must be last
 typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, FILE_SEG} nixl_mem_t;
 
-typedef enum {NIXL_XFER_INIT, NIXL_XFER_PROC,
-              NIXL_XFER_DONE, NIXL_XFER_ERR} nixl_xfer_state_t;
-
 typedef enum {NIXL_READ,  NIXL_RD_NOTIF,
               NIXL_WRITE, NIXL_WR_NOTIF} nixl_xfer_op_t;
 
 typedef enum {
+    NIXL_IN_PROG = 1,
     NIXL_SUCCESS = 0,
-    NIXL_ERR_INVALID_PARAM = -1,
-    NIXL_ERR_BACKEND = -2,
-    NIXL_ERR_NOT_FOUND = -3,
-    NIXL_ERR_NYI = -4,
+    NIXL_ERR_NOT_POSTED = -1,
+    NIXL_ERR_INVALID_PARAM = -2,
+    NIXL_ERR_BACKEND = -3,
+    NIXL_ERR_NOT_FOUND = -4,
     NIXL_ERR_MISMATCH = -5,
-    NIXL_ERR_BAD = -6,
-    NIXL_ERR_NOT_ALLOWED = -7
+    NIXL_ERR_NOT_ALLOWED = -6,
+    NIXL_ERR_REPOST_ACTIVE = -7,
+    NIXL_ERR_UNKNOWN = -8
 } nixl_status_t;
 
 class nixlSerDes;

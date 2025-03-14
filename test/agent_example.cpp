@@ -238,11 +238,11 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     status = A1->makeXferReq(src_side, indices1, dst_side, indices1, "", NIXL_WRITE, req1);
     assert(status == NIXL_SUCCESS);
 
-    nixl_xfer_state_t xfer_status = A1->postXferReq(req1);
+    nixl_status_t xfer_status = A1->postXferReq(req1);
 
-    while(xfer_status != NIXL_XFER_DONE) {
-        if(xfer_status != NIXL_XFER_DONE) xfer_status = A1->getXferStatus(req1);
-        assert(xfer_status != NIXL_XFER_ERR);
+    while(xfer_status != NIXL_SUCCESS) {
+        if(xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req1);
+        assert(xfer_status >= 0);
     }
 
     for(int i = 0; i<(n_bufs/2); i++)
@@ -256,9 +256,9 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     xfer_status = A1->postXferReq(req2);
 
-    while(xfer_status != NIXL_XFER_DONE) {
-        if(xfer_status != NIXL_XFER_DONE) xfer_status = A1->getXferStatus(req2);
-        assert(xfer_status != NIXL_XFER_ERR);
+    while(xfer_status != NIXL_SUCCESS) {
+        if(xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req2);
+        assert(xfer_status >= 0);
     }
 
     for(int i = (n_bufs/2); i<n_bufs; i++)
@@ -272,9 +272,9 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     xfer_status = A1->postXferReq(req3);
 
-    while(xfer_status != NIXL_XFER_DONE) {
-        if(xfer_status != NIXL_XFER_DONE) xfer_status = A1->getXferStatus(req3);
-        assert(xfer_status != NIXL_XFER_ERR);
+    while(xfer_status != NIXL_SUCCESS) {
+        if(xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req3);
+        assert(xfer_status >= 0);
     }
 
     for(int i = (n_bufs/2); i<n_bufs; i++)
@@ -421,17 +421,17 @@ int main()
     ret1 = A1.createXferReq(req_src_descs, req_dst_descs, agent2, "notification", NIXL_WR_NOTIF, req_handle);
     assert(ret1 == NIXL_SUCCESS);
 
-    nixl_xfer_state_t status = A1.postXferReq(req_handle);
+    nixl_status_t status = A1.postXferReq(req_handle);
 
     std::cout << "Transfer was posted\n";
 
     nixl_notifs_t notif_map;
     int n_notifs = 0;
 
-    while(status != NIXL_XFER_DONE || n_notifs == 0) {
-        if(status != NIXL_XFER_DONE) status = A1.getXferStatus(req_handle);
+    while(status != NIXL_SUCCESS || n_notifs == 0) {
+        if(status != NIXL_SUCCESS) status = A1.getXferStatus(req_handle);
         if(n_notifs == 0) n_notifs = A2.getNotifs(notif_map);
-        assert(status != NIXL_XFER_ERR);
+        assert(status >= 0);
         assert(n_notifs >= 0);
     }
 
@@ -454,10 +454,10 @@ int main()
     status = A1.postXferReq(req_handle2);
     std::cout << "Local transfer was posted\n";
 
-    while(status != NIXL_XFER_DONE || n_notifs == 0) {
-        if(status != NIXL_XFER_DONE) status = A1.getXferStatus(req_handle2);
+    while(status != NIXL_SUCCESS || n_notifs == 0) {
+        if(status != NIXL_SUCCESS) status = A1.getXferStatus(req_handle2);
         if(n_notifs == 0) n_notifs = A1.getNotifs(notif_map);
-        assert(status != NIXL_XFER_ERR);
+        assert(status >= 0);
         assert(n_notifs >= 0);
     }
 

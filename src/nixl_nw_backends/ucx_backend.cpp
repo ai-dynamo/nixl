@@ -427,7 +427,7 @@ nixlUcxEngine::connectionTermAmCb (void *arg, const void *header,
 nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
     struct nixl_ucx_am_hdr hdr;
     uint32_t flags = 0;
-    nixl_xfer_state_t ret;
+    nixl_status_t ret;
     nixlUcxReq req;
 
     if (remote_agent == localAgent)
@@ -451,12 +451,12 @@ nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
                      (void*) localAgent.data(), localAgent.size(),
                      flags, req);
 
-    if(ret == NIXL_XFER_ERR) {
-        return NIXL_ERR_BACKEND;
+    if(ret < 0) {
+        return ret;
     }
 
     //wait for AM to send
-    while(ret == NIXL_XFER_PROC){
+    while(ret == NIXL_IN_PROG){
         ret = uw->test(req);
     }
 
@@ -467,7 +467,7 @@ nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
 
     static struct nixl_ucx_am_hdr hdr;
     uint32_t flags = 0;
-    nixl_xfer_state_t ret;
+    nixl_status_t ret;
     nixlUcxReq req;
 
     if (remote_agent != localAgent) {
@@ -489,7 +489,7 @@ nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
                         flags, req);
 
         //don't care
-        if(ret == NIXL_XFER_PROC){
+        if(ret == NIXL_IN_PROG){
             uw->reqRelease(req);
         }
     }
@@ -663,14 +663,14 @@ nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
  * Data movement
 *****************************************/
 
-nixl_status_t nixlUcxEngine::retHelper(nixl_xfer_state_t ret, nixlUcxBckndReq *head, nixlUcxReq &req)
+nixl_status_t nixlUcxEngine::retHelper(nixl_status_t ret, nixlUcxBckndReq *head, nixlUcxReq &req)
 {
     /* if transfer wasn't immediately completed */
     switch(ret) {
-        case NIXL_XFER_PROC:
+        case NIXL_IN_PROG:
             head->link((nixlUcxBckndReq*)req);
             break;
-        case NIXL_XFER_DONE:
+        case NIXL_SUCCESS:
             // Nothing to do
             break;
         default:
@@ -683,17 +683,17 @@ nixl_status_t nixlUcxEngine::retHelper(nixl_xfer_state_t ret, nixlUcxBckndReq *h
     return NIXL_SUCCESS;
 }
 
-nixl_xfer_state_t nixlUcxEngine::postXfer (const nixl_meta_dlist_t &local,
-                                           const nixl_meta_dlist_t &remote,
-                                           const nixl_xfer_op_t &op,
-                                           const std::string &remote_agent,
-                                           const std::string &notif_msg,
-                                           nixlBackendReqH* &handle)
+nixl_status_t nixlUcxEngine::postXfer (const nixl_meta_dlist_t &local,
+                                       const nixl_meta_dlist_t &remote,
+                                       const nixl_xfer_op_t &op,
+                                       const std::string &remote_agent,
+                                       const std::string &notif_msg,
+                                       nixlBackendReqH* &handle)
 {
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
     size_t i;
-    nixl_xfer_state_t ret;
+    nixl_status_t ret;
     nixlUcxBckndReq dummy, *head = new (&dummy) nixlUcxBckndReq;
     nixlUcxPrivateMetadata *lmd;
     nixlUcxPublicMetadata *rmd;
@@ -701,7 +701,7 @@ nixl_xfer_state_t nixlUcxEngine::postXfer (const nixl_meta_dlist_t &local,
 
 
     if (lcnt != rcnt) {
-        return NIXL_XFER_ERR;
+        return NIXL_ERR_INVALID_PARAM;
     }
 
     for(i = 0; i < lcnt; i++) {
@@ -714,8 +714,7 @@ nixl_xfer_state_t nixlUcxEngine::postXfer (const nixl_meta_dlist_t &local,
         rmd = (nixlUcxPublicMetadata*) remote[i].metadataP;
 
         if (lsize != rsize) {
-            // TODO: err output
-            return NIXL_XFER_ERR;
+            return NIXL_ERR_INVALID_PARAM;
         }
 
         // TODO: remote_agent and msg should be cached in nixlUCxReq or another way
@@ -730,7 +729,7 @@ nixl_xfer_state_t nixlUcxEngine::postXfer (const nixl_meta_dlist_t &local,
             ret = uw->write(rmd->conn.ep, laddr, lmd->mem, (uint64_t) raddr, rmd->rkey, lsize, req);
             break;
         default:
-            return NIXL_XFER_ERR;
+            return NIXL_ERR_INVALID_PARAM;
         }
 
         if (retHelper(ret, head, req)) {
@@ -756,43 +755,41 @@ nixl_xfer_state_t nixlUcxEngine::postXfer (const nixl_meta_dlist_t &local,
         case NIXL_READ:
             break;
         default:
-            return NIXL_XFER_ERR;
+            return NIXL_ERR_INVALID_PARAM;
     }
 
     handle = head->next();
-    return (NULL ==  head->next()) ? NIXL_XFER_DONE : NIXL_XFER_PROC;
+    return (NULL ==  head->next()) ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
-nixl_xfer_state_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
+nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
 {
     nixlUcxBckndReq *head = (nixlUcxBckndReq *)handle;
     nixlUcxBckndReq *req = head;
-    nixl_xfer_state_t out_ret = NIXL_XFER_DONE;
+    nixl_status_t out_ret = NIXL_SUCCESS;
 
     /* If transfer has returned DONE - no check transfer */
     if (NULL == head) {
         /* Nothing to do */
-        return NIXL_XFER_ERR;
+        return NIXL_ERR_INVALID_PARAM;
     }
 
     /* Go over all request updating their status */
     while(req) {
-        nixl_xfer_state_t ret;
+        nixl_status_t ret;
         if (!req->is_complete()) {
             ret = uw->test((nixlUcxReq)req);
             switch (ret) {
-                case NIXL_XFER_DONE:
+                case NIXL_SUCCESS:
                     /* Mark as completed */
                     req->completed();
                     break;
-                case NIXL_XFER_ERR:
-                    return ret;
-                case NIXL_XFER_PROC:
-                    out_ret = NIXL_XFER_PROC;
+                case NIXL_IN_PROG:
+                    out_ret = NIXL_IN_PROG;
                     break;
                 default:
-                    /* Any other ret value is unexpected */
-                    return NIXL_XFER_ERR;
+                    /* Any other ret value is ERR and will be returned */
+                    return ret;
             }
         }
         req = req->next();
@@ -853,8 +850,8 @@ int nixlUcxEngine::progress() {
 *****************************************/
 
 //agent will provide cached msg
-nixl_xfer_state_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
-                                               const std::string &msg, nixlUcxReq &req)
+nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
+                                           const std::string &msg, nixlUcxReq &req)
 {
     nixlSerDes ser_des;
     std::string *ser_msg;
@@ -862,13 +859,13 @@ nixl_xfer_state_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     // TODO - temp fix, need to have an mpool
     static struct nixl_ucx_am_hdr hdr;
     uint32_t flags = 0;
-    nixl_xfer_state_t ret;
+    nixl_status_t ret;
 
     auto search = remoteConnMap.find(remote_agent);
 
     if(search == remoteConnMap.end()) {
         //TODO: err: remote connection not found
-        return NIXL_XFER_ERR;
+        return NIXL_ERR_NOT_FOUND;
     }
 
     conn = remoteConnMap[remote_agent];
@@ -886,7 +883,7 @@ nixl_xfer_state_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                      (void*) ser_msg->data(), ser_msg->size(),
                      flags, req);
 
-    if (ret == NIXL_XFER_PROC) {
+    if (ret == NIXL_IN_PROG) {
         nixlUcxBckndReq* nReq = (nixlUcxBckndReq*)req;
         nReq->amBuffer = ser_msg;
     }
@@ -975,24 +972,20 @@ int nixlUcxEngine::getNotifs(notif_list_t &notif_list)
 
 nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
 {
-    nixl_xfer_state_t ret;
+    nixl_status_t ret;
     nixlUcxReq req;
 
     ret = notifSendPriv(remote_agent, msg, req);
 
     switch(ret) {
-    case NIXL_XFER_PROC:
+    case NIXL_IN_PROG:
         /* do not track the request */
         uw->reqRelease(req);
-    case NIXL_XFER_DONE:
+    case NIXL_SUCCESS:
         break;
-    case NIXL_XFER_ERR:
-        // TODO output the error cause
-        return NIXL_ERR_BACKEND;
     default:
-        /* Should not happen */
-        assert(0);
-        return NIXL_ERR_BAD;
+        /* error case */
+        return ret;
     }
     return NIXL_SUCCESS;
 }

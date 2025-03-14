@@ -65,10 +65,10 @@ class nixlAgent {
                                      const nixlBackendH* backend = nullptr) const;
 
         // Submit a transfer request, which populates the req async handler.
-        nixl_xfer_state_t postXferReq (nixlXferReqH* req);
+        nixl_status_t postXferReq (nixlXferReqH* req);
 
         // Check the status of transfer requests
-        nixl_xfer_state_t getXferStatus (nixlXferReqH* req);
+        nixl_status_t getXferStatus (nixlXferReqH* req);
 
         // Invalidate transfer request if we no longer need it.
         // Will also abort a running transfer.
