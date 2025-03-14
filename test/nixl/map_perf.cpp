@@ -23,7 +23,7 @@
 
 #include <sys/time.h>
 
-#include "str_tools.h"
+#include "common/str_tools.h"
 
 std::string generate_random_string(size_t length) {
     const std::string characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";

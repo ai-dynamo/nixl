@@ -17,11 +17,11 @@
 
 #include <iostream>
 #include "nixl.h"
-#include "serdes.h"
+#include "serdes/serdes.h"
 #include "backend/backend_engine.h"
-#include "internal/transfer_request.h"
-#include "internal/agent_data.h"
-#include "internal/plugin_manager.h"
+#include "transfer_request.h"
+#include "agent_data.h"
+#include "plugin_manager.h"
 
 nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :

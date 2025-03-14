@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = declare_dependency(link_with: ucx_utils_lib, include_directories: inc_dir)
-nixl_dep = declare_dependency(link_with: nixl_infra, include_directories: inc_dir)
+ucx_utils_dep = declare_dependency(link_with: ucx_utils_lib, include_directories: utils_inc_dirs )
+nixl_dep = declare_dependency(link_with: nixl_infra, include_directories: nixl_inc_dirs)
 
 compile_flags = []
 if cuda_dep.found()
@@ -33,7 +33,7 @@ else
     ucx_backend_lib = shared_library('UCX',
                'ucx_backend.cpp', 'ucx_backend.h', 'ucx_plugin.cpp',
                dependencies: [ucx_utils_dep, nixl_dep, serdes_interface, cuda_dep, ucx_dep],
-               include_directories: inc_dir,
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries

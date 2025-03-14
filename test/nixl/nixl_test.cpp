@@ -21,8 +21,8 @@
 #include <nixl_params.h>
 #include <nixl.h>
 #include <cassert>
-#include "internal/metadata_stream.h"
-#include "utils/serdes/serdes.h"
+#include "metadata_stream.h"
+#include "serdes.h"
 #define NUM_TRANSFERS 1
 #define SIZE 1024
 

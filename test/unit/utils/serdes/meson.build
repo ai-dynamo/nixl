@@ -17,7 +17,7 @@ if get_option('buildtype') != 'release'
 
   serdes_test_bin = executable('serdes_test',
              'serdes_test.cpp',
-             include_directories: inc_dir,
+             include_directories: [nixl_inc_dirs, utils_inc_dirs],
              link_with: serdes_lib,
              install: true)
 endif

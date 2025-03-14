@@ -20,7 +20,7 @@
 #include <cstring>
 #include <iostream>
 
-#include "ucx_utils.h"
+#include "ucx/ucx_utils.h"
 
 //TODO: meson conditional build for CUDA
 //#define USE_VRAM

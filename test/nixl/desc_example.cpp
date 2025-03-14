@@ -18,7 +18,7 @@
 #include <string>
 #include <cassert>
 #include "nixl.h"
-#include "utils/serdes/serdes.h"
+#include "serdes/serdes.h"
 #include "backend/backend_aux.h"
 
 #include <sys/time.h>

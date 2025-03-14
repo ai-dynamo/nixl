@@ -13,9 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+subdir('api')
+
 subdir('utils')
 
+#subdir('arch')
 subdir('core')
 subdir('plugins')
 subdir('bindings')
-subdir('api')

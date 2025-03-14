@@ -14,15 +14,12 @@
 # limitations under the License.
 
 nixl_lib_deps = [serdes_interface]
-nixl_inc_dirs = ['../../include', '../../include/internal',
-                 '../utils/serdes', '../utils/data_structures', '../utils/sys/',
-                 '../utils/ucx/']
 
 nixl_infra = library('nixl_build',
            'nixl_descriptors.cpp',
            'nixl_memory_section.cpp',
            'nixl_metadata_stream.cpp',
-            include_directories: [ nixl_inc_dirs ],
+            include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
             dependencies: [serdes_interface],
             install: true)
 
@@ -32,6 +29,6 @@ nixl_lib = library('nixl',
                    'nixl_agent.cpp',
                    'nixl_metadata_stream.cpp',
                    'nixl_plugin_manager.cpp',
-                   include_directories: [ nixl_inc_dirs ],
+                   include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
                    dependencies: [ serdes_interface ],
                    install: true)

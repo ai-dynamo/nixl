@@ -17,7 +17,7 @@
 subdir('ucx')
 subdir('gds')
 
-nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: inc_dir)
+nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)
 
 #if cuda_dep.found()
 #    cuda_dependencies = [cuda_dep]
@@ -30,5 +30,5 @@ nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: inc_dir)
 plugin_test = executable('test_plugin',
                         'test_plugin.cpp',
                         dependencies: [nixl_dep],
-                        include_directories: [inc_dir],
+                        include_directories: [nixl_inc_dirs, utils_inc_dirs],
                         install: true)

@@ -25,12 +25,12 @@
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
-#include "utils/sys/str_tools.h"
+#include "common/str_tools.h"
 
 // Local includes
-#include <nixl_time.h>
-#include <ucx_utils.h>
-#include <list_elem.h>
+#include "common/nixl_time.h"
+#include "ucx/ucx_utils.h"
+#include "common/list_elem.h"
 
 #ifdef HAVE_CUDA
 

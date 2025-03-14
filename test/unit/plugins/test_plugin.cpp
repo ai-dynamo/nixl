@@ -18,7 +18,7 @@
 #include <iostream>
 #include <string>
 #include "nixl.h"
-#include "internal/plugin_manager.h"
+#include "plugin_manager.h"
 
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [plugin_directory]" << std::endl;

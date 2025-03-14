@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 #include "ucx_backend.h"
-#include "serdes.h"
+#include "serdes/serdes.h"
 #include <cassert>
 
 class nixlUcxCudaCtx {

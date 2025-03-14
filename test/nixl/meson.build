@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: inc_dir)
-ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [inc_dir, '../../src/plugins/ucx'])
+nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)
+ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [nixl_inc_dirs, '../../src/plugins/ucx'])
 
 if cuda_dep.found()
     cuda_dependencies = [cuda_dep]
@@ -27,35 +27,35 @@ endif
 desc_example = executable('desc_example',
            'desc_example.cpp',
            dependencies: [nixl_dep] + cuda_dependencies,
-           include_directories: [inc_dir, '../../src/utils/serdes'],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
            link_with: [serdes_lib],
            install: true)
 
 md_streamer = executable('md_streamer',
             'metadata_streamer.cpp',
             dependencies: [nixl_dep] + cuda_dependencies,
-            include_directories: [inc_dir],
+            include_directories: [nixl_inc_dirs, utils_inc_dirs],
             install: true)
 
 agent_example = executable('agent_example',
            'agent_example.cpp',
            dependencies: [nixl_dep, ucx_backend_dep, ucx_dep] + cuda_dependencies,
-           include_directories: [inc_dir, '../../src/utils/serdes', '../../src/plugins/ucx'],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
            link_with: [serdes_lib],
            install: true)
 
 p2p_socket = executable('p2p_test',
             'p2p_socket_test.cpp',
             dependencies: [nixl_dep] + cuda_dependencies,
-            include_directories: [inc_dir],
+            include_directories: [nixl_inc_dirs],
             install: true)
 
 nixl_ucx_app  = executable('nixl_test', 'nixl_test.cpp',
                            dependencies: [nixl_dep] + cuda_dependencies,
-                           include_directories: [inc_dir, '../../src/utils/serdes'],
+                           include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/utils/serdes'],
                            link_with: [serdes_lib], install: true)
 
 map_perf_test = executable('map_perf_test',
                            'map_perf.cpp',
-                           include_directories: [inc_dir],
+                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
                            install: true)

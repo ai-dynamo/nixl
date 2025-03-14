@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "internal/plugin_manager.h"
+#include "plugin_manager.h"
 #include "nixl.h"
 #include <dlfcn.h>
 #include <iostream>

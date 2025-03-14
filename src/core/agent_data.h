@@ -17,7 +17,7 @@
 #ifndef __AGENT_DATA_H_
 #define __AGENT_DATA_H_
 
-#include "str_tools.h"
+#include "common/str_tools.h"
 #include "mem_section.h"
 
 class nixlAgentData {

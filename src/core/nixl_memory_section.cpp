@@ -19,7 +19,7 @@
 #include "nixl_descriptors.h"
 #include "mem_section.h"
 #include "backend/backend_engine.h"
-#include "serdes.h"
+#include "serdes/serdes.h"
 
 /*** Class nixlMemSection implementation ***/
 

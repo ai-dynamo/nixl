@@ -15,7 +15,7 @@
 
 pybind_dep = dependency('pybind11')
 
-nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: inc_dir)
+nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)
 
 py = import('python').find_installation('python3', pure: false)
 
@@ -23,7 +23,7 @@ py.extension_module('_bindings',
            'nixl_bindings.cpp',
            subdir: ('nixl'),
            dependencies: [nixl_dep, serdes_interface, pybind_dep],
-           include_directories: [inc_dir],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
            install: true)
 
 py.extension_module('_utils',

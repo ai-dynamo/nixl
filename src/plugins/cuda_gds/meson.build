@@ -28,7 +28,7 @@ if 'GDS' in static_plugins
                     'gds_backend.cpp', 'gds_backend.h',
                     'gds_plugin.cpp',
                     dependencies: [nixl_dep, cuda_dep, cufile_dep],
-                    include_directories: inc_dir,
+                    include_directories: [nixl_inc_dirs,utils_inc_dirs],
                     install: true,
                     cpp_args : compile_flags,
                     name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
@@ -39,7 +39,7 @@ else
                     'gds_backend.cpp', 'gds_backend.h',
                     'gds_plugin.cpp',
                     dependencies: [nixl_dep, cuda_dep, cufile_dep],
-                    include_directories: inc_dir,
+                    include_directories: [nixl_inc_dirs,utils_inc_dirs],
                     install: true,
                     cpp_args : ['-fPIC'],
                     name_prefix: 'libplugin_',  # Custom prefix for plugin libraries

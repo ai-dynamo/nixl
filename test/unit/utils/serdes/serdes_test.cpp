@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "serdes.h"
+#include "serdes/serdes.h"
 #include <cassert>
 #include <iostream>
 

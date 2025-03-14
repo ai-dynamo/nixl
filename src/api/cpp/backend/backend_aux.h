@@ -21,7 +21,7 @@
 #include <string>
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
-#include "nixl_time.h"
+#include "common/nixl_time.h"
 
 // Might be removed to be decided by backend, or changed to high
 // level direction or so.

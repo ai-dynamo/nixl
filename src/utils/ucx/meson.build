@@ -21,5 +21,5 @@ endif
 ucx_utils_lib = library('ucx_utils',
            'ucx_utils.cpp', 'ucx_utils.h',
            dependencies: ucx_utils_dep,
-           include_directories: inc_dir,
+           include_directories: [ nixl_inc_dirs ],
            install: true)

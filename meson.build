@@ -69,7 +69,6 @@ if get_option('static_plugins') != ''
     endforeach
 endif
 
-
 # Define a specific plugin directory
 plugin_install_dir = join_paths(get_option('libdir'), 'plugins')
 plugin_build_dir = meson.current_build_dir()
@@ -79,11 +78,9 @@ if get_option('buildtype') == 'debug'
     add_project_arguments('-DNIXL_USE_PLUGIN_FILE="' + plugin_build_dir + '/pluginlist"',  language: 'cpp')
 endif
 
-inc_dir = include_directories('include', 'include/internal', 'include/backend',
-                              'src', 'src/utils/serdes', 'src/utils/data_structures',
-                              'src/utils/sys', 'src/utils/ucx')
-subdir('include')
-subdir('include/internal')
+nixl_inc_dirs = include_directories('src/api/cpp', 'src/core')
+utils_inc_dirs = include_directories('src/utils')
+
 subdir('src')
 
 if get_option('buildtype') != 'release'
@@ -91,15 +88,15 @@ if get_option('buildtype') != 'release'
 endif
 
 if get_option('install_headers')
-  install_headers('include/nixl.h', install_dir: prefix_inc)
-  install_headers('include/nixl_types.h', install_dir: prefix_inc)
-  install_headers('include/nixl_params.h', install_dir: prefix_inc)
-  install_headers('include/nixl_descriptors.h', install_dir: prefix_inc)
+  install_headers('src/api/cpp/nixl.h', install_dir: prefix_inc)
+  install_headers('src/api/cpp/nixl_types.h', install_dir: prefix_inc)
+  install_headers('src/api/cpp/nixl_params.h', install_dir: prefix_inc)
+  install_headers('src/api/cpp/nixl_descriptors.h', install_dir: prefix_inc)
   install_headers('src/utils/serdes/serdes.h', install_dir: prefix_inc + '/utils/serdes')
-  install_headers('src/utils/sys/nixl_time.h', install_dir: prefix_inc + '/utils/sys')
-  install_headers('include/backend/backend_engine.h', install_dir: prefix_inc + '/backend')
-  install_headers('include/backend/backend_aux.h', install_dir: prefix_inc + '/backend')
-  install_headers('include/internal/transfer_request.h', install_dir: prefix_inc + '/internal')
-  install_headers('include/internal/agent_data.h', install_dir: prefix_inc + '/internal')
-  install_headers('include/internal/mem_section.h', install_dir: prefix_inc + '/internal')
+  install_headers('src/utils/common/nixl_time.h', install_dir: prefix_inc + '/utils/common')
+  install_headers('src/api/cpp/backend/backend_engine.h', install_dir: prefix_inc + '/backend')
+  install_headers('src/api/cpp/backend/backend_aux.h', install_dir: prefix_inc + '/backend')
+  install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
+  install_headers('src/core/agent_data.h', install_dir: prefix_inc)
+  install_headers('src/core/mem_section.h', install_dir: prefix_inc)
 endif
