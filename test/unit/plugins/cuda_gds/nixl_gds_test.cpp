@@ -68,61 +68,66 @@ int main(int argc, char *argv[])
         nixlAgent agent("GDSTester", cfg);
 
         agent.createBackend("GDS", params, gds);
+
+        nixl_opt_args_t extra_params;
+        extra_params.backends.push_back(gds);
+
         if (gds == nullptr) {
-        std::cerr <<"Error creating a new backend\n";
-        exit(-1);
-    }
+            std::cerr <<"Error creating a new backend\n";
+            exit(-1);
+        }
+
         /** Argument Parsing */
         if (argc < 2) {
-                std::cout <<"Enter the required arguments\n" << std::endl;
-                std::cout <<"Directory path " << std::endl;
-                exit(-1);
+            std::cout <<"Enter the required arguments\n" << std::endl;
+            std::cout <<"Directory path " << std::endl;
+            exit(-1);
         }
 
         for (i = 0; i < NUM_TRANSFERS; i++) {
-                cudaMalloc((void **)&addr[i], SIZE);
-                cudaMemset(addr[i], 'A', SIZE);
-        name = generate_timestamped_filename("testfile");
+            cudaMalloc((void **)&addr[i], SIZE);
+            cudaMemset(addr[i], 'A', SIZE);
+            name = generate_timestamped_filename("testfile");
             std::string path = std::string(argv[1]);
-        name = path +"/"+ name +"_"+ std::to_string(i);
+            name = path +"/"+ name +"_"+ std::to_string(i);
 
-        std::cout << "Opening File " << name << std::endl;
-        fd[i] = open(name.c_str(), O_RDWR|O_CREAT, 0744);
+            std::cout << "Opening File " << name << std::endl;
+            fd[i] = open(name.c_str(), O_RDWR|O_CREAT, 0744);
             if (fd[i] < 0) {
-           std::cerr<<"Error: "<<strerror(errno)<<std::endl;
-           std::cerr<<"Open call failed to open file\n";
-               std::cerr<<"Cannot run tests\n";
-               return 1;
-        }
+                std::cerr<<"Error: "<<strerror(errno)<<std::endl;
+                std::cerr<<"Open call failed to open file\n";
+                    std::cerr<<"Cannot run tests\n";
+                    return 1;
+            }
             std::cout << "Opened File " << name << std::endl;
 
-        std::cout << "Allocating for src buffer : "
-                          << addr[i] << ","
-                          << "Setting to As "
-                          << std::endl;
-                /* If O_CREATE is specified, mode flags need to be specified */
-                /* Use 0744 as mode */
-                buf[i].addr   = (uintptr_t)(addr[i]);
-                buf[i].len    = SIZE;
-                buf[i].devId  = 0;
-                vram_for_gds.addDesc(buf[i]);
+            std::cout << "Allocating for src buffer : "
+                      << addr[i] << ","
+                      << "Setting to As "
+                      << std::endl;
+            /* If O_CREATE is specified, mode flags need to be specified */
+            /* Use 0744 as mode */
+            buf[i].addr   = (uintptr_t)(addr[i]);
+            buf[i].len    = SIZE;
+            buf[i].devId  = 0;
+            vram_for_gds.addDesc(buf[i]);
 
-                ftrans[i].addr  = 0; // this is offset
-                ftrans[i].len   = SIZE;
-                ftrans[i].devId = fd[i];
-                file_for_gds.addDesc(ftrans[i]);
+            ftrans[i].addr  = 0; // this is offset
+            ftrans[i].len   = SIZE;
+            ftrans[i].devId = fd[i];
+            file_for_gds.addDesc(ftrans[i]);
         }
-        agent.registerMem(file_for_gds, gds);
-        agent.registerMem(vram_for_gds, gds);
+        agent.registerMem(file_for_gds, &extra_params);
+        agent.registerMem(vram_for_gds, &extra_params);
 
         nixl_xfer_dlist_t vram_for_gds_list = vram_for_gds.trim();
         nixl_xfer_dlist_t file_for_gds_list = file_for_gds.trim();
 
-        ret = agent.createXferReq(vram_for_gds_list, file_for_gds_list,
-                                  "GDSTester", "", NIXL_WRITE, treq);
+        ret = agent.createXferReq(NIXL_WRITE, vram_for_gds_list, file_for_gds_list,
+                                  "GDSTester", treq, &extra_params);
         if (ret != NIXL_SUCCESS) {
-                std::cerr << "Error creating transfer request\n" << ret;
-                exit(-1);
+            std::cerr << "Error creating transfer request\n" << ret;
+            exit(-1);
         }
 
         std::cout << " Post the request with GDS backend\n ";
@@ -135,11 +140,11 @@ int main(int argc, char *argv[])
             assert(status >= 0);
         }
         std::cout <<" Completed writing data using GDS backend\n";
-        agent.invalidateXferReq(treq);
+        agent.releaseXferReq(treq);
 
         std::cout <<"Cleanup.. \n";
-        agent.deregisterMem(vram_for_gds, gds);
-        agent.deregisterMem(file_for_gds, gds);
+        agent.deregisterMem(vram_for_gds, &extra_params);
+        agent.deregisterMem(file_for_gds, &extra_params);
 
         return 0;
 }

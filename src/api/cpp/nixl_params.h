@@ -26,7 +26,7 @@
 class nixlAgentConfig {
     private:
 
-        // Determines if progress thread is used or not
+        // Enable progress thread
         bool     useProgThread;
 
     public:
@@ -39,13 +39,6 @@ class nixlAgentConfig {
          * amount of time has past.
          */
         uint64_t pthrDelay;
-
-        // std::string defaultLibPath;
-
-        // Map from backend_type (e.g., "UCX") to it's lib path
-        // Name of class or .so is determined by a fixed macro
-        // If value is "", defaultLibPath is used
-        // std::map<std::string, std::string> availBackends;
 
         // Important configs such as useProgThread must be given and can't be changed.
         nixlAgentConfig(const bool use_prog_thread, const uint64_t pthr_delay_us=0) {

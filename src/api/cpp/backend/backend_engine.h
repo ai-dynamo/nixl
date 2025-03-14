@@ -85,7 +85,7 @@ class nixlBackendEngine {
         // Determines if a backend supports progress thread.
         virtual bool supportsProgTh () const = 0;
 
-        virtual nixl_status_t getSupportedMems (std::vector<nixl_mem_t> &mems) const = 0;
+        virtual nixl_mem_list_t getSupportedMems () const = 0;
 
 
         // *** Pure virtual methods that need to be implemented by any backend *** //

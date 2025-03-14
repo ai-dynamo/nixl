@@ -127,6 +127,9 @@ int main(int argc, char *argv[]) {
     agent.createBackend("UCX", params, ucx);
     serdes      = new nixlSerDes();
 
+    nixl_opt_args_t extra_params;
+    extra_params.backends.push_back(ucx);
+
     for (int i = 0; i < NUM_TRANSFERS; i++) {
         addr[i] = calloc(1, SIZE);
         if (role != "target") {
@@ -148,7 +151,7 @@ int main(int argc, char *argv[]) {
     }
 
     /** Register memory in both initiator and target */
-    agent.registerMem(dram_for_ucx, ucx);
+    agent.registerMem(dram_for_ucx, &extra_params);
     if (role == "target") {
         agent.getLocalMD(tgt_metadata);
     }
@@ -213,8 +216,8 @@ int main(int argc, char *argv[]) {
         std::cout << " Start Data Path Exchanges \n\n";
         std::cout << " Create transfer request with UCX backend\n ";
 
-        ret = agent.createXferReq(dram_initiator_ucx, dram_target_ucx,
-                                  "target", "", NIXL_WRITE, treq);
+        ret = agent.createXferReq(NIXL_WRITE, dram_initiator_ucx, dram_target_ucx,
+                                  "target", treq, &extra_params);
         if (ret != NIXL_SUCCESS) {
             std::cerr << "Error creating transfer request\n";
             exit(-1);
@@ -230,11 +233,11 @@ int main(int argc, char *argv[]) {
             assert(status >= 0);
         }
         std::cout << " Completed Sending Data using UCX backend\n";
-        agent.invalidateXferReq(treq);
+        agent.releaseXferReq(treq);
     }
 
     std::cout <<"Cleanup.. \n";
-    agent.deregisterMem(dram_for_ucx, ucx);
+    agent.deregisterMem(dram_for_ucx, &extra_params);
     for (int i = 0; i < NUM_TRANSFERS; i++) {
         free(addr[i]);
     }

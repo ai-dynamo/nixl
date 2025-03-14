@@ -308,6 +308,14 @@ nixl_b_params_t nixlPluginHandle::getBackendOptions() {
     return params; // Return empty params if not implemented
 }
 
+nixl_mem_list_t nixlPluginHandle::getBackendMems() {
+    nixl_mem_list_t mems;
+    if (plugin_ && plugin_->get_backend_mems) {
+        return plugin_->get_backend_mems();
+    }
+    return mems; // Return empty mems if not implemented
+}
+
 std::vector<std::string> nixlPluginManager::getLoadedPluginNames() {
     std::vector<std::string> names;
     for (const auto& pair : loaded_plugins_) {

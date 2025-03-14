@@ -42,6 +42,7 @@ public:
     const char* getName();
     const char* getVersion();
     nixl_b_params_t getBackendOptions();
+    nixl_mem_list_t getBackendMems();
 };
 
 // Creator Function for static plugins

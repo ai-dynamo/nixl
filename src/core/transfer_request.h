@@ -28,7 +28,7 @@ class nixlXferReqH {
         nixl_meta_dlist_t* targetDescs;
 
         std::string        remoteAgent;
-        std::string        notifMsg;
+        nixl_blob_t        notifMsg;
 
         nixl_xfer_op_t     backendOp;
         nixl_status_t      status;
@@ -52,21 +52,19 @@ class nixlXferReqH {
     friend class nixlAgent;
 };
 
-class nixlXferSideH {
+class nixlPreppedH {
     private:
-        nixl_meta_dlist_t* descs;
+        std::unordered_map<nixlBackendEngine*, nixl_meta_dlist_t*> descs;
 
-        nixlBackendEngine* engine;
         std::string        remoteAgent;
         bool               isLocal;
 
     public:
-        inline nixlXferSideH() {
-            engine = nullptr;
-        }
+        inline nixlPreppedH() { }
 
-        inline ~nixlXferSideH() {
-            delete descs;
+        inline ~nixlPreppedH() {
+            for (auto & elm : descs)
+                delete elm.second;
         }
 
     friend class nixlAgent;

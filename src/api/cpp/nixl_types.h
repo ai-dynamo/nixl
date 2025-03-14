@@ -20,23 +20,32 @@
 #include <string>
 #include <unordered_map>
 
+
+class nixlSerDes;
+class nixlBackendH;
+class nixlXferReqH;
+class nixlPreppedH;
+class nixlAgentData;
+
+
+typedef std::string nixl_backend_t;
 // std::string supports \0 natively, So it can be looked as a void* of data,
 // with specified length. Giving it a new name to be clear in the API and
 // preventing users to think it's a string and call c_str().
 typedef std::string nixl_blob_t;
 
-typedef std::string nixl_backend_t;
+#define NIXL_INIT_AGENT ""
+
+// FILE_SEG must be last
+typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG} nixl_mem_t;
+
+typedef enum {NIXL_READ, NIXL_WRITE,
+              NIXL_RD_NOTIF, NIXL_WR_NOTIF} nixl_xfer_op_t; // NOTIFs to be removed
+
+typedef std::vector<nixl_mem_t> nixl_mem_list_t;
 typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
 typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
 
-#define NIXL_NO_MSG     ""
-#define NIXL_INIT_AGENT ""
-
-//FILE_SEG must be last
-typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, FILE_SEG} nixl_mem_t;
-
-typedef enum {NIXL_READ,  NIXL_RD_NOTIF,
-              NIXL_WRITE, NIXL_WR_NOTIF} nixl_xfer_op_t;
 
 typedef enum {
     NIXL_IN_PROG = 1,
@@ -51,10 +60,20 @@ typedef enum {
     NIXL_ERR_UNKNOWN = -8
 } nixl_status_t;
 
-class nixlSerDes;
-class nixlBackendH;
-class nixlXferReqH;
-class nixlXferSideH;
-class nixlAgentData;
+
+class nixlAgentOptionalArgs {
+    public:
+        // Used in createBackend / createXferReq / prepXferDescs
+        //         makeXferReq   / GetNotifs     / GenNotif
+        // As suggestion to limit the list of backends to be explored, and
+        // the preference among them, first being the most preferred.
+        std::vector<nixlBackendH*> backends;
+
+        // Used in createXferReq / makeXferReq / postXferReq,
+        // if a notification message is desired, and the corresponding indicator
+        nixl_blob_t notifMsg;
+        bool hasNotif = false;
+};
+typedef nixlAgentOptionalArgs nixl_opt_args_t;
 
 #endif

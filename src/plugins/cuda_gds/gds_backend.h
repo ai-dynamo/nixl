@@ -100,10 +100,11 @@ class nixlGdsEngine : public nixlBackendEngine {
             return false;
         }
 
-        nixl_status_t getSupportedMems (std::vector<nixl_mem_t> &mems) const {
+        nixl_mem_list_t getSupportedMems () const {
+            nixl_mem_list_t mems;
             mems.push_back(VRAM_SEG);
             mems.push_back(FILE_SEG);
-            return NIXL_SUCCESS;
+            return mems;
         }
 
         nixl_status_t connect(const std::string &remote_agent)
