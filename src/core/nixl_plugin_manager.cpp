@@ -76,8 +76,8 @@ const char* nixlPluginHandle::getVersion() {
     return "unknown";
 }
 
-std::map<std::string, std::string> loadPluginList(const std::string& filename) {
-    std::map<std::string, std::string> plugins;
+std::map<nixl_backend_t, std::string> loadPluginList(const std::string& filename) {
+    std::map<nixl_backend_t, std::string> plugins;
     std::ifstream file(filename);
 
     if (!file.is_open()) {
@@ -288,11 +288,11 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
     return nullptr;
 }
 
-void nixlPluginManager::unloadPlugin(const std::string& plugin_name) {
+void nixlPluginManager::unloadPlugin(const nixl_backend_t& plugin_name) {
     loaded_plugins_.erase(plugin_name);
 }
 
-std::shared_ptr<nixlPluginHandle> nixlPluginManager::getPlugin(const std::string& plugin_name) {
+std::shared_ptr<nixlPluginHandle> nixlPluginManager::getPlugin(const nixl_backend_t& plugin_name) {
     auto it = loaded_plugins_.find(plugin_name);
     if (it != loaded_plugins_.end()) {
         return it->second;
@@ -316,8 +316,8 @@ nixl_mem_list_t nixlPluginHandle::getBackendMems() {
     return mems; // Return empty mems if not implemented
 }
 
-std::vector<std::string> nixlPluginManager::getLoadedPluginNames() {
-    std::vector<std::string> names;
+std::vector<nixl_backend_t> nixlPluginManager::getLoadedPluginNames() {
+    std::vector<nixl_backend_t> names;
     for (const auto& pair : loaded_plugins_) {
         names.push_back(pair.first);
     }
