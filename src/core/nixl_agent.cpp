@@ -99,7 +99,7 @@ nixl_status_t
 nixlAgent::getBackendParams (const nixlBackendH* backend,
                              nixl_mem_list_t &mems,
                              nixl_b_params_t &params) const {
-    if (backend == nullptr)
+    if (!backend)
         return NIXL_ERR_INVALID_PARAM;
 
     mems   = backend->engine->getSupportedMems();
@@ -140,7 +140,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    if (backend!=nullptr) {
+    if (backend) {
         if (backend->getInitErr()) {
             delete backend;
             return NIXL_ERR_BACKEND;
@@ -165,7 +165,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
 
         bknd_hndl = new nixlBackendH(backend);
-        if (bknd_hndl == nullptr) {
+        if (!bknd_hndl) {
             delete backend;
             return NIXL_ERR_BACKEND;
         }
@@ -187,7 +187,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     nixlBackendEngine* backend;
 
     // TODO: Support other than single backend option, all or some
-    if (extra_params == nullptr)
+    if (!extra_params)
         return NIXL_ERR_INVALID_PARAM;
 
     if (extra_params->backends.size() != 1)
@@ -219,7 +219,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     nixlBackendEngine* backend;
 
     // TODO: Support other than single backend option, all or some
-    if (extra_params == nullptr)
+    if (!extra_params)
         return NIXL_ERR_INVALID_PARAM;
 
     if (extra_params->backends.size() != 1)
@@ -276,7 +276,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     nixlBackendH* backend = nullptr;
     nixl_opt_b_args_t opt_args;
 
-    if (extra_params != nullptr) {
+    if (extra_params) {
         if (extra_params->hasNotif){
             opt_args.notifMsg = extra_params->notifMsg;
             opt_args.hasNotif = true;
@@ -307,12 +307,12 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                      local_descs.isUnifiedAddr(),
                                      local_descs.isSorted());
 
-    if (backend==nullptr) {
+    if (!backend) {
         handle->engine = data->memorySection.findQuery(local_descs,
                               remote_descs.getType(),
                               data->remoteBackends[remote_agent],
                               *handle->initiatorDescs);
-        if (handle->engine==nullptr) {
+        if (!handle->engine) {
             delete handle;
             return NIXL_ERR_NOT_FOUND;
         }
@@ -347,6 +347,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     handle->remoteAgent = remote_agent;
     handle->notifMsg    = opt_args.notifMsg;
+    handle->hasNotif    = opt_args.hasNotif;
     handle->backendOp   = operation;
     handle->status      = NIXL_ERR_NOT_POSTED;
 
@@ -377,7 +378,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     opt_args.hasNotif = false;
 
-    if (req_hndl==nullptr)
+    if (!req_hndl)
         return NIXL_ERR_INVALID_PARAM;
 
     // We can't repost while a request is in progress
@@ -396,18 +397,30 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     //     return NIXL_ERR_BAD;
     // }
 
-    if (req_hndl->notifMsg.size() > 0) {
+    // Carrying over notification from xfer handle creation time
+    if (req_hndl->hasNotif) {
         opt_args.notifMsg = req_hndl->notifMsg;
         opt_args.hasNotif = true;
     }
 
-    if (extra_params!=nullptr) {
+    // Updating the notification based on opt_args
+    if (extra_params) {
         if (extra_params->hasNotif) {
             req_hndl->notifMsg = extra_params->notifMsg;
-            opt_args.notifMsg = extra_params->notifMsg;
-            opt_args.hasNotif = true;
+            opt_args.notifMsg  = extra_params->notifMsg;
+            req_hndl->hasNotif = true;
+            opt_args.hasNotif  = true;
+        } else {
+            req_hndl->hasNotif = false;
+            opt_args.hasNotif  = false;
         }
     }
+
+    if (opt_args.hasNotif && (!req_hndl->engine->supportsNotif())) {
+        delete req_hndl;
+        return NIXL_ERR_BACKEND;
+    }
+
     // If status is not NIXL_IN_PROG we can repost,
     ret = req_hndl->engine->postXfer (req_hndl->backendOp,
                                      *req_hndl->initiatorDescs,
@@ -450,7 +463,7 @@ nixlAgent::prepXferDescs (const nixl_xfer_dlist_t &descs,
                           const nixl_opt_args_t* extra_params) const {
 
     // TODO: Support other than single backend option, all or some
-    if (extra_params == nullptr)
+    if (!extra_params)
         return NIXL_ERR_INVALID_PARAM;
 
     if (extra_params->backends.size() != 1)
@@ -458,7 +471,7 @@ nixlAgent::prepXferDescs (const nixl_xfer_dlist_t &descs,
 
     nixlBackendEngine* backend = extra_params->backends[0]->engine;
 
-    if (backend==nullptr)
+    if (!backend)
         return NIXL_ERR_NOT_FOUND;
 
     nixl_status_t ret;
@@ -512,7 +525,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     int desc_count = (int) local_indices.size();
     nixl_opt_b_args_t opt_args;
 
-    if ((local_side == nullptr) || (remote_side==nullptr))
+    if (!local_side || !remote_side)
         return NIXL_ERR_INVALID_PARAM;
 
     if ((!local_side->isLocal) || (remote_side->isLocal))
@@ -548,11 +561,9 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
     }
 
-    if (extra_params!=nullptr){
-        if (extra_params->hasNotif) {
-            opt_args.notifMsg = extra_params->notifMsg;
-            opt_args.hasNotif = true;
-        }
+    if (extra_params && extra_params->hasNotif) {
+        opt_args.notifMsg = extra_params->notifMsg;
+        opt_args.hasNotif = true;
     }
 
     if ((opt_args.hasNotif) && (!local_backend->supportsNotif())) {
@@ -620,6 +631,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     handle->engine      = local_backend;
     handle->remoteAgent = remote_side->remoteAgent;
     handle->notifMsg    = opt_args.notifMsg;
+    handle->hasNotif    = opt_args.hasNotif;
     handle->backendOp   = operation;
     handle->status      = NIXL_ERR_NOT_POSTED;
 
@@ -645,7 +657,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
                     const nixl_opt_args_t* extra_params) {
 
     // TODO: Support more than a single backend to choose from
-    if (extra_params != nullptr) {
+    if (extra_params) {
         if (extra_params->backends.size() > 1)
             return NIXL_ERR_INVALID_PARAM;
         else if (extra_params->backends.size() == 1)
@@ -672,9 +684,8 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
     bool any_backend = false;
 
     // TODO: add support for selection of backends, not all
-    if (extra_params != nullptr)
-        if (extra_params->backends.size() != 0)
-            return NIXL_ERR_INVALID_PARAM;
+    if (extra_params && (extra_params->backends.size() != 0))
+        return NIXL_ERR_INVALID_PARAM;
 
 
     // Doing best effort, if any backend errors out we return

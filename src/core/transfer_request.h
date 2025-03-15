@@ -29,6 +29,7 @@ class nixlXferReqH {
 
         std::string        remoteAgent;
         nixl_blob_t        notifMsg;
+        bool               hasNotif;
 
         nixl_xfer_op_t     backendOp;
         nixl_status_t      status;
