@@ -42,8 +42,6 @@ class nixl_agent:
         self.nixl_ops = {
             "WRITE": nixlBind.NIXL_WRITE,
             "READ": nixlBind.NIXL_READ,
-            "WRITE_NOTIF": nixlBind.NIXL_WR_NOTIF,
-            "READ_NOTIF": nixlBind.NIXL_RD_NOTIF,
         }
 
         print("Initializied NIXL agent:", agent_name)
@@ -172,7 +170,7 @@ class nixl_agent:
     def initialize_xfer(
         self, local_descs, remote_descs, remote_agent, notif_msg, operation
     ):
-        op = self.nixl_ops[operation + "_NOTIF" if len(notif_msg) != 0 else operation]
+        op = self.nixl_ops[operation]
         if op:
             handle = self.agent.createXferReq(
                 local_descs, remote_descs, remote_agent, notif_msg, op
@@ -215,7 +213,7 @@ class nixl_agent:
         notif_msg,
         operation,
     ):
-        op = self.nixl_ops[operation + "_NOTIF" if len(notif_msg) != 0 else operation]
+        op = self.nixl_ops[operation]
         if op:
             handle = self.agent.makeXferReq(
                 local_xfer_side,

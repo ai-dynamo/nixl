@@ -742,11 +742,9 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
 
         switch (operation) {
         case NIXL_READ:
-        case NIXL_RD_NOTIF:
             ret = uw->read(rmd->conn.ep, (uint64_t) raddr, rmd->rkey, laddr, lmd->mem, lsize, req);
             break;
         case NIXL_WRITE:
-        case NIXL_WR_NOTIF:
             ret = uw->write(rmd->conn.ep, laddr, lmd->mem, (uint64_t) raddr, rmd->rkey, lsize, req);
             break;
         default:
@@ -764,22 +762,11 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
         return ret;
     }
 
-    switch (operation) {
-        case NIXL_RD_NOTIF:
-        case NIXL_WR_NOTIF:
-            if (opt_args==nullptr)
-                return NIXL_ERR_INVALID_PARAM;
-
-            ret = notifSendPriv(remote_agent, opt_args->notifMsg, req);
-            if (retHelper(ret, head, req)) {
-                return ret;
-            }
-            break;
-        case NIXL_WRITE:
-        case NIXL_READ:
-            break;
-        default:
-            return NIXL_ERR_INVALID_PARAM;
+    if(opt_args && opt_args->hasNotif) {
+        ret = notifSendPriv(remote_agent, opt_args->notifMsg, req);
+        if (retHelper(ret, head, req)) {
+            return ret;
+        }
     }
 
     handle = head->next();

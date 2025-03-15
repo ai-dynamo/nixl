@@ -498,7 +498,7 @@ int main()
 
     extra_params1.notifMsg = "notification";
     extra_params1.hasNotif = true;
-    ret1 = A1.createXferReq(NIXL_WR_NOTIF, req_src_descs, req_dst_descs, agent2, req_handle, &extra_params1);
+    ret1 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_dst_descs, agent2, req_handle, &extra_params1);
     assert (ret1 == NIXL_SUCCESS);
 
     nixl_status_t status = A1.postXferReq(req_handle);
@@ -531,7 +531,8 @@ int main()
 
     std::cout << "Performing local test\n";
     extra_params1.notifMsg = "local_notif";
-    ret2 = A1.createXferReq(NIXL_WR_NOTIF, req_src_descs, req_ldst_descs, agent1, req_handle2, &extra_params1);
+    extra_params1.hasNotif = true;
+    ret2 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_ldst_descs, agent1, req_handle2, &extra_params1);
     assert (ret2 == NIXL_SUCCESS);
 
     status = A1.postXferReq(req_handle2);

@@ -269,18 +269,17 @@ void populateDescs(nixl_meta_dlist_t &descs, int dev_id, void *addr, int desc_cn
     }
 }
 
-static string op2string(nixl_xfer_op_t op)
+static string op2string(nixl_xfer_op_t op, bool hasNotif)
 {
-    switch(op) {
-        case NIXL_READ:
-            return string("READ");
-        case NIXL_WRITE:
-            return string("WRITE");
-        case NIXL_RD_NOTIF:
-            return string("READ/NOTIF");
-        case NIXL_WR_NOTIF:
-            return string("WRITE/NOTIF");
-    }
+    if(op == NIXL_READ && !hasNotif)
+        return string("READ");
+    if(op == NIXL_WRITE && !hasNotif)
+        return string("WRITE");
+    if(op == NIXL_READ && hasNotif)
+        return string("READ/NOTIF");
+    if(op == NIXL_WRITE && hasNotif)
+        return string("WRITE/NOTIF");
+
     return string("ERR-OP");
 }
 
@@ -290,7 +289,7 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
                      nixl_meta_dlist_t &req_src_descs,
                      nixl_meta_dlist_t &req_dst_descs,
                      void* addr1, void* addr2, size_t len,
-                     nixl_xfer_op_t op, bool progress_ucx2)
+                     nixl_xfer_op_t op, bool progress_ucx2, bool use_notif)
 {
     int ret2;
     nixl_status_t ret3;
@@ -302,9 +301,12 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
     if(ucx1 == ucx2) remote_agent = "Agent1";
 
     std::string test_str("test");
-    std::cout << "\t" << op2string(op) << " from " << addr1 << " to " << addr2 << "\n";
+    std::cout << "\t" << op2string(op, use_notif) << " from " << addr1 << " to " << addr2 << "\n";
+
     nixl_opt_b_args_t opt_args;
     opt_args.notifMsg = test_str;
+    opt_args.hasNotif = use_notif;
+
 
     // Posting a request, to be updated to return an async handler,
     // or an ID that later can be used to check the status as a new method
@@ -329,31 +331,25 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
     }
 
 
-    switch (op) {
-        case NIXL_RD_NOTIF:
-        case NIXL_WR_NOTIF: {
+    if(use_notif) {
             /* Test notification path */
-            notif_list_t target_notifs;
+        notif_list_t target_notifs;
 
-            cout << "\t\tChecking notification flow: " << flush;
-            ret2 = 0;
+        cout << "\t\tChecking notification flow: " << flush;
+        ret2 = 0;
 
-            while(ret2 == 0){
-                ret3 = ucx2->getNotifs(target_notifs);
-                ret2 = target_notifs.size();
-                assert(ret3 == NIXL_SUCCESS);
-            }
-
-            assert(ret2 == 1);
-
-            assert(target_notifs.front().first == "Agent1");
-            assert(target_notifs.front().second == test_str);
-
-            cout << "OK" << endl;
-            break;
+        while(ret2 == 0){
+            ret3 = ucx2->getNotifs(target_notifs);
+            ret2 = target_notifs.size();
+            assert(ret3 == NIXL_SUCCESS);
         }
-        default:
-            break;
+
+        assert(ret2 == 1);
+
+        assert(target_notifs.front().first == "Agent1");
+        assert(target_notifs.front().second == test_str);
+
+        cout << "OK" << endl;
     }
 
     cout << "\t\tData verification: " << flush;
@@ -420,18 +416,22 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t
     nixl_meta_dlist_t req_dst_descs (mem_type);
     populateDescs(req_dst_descs, 0, addr2, desc_cnt, desc_size, rmd2);
 
-    nixl_xfer_op_t ops[] = {  NIXL_READ, NIXL_WRITE, NIXL_RD_NOTIF, NIXL_WR_NOTIF };
+    nixl_xfer_op_t ops[] = {  NIXL_READ, NIXL_WRITE };
+    bool use_notifs[] = { true, false };
 
     for (size_t i = 0; i < sizeof(ops)/sizeof(ops[i]); i++) {
-        cout << endl << op2string(ops[i]) << " test (" << iter << ") iterations" <<endl;
-        for(int k = 0; k < iter; k++ ) {
-            /* Init data */
-            doMemset(mem_type, 0, addr1, 0xbb, len);
-            doMemset(mem_type, 0, addr2, 0, len);
 
-            /* Test */
-            performTransfer(ucx, ucx, req_src_descs, req_dst_descs,
-                                 addr1, addr2, len, ops[i], p_thread);
+        for(bool use_notif : use_notifs) {
+            cout << endl << op2string(ops[i], use_notif) << " test (" << iter << ") iterations" <<endl;
+            for(int k = 0; k < iter; k++ ) {
+                /* Init data */
+                doMemset(mem_type, 0, addr1, 0xbb, len);
+                doMemset(mem_type, 0, addr2, 0, len);
+
+                /* Test */
+                performTransfer(ucx, ucx, req_src_descs, req_dst_descs,
+                                addr1, addr2, len, ops[i], p_thread, use_notif);
+            }
         }
     }
 
@@ -501,18 +501,22 @@ void test_inter_agent_transfer(bool p_thread,
     nixl_meta_dlist_t req_dst_descs (dst_mem_type);
     populateDescs(req_dst_descs, dst_dev_id, addr2, desc_cnt, desc_size, rmd1);
 
-    nixl_xfer_op_t ops[] = {  NIXL_READ, NIXL_WRITE, NIXL_RD_NOTIF, NIXL_WR_NOTIF };
+    nixl_xfer_op_t ops[] = {  NIXL_READ, NIXL_WRITE };
+    bool use_notifs[] = { true, false };
 
     for (size_t i = 0; i < sizeof(ops)/sizeof(ops[i]); i++) {
-        cout << endl << op2string(ops[i]) << " test (" << iter << ") iterations" <<endl;
-        for(int k = 0; k < iter; k++ ) {
-            /* Init data */
-            doMemset(src_mem_type, src_dev_id, addr1, 0xbb, len);
-            doMemset(dst_mem_type, dst_dev_id, addr2, 0xda, len);
 
-            /* Test */
-            performTransfer(ucx1, ucx2, req_src_descs, req_dst_descs,
-                            addr1, addr2, len, ops[i], !p_thread);
+        for(bool use_notif : use_notifs) {
+            cout << endl << op2string(ops[i], use_notif) << " test (" << iter << ") iterations" <<endl;
+            for(int k = 0; k < iter; k++ ) {
+                /* Init data */
+                doMemset(src_mem_type, src_dev_id, addr1, 0xbb, len);
+                doMemset(dst_mem_type, dst_dev_id, addr2, 0xda, len);
+
+                /* Test */
+                performTransfer(ucx1, ucx2, req_src_descs, req_dst_descs,
+                                addr1, addr2, len, ops[i], !p_thread, use_notif);
+            }
         }
     }
 

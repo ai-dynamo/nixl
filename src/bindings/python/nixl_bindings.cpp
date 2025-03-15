@@ -42,9 +42,7 @@ PYBIND11_MODULE(_bindings, m) {
 
     py::enum_<nixl_xfer_op_t>(m, "nixl_xfer_op_t")
         .value("NIXL_READ", NIXL_READ)
-        .value("NIXL_RD_NOTIF", NIXL_RD_NOTIF)
         .value("NIXL_WRITE", NIXL_WRITE)
-        .value("NIXL_WR_NOTIF", NIXL_WR_NOTIF)
         .export_values();
 
     py::enum_<nixl_status_t>(m, "nixl_status_t")
