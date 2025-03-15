@@ -107,7 +107,6 @@ std::map<nixl_backend_t, std::string> loadPluginList(const std::string& filename
 
             // Add to map
             plugins[name] = path;
-            std::cout << "Found plugin: " << name << " at path: " << path << std::endl;
         }
     }
 
@@ -166,10 +165,6 @@ void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
         auto plugin_handle = loadPluginFromPath(path);
         if (plugin_handle) {
             loaded_plugins_[name] = plugin_handle;
-
-            std::cout << "Successfully loaded plugin '" << name << "'"
-                << " version " << plugin_handle->getVersion()
-                << " from " << path << std::endl;
         }
     }
 }
@@ -179,7 +174,6 @@ nixlPluginManager::nixlPluginManager() {
 #ifdef NIXL_USE_PLUGIN_FILE
     std::string plugin_file = NIXL_USE_PLUGIN_FILE;
     if (!plugin_file.empty()) {
-        std::cout << "Using plugin file: " << plugin_file << std::endl;
         loadPluginsFromList(plugin_file);
     }
 #endif
@@ -187,7 +181,6 @@ nixlPluginManager::nixlPluginManager() {
     // Check for NIXL_PLUGIN_DIR environment variable
     const char* plugin_dir = getenv("NIXL_PLUGIN_DIR");
     if (plugin_dir) {
-        std::cout << "Using plugin directory from NIXL_PLUGIN_DIR: " << plugin_dir << std::endl;
         plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);  // Insert at the beginning for priority
     }
 }
@@ -225,8 +218,6 @@ void nixlPluginManager::addPluginDirectory(const std::string& directory) {
         }
     }
 
-    std::cout << "Adding plugin directory: " << directory << std::endl;
-
     // Prioritize the new directory by inserting it at the beginning
     plugin_dirs_.insert(plugin_dirs_.begin(), directory);
 }
@@ -235,12 +226,10 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
     // Check if the plugin is already loaded
     auto it = loaded_plugins_.find(plugin_name);
     if (it != loaded_plugins_.end()) {
-        std::cout << "Plugin already loaded: " << plugin_name << std::endl;
         return it->second;
     }
 
     for (const auto& static_plugin : getStaticPlugins()) {
-        std::cout << "Checking static plugin: " << static_plugin.name << std::endl;
         if (plugin_name == static_plugin.name) {
             // Create an instance of the static plugin
             nixlBackendPlugin* plugin = static_plugin.createFunc();
@@ -248,9 +237,6 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
                 // Register the loaded plugin
                 auto plugin_handle = std::make_shared<nixlPluginHandle>(nullptr, plugin);
                 loaded_plugins_[plugin_name] = plugin_handle;
-
-                std::cout << "Successfully loaded static plugin '" << plugin_name << "'"
-                << " version " << plugin_handle->getVersion()  << std::endl;
 
                 return plugin_handle;
             }
@@ -268,8 +254,6 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
         } else {
             plugin_path = dir + "/libplugin_" + plugin_name + ".so";
         }
-
-        std::cout << "Trying to load plugin from: " << plugin_path << std::endl;
 
         // Check if the plugin file exists before attempting to load i
         if (access(plugin_path.c_str(), F_OK) != 0) {
@@ -339,18 +323,14 @@ std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
 }
 
 void nixlPluginManager::registerBuiltinPlugins() {
-    std::cout << "Registering built-in static plugins..." << std::endl;
-
     #ifdef STATIC_PLUGIN_UCX
         extern nixlBackendPlugin* createStaticUcxPlugin();
-        std::cout << "Registering static UCX plugin" << std::endl;
         registerStaticPlugin("UCX", createStaticUcxPlugin);
     #endif
 
     #ifdef STATIC_PLUGIN_GDS
     #ifndef DISABLE_GDS_BACKEND
         extern nixlBackendPlugin* createStaticGdsPlugin();
-        std::cout << "Registering static GDS plugin" << std::endl;
         registerStaticPlugin("GDS", createStaticGdsPlugin);
     #endif
     #endif
