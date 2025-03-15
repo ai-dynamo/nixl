@@ -56,7 +56,8 @@ typedef enum {
     NIXL_ERR_MISMATCH = -5,
     NIXL_ERR_NOT_ALLOWED = -6,
     NIXL_ERR_REPOST_ACTIVE = -7,
-    NIXL_ERR_UNKNOWN = -8
+    NIXL_ERR_UNKNOWN = -8,
+    NIXL_ERR_NOT_SUPPORTED = -9
 } nixl_status_t;
 
 

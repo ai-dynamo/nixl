@@ -188,10 +188,10 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
 
     // TODO: Support other than single backend option, all or some
     if (!extra_params)
-        return NIXL_ERR_INVALID_PARAM;
+        return NIXL_ERR_NOT_SUPPORTED;
 
     if (extra_params->backends.size() != 1)
-        return NIXL_ERR_INVALID_PARAM;
+        return NIXL_ERR_NOT_SUPPORTED;
 
     backend = extra_params->backends[0]->engine;
 
@@ -220,10 +220,10 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
 
     // TODO: Support other than single backend option, all or some
     if (!extra_params)
-        return NIXL_ERR_INVALID_PARAM;
+        return NIXL_ERR_NOT_SUPPORTED;
 
     if (extra_params->backends.size() != 1)
-        return NIXL_ERR_INVALID_PARAM;
+        return NIXL_ERR_NOT_SUPPORTED;
 
     backend = extra_params->backends[0]->engine;
 
@@ -464,10 +464,10 @@ nixlAgent::prepXferDescs (const nixl_xfer_dlist_t &descs,
 
     // TODO: Support other than single backend option, all or some
     if (!extra_params)
-        return NIXL_ERR_INVALID_PARAM;
+        return NIXL_ERR_NOT_SUPPORTED;
 
     if (extra_params->backends.size() != 1)
-        return NIXL_ERR_INVALID_PARAM;
+        return NIXL_ERR_NOT_SUPPORTED;
 
     nixlBackendEngine* backend = extra_params->backends[0]->engine;
 
@@ -533,7 +533,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     // TODO: add support for more than single backend option
     if ((local_side->descs.size() != 1) || (remote_side->descs.size() != 1))
-        return NIXL_ERR_INVALID_PARAM;
+        return NIXL_ERR_NOT_SUPPORTED;
 
     // TODO: support more than single backend coming from prepXferDescs
     nixlBackendEngine* local_backend  = local_side->descs.begin()->first;
@@ -659,7 +659,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
     // TODO: Support more than a single backend to choose from
     if (extra_params) {
         if (extra_params->backends.size() > 1)
-            return NIXL_ERR_INVALID_PARAM;
+            return NIXL_ERR_NOT_SUPPORTED;
         else if (extra_params->backends.size() == 1)
             return extra_params->backends[0]->engine->genNotif(
                                               remote_agent, msg);
@@ -685,7 +685,7 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
 
     // TODO: add support for selection of backends, not all
     if (extra_params && (extra_params->backends.size() != 0))
-        return NIXL_ERR_INVALID_PARAM;
+        return NIXL_ERR_NOT_SUPPORTED;
 
 
     // Doing best effort, if any backend errors out we return
