@@ -43,7 +43,8 @@ class nixl_agent:
             self.mem_type_map[plugin] = mem_types
 
         # TODO: make explicit call later
-        self.backends["UCX"] = self.agent.createBackend("UCX", init)
+        #self.backends["UCX"] = self.agent.createBackend("UCX", init)
+        self.backends = {}
 
         if len(self.plugin_list) == 0:
             print("No plugins available, cannot start transfers!")
@@ -71,6 +72,13 @@ class nixl_agent:
 
     def get_backend_params(self, backend):
         return self.backend_options_map[backend]
+
+    def create_backend(self, backend, initParams = None):
+        self.backends[backend] = self.agent.createBackend(backend, initParams)
+
+        (backend_options, mem_types) = self.agent.getBackendParams(self.backends[backend])
+        self.backend_option_map[backend] = backend_options
+        self.mem_type_map[backend] = mem_types
 
     def get_xfer_descs(
         self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
