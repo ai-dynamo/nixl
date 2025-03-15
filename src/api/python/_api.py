@@ -31,7 +31,22 @@ class nixl_agent:
         self.notifs = {}
         self.backends = {}
         self.agent = nixlBind.nixlAgent(agent_name, devices)
+
+        self.plugin_list = nixlBind.getAvailPlugins()
+
+        self.backend_option_map = {}
+        self.mem_type_map = {}
+
+        for plugin in self.plugin_list:
+            (backend_options, mem_types) = self.agent.getPluginParams(plugin)
+            self.backend_option_map[plugin] = backend_options
+            self.mem_type_map[plugin] = mem_types
+
+        # TODO: make explicit call later
         self.backends["UCX"] = self.agent.createBackend("UCX", init)
+
+        if len(self.plugin_list) == 0:
+            print("No plugins available, cannot start transfers!")
 
         self.nixl_mems = {
             "DRAM": nixlBind.DRAM_SEG,
@@ -47,6 +62,15 @@ class nixl_agent:
         }
 
         print("Initializied NIXL agent:", agent_name)
+
+    def get_plugin_list(self):
+        return self.plugin_list
+
+    def get_backend_mem_types(self, backend):
+        return self.mem_types[backend]
+
+    def get_backend_params(self, backend):
+        return self.backend_options_map[backend]
 
     def get_xfer_descs(
         self, descs, mem_type=None, is_unified_addr=True, is_sorted=False

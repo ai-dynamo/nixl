@@ -177,21 +177,19 @@ PYBIND11_MODULE(_bindings, m) {
     py::class_<nixlAgent>(m, "nixlAgent")
         .def(py::init<std::string, nixlAgentConfig>())
         .def("getAvailPlugins", &nixlAgent::getAvailPlugins)
-        .def("getPluginParams", [](nixlAgent &agent, const nixl_backend_t type) -> nixl_b_params_t {
+        .def("getPluginParams", [](nixlAgent &agent, const nixl_backend_t type) -> std::pair<nixl_b_params_t, nixl_mem_list_t> {
                     nixl_b_params_t params;
                     nixl_mem_list_t mems;
                     nixl_status_t ret = agent.getPluginParams(type, mems, params);
                     if(ret < 0); //throw exception
-                    // TODO merge the mems
-                    return params;
+                    return std::make_pair(params, mems);
             })
-        .def("getBackendParams", [](nixlAgent &agent, uintptr_t backend) -> nixl_b_params_t {
+        .def("getBackendParams", [](nixlAgent &agent, uintptr_t backend) -> std::pair<nixl_b_params_t, nixl_mem_list_t> {
                     nixl_b_params_t params;
                     nixl_mem_list_t mems;
                     nixl_status_t ret = agent.getBackendParams((nixlBackendH*) backend, mems, params);
                     if(ret < 0); //throw exception
-                    // TODO merge the mems
-                    return params;
+                    return std::make_pair(params, mems);
             })
         .def("createBackend", [](nixlAgent &agent, const nixl_backend_t &type, const nixl_b_params_t &initParams) -> uintptr_t {
                     nixlBackendH* backend;
