@@ -55,14 +55,14 @@ class nixl_agent:
 
         init = {}
         if nixl_config:
-            for x in nixl_config.backends:
+            for bknd in nixl_config.backends:
                 # TODO: populate init from nixl_config when added
-                if x not in self.plugin_list:
+                if bknd not in self.plugin_list:
                     print(
-                        "Skipping backend registration", x, "due to the missing plugin."
+                        "Skipping backend registration", bknd, "due to the missing plugin."
                     )
                 else:
-                    self.backends[x] = self.agent.createBackend(x, init)
+                    self.backends[bknd] = self.agent.createBackend(bknd, init)
         elif instantiate_all:
             # TODO: populate init from default parameters, or define a set of params in python
             for plugin in self.plugin_list:
@@ -70,7 +70,7 @@ class nixl_agent:
 
         for backend in self.backends:
             (backend_options, mem_types) = self.agent.getBackendParams(backend)
-            self.backend_mems[backend] = mem_types
+            self.backend_mems[backend]    = mem_types
             self.backend_options[backend] = backend_options
 
         self.nixl_mems = {
@@ -119,105 +119,14 @@ class nixl_agent:
             print("Backend", backend, "not instantiated to get its parameters.")
             return None
 
-    def create_backend(self, backend, initParams=None):
+    def create_backend(self, backend, initParams={}):
         self.backends[backend] = self.agent.createBackend(backend, initParams)
 
         (backend_options, mem_types) = self.agent.getBackendParams(
             self.backends[backend]
         )
-        self.backend_option_map[backend] = backend_options
-        self.mem_type_map[backend] = mem_types
-
-    def get_xfer_descs(
-        self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
-    ):
-        # can add check for DLPack input
-
-        if isinstance(descs, nixlBind.nixlXferDList):
-            return descs
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 3:
-                new_descs = nixlBind.nixlXferDList(
-                    self.nixl_mems[mem_type], descs, is_unified_addr, is_sorted
-                )
-            elif mem_type is None:
-                print("Please specify a mem type if not using Tensors")
-                new_descs = None
-            else:
-                print("3-tuple list needed for transfer")
-                new_descs = None
-        elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
-            tensor_type = descs[0].device
-            dlist = [(0, 0, 0)] * len(descs)
-
-            for i in range(len(descs)):
-                if descs[i].device != tensor_type:
-                    return None
-                base_addr = descs[i].data_ptr()
-                region_len = descs[i].numel() * descs[i].element_size()
-                gpu_id = descs[i].get_device()
-                if gpu_id == -1:  # DRAM
-                    gpu_id = 0
-                dlist[i] = (base_addr, region_len, gpu_id)
-            new_descs = nixlBind.nixlXferDList(
-                self.nixl_mems[str(tensor_type)], dlist, is_unified_addr, is_sorted
-            )
-        elif isinstance(descs, nixlBind.nixlRegDList):
-            print("RegList type detected for transfer, please use XferList")
-            new_descs = None
-        else:
-            new_descs = None
-
-        return new_descs
-
-    def get_reg_descs(
-        self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
-    ):
-        # can add check for DLPack input
-
-        if isinstance(descs, nixlBind.nixlRegDList):
-            return descs
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 4:
-                new_descs = nixlBind.nixlRegDList(
-                    self.nixl_mems[mem_type], descs, is_unified_addr, is_sorted
-                )
-            elif mem_type is None:
-                print("Please specify a mem type if not using Tensors")
-                new_descs = None
-            else:
-                print("4-tuple list needed for registration")
-                new_descs = None
-        elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
-            tensor_type = descs[0].device
-            dlist = [(0, 0, 0, "")] * len(descs)
-
-            for i in range(len(descs)):
-                if descs[i].device != tensor_type:
-                    return None
-                base_addr = descs[i].data_ptr()
-                region_len = descs[i].numel() * descs[i].element_size()
-                gpu_id = descs[i].get_device()
-                if gpu_id == -1:  # DRAM
-                    gpu_id = 0
-                dlist[i] = (base_addr, region_len, gpu_id, "")
-            new_descs = nixlBind.nixlRegDList(
-                self.nixl_mems[str(tensor_type)], dlist, is_unified_addr, is_sorted
-            )
-        elif isinstance(descs, nixlBind.nixlXferDList):
-            print("XferList type detected for registration, please use RegList")
-            new_descs = None
-        else:
-            new_descs = None
-
-        return new_descs
-
-    # Since we create descriptor lists in agent, their SerDes methods are in the agent too
-    def get_serialized_descs(self, descs):
-        return pickle.dumps(descs)
-
-    def deserialize_descs(self, serialized_descs):
-        return pickle.loads(serialized_descs)
+        self.backend_mems[backend]    = mem_types
+        self.backend_options[backend] = backend_options
 
     # The returned descriptor object can be used for call to deregister
     def register_memory(
@@ -436,3 +345,96 @@ class nixl_agent:
 
     def remove_remote_agent(self, agent):
         self.agent.invalidateRemoteMD(agent)
+
+    ### Methods to create and serialize/deserialize descriptors, provided through Agent
+    def get_xfer_descs(
+        self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
+    ):
+        # can add check for DLPack input
+
+        if isinstance(descs, nixlBind.nixlXferDList):
+            return descs
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 3:
+                new_descs = nixlBind.nixlXferDList(
+                    self.nixl_mems[mem_type], descs, is_unified_addr, is_sorted
+                )
+            elif mem_type is None:
+                print("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                print("3-tuple list needed for transfer")
+                new_descs = None
+        elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
+            tensor_type = descs[0].device
+            dlist = [(0, 0, 0)] * len(descs)
+
+            for i in range(len(descs)):
+                if descs[i].device != tensor_type:
+                    return None
+                base_addr = descs[i].data_ptr()
+                region_len = descs[i].numel() * descs[i].element_size()
+                gpu_id = descs[i].get_device()
+                if gpu_id == -1:  # DRAM
+                    gpu_id = 0
+                dlist[i] = (base_addr, region_len, gpu_id)
+            new_descs = nixlBind.nixlXferDList(
+                self.nixl_mems[str(tensor_type)], dlist, is_unified_addr, is_sorted
+            )
+        elif isinstance(descs, nixlBind.nixlRegDList):
+            print("RegList type detected for transfer, please use XferList")
+            new_descs = None
+        else:
+            new_descs = None
+
+        return new_descs
+
+    def get_reg_descs(
+        self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
+    ):
+        # can add check for DLPack input
+
+        if isinstance(descs, nixlBind.nixlRegDList):
+            return descs
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 4:
+                new_descs = nixlBind.nixlRegDList(
+                    self.nixl_mems[mem_type], descs, is_unified_addr, is_sorted
+                )
+            elif mem_type is None:
+                print("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                print("4-tuple list needed for registration")
+                new_descs = None
+        elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
+            tensor_type = descs[0].device
+            dlist = [(0, 0, 0, "")] * len(descs)
+
+            for i in range(len(descs)):
+                if descs[i].device != tensor_type:
+                    return None
+                base_addr = descs[i].data_ptr()
+                region_len = descs[i].numel() * descs[i].element_size()
+                gpu_id = descs[i].get_device()
+                if gpu_id == -1:  # DRAM
+                    gpu_id = 0
+                dlist[i] = (base_addr, region_len, gpu_id, "")
+            new_descs = nixlBind.nixlRegDList(
+                self.nixl_mems[str(tensor_type)], dlist, is_unified_addr, is_sorted
+            )
+        elif isinstance(descs, nixlBind.nixlXferDList):
+            print("XferList type detected for registration, please use RegList")
+            new_descs = None
+        else:
+            new_descs = None
+
+        return new_descs
+
+    def get_serialized_descs(self, descs):
+        return pickle.dumps(descs)
+
+    def deserialize_descs(self, serialized_descs):
+        return pickle.loads(serialized_descs)
+
+
