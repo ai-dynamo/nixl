@@ -28,7 +28,7 @@ class nixl_config:
 
 
 class nixl_agent:
-    def __init__(self, agent_name, nixl_config=None):
+    def __init__(self, agent_name, nixl_config=None, instantiate_all=False):
         # Set agent config and instantiate an agent
         if nixl_config:
             agent_config = nixlBind.nixlAgentConfig(nixl_config.enable_pthread)
@@ -42,7 +42,7 @@ class nixl_agent:
         self.backend_mems = {}
         self.backend_options = {}
 
-        self.plugin_list = self.getAvailPlugins()
+        self.plugin_list = self.agent.getAvailPlugins()
         if len(self.plugin_list) == 0:
             print("No plugins available, cannot start transfers!")
 
@@ -63,7 +63,7 @@ class nixl_agent:
                     )
                 else:
                     self.backends[x] = self.agent.createBackend(x, init)
-        else:
+        elif instantiate_all:
             # TODO: populate init from default parameters, or define a set of params in python
             for plugin in self.plugin_list:
                 self.backends[plugin] = self.agent.createBackend(plugin, init)
@@ -212,7 +212,7 @@ class nixl_agent:
 
         return new_descs
 
-    # TODO: these not necessarily agent specific, maybe separate somehow?
+    # Since we create descriptor lists in agent, their SerDes methods are in the agent too
     def get_serialized_descs(self, descs):
         return pickle.dumps(descs)
 
@@ -290,14 +290,22 @@ class nixl_agent:
         if xfer_backend:
             handle = self.agent.prepXferDlist(descs, remote_agent, xfer_backend)
         else:
-            # TODO: need better way to select backend if not specified
+            # TODO: rely on underlying capability to register with all when supported
             if (descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backend):
                 handle = self.agent.prepXferDlist(
                     descs, remote_agent, self.backends["GDS"]
                 )
-            else:
+            elif (descs.getType() == nixlBind.DRAM_SEG) and ("UCX" in self.backend):
                 handle = self.agent.prepXferDlist(
                     descs, remote_agent, self.backends["UCX"]
+                )
+            elif (descs.getType() == nixlBind.VRAM_SEG) and ("UCX" in self.backend):
+                handle = self.agent.prepXferDlist(
+                    descs, remote_agent, self.backends["UCX"]
+                )
+            elif (descs.getType() == nixlBind.VRAM_SEG) and ("GDS" in self.backend):
+                handle = self.agent.prepXferDlist(
+                    descs, remote_agent, self.backends["GDS"]
                 )
         if handle == 0:
             return None
