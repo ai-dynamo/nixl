@@ -347,7 +347,7 @@ void printParams(const nixl_b_params_t& params, const nixl_mem_list_t& mems) {
 
     std::cout << "Mems:" << std::endl;
     for (const auto& elm : mems) {
-        std::cout << "  " << elm << std::endl;
+        std::cout << "  " << nixlEnumStrings::memTypeStr(elm) << std::endl;
     }
 }
 
