@@ -31,11 +31,24 @@ class nixlAgentData;
 
 /*** NIXL memory type, operation and status enums ***/
 
-// FILE_SEG must be last
+/**
+ * @enum   nixl_mem_t
+ * @brief  An enumeration of segment types for NIXL
+ *         FILE_SEG must be last
+ */
 typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG} nixl_mem_t;
 
+/**
+ * @enum   nixl_xfer_op_t
+ * @brief  An enumeration of different transfer types for NIXL
+ */
 typedef enum {NIXL_READ, NIXL_WRITE} nixl_xfer_op_t;
 
+/**
+ * @enum   nixl_status_t
+ * @brief  An enumeration of status values and error codes for
+ *         NIXL
+ */
 typedef enum {
     NIXL_IN_PROG = 1,
     NIXL_SUCCESS = 0,
@@ -50,7 +63,12 @@ typedef enum {
     NIXL_ERR_NOT_SUPPORTED = -9
 } nixl_status_t;
 
-// namespace to get string representation of different enums
+/**
+ * @namespace nixlEnumStrings
+ * @brief     This namespace to get string representation
+ *             of different enums
+ *
+ */
 namespace nixlEnumStrings {
     std::string memTypeStr(const nixl_mem_t &mem);
     std::string xferOpStr (const nixl_xfer_op_t &op);
@@ -59,32 +77,69 @@ namespace nixlEnumStrings {
 
 
 /*** NIXL typedefs and defines used in the API ***/
+/**
+ * @brief A typedef for a std::string to identify nixl backends
+ */
 
 typedef std::string nixl_backend_t;
-// std::string supports \0 natively, So it can be looked as a void* of data,
-// with specified length. Giving it a new name to be clear in the API and
-// preventing users to think it's a string and call c_str().
+/**
+ * @brief A typedef for a std::string to identify nixl blob
+ *        std::string supports \0 natively, So it can be looked as a void* of data,
+ *        with specified length. Giving it a new name to be clear in the API and
+ *        preventing users to think it's a string and call c_str().
+ */
 typedef std::string nixl_blob_t;
+/**
+ * @brief A typedef for a std::vector<nixl_mem_t> to create nixl_mem_list_t objects.
+ */
 typedef std::vector<nixl_mem_t> nixl_mem_list_t;
+/**
+ * @brief A typedef for a  std::unordered_map<std::string, std::string>
+ *        to hold nixl_b_params_t .
+ */
 typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
+/**
+ * @brief A typedef for a  std::unordered_map<std::string, std::vector<nixl_blob_t>>
+ *        to hold nixl_notifs_t (nixl notifcations)
+ */
 typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
+
+/**
+ * @class nixlAgentOptionalArgs
+ * @brief A class for optional argument that can be provided to agent.
+ */
 
 class nixlAgentOptionalArgs {
     public:
-        // Used in createBackend / createXferReq / prepXferDlist
-        //         makeXferReq   / GetNotifs     / GenNotif
-        // As suggestion to limit the list of backends to be explored, and
-        // the preference among them, first being the most preferred.
+        /**
+         * @var backends Vector for holding different backends
+         *      Used in createBackend / createXferReq / prepXferDlist
+         *      makeXferReq   / GetNotifs     / GenNotif
+         *      As suggestion to limit the list of backends to be explored, and
+         *      the preference among them, first being the most preferred.
+         */
         std::vector<nixlBackendH*> backends;
 
-        // Used in createXferReq / makeXferReq / postXferReq,
-        // if a notification message is desired, and the corresponding indicator
+        /**
+         * @var notifMsg A messaged Used in createXferReq / makeXferReq / postXferReq,
+         *               if a notification message is desired, and the corresponding indicator
+         */
         nixl_blob_t notifMsg;
+        /**
+         * @var hasNotif boolean value to check if notification is provided
+         */
         bool hasNotif = false;
 
-        // Used in makeXferReq, to skip merging of consecutive descriptors
+        /**
+         * @var makeXferReq boolean to skip merging consecutive descriptors
+         *                  Used in makeXferReq, to skip merging of consecutive descriptors
+         */
         bool skipDescMerge = false;
 };
+/**
+ * @brief A typedef for a nixlAgentOptionalArgs
+ *        for providing extra optional arguments
+ */
 typedef nixlAgentOptionalArgs nixl_opt_args_t;
 
 #define NIXL_INIT_AGENT ""
