@@ -25,13 +25,27 @@ class nixl_agent:
         # Read available backends and device info from nixl_config
         # For now setting the multithreading to enabled.
         devices = nixlBind.nixlAgentConfig(True)
-        init = {}
+        # init = {}
 
         self.name = agent_name
         self.notifs = {}
         self.backends = {}
         self.agent = nixlBind.nixlAgent(agent_name, devices)
-        self.backends["UCX"] = self.agent.createBackend("UCX", init)
+
+        self.plugin_list = nixlBind.getAvailPlugins()
+
+        self.backend_option_map = {}
+        self.mem_type_map = {}
+
+        for plugin in self.plugin_list:
+            (backend_options, mem_types) = self.agent.getPluginParams(plugin)
+            self.backend_option_map[plugin] = backend_options
+            self.mem_type_map[plugin] = mem_types
+
+        # TODO: make explicit call later
+        # self.backends["UCX"] = self.agent.createBackend("UCX", init)
+        if len(self.plugin_list) == 0:
+            print("No plugins available, cannot start transfers!")
 
         self.nixl_mems = {
             "DRAM": nixlBind.DRAM_SEG,
@@ -45,6 +59,24 @@ class nixl_agent:
         }
 
         print("Initializied NIXL agent:", agent_name)
+
+    def get_plugin_list(self):
+        return self.plugin_list
+
+    def get_backend_mem_types(self, backend):
+        return self.mem_types[backend]
+
+    def get_backend_params(self, backend):
+        return self.backend_options_map[backend]
+
+    def create_backend(self, backend, initParams=None):
+        self.backends[backend] = self.agent.createBackend(backend, initParams)
+
+        (backend_options, mem_types) = self.agent.getBackendParams(
+            self.backends[backend]
+        )
+        self.backend_option_map[backend] = backend_options
+        self.mem_type_map[backend] = mem_types
 
     def get_xfer_descs(
         self, descs, mem_type=None, is_unified_addr=True, is_sorted=False

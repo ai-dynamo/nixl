@@ -24,6 +24,18 @@ if __name__ == "__main__":
     buf_size = 256
     # Allocate memory and register with NIXL
     nixl_agent1 = nixl_agent("target", None)
+
+    plugin_list = nixl_agent1.get_plugin_list("UCX")
+    assert "UCX" in plugin_list
+    print(plugin_list)
+
+    print(nixl_agent1.get_backend_mem_types("UCX"))
+    print(nixl_agent1.get_backend_params("UCX"))
+
+    nixl_agent1.create_backend("UCX")
+
+    print(nixl_agent1.get_backend_params("UCX"))
+
     addr1 = nixl_utils.malloc_passthru(buf_size * 2)
     addr2 = addr1 + buf_size
 
