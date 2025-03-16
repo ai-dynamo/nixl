@@ -19,9 +19,12 @@ import torch
 
 import nixl._bindings as nixlBind
 
+class nixl_config:
+    def __init(self, backends=["UCX", "GDS"]):
+        self.backends = backends
 
 class nixl_agent:
-    def __init__(self, agent_name, nixl_config):
+    def __init__(self, agent_name, nixl_config=None):
         # Read available backends and device info from nixl_config
         # For now setting the multithreading to enabled.
         devices = nixlBind.nixlAgentConfig(True)
@@ -46,6 +49,13 @@ class nixl_agent:
         # self.backends["UCX"] = self.agent.createBackend("UCX", init)
         if len(self.plugin_list) == 0:
             print("No plugins available, cannot start transfers!")
+
+        if nixl_config:
+            for x in nixl_config.backends:
+                self.backends[x] = self.agent.createBackend(x, init)
+        else:  # Defaulting to UCX and GDS for now
+            self.backends["UCX"] = self.agent.createBackend("UCX", init)
+            self.backends["GDS"] = self.agent.createBackend("GDS", init)
 
         self.nixl_mems = {
             "DRAM": nixlBind.DRAM_SEG,
@@ -170,19 +180,31 @@ class nixl_agent:
 
     # The returned descriptor object can be used for call to deregister
     def register_memory(
-        self, reg_list, mem_type=None, is_unified_addr=True, is_sorted=False
+        self, reg_list, mem_type=None, is_unified_addr=True, is_sorted=False, backend=None
     ):
-        # based on backend type and mem_type, figure what registrations are meaningful
         reg_descs = self.get_reg_descs(reg_list, mem_type, is_unified_addr, is_sorted)
 
-        ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
+        # based on backend type and mem_type, figure what registrations are meaningful
+        if backend:
+            ret = self.agent.registerMem(reg_descs, self.backends[backend])
+        else:
+            if (reg_descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
+                ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
+            else:
+                ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
         if ret != 0:
             return None
         return reg_descs
 
-    def deregister_memory(self, dereg_descs):
+    def deregister_memory(self, dereg_descs, backend=None):
         # based on backend type and mem_type, figure what deregistrations are needed
-        self.agent.deregisterMem(dereg_descs, self.backends["UCX"])
+        if backend:
+            self.agent.deregisterMem(dereg_descs, self.backends[backend])
+        else:
+            if (dereg_descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
+                self.agent.deregisterMem(dereg_descs, self.backends["GDS"])
+            else:
+                self.agent.deregisterMem(dereg_descs, self.backends["UCX"])
         # No return
 
     # Optional proactive make connection
@@ -200,14 +222,24 @@ class nixl_agent:
         self.agent.invalidateRemoteMD(agent)
 
     def initialize_xfer(
-        self, local_descs, remote_descs, remote_agent, notif_msg, operation
+        self, local_descs, remote_descs, remote_agent, notif_msg, operation, xfer_backend=None
     ):
         op = self.nixl_ops[operation]
         if op:
-            handle = self.agent.createXferReq(
-                local_descs, remote_descs, remote_agent, notif_msg, op
-            )
-            return handle  # In case of error it will be 0
+            if xfer_backend:
+                handle = self.agent.createXferReq(
+                    local_descs,
+                    remote_descs,
+                    remote_agent,
+                    notif_msg,
+                    op,
+                    xfer_backend,
+                )
+            else:
+                handle = self.agent.createXferReq(
+                    local_descs, remote_descs, remote_agent, notif_msg, op
+                )
+            return handle  # In case of error it will be None
         else:
             return None
 
@@ -229,8 +261,14 @@ class nixl_agent:
             backend = self.agent.getXferBackend(example_xfer)
             handle = self.agent.prepXferDlist(descs, remote_agent, backend)
         else:
-            # Or use same logic that we used in register_memory
-            handle = self.agent.prepXferDlist(descs, remote_agent, self.backends["UCX"])
+            if (descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
+                handle = self.agent.prepXferDlist(
+                    descs, remote_agent, self.backends["GDS"]
+                )
+            else:
+                handle = self.agent.prepXferDlist(
+                    descs, remote_agent, self.backends["UCX"]
+                )
         if handle == 0:
             return None
 
