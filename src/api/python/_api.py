@@ -20,42 +20,57 @@ import torch
 import nixl._bindings as nixlBind
 
 class nixl_config:
-    def __init(self, backends=["UCX", "GDS"]):
+    def __init(self, enable_prog_thread = True, backends=["UCX", "GDS"]):
+        # TODO: add backend init parameters
         self.backends = backends
+        self.enable_pthread = enable_prog_thread
 
 class nixl_agent:
     def __init__(self, agent_name, nixl_config=None):
-        # Read available backends and device info from nixl_config
-        # For now setting the multithreading to enabled.
-        devices = nixlBind.nixlAgentConfig(True)
-        # init = {}
+        # Set agent config and instantiate an agent
+        if nixl_config:
+            agent_config = nixlBind.nixlAgentConfig(nixl_config.enable_pthread)
+        else:
+            agent_config = nixlBind.nixlAgentConfig(True)
+        self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name
         self.notifs = {}
         self.backends = {}
-        self.agent = nixlBind.nixlAgent(agent_name, devices)
+        self.backend_mems = {}
+        self.backend_options = {}
 
         self.plugin_list = nixlBind.getAvailPlugins()
-
-        self.backend_option_map = {}
-        self.mem_type_map = {}
-
-        for plugin in self.plugin_list:
-            (backend_options, mem_types) = self.agent.getPluginParams(plugin)
-            self.backend_option_map[plugin] = backend_options
-            self.mem_type_map[plugin] = mem_types
-
-        # TODO: make explicit call later
-        # self.backends["UCX"] = self.agent.createBackend("UCX", init)
         if len(self.plugin_list) == 0:
             print("No plugins available, cannot start transfers!")
 
+        self.plugin_b_options = {}
+        self.plugin_mem_types = {}
+        for plugin in self.plugin_list:
+            (backend_options, mem_types) = self.agent.getPluginParams(plugin)
+            self.plugin_b_options[plugin] = backend_options
+            self.plugin_mem_types[plugin] = mem_types
+
+        # self.backends["UCX"] = self.agent.createBackend("UCX", init)
+
+        init = {}
         if nixl_config:
             for x in nixl_config.backends:
-                self.backends[x] = self.agent.createBackend(x, init)
+                # TODO: populate init from nixl_config when added
+                if x not in self.plugin_list:
+                    print("Skiping backend registration", x, "due to the missing plugin.")
+                else:
+                    self.backends[x] = self.agent.createBackend(x, init)
         else:  # Defaulting to UCX and GDS for now
-            self.backends["UCX"] = self.agent.createBackend("UCX", init)
-            self.backends["GDS"] = self.agent.createBackend("GDS", init)
+            if "UCX" in self.plugin_list:
+                self.backends["UCX"] = self.agent.createBackend("UCX", init)
+            if "GDS" in self.plugin_list:
+                self.backends["GDS"] = self.agent.createBackend("GDS", init)
+
+        for backend in self.backends:
+            (backend_options, mem_types) = self.agent.getBackendParams(backend)
+            self.backend_mems[backend] = mem_types
+            self.backend_options[backend] = backend_options
 
         self.nixl_mems = {
             "DRAM": nixlBind.DRAM_SEG,
@@ -73,11 +88,33 @@ class nixl_agent:
     def get_plugin_list(self):
         return self.plugin_list
 
+    def get_plugin_mem_types(self, backend):
+        if backend in self.plugin_mem_types:
+            return self.plugin_mem_types[backend]
+        else:
+            print ("Plugin", backend, "is not available to get its supported mem types.")
+            return None
+
+    def get_plugin_params(self, backend):
+        if backend in self.plugin_b_options:
+            return self.plugin_b_options[backend]
+        else:
+            print ("Plugin", backend, "is not available to get its parameters.")
+            return None
+
     def get_backend_mem_types(self, backend):
-        return self.mem_types[backend]
+        if backend in self.backend_mems:
+            return self.backend_mems[backend]
+        else:
+            print ("Backend", backend, "not instantiated to get its supported mem types.")
+            return None
 
     def get_backend_params(self, backend):
-        return self.backend_options_map[backend]
+        if backend in self.backend_options:
+            return self.backend_options[backend]
+        else:
+            print ("Backend", backend, "not instantiated to get its parameters.")
+            return None
 
     def create_backend(self, backend, initParams=None):
         self.backends[backend] = self.agent.createBackend(backend, initParams)
@@ -282,6 +319,7 @@ class nixl_agent:
         remote_indices,
         notif_msg,
         operation,
+        skip_desc_merge = False
     ):
         op = self.nixl_ops[operation]
         if op:
@@ -292,6 +330,7 @@ class nixl_agent:
                 remote_indices,
                 notif_msg,
                 op,
+                skip_desc_merge,
             )
             if handle == 0:
                 return None
@@ -300,7 +339,7 @@ class nixl_agent:
         else:
             return None
 
-    def delete_xfer_side(self, handle):
+    def delete_dlist_handle(self, handle):
         # frees the handle too
         self.agent.releasedDlistH(handle)
 
@@ -335,7 +374,7 @@ class nixl_agent:
             self.notifs[remote_agent_name].remove(message)
         return message
 
-    def abort_xfer(self, handle):
+    def release_xfer_handle(self, handle):
         # frees the handle too
         self.agent.releaseXferReq(handle)
 

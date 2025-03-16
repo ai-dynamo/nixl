@@ -352,13 +352,15 @@ PYBIND11_MODULE(_bindings, m) {
                                uintptr_t remote_side,
                                const std::vector<int> &remote_indices,
                                const std::string &notif_msg,
-                               const nixl_xfer_op_t &operation) -> uintptr_t {
+                               const nixl_xfer_op_t &operation,
+                               bool skip_desc_merge) -> uintptr_t {
                     nixlXferReqH* handle;
                     nixl_opt_args_t extra_params;
                     if (notif_msg.size()>0) {
                         extra_params.notifMsg = notif_msg;
                         extra_params.hasNotif = true;
                     }
+                    extra_params.skipDescMerge = skip_desc_merge;
                     nixl_status_t ret = agent.makeXferReq(operation,
                                                           (nixlDlistH*) local_side, local_indices,
                                                           (nixlDlistH*) remote_side, remote_indices,

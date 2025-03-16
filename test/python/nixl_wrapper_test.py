@@ -146,10 +146,10 @@ if __name__ == "__main__":
                 target_done = True
                 print("Target done")
 
-    nixl_agent2.abort_xfer(xfer_handle_1)
-    nixl_agent2.abort_xfer(xfer_handle_2)
-    nixl_agent2.delete_xfer_side(local_prep_handle)
-    nixl_agent2.delete_xfer_side(remote_prep_handle)
+    nixl_agent2.release_xfer(xfer_handle_1)
+    nixl_agent2.release_xfer(xfer_handle_2)
+    nixl_agent2.delete_dlist_handle(local_prep_handle)
+    nixl_agent2.delete_dlist_handle(remote_prep_handle)
     nixl_agent2.remove_remote_agent("target")
     nixl_agent1.deregister_memory(agent1_reg_descs)
     nixl_agent2.deregister_memory(agent2_reg_descs)
