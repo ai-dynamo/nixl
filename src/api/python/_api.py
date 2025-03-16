@@ -143,6 +143,8 @@ class nixl_agent:
 
         # based on backend type and mem_type, figure what registrations are meaningful
         if backend:
+            print("trying backend")
+            print(self.backends[backend])
             ret = self.agent.registerMem(reg_descs, self.backends[backend])
         else:
             # TODO: rely on underlying capability to register with all when supported

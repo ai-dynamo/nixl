@@ -65,6 +65,10 @@ class nixlRepostActiveError : public std::runtime_error {
         nixlRepostActiveError(const char* what) : runtime_error(what) {}
 };
 
+class nixlNotSupportedError : public std::runtime_error {
+    public:
+        nixlNotSupportedError(const char* what) : runtime_error(what) {}
+};
 
 class nixlUnknownError : public std::runtime_error {
     public:
@@ -100,7 +104,7 @@ void throw_nixl_exception(const nixl_status_t &status) {
             throw nixlUnknownError(nixlEnumStrings::statusStr(status).c_str());
             break;
         case NIXL_ERR_NOT_SUPPORTED:
-            throw nixlUnknownError(nixlEnumStrings::statusStr(status).c_str());
+            throw nixlNotSupportedError(nixlEnumStrings::statusStr(status).c_str());
             break;
         default:
             throw std::runtime_error("BAD_STATUS");
@@ -148,7 +152,7 @@ PYBIND11_MODULE(_bindings, m) {
     py::register_exception<nixlNotAllowedError>(m, "nixlNotAllowedError");
     py::register_exception<nixlRepostActiveError>(m, "nixlRepostActiveError");
     py::register_exception<nixlUnknownError>(m, "nixlUnknownError");
-    py::register_exception<nixlUnknownError>(m, "nixlNotSupportedError");
+    py::register_exception<nixlNotSupportedError>(m, "nixlNotSupportedError");
 
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
         .def(py::init<nixl_mem_t, bool, bool, int>(), py::arg("type"), py::arg("unifiedAddr")=true, py::arg("sorted")=false, py::arg("init_size")=0)
@@ -297,9 +301,11 @@ PYBIND11_MODULE(_bindings, m) {
         .def("registerMem", [](nixlAgent &agent, nixl_reg_dlist_t descs, uintptr_t backend) -> nixl_status_t {
                     nixl_opt_args_t extra_params;
                     nixl_status_t ret;
-                    extra_params.backends.push_back((nixlBackendH*) backend);
+                    if(backend != 0)
+                        extra_params.backends.push_back((nixlBackendH*) backend);
 
                     ret = agent.registerMem(descs, &extra_params);
+                    throw_nixl_exception(ret);
                     return ret;
                 })
         .def("deregisterMem", [](nixlAgent &agent, nixl_reg_dlist_t descs, uintptr_t backend) -> nixl_status_t {
@@ -308,6 +314,7 @@ PYBIND11_MODULE(_bindings, m) {
                     extra_params.backends.push_back((nixlBackendH*) backend);
 
                     ret = agent.deregisterMem(descs, &extra_params);
+                    throw_nixl_exception(ret);
                     return ret;
                 })
         .def("makeConnection", [](nixlAgent &agent, const std::string &remote_agent) {
