@@ -261,7 +261,11 @@ PYBIND11_MODULE(_bindings, m) {
 
     py::class_<nixlAgent>(m, "nixlAgent")
         .def(py::init<std::string, nixlAgentConfig>())
-        .def("getAvailPlugins", &nixlAgent::getAvailPlugins)
+        .def("getAvailPlugins", [](nixlAgent &agent) -> std::vector<nixl_backend_t> {
+                    std::vector<nixl_backend_t> backends;
+                    throw_nixl_exception(agent.getAvailPlugins(backends));
+                    return backends;
+            })
         .def("getPluginParams", [](nixlAgent &agent, const nixl_backend_t type) -> std::pair<nixl_b_params_t, nixl_mem_list_t> {
                     nixl_b_params_t params;
                     nixl_mem_list_t mems;
