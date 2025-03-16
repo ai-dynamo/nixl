@@ -23,6 +23,38 @@
 #include "agent_data.h"
 #include "plugin_manager.h"
 
+std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
+    static std::array<std::string, FILE_SEG+1> nixl_mem_str = {
+           "DRAM_SEG", "VRAM_SEG", "BLK_SEG", "OBJ_SEG", "FILE_SEG"};
+    if (mem<DRAM_SEG || mem>FILE_SEG)
+        return "BAD_SEG";
+    return nixl_mem_str[mem];
+}
+
+std::string nixlEnumStrings::xferOpStr (const nixl_xfer_op_t &op) {
+    static std::array<std::string, 2> nixl_op_str = {"READ", "WRITE"};
+    if (op<NIXL_READ || op>NIXL_WRITE)
+        return "BAD_OP";
+    return nixl_op_str[op];
+
+}
+
+std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
+    switch (status) {
+        case NIXL_IN_PROG:           return "NIXL_IN_PROG";
+        case NIXL_SUCCESS:           return "NIXL_SUCCESS";
+        case NIXL_ERR_NOT_POSTED:    return "NIXL_ERR_NOT_POSTED";
+        case NIXL_ERR_INVALID_PARAM: return "NIXL_ERR_INVALID_PARAM";
+        case NIXL_ERR_BACKEND:       return "NIXL_ERR_BACKEND";
+        case NIXL_ERR_NOT_FOUND:     return "NIXL_ERR_NOT_FOUND";
+        case NIXL_ERR_MISMATCH:      return "NIXL_ERR_MISMATCH";
+        case NIXL_ERR_NOT_ALLOWED:   return "NIXL_ERR_NOT_ALLOWED";
+        case NIXL_ERR_REPOST_ACTIVE: return "NIXL_ERR_REPOST_ACTIVE";
+        case NIXL_ERR_UNKNOWN:       return "NIXL_ERR_UNKNOWN";
+        default:                     return "BAD_STATUS";
+    }
+}
+
 nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :
                                    name(name), config(cfg) {}

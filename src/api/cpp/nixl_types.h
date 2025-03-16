@@ -21,6 +21,7 @@
 #include <unordered_map>
 
 
+/*** Forward declarations ***/
 class nixlSerDes;
 class nixlDlistH;
 class nixlBackendH;
@@ -28,23 +29,12 @@ class nixlXferReqH;
 class nixlAgentData;
 
 
-typedef std::string nixl_backend_t;
-// std::string supports \0 natively, So it can be looked as a void* of data,
-// with specified length. Giving it a new name to be clear in the API and
-// preventing users to think it's a string and call c_str().
-typedef std::string nixl_blob_t;
-
-#define NIXL_INIT_AGENT ""
+/*** NIXL memory type, operation and status enums ***/
 
 // FILE_SEG must be last
 typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG} nixl_mem_t;
 
 typedef enum {NIXL_READ, NIXL_WRITE} nixl_xfer_op_t;
-
-typedef std::vector<nixl_mem_t> nixl_mem_list_t;
-typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
-typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
-
 
 typedef enum {
     NIXL_IN_PROG = 1,
@@ -60,6 +50,24 @@ typedef enum {
     NIXL_ERR_NOT_SUPPORTED = -9
 } nixl_status_t;
 
+// namespace to get string representation of different enums
+namespace nixlEnumStrings {
+    std::string memTypeStr(const nixl_mem_t &mem);
+    std::string xferOpStr (const nixl_xfer_op_t &op);
+    std::string statusStr (const nixl_status_t &status);
+}
+
+
+/*** NIXL typedefs and defines used in the API ***/
+
+typedef std::string nixl_backend_t;
+// std::string supports \0 natively, So it can be looked as a void* of data,
+// with specified length. Giving it a new name to be clear in the API and
+// preventing users to think it's a string and call c_str().
+typedef std::string nixl_blob_t;
+typedef std::vector<nixl_mem_t> nixl_mem_list_t;
+typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
+typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
 
 class nixlAgentOptionalArgs {
     public:
@@ -75,5 +83,7 @@ class nixlAgentOptionalArgs {
         bool hasNotif = false;
 };
 typedef nixlAgentOptionalArgs nixl_opt_args_t;
+
+#define NIXL_INIT_AGENT ""
 
 #endif
