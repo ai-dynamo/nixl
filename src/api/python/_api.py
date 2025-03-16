@@ -319,6 +319,23 @@ class nixl_agent:
         else:
             return "ERR"
 
+    def abort_xfer(self, handle):
+        # frees the handle too
+        self.agent.releaseXferReq(handle)
+
+    def delete_xfer_side(self, handle):
+        # frees the handle too
+        self.agent.releasedDlistH(handle)
+
+    # Returns new notifs, without touching self.notifs
+    def get_new_notifs(self):
+        return self.agent.getNotifs({})
+
+    # Adds new notifs to self.notifs and returns it
+    def update_notifs(self):
+        self.notifs = self.agent.getNotifs(self.notifs)
+        return self.notifs
+
     # Only removes the specific notification from self.notifs
     def check_remote_xfer_done(self, remote_agent_name, lookup_msg):
         self.notifs = self.agent.getNotifs(self.notifs)  # Adds new notifs
@@ -332,26 +349,9 @@ class nixl_agent:
             self.notifs[remote_agent_name].remove(message)
         return message
 
-    def abort_xfer(self, handle):
-        # frees the handle too
-        self.agent.releaseXferReq(handle)
-
-    def delete_xfer_side(self, handle):
-        # frees the handle too
-        self.agent.releasedDlistH(handle)
-
     # Extra notification APIs
     def send_notif(self, remote_agent_name, notif_msg):
         self.agent.genNotif(remote_agent_name, notif_msg)
-
-    # Returns new notifs, without touching self.notifs
-    def get_new_notifs(self):
-        return self.agent.getNotifs({})
-
-    # Adds new notifs to self.notifs and returns it
-    def update_notifs(self):
-        self.notifs = self.agent.getNotifs(self.notifs)
-        return self.notifs
 
     def get_agent_metadata(self):
         return self.agent.getLocalMD()
