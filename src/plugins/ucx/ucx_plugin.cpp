@@ -20,7 +20,7 @@
 
 // Plugin version information
 static const char* PLUGIN_NAME = "UCX";
-static const char* PLUGIN_VERSION = "1.0.0";
+static const char* PLUGIN_VERSION = "0.1.0";
 
 // Function to create a new UCX backend engine instance
 static nixlBackendEngine* create_ucx_engine(const nixlBackendInitParams* init_params) {
