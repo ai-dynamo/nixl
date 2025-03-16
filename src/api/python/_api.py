@@ -59,7 +59,9 @@ class nixl_agent:
                 # TODO: populate init from nixl_config when added
                 if bknd not in self.plugin_list:
                     print(
-                        "Skipping backend registration", bknd, "due to the missing plugin."
+                        "Skipping backend registration",
+                        bknd,
+                        "due to the missing plugin.",
                     )
                 else:
                     self.backends[bknd] = self.agent.createBackend(bknd, init)
@@ -70,7 +72,7 @@ class nixl_agent:
 
         for backend in self.backends:
             (backend_options, mem_types) = self.agent.getBackendParams(backend)
-            self.backend_mems[backend]    = mem_types
+            self.backend_mems[backend] = mem_types
             self.backend_options[backend] = backend_options
 
         self.nixl_mems = {
@@ -125,7 +127,7 @@ class nixl_agent:
         (backend_options, mem_types) = self.agent.getBackendParams(
             self.backends[backend]
         )
-        self.backend_mems[backend]    = mem_types
+        self.backend_mems[backend] = mem_types
         self.backend_options[backend] = backend_options
 
     # The returned descriptor object can be used for call to deregister
@@ -146,11 +148,17 @@ class nixl_agent:
             # TODO: rely on underlying capability to register with all when supported
             if (reg_descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backends):
                 ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
-            elif (reg_descs.getType() == nixlBind.DRAM_SEG) and ("UCX" in self.backends):
+            elif (reg_descs.getType() == nixlBind.DRAM_SEG) and (
+                "UCX" in self.backends
+            ):
                 ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
-            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and ("UCX" in self.backends):
+            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and (
+                "UCX" in self.backends
+            ):
                 ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
-            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and ("GDS" in self.backends):
+            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and (
+                "GDS" in self.backends
+            ):
                 ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
         if ret != 0:
             return None
@@ -162,9 +170,7 @@ class nixl_agent:
             self.agent.deregisterMem(dereg_list, self.backends[backend])
         else:
             # TODO: rely on underlying capability to register with all when supported
-            if (dereg_list.getType() == nixlBind.FILE_SEG) and (
-                "GDS" in self.backends
-            ):
+            if (dereg_list.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backends):
                 ret = self.agent.deregisterMem(dereg_list, self.backends["GDS"])
             elif (dereg_list.getType() == nixlBind.DRAM_SEG) and (
                 "UCX" in self.backends
@@ -439,5 +445,3 @@ class nixl_agent:
 
     def deserialize_descs(self, serialized_descs):
         return pickle.loads(serialized_descs)
-
-
