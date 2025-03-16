@@ -376,11 +376,14 @@ PYBIND11_MODULE(_bindings, m) {
                    py::arg("skip_desc_merg") = false)
         .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh, std::string notif_msg) -> nixl_status_t {
                     nixl_opt_args_t extra_params;
+                    nixl_status_t ret;
                     if (notif_msg.size()>0) {
                         extra_params.notifMsg = notif_msg;
                         extra_params.hasNotif = true;
+                        ret = agent.postXferReq((nixlXferReqH*) reqh, &extra_params);
+                    } else {
+                        ret = agent.postXferReq((nixlXferReqH*) reqh);
                     }
-                    nixl_status_t ret = agent.postXferReq((nixlXferReqH*) reqh, &extra_params);
                     throw_nixl_exception(ret);
                     return ret;
                 })
