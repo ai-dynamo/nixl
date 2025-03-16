@@ -19,7 +19,6 @@ import nixl._utils as nixl_utils
 from nixl._api import nixl_agent
 
 if __name__ == "__main__":
-
     nixl_agent1 = nixl_agent("bad agent", None)
 
     buf_size = 256
