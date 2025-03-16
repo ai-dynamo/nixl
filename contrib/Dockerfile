@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 as base
+FROM nvcr.io/nvidia/pytorch:25.02-py3
 ARG MOFED_VERSION=24.10-1.1.4.0
 
 ENV TZ=America
@@ -64,9 +64,6 @@ RUN apt-get install -y linux-tools-common linux-tools-generic ethtool iproute2
 RUN apt-get install -y dkms linux-headers-generic
 RUN apt-get install -y meson ninja-build uuid-dev gdb
 
-# Use nightly cuda 12.8 based pytorch since these are not yet released
-RUN pip3 install --break-system-packages --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128
-
 RUN apt-get update && apt install -y wget libglib2.0-0
 RUN wget ${NSYS_URL}${NSYS_PKG} && dpkg -i $NSYS_PKG && rm $NSYS_PKG
 
@@ -79,7 +76,7 @@ RUN cd /usr/local/src && \
     rm -rf /var/lib/apt/lists/* /usr/local/src/*
 
 ENV LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64 \
-    LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
+    LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs
 
 ENV LIBRARY_PATH=$LIBRARY_PATH:/usr/local/lib \
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
@@ -107,8 +104,7 @@ RUN cd /usr/local/src && \
         --with-verbs                \
         --with-dm                   \
         --with-gdrcopy=/usr/local   \
-        --enable-mt                 \
-        --with-mlx5-dv &&           \
+        --enable-mt &&              \
     make -j &&                      \
     make -j install-strip &&        \
     ldconfig
@@ -132,15 +128,23 @@ RUN cd /usr/local/src && \
 
 WORKDIR /workspace
 
-ENV LD_LIBRARY_PATH=/usr/local/ompi/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/ompi/lib:/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 ENV CPATH=/usr/local/ompi/include:$CPATH
 ENV PATH=/usr/local/ompi/bin:$PATH
 ENV PKG_CONFIG_PATH=/usr/local/ompi/lib/pkgconfig:$PKG_CONFIG_PATH
 
-ARG USERNAME
-ARG PASSWORD
+# Disabling CUDA IPC not to use NVLINK, as it slows down local
+# UCX transfers and can cause contention with local collectives.
+ENV UCX_TLS=^cuda_ipc
 
-RUN git clone https://${USERNAME}:${PASSWORD}@github.com/ai-dynamo/nixl.git && cd nixl && git branch
+# Make sure to build the container from the cloned git repository
+RUN mkdir nixl
+COPY . /workspace/nixl
+RUN cd nixl && git clean -d -f && rm -rf .git build
 RUN cd nixl && mkdir build && meson setup build/ --prefix=/usr/local/nixl && cd build/ && ninja && ninja install
+
+RUN echo "/usr/local/nixl/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/nixl.conf
+RUN echo "/usr/local/nixl/lib/x86_64-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf
+RUN ldconfig
 
 RUN cd nixl && pip3 install --break-system-packages .
