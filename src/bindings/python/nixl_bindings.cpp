@@ -381,6 +381,11 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(ret);
                     return ret;
                 })
+        .def("queryXferBackend", [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {
+                    nixlBackendH* backend = nullptr;
+                    throw_nixl_exception(agent.queryXferBackend((nixlXferReqH*) reqh, backend));
+                    return (uintptr_t) backend;
+                })
         .def("getNotifs", [](nixlAgent &agent, nixl_notifs_t notif_map) -> nixl_notifs_t {
                     nixl_status_t ret = agent.getNotifs(notif_map);
 
