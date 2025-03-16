@@ -271,8 +271,8 @@ PYBIND11_MODULE(_bindings, m) {
         .def("releaseXferReq", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                     return agent.releaseXferReq((nixlXferReqH*) reqh);
                 })
-        .def("releasePrepped", [](nixlAgent &agent, uintptr_t handle) -> nixl_status_t {
-                    return agent.releasePrepped((nixlDlistH*) handle);
+        .def("releasedDlistH", [](nixlAgent &agent, uintptr_t handle) -> nixl_status_t {
+                    return agent.releasedDlistH((nixlDlistH*) handle);
                 })
         .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                     return agent.postXferReq((nixlXferReqH*) reqh);

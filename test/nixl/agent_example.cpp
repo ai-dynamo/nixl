@@ -161,9 +161,9 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     assert (status == NIXL_SUCCESS);
 
     for(int i = 0; i<n_iters; i++){
-        status = A1->releasePrepped(src_side[i]);
+        status = A1->releasedDlistH(src_side[i]);
         assert (status == NIXL_SUCCESS);
-        status = A1->releasePrepped(dst_side[i]);
+        status = A1->releasedDlistH(dst_side[i]);
         assert (status == NIXL_SUCCESS);
     }
 
@@ -316,9 +316,9 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     status = A2->deregisterMem(mem_list2, &extra_params2);
     assert (status == NIXL_SUCCESS);
 
-    status = A1->releasePrepped(src_side);
+    status = A1->releasedDlistH(src_side);
     assert (status == NIXL_SUCCESS);
-    status = A1->releasePrepped(dst_side);
+    status = A1->releasedDlistH(dst_side);
     assert (status == NIXL_SUCCESS);
 
     for(int i = 0; i<n_bufs; i++) {

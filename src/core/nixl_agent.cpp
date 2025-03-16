@@ -690,7 +690,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
-nixlAgent::releasePrepped (nixlDlistH* dlist_hndl) const {
+nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
     delete dlist_hndl;
     return NIXL_SUCCESS;
 }

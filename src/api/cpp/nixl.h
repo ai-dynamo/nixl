@@ -158,7 +158,7 @@ class nixlAgent {
 
         // Release the preparred transfer descriptor handle `dlist_hndl`
         nixl_status_t
-        releasePrepped (nixlDlistH* dlist_hndl) const;
+        releasedDlistH (nixlDlistH* dlist_hndl) const;
 
 
         /*** Notification Handling ***/
