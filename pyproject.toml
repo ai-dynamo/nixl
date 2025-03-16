@@ -26,6 +26,9 @@ license = 'LICENSE'
 requires-python = '>=3.9'
 authors = [
   {name = 'Timothy Stamler', email = 'tstamler@nvidia.com'},
+  {name = 'Moein Khazraee', email = 'moein@nvidia.com'},
+  {name = 'Vishwanath Venkatesan', email = 'vvenkatesan@nvidia.com'},
+  {name = 'Omri Kahalon', email = 'omrik@nvidia.com'},
 ]
 
 [tool.meson-python.args]
