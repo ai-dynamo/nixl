@@ -277,10 +277,10 @@ class nixl_agent:
         self.agent.makeConnection(remote_agent)
 
     # "" remote agent means local. example xfer can be used to know the backend
-    def prep_xfer_dlist(
+    def prep_xfer_side(
         self,
-        xfer_list,
         remote_agent,
+        xfer_list,
         mem_type=None,
         is_unified_addr=True,
         is_sorted=False,
@@ -312,14 +312,14 @@ class nixl_agent:
 
         return handle
 
-    def make_resolved_xfer(
+    def make_prepped_xfer(
         self,
-        operation,
         local_xfer_side,
         local_indices,
         remote_xfer_side,
         remote_indices,
-        notif_msg="",
+        notif_msg,
+        operation,
         skip_desc_merge=False,
     ):
         op = self.nixl_ops[operation]
@@ -340,13 +340,13 @@ class nixl_agent:
         else:
             return None
 
-    def create_xfer(
+    def initialize_xfer(
         self,
-        operation,
         local_descs,
         remote_descs,
         remote_agent,
-        notif_msg="",
+        notif_msg,
+        operation,
         xfer_backend=None,
     ):
         op = self.nixl_ops[operation]
@@ -406,11 +406,11 @@ class nixl_agent:
             self.notifs[remote_agent_name].remove(message)
         return message
 
-    def release_xfer_handle(self, handle):
+    def abort_xfer(self, handle):
         # frees the handle too
         self.agent.releaseXferReq(handle)
 
-    def release_dlist_handle(self, handle):
+    def delete_xfer_side(self, handle):
         # frees the handle too
         self.agent.releasedDlistH(handle)
 

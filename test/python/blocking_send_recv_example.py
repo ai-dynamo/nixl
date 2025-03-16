@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     if args.mode != "target":
         agent.remove_remote_agent(peer_name)
-        agent.release_xfer(xfer_handle)
+        agent.abort_xfer(xfer_handle)
 
     agent.deregister_memory(reg_descs)
 
