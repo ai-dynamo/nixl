@@ -29,7 +29,7 @@
 class nixlAgentConfig {
     private:
 
-        /** @var Enable progress thread *
+        /** @var Enable progress thread */
         bool     useProgThread;
 
     public:
