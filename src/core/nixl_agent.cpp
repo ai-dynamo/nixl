@@ -264,7 +264,10 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
                            descs.isUnifiedAddr(),
                            descs.isSorted());
     nixl_xfer_dlist_t trimmed = descs.trim();
-    // TODO: can use getIndex for exact match instead of populate
+
+    // TODO: can use getIndex for exact match before populate
+    // Or in case of supporting overlapping registers with splitting,
+    // add logic to find each (after todo in addDescList for local sec).
     ret = data->memorySection.populate(trimmed, backend->getType(), resp);
     if (ret != NIXL_SUCCESS)
         return ret;
@@ -621,41 +624,50 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                                      remote_descs->isUnifiedAddr(),
                                      false, desc_count);
 
-    int i = 0, j = 0; //final list size
-    while (i<(desc_count)) {
-        nixlMetaDesc local_desc1  = (*local_descs) [local_indices[i]];
-        nixlMetaDesc remote_desc1 = (*remote_descs)[remote_indices[i]];
+    if (extra_params && extra_params->skipDescMerge) {
+        for (int i=0; i<desc_count; ++i) {
+            (*handle->initiatorDescs)[i] =
+                                     (*local_descs)[local_indices[i]];
+            (*handle->targetDescs)[i] =
+                                     (*remote_descs)[remote_indices[i]];
+        }
+    } else {
+        int i = 0, j = 0; //final list size
+        while (i<(desc_count)) {
+            nixlMetaDesc local_desc1  = (*local_descs) [local_indices[i]];
+            nixlMetaDesc remote_desc1 = (*remote_descs)[remote_indices[i]];
 
-        if(i != (desc_count-1) ) {
-            nixlMetaDesc local_desc2  = (*local_descs) [local_indices[i+1]];
-            nixlMetaDesc remote_desc2 = (*remote_descs)[remote_indices[i+1]];
+            if(i != (desc_count-1) ) {
+                nixlMetaDesc local_desc2  = (*local_descs) [local_indices[i+1]];
+                nixlMetaDesc remote_desc2 = (*remote_descs)[remote_indices[i+1]];
 
-          while( ((local_desc1.addr + local_desc1.len) == local_desc2.addr)
-              && ((remote_desc1.addr + remote_desc1.len) == remote_desc2.addr)
-              && (local_desc1.metadataP == local_desc2.metadataP)
-              && (remote_desc1.metadataP == remote_desc2.metadataP)
-              && (local_desc1.devId == local_desc2.devId)
-              && (remote_desc1.devId == remote_desc2.devId)) {
+              while (((local_desc1.addr + local_desc1.len) == local_desc2.addr)
+                  && ((remote_desc1.addr + remote_desc1.len) == remote_desc2.addr)
+                  && (local_desc1.metadataP == local_desc2.metadataP)
+                  && (remote_desc1.metadataP == remote_desc2.metadataP)
+                  && (local_desc1.devId == local_desc2.devId)
+                  && (remote_desc1.devId == remote_desc2.devId)) {
 
-                local_desc1.len += local_desc2.len;
-                remote_desc1.len += remote_desc2.len;
+                    local_desc1.len += local_desc2.len;
+                    remote_desc1.len += remote_desc2.len;
 
-                i++;
-                if(i == (desc_count-1)) break;
+                    i++;
+                    if(i == (desc_count-1)) break;
 
-                local_desc2 = (*local_descs)[local_indices[i+1]];
-                remote_desc2 = (*remote_descs)[remote_indices[i+1]];
+                    local_desc2  = (*local_descs) [local_indices[i+1]];
+                    remote_desc2 = (*remote_descs)[remote_indices[i+1]];
+                }
             }
+
+            (*handle->initiatorDescs)[j] = local_desc1;
+            (*handle->targetDescs)   [j] = remote_desc1;
+            j++;
+            i++;
         }
 
-        (*handle->initiatorDescs)[j] = local_desc1;
-        (*handle->targetDescs)   [j] = remote_desc1;
-        j++;
-        i++;
+        handle->initiatorDescs->resize(j);
+        handle->targetDescs->resize(j);
     }
-
-    handle->initiatorDescs->resize(j);
-    handle->targetDescs->resize(j);
 
     // To be added to logging
     //std::cout << "reqH descList size down to " << j << "\n";
@@ -818,6 +830,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     if(ret)
         return ret;
 
+    // TODO: add support for marginal updates, then conn_cnt might be 0
     if (conn_cnt<1)
         return NIXL_ERR_INVALID_PARAM;
 
@@ -826,7 +839,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
         if (nixl_backend.size()==0)
             return NIXL_ERR_MISMATCH;
         conn_info = sd.getStr("c");
-        if (conn_info.size()==0) // Fine if doing marginal updates
+        if (conn_info.size()==0)
             return NIXL_ERR_MISMATCH;
 
         // Current agent might not support a remote backend
@@ -842,11 +855,13 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
             eng = data->backendEngines[nixl_backend];
             if (eng->supportsRemote()) {
                 ret = eng->loadRemoteConnInfo(remote_agent, conn_info);
-                if(ret)
+                if (ret)
                     return ret; // Error in load
                 count++;
                 data->remoteBackends[remote_agent].insert(nixl_backend);
             } else {
+                // If there was an issue and we return error while some connections
+                // are loaded, they will be deleted in the backend destructor.
                 return NIXL_ERR_UNKNOWN; // This is an erroneous case
             }
         }
@@ -856,13 +871,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     if (count == 0)
         return NIXL_ERR_BACKEND;
 
-    // If there was an issue and we return -1 while some connections
-    // are loaded, they will be deleted in backend destructor.
-    // the backend connection list for this agent will be empty.
-
-    // It's just a check, not introducing section_info
-    conn_info = sd.getStr("");
-    if (conn_info != "MemSection")
+    if (sd.getStr("") != "MemSection")
         return NIXL_ERR_MISMATCH;
 
     if (data->remoteSections.count(remote_agent) == 0)
@@ -871,7 +880,8 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     ret = data->remoteSections[remote_agent]->loadRemoteData(&sd);
 
-    if(ret) {
+    // TODO: can be more graceful, if just the new MD blob was improper
+    if (ret) {
         delete data->remoteSections[remote_agent];
         data->remoteSections.erase(remote_agent);
         return ret;

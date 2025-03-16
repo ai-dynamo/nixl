@@ -81,6 +81,9 @@ class nixlAgentOptionalArgs {
         // if a notification message is desired, and the corresponding indicator
         nixl_blob_t notifMsg;
         bool hasNotif = false;
+
+        // Used in makeXferReq, to skip merging of consecutive descriptors
+        bool skipDescMerge = false;
 };
 typedef nixlAgentOptionalArgs nixl_opt_args_t;
 

@@ -29,7 +29,7 @@ namespace py = pybind11;
 PYBIND11_MODULE(_bindings, m) {
 
     //TODO: each nixl class and/or function can be documented in place
-    m.doc() = "pybind11 NIXL plugin: Implements NIXL descriptors and lists, soon Agent API as well";
+    m.doc() = "pybind11 NIXL plugin: Implements NIXL descriptors and lists, as well as bindings of NIXL CPP APIs";
 
     //cast types
     py::enum_<nixl_mem_t>(m, "nixl_mem_t")
@@ -86,8 +86,9 @@ PYBIND11_MODULE(_bindings, m) {
                 list[i] = nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint32_t>());
             })
         .def("addDesc", [](nixl_xfer_dlist_t &list, const py::tuple &desc) {
-                nixlBasicDesc newDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint32_t>());
-                newDesc.print("bdesc");
+                list.addDesc(nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint32_t>()));
+            })
+        .def("append", [](nixl_xfer_dlist_t &list, const py::tuple &desc) {
                 list.addDesc(nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint32_t>()));
             })
         .def("remDesc", &nixl_xfer_dlist_t::remDesc)
@@ -138,13 +139,12 @@ PYBIND11_MODULE(_bindings, m) {
                 list[i] = nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint32_t>(), desc[3].cast<std::string>());
             })
         .def("addDesc", [](nixl_reg_dlist_t &list, const py::tuple &desc) {
-                uintptr_t addr = desc[0].cast<uintptr_t>();
-                size_t size = desc[1].cast<size_t>();
-                uint32_t dev_id = desc[2].cast<uint32_t>();
-                std::string meta = desc[3].cast<std::string>();
-                nixlBlobDesc newDesc(addr, size, dev_id, meta);
-
-                list.addDesc(newDesc);
+                list.addDesc(nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(),
+                                            desc[2].cast<uint32_t>(),desc[3].cast<std::string>()));
+            })
+        .def("append", [](nixl_reg_dlist_t &list, const py::tuple &desc) {
+                list.addDesc(nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(),
+                                            desc[2].cast<uint32_t>(),desc[3].cast<std::string>()));
             })
         .def("remDesc", &nixl_reg_dlist_t::remDesc)
         .def("verifySorted", &nixl_reg_dlist_t::verifySorted)
