@@ -94,8 +94,8 @@ int main(int argc, char *argv[]) {
     nixlBackendH    *ucx;
 
     /** Serialization/Deserialization object to create a blob */
-    nixlSerDes        *serdes;
-    nixlSerDes        *remote_serdes;
+    nixlSerDes *serdes        = new nixlSerDes();
+    nixlSerDes *remote_serdes = new nixlSerDes();
 
     /** Descriptors and Transfer Request */
     nixl_reg_dlist_t  dram_for_ucx(DRAM_SEG);
@@ -125,7 +125,6 @@ int main(int argc, char *argv[]) {
     std::cout << "Starting Agent for "<< role << "\n";
     nixlAgent     agent(role, cfg);
     agent.createBackend("UCX", params, ucx);
-    serdes      = new nixlSerDes();
 
     nixl_opt_args_t extra_params;
     extra_params.backends.push_back(ucx);
@@ -204,7 +203,6 @@ int main(int argc, char *argv[]) {
         std::string target_name;
 
         std::cout << " Verify Deserialized Target's Desc List at Initiator\n";
-        remote_serdes = new nixlSerDes();
         remote_serdes->importStr(remote_desc);
         nixl_xfer_dlist_t dram_target_ucx(remote_serdes);
         nixl_xfer_dlist_t dram_initiator_ucx = dram_for_ucx.trim();
