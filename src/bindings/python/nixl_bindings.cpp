@@ -237,14 +237,14 @@ PYBIND11_MODULE(_bindings, m) {
                     if(ret < 0) return (uintptr_t) nullptr;
                     return (uintptr_t) handle;
             })
-        .def("prepXferDescs", [](nixlAgent &agent,
+        .def("prepXferDlist", [](nixlAgent &agent,
                                 const nixl_xfer_dlist_t &descs,
                                 const std::string &remote_agent,
                                 uintptr_t backend) -> uintptr_t {
                     nixlDlistH* handle;
                     nixl_opt_args_t extra_params;
                     extra_params.backends.push_back((nixlBackendH*) backend);
-                    nixl_status_t ret = agent.prepXferDescs(descs, remote_agent, handle, &extra_params);
+                    nixl_status_t ret = agent.prepXferDlist(descs, remote_agent, handle, &extra_params);
                     if (ret != NIXL_SUCCESS) return (uintptr_t) nullptr;
                     else return (uintptr_t) handle;
                 })

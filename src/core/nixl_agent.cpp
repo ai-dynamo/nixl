@@ -492,7 +492,7 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
 }
 
 nixl_status_t
-nixlAgent::prepXferDescs (const nixl_xfer_dlist_t &descs,
+nixlAgent::prepXferDlist (const nixl_xfer_dlist_t &descs,
                           const std::string &remote_agent,
                           nixlDlistH* &dlist_hndl,
                           const nixl_opt_args_t* extra_params) const {
@@ -570,7 +570,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     if ((local_side->descs.size() != 1) || (remote_side->descs.size() != 1))
         return NIXL_ERR_NOT_SUPPORTED;
 
-    // TODO: support more than single backend coming from prepXferDescs
+    // TODO: support more than single backend coming from prepXferDlist
     nixlBackendEngine* local_backend  = local_side->descs.begin()->first;
     nixlBackendEngine* remote_backend = remote_side->descs.begin()->first;
 

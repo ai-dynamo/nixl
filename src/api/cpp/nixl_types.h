@@ -71,7 +71,7 @@ typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
 
 class nixlAgentOptionalArgs {
     public:
-        // Used in createBackend / createXferReq / prepXferDescs
+        // Used in createBackend / createXferReq / prepXferDlist
         //         makeXferReq   / GetNotifs     / GenNotif
         // As suggestion to limit the list of backends to be explored, and
         // the preference among them, first being the most preferred.
