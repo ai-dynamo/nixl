@@ -305,4 +305,5 @@ class nixlAgent {
         nixl_status_t
         invalidateRemoteMD (const std::string &remote_agent);
 };
+
 #endif
