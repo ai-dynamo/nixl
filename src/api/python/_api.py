@@ -251,12 +251,12 @@ class nixl_agent:
         op = self.nixl_ops[operation]
         if op:
             handle = self.agent.makeXferReq(
+                op,
                 local_xfer_side,
                 local_indices,
                 remote_xfer_side,
                 remote_indices,
                 notif_msg,
-                op,
                 skip_desc_merge,
             )
             if handle == 0:
@@ -279,16 +279,16 @@ class nixl_agent:
         if op:
             if xfer_backend:
                 handle = self.agent.createXferReq(
+                    op,
                     local_descs,
                     remote_descs,
                     remote_agent,
                     notif_msg,
-                    op,
                     xfer_backend,
                 )
             else:
                 handle = self.agent.createXferReq(
-                    local_descs, remote_descs, remote_agent, notif_msg, op
+                    op, local_descs, remote_descs, remote_agent, notif_msg
                 )
             return handle  # In case of error it will be None
         else:

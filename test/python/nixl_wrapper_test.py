@@ -26,7 +26,7 @@ if __name__ == "__main__":
     nixl_agent1 = nixl_agent("target")
 
     plugin_list = nixl_agent1.get_plugin_list()
-    assert "UCX" in plugin_list
+    # assert "UCX" in plugin_list # not supported in static linking mode yet
     print(plugin_list)
 
     print(nixl_agent1.get_plugin_mem_types("UCX"))
@@ -43,8 +43,8 @@ if __name__ == "__main__":
     agent1_addrs = [(addr1, buf_size, 0), (addr2, buf_size, 0)]
     agent1_strings = [(addr1, buf_size, 0, "a"), (addr2, buf_size, 0, "b")]
 
-    agent1_reg_descs = nixl_agent1.get_reg_descs(agent1_strings, "DRAM", True)
-    agent1_xfer_descs = nixl_agent1.get_xfer_descs(agent1_addrs, "DRAM", True)
+    agent1_reg_descs = nixl_agent1.get_reg_descs(agent1_strings, "DRAM", is_sorted=True)
+    agent1_xfer_descs = nixl_agent1.get_xfer_descs(agent1_addrs, "DRAM", is_sorted=True)
 
     # Just for tensor test
     tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]
@@ -54,14 +54,15 @@ if __name__ == "__main__":
     assert nixl_agent1.register_memory(agent1_reg_descs) is not None
 
     nixl_agent2 = nixl_agent("initiator", None)
+    nixl_agent2.create_backend("UCX")
     addr3 = nixl_utils.malloc_passthru(buf_size * 2)
     addr4 = addr3 + buf_size
 
     agent2_addrs = [(addr3, buf_size, 0), (addr4, buf_size, 0)]
     agent2_strings = [(addr3, buf_size, 0, "a"), (addr4, buf_size, 0, "b")]
 
-    agent2_reg_descs = nixl_agent1.get_reg_descs(agent2_strings, "DRAM", True)
-    agent2_xfer_descs = nixl_agent1.get_xfer_descs(agent2_addrs, "DRAM", True)
+    agent2_reg_descs = nixl_agent2.get_reg_descs(agent2_strings, "DRAM", is_sorted=True)
+    agent2_xfer_descs = nixl_agent2.get_xfer_descs(agent2_addrs, "DRAM", is_sorted=True)
 
     agent2_descs = nixl_agent2.register_memory(agent2_reg_descs, is_sorted=True)
     assert agent2_descs is not None
