@@ -235,35 +235,42 @@ class nixl_agent:
             ret = self.agent.registerMem(reg_descs, self.backends[backend])
         else:
             # TODO: rely on underlying capability to register with all when supported
-            if (reg_descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
+            if (reg_descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backend):
                 ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
-            elif (reg_descs.getType() == nixl.DRAM_SEG) and ("UCX" in self.backend):
+            elif (reg_descs.getType() == nixlBind.DRAM_SEG) and ("UCX" in self.backend):
                 ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
-            elif (reg_descs.getType() == nixl.VRAM_SEG) and ("UCX" in self.backend):
+            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and ("UCX" in self.backend):
                 ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
-            elif (reg_descs.getType() == nixl.VRAM_SEG) and ("GDS" in self.backend):
+            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and ("GDS" in self.backend):
                 ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
         if ret != 0:
             return None
         return reg_descs
 
-    def deregister_memory(self, dereg_descs, backend=None):
+    def deregister_memory(self, dereg_list, backend=None):
         # based on backend type and mem_type, figure what deregistrations are needed
         if backend:
-            self.agent.deregisterMem(dereg_descs, self.backends[backend])
+            self.agent.deregisterMem(dereg_list, self.backends[backend])
         else:
             # TODO: rely on underlying capability to register with all when supported
-            if (reg_descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
-                ret = self.agent.deregisterMem(reg_descs, self.backends["GDS"])
-            elif (reg_descs.getType() == nixl.DRAM_SEG) and ("UCX" in self.backend):
-                ret = self.agent.deregisterMem(reg_descs, self.backends["UCX"])
-            elif (reg_descs.getType() == nixl.VRAM_SEG) and ("UCX" in self.backend):
-                ret = self.agent.deregisterMem(reg_descs, self.backends["UCX"])
-            elif (reg_descs.getType() == nixl.VRAM_SEG) and ("GDS" in self.backend):
-                ret = self.agent.deregisterMem(reg_descs, self.backends["GDS"])
+            if (dereg_list.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backend):
+                ret = self.agent.deregisterMem(dereg_list, self.backends["GDS"])
+            elif (dereg_list.getType() == nixlBind.DRAM_SEG) and (
+                "UCX" in self.backend
+            ):
+                ret = self.agent.deregisterMem(dereg_list, self.backends["UCX"])
+            elif (dereg_list.getType() == nixlBind.VRAM_SEG) and (
+                "UCX" in self.backend
+            ):
+                ret = self.agent.deregisterMem(dereg_list, self.backends["UCX"])
+            elif (dereg_list.getType() == nixlBind.VRAM_SEG) and (
+                "GDS" in self.backend
+            ):
+                ret = self.agent.deregisterMem(dereg_list, self.backends["GDS"])
         if ret != 0:
             return None
-        return reg_descs
+        # is this the best ret value?
+        return dereg_list
 
     # Optional proactive make connection
     def make_connection(self, remote_agent):
@@ -284,7 +291,7 @@ class nixl_agent:
             handle = self.agent.prepXferDlist(descs, remote_agent, xfer_backend)
         else:
             # TODO: need better way to select backend if not specified
-            if (descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
+            if (descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backend):
                 handle = self.agent.prepXferDlist(
                     descs, remote_agent, self.backends["GDS"]
                 )
