@@ -151,7 +151,7 @@ class nixlAgent {
          * @param local_indices     Local indices list for creating a transfer request
          * @param remote_side       Remote Descriptor list handle for creating transfer request
          * @param remote_indices    List of indices for the remote side
-         * @param notif_msg         notifcation message as nixl blob
+         * @param notif_msg         notification message as nixl blob
          * @param req_handle        request handle created for NIXL
          * @param extra_params      Optional extra parameters required for registering memory
          * @return nixl_status_t    Value is returned after the call
@@ -289,7 +289,7 @@ class nixlAgent {
         /**
          * @brief Load other agent's metadata and unpack it internally.
          *        Returns the found agent name in metadata, or "" in case of error.
-         * @param remote_metadata  Serialized metdata blob to be loaded
+         * @param remote_metadata  Serialized metadata blob to be loaded
          * @param agent_name       Agent name in metadata
          * @return nixl_status_t value is returned after the call
          */

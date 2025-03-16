@@ -100,7 +100,7 @@ typedef std::vector<nixl_mem_t> nixl_mem_list_t;
 typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
 /**
  * @brief A typedef for a  std::unordered_map<std::string, std::vector<nixl_blob_t>>
- *        to hold nixl_notifs_t (nixl notifcations)
+ *        to hold nixl_notifs_t (nixl notifications)
  */
 typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
 

@@ -320,7 +320,7 @@ class nixlDescList {
          */
         nixl_status_t remDesc(const int &index);
         /**
-         * @brief Populate adds metadata to respose based on queried
+         * @brief Populate adds metadata to response based on queried
          *        descriptor list. If one descriptor fully belongs to
          *        a descriptor in the target list copies the metadata
          *        key to it.
