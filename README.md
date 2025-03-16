@@ -17,29 +17,27 @@ limitations under the License.
 
 # NVIDIA Inference Xfer Library (NIXL)
 
-NIXL is an abstraction library to abstract memory of heterogeneous devices, i.e., CPU, GPU, storage, and enable most efficient and low-latency communication among them, integrated with distributed inference servers such as Triton. This library will target distributed inference communication patterns to effectively transfer the KV cache in disaggregated LLM serving platform.
+NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point communications in AI inference frameworks such as Dynamo, while providing an abstraction over various types of memory (e.g., CPU and GPU) and storage (e.g., file, block and object store) through a modular plug-in architecture.
 
-# Code style
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![GitHub Release](https://img.shields.io/github/v/release/ai-dynamo/nixl)](https://github.com/ai-dynamo/nixl/releases/latest)
 
-* Lower camel style: Data types, Classes, Class Members, Member functions
-* Snake style: function arguments, local variables
+## Prerequisites
+### Ubuntu:
 
-# Prerequisites
-### Packages ###
-```
-Ubuntu: sudo apt install build-essential cmake pkg-config
-Fedora: sudo dnf install gcc-c++ cmake pkg-config
-```
+`$ sudo apt install build-essential cmake pkg-config`
 
-### Python ###
-```
-pip3 install meson ninja pybind11
-```
+### Fedora:
 
-### UCX install ###
+`$ sudo dnf install gcc-c++ cmake pkg-config`
 
-UCX version 1.18.0 was used for nixl backend testing. This is available from the latest
-tarball download
+### Python
+
+`$ pip3 install meson ninja pybind11`
+
+### UCX
+
+NIXL was tested with UCX version 1.18.0.
 
 ```
 $ wget https://github.com/openucx/ucx/releases/download/v1.18.0/ucx-1.18.0.tar.gz
@@ -51,61 +49,32 @@ $ make install
 ```
 
 ## Getting started
-To compile and use this library use:
-```
-meson setup <name_of_build_dir>
-cd <name_of_build_dir>
-ninja
-```
-## Contributing
-Commits:
-
-Please follow the following format for your commits:
+### Build & install
 
 ```
-<component>: <title>
-
-Detailed description of the fix.
-
-Signed-off-by: <real name> <<email address>>
+$ meson setup <name_of_build_dir>
+$ cd <name_of_build_dir>
+$ ninja
+$ ninja-install
 ```
 
-Please make commits with proper description and try to combine commits to smaller features
-as possible. Similar to the Linux Kernel development, each author provides a signed-off-by:
-at the bottom of the commit to certify that they contributed to the commit. If more than one
-author(s) sheperd the contribution, add their own attestation to the bottom of the commit also.
+### pybind11 Python Interface
+The pybind11 bindings for the public facing NIXL API are available in src/bindings/python. These bindings implement the headers in the src/api/cpp directory.
 
-Example commit can be as shown below.
+The Python module library (.so) will be built by default. To make it easy to import you can include either the build or install directory to your PYTHONPATH, see:
 
-```
-commit 067e922af48c0d9b45da507b5800c3951076c4e9
-Author: Jane Doe <jane@daos.io>
-Date:   Thu Jan 23 14:26:00 2024 +0800
+`$ export PYTHONPATH=$PYTHONPATH:<path to build>/src/pybind`
 
-    NIXL-001 include: Add new APIs
+or
 
-    Add awesome new APIs to the NIXL
-
-    Signed-off-by: Jane Doe <jane@nixl.io>
-    Signed-off-by: John Smith <jsmith@corp.com>
-```
-
-## pybind11 Python Interface
-
-The pybind11 bindings for the public facing NIXL API are available in src/pybind. These bindings implement the headers in the include directory, but not include/internal. Some sample tests for how to use the NIXL Python module are available in the python directory.
-
-The Python module library (.so) will be built by default, to make it easy to import you can include either the build or install directory to your PYTHONPATH, see:
-
-```
-export PYTHONPATH=$PYTHONPATH:<path to build>/src/pybind
-### or
-export PYTHONPATH=$PYTHONPATH:<path to install>/lib64/python3.9/site-packages/
-```
+` $export PYTHONPATH=$PYTHONPATH:<path to install>/lib64/python3.9/site-packages/`
 
 The preferred way is to build it through meson-python, which will just let it be installed with pip. This can be done from the root nixl directory:
-```
-pip install .
-```
 
-## License
-Apache 2.0
+` $pip install .`
+
+## Examples
+
+* [C++ examples](https://github.com/ai-dynamo/nixl/tree/main/test/nixl)
+
+* [Python examples](https://github.com/ai-dynamo/nixl/tree/main/test/python)
