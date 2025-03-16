@@ -144,13 +144,13 @@ class nixl_agent:
             ret = self.agent.registerMem(reg_descs, self.backends[backend])
         else:
             # TODO: rely on underlying capability to register with all when supported
-            if (reg_descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backend):
+            if (reg_descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backends):
                 ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
-            elif (reg_descs.getType() == nixlBind.DRAM_SEG) and ("UCX" in self.backend):
+            elif (reg_descs.getType() == nixlBind.DRAM_SEG) and ("UCX" in self.backends):
                 ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
-            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and ("UCX" in self.backend):
+            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and ("UCX" in self.backends):
                 ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
-            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and ("GDS" in self.backend):
+            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and ("GDS" in self.backends):
                 ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
         if ret != 0:
             return None
@@ -162,18 +162,20 @@ class nixl_agent:
             self.agent.deregisterMem(dereg_list, self.backends[backend])
         else:
             # TODO: rely on underlying capability to register with all when supported
-            if (dereg_list.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backend):
+            if (dereg_list.getType() == nixlBind.FILE_SEG) and (
+                "GDS" in self.backends
+            ):
                 ret = self.agent.deregisterMem(dereg_list, self.backends["GDS"])
             elif (dereg_list.getType() == nixlBind.DRAM_SEG) and (
-                "UCX" in self.backend
+                "UCX" in self.backends
             ):
                 ret = self.agent.deregisterMem(dereg_list, self.backends["UCX"])
             elif (dereg_list.getType() == nixlBind.VRAM_SEG) and (
-                "UCX" in self.backend
+                "UCX" in self.backends
             ):
                 ret = self.agent.deregisterMem(dereg_list, self.backends["UCX"])
             elif (dereg_list.getType() == nixlBind.VRAM_SEG) and (
-                "GDS" in self.backend
+                "GDS" in self.backends
             ):
                 ret = self.agent.deregisterMem(dereg_list, self.backends["GDS"])
         if ret != 0:
@@ -200,19 +202,19 @@ class nixl_agent:
             handle = self.agent.prepXferDlist(descs, remote_agent, xfer_backend)
         else:
             # TODO: rely on underlying capability to register with all when supported
-            if (descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backend):
+            if (descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backends):
                 handle = self.agent.prepXferDlist(
                     descs, remote_agent, self.backends["GDS"]
                 )
-            elif (descs.getType() == nixlBind.DRAM_SEG) and ("UCX" in self.backend):
+            elif (descs.getType() == nixlBind.DRAM_SEG) and ("UCX" in self.backends):
                 handle = self.agent.prepXferDlist(
                     descs, remote_agent, self.backends["UCX"]
                 )
-            elif (descs.getType() == nixlBind.VRAM_SEG) and ("UCX" in self.backend):
+            elif (descs.getType() == nixlBind.VRAM_SEG) and ("UCX" in self.backends):
                 handle = self.agent.prepXferDlist(
                     descs, remote_agent, self.backends["UCX"]
                 )
-            elif (descs.getType() == nixlBind.VRAM_SEG) and ("GDS" in self.backend):
+            elif (descs.getType() == nixlBind.VRAM_SEG) and ("GDS" in self.backends):
                 handle = self.agent.prepXferDlist(
                     descs, remote_agent, self.backends["GDS"]
                 )
@@ -346,7 +348,8 @@ class nixl_agent:
     def remove_remote_agent(self, agent):
         self.agent.invalidateRemoteMD(agent)
 
-    ### Methods to create and serialize/deserialize descriptors, provided through Agent
+    # 4 methods to create and serialize/deserialize descriptors, provided through Agent
+
     def get_xfer_descs(
         self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
     ):
