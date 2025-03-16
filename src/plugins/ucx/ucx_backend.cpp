@@ -312,10 +312,11 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     progressThreadStart();
 }
 
-nixl_status_t nixlUcxEngine::getSupportedMems (std::vector<nixl_mem_t> &mems) const {
+nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
+    nixl_mem_list_t mems;
     mems.push_back(DRAM_SEG);
     mems.push_back(VRAM_SEG);
-    return NIXL_SUCCESS;
+    return mems;
 }
 
 // Through parent destructor the unregister will be called.

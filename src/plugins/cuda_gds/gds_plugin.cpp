@@ -47,6 +47,14 @@ static nixl_b_params_t get_backend_options() {
     return params;
 }
 
+// Function to get supported backend mem types
+static nixl_mem_list_t get_backend_mems() {
+    nixl_mem_list_t mems;
+    mems.push_back(VRAM_SEG);
+    mems.push_back(FILE_SEG);
+    return mems;
+}
+
 // Static plugin structure
 static nixlBackendPlugin plugin = {
     NIXL_PLUGIN_API_VERSION,
@@ -54,7 +62,8 @@ static nixlBackendPlugin plugin = {
     destroy_gds_engine,
     get_plugin_name,
     get_plugin_version,
-    get_backend_options
+    get_backend_options,
+    get_backend_mems
 };
 
 #ifdef STATIC_PLUGIN_GDS

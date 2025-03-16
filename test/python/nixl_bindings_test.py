@@ -145,7 +145,7 @@ def test_agent():
 
     print("Transfer verified")
 
-    agent1.invalidateXferReq(handle)
+    agent1.releaseXferReq(handle)
 
     ret = agent1.deregisterMem(reg_list1, ucx1)
     assert ret == nixl.NIXL_SUCCESS
