@@ -98,7 +98,7 @@ public:
     void addPluginDirectory(const std::string& directory);
 
     // Static Plugin Helpers
-    static void registerStaticPlugin(const char* name, nixlStaticPluginCreatorFunc creator);
+    void registerStaticPlugin(const char* name, nixlStaticPluginCreatorFunc creator);
     static std::vector<nixlStaticPluginInfo>& getStaticPlugins();
 };
 

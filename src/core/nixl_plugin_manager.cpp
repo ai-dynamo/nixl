@@ -224,23 +224,10 @@ void nixlPluginManager::addPluginDirectory(const std::string& directory) {
 
 std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::string& plugin_name) {
     // Check if the plugin is already loaded
+    // Static Plugins are preloaded so return handle
     auto it = loaded_plugins_.find(plugin_name);
     if (it != loaded_plugins_.end()) {
         return it->second;
-    }
-
-    for (const auto& static_plugin : getStaticPlugins()) {
-        if (plugin_name == static_plugin.name) {
-            // Create an instance of the static plugin
-            nixlBackendPlugin* plugin = static_plugin.createFunc();
-            if (plugin) {
-                // Register the loaded plugin
-                auto plugin_handle = std::make_shared<nixlPluginHandle>(nullptr, plugin);
-                loaded_plugins_[plugin_name] = plugin_handle;
-
-                return plugin_handle;
-            }
-        }
     }
 
     // Try to load the plugin from all registered directories
@@ -316,6 +303,14 @@ void nixlPluginManager::registerStaticPlugin(const char* name, nixlStaticPluginC
     info.name = name;
     info.createFunc = creator;
     static_plugins_.push_back(info);
+
+    //Static Plugins are considered pre-loaded
+    nixlBackendPlugin* plugin = info.createFunc();
+    if (plugin) {
+        // Register the loaded plugin
+        auto plugin_handle = std::make_shared<nixlPluginHandle>(nullptr, plugin);
+        loaded_plugins_[name] = plugin_handle;
+    }
 }
 
 std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
