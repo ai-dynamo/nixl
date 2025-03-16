@@ -25,7 +25,6 @@ class nixl_agent:
         # Read available backends and device info from nixl_config
         # For now setting the multithreading to enabled.
         devices = nixlBind.nixlAgentConfig(True)
-        init = {}
 
         self.name = agent_name
         self.notifs = {}
@@ -43,7 +42,7 @@ class nixl_agent:
             self.mem_type_map[plugin] = mem_types
 
         # TODO: make explicit call later
-        #self.backends["UCX"] = self.agent.createBackend("UCX", init)
+        # self.backends["UCX"] = self.agent.createBackend("UCX", init)
         self.backends = {}
 
         if len(self.plugin_list) == 0:
@@ -73,10 +72,12 @@ class nixl_agent:
     def get_backend_params(self, backend):
         return self.backend_options_map[backend]
 
-    def create_backend(self, backend, initParams = None):
+    def create_backend(self, backend, initParams=None):
         self.backends[backend] = self.agent.createBackend(backend, initParams)
 
-        (backend_options, mem_types) = self.agent.getBackendParams(self.backends[backend])
+        (backend_options, mem_types) = self.agent.getBackendParams(
+            self.backends[backend]
+        )
         self.backend_option_map[backend] = backend_options
         self.mem_type_map[backend] = mem_types
 

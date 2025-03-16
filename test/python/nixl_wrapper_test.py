@@ -29,8 +29,8 @@ if __name__ == "__main__":
     assert "UCX" in plugin_list
     print(plugin_list)
 
-    print(agent1.get_backend_mem_types("UCX"))
-    print(agent1.get_backend_params("UCX"))
+    print(nixl_agent1.get_backend_mem_types("UCX"))
+    print(nixl_agent1.get_backend_params("UCX"))
 
     nixl_agent1.create_backend("UCX")
 
