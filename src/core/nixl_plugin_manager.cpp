@@ -76,8 +76,8 @@ const char* nixlPluginHandle::getVersion() {
     return "unknown";
 }
 
-std::map<std::string, std::string> loadPluginList(const std::string& filename) {
-    std::map<std::string, std::string> plugins;
+std::map<nixl_backend_t, std::string> loadPluginList(const std::string& filename) {
+    std::map<nixl_backend_t, std::string> plugins;
     std::ifstream file(filename);
 
     if (!file.is_open()) {
@@ -107,7 +107,6 @@ std::map<std::string, std::string> loadPluginList(const std::string& filename) {
 
             // Add to map
             plugins[name] = path;
-            std::cout << "Found plugin: " << name << " at path: " << path << std::endl;
         }
     }
 
@@ -166,10 +165,6 @@ void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
         auto plugin_handle = loadPluginFromPath(path);
         if (plugin_handle) {
             loaded_plugins_[name] = plugin_handle;
-
-            std::cout << "Successfully loaded plugin '" << name << "'"
-                << " version " << plugin_handle->getVersion()
-                << " from " << path << std::endl;
         }
     }
 }
@@ -179,7 +174,6 @@ nixlPluginManager::nixlPluginManager() {
 #ifdef NIXL_USE_PLUGIN_FILE
     std::string plugin_file = NIXL_USE_PLUGIN_FILE;
     if (!plugin_file.empty()) {
-        std::cout << "Using plugin file: " << plugin_file << std::endl;
         loadPluginsFromList(plugin_file);
     }
 #endif
@@ -187,7 +181,6 @@ nixlPluginManager::nixlPluginManager() {
     // Check for NIXL_PLUGIN_DIR environment variable
     const char* plugin_dir = getenv("NIXL_PLUGIN_DIR");
     if (plugin_dir) {
-        std::cout << "Using plugin directory from NIXL_PLUGIN_DIR: " << plugin_dir << std::endl;
         plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);  // Insert at the beginning for priority
     }
 }
@@ -225,8 +218,6 @@ void nixlPluginManager::addPluginDirectory(const std::string& directory) {
         }
     }
 
-    std::cout << "Adding plugin directory: " << directory << std::endl;
-
     // Prioritize the new directory by inserting it at the beginning
     plugin_dirs_.insert(plugin_dirs_.begin(), directory);
 }
@@ -235,12 +226,10 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
     // Check if the plugin is already loaded
     auto it = loaded_plugins_.find(plugin_name);
     if (it != loaded_plugins_.end()) {
-        std::cout << "Plugin already loaded: " << plugin_name << std::endl;
         return it->second;
     }
 
     for (const auto& static_plugin : getStaticPlugins()) {
-        std::cout << "Checking static plugin: " << static_plugin.name << std::endl;
         if (plugin_name == static_plugin.name) {
             // Create an instance of the static plugin
             nixlBackendPlugin* plugin = static_plugin.createFunc();
@@ -248,9 +237,6 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
                 // Register the loaded plugin
                 auto plugin_handle = std::make_shared<nixlPluginHandle>(nullptr, plugin);
                 loaded_plugins_[plugin_name] = plugin_handle;
-
-                std::cout << "Successfully loaded static plugin '" << plugin_name << "'"
-                << " version " << plugin_handle->getVersion()  << std::endl;
 
                 return plugin_handle;
             }
@@ -269,8 +255,6 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
             plugin_path = dir + "/libplugin_" + plugin_name + ".so";
         }
 
-        std::cout << "Trying to load plugin from: " << plugin_path << std::endl;
-
         // Check if the plugin file exists before attempting to load i
         if (access(plugin_path.c_str(), F_OK) != 0) {
             std::cerr << "Plugin file does not exist: " << plugin_path << std::endl;
@@ -288,11 +272,11 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
     return nullptr;
 }
 
-void nixlPluginManager::unloadPlugin(const std::string& plugin_name) {
+void nixlPluginManager::unloadPlugin(const nixl_backend_t& plugin_name) {
     loaded_plugins_.erase(plugin_name);
 }
 
-std::shared_ptr<nixlPluginHandle> nixlPluginManager::getPlugin(const std::string& plugin_name) {
+std::shared_ptr<nixlPluginHandle> nixlPluginManager::getPlugin(const nixl_backend_t& plugin_name) {
     auto it = loaded_plugins_.find(plugin_name);
     if (it != loaded_plugins_.end()) {
         return it->second;
@@ -316,8 +300,8 @@ nixl_mem_list_t nixlPluginHandle::getBackendMems() {
     return mems; // Return empty mems if not implemented
 }
 
-std::vector<std::string> nixlPluginManager::getLoadedPluginNames() {
-    std::vector<std::string> names;
+std::vector<nixl_backend_t> nixlPluginManager::getLoadedPluginNames() {
+    std::vector<nixl_backend_t> names;
     for (const auto& pair : loaded_plugins_) {
         names.push_back(pair.first);
     }
@@ -339,18 +323,14 @@ std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
 }
 
 void nixlPluginManager::registerBuiltinPlugins() {
-    std::cout << "Registering built-in static plugins..." << std::endl;
-
     #ifdef STATIC_PLUGIN_UCX
         extern nixlBackendPlugin* createStaticUcxPlugin();
-        std::cout << "Registering static UCX plugin" << std::endl;
         registerStaticPlugin("UCX", createStaticUcxPlugin);
     #endif
 
     #ifdef STATIC_PLUGIN_GDS
     #ifndef DISABLE_GDS_BACKEND
         extern nixlBackendPlugin* createStaticGdsPlugin();
-        std::cout << "Registering static GDS plugin" << std::endl;
         registerStaticPlugin("GDS", createStaticGdsPlugin);
     #endif
     #endif
