@@ -40,7 +40,7 @@ class nixl_agent:
         self.backend_mems = {}
         self.backend_options = {}
 
-        self.plugin_list = nixlBind.getAvailPlugins()
+        self.plugin_list = self.getAvailPlugins()
         if len(self.plugin_list) == 0:
             print("No plugins available, cannot start transfers!")
 
