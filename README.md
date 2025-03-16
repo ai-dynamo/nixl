@@ -61,11 +61,6 @@ $ ninja-install
 ### pybind11 Python Interface
 The pybind11 bindings for the public facing NIXL API are available in src/bindings/python. These bindings implement the headers in the src/api/cpp directory.
 
-The Python module library (.so) will be built by default. To make it easy to import you can include either the build or install directory to your PYTHONPATH, see:
-
-`$ export PYTHONPATH=$PYTHONPATH:<path to build>/src/pybind:<nixl path>/src/api/python`
-
-
 The preferred way is to build it through meson-python, which will just let it be installed with pip. This can be done from the root nixl directory:
 
 ` $pip install .`
