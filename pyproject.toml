@@ -25,7 +25,7 @@ readme = 'README.md'
 license = 'LICENSE'
 requires-python = '>=3.9'
 authors = [
-  {name = 'NIXL Developers', email = 'tstamler@nvidia.com'},
+  {name = 'Timothy Stamler', email = 'tstamler@nvidia.com'},
 ]
 
 [tool.meson-python.args]

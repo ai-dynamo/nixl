@@ -398,7 +398,7 @@ PYBIND11_MODULE(_bindings, m) {
                     }
                     throw_nixl_exception(ret);
                     return ret;
-                })
+                }, py::arg("reqh"), py::arg("notif_msg") = std::string(""))
         .def("getXferStatus", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                     nixl_status_t ret = agent.getXferStatus((nixlXferReqH*) reqh);
                     throw_nixl_exception(ret);
