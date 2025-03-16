@@ -192,13 +192,13 @@ class nixl_agent:
     ):
         descs = self.get_xfer_descs(xfer_list, mem_type, is_unified_addr, is_sorted)
         if xfer_backend:
-            handle = self.agent.prepXferDescs(descs, remote_agent, xfer_backend)
+            handle = self.agent.prepXferDlist(descs, remote_agent, xfer_backend)
         elif example_xfer:
             backend = self.agent.getXferBackend(example_xfer)
-            handle = self.agent.prepXferDescs(descs, remote_agent, backend)
+            handle = self.agent.prepXferDlist(descs, remote_agent, backend)
         else:
             # Or use same logic that we used in register_memory
-            handle = self.agent.prepXferDescs(descs, remote_agent, self.backends["UCX"])
+            handle = self.agent.prepXferDlist(descs, remote_agent, self.backends["UCX"])
         if handle == 0:
             return None
 
@@ -232,7 +232,7 @@ class nixl_agent:
 
     def delete_xfer_side(self, handle):
         # frees the handle too
-        self.agent.releasePrepped(handle)
+        self.agent.releasedDlistH(handle)
 
     def transfer(self, handle):
         status = self.agent.postXferReq(handle)

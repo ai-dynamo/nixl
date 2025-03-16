@@ -111,17 +111,17 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     gettimeofday(&start_time, NULL);
 
     for(int i = 0; i<n_iters; i++) {
-        status = A1->prepXferDescs(dst_list, agent2, dst_side[i], &extra_params1);
+        status = A1->prepXferDlist(dst_list, agent2, dst_side[i], &extra_params1);
         assert (status == NIXL_SUCCESS);
 
-        status = A1->prepXferDescs(src_list, "", src_side[i], &extra_params1);
+        status = A1->prepXferDlist(src_list, "", src_side[i], &extra_params1);
         assert (status == NIXL_SUCCESS);
     }
 
     gettimeofday(&end_time, NULL);
 
     timersub(&end_time, &start_time, &diff_time);
-    std::cout << "prepXferDescs, total time for " << n_iters << " iters: "
+    std::cout << "prepXferDlist, total time for " << n_iters << " iters: "
               << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
 
     float time_per_iter = ((diff_time.tv_sec * 1000000) + diff_time.tv_usec);
@@ -161,9 +161,9 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     assert (status == NIXL_SUCCESS);
 
     for(int i = 0; i<n_iters; i++){
-        status = A1->releasePrepped(src_side[i]);
+        status = A1->releasedDlistH(src_side[i]);
         assert (status == NIXL_SUCCESS);
-        status = A1->releasePrepped(dst_side[i]);
+        status = A1->releasedDlistH(dst_side[i]);
         assert (status == NIXL_SUCCESS);
     }
 
@@ -236,10 +236,10 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     nixlDlistH *src_side, *dst_side;
 
-    status = A1->prepXferDescs(src_list, "", src_side, &extra_params1);
+    status = A1->prepXferDlist(src_list, "", src_side, &extra_params1);
     assert (status == NIXL_SUCCESS);
 
-    status = A1->prepXferDescs(dst_list, remote_name, dst_side, &extra_params1);
+    status = A1->prepXferDlist(dst_list, remote_name, dst_side, &extra_params1);
     assert (status == NIXL_SUCCESS);
 
     std::cout << "prep done, starting transfers\n";
@@ -316,9 +316,9 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     status = A2->deregisterMem(mem_list2, &extra_params2);
     assert (status == NIXL_SUCCESS);
 
-    status = A1->releasePrepped(src_side);
+    status = A1->releasedDlistH(src_side);
     assert (status == NIXL_SUCCESS);
-    status = A1->releasePrepped(dst_side);
+    status = A1->releasedDlistH(dst_side);
     assert (status == NIXL_SUCCESS);
 
     for(int i = 0; i<n_bufs; i++) {
