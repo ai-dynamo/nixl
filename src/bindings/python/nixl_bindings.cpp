@@ -99,6 +99,9 @@ void throw_nixl_exception(const nixl_status_t &status) {
         case NIXL_ERR_UNKNOWN:
             throw nixlUnknownError(nixlEnumStrings::statusStr(status).c_str());
             break;
+        case NIXL_ERR_NOT_SUPPORTED:
+            throw nixlUnknownError(nixlEnumStrings::statusStr(status).c_str());
+            break;
         default:
             throw std::runtime_error("BAD_STATUS");
     }
@@ -134,6 +137,7 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_ERR_NOT_ALLOWED", NIXL_ERR_NOT_ALLOWED)
         .value("NIXL_ERR_REPOST_ACTIVE", NIXL_ERR_REPOST_ACTIVE)
         .value("NIXL_ERR_UNKNOWN", NIXL_ERR_UNKNOWN)
+        .value("NIXL_ERR_NOT_SUPPORTED", NIXL_ERR_NOT_SUPPORTED)
         .export_values();
 
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
@@ -144,6 +148,7 @@ PYBIND11_MODULE(_bindings, m) {
     py::register_exception<nixlNotAllowedError>(m, "nixlNotAllowedError");
     py::register_exception<nixlRepostActiveError>(m, "nixlRepostActiveError");
     py::register_exception<nixlUnknownError>(m, "nixlUnknownError");
+    py::register_exception<nixlUnknownError>(m, "nixlNotSupportedError");
 
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
         .def(py::init<nixl_mem_t, bool, bool, int>(), py::arg("type"), py::arg("unifiedAddr")=true, py::arg("sorted")=false, py::arg("init_size")=0)
