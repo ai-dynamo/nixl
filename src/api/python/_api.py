@@ -51,8 +51,6 @@ class nixl_agent:
             self.plugin_b_options[plugin] = backend_options
             self.plugin_mem_types[plugin] = mem_types
 
-        # self.backends["UCX"] = self.agent.createBackend("UCX", init)
-
         init = {}
         if nixl_config:
             for x in nixl_config.backends:
@@ -61,11 +59,10 @@ class nixl_agent:
                     print("Skiping backend registration", x, "due to the missing plugin.")
                 else:
                     self.backends[x] = self.agent.createBackend(x, init)
-        else:  # Defaulting to UCX and GDS for now
-            if "UCX" in self.plugin_list:
-                self.backends["UCX"] = self.agent.createBackend("UCX", init)
-            if "GDS" in self.plugin_list:
-                self.backends["GDS"] = self.agent.createBackend("GDS", init)
+        else:
+            # TODO: populate init from default parameters, or define a set of params in python
+            for plugin in self.plugin_list:
+                self.backends[plugin] = self.agent.createBackend(plugin, init)
 
         for backend in self.backends:
             (backend_options, mem_types) = self.agent.getBackendParams(backend)
@@ -225,10 +222,15 @@ class nixl_agent:
         if backend:
             ret = self.agent.registerMem(reg_descs, self.backends[backend])
         else:
+            # TODO: rely on underlying capability to register with all when supported
             if (reg_descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
                 ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
-            else:
+            else if (reg_descs.getType() == nixl.DRAM_SEG) and ("UCX" in self.backend):
                 ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
+            else if (reg_descs.getType() == nixl.VRAM_SEG) and ("UCX" in self.backend):
+                ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
+            else if (reg_descs.getType() == nixl.VRAM_SEG) and ("GDS" in self.backend):
+                ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
         if ret != 0:
             return None
         return reg_descs
@@ -238,11 +240,18 @@ class nixl_agent:
         if backend:
             self.agent.deregisterMem(dereg_descs, self.backends[backend])
         else:
-            if (dereg_descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
-                self.agent.deregisterMem(dereg_descs, self.backends["GDS"])
-            else:
-                self.agent.deregisterMem(dereg_descs, self.backends["UCX"])
-        # No return
+            # TODO: rely on underlying capability to register with all when supported
+            if (reg_descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
+                ret = self.agent.deregisterMem(reg_descs, self.backends["GDS"])
+            else if (reg_descs.getType() == nixl.DRAM_SEG) and ("UCX" in self.backend):
+                ret = self.agent.deregisterMem(reg_descs, self.backends["UCX"])
+            else if (reg_descs.getType() == nixl.VRAM_SEG) and ("UCX" in self.backend):
+                ret = self.agent.deregisterMem(reg_descs, self.backends["UCX"])
+            else if (reg_descs.getType() == nixl.VRAM_SEG) and ("GDS" in self.backend):
+                ret = self.agent.deregisterMem(reg_descs, self.backends["GDS"])
+        if ret != 0:
+            return None
+        return reg_descs
 
     # Optional proactive make connection
     def make_connection(self, remote_agent):
@@ -258,7 +267,7 @@ class nixl_agent:
     def remove_remote_agent(self, agent):
         self.agent.invalidateRemoteMD(agent)
 
-    def initialize_xfer(
+    def create_xfer(
         self, local_descs, remote_descs, remote_agent, notif_msg, operation, xfer_backend=None
     ):
         op = self.nixl_ops[operation]
@@ -281,7 +290,7 @@ class nixl_agent:
             return None
 
     # "" remote agent means local. example xfer can be used to know the backend
-    def prep_xfer_side(
+    def prep_xfer_dlist(
         self,
         remote_agent,
         xfer_list,
@@ -311,7 +320,7 @@ class nixl_agent:
 
         return handle
 
-    def make_prepped_xfer(
+    def make_resolved_xfer(
         self,
         local_xfer_side,
         local_indices,
@@ -339,7 +348,7 @@ class nixl_agent:
         else:
             return None
 
-    def delete_dlist_handle(self, handle):
+    def release_dlist_handle(self, handle):
         # frees the handle too
         self.agent.releasedDlistH(handle)
 
