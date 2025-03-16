@@ -26,6 +26,84 @@
 
 namespace py = pybind11;
 
+class nixlNotPostedError : public std::runtime_error {
+    public:
+        nixlNotPostedError(const char* what) : runtime_error(what) {}
+};
+
+class nixlInvalidParamError : public std::runtime_error {
+    public:
+        nixlInvalidParamError(const char* what) : runtime_error(what) {}
+};
+
+class nixlBackendError : public std::runtime_error {
+    public:
+        nixlBackendError(const char* what) : runtime_error(what) {}
+};
+
+
+class nixlNotFoundError : public std::runtime_error {
+    public:
+        nixlNotFoundError(const char* what) : runtime_error(what) {}
+};
+
+
+class nixlMismatchError : public std::runtime_error {
+    public:
+        nixlMismatchError(const char* what) : runtime_error(what) {}
+};
+
+
+class nixlNotAllowedError : public std::runtime_error {
+    public:
+        nixlNotAllowedError(const char* what) : runtime_error(what) {}
+};
+
+
+class nixlRepostActiveError : public std::runtime_error {
+    public:
+        nixlRepostActiveError(const char* what) : runtime_error(what) {}
+};
+
+
+class nixlUnknownError : public std::runtime_error {
+    public:
+        nixlUnknownError(const char* what) : runtime_error(what) {}
+};
+
+void throw_nixl_exception(const nixl_status_t &status) {
+    switch (status) {
+        case NIXL_IN_PROG:           return; //not an error
+        case NIXL_SUCCESS:           return; //not an error
+        case NIXL_ERR_NOT_POSTED:
+            throw nixlNotPostedError(nixlEnumStrings::statusStr(status).c_str());
+            break;
+        case NIXL_ERR_INVALID_PARAM:
+            throw nixlInvalidParamError(nixlEnumStrings::statusStr(status).c_str());
+            break;
+        case NIXL_ERR_BACKEND:
+            throw nixlBackendError(nixlEnumStrings::statusStr(status).c_str());
+            break;
+        case NIXL_ERR_NOT_FOUND:
+            throw nixlNotFoundError(nixlEnumStrings::statusStr(status).c_str());
+            break;
+        case NIXL_ERR_MISMATCH:
+            throw nixlMismatchError(nixlEnumStrings::statusStr(status).c_str());
+            break;
+        case NIXL_ERR_NOT_ALLOWED:
+            throw nixlNotAllowedError(nixlEnumStrings::statusStr(status).c_str());
+            break;
+        case NIXL_ERR_REPOST_ACTIVE:
+            throw nixlRepostActiveError(nixlEnumStrings::statusStr(status).c_str());
+            break;
+        case NIXL_ERR_UNKNOWN:
+            throw nixlUnknownError(nixlEnumStrings::statusStr(status).c_str());
+            break;
+        default:
+            throw std::runtime_error("BAD_STATUS");
+    }
+}
+
 PYBIND11_MODULE(_bindings, m) {
 
     //TODO: each nixl class and/or function can be documented in place
@@ -57,6 +135,15 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_ERR_REPOST_ACTIVE", NIXL_ERR_REPOST_ACTIVE)
         .value("NIXL_ERR_UNKNOWN", NIXL_ERR_UNKNOWN)
         .export_values();
+
+    py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
+    py::register_exception<nixlInvalidParamError>(m, "nixlInvalidParamError");
+    py::register_exception<nixlBackendError>(m, "nixlBackendError");
+    py::register_exception<nixlNotFoundError>(m, "nixlNotFoundError");
+    py::register_exception<nixlMismatchError>(m, "nixlMismatchError");
+    py::register_exception<nixlNotAllowedError>(m, "nixlNotAllowedError");
+    py::register_exception<nixlRepostActiveError>(m, "nixlRepostActiveError");
+    py::register_exception<nixlUnknownError>(m, "nixlUnknownError");
 
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
         .def(py::init<nixl_mem_t, bool, bool, int>(), py::arg("type"), py::arg("unifiedAddr")=true, py::arg("sorted")=false, py::arg("init_size")=0)
@@ -179,7 +266,7 @@ PYBIND11_MODULE(_bindings, m) {
                     nixl_b_params_t params;
                     nixl_mem_list_t mems;
                     nixl_status_t ret = agent.getPluginParams(type, mems, params);
-                    if(ret < 0); //throw exception
+                    if(ret < 0) throw_nixl_exception(ret);
                     // TODO merge the mems
                     return params;
             })
@@ -187,14 +274,17 @@ PYBIND11_MODULE(_bindings, m) {
                     nixl_b_params_t params;
                     nixl_mem_list_t mems;
                     nixl_status_t ret = agent.getBackendParams((nixlBackendH*) backend, mems, params);
-                    if(ret < 0); //throw exception
+                    if(ret < 0) throw_nixl_exception(ret);
                     // TODO merge the mems
                     return params;
             })
         .def("createBackend", [](nixlAgent &agent, const nixl_backend_t &type, const nixl_b_params_t &initParams) -> uintptr_t {
                     nixlBackendH* backend;
                     nixl_status_t ret = agent.createBackend(type, initParams, backend);
-                    if(ret < 0) return (uintptr_t) nullptr; //throw exception
+                    if(ret < 0){
+                        throw_nixl_exception(ret);
+                        return (uintptr_t) nullptr;
+                    }
                     return (uintptr_t) backend;
             })
         .def("registerMem", [](nixlAgent &agent, nixl_reg_dlist_t descs, uintptr_t backend) -> nixl_status_t {
@@ -225,8 +315,12 @@ PYBIND11_MODULE(_bindings, m) {
                         extra_params.hasNotif = true;
                     }
                     nixl_status_t ret = agent.createXferReq(operation, local_descs, remote_descs, remote_agent, handle, &extra_params);
-                    if (ret != NIXL_SUCCESS) return (uintptr_t) nullptr;
-                    else return (uintptr_t) handle;
+
+                    if(ret < 0){
+                        throw_nixl_exception(ret);
+                        return (uintptr_t) nullptr;
+                    }
+                    return (uintptr_t) handle;
                 }, py::arg("local_descs"),
                    py::arg("remote_descs"), py::arg("remote_agent"),
                    py::arg("notif_msg"), py::arg("operation"),
@@ -234,7 +328,10 @@ PYBIND11_MODULE(_bindings, m) {
         .def("queryXferBackend", [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {
                     nixlBackendH* handle;
                     nixl_status_t ret = agent.queryXferBackend((nixlXferReqH*) reqh, handle);
-                    if(ret < 0) return (uintptr_t) nullptr;
+                    if(ret < 0){
+                        throw_nixl_exception(ret);
+                        return (uintptr_t) nullptr;
+                    }
                     return (uintptr_t) handle;
             })
         .def("prepXferDlist", [](nixlAgent &agent,
@@ -245,8 +342,11 @@ PYBIND11_MODULE(_bindings, m) {
                     nixl_opt_args_t extra_params;
                     extra_params.backends.push_back((nixlBackendH*) backend);
                     nixl_status_t ret = agent.prepXferDlist(descs, remote_agent, handle, &extra_params);
-                    if (ret != NIXL_SUCCESS) return (uintptr_t) nullptr;
-                    else return (uintptr_t) handle;
+                    if(ret < 0){
+                        throw_nixl_exception(ret);
+                        return (uintptr_t) nullptr;
+                    }
+                    return (uintptr_t) handle;
                 })
         .def("makeXferReq", [](nixlAgent &agent,
                                uintptr_t local_side,
@@ -265,8 +365,11 @@ PYBIND11_MODULE(_bindings, m) {
                                                           (nixlDlistH*) local_side, local_indices,
                                                           (nixlDlistH*) remote_side, remote_indices,
                                                           handle, &extra_params);
-                    if (ret != NIXL_SUCCESS) return (uintptr_t) nullptr;
-                    else return (uintptr_t) handle;
+                     if(ret < 0){
+                        throw_nixl_exception(ret);
+                        return (uintptr_t) nullptr;
+                    }
+                    return (uintptr_t) handle;
                 })
         .def("releaseXferReq", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                     return agent.releaseXferReq((nixlXferReqH*) reqh);
