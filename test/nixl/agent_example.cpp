@@ -57,8 +57,8 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
 
     struct timeval start_time, end_time, diff_time;
 
-    nixlPreppedH *src_side[n_iters];
-    nixlPreppedH *dst_side[n_iters];
+    nixlDlistH *src_side[n_iters];
+    nixlDlistH *dst_side[n_iters];
 
     void* src_buf = malloc(n_mems*descs_per_mem*8);
     void* dst_buf = malloc(n_mems*descs_per_mem*8);
@@ -175,7 +175,7 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     std::cout << "Starting sideXferTest\n";
 
     nixlBackendH* src_backend;
-    nixl_status_t status = A1->getXferBackend(src_handle, src_backend);
+    nixl_status_t status = A1->queryXferBackend(src_handle, src_backend);
 
     nixl_opt_args_t extra_params1, extra_params2;
     extra_params1.backends.push_back(src_backend);
@@ -234,7 +234,7 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     std::cout << "Ready to prepare side\n";
 
-    nixlPreppedH *src_side, *dst_side;
+    nixlDlistH *src_side, *dst_side;
 
     status = A1->prepXferDescs(src_list, "", src_side, &extra_params1);
     assert (status == NIXL_SUCCESS);

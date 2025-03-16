@@ -52,7 +52,7 @@ class nixlXferReqH {
     friend class nixlAgent;
 };
 
-class nixlPreppedH {
+class nixlDlistH {
     private:
         std::unordered_map<nixlBackendEngine*, nixl_meta_dlist_t*> descs;
 
@@ -60,9 +60,9 @@ class nixlPreppedH {
         bool               isLocal;
 
     public:
-        inline nixlPreppedH() { }
+        inline nixlDlistH() { }
 
-        inline ~nixlPreppedH() {
+        inline ~nixlDlistH() {
             for (auto & elm : descs)
                 delete elm.second;
         }

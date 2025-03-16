@@ -63,8 +63,8 @@ nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
 
 nixl_status_t
 nixlAgent::getPluginParams (const nixl_backend_t &type,
-                                  nixl_mem_list_t &mems,
-                                  nixl_b_params_t &params) const {
+                            nixl_mem_list_t &mems,
+                            nixl_b_params_t &params) const {
 
     // TODO: unify to uppercase/lowercase and do ltrim/rtrim for type
 
@@ -97,8 +97,8 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
 
 nixl_status_t
 nixlAgent::getBackendParams (const nixlBackendH* backend,
-                                   nixl_mem_list_t &mems,
-                                   nixl_b_params_t &params) const {
+                             nixl_mem_list_t &mems,
+                             nixl_b_params_t &params) const {
     if (backend == nullptr)
         return NIXL_ERR_INVALID_PARAM;
 
@@ -110,7 +110,7 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
-                               nixlBackendH* &bknd_hndl) {
+                         nixlBackendH* &bknd_hndl) {
 
     nixlBackendInitParams init_params;
     nixlBackendEngine* backend = nullptr;
@@ -269,7 +269,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          const nixl_xfer_dlist_t &local_descs,
                          const nixl_xfer_dlist_t &remote_descs,
                          const std::string &remote_agent,
-                               nixlXferReqH* &req_hndl,
+                         nixlXferReqH* &req_hndl,
                          const nixl_opt_args_t* extra_params) const {
     nixl_status_t ret;
     req_hndl = nullptr;
@@ -377,7 +377,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) {
 }
 
 nixl_status_t
-nixlAgent::postXferReq(      nixlXferReqH *req_hndl,
+nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                        const nixl_opt_args_t* extra_params) const {
     nixl_status_t ret;
 
@@ -438,8 +438,8 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) {
 
 
 nixl_status_t
-nixlAgent::getXferBackend(const nixlXferReqH* req_hndl,
-                                nixlBackendH* &backend) const {
+nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
+                            nixlBackendH* &backend) const {
     backend = data->backendHandles[req_hndl->engine->getType()];
     return NIXL_SUCCESS;
 }
@@ -447,7 +447,7 @@ nixlAgent::getXferBackend(const nixlXferReqH* req_hndl,
 nixl_status_t
 nixlAgent::prepXferDescs (const nixl_xfer_dlist_t &descs,
                           const std::string &remote_agent,
-                                nixlPreppedH* &prep_hndl,
+                          nixlDlistH* &dlist_hndl,
                           const nixl_opt_args_t* extra_params) const {
 
     // TODO: Support other than single backend option, all or some
@@ -471,7 +471,7 @@ nixlAgent::prepXferDescs (const nixl_xfer_dlist_t &descs,
     // TODO: when central KV is supported, add a call to fetchRemoteMD
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    nixlPreppedH *handle = new nixlPreppedH;
+    nixlDlistH *handle = new nixlDlistH;
 
     // This function is const regarding the backend, when transfer handle is
     // generated, there the backend can change upong post.
@@ -496,17 +496,17 @@ nixlAgent::prepXferDescs (const nixl_xfer_dlist_t &descs,
         return ret;
     }
 
-    prep_hndl = handle;
+    dlist_hndl = handle;
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
-                        const nixlPreppedH* local_side,
+                        const nixlDlistH* local_side,
                         const std::vector<int> &local_indices,
-                        const nixlPreppedH* remote_side,
+                        const nixlDlistH* remote_side,
                         const std::vector<int> &remote_indices,
-                              nixlXferReqH* &req_hndl,
+                        nixlXferReqH* &req_hndl,
                         const nixl_opt_args_t* extra_params) const {
 
     req_hndl     = nullptr;
@@ -644,8 +644,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
-nixlAgent::releasePrepped (nixlPreppedH* prep_hndl) const {
-    delete prep_hndl;
+nixlAgent::releasePrepped (nixlDlistH* dlist_hndl) const {
+    delete dlist_hndl;
     return NIXL_SUCCESS;
 }
 
@@ -675,7 +675,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
 }
 
 nixl_status_t
-nixlAgent::getNotifs(      nixl_notifs_t &notif_map,
+nixlAgent::getNotifs(nixl_notifs_t &notif_map,
                      const nixl_opt_args_t* extra_params) {
     notif_list_t backend_list;
     nixl_status_t ret, bad_ret=NIXL_SUCCESS;
@@ -761,7 +761,7 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
 
 nixl_status_t
 nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
-                               std::string &agent_name) {
+                         std::string &agent_name) {
     int count = 0;
     nixlSerDes sd;
     size_t conn_cnt;

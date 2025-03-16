@@ -233,9 +233,9 @@ PYBIND11_MODULE(_bindings, m) {
                    py::arg("remote_descs"), py::arg("remote_agent"),
                    py::arg("notif_msg"), py::arg("operation"),
                    py::arg("backend") = ((uintptr_t) nullptr))
-        .def("getXferBackend", [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {
+        .def("queryXferBackend", [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {
                     nixlBackendH* handle;
-                    nixl_status_t ret = agent.getXferBackend((nixlXferReqH*) reqh, handle);
+                    nixl_status_t ret = agent.queryXferBackend((nixlXferReqH*) reqh, handle);
                     if(ret < 0) return (uintptr_t) nullptr;
                     return (uintptr_t) handle;
             })
@@ -243,7 +243,7 @@ PYBIND11_MODULE(_bindings, m) {
                                 const nixl_xfer_dlist_t &descs,
                                 const std::string &remote_agent,
                                 uintptr_t backend) -> uintptr_t {
-                    nixlPreppedH* handle;
+                    nixlDlistH* handle;
                     nixl_opt_args_t extra_params;
                     extra_params.backends.push_back((nixlBackendH*) backend);
                     nixl_status_t ret = agent.prepXferDescs(descs, remote_agent, handle, &extra_params);
@@ -264,8 +264,8 @@ PYBIND11_MODULE(_bindings, m) {
                         extra_params.hasNotif = true;
                     }
                     nixl_status_t ret = agent.makeXferReq(operation,
-                                                          (nixlPreppedH*) local_side, local_indices,
-                                                          (nixlPreppedH*) remote_side, remote_indices,
+                                                          (nixlDlistH*) local_side, local_indices,
+                                                          (nixlDlistH*) remote_side, remote_indices,
                                                           handle, &extra_params);
                     if (ret != NIXL_SUCCESS) return (uintptr_t) nullptr;
                     else return (uintptr_t) handle;
@@ -274,7 +274,7 @@ PYBIND11_MODULE(_bindings, m) {
                     return agent.releaseXferReq((nixlXferReqH*) reqh);
                 })
         .def("releasePrepped", [](nixlAgent &agent, uintptr_t handle) -> nixl_status_t {
-                    return agent.releasePrepped((nixlPreppedH*) handle);
+                    return agent.releasePrepped((nixlDlistH*) handle);
                 })
         .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                     return agent.postXferReq((nixlXferReqH*) reqh);

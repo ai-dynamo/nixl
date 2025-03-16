@@ -22,9 +22,9 @@
 
 
 class nixlSerDes;
+class nixlDlistH;
 class nixlBackendH;
 class nixlXferReqH;
-class nixlPreppedH;
 class nixlAgentData;
 
 
