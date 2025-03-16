@@ -206,6 +206,7 @@ class nixl_agent:
 
         return new_descs
 
+    #TODO: these not necessarily agent specific, maybe separate somehow?
     def get_serialized_descs(self, descs):
         return pickle.dumps(descs)
 
@@ -257,56 +258,21 @@ class nixl_agent:
     def make_connection(self, remote_agent):
         self.agent.makeConnection(remote_agent)
 
-    def get_agent_metadata(self):
-        return self.agent.getLocalMD()
-
-    def add_remote_agent(self, metadata):
-        agent_name = self.agent.loadRemoteMD(metadata)
-        return agent_name
-
-    def remove_remote_agent(self, agent):
-        self.agent.invalidateRemoteMD(agent)
-
-    def create_xfer(
-        self, local_descs, remote_descs, remote_agent, notif_msg, operation, xfer_backend=None
-    ):
-        op = self.nixl_ops[operation]
-        if op:
-            if xfer_backend:
-                handle = self.agent.createXferReq(
-                    local_descs,
-                    remote_descs,
-                    remote_agent,
-                    notif_msg,
-                    op,
-                    xfer_backend,
-                )
-            else:
-                handle = self.agent.createXferReq(
-                    local_descs, remote_descs, remote_agent, notif_msg, op
-                )
-            return handle  # In case of error it will be None
-        else:
-            return None
-
     # "" remote agent means local. example xfer can be used to know the backend
     def prep_xfer_dlist(
         self,
-        remote_agent,
         xfer_list,
+        remote_agent,
         mem_type=None,
         is_unified_addr=True,
         is_sorted=False,
-        xfer_backend=None,
-        example_xfer=None,
+        xfer_backend=None
     ):
         descs = self.get_xfer_descs(xfer_list, mem_type, is_unified_addr, is_sorted)
         if xfer_backend:
             handle = self.agent.prepXferDlist(descs, remote_agent, xfer_backend)
-        elif example_xfer:
-            backend = self.agent.getXferBackend(example_xfer)
-            handle = self.agent.prepXferDlist(descs, remote_agent, backend)
         else:
+            #TODO: need better way to select backend if not specified
             if (descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
                 handle = self.agent.prepXferDlist(
                     descs, remote_agent, self.backends["GDS"]
@@ -322,12 +288,12 @@ class nixl_agent:
 
     def make_resolved_xfer(
         self,
+        operation,
         local_xfer_side,
         local_indices,
         remote_xfer_side,
         remote_indices,
-        notif_msg,
-        operation,
+        notif_msg = "",
         skip_desc_merge = False
     ):
         op = self.nixl_ops[operation]
@@ -348,12 +314,36 @@ class nixl_agent:
         else:
             return None
 
-    def release_dlist_handle(self, handle):
-        # frees the handle too
-        self.agent.releasedDlistH(handle)
+    def create_xfer(
+        self,
+        operation,
+        local_descs,
+        remote_descs,
+        remote_agent,
+        notif_msg = "",
+        xfer_backend = None
+    ):
+        op = self.nixl_ops[operation]
+        if op:
+            if xfer_backend:
+                handle = self.agent.createXferReq(
+                    local_descs,
+                    remote_descs,
+                    remote_agent,
+                    notif_msg,
+                    op,
+                    xfer_backend,
+                )
+            else:
+                handle = self.agent.createXferReq(
+                    local_descs, remote_descs, remote_agent, notif_msg, op
+                )
+            return handle  # In case of error it will be None
+        else:
+            return None
 
-    def transfer(self, handle):
-        status = self.agent.postXferReq(handle)
+    def transfer(self, handle, notif_msg = ""):
+        status = self.agent.postXferReq(handle, notif_msg)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
         elif status == nixlBind.NIXL_IN_PROG:
@@ -387,15 +377,29 @@ class nixl_agent:
         # frees the handle too
         self.agent.releaseXferReq(handle)
 
+    def release_dlist_handle(self, handle):
+        # frees the handle too
+        self.agent.releasedDlistH(handle)
+
     # Extra notification APIs
     def send_notif(self, remote_agent_name, notif_msg):
         self.agent.genNotif(remote_agent_name, notif_msg)
+
+    # Returns new notifs, without touching self.notifs
+    def get_new_notifs(self):
+        return self.agent.getNotifs({})
 
     # Adds new notifs to self.notifs and returns it
     def update_notifs(self):
         self.notifs = self.agent.getNotifs(self.notifs)
         return self.notifs
 
-    # Returns new notifs, without touching self.notifs
-    def get_new_notifs(self):
-        return self.agent.getNotifs({})
+    def get_agent_metadata(self):
+        return self.agent.getLocalMD()
+
+    def add_remote_agent(self, metadata):
+        agent_name = self.agent.loadRemoteMD(metadata)
+        return agent_name
+
+    def remove_remote_agent(self, agent):
+        self.agent.invalidateRemoteMD(agent)
