@@ -369,6 +369,13 @@ class nixl_agent:
         else:
             return "ERR"
 
+    def query_xfer_backend(self, handle):
+        b_handle = self.agent.queryXferBackend(handle)
+        # this works because there should not be multiple matching handles in the Dict
+        return next(
+            backendS for backendS, backendH in self.backends if backendH == b_handle
+        )
+
     def check_xfer_state(self, handle):
         status = self.agent.getXferStatus(handle)
         if status == nixlBind.NIXL_SUCCESS:
