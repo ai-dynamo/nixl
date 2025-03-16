@@ -63,7 +63,7 @@ if __name__ == "__main__":
     agent2_reg_descs = nixl_agent1.get_reg_descs(agent2_strings, "DRAM", True)
     agent2_xfer_descs = nixl_agent1.get_xfer_descs(agent2_addrs, "DRAM", True)
 
-    agent2_descs = nixl_agent2.register_memory(agent2_reg_descs, True)
+    agent2_descs = nixl_agent2.register_memory(agent2_reg_descs, is_sorted=True)
     assert agent2_descs is not None
 
     # Exchange metadata

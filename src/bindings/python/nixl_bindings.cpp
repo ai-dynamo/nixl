@@ -266,17 +266,23 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(agent.getAvailPlugins(backends));
                     return backends;
             })
-        .def("getPluginParams", [](nixlAgent &agent, const nixl_backend_t type) -> std::pair<nixl_b_params_t, nixl_mem_list_t> {
+        .def("getPluginParams", [](nixlAgent &agent, const nixl_backend_t type) -> std::pair<nixl_b_params_t, std::vector<std::string>> {
                     nixl_b_params_t params;
                     nixl_mem_list_t mems;
+                    std::vector<std::string> mems_vec;
                     throw_nixl_exception(agent.getPluginParams(type, mems, params));
-                    return std::make_pair(params, mems);
+                    for (const auto& elm: mems)
+                        mems_vec.push_back(nixlEnumStrings::memTypeStr(elm));
+                    return std::make_pair(params, mems_vec);
             })
-        .def("getBackendParams", [](nixlAgent &agent, uintptr_t backend) -> std::pair<nixl_b_params_t, nixl_mem_list_t> {
+        .def("getBackendParams", [](nixlAgent &agent, uintptr_t backend) -> std::pair<nixl_b_params_t, std::vector<std::string>> {
                     nixl_b_params_t params;
                     nixl_mem_list_t mems;
+                    std::vector<std::string> mems_vec;
                     throw_nixl_exception(agent.getBackendParams((nixlBackendH*) backend, mems, params));
-                    return std::make_pair(params, mems);
+                    for (const auto& elm: mems)
+                        mems_vec.push_back(nixlEnumStrings::memTypeStr(elm));
+                    return std::make_pair(params, mems_vec);
             })
         .def("createBackend", [](nixlAgent &agent, const nixl_backend_t &type, const nixl_b_params_t &initParams) -> uintptr_t {
                     nixlBackendH* backend = nullptr;

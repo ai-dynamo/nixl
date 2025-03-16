@@ -160,6 +160,9 @@ class nixl_agent:
                 "GDS" in self.backends
             ):
                 ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
+            else:
+                return None
+
         if ret != 0:
             return None
         return reg_descs
@@ -184,6 +187,9 @@ class nixl_agent:
                 "GDS" in self.backends
             ):
                 ret = self.agent.deregisterMem(dereg_list, self.backends["GDS"])
+            else:
+                return None
+
         if ret != 0:
             return None
         # is this the best ret value?
@@ -224,6 +230,9 @@ class nixl_agent:
                 handle = self.agent.prepXferDlist(
                     descs, remote_agent, self.backends["GDS"]
                 )
+            else:
+                return None
+
         if handle == 0:
             return None
 
