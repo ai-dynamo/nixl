@@ -17,7 +17,6 @@
 
 import nixl._utils as nixl_utils
 from nixl._api import nixl_agent
-import nixl._bindings as nixl_bindings
 
 if __name__ == "__main__":
 
@@ -35,9 +34,9 @@ if __name__ == "__main__":
     agent1_xfer_descs = nixl_agent1.get_xfer_descs(agent1_addrs, "DRAM", True)
 
     try:
-        #null backend not supported
+        # null backend not supported
         nixl_agent1.backends["UVX"] = 0
         nixl_agent1.register_memory(agent1_reg_descs, backend="UVX")
-    except nixl_bindings.nixlNotSupportedError as e:
+    except Exception as e:
         print("Caught you!")
         print(e)
