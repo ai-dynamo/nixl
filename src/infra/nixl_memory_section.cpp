@@ -69,7 +69,7 @@ nixl_reg_dlist_t nixlLocalSection::getStringDesc (
 }
 
 nixl_status_t nixlLocalSection::addBackendHandler (nixlBackendEngine* backend) {
-    if (backend == nullptr)
+    if (!backend)
         return NIXL_ERR_INVALID_PARAM;
     // Agent has already checked for not being the same type of backend
     backendToEngineMap[backend->getType()] = backend;
@@ -81,7 +81,7 @@ nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
                                              nixlBackendEngine* backend,
                                              nixl_meta_dlist_t &remote_self) {
 
-    if (backend == nullptr)
+    if (!backend)
         return NIXL_ERR_INVALID_PARAM;
     // Find the MetaDesc list, or add it to the map
     nixl_mem_t     nixl_mem     = mem_elms.getType();
@@ -146,7 +146,7 @@ nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
 // Per each nixlBasicDesc, the full region that got registered should be deregistered
 nixl_status_t nixlLocalSection::remDescList (const nixl_meta_dlist_t &mem_elms,
                                              nixlBackendEngine *backend) {
-    if (backend == nullptr)
+    if (!backend)
         return NIXL_ERR_INVALID_PARAM;
     nixl_mem_t     nixl_mem     = mem_elms.getType();
     nixl_backend_t nixl_backend = backend->getType();
@@ -184,13 +184,15 @@ nixlBackendEngine* nixlLocalSection::findQuery(
                        const backend_set_t &remote_backends,
                        nixl_meta_dlist_t &resp) const {
 
+    nixlBackendEngine* backend = nullptr;
+
     nixl_mem_t q_mem = query.getType();
     if (q_mem>FILE_SEG)
-        return nullptr;
+        return backend;
 
     const backend_set_t* backend_set = &memToBackendMap.at(q_mem);
     if (backend_set->empty())
-        return nullptr;
+        return backend;
 
     // Decision making based on supported local backends for this
     // memory type, supported remote backends and remote memory type
@@ -203,7 +205,7 @@ nixlBackendEngine* nixlLocalSection::findQuery(
         if (populate(query, elm, resp) == NIXL_SUCCESS)
             return backendToEngineMap.at(elm);
     }
-    return nullptr;
+    return backend;
 }
 
 nixl_status_t nixlLocalSection::serialize(nixlSerDes* serializer) const {

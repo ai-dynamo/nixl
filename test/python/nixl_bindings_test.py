@@ -115,9 +115,7 @@ def test_agent():
     print(src_list)
     print(dst_list)
 
-    handle = agent1.createXferReq(
-        src_list, dst_list, name2, noti_str, nixl.NIXL_WR_NOTIF
-    )
+    handle = agent1.createXferReq(src_list, dst_list, name2, noti_str, nixl.NIXL_WRITE)
     assert handle != 0
 
     print(handle)

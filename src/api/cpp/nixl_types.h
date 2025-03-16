@@ -39,8 +39,7 @@ typedef std::string nixl_blob_t;
 // FILE_SEG must be last
 typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG} nixl_mem_t;
 
-typedef enum {NIXL_READ, NIXL_WRITE,
-              NIXL_RD_NOTIF, NIXL_WR_NOTIF} nixl_xfer_op_t; // NOTIFs to be removed
+typedef enum {NIXL_READ, NIXL_WRITE} nixl_xfer_op_t;
 
 typedef std::vector<nixl_mem_t> nixl_mem_list_t;
 typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
@@ -57,7 +56,8 @@ typedef enum {
     NIXL_ERR_MISMATCH = -5,
     NIXL_ERR_NOT_ALLOWED = -6,
     NIXL_ERR_REPOST_ACTIVE = -7,
-    NIXL_ERR_UNKNOWN = -8
+    NIXL_ERR_UNKNOWN = -8,
+    NIXL_ERR_NOT_SUPPORTED = -9
 } nixl_status_t;
 
 
