@@ -23,6 +23,7 @@
 #include "agent_data.h"
 #include "plugin_manager.h"
 
+/*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
     static std::array<std::string, FILE_SEG+1> nixl_mem_str = {
            "DRAM_SEG", "VRAM_SEG", "BLK_SEG", "OBJ_SEG", "FILE_SEG"};
@@ -55,6 +56,8 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
     }
 }
 
+
+/*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :
                                    name(name), config(cfg) {}
@@ -77,6 +80,8 @@ nixlAgentData::~nixlAgentData() {
         delete elm.second;
 }
 
+
+/*** nixlAgent implementation ***/
 nixlAgent::nixlAgent(const std::string &name,
                      const nixlAgentConfig &cfg) {
     data = new nixlAgentData(name, cfg);
@@ -300,198 +305,6 @@ nixlAgent::makeConnection(const std::string &remote_agent) {
 }
 
 nixl_status_t
-nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
-                         const nixl_xfer_dlist_t &local_descs,
-                         const nixl_xfer_dlist_t &remote_descs,
-                         const std::string &remote_agent,
-                         nixlXferReqH* &req_hndl,
-                         const nixl_opt_args_t* extra_params) const {
-    nixl_status_t ret;
-    req_hndl = nullptr;
-    nixlBackendH* backend = nullptr;
-    nixl_opt_b_args_t opt_args;
-
-    if (extra_params) {
-        if (extra_params->hasNotif){
-            opt_args.notifMsg = extra_params->notifMsg;
-            opt_args.hasNotif = true;
-        }
-
-        // TODO: Support more than all or single backend specification
-        if (extra_params->backends.size()==1)
-            backend = extra_params->backends[0];
-    }
-
-    // Check the correspondence between descriptor lists
-    if (local_descs.descCount() != remote_descs.descCount())
-        return NIXL_ERR_INVALID_PARAM;
-    for (int i=0; i<local_descs.descCount(); ++i)
-        if (local_descs[i].len != remote_descs[i].len)
-            return NIXL_ERR_INVALID_PARAM;
-
-    if (data->remoteSections.count(remote_agent)==0)
-        return NIXL_ERR_NOT_FOUND;
-
-    // TODO: when central KV is supported, add a call to fetchRemoteMD
-    // TODO: merge descriptors back to back in memory (like makeXferReq).
-    // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
-
-    nixlXferReqH *handle = new nixlXferReqH;
-    handle->initiatorDescs = new nixl_meta_dlist_t (
-                                     local_descs.getType(),
-                                     local_descs.isUnifiedAddr(),
-                                     local_descs.isSorted());
-
-    if (!backend) {
-        handle->engine = data->memorySection.findQuery(local_descs,
-                              remote_descs.getType(),
-                              data->remoteBackends[remote_agent],
-                              *handle->initiatorDescs);
-        if (!handle->engine) {
-            delete handle;
-            return NIXL_ERR_NOT_FOUND;
-        }
-    } else {
-        ret = data->memorySection.populate(local_descs,
-                                           backend->getType(),
-                                           *handle->initiatorDescs);
-       if (ret!=NIXL_SUCCESS) {
-            delete handle;
-            return NIXL_ERR_BACKEND;
-       }
-       handle->engine = backend->engine;
-    }
-
-    if (opt_args.hasNotif && (!handle->engine->supportsNotif())) {
-        delete handle;
-        return NIXL_ERR_BACKEND;
-    }
-
-    handle->targetDescs = new nixl_meta_dlist_t (
-                                  remote_descs.getType(),
-                                  remote_descs.isUnifiedAddr(),
-                                  remote_descs.isSorted());
-
-    // Based on the decided local backend, we check the remote counterpart
-    ret = data->remoteSections[remote_agent]->populate(remote_descs,
-               handle->engine->getType(), *handle->targetDescs);
-    if (ret!=NIXL_SUCCESS) {
-        delete handle;
-        return ret;
-    }
-
-    handle->remoteAgent = remote_agent;
-    handle->notifMsg    = opt_args.notifMsg;
-    handle->hasNotif    = opt_args.hasNotif;
-    handle->backendOp   = operation;
-    handle->status      = NIXL_ERR_NOT_POSTED;
-
-    req_hndl = handle;
-
-    ret = handle->engine->prepXfer (req_hndl->backendOp,
-                                   *req_hndl->initiatorDescs,
-                                   *req_hndl->targetDescs,
-                                    req_hndl->remoteAgent,
-                                    req_hndl->backendHandle,
-                                    &opt_args);
-    return ret;
-}
-
-nixl_status_t
-nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) {
-    //destructor will call release to abort transfer if necessary
-    delete req_hndl;
-    //TODO: check if abort is supported and if so, successful
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
-nixlAgent::postXferReq(nixlXferReqH *req_hndl,
-                       const nixl_opt_args_t* extra_params) const {
-    nixl_status_t ret;
-    nixl_opt_b_args_t opt_args;
-
-    opt_args.hasNotif = false;
-
-    if (!req_hndl)
-        return NIXL_ERR_INVALID_PARAM;
-
-    // We can't repost while a request is in progress
-    if (req_hndl->status == NIXL_IN_PROG) {
-        req_hndl->status = req_hndl->engine->checkXfer(
-                                     req_hndl->backendHandle);
-        if (req_hndl->status == NIXL_IN_PROG) {
-            delete req_hndl;
-            return NIXL_ERR_REPOST_ACTIVE;
-        }
-    }
-
-    // // The remote was invalidated
-    // if (data->remoteBackends.count(req_hndl->remoteAgent)==0)
-    //     delete req_hndl;
-    //     return NIXL_ERR_BAD;
-    // }
-
-    // Carrying over notification from xfer handle creation time
-    if (req_hndl->hasNotif) {
-        opt_args.notifMsg = req_hndl->notifMsg;
-        opt_args.hasNotif = true;
-    }
-
-    // Updating the notification based on opt_args
-    if (extra_params) {
-        if (extra_params->hasNotif) {
-            req_hndl->notifMsg = extra_params->notifMsg;
-            opt_args.notifMsg  = extra_params->notifMsg;
-            req_hndl->hasNotif = true;
-            opt_args.hasNotif  = true;
-        } else {
-            req_hndl->hasNotif = false;
-            opt_args.hasNotif  = false;
-        }
-    }
-
-    if (opt_args.hasNotif && (!req_hndl->engine->supportsNotif())) {
-        delete req_hndl;
-        return NIXL_ERR_BACKEND;
-    }
-
-    // If status is not NIXL_IN_PROG we can repost,
-    ret = req_hndl->engine->postXfer (req_hndl->backendOp,
-                                     *req_hndl->initiatorDescs,
-                                     *req_hndl->targetDescs,
-                                      req_hndl->remoteAgent,
-                                      req_hndl->backendHandle,
-                                      &opt_args);
-    req_hndl->status = ret;
-    return ret;
-}
-
-nixl_status_t
-nixlAgent::getXferStatus (nixlXferReqH *req_hndl) {
-    // // The remote was invalidated
-    // if (data->remoteBackends.count(req_hndl->remoteAgent)==0)
-    //     delete req_hndl;
-    //     return NIXL_ERR_BAD;
-    // }
-
-    // If the status is done, no need to recheck.
-    if (req_hndl->status != NIXL_SUCCESS)
-        req_hndl->status = req_hndl->engine->checkXfer(
-                                     req_hndl->backendHandle);
-
-    return req_hndl->status;
-}
-
-
-nixl_status_t
-nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
-                            nixlBackendH* &backend) const {
-    backend = data->backendHandles[req_hndl->engine->getType()];
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
 nixlAgent::prepXferDlist (const nixl_xfer_dlist_t &descs,
                           const std::string &remote_agent,
                           nixlDlistH* &dlist_hndl,
@@ -690,34 +503,201 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
-nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
-    delete dlist_hndl;
+nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
+                         const nixl_xfer_dlist_t &local_descs,
+                         const nixl_xfer_dlist_t &remote_descs,
+                         const std::string &remote_agent,
+                         nixlXferReqH* &req_hndl,
+                         const nixl_opt_args_t* extra_params) const {
+    nixl_status_t ret;
+    req_hndl = nullptr;
+    nixlBackendH* backend = nullptr;
+    nixl_opt_b_args_t opt_args;
+
+    if (extra_params) {
+        if (extra_params->hasNotif){
+            opt_args.notifMsg = extra_params->notifMsg;
+            opt_args.hasNotif = true;
+        }
+
+        // TODO: Support more than all or single backend specification
+        if (extra_params->backends.size()==1)
+            backend = extra_params->backends[0];
+    }
+
+    // Check the correspondence between descriptor lists
+    if (local_descs.descCount() != remote_descs.descCount())
+        return NIXL_ERR_INVALID_PARAM;
+    for (int i=0; i<local_descs.descCount(); ++i)
+        if (local_descs[i].len != remote_descs[i].len)
+            return NIXL_ERR_INVALID_PARAM;
+
+    if (data->remoteSections.count(remote_agent)==0)
+        return NIXL_ERR_NOT_FOUND;
+
+    // TODO: when central KV is supported, add a call to fetchRemoteMD
+    // TODO: merge descriptors back to back in memory (like makeXferReq).
+    // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
+
+    nixlXferReqH *handle = new nixlXferReqH;
+    handle->initiatorDescs = new nixl_meta_dlist_t (
+                                     local_descs.getType(),
+                                     local_descs.isUnifiedAddr(),
+                                     local_descs.isSorted());
+
+    if (!backend) {
+        handle->engine = data->memorySection.findQuery(local_descs,
+                              remote_descs.getType(),
+                              data->remoteBackends[remote_agent],
+                              *handle->initiatorDescs);
+        if (!handle->engine) {
+            delete handle;
+            return NIXL_ERR_NOT_FOUND;
+        }
+    } else {
+        ret = data->memorySection.populate(local_descs,
+                                           backend->getType(),
+                                           *handle->initiatorDescs);
+       if (ret!=NIXL_SUCCESS) {
+            delete handle;
+            return NIXL_ERR_BACKEND;
+       }
+       handle->engine = backend->engine;
+    }
+
+    if (opt_args.hasNotif && (!handle->engine->supportsNotif())) {
+        delete handle;
+        return NIXL_ERR_BACKEND;
+    }
+
+    handle->targetDescs = new nixl_meta_dlist_t (
+                                  remote_descs.getType(),
+                                  remote_descs.isUnifiedAddr(),
+                                  remote_descs.isSorted());
+
+    // Based on the decided local backend, we check the remote counterpart
+    ret = data->remoteSections[remote_agent]->populate(remote_descs,
+               handle->engine->getType(), *handle->targetDescs);
+    if (ret!=NIXL_SUCCESS) {
+        delete handle;
+        return ret;
+    }
+
+    handle->remoteAgent = remote_agent;
+    handle->notifMsg    = opt_args.notifMsg;
+    handle->hasNotif    = opt_args.hasNotif;
+    handle->backendOp   = operation;
+    handle->status      = NIXL_ERR_NOT_POSTED;
+
+    req_hndl = handle;
+
+    ret = handle->engine->prepXfer (req_hndl->backendOp,
+                                   *req_hndl->initiatorDescs,
+                                   *req_hndl->targetDescs,
+                                    req_hndl->remoteAgent,
+                                    req_hndl->backendHandle,
+                                    &opt_args);
+    return ret;
+}
+
+nixl_status_t
+nixlAgent::postXferReq(nixlXferReqH *req_hndl,
+                       const nixl_opt_args_t* extra_params) const {
+    nixl_status_t ret;
+    nixl_opt_b_args_t opt_args;
+
+    opt_args.hasNotif = false;
+
+    if (!req_hndl)
+        return NIXL_ERR_INVALID_PARAM;
+
+    // We can't repost while a request is in progress
+    if (req_hndl->status == NIXL_IN_PROG) {
+        req_hndl->status = req_hndl->engine->checkXfer(
+                                     req_hndl->backendHandle);
+        if (req_hndl->status == NIXL_IN_PROG) {
+            delete req_hndl;
+            return NIXL_ERR_REPOST_ACTIVE;
+        }
+    }
+
+    // // The remote was invalidated
+    // if (data->remoteBackends.count(req_hndl->remoteAgent)==0)
+    //     delete req_hndl;
+    //     return NIXL_ERR_BAD;
+    // }
+
+    // Carrying over notification from xfer handle creation time
+    if (req_hndl->hasNotif) {
+        opt_args.notifMsg = req_hndl->notifMsg;
+        opt_args.hasNotif = true;
+    }
+
+    // Updating the notification based on opt_args
+    if (extra_params) {
+        if (extra_params->hasNotif) {
+            req_hndl->notifMsg = extra_params->notifMsg;
+            opt_args.notifMsg  = extra_params->notifMsg;
+            req_hndl->hasNotif = true;
+            opt_args.hasNotif  = true;
+        } else {
+            req_hndl->hasNotif = false;
+            opt_args.hasNotif  = false;
+        }
+    }
+
+    if (opt_args.hasNotif && (!req_hndl->engine->supportsNotif())) {
+        delete req_hndl;
+        return NIXL_ERR_BACKEND;
+    }
+
+    // If status is not NIXL_IN_PROG we can repost,
+    ret = req_hndl->engine->postXfer (req_hndl->backendOp,
+                                     *req_hndl->initiatorDescs,
+                                     *req_hndl->targetDescs,
+                                      req_hndl->remoteAgent,
+                                      req_hndl->backendHandle,
+                                      &opt_args);
+    req_hndl->status = ret;
+    return ret;
+}
+
+nixl_status_t
+nixlAgent::getXferStatus (nixlXferReqH *req_hndl) {
+    // // The remote was invalidated
+    // if (data->remoteBackends.count(req_hndl->remoteAgent)==0)
+    //     delete req_hndl;
+    //     return NIXL_ERR_BAD;
+    // }
+
+    // If the status is done, no need to recheck.
+    if (req_hndl->status != NIXL_SUCCESS)
+        req_hndl->status = req_hndl->engine->checkXfer(
+                                     req_hndl->backendHandle);
+
+    return req_hndl->status;
+}
+
+
+nixl_status_t
+nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
+                            nixlBackendH* &backend) const {
+    backend = data->backendHandles[req_hndl->engine->getType()];
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlAgent::genNotif(const std::string &remote_agent,
-                    const nixl_blob_t &msg,
-                    const nixl_opt_args_t* extra_params) {
+nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) {
+    //destructor will call release to abort transfer if necessary
+    delete req_hndl;
+    //TODO: check if abort is supported and if so, successful
+    return NIXL_SUCCESS;
+}
 
-    // TODO: Support more than a single backend to choose from
-    if (extra_params) {
-        if (extra_params->backends.size() > 1)
-            return NIXL_ERR_NOT_SUPPORTED;
-        else if (extra_params->backends.size() == 1)
-            return extra_params->backends[0]->engine->genNotif(
-                                              remote_agent, msg);
-    }
-
-    // TODO: add logic to choose between backends if multiple support it
-    for (auto & eng: data->backendEngines) {
-        if (eng.second->supportsNotif()) {
-            if (data->remoteBackends[remote_agent].count(
-                                    eng.second->getType()) != 0)
-                return eng.second->genNotif(remote_agent, msg);
-        }
-    }
-    return NIXL_ERR_NOT_FOUND;
+nixl_status_t
+nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
+    delete dlist_hndl;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -761,6 +741,31 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
         return NIXL_ERR_BACKEND;
     else
         return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::genNotif(const std::string &remote_agent,
+                    const nixl_blob_t &msg,
+                    const nixl_opt_args_t* extra_params) {
+
+    // TODO: Support more than a single backend to choose from
+    if (extra_params) {
+        if (extra_params->backends.size() > 1)
+            return NIXL_ERR_NOT_SUPPORTED;
+        else if (extra_params->backends.size() == 1)
+            return extra_params->backends[0]->engine->genNotif(
+                                              remote_agent, msg);
+    }
+
+    // TODO: add logic to choose between backends if multiple support it
+    for (auto & eng: data->backendEngines) {
+        if (eng.second->supportsNotif()) {
+            if (data->remoteBackends[remote_agent].count(
+                                    eng.second->getType()) != 0)
+                return eng.second->genNotif(remote_agent, msg);
+        }
+    }
+    return NIXL_ERR_NOT_FOUND;
 }
 
 nixl_status_t
