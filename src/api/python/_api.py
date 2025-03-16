@@ -19,11 +19,13 @@ import torch
 
 import nixl._bindings as nixlBind
 
+
 class nixl_config:
-    def __init(self, enable_prog_thread = True, backends=["UCX", "GDS"]):
+    def __init(self, enable_prog_thread=True, backends=["UCX", "GDS"]):
         # TODO: add backend init parameters
         self.backends = backends
         self.enable_pthread = enable_prog_thread
+
 
 class nixl_agent:
     def __init__(self, agent_name, nixl_config=None):
@@ -56,7 +58,9 @@ class nixl_agent:
             for x in nixl_config.backends:
                 # TODO: populate init from nixl_config when added
                 if x not in self.plugin_list:
-                    print("Skiping backend registration", x, "due to the missing plugin.")
+                    print(
+                        "Skipping backend registration", x, "due to the missing plugin."
+                    )
                 else:
                     self.backends[x] = self.agent.createBackend(x, init)
         else:
@@ -89,28 +93,30 @@ class nixl_agent:
         if backend in self.plugin_mem_types:
             return self.plugin_mem_types[backend]
         else:
-            print ("Plugin", backend, "is not available to get its supported mem types.")
+            print("Plugin", backend, "is not available to get its supported mem types.")
             return None
 
     def get_plugin_params(self, backend):
         if backend in self.plugin_b_options:
             return self.plugin_b_options[backend]
         else:
-            print ("Plugin", backend, "is not available to get its parameters.")
+            print("Plugin", backend, "is not available to get its parameters.")
             return None
 
     def get_backend_mem_types(self, backend):
         if backend in self.backend_mems:
             return self.backend_mems[backend]
         else:
-            print ("Backend", backend, "not instantiated to get its supported mem types.")
+            print(
+                "Backend", backend, "not instantiated to get its supported mem types."
+            )
             return None
 
     def get_backend_params(self, backend):
         if backend in self.backend_options:
             return self.backend_options[backend]
         else:
-            print ("Backend", backend, "not instantiated to get its parameters.")
+            print("Backend", backend, "not instantiated to get its parameters.")
             return None
 
     def create_backend(self, backend, initParams=None):
@@ -206,7 +212,7 @@ class nixl_agent:
 
         return new_descs
 
-    #TODO: these not necessarily agent specific, maybe separate somehow?
+    # TODO: these not necessarily agent specific, maybe separate somehow?
     def get_serialized_descs(self, descs):
         return pickle.dumps(descs)
 
@@ -215,7 +221,12 @@ class nixl_agent:
 
     # The returned descriptor object can be used for call to deregister
     def register_memory(
-        self, reg_list, mem_type=None, is_unified_addr=True, is_sorted=False, backend=None
+        self,
+        reg_list,
+        mem_type=None,
+        is_unified_addr=True,
+        is_sorted=False,
+        backend=None,
     ):
         reg_descs = self.get_reg_descs(reg_list, mem_type, is_unified_addr, is_sorted)
 
@@ -226,11 +237,11 @@ class nixl_agent:
             # TODO: rely on underlying capability to register with all when supported
             if (reg_descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
                 ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
-            else if (reg_descs.getType() == nixl.DRAM_SEG) and ("UCX" in self.backend):
+            elif (reg_descs.getType() == nixl.DRAM_SEG) and ("UCX" in self.backend):
                 ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
-            else if (reg_descs.getType() == nixl.VRAM_SEG) and ("UCX" in self.backend):
+            elif (reg_descs.getType() == nixl.VRAM_SEG) and ("UCX" in self.backend):
                 ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
-            else if (reg_descs.getType() == nixl.VRAM_SEG) and ("GDS" in self.backend):
+            elif (reg_descs.getType() == nixl.VRAM_SEG) and ("GDS" in self.backend):
                 ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
         if ret != 0:
             return None
@@ -244,11 +255,11 @@ class nixl_agent:
             # TODO: rely on underlying capability to register with all when supported
             if (reg_descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
                 ret = self.agent.deregisterMem(reg_descs, self.backends["GDS"])
-            else if (reg_descs.getType() == nixl.DRAM_SEG) and ("UCX" in self.backend):
+            elif (reg_descs.getType() == nixl.DRAM_SEG) and ("UCX" in self.backend):
                 ret = self.agent.deregisterMem(reg_descs, self.backends["UCX"])
-            else if (reg_descs.getType() == nixl.VRAM_SEG) and ("UCX" in self.backend):
+            elif (reg_descs.getType() == nixl.VRAM_SEG) and ("UCX" in self.backend):
                 ret = self.agent.deregisterMem(reg_descs, self.backends["UCX"])
-            else if (reg_descs.getType() == nixl.VRAM_SEG) and ("GDS" in self.backend):
+            elif (reg_descs.getType() == nixl.VRAM_SEG) and ("GDS" in self.backend):
                 ret = self.agent.deregisterMem(reg_descs, self.backends["GDS"])
         if ret != 0:
             return None
@@ -266,13 +277,13 @@ class nixl_agent:
         mem_type=None,
         is_unified_addr=True,
         is_sorted=False,
-        xfer_backend=None
+        xfer_backend=None,
     ):
         descs = self.get_xfer_descs(xfer_list, mem_type, is_unified_addr, is_sorted)
         if xfer_backend:
             handle = self.agent.prepXferDlist(descs, remote_agent, xfer_backend)
         else:
-            #TODO: need better way to select backend if not specified
+            # TODO: need better way to select backend if not specified
             if (descs.getType() == nixl.FILE_SEG) and ("GDS" in self.backend):
                 handle = self.agent.prepXferDlist(
                     descs, remote_agent, self.backends["GDS"]
@@ -293,8 +304,8 @@ class nixl_agent:
         local_indices,
         remote_xfer_side,
         remote_indices,
-        notif_msg = "",
-        skip_desc_merge = False
+        notif_msg="",
+        skip_desc_merge=False,
     ):
         op = self.nixl_ops[operation]
         if op:
@@ -320,8 +331,8 @@ class nixl_agent:
         local_descs,
         remote_descs,
         remote_agent,
-        notif_msg = "",
-        xfer_backend = None
+        notif_msg="",
+        xfer_backend=None,
     ):
         op = self.nixl_ops[operation]
         if op:
@@ -342,7 +353,7 @@ class nixl_agent:
         else:
             return None
 
-    def transfer(self, handle, notif_msg = ""):
+    def transfer(self, handle, notif_msg=""):
         status = self.agent.postXferReq(handle, notif_msg)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
