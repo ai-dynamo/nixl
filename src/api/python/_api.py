@@ -209,7 +209,7 @@ class nixl_agent:
         self.agent.makeConnection(remote_agent)
 
     # "" remote agent means local. example xfer can be used to know the backend
-    def prep_xfer_side(
+    def prep_xfer_dlist(
         self,
         remote_agent,
         xfer_list,
@@ -249,12 +249,12 @@ class nixl_agent:
 
     def make_prepped_xfer(
         self,
+        operation,
         local_xfer_side,
         local_indices,
         remote_xfer_side,
         remote_indices,
-        notif_msg,
-        operation,
+        notif_msg="",
         skip_desc_merge=False,
     ):
         op = self.nixl_ops[operation]
@@ -277,11 +277,11 @@ class nixl_agent:
 
     def initialize_xfer(
         self,
+        operation,
         local_descs,
         remote_descs,
         remote_agent,
-        notif_msg,
-        operation,
+        notif_msg="",
         xfer_backend=None,
     ):
         op = self.nixl_ops[operation]
@@ -315,13 +315,6 @@ class nixl_agent:
         else:
             return "ERR"
 
-    def query_xfer_backend(self, handle):
-        b_handle = self.agent.queryXferBackend(handle)
-        # this works because there should not be multiple matching handles in the Dict
-        return next(
-            backendS for backendS, backendH in self.backends if backendH == b_handle
-        )
-
     def check_xfer_state(self, handle):
         status = self.agent.getXferStatus(handle)
         if status == nixlBind.NIXL_SUCCESS:
@@ -331,11 +324,18 @@ class nixl_agent:
         else:
             return "ERR"
 
-    def abort_xfer(self, handle):
+    def query_xfer_backend(self, handle):
+        b_handle = self.agent.queryXferBackend(handle)
+        # this works because there should not be multiple matching handles in the Dict
+        return next(
+            backendS for backendS, backendH in self.backends if backendH == b_handle
+        )
+
+    def release_xfer_handle(self, handle):
         # frees the handle too
         self.agent.releaseXferReq(handle)
 
-    def delete_xfer_side(self, handle):
+    def release_dlist_handle(self, handle):
         # frees the handle too
         self.agent.releasedDlistH(handle)
 

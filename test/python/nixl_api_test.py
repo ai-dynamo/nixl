@@ -77,7 +77,7 @@ if __name__ == "__main__":
 
     # initialize transfer mode
     xfer_handle_1 = nixl_agent2.initialize_xfer(
-        agent2_xfer_descs, agent1_xfer_descs, remote_name, "UUID1", "READ"
+        "READ", agent2_xfer_descs, agent1_xfer_descs, remote_name, "UUID1"
     )
     if not xfer_handle_1:
         print("Creating transfer failed.")
@@ -105,10 +105,10 @@ if __name__ == "__main__":
                 print("Target done")
 
     # prep transfer mode
-    local_prep_handle = nixl_agent2.prep_xfer_side(
+    local_prep_handle = nixl_agent2.prep_xfer_dlist(
         "", [(addr3, buf_size, 0), (addr4, buf_size, 0)], "DRAM", True
     )
-    remote_prep_handle = nixl_agent2.prep_xfer_side(
+    remote_prep_handle = nixl_agent2.prep_xfer_dlist(
         remote_name, agent1_xfer_descs, "DRAM"
     )
 
@@ -116,7 +116,7 @@ if __name__ == "__main__":
     assert remote_prep_handle != 0
 
     xfer_handle_2 = nixl_agent2.make_prepped_xfer(
-        local_prep_handle, [0, 1], remote_prep_handle, [1, 0], "UUID2", "WRITE"
+        "WRITE", local_prep_handle, [0, 1], remote_prep_handle, [1, 0], "UUID2"
     )
     if not local_prep_handle or not remote_prep_handle:
         print("Preparing transfer side handles failed.")
@@ -147,10 +147,10 @@ if __name__ == "__main__":
                 target_done = True
                 print("Target done")
 
-    nixl_agent2.abort_xfer(xfer_handle_1)
-    nixl_agent2.abort_xfer(xfer_handle_2)
-    nixl_agent2.delete_xfer_side(local_prep_handle)
-    nixl_agent2.delete_xfer_side(remote_prep_handle)
+    nixl_agent2.release_xfer_handle(xfer_handle_1)
+    nixl_agent2.release_xfer_handle(xfer_handle_2)
+    nixl_agent2.release_dlist_handle(local_prep_handle)
+    nixl_agent2.release_dlist_handle(remote_prep_handle)
     nixl_agent2.remove_remote_agent("target")
     nixl_agent1.deregister_memory(agent1_reg_descs)
     nixl_agent2.deregister_memory(agent2_reg_descs)
