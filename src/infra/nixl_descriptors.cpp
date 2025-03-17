@@ -73,7 +73,7 @@ bool nixlBasicDesc::overlaps (const nixlBasicDesc &query) const {
     return true;
 }
 
-std::string nixlBasicDesc::serialize() const {
+nixl_blob_t nixlBasicDesc::serialize() const {
     return std::string(reinterpret_cast<const char*>(this),
                        sizeof(nixlBasicDesc));
 }
@@ -120,7 +120,7 @@ bool operator==(const nixlBlobDesc &lhs, const nixlBlobDesc &rhs) {
                   (lhs.metaInfo == rhs.metaInfo));
 }
 
-std::string nixlBlobDesc::serialize() const {
+nixl_blob_t nixlBlobDesc::serialize() const {
     return nixlBasicDesc::serialize() + metaInfo;
 }
 
