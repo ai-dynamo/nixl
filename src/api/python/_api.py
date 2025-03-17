@@ -28,7 +28,7 @@ class nixl_config:
 
 
 class nixl_agent:
-    def __init__(self, agent_name, nixl_config=None, instantiate_all=False):
+    def __init__(self, agent_name, nixl_config=None, instantiate_all=True):
         # Set agent config and instantiate an agent
         if nixl_config:
             agent_config = nixlBind.nixlAgentConfig(nixl_config.enable_pthread)
@@ -45,6 +45,10 @@ class nixl_agent:
         self.plugin_list = self.agent.getAvailPlugins()
         if len(self.plugin_list) == 0:
             print("No plugins available, cannot start transfers!")
+            raise RuntimeError("No plugins available for NIXL, cannot start transfers!")
+        else:
+            print("Found plugins during Agent initialization:")
+            print(self.plugin_list)
 
         self.plugin_b_options = {}
         self.plugin_mem_types = {}
@@ -69,6 +73,8 @@ class nixl_agent:
             # TODO: populate init from default parameters, or define a set of params in python
             for plugin in self.plugin_list:
                 self.backends[plugin] = self.agent.createBackend(plugin, init)
+        else:
+            print("No backends were created during agent creation.")
 
         for backend in self.backends:
             (backend_options, mem_types) = self.agent.getBackendParams(backend)
