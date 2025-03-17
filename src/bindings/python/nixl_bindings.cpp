@@ -187,6 +187,12 @@ PYBIND11_MODULE(_bindings, m) {
         .def("append", [](nixl_xfer_dlist_t &list, const py::tuple &desc) {
                 list.addDesc(nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint32_t>()));
             })
+        .def("index", [](nixl_xfer_dlist_t &list, const py::tuple &desc) {
+                int ret = (nixl_status_t) list.getIndex(nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(),
+                                                  desc[2].cast<uint32_t>()));
+                if(ret < 0) throw_nixl_exception((nixl_status_t) ret);
+                return (int) ret;
+            })
         .def("remDesc", &nixl_xfer_dlist_t::remDesc)
         .def("verifySorted", &nixl_xfer_dlist_t::verifySorted)
         .def("clear", &nixl_xfer_dlist_t::clear)
@@ -242,6 +248,13 @@ PYBIND11_MODULE(_bindings, m) {
                 list.addDesc(nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(),
                                             desc[2].cast<uint32_t>(),desc[3].cast<std::string>()));
             })
+        .def("index", [](nixl_reg_dlist_t &list, const py::tuple &desc) {
+                int ret = list.getIndex(nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(),
+                                                  desc[2].cast<uint32_t>(),desc[3].cast<std::string>()));
+                if(ret < 0) throw_nixl_exception((nixl_status_t) ret);
+                return ret;
+            })
+        .def("trim", &nixl_reg_dlist_t::trim)
         .def("remDesc", &nixl_reg_dlist_t::remDesc)
         .def("verifySorted", &nixl_reg_dlist_t::verifySorted)
         .def("clear", &nixl_reg_dlist_t::clear)
