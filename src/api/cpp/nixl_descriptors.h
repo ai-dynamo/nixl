@@ -39,171 +39,173 @@ class nixlBasicDesc {
 
         /**
          * @brief Default constructor for nixlBasicDesc
-         *	  No initialization to zero
+         *	  Does not initialize members to zero
          */
         nixlBasicDesc() {};
         /**
-         * @brief Parametrized Constructor for nixlBasicDesc
+         * @brief Parametrized constructor for nixlBasicDesc
          *
          * @param addr  Start of buffer/block/offset in file
          * @param len   Length of buffer
-         * @param devID deviceID/filID/BlockID
+         * @param devID deviceID/fileID/BlockID
          */
         nixlBasicDesc(const uintptr_t &addr,
                       const size_t &len,
                       const uint32_t &dev_id);
         /**
-         * @brief Parametrized Constructor for nixlBasicDesc
-         *        with serialized string
+         * @brief Parametrized constructor for nixlBasicDesc
+         *        with serialized blob of another nixlBasicDesc
          *
          * @param str   Serialized Descriptor
          */
         nixlBasicDesc(const nixl_blob_t &str); // deserializer
         /**
-         * @brief Copy Constructor for nixlBasicDesc
-         *        with Descriptor object
+         * @brief Copy constructor for nixlBasicDesc
          *
-         * @param desc   Descriptor Object
+         * @param desc   nixlBasicDesc object
          */
         nixlBasicDesc(const nixlBasicDesc &desc) = default;
         /**
          * @brief Operator overloading constructor
-         *        with Descriptor object
+         *        with nixlBasicDesc object
          *
-         * @param desc   Descriptor Object
+         * @param desc   nixlBasicDesc object
          */
         nixlBasicDesc& operator=(const nixlBasicDesc &desc) = default;
         /**
-         * @brief Basic Desc Destructor
+         * @brief Default destructor
          */
         ~nixlBasicDesc() = default;
         /**
          * @brief Operator overloading (==) to compare BasicDesc objects
          *
-         * @param lhs   BasicDesc Object
-         * @param rhs   BasicDesc Object to compare
+         * @param lhs   nixlBasicDesc object
+         * @param rhs   nixlBasicDesc object
          *
          */
         friend bool operator==(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs);
         /**
          * @brief Operator overloading (!=) to compare BasicDesc objects
          *
-         * @param lhs   Descriptor Object
-         * @param rhs   Descriptor Object
+         * @param lhs   nixlBasicDesc object
+         * @param rhs   nixlBasicDesc object
          *
          */
         friend bool operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs);
         /**
          * @brief Check for complete coverage of BasicDesc object
          *
-         * @param query   Descriptor Object
+         * @param query   nixlBasicDesc object
          */
         bool covers (const nixlBasicDesc &query) const;
         /**
-         * @brief Check for overlap of BasicDesc object
+         * @brief Check for overlap betwen BasicDesc objects
          *
-         * @param query   Descriptor Object
+         * @param query   nixlBasicDesc Object
          */
         bool overlaps (const nixlBasicDesc &query) const;
 
         /**
-         * @brief Copy Metadata from one
-         *        object to another.
-         *        No meta info in BasicDesc
+         * @brief Copy Metadata from one descriptor to another.
+         *        No meta info in BasicDesc, so not implemented
          */
         void copyMeta (const nixlBasicDesc &desc) {};
         /**
-         * @brief Serialize descriptor
+         * @brief Serialize descriptor into BLOB
          */
         nixl_blob_t serialize() const;
         /**
-         * @brief Print descriptor for Debugging
+         * @brief Print descriptor for debugging
          *
-         * @param Serialized descriptor object
+         * @param Suffix to append to descriptor for debugging
          */
 	    void print(const std::string &suffix) const;
 };
 
-
-// String next to each BasicDesc, used for extra info for memory registrartion
+/**
+ * @class nixlBlobDesc
+ * @brief A basic descriptor class, with additional metadata in a BLOB
+ */
 class nixlBlobDesc : public nixlBasicDesc {
     public:
-        /** @var String for metadata information */
+        /** @var BLOB for metadata information */
         nixl_blob_t metaInfo;
 
-        /** @var Reuse parent constructor without the extra info */
+        /** @var Reuse parent constructor without the metadata */
         using nixlBasicDesc::nixlBasicDesc;
 
         /**
-         * @brief Parametrized Constructor for nixlBlobDesc
+         * @brief Parametrized constructor for nixlBlobDesc
          *
          * @param addr      Start of buffer/block/offset in file
          * @param len       Length of buffer
-         * @param devID     deviceID/filID/BlockID
-         * @param meta_info Metadata Information String
+         * @param devID     deviceID/fillID/BlockID
+         * @param meta_info Metadata information BLOB
          */
          nixlBlobDesc(const uintptr_t &addr, const size_t &len,
                       const uint32_t &dev_id, const nixl_blob_t &meta_info);
         /**
-         * @brief Parametrized Constructor for nixlBlobDesc from nixlBasicDesc
+         * @brief Constructor for nixlBlobDesc from nixlBasicDesc
          *
-         * @param desc      Object for nixlBasicDesc
-         * @param meta_info Metadata Information String
+         * @param desc      nixlBasicDesc object
+         * @param meta_info Metadata information BLOB
          */
         nixlBlobDesc(const nixlBasicDesc &desc, const nixl_blob_t &meta_info);
         /**
-         * @brief Parametrized Constructor for nixlBasicDesc
-         *        with serialized string
+         * @brief Constructor for nixlBlobDesc with serialized BLOB
          *
-         * @param str   Serialized Descriptor
+         * @param str   Serialized BLOB from other nixlBlobDesc
          */
-        nixlBlobDesc(const std::string &str); // Deserializer
+        nixlBlobDesc(const nixl_blob_t &str);
         /**
          * @brief Operator overloading (==) to compare BlobDesc objects
          *
-         * @param lhs   BlobDesc Object
-         * @param rhs   BlobDesc Object to compare
+         * @param lhs   nixlBlobDesc object
+         * @param rhs   nixlBlobDesc object
          */
         friend bool operator==(const nixlBlobDesc &lhs,
                                const nixlBlobDesc &rhs);
         /**
-         * @brief Serialize BlobDesc to a string
+         * @brief Serialize nixlBlobDesc to a BLOB
          */
         nixl_blob_t serialize() const;
         /**
-         * @brief Copy nixlBlobDesc Metadata from one
-         *        object to another
+         * @brief Copy nixlBlobDesc metadata from one object to another
          */
         void copyMeta (const nixlBlobDesc &info);
         /**
-         * @brief Print Descriptor based on a
-         *        serialized string
-         */
+         * @brief Print nixlBlobDesc for debugging purpose
+         *
+		 * @param suffix  String to append to the nixlBlobDesc for debugging
+		 */
         void print(const std::string &suffix) const;
 };
 
 /**
  * @class nixlDescList
- * @brief A class for a list of descriptors, where transfer requests are made from.
- *        It has some additional methods to help with creation and population.
+ * @brief A class for describing a list of various nixlDesc types
  */
 template<class T>
 class nixlDescList {
     private:
         /** @var NIXL memory type */
         nixl_mem_t     type;
-        /** @var unified Addressing flag */
+        /** @var Unified addressing flag
+		  *
+		  * Should be true for DRAM/VRAM with global addressing over PCIe
+		  * Should be false for file or other storage objects
+		  */
         bool           unifiedAddr;
-        /** @var Descriptor List sorted flag */
+        /** @var Flag for if list should be sorted */
         bool           sorted;
-        /** @var Descriptor list vector */
+        /** @var Vector for storing nixlDescs */
         std::vector<T> descs;
 
     public:
         /**
          * @brief Parametrized Constructor for nixlDescList
          *
-         * @param type         Memory type of descriptor list
+         * @param type         NIXL memory type of descriptor list
          * @param unifiedAddr  Flag to set unified addressing (default = true)
          * @param sorted       Flag to set sorted option (default = false)
          * @param init_size    initial size for descriptor list (default = 0)
@@ -211,70 +213,64 @@ class nixlDescList {
         nixlDescList(const nixl_mem_t &type, const bool &unifiedAddr=true,
                      const bool &sorted=false, const int &init_size=0);
         /**
-         * @brief Parametrized Constructor for nixlDescList from Serializer
+         * @brief Constructor for nixlDescList from nixlSerDes object
+		 *        nixlSerDes serializes/deserializes our classes into strings
          *
-         *
-         * @param deserializer Serializer object to construct DescList
+         * @param nixlSerDes object to construct nixlDescList
          */
         nixlDescList(nixlSerDes* deserializer);
         /**
-         * @brief Parametrized Constructor for nixlDescList from DescList
-         *        object
+         * @brief Constructor for creating nixlDescList from another list
          *
-         * @param d_list DescList object
+         * @param d_list other nixlDescList object
          */
         nixlDescList(const nixlDescList<T> &d_list) = default;
         /**
-         * @brief Operator(=) overloaded for nixlDescList to assign
-         *         DescList
+         * @brief Operator(=) overload for nixlDescList to assign DescList
          *
-         * @param d_list DescList object
+         * @param d_list nixlDescList object
          */
         nixlDescList& operator=(const nixlDescList<T> &d_list) = default;
         /**
-         * @brief Basic Desc Destructor
+         * @brief Default destructor
          */
         ~nixlDescList () = default;
         /**
          * @brief      Get NIXL memory type for this DescList
-         * @return mem nixl_mem_t type returned
          */
         inline nixl_mem_t getType() const { return type; }
         /**
-         * @brief       Get DescList unifiedAddr property
-         * @return true if the address is unified/false otherwise
+         * @brief       Get unifiedAddr flag
          */
         inline bool isUnifiedAddr() const { return unifiedAddr; }
         /**
-         * @brief        Get DescList descriptor count
-         *
-         * @return count Count of descriptors in DescList
+         * @brief        Get count of descriptors in list
          */
         inline int descCount() const { return descs.size(); }
         /**
-         * @brief Check if DescList is Empty()
-         *
-         * @return true if sorted/false otherwise
+         * @brief Check if DescList is empty or not
          */
         inline bool isEmpty() const { return (descs.size()==0); }
         /**
-         * @brief Check if DescList is Sorted()
-         * @return true if empty/false otherwise
+         * @brief Check if DescList is sorted or not
+		 *
+		 * nixlDescList is sorted in two different ways
+		 * First, for unifiedAddr cases, the list is sorted just on address
+		 * Second, for not unifiedAddr cases, the devID may contain file
+		 * information, and so we sort first on devID, then addr
          */
         inline bool isSorted() const { return sorted; }
         /**
-         * @brief Check if DescList has overlaps
-         * @return true if overlaps/false otherwise
+         * @brief Check if nixlDescs in list overlap with each other
          */
         bool hasOverlaps() const;
         /**
-         * @brief Operator Overloading getting DescList at []
+         * @brief Operator overloading getting/setting descriptor at [index]
          */
         const T& operator[](unsigned int index) const;
         T& operator[](unsigned int index);
         /**
-         * @brief DescList convenience Iterators for const and non-const
-         *        objects
+         * @brief Vector iterators for const and non-const elements
          */
         inline typename std::vector<T>::const_iterator begin() const
             { return descs.begin(); }
@@ -285,10 +281,10 @@ class nixlDescList {
         inline typename std::vector<T>::iterator end()
             { return descs.end(); }
         /**
-         * @brief Operator overloading (==) to compare Descriptor list objects
+         * @brief Operator overloading (==) to compare nixlDescList objects
          *
-         * @param lhs   Descriptor List Object
-         * @param rhs   Descriptor List Object
+         * @param lhs   nixlDescList object
+         * @param rhs   nixlDescList object
          *
          */
         template <class Y> friend bool operator==(const nixlDescList<Y> &lhs,
@@ -300,8 +296,7 @@ class nixlDescList {
          */
         void resize (const size_t &count);
         /**
-         * @brief Check if DescList is sorted
-         * @return true if sorted/false otherwise
+         * @brief Recomputes if a nixlDescList is still sorted or not
          */
         bool verifySorted();
         /**
@@ -310,17 +305,17 @@ class nixlDescList {
         inline void clear() { descs.clear(); }
         /**
          * @brief     Add Descriptors to descriptor list
-         * 	      If sorted, keeps it sorted
+         * 	          If sorted, keeps it sorted
          */
         void addDesc(const T &desc);
         /**
-         * @brief Remove descriptors from list at index
+         * @brief Remove descriptor from list at index
          *
-         * @return status   Status value in NIXL returned
+         * @return status  Status value for if removal was successful
          */
         nixl_status_t remDesc(const int &index);
         /**
-         * @brief Populate adds metadata to response based on queried
+         * @brief Populate adds metadata to response based on query
          *        descriptor list. If one descriptor fully belongs to
          *        a descriptor in the target list copies the metadata
          *        key to it.
@@ -332,46 +327,40 @@ class nixlDescList {
          */
         nixl_status_t populate(const nixlDescList<nixlBasicDesc> &query,
                                nixlDescList<T> &resp) const;
-	/**
-	 * @brief Converts a desc with metadata to BasicDesc
-         *
-         * @return nixlDescList<nixlBasicDesc>   DescList of type BasicDesc
+	    /**
+	     * @brief Converts a nixlDescList with metadata to BasicDesc list
          */
         nixlDescList<nixlBasicDesc> trim() const;
         /**
          * @brief  Check if desc overlaps descriptor list at index
          *
          * @param  index index of Descriptor in the list
-         *
-         * @return bool  Flag to say if it overlaps or not
          */
         bool overlaps (const T &desc, int &index) const;
         /**
-         * @brief  Get the index of a BasicDesc object
+         * @brief  Get the index of a list element based on query
          *
-         * @param  query nixlBasicDesc object to get the index
+         * @param  query nixlBasicDesc object to use as list query
          * @return int   index of the queried BasicDesc
          */
         int getIndex(const nixlBasicDesc &query) const;
         /**
-         * @brief Serialize a descriptor list to a string
-         *
-         * @param serializer Object to a serializer for DescList
+         * @brief Serialize a descriptor list with nixlSerDes class
          */
         nixl_status_t serialize(nixlSerDes* serializer) const;
         /**
-         * @brief Print the Descriptor List
+         * @brief Print the descriptor list for debugging
          */
         void print() const;
 };
 /**
  * @brief A typedef for a nixlDescList<nixlBasicDesc>
- *        used for creating xfer decs list
+ *        used for creating transfer descriptor lists
  */
 typedef nixlDescList<nixlBasicDesc> nixl_xfer_dlist_t;
 /**
  * @brief A typedef for a nixlDescList<nixlBlobDesc>
- *        used for creating registratin desc liost
+ *        used for creating registratoin descriptor lists
  */
 typedef nixlDescList<nixlBlobDesc>  nixl_reg_dlist_t;
 
