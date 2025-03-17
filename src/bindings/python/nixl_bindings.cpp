@@ -351,13 +351,13 @@ PYBIND11_MODULE(_bindings, m) {
                     return (uintptr_t) handle;
             })
         .def("prepXferDlist", [](nixlAgent &agent,
-                                const nixl_xfer_dlist_t &descs,
                                 const std::string &remote_agent,
+                                const nixl_xfer_dlist_t &descs,
                                 uintptr_t backend) -> uintptr_t {
                     nixlDlistH* handle = nullptr;
                     nixl_opt_args_t extra_params;
                     extra_params.backends.push_back((nixlBackendH*) backend);
-                    throw_nixl_exception(agent.prepXferDlist(descs, remote_agent, handle, &extra_params));
+                    throw_nixl_exception(agent.prepXferDlist(remote_agent, descs, handle, &extra_params));
 
                     return (uintptr_t) handle;
                 })

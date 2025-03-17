@@ -90,8 +90,8 @@ class nixlAgent {
         // If a list of backends hints is provided (via extra_params), the preparation
         // is limited to the specified backends, in the order of preference.
         nixl_status_t
-        prepXferDlist (const nixl_xfer_dlist_t &descs,
-                       const std::string &remote_agent,
+        prepXferDlist (const std::string &remote_agent,
+                       const nixl_xfer_dlist_t &descs,
                        nixlDlistH* &dlist_hndl,
                        const nixl_opt_args_t* extra_params = nullptr) const;
 
@@ -112,8 +112,8 @@ class nixlAgent {
         // NIXL will prepare each side and create a transfer handle `req_hndl`.
         // The below set of operations are equivalent:
         // 1. A sequence of prepXferDlist & makeXferReq:
-        //  * prepXferDlist(local_desc, NIXL_INIT_AGENT, local_desc_hndl)
-        //  * prepXferDlist(remote_desc, "Agent-remote/self", remote_desc_hndl)
+        //  * prepXferDlist(NIXL_INIT_AGENT, local_desc, local_desc_hndl)
+        //  * prepXferDlist("Agent-remote/self", remote_desc, remote_desc_hndl)
         //  * makeXferReq(NIXL_WRITE, local_desc_hndl, list of all local indices,
         //                remote_desc_hndl, list of all remote_indices, req_hndl)
         // 2. A CreateXfer:
