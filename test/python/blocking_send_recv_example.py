@@ -84,7 +84,7 @@ if __name__ == "__main__":
         targer_descs = agent.deserialize_descs(_socket.recv())
         initiator_descs = reg_descs
         xfer_handle = agent.initialize_xfer(
-            initiator_descs, targer_descs, peer_name, "UUID", "READ"
+            "READ", initiator_descs, targer_descs, peer_name, "UUID"
         )
         if not xfer_handle:
             print("Creating transfer failed.")
@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     if args.mode != "target":
         agent.remove_remote_agent(peer_name)
-        agent.abort_xfer(xfer_handle)
+        agent.release_xfer_handle(xfer_handle)
 
     agent.deregister_memory(reg_descs)
 
