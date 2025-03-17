@@ -36,9 +36,9 @@ nixlBasicDesc::nixlBasicDesc(const uintptr_t &addr,
     this->devId = dev_id;
 }
 
-nixlBasicDesc::nixlBasicDesc(const std::string &str) {
-    if (str.size()==sizeof(nixlBasicDesc)) {
-        str.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
+nixlBasicDesc::nixlBasicDesc(const nixl_blob_t &blob) {
+    if (blob.size()==sizeof(nixlBasicDesc)) {
+        blob.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
     } else { // Error indicator, not possible by descList deserializer call
         addr  = 0;
         len   = 0;
@@ -89,23 +89,23 @@ void nixlBasicDesc::print(const std::string &suffix) const {
 nixlBlobDesc::nixlBlobDesc(const uintptr_t &addr,
                            const size_t &len,
                            const uint32_t &dev_id,
-                           const std::string &meta_info) :
+                           const nixl_blob_t &meta_info) :
                            nixlBasicDesc(addr, len, dev_id) {
     this->metaInfo = meta_info;
 }
 
 nixlBlobDesc::nixlBlobDesc(const nixlBasicDesc &desc,
-                           const std::string &meta_info) :
+                           const nixl_blob_t &meta_info) :
                            nixlBasicDesc(desc) {
     this->metaInfo = meta_info;
 }
 
-nixlBlobDesc::nixlBlobDesc(const std::string &str) {
-    size_t meta_size = str.size() - sizeof(nixlBasicDesc);
+nixlBlobDesc::nixlBlobDesc(const nixl_blob_t &blob) {
+    size_t meta_size = blob.size() - sizeof(nixlBasicDesc);
     if (meta_size>0) {
         metaInfo.resize(meta_size);
-        str.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
-        str.copy(reinterpret_cast<char*>(&metaInfo[0]),
+        blob.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
+        blob.copy(reinterpret_cast<char*>(&metaInfo[0]),
                  meta_size, sizeof(nixlBasicDesc));
     } else { // Error indicator, not possible by descList deserializer call
         addr  = 0;

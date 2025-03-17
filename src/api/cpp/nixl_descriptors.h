@@ -35,7 +35,7 @@ class nixlBasicDesc {
         nixlBasicDesc(const uintptr_t &addr,
                       const size_t &len,
                       const uint32_t &dev_id);
-        nixlBasicDesc(const nixl_blob_t &str); // deserializer
+        nixlBasicDesc(const nixl_blob_t &blob); // deserializer
         nixlBasicDesc(const nixlBasicDesc &desc) = default;
         nixlBasicDesc& operator=(const nixlBasicDesc &desc) = default;
         ~nixlBasicDesc() = default;
@@ -62,7 +62,7 @@ class nixlBlobDesc : public nixlBasicDesc {
         nixlBlobDesc(const uintptr_t &addr, const size_t &len,
                      const uint32_t &dev_id, const nixl_blob_t &meta_info);
         nixlBlobDesc(const nixlBasicDesc &desc, const nixl_blob_t &meta_info);
-        nixlBlobDesc(const nixl_blob_t &str); // Deserializer
+        nixlBlobDesc(const nixl_blob_t &blob); // Deserializer
 
         friend bool operator==(const nixlBlobDesc &lhs,
                                const nixlBlobDesc &rhs);
