@@ -16,6 +16,7 @@
  */
 
 #include <iostream>
+#include <set>
 #include <string>
 #include "nixl.h"
 #include "plugin_manager.h"
@@ -62,6 +63,7 @@ int verify_plugin(std::string name, nixlPluginManager& plugin_manager)
 
 int main(int argc, char** argv) {
     char *plugindir = NULL;
+    std::set<nixl_backend_t> staticPlugs;
 
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
         print_usage(argv[0]);
@@ -84,6 +86,7 @@ int main(int argc, char** argv) {
     std::cout << "Available static plugins:" << std::endl;
     for (const auto& plugin : nixlPluginManager::getStaticPlugins()) {
         std::cout << " - " << plugin.name << std::endl;
+        staticPlugs.insert(plugin.name);
     }
 
     verify_plugin("UCX", plugin_manager);
@@ -97,6 +100,19 @@ int main(int argc, char** argv) {
 
     plugin_manager.unloadPlugin("UCX");
     plugin_manager.unloadPlugin("GDS");
+
+    // List all loaded plugins and make sure static plugins are present
+    std::cout << "Loaded plugins after unload:" << std::endl;
+    for (const auto& name : plugin_manager.getLoadedPluginNames()) {
+        std::cout << " - " << name << std::endl;
+    }
+
+    // Plugins loaded should only be the static plugins
+    if (plugin_manager.getLoadedPluginNames().size() !=
+        staticPlugs.size()) {
+        std::cout << "Static Plugins not kept loaded" << std::endl;
+        return -1;
+    }
 
     return 0;
 }

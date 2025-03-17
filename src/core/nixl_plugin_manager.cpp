@@ -260,6 +260,12 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
 }
 
 void nixlPluginManager::unloadPlugin(const nixl_backend_t& plugin_name) {
+    // Do no unload static plugins
+    for (const auto& splugin : getStaticPlugins()) {
+        if (splugin.name == plugin_name) {
+            return;
+        }
+    }
     loaded_plugins_.erase(plugin_name);
 }
 
