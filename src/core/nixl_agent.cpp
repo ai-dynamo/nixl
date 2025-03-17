@@ -306,8 +306,8 @@ nixlAgent::makeConnection(const std::string &remote_agent) {
 }
 
 nixl_status_t
-nixlAgent::prepXferDlist (const nixl_xfer_dlist_t &descs,
-                          const std::string &remote_agent,
+nixlAgent::prepXferDlist (const std::string &remote_agent,
+                          const nixl_xfer_dlist_t &descs,
                           nixlDlistH* &dlist_hndl,
                           const nixl_opt_args_t* extra_params) const {
 

@@ -220,24 +220,24 @@ class nixl_agent:
     ):
         descs = self.get_xfer_descs(xfer_list, mem_type, is_unified_addr, is_sorted)
         if xfer_backend:
-            handle = self.agent.prepXferDlist(descs, remote_agent, xfer_backend)
+            handle = self.agent.prepXferDlist(remote_agent, descs, xfer_backend)
         else:
             # TODO: rely on underlying capability to register with all when supported
             if (descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backends):
                 handle = self.agent.prepXferDlist(
-                    descs, remote_agent, self.backends["GDS"]
+                    remote_agent, descs, self.backends["GDS"]
                 )
             elif (descs.getType() == nixlBind.DRAM_SEG) and ("UCX" in self.backends):
                 handle = self.agent.prepXferDlist(
-                    descs, remote_agent, self.backends["UCX"]
+                    remote_agent, descs, self.backends["UCX"]
                 )
             elif (descs.getType() == nixlBind.VRAM_SEG) and ("UCX" in self.backends):
                 handle = self.agent.prepXferDlist(
-                    descs, remote_agent, self.backends["UCX"]
+                    remote_agent, descs, self.backends["UCX"]
                 )
             elif (descs.getType() == nixlBind.VRAM_SEG) and ("GDS" in self.backends):
                 handle = self.agent.prepXferDlist(
-                    descs, remote_agent, self.backends["GDS"]
+                    remote_agent, descs, self.backends["GDS"]
                 )
             else:
                 return None

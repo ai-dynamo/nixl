@@ -111,10 +111,10 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     gettimeofday(&start_time, NULL);
 
     for(int i = 0; i<n_iters; i++) {
-        status = A1->prepXferDlist(dst_list, agent2, dst_side[i], &extra_params1);
+        status = A1->prepXferDlist(agent2, dst_list, dst_side[i], &extra_params1);
         assert (status == NIXL_SUCCESS);
 
-        status = A1->prepXferDlist(src_list, "", src_side[i], &extra_params1);
+        status = A1->prepXferDlist(NIXL_INIT_AGENT, src_list, src_side[i], &extra_params1);
         assert (status == NIXL_SUCCESS);
     }
 
@@ -236,10 +236,10 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     nixlDlistH *src_side, *dst_side;
 
-    status = A1->prepXferDlist(src_list, "", src_side, &extra_params1);
+    status = A1->prepXferDlist(NIXL_INIT_AGENT, src_list, src_side, &extra_params1);
     assert (status == NIXL_SUCCESS);
 
-    status = A1->prepXferDlist(dst_list, remote_name, dst_side, &extra_params1);
+    status = A1->prepXferDlist(remote_name, dst_list, dst_side, &extra_params1);
     assert (status == NIXL_SUCCESS);
 
     std::cout << "prep done, starting transfers\n";
