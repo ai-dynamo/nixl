@@ -73,7 +73,7 @@ class nixlBasicDesc {
          */
         nixlBasicDesc& operator=(const nixlBasicDesc &desc) = default;
         /**
-         * @brief Default destructor
+         * @brief BasicDesc Destructor
          */
         ~nixlBasicDesc() = default;
         /**
@@ -99,7 +99,7 @@ class nixlBasicDesc {
          */
         bool covers (const nixlBasicDesc &query) const;
         /**
-         * @brief Check for overlap betwen BasicDesc objects
+         * @brief Check for overlap between BasicDesc objects
          *
          * @param query   nixlBasicDesc Object
          */
@@ -132,6 +132,7 @@ class nixlBlobDesc : public nixlBasicDesc {
         nixl_blob_t metaInfo;
 
         /** @var Reuse parent constructor without the metadata */
+        nixl_blob_t metaInfo;
         using nixlBasicDesc::nixlBasicDesc;
 
         /**
@@ -139,8 +140,8 @@ class nixlBlobDesc : public nixlBasicDesc {
          *
          * @param addr      Start of buffer/block/offset in file
          * @param len       Length of buffer
-         * @param devID     deviceID/fillID/BlockID
-         * @param meta_info Metadata information BLOB
+         * @param devID     deviceID/fileID/BlockID
+         * @param meta_info Metadata Information String
          */
          nixlBlobDesc(const uintptr_t &addr, const size_t &len,
                       const uint32_t &dev_id, const nixl_blob_t &meta_info);
@@ -214,7 +215,7 @@ class nixlDescList {
                      const bool &sorted=false, const int &init_size=0);
         /**
          * @brief Constructor for nixlDescList from nixlSerDes object
-		 *        nixlSerDes serializes/deserializes our classes into strings
+         *        nixlSerDes serializes/deserializes our classes into strings
          *
          * @param nixlSerDes object to construct nixlDescList
          */
@@ -232,7 +233,7 @@ class nixlDescList {
          */
         nixlDescList& operator=(const nixlDescList<T> &d_list) = default;
         /**
-         * @brief Default destructor
+         * @brief Descriptor List Destructor
          */
         ~nixlDescList () = default;
         /**
@@ -253,11 +254,11 @@ class nixlDescList {
         inline bool isEmpty() const { return (descs.size()==0); }
         /**
          * @brief Check if DescList is sorted or not
-		 *
-		 * nixlDescList is sorted in two different ways
-		 * First, for unifiedAddr cases, the list is sorted just on address
-		 * Second, for not unifiedAddr cases, the devID may contain file
-		 * information, and so we sort first on devID, then addr
+         *
+         * nixlDescList is sorted in two different ways
+         * First, for unifiedAddr cases, the list is sorted just on address
+         * Second, for not unifiedAddr cases, the devID may contain file
+         * information, and so we sort first on devID, then addr
          */
         inline bool isSorted() const { return sorted; }
         /**
@@ -327,8 +328,8 @@ class nixlDescList {
          */
         nixl_status_t populate(const nixlDescList<nixlBasicDesc> &query,
                                nixlDescList<T> &resp) const;
-	    /**
-	     * @brief Converts a nixlDescList with metadata to BasicDesc list
+        /**
+         * @brief Converts a nixlDescList with metadata to BasicDesc list
          */
         nixlDescList<nixlBasicDesc> trim() const;
         /**
