@@ -29,11 +29,16 @@ class nixl_agent_config:
 
 class nixl_agent:
     def __init__(self, agent_name, nixl_conf=None, instantiate_all=False):
+        if nixl_conf and instantiate_all:
+            instantiate_all = False
+            print(
+                "Ignoring instantiate_all based on the provided config in agent creation."
+            )
+        if not nixl_conf:
+            nixl_conf = nixl_agent_config()  # Using defaults set in nixl_agent_config
+
         # Set agent config and instantiate an agent
-        if nixl_conf:
-            agent_config = nixlBind.nixlAgentConfig(nixl_conf.enable_pthread)
-        else:
-            agent_config = nixlBind.nixlAgentConfig(True)
+        agent_config = nixlBind.nixlAgentConfig(nixl_conf.enable_pthread)
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name
@@ -55,19 +60,12 @@ class nixl_agent:
             self.plugin_mem_types[plugin] = mem_types
 
         init = {}
-        if nixl_conf and instantiate_all:
-            instantiate_all = False
-            print(
-                "Overruling instantiate_all based on the provided config in agent creation."
-            )
 
         if instantiate_all:
             # TODO: populate init from default parameters, or define a set of params in python
             for plugin in self.plugin_list:
                 self.backends[plugin] = self.agent.createBackend(plugin, init)
         else:
-            if not nixl_conf:
-                nixl_conf = nixl_agent_config()
             for bknd in nixl_conf.backends:
                 # TODO: populate init from nixl_conf when added
                 if bknd not in self.plugin_list:
@@ -154,7 +152,6 @@ class nixl_agent:
 
         # based on backend type and mem_type, figure what registrations are meaningful
         if backend:
-            print("Registering backend", self.backends[backend])
             ret = self.agent.registerMem(reg_descs, self.backends[backend])
         else:
             # TODO: rely on underlying capability to register with all when supported
