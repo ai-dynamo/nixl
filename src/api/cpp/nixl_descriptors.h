@@ -56,21 +56,21 @@ class nixlBasicDesc {
          * @brief Parametrized Constructor for nixlBasicDesc
          *        with serialized string
          *
-         * @param str   Serialized Descriptor list
+         * @param str   Serialized Descriptor
          */
         nixlBasicDesc(const nixl_blob_t &str); // deserializer
         /**
          * @brief Parametrized Constructor for nixlBasicDesc
-         *        with Descriptor list object
+         *        with Descriptor object
          *
-         * @param desc   Descriptor List Object
+         * @param desc   Descriptor Object
          */
         nixlBasicDesc(const nixlBasicDesc &desc) = default;
         /**
          * @brief Operator overloading constructor
-         *        with Descriptor list object
+         *        with Descriptor object
          *
-         * @param desc   Descriptor List Object
+         * @param desc   Descriptor Object
          */
         nixlBasicDesc& operator=(const nixlBasicDesc &desc) = default;
         /**
@@ -88,21 +88,21 @@ class nixlBasicDesc {
         /**
          * @brief Operator overloading (!=) to compare Descriptor list objects
          *
-         * @param lhs   Descriptor List Object
-         * @param rhs   Descriptor List Object
+         * @param lhs   Descriptor Object
+         * @param rhs   Descriptor Object
          *
          */
         friend bool operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs);
         /**
-         * @brief Check for complete overlap of descriptor list
+         * @brief Check for complete overlap of descriptor
          *
-         * @param query   Descriptor List Object
+         * @param query   Descriptor Object
          */
         bool covers (const nixlBasicDesc &query) const;
         /**
-         * @brief Check for overlap of descriptor list
+         * @brief Check for overlap of descriptor
          *
-         * @param query   Descriptor List Object
+         * @param query   Descriptor Object
          */
         bool overlaps (const nixlBasicDesc &query) const;
 
@@ -113,11 +113,11 @@ class nixlBasicDesc {
          */
         void copyMeta (const nixlBasicDesc &desc) {};
         /**
-         * @brief Serialize descriptor list
+         * @brief Serialize descriptor
          */
         nixl_blob_t serialize() const;
         /**
-         * @brief Print descriptor list for Debugging
+         * @brief Print descriptor for Debugging
          *
          * @param Serialized descriptor object
          */
@@ -155,7 +155,7 @@ class nixlBlobDesc : public nixlBasicDesc {
          * @brief Parametrized Constructor for nixlBasicDesc
          *        with serialized string
          *
-         * @param str   Serialized Descriptor list
+         * @param str   Serialized Descriptor
          */
         nixlBlobDesc(const std::string &str); // Deserializer
         /**
@@ -176,7 +176,7 @@ class nixlBlobDesc : public nixlBasicDesc {
          */
         void copyMeta (const nixlBlobDesc &info);
         /**
-         * @brief Print Descriptor list based on a
+         * @brief Print Descriptor based on a
          *        serialized string
          */
         void print(const std::string &suffix) const;
