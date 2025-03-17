@@ -28,13 +28,14 @@ if __name__ == "__main__":
     plugin_list = nixl_agent1.get_plugin_list()
     assert "UCX" in plugin_list
 
+    print("Plugin parameters")
     print(nixl_agent1.get_plugin_mem_types("UCX"))
     print(nixl_agent1.get_plugin_params("UCX"))
 
-    nixl_agent1.create_backend("UCX")
-
+    print("\nLoaded backend parameters")
     print(nixl_agent1.get_backend_mem_types("UCX"))
     print(nixl_agent1.get_backend_params("UCX"))
+    print()
 
     addr1 = nixl_utils.malloc_passthru(buf_size * 2)
     addr2 = addr1 + buf_size
@@ -53,7 +54,6 @@ if __name__ == "__main__":
     assert nixl_agent1.register_memory(agent1_reg_descs) is not None
 
     nixl_agent2 = nixl_agent("initiator", None)
-    nixl_agent2.create_backend("UCX")
     addr3 = nixl_utils.malloc_passthru(buf_size * 2)
     addr4 = addr3 + buf_size
 

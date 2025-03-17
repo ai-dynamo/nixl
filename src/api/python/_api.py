@@ -20,8 +20,8 @@ import torch
 import nixl._bindings as nixlBind
 
 
-class nixl_config:
-    def __init(self, enable_prog_thread=True, backends=["UCX"]):
+class nixl_agent_config:
+    def __init__(self, enable_prog_thread=True, backends=["UCX"]):
         # TODO: add backend init parameters
         self.backends = backends
         self.enable_pthread = enable_prog_thread
@@ -67,7 +67,7 @@ class nixl_agent:
                 self.backends[plugin] = self.agent.createBackend(plugin, init)
         else:
             if not nixl_conf:
-                nixl_conf = nixl_config()
+                nixl_conf = nixl_agent_config()
             for bknd in nixl_conf.backends:
                 # TODO: populate init from nixl_conf when added
                 if bknd not in self.plugin_list:
@@ -80,7 +80,9 @@ class nixl_agent:
                     self.backends[bknd] = self.agent.createBackend(bknd, init)
 
         for backend in self.backends:
-            (backend_options, mem_types) = self.agent.getBackendParams(backend)
+            (backend_options, mem_types) = self.agent.getBackendParams(
+                self.backends[backend]
+            )
             self.backend_mems[backend] = mem_types
             self.backend_options[backend] = backend_options
 
@@ -152,8 +154,7 @@ class nixl_agent:
 
         # based on backend type and mem_type, figure what registrations are meaningful
         if backend:
-            print("trying backend")
-            print(self.backends[backend])
+            print("Registering backend", self.backends[backend])
             ret = self.agent.registerMem(reg_descs, self.backends[backend])
         else:
             # TODO: rely on underlying capability to register with all when supported
@@ -301,6 +302,9 @@ class nixl_agent:
                 handle = self.agent.createXferReq(
                     op, local_descs, remote_descs, remote_agent, notif_msg
                 )
+
+            if handle == 0:
+                return None
             return handle  # In case of error it will be None
         else:
             return None
