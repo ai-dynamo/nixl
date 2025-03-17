@@ -52,6 +52,7 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
         case NIXL_ERR_NOT_ALLOWED:   return "NIXL_ERR_NOT_ALLOWED";
         case NIXL_ERR_REPOST_ACTIVE: return "NIXL_ERR_REPOST_ACTIVE";
         case NIXL_ERR_UNKNOWN:       return "NIXL_ERR_UNKNOWN";
+        case NIXL_ERR_NOT_SUPPORTED: return "NIXL_ERR_NOT_SUPPORTED";
         default:                     return "BAD_STATUS";
     }
 }

@@ -23,15 +23,28 @@ from nixl._api import nixl_agent
 if __name__ == "__main__":
     buf_size = 256
     # Allocate memory and register with NIXL
-    nixl_agent1 = nixl_agent("target", None)
+    nixl_agent1 = nixl_agent("target")
+
+    plugin_list = nixl_agent1.get_plugin_list()
+    assert "UCX" in plugin_list
+
+    print("Plugin parameters")
+    print(nixl_agent1.get_plugin_mem_types("UCX"))
+    print(nixl_agent1.get_plugin_params("UCX"))
+
+    print("\nLoaded backend parameters")
+    print(nixl_agent1.get_backend_mem_types("UCX"))
+    print(nixl_agent1.get_backend_params("UCX"))
+    print()
+
     addr1 = nixl_utils.malloc_passthru(buf_size * 2)
     addr2 = addr1 + buf_size
 
     agent1_addrs = [(addr1, buf_size, 0), (addr2, buf_size, 0)]
     agent1_strings = [(addr1, buf_size, 0, "a"), (addr2, buf_size, 0, "b")]
 
-    agent1_reg_descs = nixl_agent1.get_reg_descs(agent1_strings, "DRAM", True)
-    agent1_xfer_descs = nixl_agent1.get_xfer_descs(agent1_addrs, "DRAM", True)
+    agent1_reg_descs = nixl_agent1.get_reg_descs(agent1_strings, "DRAM", is_sorted=True)
+    agent1_xfer_descs = nixl_agent1.get_xfer_descs(agent1_addrs, "DRAM", is_sorted=True)
 
     # Just for tensor test
     tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]
@@ -47,10 +60,10 @@ if __name__ == "__main__":
     agent2_addrs = [(addr3, buf_size, 0), (addr4, buf_size, 0)]
     agent2_strings = [(addr3, buf_size, 0, "a"), (addr4, buf_size, 0, "b")]
 
-    agent2_reg_descs = nixl_agent1.get_reg_descs(agent2_strings, "DRAM", True)
-    agent2_xfer_descs = nixl_agent1.get_xfer_descs(agent2_addrs, "DRAM", True)
+    agent2_reg_descs = nixl_agent2.get_reg_descs(agent2_strings, "DRAM", is_sorted=True)
+    agent2_xfer_descs = nixl_agent2.get_xfer_descs(agent2_addrs, "DRAM", is_sorted=True)
 
-    agent2_descs = nixl_agent2.register_memory(agent2_reg_descs, True)
+    agent2_descs = nixl_agent2.register_memory(agent2_reg_descs, is_sorted=True)
     assert agent2_descs is not None
 
     # Exchange metadata
