@@ -60,7 +60,7 @@ class nixlBasicDesc {
          */
         nixlBasicDesc(const nixl_blob_t &str); // deserializer
         /**
-         * @brief Parametrized Constructor for nixlBasicDesc
+         * @brief Copy Constructor for nixlBasicDesc
          *        with Descriptor object
          *
          * @param desc   Descriptor Object
@@ -86,7 +86,7 @@ class nixlBasicDesc {
          */
         friend bool operator==(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs);
         /**
-         * @brief Operator overloading (!=) to compare Descriptor list objects
+         * @brief Operator overloading (!=) to compare BasicDesc objects
          *
          * @param lhs   Descriptor Object
          * @param rhs   Descriptor Object
@@ -94,13 +94,13 @@ class nixlBasicDesc {
          */
         friend bool operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs);
         /**
-         * @brief Check for complete overlap of descriptor
+         * @brief Check for complete coverage of BasicDesc object
          *
          * @param query   Descriptor Object
          */
         bool covers (const nixlBasicDesc &query) const;
         /**
-         * @brief Check for overlap of descriptor
+         * @brief Check for overlap of BasicDesc object
          *
          * @param query   Descriptor Object
          */
