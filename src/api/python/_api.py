@@ -21,17 +21,17 @@ import nixl._bindings as nixlBind
 
 
 class nixl_config:
-    def __init(self, enable_prog_thread=True, backends=["UCX", "GDS"]):
+    def __init(self, enable_prog_thread=True, backends=["UCX"]):
         # TODO: add backend init parameters
         self.backends = backends
         self.enable_pthread = enable_prog_thread
 
 
 class nixl_agent:
-    def __init__(self, agent_name, nixl_config=None, instantiate_all=True):
+    def __init__(self, agent_name, nixl_conf=None, instantiate_all=False):
         # Set agent config and instantiate an agent
-        if nixl_config:
-            agent_config = nixlBind.nixlAgentConfig(nixl_config.enable_pthread)
+        if nixl_conf:
+            agent_config = nixlBind.nixlAgentConfig(nixl_conf.enable_pthread)
         else:
             agent_config = nixlBind.nixlAgentConfig(True)
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
@@ -46,9 +46,6 @@ class nixl_agent:
         if len(self.plugin_list) == 0:
             print("No plugins available, cannot start transfers!")
             raise RuntimeError("No plugins available for NIXL, cannot start transfers!")
-        else:
-            print("Found plugins during Agent initialization:")
-            print(self.plugin_list)
 
         self.plugin_b_options = {}
         self.plugin_mem_types = {}
@@ -58,9 +55,21 @@ class nixl_agent:
             self.plugin_mem_types[plugin] = mem_types
 
         init = {}
-        if nixl_config:
-            for bknd in nixl_config.backends:
-                # TODO: populate init from nixl_config when added
+        if nixl_conf and instantiate_all:
+            instantiate_all = False
+            print(
+                "Overruling instantiate_all based on the provided config in agent creation."
+            )
+
+        if instantiate_all:
+            # TODO: populate init from default parameters, or define a set of params in python
+            for plugin in self.plugin_list:
+                self.backends[plugin] = self.agent.createBackend(plugin, init)
+        else:
+            if not nixl_conf:
+                nixl_conf = nixl_config()
+            for bknd in nixl_conf.backends:
+                # TODO: populate init from nixl_conf when added
                 if bknd not in self.plugin_list:
                     print(
                         "Skipping backend registration",
@@ -69,12 +78,6 @@ class nixl_agent:
                     )
                 else:
                     self.backends[bknd] = self.agent.createBackend(bknd, init)
-        elif instantiate_all:
-            # TODO: populate init from default parameters, or define a set of params in python
-            for plugin in self.plugin_list:
-                self.backends[plugin] = self.agent.createBackend(plugin, init)
-        else:
-            print("No backends were created during agent creation.")
 
         for backend in self.backends:
             (backend_options, mem_types) = self.agent.getBackendParams(backend)
