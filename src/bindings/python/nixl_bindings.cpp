@@ -187,7 +187,7 @@ PYBIND11_MODULE(_bindings, m) {
         .def("append", [](nixl_xfer_dlist_t &list, const py::tuple &desc) {
                 list.addDesc(nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint32_t>()));
             })
-        .def("getIndex", [](nixl_reg_dlist_t &list, const py::tuple &desc) {
+        .def("index", [](nixl_reg_dlist_t &list, const py::tuple &desc) {
                 return list.getIndex(nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(),
                                                    desc[2].cast<uint32_t>()));
             })
@@ -247,7 +247,7 @@ PYBIND11_MODULE(_bindings, m) {
                 list.addDesc(nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(),
                                             desc[2].cast<uint32_t>(),desc[3].cast<std::string>()));
             })
-        .def("getIndex", [](nixl_reg_dlist_t &list, const py::tuple &desc) {
+        .def("index", [](nixl_reg_dlist_t &list, const py::tuple &desc) {
                 return list.getIndex(nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(),
                                      desc[2].cast<uint32_t>(),desc[3].cast<std::string>()));
             })
