@@ -14,7 +14,7 @@
 # limitations under the License.
 
 [build-system]
-requires = ["meson-python", "pybind11", "patchelf", "libucx-cu12==1.18.0"]
+requires = ["meson-python", "pybind11", "patchelf", "libucx-cu12"]
 build-backend = "mesonpy"
 
 [project]
@@ -22,7 +22,7 @@ name = 'nixl'
 version = '0.1.0'
 description = 'NIXL Python API'
 readme = 'README.md'
-license = "Apache-2.0"
+license = 'LICENSE'
 requires-python = '>=3.9'
 authors = [
   {name = 'Timothy Stamler', email = 'tstamler@nvidia.com'},
