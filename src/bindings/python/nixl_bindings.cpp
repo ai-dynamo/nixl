@@ -187,7 +187,7 @@ PYBIND11_MODULE(_bindings, m) {
         .def("append", [](nixl_xfer_dlist_t &list, const py::tuple &desc) {
                 list.addDesc(nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint32_t>()));
             })
-        .def("index", [](nixl_reg_dlist_t &list, const py::tuple &desc) {
+        .def("index", [](nixl_xfer_dlist_t &list, const py::tuple &desc) {
                 int ret = (nixl_status_t) list.getIndex(nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(),
                                                   desc[2].cast<uint32_t>()));
                 if(ret < 0) throw_nixl_exception((nixl_status_t) ret);
