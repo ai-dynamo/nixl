@@ -35,7 +35,7 @@ class nixlBasicDesc {
         nixlBasicDesc(const uintptr_t &addr,
                       const size_t &len,
                       const uint32_t &dev_id);
-        nixlBasicDesc(const std::string &str); // deserializer
+        nixlBasicDesc(const nixl_blob_t &str); // deserializer
         nixlBasicDesc(const nixlBasicDesc &desc) = default;
         nixlBasicDesc& operator=(const nixlBasicDesc &desc) = default;
         ~nixlBasicDesc() = default;
@@ -46,7 +46,7 @@ class nixlBasicDesc {
         bool overlaps (const nixlBasicDesc &query) const;
 
         void copyMeta (const nixlBasicDesc &desc) {}; // No meta info in BasicDesc
-        std::string serialize() const;
+        nixl_blob_t serialize() const;
         void print(const std::string &suffix) const; // For debugging
 };
 
@@ -60,14 +60,14 @@ class nixlBlobDesc : public nixlBasicDesc {
         using nixlBasicDesc::nixlBasicDesc;
 
         nixlBlobDesc(const uintptr_t &addr, const size_t &len,
-                     const uint32_t &dev_id, const std::string &meta_info);
-        nixlBlobDesc(const nixlBasicDesc &desc, const std::string &meta_info);
-        nixlBlobDesc(const std::string &str); // Deserializer
+                     const uint32_t &dev_id, const nixl_blob_t &meta_info);
+        nixlBlobDesc(const nixlBasicDesc &desc, const nixl_blob_t &meta_info);
+        nixlBlobDesc(const nixl_blob_t &str); // Deserializer
 
         friend bool operator==(const nixlBlobDesc &lhs,
                                const nixlBlobDesc &rhs);
 
-        std::string serialize() const;
+        nixl_blob_t serialize() const;
         void copyMeta (const nixlBlobDesc &info);
         void print(const std::string &suffix) const;
 };
