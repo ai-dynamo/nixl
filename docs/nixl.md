@@ -15,16 +15,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 # NVIDIA Inference Xfer Library (NIXL)
-NIXL is targeted for accelerating point to point communications in AI inference frameworks such as [Dynamo](https://github.com/ai-dynamo/dynamo), while providing an abstraction over various types of memory (e.g., CPU and GPU) and storage (e.g., file, block and object store) through a modular plug-in architecture.
+NIXL is targeted for accelerating point to point communications in AI inference frameworks such as [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo), while providing an abstraction over various types of memory (e.g., CPU and GPU) and storage (e.g., file, block and object store) through a modular plug-in architecture.
 
 # Background
 Distributed inference workloads present complex challenges for systems, including but not limited to networking and communication issues. These challenges encompass high-performance requirements, heterogeneous data paths that span both memory and storage, and the need for dynamic scaling up and down.
 
-NIXL is designed to support inference frameworks by addressing their challenges while delivering high-bandwidth, low-latency point-to-point data transfers. It offers a unified abstraction across various memory types, including HBM, DRAM, local or remote SSDs, and distributed storage systems, through a versatile API. This API can support multiple backend plugins like UCX, GDS, SCADA, S3, and other protocols or clients. Furthermore, NIXL abstracts away additional backend specifics, such as connection management, addressing schemes, and memory characteristics, to streamline integration with inference frameworks.
+NIXL is designed to support inference frameworks by addressing their challenges while delivering high-bandwidth, low-latency point-to-point data transfers. It offers a unified abstraction across various memory types, including HBM, DRAM, local or remote SSDs, and distributed storage systems, through a versatile API. This API can support multiple backend plugins like UCX, GDS, S3, and other protocols or clients. Furthermore, NIXL abstracts away additional backend specifics, such as connection management, addressing schemes, and memory characteristics, to streamline integration with inference frameworks.
 
 # Overview
 
-The following figure illustrates NIXL's relationship to inference server stacks. NIXL functions as a standalone library, providing the necessary abstraction for various network and storage backends to support the dataplane operations of distributed inference platforms, such as Dynamo. The backends that were considered in NIXL's design include, but are not limited to, [UCX](https://github.com/openucx/ucx), [NVIDIA Magnum IO GPUDirect Storage](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html), file systems (including DFS), block and object storage. NIXL offers generic interfaces capable of supporting data transfers in the form of tensors, bytes, or objects.
+The following figure illustrates NIXL's relationship to inference server stacks. NIXL functions as a standalone library, providing the necessary abstraction for various network and storage backends to support the data plane operations of NVIDIA Dynamo. The backends that were considered in NIXL's design include but are not limited to, [UCX](https://github.com/openucx/ucx), [NVIDIA Magnum IO GPUDirect Storage](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html), file systems (including DFS), block and object storage. NIXL offers generic interfaces capable of supporting data transfers in the form of tensors, bytes, or objects.
 
 ![Figure of NIXL high level architecture](figures/nixl.svg)
 
@@ -50,7 +50,7 @@ During initialization, each transfer backend must be registered with the transfe
 
 ### Metadata Handler
 The Metadata Handler manages the metadata necessary for establishing transfers between the initiating transfer agent and the target agent. This metadata can be exchanged via a side channel or through a centralized metadata server like etcd or Redis. The serialized metadata includes connection information for each backend and remote identifiers for different registered memories and regions within the memory section. However, it excludes local private information stored in the memory section per backend, only including the remote identifiers needed for the target agent's backend to connect and initiate transfers.
-When loading metadata, the backend type that generated the remote identifiers is specified. This ensures that the received metadata is routed to the appropriate backend on the receiving agent. If that backend is not available, the relevant metadata portion is ignored.
+When loading metadata, the backend type that generates the remote identifiers is specified. This ensures that the received metadata is routed to the appropriate backend on the receiving agent. If that backend is not available, the relevant metadata portion is ignored.
 
 For example, a memory section tagged with UCX indicates it was generated by a UCX backend engine and should be delivered to a UCX backend engine on the receiving agent, if present.
 
