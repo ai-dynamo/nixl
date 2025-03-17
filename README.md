@@ -65,6 +65,15 @@ The preferred way is to build it through meson-python, which will just let it be
 
 ` $pip install .`
 
+### Building Docker container
+Please clone the current repository before building the docker container. Please make sure you are able to pull docker images to your machine before attempting to build the container.
+
+Run the following from the root folder of the cloned NIXL repository.
+
+```
+$ docker build -t nixl-container -f contrib/Dockerfile .
+```
+
 ## Examples
 
 * [C++ examples](https://github.com/ai-dynamo/nixl/tree/main/test/nixl)
