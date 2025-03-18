@@ -22,7 +22,7 @@ name = 'nixl'
 version = '0.1.0'
 description = 'NIXL Python API'
 readme = 'README.md'
-license = 'LICENSE'
+license = {file = 'LICENSE'}
 requires-python = '>=3.9'
 authors = [
   {name = 'Timothy Stamler', email = 'tstamler@nvidia.com'},
