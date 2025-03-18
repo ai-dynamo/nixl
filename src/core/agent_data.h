@@ -25,13 +25,18 @@ class nixlAgentData {
         std::string     name;
         nixlAgentConfig config;
 
-        // some handle that can be used to instantiate and object from the lib
+        // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*>                           backendLibs;
+
+        // Bookkeeping from backend type and memory type to backend engine
         backend_map_t                                          backendEngines;
+        std::array<backend_set_t, FILE_SEG+1>                  memToBackend;
 
+        // Bookkeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, nixlBackendH*>      backendHandles;
-        std::unordered_map<nixl_backend_t, std::string>        connMD; // Local info
+        std::unordered_map<nixl_backend_t, std::string>        connMD;
 
+        // Local section, and Remote sections and their available common backends
         nixlLocalSection                                       memorySection;
 
         std::unordered_map<std::string, std::set<nixl_backend_t>,

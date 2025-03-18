@@ -150,10 +150,11 @@ nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
                          nixlBackendH* &bknd_hndl) {
 
+    nixlBackendEngine*    backend = nullptr;
     nixlBackendInitParams init_params;
-    nixlBackendEngine* backend = nullptr;
-    nixl_status_t ret;
-    std::string str;
+    nixl_mem_list_t       mems;
+    nixl_status_t         ret;
+    std::string           str;
 
     // Registering same type of backend is not supported, unlikely and prob error
     if (data->backendEngines.count(type)!=0)
@@ -173,7 +174,6 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         // Plugin found, use it to create the backend
         backend = plugin_handle->createEngine(&init_params);
     } else {
-        // Fallback to built-in backends
         std::cout << "Unsupported backend: " << type << std::endl;
         return NIXL_ERR_NOT_FOUND;
     }
@@ -210,6 +210,9 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
         data->backendEngines[type] = backend;
         data->backendHandles[type] = bknd_hndl;
+        mems = backend->getSupportedMems();
+        for (auto & elm : mems)
+            data->memToBackend[elm].insert(backend);
 
         // TODO: Check if backend supports ProgThread when threading is in agent
     }
