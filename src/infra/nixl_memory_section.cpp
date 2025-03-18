@@ -30,7 +30,7 @@ backend_set_t* nixlMemSection::queryBackends (const nixl_mem_t &mem) {
     if (mem<DRAM_SEG || mem>FILE_SEG)
         return nullptr;
     else
-        return &memToBackendMap[mem];
+        return &memToBackend[mem];
 }
 
 nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
@@ -93,7 +93,7 @@ nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
     if (it==sectionMap.end()) { // New desc list
         sectionMap[sec_key] = new nixl_meta_dlist_t(
                                   nixl_mem, mem_elms.isUnifiedAddr(), true);
-        memToBackendMap[nixl_mem].insert(backend);
+        memToBackend[nixl_mem].insert(backend);
     }
     nixl_meta_dlist_t *target = sectionMap[sec_key];
 
@@ -169,7 +169,7 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_meta_dlist_t &mem_elms,
     if (target->descCount()==0){
         delete target;
         sectionMap.erase(sec_key);
-        memToBackendMap[nixl_mem].erase(backend);
+        memToBackend[nixl_mem].erase(backend);
     }
 
     return NIXL_SUCCESS;
@@ -223,7 +223,7 @@ nixl_status_t nixlRemoteSection::addDescList (
     if (sectionMap.count(sec_key) == 0)
         sectionMap[sec_key] = new nixl_meta_dlist_t(
                                   nixl_mem, mem_elms.isUnifiedAddr(), true);
-    memToBackendMap[nixl_mem].insert(backend); // Fine to overwrite, it's a set
+    memToBackend[nixl_mem].insert(backend); // Fine to overwrite, it's a set
     nixl_meta_dlist_t *target = sectionMap[sec_key];
 
 
@@ -284,7 +284,7 @@ nixl_status_t nixlRemoteSection::loadLocalData (
     if (sectionMap.count(sec_key) == 0)
         sectionMap[sec_key] = new nixl_meta_dlist_t(
                                   nixl_mem, mem_elms.isUnifiedAddr(), true);
-    memToBackendMap[nixl_mem].insert(backend); // Fine to overwrite, it's a set
+    memToBackend[nixl_mem].insert(backend); // Fine to overwrite, it's a set
     nixl_meta_dlist_t *target = sectionMap[sec_key];
 
     for (auto & elm: mem_elms)

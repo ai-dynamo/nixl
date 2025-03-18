@@ -20,29 +20,31 @@
 #include "common/str_tools.h"
 #include "mem_section.h"
 
+typedef std::vector<nixlBackendEngine*> backend_list_t;
+
 class nixlAgentData {
     private:
         std::string     name;
         nixlAgentConfig config;
 
         // some handle that can be used to instantiate an object from the lib
-        std::map<std::string, void*>                           backendLibs;
+        std::map<std::string, void*> backendLibs;
 
         // Bookkeeping from backend type and memory type to backend engine
-        backend_map_t                                          backendEngines;
-        std::array<backend_set_t, FILE_SEG+1>                  memToBackend;
+        backend_map_t                          backendEngines;
+        std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
         // Bookkeping for local connection metadata and user handles per backend
-        std::unordered_map<nixl_backend_t, nixlBackendH*>      backendHandles;
-        std::unordered_map<nixl_backend_t, std::string>        connMD;
+        std::unordered_map<nixl_backend_t, nixlBackendH*> backendHandles;
+        std::unordered_map<nixl_backend_t, std::string>   connMD;
 
         // Local section, and Remote sections and their available common backends
-        nixlLocalSection                                       memorySection;
+        nixlLocalSection                                         memorySection;
 
         std::unordered_map<std::string, std::set<nixl_backend_t>,
-                           std::hash<std::string>, strEqual>   remoteBackends;
+                           std::hash<std::string>, strEqual>     remoteBackends;
         std::unordered_map<std::string, nixlRemoteSection*,
-                           std::hash<std::string>, strEqual>   remoteSections;
+                           std::hash<std::string>, strEqual>     remoteSections;
 
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();

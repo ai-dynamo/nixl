@@ -34,7 +34,7 @@ typedef std::unordered_map<nixl_backend_t, nixlBackendEngine*> backend_map_t;
 
 class nixlMemSection {
     protected:
-        std::array<backend_set_t, FILE_SEG+1>         memToBackendMap;
+        std::array<backend_set_t, FILE_SEG+1>         memToBackend;
         std::map<section_key_t,   nixl_meta_dlist_t*> sectionMap;
 
     public:

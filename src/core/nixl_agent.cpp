@@ -155,6 +155,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     nixl_mem_list_t       mems;
     nixl_status_t         ret;
     std::string           str;
+    backend_list_t*       backend_list;
 
     // Registering same type of backend is not supported, unlikely and prob error
     if (data->backendEngines.count(type)!=0)
@@ -211,8 +212,13 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         data->backendEngines[type] = backend;
         data->backendHandles[type] = bknd_hndl;
         mems = backend->getSupportedMems();
-        for (auto & elm : mems)
-            data->memToBackend[elm].insert(backend);
+        for (auto & elm : mems) {
+            backend_list = &data->memToBackend[elm];
+            if (std::find(backend_list->begin(),
+                          backend_list->end(), backend)
+                       == backend_list->end())
+                backend_list->push_back(backend);
+        }
 
         // TODO: Check if backend supports ProgThread when threading is in agent
     }
@@ -224,32 +230,60 @@ nixl_status_t
 nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
                        const nixl_opt_args_t* extra_params) {
 
-    nixlBackendEngine* backend;
+    backend_list_t* backend_list;
+    nixl_status_t   ret, ret2;
 
-    // TODO: Support other than single backend option, all or some
-    if (!extra_params)
-        return NIXL_ERR_NOT_SUPPORTED;
-
-    if (extra_params->backends.size() != 1)
-        return NIXL_ERR_NOT_SUPPORTED;
-
-    backend = extra_params->backends[0]->engine;
-
-    nixl_status_t ret;
-    nixl_meta_dlist_t remote_self(descs.getType(), descs.isUnifiedAddr(), false);
-    ret = data->memorySection.addDescList(descs, backend, remote_self);
-    if (ret!=NIXL_SUCCESS)
-        return ret;
-
-    if (backend->supportsLocal()) {
-        if (data->remoteSections.count(data->name)==0)
-            data->remoteSections[data->name] = new nixlRemoteSection(data->name);
-
-        ret = data->remoteSections[data->name]->loadLocalData(remote_self,
-                                                              backend);
+    if (!extra_params || extra_params->backends.size() == 0) {
+        backend_list = &data->memToBackend[descs.getType()];
+        if (backend_list->empty())
+            return NIXL_ERR_NOT_FOUND;
+    } else {
+        backend_list = new backend_list_t();
+        for (auto & elm : extra_params->backends)
+            backend_list->push_back(elm->engine);
     }
 
-    return ret;
+    // Can be replaced to best effort instead
+    for (size_t i=0; i<backend_list->size(); ++i) {
+        nixlBackendEngine* backend = (*backend_list)[i];
+        // remote_self use to be passed to loadLocalData
+        nixl_meta_dlist_t remote_self(descs.getType(), descs.isUnifiedAddr(), false);
+        ret = data->memorySection.addDescList(descs, backend, remote_self);
+        if (ret != NIXL_SUCCESS) {
+            nixl_xfer_dlist_t trimmed = descs.trim();
+            // deregister with the previous backends
+            for (size_t j=0; j<i; ++j) {
+                ret2 = data->memorySection.populate(trimmed, (*backend_list)[j], remote_self);
+                if (ret2 == NIXL_SUCCESS)
+                    data->memorySection.remDescList(remote_self, (*backend_list)[j]);
+            }
+            return ret;
+        } else {
+            if (backend->supportsLocal()) {
+                if (data->remoteSections.count(data->name)==0)
+                    data->remoteSections[data->name] =
+                          new nixlRemoteSection(data->name);
+
+                ret = data->remoteSections[data->name]->loadLocalData(
+                                                        remote_self, backend);
+                if (ret != NIXL_SUCCESS) {
+                    nixl_xfer_dlist_t trimmed = descs.trim();
+                    // deregister with the previous backends
+                    for (size_t j=0; j<i; ++j) {
+                        ret2 = data->memorySection.populate(trimmed, (*backend_list)[j], remote_self);
+                        if (ret2 == NIXL_SUCCESS)
+                            data->memorySection.remDescList(remote_self, (*backend_list)[j]);
+                    }
+                    return ret;
+                }
+            }
+        }
+    }
+
+    if (extra_params && extra_params->backends.size() > 0)
+        delete backend_list;
+
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -555,7 +589,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         // preference list or more exhaustive search.
         backend_set_t* backend_set = data->memorySection.queryBackends(
                                                remote_descs.getType());
-        if (!backend_set) {
+        if (!backend_set || backend_set->empty()) {
             delete handle;
             return NIXL_ERR_NOT_FOUND;
         }
