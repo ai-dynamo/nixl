@@ -257,6 +257,8 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
                 if (ret2 == NIXL_SUCCESS)
                     data->memorySection.remDescList(remote_self, (*backend_list)[j]);
             }
+            if (extra_params && extra_params->backends.size() > 0)
+                delete backend_list;
             return ret;
         } else {
             if (backend->supportsLocal()) {
@@ -274,6 +276,8 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
                         if (ret2 == NIXL_SUCCESS)
                             data->memorySection.remDescList(remote_self, (*backend_list)[j]);
                     }
+                    if (extra_params && extra_params->backends.size() > 0)
+                        delete backend_list;
                     return ret;
                 }
             }
@@ -289,30 +293,43 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
                          const nixl_opt_args_t* extra_params) {
-    nixlBackendEngine* backend;
 
-    // TODO: Support other than single backend option, all or some
-    if (!extra_params)
-        return NIXL_ERR_NOT_SUPPORTED;
 
-    if (extra_params->backends.size() != 1)
-        return NIXL_ERR_NOT_SUPPORTED;
-
-    backend = extra_params->backends[0]->engine;
-
-    nixl_status_t ret;
-    nixl_meta_dlist_t resp(descs.getType(),
-                           descs.isUnifiedAddr(),
-                           descs.isSorted());
+    backend_list_t*   backend_list;
+    nixl_status_t     ret, bad_ret=NIXL_SUCCESS;
     nixl_xfer_dlist_t trimmed = descs.trim();
 
-    // TODO: can use getIndex for exact match before populate
-    // Or in case of supporting overlapping registers with splitting,
-    // add logic to find each (after todo in addDescList for local sec).
-    ret = data->memorySection.populate(trimmed, backend, resp);
-    if (ret != NIXL_SUCCESS)
-        return ret;
-    return (data->memorySection.remDescList(resp, backend));
+    if (!extra_params || extra_params->backends.size() == 0) {
+        backend_list = &data->memToBackend[descs.getType()];
+        if (backend_list->empty())
+            return NIXL_ERR_NOT_FOUND;
+    } else {
+        backend_list = new backend_list_t();
+        for (auto & elm : extra_params->backends)
+            backend_list->push_back(elm->engine);
+    }
+
+    // Doing best effort, and returning err if any
+    for (auto & backend : *backend_list) {
+        nixl_meta_dlist_t resp(descs.getType(),
+                               descs.isUnifiedAddr(),
+                               descs.isSorted());
+
+        // TODO: can use getIndex for exact match before populate
+        // Or in case of supporting overlapping registers with splitting,
+        // add logic to find each (after todo in addDescList for local sec).
+        ret = data->memorySection.populate(trimmed, backend, resp);
+        if (ret != NIXL_SUCCESS)
+            bad_ret = ret;
+        ret = data->memorySection.remDescList(resp, backend);
+        if (ret != NIXL_SUCCESS)
+            bad_ret = ret;
+    }
+
+    if (extra_params && extra_params->backends.size() > 0)
+        delete backend_list;
+
+    return bad_ret;
 }
 
 nixl_status_t
