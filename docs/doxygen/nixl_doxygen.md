@@ -111,7 +111,7 @@ for each target_agent:
 ## Transfer
 To initiate a transfer, both the initiator and target agents need to provide a descriptor (buffer) list, which can be sent by the runtime from the target to the initiator agent. Using these descriptor lists, along with the target agent's name and the transfer operation (read or write), a transfer can be created, returning a transfer handle. Optionally, a notification message can be specified for the operation.
 
-The create_transfer_request function performs the necessary checks for the transfer and determines which backend will be used. If successful, the runtime can post a transfer request on the received handle as many times as needed. The status of the transfer can be checked using the get_transfer_status function. In the example provided, the process blocks on the transfer checks since it is the only transfer in the system and there is no computation to overlap it with.
+The create_transfer_request function performs the necessary checks for the transfer and determines which backend will be used. If successful, the runtime can subsequently post a transfer request described by the received handle one or more times (but only single instance of a transfer is allowed at any given point in time). The status of the transfer can be checked using the get_transfer_status function. In the example provided, the process blocks on the transfer checks since it is the only transfer in the system and there is no computation to overlap it with.
 
 ```
 # On initiator agent
