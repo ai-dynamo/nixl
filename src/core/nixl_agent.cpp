@@ -438,9 +438,10 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                         nixlXferReqH* &req_hndl,
                         const nixl_opt_args_t* extra_params) const {
 
-    nixl_opt_b_args_t opt_args;
-    nixl_status_t     ret;
-    int               desc_count = (int) local_indices.size();
+    nixl_opt_b_args_t  opt_args;
+    nixl_status_t      ret;
+    int                desc_count = (int) local_indices.size();
+    nixlBackendEngine* backend    = nullptr;
 
     req_hndl = nullptr;
 
@@ -450,19 +451,22 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     if ((!local_side->isLocal) || (remote_side->isLocal))
         return NIXL_ERR_INVALID_PARAM;
 
-    // TODO: add support for more than single backend option
-    if ((local_side->descs.size() != 1) || (remote_side->descs.size() != 1))
-        return NIXL_ERR_NOT_SUPPORTED;
+    for (auto & loc_bknd : local_side->descs) {
+        for (auto & rem_bknd : remote_side->descs) {
+            if (loc_bknd.first == rem_bknd.first) {
+                backend = loc_bknd.first;
+                break;
+            }
+        }
+        if (backend)
+            break;
+    }
 
-    // TODO: support more than single backend coming from prepXferDlist
-    nixlBackendEngine* local_backend  = local_side->descs.begin()->first;
-    nixlBackendEngine* remote_backend = remote_side->descs.begin()->first;
-
-    if (local_backend != remote_backend)
+    if (!backend)
         return NIXL_ERR_INVALID_PARAM;
 
-    nixl_meta_dlist_t* local_descs  = local_side->descs.begin()->second;
-    nixl_meta_dlist_t* remote_descs = remote_side->descs.begin()->second;
+    nixl_meta_dlist_t* local_descs  = local_side->descs.at(backend);
+    nixl_meta_dlist_t* remote_descs = remote_side->descs.at(backend);
 
     if ((desc_count==0) || (remote_indices.size()==0) ||
         (desc_count != (int) remote_indices.size()))
@@ -485,7 +489,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         opt_args.hasNotif = true;
     }
 
-    if ((opt_args.hasNotif) && (!local_backend->supportsNotif())) {
+    if ((opt_args.hasNotif) && (!backend->supportsNotif())) {
         return NIXL_ERR_BACKEND;
     }
 
@@ -556,7 +560,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     // To be added to logging
     //std::cout << "reqH descList size down to " << j << "\n";
 
-    handle->engine      = local_backend;
+    handle->engine      = backend;
     handle->remoteAgent = remote_side->remoteAgent;
     handle->notifMsg    = opt_args.notifMsg;
     handle->hasNotif    = opt_args.hasNotif;
