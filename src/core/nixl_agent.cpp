@@ -545,10 +545,29 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                      local_descs.isSorted());
 
     if (!backend) {
-        handle->engine = data->memorySection.findQuery(local_descs,
-                              remote_descs.getType(),
-                              data->remoteBackends[remote_agent],
-                              *handle->initiatorDescs);
+        // Decision making based on supported local backends for this
+        // memory type (backend_set), supported remote backends for remote
+        // memory type (data->remoteBackends[remote_agent]).
+        // Currently we loop through and find first local match. Can use a
+        // preference list or more exhaustive search.
+        backend_set_t* backend_set = data->memorySection.queryBackends(
+                                               remote_descs.getType());
+        if (!backend_set) {
+            delete handle;
+            return NIXL_ERR_NOT_FOUND;
+        }
+
+        for (auto & elm : *backend_set) {
+            // If populate fails, it clears the resp before return
+            ret = data->memorySection.populate(local_descs,
+                                               elm,
+                                               *handle->initiatorDescs);
+            if (ret == NIXL_SUCCESS) {
+                handle->engine = elm;
+                break;
+            }
+        }
+
         if (!handle->engine) {
             delete handle;
             return NIXL_ERR_NOT_FOUND;

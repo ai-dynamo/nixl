@@ -29,7 +29,6 @@
 
 typedef std::pair<nixl_mem_t, nixlBackendEngine*>              section_key_t;
 typedef std::set<nixlBackendEngine*>                           backend_set_t;
-typedef std::set<nixl_backend_t>                               bknd_type_set_t;
 typedef std::unordered_map<nixl_backend_t, nixlBackendEngine*> backend_map_t;
 
 
@@ -41,9 +40,12 @@ class nixlMemSection {
     public:
         nixlMemSection () {};
 
+        backend_set_t* queryBackends (const nixl_mem_t &mem);
+
         nixl_status_t populate (const nixl_xfer_dlist_t &query,
                                 nixlBackendEngine* backend,
                                 nixl_meta_dlist_t &resp) const;
+
 
         virtual ~nixlMemSection () = 0; // Making the class abstract
 };
@@ -62,13 +64,6 @@ class nixlLocalSection : public nixlMemSection {
         // Each nixlBasicDesc should be same as original registration region
         nixl_status_t remDescList (const nixl_meta_dlist_t &mem_elms,
                                    nixlBackendEngine* backend);
-
-        // Find a nixlBasicDesc in the section, if available fills the resp based
-        // on that, and returns the backend pointer that can use the resp
-        nixlBackendEngine* findQuery (const nixl_xfer_dlist_t &query,
-                                      const nixl_mem_t &remote_nixl_mem,
-                                      const bknd_type_set_t &remote_backends,
-                                      nixl_meta_dlist_t &resp) const;
 
         nixl_status_t serialize(nixlSerDes* serializer) const;
 

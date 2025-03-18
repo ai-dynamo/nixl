@@ -34,10 +34,10 @@ class nixlAgentData {
 
         nixlLocalSection                                       memorySection;
 
+        std::unordered_map<std::string, std::set<nixl_backend_t>,
+                           std::hash<std::string>, strEqual>   remoteBackends;
         std::unordered_map<std::string, nixlRemoteSection*,
                            std::hash<std::string>, strEqual>   remoteSections;
-        std::unordered_map<std::string, bknd_type_set_t,
-                           std::hash<std::string>, strEqual>   remoteBackends;
 
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();

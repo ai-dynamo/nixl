@@ -26,6 +26,13 @@
 // It's pure virtual, but base also class needs a destructor due to its members.
 nixlMemSection::~nixlMemSection () {}
 
+backend_set_t* nixlMemSection::queryBackends (const nixl_mem_t &mem) {
+    if (mem<DRAM_SEG || mem>FILE_SEG)
+        return nullptr;
+    else
+        return &memToBackendMap[mem];
+}
+
 nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
                                         nixlBackendEngine* backend,
                                         nixl_meta_dlist_t &resp) const {
@@ -166,36 +173,6 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_meta_dlist_t &mem_elms,
     }
 
     return NIXL_SUCCESS;
-}
-
-nixlBackendEngine* nixlLocalSection::findQuery(
-                       const nixl_xfer_dlist_t &query,
-                       const nixl_mem_t &remote_nixl_mem,
-                       const bknd_type_set_t &remote_backends,
-                       nixl_meta_dlist_t &resp) const {
-
-    nixlBackendEngine* backend = nullptr;
-
-    nixl_mem_t q_mem = query.getType();
-    if (q_mem>FILE_SEG)
-        return backend;
-
-    const backend_set_t* backend_set = &memToBackendMap.at(q_mem);
-    if (backend_set->empty())
-        return backend;
-
-    // Decision making based on supported local backends for this
-    // memory type, supported remote backends and remote memory type
-    // or here we loop through and find first local match. The more
-    // complete option (overkill) is to try all possible scenarios and
-    // see which populates on both side are successful and then decide
-
-    for (auto & elm : *backend_set) {
-        // If populate fails, it clears the resp before return
-        if (populate(query, elm, resp) == NIXL_SUCCESS)
-            return elm;
-    }
-    return backend;
 }
 
 nixl_status_t nixlLocalSection::serialize(nixlSerDes* serializer) const {
