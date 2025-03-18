@@ -199,7 +199,8 @@ int nixlUcxWorker::connect(void* addr, size_t size, nixlUcxEp &ep)
     ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
                            UCP_EP_PARAM_FIELD_ERR_HANDLER |
                            UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-    ep_params.err_mode = UCP_ERR_HANDLING_MODE_PEER;
+    ep_params.err_mode = UCP_ERR_HANDLING_MODE_NONE; // TODO: Need to be UCP_ERR_HANDLING_MODE_PEER
+                                                     // to properly handle disconnect
     ep_params.err_handler.cb = err_cb;
     ep_params.address = (ucp_address_t*) addr;
 
