@@ -85,6 +85,8 @@ nixlAgentData::~nixlAgentData() {
 /*** nixlAgent implementation ***/
 nixlAgent::nixlAgent(const std::string &name,
                      const nixlAgentConfig &cfg) {
+    if (name.size()==0)
+        throw std::invalid_argument("Agent needs a name");
     data = new nixlAgentData(name, cfg);
 }
 
@@ -214,13 +216,12 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         mems = backend->getSupportedMems();
         for (auto & elm : mems) {
             backend_list = &data->memToBackend[elm];
-            if (std::find(backend_list->begin(),
-                          backend_list->end(), backend)
-                       == backend_list->end())
-                backend_list->push_back(backend);
+            // First time creating this backend handle, so unique
+            backend_list->push_back(backend);
         }
 
-        // TODO: Check if backend supports ProgThread when threading is in agent
+        // TODO: Check if backend supports ProgThread
+        //       when threading is in agent
     }
 
     return NIXL_SUCCESS;
@@ -295,22 +296,23 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
                          const nixl_opt_args_t* extra_params) {
 
 
-    backend_list_t*   backend_list;
+    backend_set_t*    backend_set;
     nixl_status_t     ret, bad_ret=NIXL_SUCCESS;
     nixl_xfer_dlist_t trimmed = descs.trim();
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        backend_list = &data->memToBackend[descs.getType()];
-        if (backend_list->empty())
+        backend_set = data->memorySection.queryBackends(
+                                          descs.getType());
+        if (backend_set->empty())
             return NIXL_ERR_NOT_FOUND;
     } else {
-        backend_list = new backend_list_t();
+        backend_set = new backend_set_t();
         for (auto & elm : extra_params->backends)
-            backend_list->push_back(elm->engine);
+            backend_set->insert(elm->engine);
     }
 
     // Doing best effort, and returning err if any
-    for (auto & backend : *backend_list) {
+    for (auto & backend : *backend_set) {
         nixl_meta_dlist_t resp(descs.getType(),
                                descs.isUnifiedAddr(),
                                descs.isSorted());
@@ -327,7 +329,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     }
 
     if (extra_params && extra_params->backends.size() > 0)
-        delete backend_list;
+        delete backend_set;
 
     return bad_ret;
 }
@@ -363,54 +365,68 @@ nixlAgent::prepXferDlist (const std::string &remote_agent,
                           nixlDlistH* &dlist_hndl,
                           const nixl_opt_args_t* extra_params) const {
 
-    // TODO: Support other than single backend option, all or some
-    if (!extra_params)
-        return NIXL_ERR_NOT_SUPPORTED;
+    // Using a set as order is not important to revert the operation
+    backend_set_t* backend_set;
+    nixl_status_t  ret;
+    int            count = 0;
 
-    if (extra_params->backends.size() != 1)
-        return NIXL_ERR_NOT_SUPPORTED;
-
-    nixlBackendEngine* backend = extra_params->backends[0]->engine;
-
-    if (!backend)
-        return NIXL_ERR_NOT_FOUND;
-
-    nixl_status_t ret;
-
-    if (remote_agent.size()!=0)
-        if (data->remoteSections.count(remote_agent)==0)
+    // When central KV is supported, still it should return error,
+    // just we can add a call to fetchRemoteMD for next time
+    if (remote_agent.size() != 0)
+        if (data->remoteSections.count(remote_agent) == 0)
             return NIXL_ERR_NOT_FOUND;
 
-    // TODO: when central KV is supported, add a call to fetchRemoteMD
-    // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
-
-    nixlDlistH *handle = new nixlDlistH;
-
-    // This function is const regarding the backend, when transfer handle is
-    // generated, there the backend can change upong post.
-    handle->descs[backend] = new nixl_meta_dlist_t (descs.getType(),
-                                                    descs.isUnifiedAddr(),
-                                                    descs.isSorted());
-
-    if (remote_agent.size()==0) { // Local descriptor list
-        handle->isLocal = true;
-        handle->remoteAgent = "";
-        ret = data->memorySection.populate(
-                   descs, backend, *(handle->descs[backend]));
+    if (!extra_params || extra_params->backends.size() == 0) {
+        backend_set = data->memorySection.queryBackends(
+                                          descs.getType());
+        if (backend_set->empty())
+            return NIXL_ERR_NOT_FOUND;
     } else {
-        handle->isLocal = false;
+        backend_set = new backend_set_t();
+        for (auto & elm : extra_params->backends)
+            backend_set->insert(elm->engine);
+    }
+
+    // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
+    nixlDlistH *handle = new nixlDlistH;
+    if (remote_agent.size()==0) { // Local descriptor list
+        handle->isLocal     = true;
+        handle->remoteAgent = "";
+    } else {
+        handle->isLocal     = false;
         handle->remoteAgent = remote_agent;
-        ret = data->remoteSections[remote_agent]->populate(
-                   descs, backend, *(handle->descs[backend]));
     }
 
-    if (ret<0) {
+    for (auto & backend : *backend_set) {
+        handle->descs[backend] = new nixl_meta_dlist_t (
+                                         descs.getType(),
+                                         descs.isUnifiedAddr(),
+                                         descs.isSorted());
+        if (remote_agent.size()==0)
+            ret = data->memorySection.populate(
+                       descs, backend, *(handle->descs[backend]));
+        else
+            ret = data->remoteSections[remote_agent]->populate(
+                       descs, backend, *(handle->descs[backend]));
+        if (ret == NIXL_SUCCESS) {
+            count++;
+        } else {
+            delete handle->descs[backend];
+            handle->descs.erase(backend);
+        }
+    }
+
+    if (extra_params && extra_params->backends.size() > 0)
+        delete backend_set;
+
+    if (count == 0) {
         delete handle;
-        return ret;
+        dlist_hndl = nullptr;
+        return NIXL_ERR_NOT_FOUND;
+    } else {
+        dlist_hndl = handle;
+        return NIXL_SUCCESS;
     }
-
-    dlist_hndl = handle;
-    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -576,6 +592,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         // TODO: Support more than all or single backend specification
         if (extra_params->backends.size()==1)
             backend = extra_params->backends[0];
+        else if (extra_params->backends.size()>1)
+            return NIXL_ERR_NOT_SUPPORTED;
     }
 
     // Check the correspondence between descriptor lists
