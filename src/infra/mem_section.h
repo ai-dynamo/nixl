@@ -27,8 +27,9 @@
 #include "nixl.h"
 #include "backend/backend_engine.h"
 
-typedef std::pair<nixl_mem_t, nixl_backend_t>                  section_key_t;
-typedef std::set<nixl_backend_t>                               backend_set_t;
+typedef std::pair<nixl_mem_t, nixlBackendEngine*>              section_key_t;
+typedef std::set<nixlBackendEngine*>                           backend_set_t;
+typedef std::set<nixl_backend_t>                               bknd_type_set_t;
 typedef std::unordered_map<nixl_backend_t, nixlBackendEngine*> backend_map_t;
 
 
@@ -36,14 +37,12 @@ class nixlMemSection {
     protected:
         std::array<backend_set_t, FILE_SEG+1>         memToBackendMap;
         std::map<section_key_t,   nixl_meta_dlist_t*> sectionMap;
-        // Replica of what Agent has, but tiny in size and helps with modularity
-        backend_map_t backendToEngineMap;
 
     public:
         nixlMemSection () {};
 
         nixl_status_t populate (const nixl_xfer_dlist_t &query,
-                                const nixl_backend_t &nixl_backend,
+                                nixlBackendEngine* backend,
                                 nixl_meta_dlist_t &resp) const;
 
         virtual ~nixlMemSection () = 0; // Making the class abstract
@@ -56,8 +55,6 @@ class nixlLocalSection : public nixlMemSection {
                                const nixlBackendEngine* backend,
                                const nixl_meta_dlist_t &d_list) const;
     public:
-        nixl_status_t addBackendHandler (nixlBackendEngine* backend);
-
         nixl_status_t addDescList (const nixl_reg_dlist_t &mem_elms,
                                    nixlBackendEngine* backend,
                                    nixl_meta_dlist_t &remote_self);
@@ -70,7 +67,7 @@ class nixlLocalSection : public nixlMemSection {
         // on that, and returns the backend pointer that can use the resp
         nixlBackendEngine* findQuery (const nixl_xfer_dlist_t &query,
                                       const nixl_mem_t &remote_nixl_mem,
-                                      const backend_set_t &remote_backends,
+                                      const bknd_type_set_t &remote_backends,
                                       nixl_meta_dlist_t &resp) const;
 
         nixl_status_t serialize(nixlSerDes* serializer) const;
@@ -87,10 +84,10 @@ class nixlRemoteSection : public nixlMemSection {
                            const nixl_reg_dlist_t &mem_elms,
                            nixlBackendEngine *backend);
     public:
-        nixlRemoteSection (const std::string &agent_name,
-                           backend_map_t &engine_map);
+        nixlRemoteSection (const std::string &agent_name);
 
-        nixl_status_t loadRemoteData (nixlSerDes* deserializer);
+        nixl_status_t loadRemoteData (nixlSerDes* deserializer,
+                                      backend_map_t &backendToEngineMap);
 
         // When adding self as a remote agent for local operations
         nixl_status_t loadLocalData (const nixl_meta_dlist_t& mem_elms,

@@ -209,7 +209,6 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
 
         data->backendEngines[type] = backend;
-        data->memorySection.addBackendHandler(backend);
         data->backendHandles[type] = bknd_hndl;
 
         // TODO: Check if backend supports ProgThread when threading is in agent
@@ -241,8 +240,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
 
     if (backend->supportsLocal()) {
         if (data->remoteSections.count(data->name)==0)
-            data->remoteSections[data->name] = new nixlRemoteSection(
-                                data->name, data->backendEngines);
+            data->remoteSections[data->name] = new nixlRemoteSection(data->name);
 
         ret = data->remoteSections[data->name]->loadLocalData(remote_self,
                                                               backend);
@@ -274,7 +272,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     // TODO: can use getIndex for exact match before populate
     // Or in case of supporting overlapping registers with splitting,
     // add logic to find each (after todo in addDescList for local sec).
-    ret = data->memorySection.populate(trimmed, backend->getType(), resp);
+    ret = data->memorySection.populate(trimmed, backend, resp);
     if (ret != NIXL_SUCCESS)
         return ret;
     return (data->memorySection.remDescList(resp, backend));
@@ -344,12 +342,12 @@ nixlAgent::prepXferDlist (const std::string &remote_agent,
         handle->isLocal = true;
         handle->remoteAgent = "";
         ret = data->memorySection.populate(
-                   descs, backend->getType(), *(handle->descs[backend]));
+                   descs, backend, *(handle->descs[backend]));
     } else {
         handle->isLocal = false;
         handle->remoteAgent = remote_agent;
         ret = data->remoteSections[remote_agent]->populate(
-                   descs, backend->getType(), *(handle->descs[backend]));
+                   descs, backend, *(handle->descs[backend]));
     }
 
     if (ret<0) {
@@ -557,7 +555,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         }
     } else {
         ret = data->memorySection.populate(local_descs,
-                                           backend->getType(),
+                                           backend->engine,
                                            *handle->initiatorDescs);
        if (ret!=NIXL_SUCCESS) {
             delete handle;
@@ -578,7 +576,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     // Based on the decided local backend, we check the remote counterpart
     ret = data->remoteSections[remote_agent]->populate(remote_descs,
-               handle->engine->getType(), *handle->targetDescs);
+               handle->engine, *handle->targetDescs);
     if (ret!=NIXL_SUCCESS) {
         delete handle;
         return ret;
@@ -882,9 +880,10 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     if (data->remoteSections.count(remote_agent) == 0)
         data->remoteSections[remote_agent] = new nixlRemoteSection(
-                            remote_agent, data->backendEngines);
+                                                  remote_agent);
 
-    ret = data->remoteSections[remote_agent]->loadRemoteData(&sd);
+    ret = data->remoteSections[remote_agent]->loadRemoteData(&sd,
+                                                  data->backendEngines);
 
     // TODO: can be more graceful, if just the new MD blob was improper
     if (ret) {

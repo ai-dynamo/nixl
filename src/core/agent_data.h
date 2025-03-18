@@ -27,16 +27,16 @@ class nixlAgentData {
 
         // some handle that can be used to instantiate and object from the lib
         std::map<std::string, void*>                           backendLibs;
+        backend_map_t                                          backendEngines;
 
         std::unordered_map<nixl_backend_t, nixlBackendH*>      backendHandles;
-        std::unordered_map<nixl_backend_t, nixlBackendEngine*> backendEngines;
         std::unordered_map<nixl_backend_t, std::string>        connMD; // Local info
 
         nixlLocalSection                                       memorySection;
 
         std::unordered_map<std::string, nixlRemoteSection*,
                            std::hash<std::string>, strEqual>   remoteSections;
-        std::unordered_map<std::string, backend_set_t,
+        std::unordered_map<std::string, bknd_type_set_t,
                            std::hash<std::string>, strEqual>   remoteBackends;
 
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
