@@ -21,21 +21,9 @@ from nixl._api import nixl_agent
 if __name__ == "__main__":
     nixl_agent1 = nixl_agent("bad agent", None)
 
-    buf_size = 256
-    addr1 = nixl_utils.malloc_passthru(buf_size * 2)
-    addr2 = addr1 + buf_size
-
-    agent1_addrs = [(addr1, buf_size, 0), (addr2, buf_size, 0)]
-    agent1_strings = [(addr1, buf_size, 0, "a"), (addr2, buf_size, 0, "b")]
-
-    agent1_reg_descs = nixl_agent1.get_reg_descs(agent1_strings, "DRAM", True)
-
-    agent1_xfer_descs = nixl_agent1.get_xfer_descs(agent1_addrs, "DRAM", True)
-
     try:
-        # null backend not supported
-        nixl_agent1.backends["UVX"] = 0
-        nixl_agent1.register_memory(agent1_reg_descs, backend="UVX")
+        # oops, I can't spell
+        nixl_agent1.create_backend("UVX")
     except Exception as e:
         print("Caught you!")
         print(e)
