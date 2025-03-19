@@ -13,7 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+ucx_backend_inc_dirs = include_directories('./ucx')
+
 subdir('ucx')
+subdir('ucx_mo')
 
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and cuda_dep.found()

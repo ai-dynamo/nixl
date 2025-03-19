@@ -18,6 +18,19 @@
 #include "serdes/serdes.h"
 #include <cassert>
 
+#ifdef HAVE_CUDA
+
+#include <cuda_runtime.h>
+#include <cufile.h>
+
+#endif
+
+
+
+/****************************************
+ * CUDA related code
+ *****************************************/
+
 class nixlUcxCudaCtx {
 public:
 #ifdef HAVE_CUDA
@@ -33,10 +46,6 @@ public:
 };
 
 #ifdef HAVE_CUDA
-
-/****************************************
- * CUDA related code
-*****************************************/
 
 static int cudaQueryAddr(void *address, bool &is_dev,
                          CUdevice &dev, CUcontext &ctx)
