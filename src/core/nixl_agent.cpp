@@ -220,6 +220,9 @@ nixlAgent::createBackend(const nixl_backend_t &type,
             backend_list->push_back(backend);
         }
 
+        if (backend->supportsRemote())
+            data->notifEngines.insert(backend);
+
         // TODO: Check if backend supports ProgThread
         //       when threading is in agent
     }
@@ -796,30 +799,34 @@ nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
 nixl_status_t
 nixlAgent::getNotifs(nixl_notifs_t &notif_map,
                      const nixl_opt_args_t* extra_params) {
-    notif_list_t backend_list;
-    nixl_status_t ret, bad_ret=NIXL_SUCCESS;
-    bool any_backend = false;
+    notif_list_t   bknd_notif_list;
+    nixl_status_t  ret, bad_ret=NIXL_SUCCESS;
+    bool           any_backend = false;
+    backend_set_t* backend_set;
 
-    // TODO: add support for selection of backends, not all
-    if (extra_params && (extra_params->backends.size() != 0))
-        return NIXL_ERR_NOT_SUPPORTED;
-
+    if (!extra_params || extra_params->backends.size() == 0) {
+        backend_set = &data->notifEngines;
+    } else {
+        backend_set = new backend_set_t();
+        for (auto & elm : extra_params->backends)
+            backend_set->insert(elm->engine);
+    }
 
     // Doing best effort, if any backend errors out we return
     // error but proceed with the rest. We can add metadata about
     // the backend to the msg, but user could put it themselves.
-    for (auto & eng: data->backendEngines) {
-        if (eng.second->supportsNotif()) {
+    for (auto & eng: *backend_set) {
+        if (eng->supportsNotif()) {
             any_backend = true;
-            backend_list.clear();
-            ret = eng.second->getNotifs(backend_list);
-            if (ret<0)
+            bknd_notif_list.clear();
+            ret = eng->getNotifs(bknd_notif_list);
+            if (ret < 0)
                 bad_ret=ret;
 
-            if (backend_list.size()==0)
+            if (bknd_notif_list.size()==0)
                 continue;
 
-            for (auto & elm: backend_list) {
+            for (auto & elm: bknd_notif_list) {
                 if (notif_map.count(elm.first)==0)
                     notif_map[elm.first] = std::vector<nixl_blob_t>();
 
@@ -827,6 +834,9 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
             }
         }
     }
+
+    if (extra_params && extra_params->backends.size() > 0)
+        delete backend_set;
 
     if (bad_ret)
         return bad_ret;
