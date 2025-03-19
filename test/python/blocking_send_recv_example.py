@@ -38,7 +38,10 @@ if __name__ == "__main__":
     # zmq as side channel
     _ctx = zmq.Context()
     _socket = _ctx.socket(zmq.PAIR)
-    _socket.connect(f"tcp: //{args.peer_ip}: {args.peer_port}")
+    if args.mode == "target":
+        _socket.bind(f"tcp://{args.peer_ip}:{args.peer_port}")
+    else:
+        _socket.connect(f"tcp://{args.peer_ip}:{args.peer_port}")
 
     # Allocate memory and register with NIXL
     agent = nixl_agent(args.name, None)
@@ -71,7 +74,7 @@ if __name__ == "__main__":
     if args.mode == "target":
         # If desired, can use send_notif instead. Also indicate
         # the notification that is expected to be received.
-        targer_descs = reg_descs
+        targer_descs = reg_descs.trim()
         _socket.send(agent.get_serialized_descs(targer_descs))
         # For now the notification is just UUID, could be any python bytes.
         # Also can have more than UUID, and check_remote_xfer_done returns
@@ -82,7 +85,7 @@ if __name__ == "__main__":
         # If send_notif is used, get_new_notifs should listen for it,
         # or directly calling check_remote_xfer_done
         targer_descs = agent.deserialize_descs(_socket.recv())
-        initiator_descs = reg_descs
+        initiator_descs = reg_descs.trim()
         xfer_handle = agent.initialize_xfer(
             "READ", initiator_descs, targer_descs, peer_name, "UUID"
         )
