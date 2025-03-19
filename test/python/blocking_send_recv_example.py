@@ -26,9 +26,14 @@ from nixl._api import nixl_agent
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str, required=True)
-    parser.add_argument("--peer_ip", type=str, required=True)
-    parser.add_argument("--mode", type=str, default="initiator")
-    parser.add_argument("--peer_port", type=int, default=5555)
+    parser.add_argument("--zmq_ip", type=str, required=True)
+    parser.add_argument("--zmq_port", type=int, default=5555)
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="initiator",
+        help="Local IP in target, peer IP (target's) in initiator",
+    )
     return parser.parse_args()
 
 
@@ -38,7 +43,7 @@ if __name__ == "__main__":
     # zmq as side channel
     _ctx = zmq.Context()
     _socket = _ctx.socket(zmq.PAIR)
-    connect_str = f"tcp://{args.peer_ip}:{args.peer_port}"
+    connect_str = f"tcp://{args.zmq_ip}:{args.zmq_port}"
 
     if args.mode == "target":
         _socket.bind(connect_str)
