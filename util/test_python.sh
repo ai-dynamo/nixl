@@ -28,7 +28,7 @@ export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/x86_64-linux-gnu/plugins
 
-pip install --break-system-packages .
+pip3 install --break-system-packages .
 
 echo "==== Running python tests ===="
 cd test/python
