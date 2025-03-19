@@ -217,11 +217,12 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         for (auto & elm : mems) {
             backend_list = &data->memToBackend[elm];
             // First time creating this backend handle, so unique
+            // The order of creation sets the preference order
             backend_list->push_back(backend);
         }
 
         if (backend->supportsRemote())
-            data->notifEngines.insert(backend);
+            data->notifEngines.push_back(backend);
 
         // TODO: Check if backend supports ProgThread
         //       when threading is in agent
@@ -799,23 +800,23 @@ nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
 nixl_status_t
 nixlAgent::getNotifs(nixl_notifs_t &notif_map,
                      const nixl_opt_args_t* extra_params) {
-    notif_list_t   bknd_notif_list;
-    nixl_status_t  ret, bad_ret=NIXL_SUCCESS;
-    bool           any_backend = false;
-    backend_set_t* backend_set;
+    notif_list_t    bknd_notif_list;
+    nixl_status_t   ret, bad_ret=NIXL_SUCCESS;
+    bool            any_backend = false;
+    backend_list_t* backend_list;
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        backend_set = &data->notifEngines;
+        backend_list = &data->notifEngines;
     } else {
-        backend_set = new backend_set_t();
+        backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
-            backend_set->insert(elm->engine);
+            backend_list->push_back(elm->engine);
     }
 
     // Doing best effort, if any backend errors out we return
     // error but proceed with the rest. We can add metadata about
     // the backend to the msg, but user could put it themselves.
-    for (auto & eng: *backend_set) {
+    for (auto & eng: *backend_list) {
         if (eng->supportsNotif()) {
             any_backend = true;
             bknd_notif_list.clear();
@@ -836,7 +837,7 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
     }
 
     if (extra_params && extra_params->backends.size() > 0)
-        delete backend_set;
+        delete backend_list;
 
     if (bad_ret)
         return bad_ret;
@@ -851,24 +852,32 @@ nixlAgent::genNotif(const std::string &remote_agent,
                     const nixl_blob_t &msg,
                     const nixl_opt_args_t* extra_params) {
 
-    // TODO: Support more than a single backend to choose from
-    if (extra_params) {
-        if (extra_params->backends.size() > 1)
-            return NIXL_ERR_NOT_SUPPORTED;
-        else if (extra_params->backends.size() == 1)
-            return extra_params->backends[0]->engine->genNotif(
-                                              remote_agent, msg);
+    nixlBackendEngine* backend = nullptr;
+    backend_list_t*    backend_list;
+
+    if (!extra_params || extra_params->backends.size() == 0) {
+        backend_list = &data->notifEngines;
+    } else {
+        backend_list = new backend_list_t();
+        for (auto & elm : extra_params->backends)
+            backend_list->push_back(elm->engine);
     }
 
-    // TODO: add logic to choose between backends if multiple support it
-    for (auto & eng: data->backendEngines) {
-        if (eng.second->supportsNotif()) {
-            if (data->remoteBackends[remote_agent].count(
-                                    eng.second->getType()) != 0)
-                return eng.second->genNotif(remote_agent, msg);
+    for (auto & eng: *backend_list) {
+        if (eng->supportsNotif() &&
+           (data->remoteBackends[remote_agent].count(eng->getType()) != 0)) {
+            backend = eng;
+            break;
         }
     }
-    return NIXL_ERR_NOT_FOUND;
+
+    if (extra_params && extra_params->backends.size() > 0)
+        delete backend_list;
+
+    if (backend)
+        return backend->genNotif(remote_agent, msg);
+    else
+        return NIXL_ERR_NOT_FOUND;
 }
 
 nixl_status_t

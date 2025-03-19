@@ -31,7 +31,7 @@ class nixlAgentData {
         std::map<std::string, void*> backendLibs;
 
         // Bookkeeping from backend type and memory type to backend engine
-        backend_set_t                          notifEngines;
+        backend_list_t                         notifEngines;
         backend_map_t                          backendEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
