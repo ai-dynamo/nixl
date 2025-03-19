@@ -38,10 +38,12 @@ if __name__ == "__main__":
     # zmq as side channel
     _ctx = zmq.Context()
     _socket = _ctx.socket(zmq.PAIR)
+    connect_str = f"tcp://{args.peer_ip}:{args.peer_port}"
+
     if args.mode == "target":
-        _socket.bind(f"tcp://{args.peer_ip}:{args.peer_port}")
+        _socket.bind(connect_str)
     else:
-        _socket.connect(f"tcp://{args.peer_ip}:{args.peer_port}")
+        _socket.connect(connect_str)
 
     # Allocate memory and register with NIXL
     agent = nixl_agent(args.name, None)
