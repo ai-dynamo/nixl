@@ -132,7 +132,6 @@ class nixlBlobDesc : public nixlBasicDesc {
         nixl_blob_t metaInfo;
 
         /** @var Reuse parent constructor without the metadata */
-        nixl_blob_t metaInfo;
         using nixlBasicDesc::nixlBasicDesc;
 
         /**
