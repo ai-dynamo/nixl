@@ -45,7 +45,11 @@ if __name__ == "__main__":
 
     # Allocate memory and register with NIXL
     agent = nixl_agent(args.name, None)
-    tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]
+    if args.mode == "target":
+        tensors = [torch.ones(10, dtype=torch.float32) for _ in range(2)]
+    else:
+        tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]
+    print(f"{args.mode} Tensors: {tensors}")
 
     reg_descs = agent.register_memory(tensors)
     if not reg_descs:  # Same as reg_descs if successful
@@ -60,10 +64,10 @@ if __name__ == "__main__":
             exit()
 
         _socket.send(meta)
-        peer_name = _socket.recv()
+        peer_name = _socket.recv_string()
     else:
         remote_meta = _socket.recv()
-        _socket.send(args.name)  # We just need the name, not full meta
+        _socket.send_string(args.name)  # We just need the name, not full meta
 
         peer_name = agent.add_remote_agent(remote_meta)
         if not peer_name:
@@ -86,6 +90,7 @@ if __name__ == "__main__":
         # or directly calling check_remote_xfer_done
         targer_descs = agent.deserialize_descs(_socket.recv())
         initiator_descs = reg_descs.trim()
+
         xfer_handle = agent.initialize_xfer(
             "READ", initiator_descs, targer_descs, peer_name, "UUID"
         )
@@ -93,11 +98,10 @@ if __name__ == "__main__":
             print("Creating transfer failed.")
             exit()
 
-        xfer_handle = agent.transfer(xfer_handle)
-        if not xfer_handle:
+        state = agent.transfer(xfer_handle)
+        if state == "ERR":
             print("Posting transfer failed.")
             exit()
-
         while True:
             state = agent.check_xfer_state(xfer_handle)
             if state == "ERR":
@@ -105,6 +109,13 @@ if __name__ == "__main__":
                 exit()
             elif state == "DONE":
                 break
+
+        # Verify data after read
+        for i, tensor in enumerate(tensors):
+            if not torch.allclose(tensor, torch.ones(10)):
+                print(f"Data verification failed for tensor {i}.")
+                exit()
+        print(f"{args.mode} Data verification passed - {tensors}")
 
     if args.mode != "target":
         agent.remove_remote_agent(peer_name)
