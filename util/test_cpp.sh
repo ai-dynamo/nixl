@@ -36,15 +36,15 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/x86_64-linux-gnu/plugins
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
-./test/nixl/desc_example
-./test/nixl/agent_example
-./test/unit/plugins/ucx/ucx_backend_test
-./test/unit/plugins/ucx/ucx_backend_multi
-./test/unit/utils/serdes/serdes_test
+./bin/desc_example
+./bin/agent_example
+./bin/ucx_backend_test
+./bin/ucx_backend_multi
+./bin/serdes_test
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
-echo "./test/md_streamer disabled"
-echo "./test/nixl_test disabled"
-echo "./test/p2p_test disabled"
-echo "./src/utils/ucx/ucx_worker_test disabled"
+echo "./bin/md_streamer disabled"
+echo "./bin/nixl_test disabled"
+echo "./bin/p2p_test disabled"
+echo "./bin/ucx_worker_test disabled"
 echo "${TEXT_CLEAR}"
