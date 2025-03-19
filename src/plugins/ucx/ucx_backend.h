@@ -32,13 +32,6 @@
 #include "ucx/ucx_utils.h"
 #include "common/list_elem.h"
 
-#ifdef HAVE_CUDA
-
-#include <cuda_runtime.h>
-#include <cufile.h>
-
-#endif
-
 typedef enum {CONN_CHECK, NOTIF_STR, DISCONNECT} ucx_cb_op_t;
 
 struct nixl_ucx_am_hdr {

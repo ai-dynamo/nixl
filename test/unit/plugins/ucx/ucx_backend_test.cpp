@@ -289,7 +289,7 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
                      nixl_meta_dlist_t &req_src_descs,
                      nixl_meta_dlist_t &req_dst_descs,
                      void* addr1, void* addr2, size_t len,
-                     nixl_xfer_op_t op, bool progress_ucx2, bool use_notif)
+                     nixl_xfer_op_t op, bool progress, bool use_notif)
 {
     int ret2;
     nixl_status_t ret3;
@@ -322,7 +322,7 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
 
         while(ret3 == NIXL_IN_PROG) {
             ret3 = ucx1->checkXfer(handle);
-            if(progress_ucx2){
+            if(progress){
                 ucx2->progress();
             }
             assert( ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
@@ -341,6 +341,9 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
         while(ret2 == 0){
             ret3 = ucx2->getNotifs(target_notifs);
             ret2 = target_notifs.size();
+            if(progress){
+                ucx1->progress();
+            }
             assert(ret3 == NIXL_SUCCESS);
         }
 

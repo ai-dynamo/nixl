@@ -15,6 +15,7 @@
 # limitations under the License.
 
 subdir('ucx')
+subdir('ucx_mo')
 
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend
