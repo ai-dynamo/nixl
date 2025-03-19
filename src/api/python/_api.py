@@ -254,9 +254,15 @@ class nixl_agent:
         local_indices,
         remote_xfer_side,
         remote_indices,
-        notif_msg="",
+        notif_msg=None,
         skip_desc_merge=False,
     ):
+        if notif_msg:
+            has_notif = True
+        else:
+            notif_msg = ""
+            has_notif = False
+
         op = self.nixl_ops[operation]
         if op:
             handle = self.agent.makeXferReq(
@@ -266,6 +272,7 @@ class nixl_agent:
                 remote_xfer_side,
                 remote_indices,
                 notif_msg,
+                has_notif,
                 skip_desc_merge,
             )
             if handle == 0:
@@ -281,9 +288,15 @@ class nixl_agent:
         local_descs,
         remote_descs,
         remote_agent,
-        notif_msg="",
+        notif_msg=None,
         xfer_backend=None,
     ):
+        if notif_msg:
+            has_notif = True
+        else:
+            notif_msg = ""
+            has_notif = False
+
         op = self.nixl_ops[operation]
         if op:
             if xfer_backend:
@@ -293,11 +306,12 @@ class nixl_agent:
                     remote_descs,
                     remote_agent,
                     notif_msg,
+                    has_notif,
                     xfer_backend,
                 )
             else:
                 handle = self.agent.createXferReq(
-                    op, local_descs, remote_descs, remote_agent, notif_msg
+                    op, local_descs, remote_descs, remote_agent, notif_msg, has_notif
                 )
 
             if handle == 0:
@@ -306,8 +320,14 @@ class nixl_agent:
         else:
             return None
 
-    def transfer(self, handle, notif_msg=""):
-        status = self.agent.postXferReq(handle, notif_msg)
+    def transfer(self, handle, notif_msg=None):
+        if notif_msg:
+            has_notif = True
+        else:
+            notif_msg = ""
+            has_notif = False
+
+        status = self.agent.postXferReq(handle, notif_msg, has_notif)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
         elif status == nixlBind.NIXL_IN_PROG:

@@ -341,22 +341,22 @@ PYBIND11_MODULE(_bindings, m) {
                                  const nixl_xfer_dlist_t &remote_descs,
                                  const std::string &remote_agent,
                                  const std::string &notif_msg,
+                                 bool  has_notif,
                                  uintptr_t backend) -> uintptr_t {
                     nixlXferReqH* handle = nullptr;
                     nixl_opt_args_t extra_params;
                     if (backend!=0)
                         extra_params.backends.push_back((nixlBackendH*) backend);
-                    if (notif_msg.size()>0) {
-                        extra_params.notifMsg = notif_msg;
-                        extra_params.hasNotif = true;
-                    }
+                    extra_params.hasNotif = has_notif;
+                    extra_params.notifMsg = notif_msg;
+
                     nixl_status_t ret = agent.createXferReq(operation, local_descs, remote_descs, remote_agent, handle, &extra_params);
 
                     throw_nixl_exception(ret);
                     return (uintptr_t) handle;
                 }, py::arg("operation"), py::arg("local_descs"),
                    py::arg("remote_descs"), py::arg("remote_agent"),
-                   py::arg("notif_msg") = std::string(""),
+                   py::arg("notif_msg") = std::string(""), py::arg("has_notif") = false,
                    py::arg("backend") = ((uintptr_t) nullptr))
         .def("queryXferBackend", [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {
                     nixlBackendH* handle = nullptr;
@@ -381,14 +381,14 @@ PYBIND11_MODULE(_bindings, m) {
                                uintptr_t remote_side,
                                const std::vector<int> &remote_indices,
                                const std::string &notif_msg,
+                               bool has_notif,
                                bool skip_desc_merge) -> uintptr_t {
                     nixlXferReqH* handle = nullptr;
                     nixl_opt_args_t extra_params;
-                    if (notif_msg.size()>0) {
-                        extra_params.notifMsg = notif_msg;
-                        extra_params.hasNotif = true;
-                    }
+                    extra_params.hasNotif = has_notif;
+                    extra_params.notifMsg = notif_msg;
                     extra_params.skipDescMerge = skip_desc_merge;
+
                     throw_nixl_exception(agent.makeXferReq(operation,
                                                            (nixlDlistH*) local_side, local_indices,
                                                            (nixlDlistH*) remote_side, remote_indices,
@@ -398,20 +398,19 @@ PYBIND11_MODULE(_bindings, m) {
                 }, py::arg("operation"), py::arg("local_side"),
                    py::arg("local_indices"), py::arg("remote_side"),
                    py::arg("remote_indices"), py::arg("notif_msg") = std::string(""),
-                   py::arg("skip_desc_merg") = false)
-        .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh, std::string notif_msg) -> nixl_status_t {
+                   py::arg("has_notif") = false, py::arg("skip_desc_merg") = false)
+        .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh, std::string notif_msg, bool has_notif) -> nixl_status_t {
                     nixl_opt_args_t extra_params;
                     nixl_status_t ret;
-                    if (notif_msg.size()>0) {
-                        extra_params.notifMsg = notif_msg;
-                        extra_params.hasNotif = true;
-                        ret = agent.postXferReq((nixlXferReqH*) reqh, &extra_params);
-                    } else {
-                        ret = agent.postXferReq((nixlXferReqH*) reqh);
-                    }
+
+                    extra_params.notifMsg = notif_msg;
+                    extra_params.hasNotif = has_notif;
+
+                    ret = agent.postXferReq((nixlXferReqH*) reqh, &extra_params);
                     throw_nixl_exception(ret);
                     return ret;
-                }, py::arg("reqh"), py::arg("notif_msg") = std::string(""))
+                }, py::arg("reqh"), py::arg("notif_msg") = std::string(""),
+                   py::arg("has_notif") = false)
         .def("getXferStatus", [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                     nixl_status_t ret = agent.getXferStatus((nixlXferReqH*) reqh);
                     throw_nixl_exception(ret);
