@@ -31,7 +31,7 @@ repos:
         types_or: [python, cython]
 
   - repo: https://github.com/PyCQA/flake8
-    rev: 5.0.4
+    rev: 7.1.2
     hooks:
       - id: flake8
         args: ["--max-line-length=88", "--select=C,E,F,W,B,B950", "--extend-ignore=E203,E501"]

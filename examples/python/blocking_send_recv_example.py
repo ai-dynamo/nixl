@@ -26,9 +26,14 @@ from nixl._api import nixl_agent
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str, required=True)
-    parser.add_argument("--peer_ip", type=str, required=True)
-    parser.add_argument("--mode", type=str, default="initiator")
-    parser.add_argument("--peer_port", type=int, default=5555)
+    parser.add_argument("--zmq_ip", type=str, required=True)
+    parser.add_argument("--zmq_port", type=int, default=5555)
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="initiator",
+        help="Local IP in target, peer IP (target's) in initiator",
+    )
     return parser.parse_args()
 
 
@@ -38,11 +43,20 @@ if __name__ == "__main__":
     # zmq as side channel
     _ctx = zmq.Context()
     _socket = _ctx.socket(zmq.PAIR)
-    _socket.connect(f"tcp: //{args.peer_ip}: {args.peer_port}")
+    connect_str = f"tcp://{args.zmq_ip}:{args.zmq_port}"
+
+    if args.mode == "target":
+        _socket.bind(connect_str)
+    else:
+        _socket.connect(connect_str)
 
     # Allocate memory and register with NIXL
     agent = nixl_agent(args.name, None)
-    tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]
+    if args.mode == "target":
+        tensors = [torch.ones(10, dtype=torch.float32) for _ in range(2)]
+    else:
+        tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]
+    print(f"{args.mode} Tensors: {tensors}")
 
     reg_descs = agent.register_memory(tensors)
     if not reg_descs:  # Same as reg_descs if successful
@@ -57,10 +71,10 @@ if __name__ == "__main__":
             exit()
 
         _socket.send(meta)
-        peer_name = _socket.recv()
+        peer_name = _socket.recv_string()
     else:
         remote_meta = _socket.recv()
-        _socket.send(args.name)  # We just need the name, not full meta
+        _socket.send_string(args.name)  # We just need the name, not full meta
 
         peer_name = agent.add_remote_agent(remote_meta)
         if not peer_name:
@@ -71,7 +85,7 @@ if __name__ == "__main__":
     if args.mode == "target":
         # If desired, can use send_notif instead. Also indicate
         # the notification that is expected to be received.
-        targer_descs = reg_descs
+        targer_descs = reg_descs.trim()
         _socket.send(agent.get_serialized_descs(targer_descs))
         # For now the notification is just UUID, could be any python bytes.
         # Also can have more than UUID, and check_remote_xfer_done returns
@@ -82,7 +96,8 @@ if __name__ == "__main__":
         # If send_notif is used, get_new_notifs should listen for it,
         # or directly calling check_remote_xfer_done
         targer_descs = agent.deserialize_descs(_socket.recv())
-        initiator_descs = reg_descs
+        initiator_descs = reg_descs.trim()
+
         xfer_handle = agent.initialize_xfer(
             "READ", initiator_descs, targer_descs, peer_name, "UUID"
         )
@@ -90,11 +105,10 @@ if __name__ == "__main__":
             print("Creating transfer failed.")
             exit()
 
-        xfer_handle = agent.transfer(xfer_handle)
-        if not xfer_handle:
+        state = agent.transfer(xfer_handle)
+        if state == "ERR":
             print("Posting transfer failed.")
             exit()
-
         while True:
             state = agent.check_xfer_state(xfer_handle)
             if state == "ERR":
@@ -102,6 +116,13 @@ if __name__ == "__main__":
                 exit()
             elif state == "DONE":
                 break
+
+        # Verify data after read
+        for i, tensor in enumerate(tensors):
+            if not torch.allclose(tensor, torch.ones(10)):
+                print(f"Data verification failed for tensor {i}.")
+                exit()
+        print(f"{args.mode} Data verification passed - {tensors}")
 
     if args.mode != "target":
         agent.remove_remote_agent(peer_name)
