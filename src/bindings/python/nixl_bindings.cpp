@@ -347,6 +347,9 @@ PYBIND11_MODULE(_bindings, m) {
                     nixl_opt_args_t extra_params;
                     if (backend!=0)
                         extra_params.backends.push_back((nixlBackendH*) backend);
+
+                    if(notif_msg.size() > 0) has_notif = true;
+
                     extra_params.hasNotif = has_notif;
                     extra_params.notifMsg = notif_msg;
 
@@ -385,6 +388,9 @@ PYBIND11_MODULE(_bindings, m) {
                                bool skip_desc_merge) -> uintptr_t {
                     nixlXferReqH* handle = nullptr;
                     nixl_opt_args_t extra_params;
+
+                    if(notif_msg.size() > 0) has_notif = true;
+
                     extra_params.hasNotif = has_notif;
                     extra_params.notifMsg = notif_msg;
                     extra_params.skipDescMerge = skip_desc_merge;
@@ -403,10 +409,14 @@ PYBIND11_MODULE(_bindings, m) {
                     nixl_opt_args_t extra_params;
                     nixl_status_t ret;
 
-                    extra_params.notifMsg = notif_msg;
-                    extra_params.hasNotif = has_notif;
+                    if(notif_msg.size() > 0 || has_notif) {
+                        extra_params.notifMsg = notif_msg;
+                        extra_params.hasNotif = has_notif;
 
-                    ret = agent.postXferReq((nixlXferReqH*) reqh, &extra_params);
+                        ret = agent.postXferReq((nixlXferReqH*) reqh, &extra_params);
+                    } else
+                        ret = agent.postXferReq((nixlXferReqH*) reqh);
+
                     throw_nixl_exception(ret);
                     return ret;
                 }, py::arg("reqh"), py::arg("notif_msg") = std::string(""),

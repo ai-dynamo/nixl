@@ -374,7 +374,7 @@ class nixl_agent:
         message = None
         if remote_agent_name in self.notifs:
             for msg in self.notifs[remote_agent_name]:
-                if lookup_msg in msg:
+                if lookup_msg == msg:
                     message = msg
                     break
         if message:
