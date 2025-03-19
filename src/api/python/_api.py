@@ -95,7 +95,7 @@ class nixl_agent:
             "READ": nixlBind.NIXL_READ,
         }
 
-        print("Initializied NIXL agent:", agent_name)
+        print("Initialized NIXL agent:", agent_name)
 
     def get_plugin_list(self):
         return self.plugin_list
