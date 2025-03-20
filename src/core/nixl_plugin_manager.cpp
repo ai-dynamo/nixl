@@ -173,7 +173,7 @@ void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
 nixlPluginManager::nixlPluginManager() {
 #ifdef NIXL_USE_PLUGIN_FILE
     std::string plugin_file = NIXL_USE_PLUGIN_FILE;
-    if (!plugin_file.empty()) {
+    if (access(plugin_file.c_str(), F_OK) == 0) {
         loadPluginsFromList(plugin_file);
     }
 #endif
@@ -327,6 +327,11 @@ void nixlPluginManager::registerBuiltinPlugins() {
     #ifdef STATIC_PLUGIN_UCX
         extern nixlBackendPlugin* createStaticUcxPlugin();
         registerStaticPlugin("UCX", createStaticUcxPlugin);
+    #endif
+
+    #ifdef STATIC_PLUGIN_UCX_MO
+        extern nixlBackendPlugin* createStaticUcxMoPlugin();
+        registerStaticPlugin("UCX_MO", createStaticUcxMoPlugin);
     #endif
 
     #ifdef STATIC_PLUGIN_GDS
