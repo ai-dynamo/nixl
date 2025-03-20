@@ -218,7 +218,7 @@ nixl_status_t nixlRemoteSection::addDescList (
     // Less checks than LocalSection, as it's private and called by loadRemoteData
     // In RemoteSection, if we support updates, value for a key gets overwritten
     // Without it, its corrupt data, we keep the last option without raising an error
-    nixl_mem_t     nixl_mem     = mem_elms.getType();
+    nixl_mem_t nixl_mem   = mem_elms.getType();
     section_key_t sec_key = std::make_pair(nixl_mem, backend);
     if (sectionMap.count(sec_key) == 0)
         sectionMap[sec_key] = new nixl_meta_dlist_t(

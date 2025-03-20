@@ -381,8 +381,13 @@ nixlAgent::prepXferDlist (const std::string &remote_agent,
             return NIXL_ERR_NOT_FOUND;
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        backend_set = data->memorySection.queryBackends(
-                                          descs.getType());
+        if (remote_agent.size() != 0)
+          backend_set = data->remoteSections[remote_agent]->
+                              queryBackends(descs.getType());
+        else
+          backend_set = data->memorySection.
+                              queryBackends(descs.getType());
+
         if (!backend_set || backend_set->empty())
             return NIXL_ERR_NOT_FOUND;
     } else {
@@ -392,6 +397,7 @@ nixlAgent::prepXferDlist (const std::string &remote_agent,
     }
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
+
     nixlDlistH *handle = new nixlDlistH;
     if (remote_agent.size()==0) { // Local descriptor list
         handle->isLocal     = true;
@@ -593,9 +599,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlXferReqH* &req_hndl,
                          const nixl_opt_args_t* extra_params) const {
-    nixl_status_t     ret;
+    nixl_status_t     ret1, ret2;
     nixl_opt_b_args_t opt_args;
-    backend_set_t*    backend_set;
+    backend_set_t*    backend_set = new backend_set_t();
 
     req_hndl = nullptr;
 
@@ -610,19 +616,29 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        backend_set = data->memorySection.queryBackends(
-                                          local_descs.getType());
-        if (!backend_set || backend_set->empty())
+        // Finding backends that support the corresponding memories
+        // locally and remotely, and find the common ones.
+        backend_set_t* local_set =
+            data->memorySection.queryBackends(local_descs.getType());
+        backend_set_t* remote_set =
+            data->remoteSections[remote_agent]->queryBackends(
+                                                remote_descs.getType());
+        if (!local_set || !remote_set) {
+            delete backend_set;
             return NIXL_ERR_NOT_FOUND;
+        }
+
+        for (auto & elm : *local_set)
+            if (remote_set->count(elm) != 0)
+                backend_set->insert(elm);
+
+        if (backend_set->empty()) {
+            delete backend_set;
+            return NIXL_ERR_NOT_FOUND;
+        }
     } else {
-        backend_set = new backend_set_t();
         for (auto & elm : extra_params->backends)
             backend_set->insert(elm->engine);
-    }
-
-    if (extra_params && extra_params->hasNotif){
-        opt_args.notifMsg = extra_params->notifMsg;
-        opt_args.hasNotif = true;
     }
 
     // TODO: when central KV is supported, add a call to fetchRemoteMD
@@ -635,27 +651,38 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                      local_descs.isUnifiedAddr(),
                                      local_descs.isSorted());
 
-    // Decision making based on supported local backends for this
-    // memory type (backend_set), supported remote backends for remote
-    // memory type (data->remoteBackends[remote_agent]).
+    handle->targetDescs    = new nixl_meta_dlist_t (
+                                     remote_descs.getType(),
+                                     remote_descs.isUnifiedAddr(),
+                                     remote_descs.isSorted());
+
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
     for (auto & backend : *backend_set) {
         // If populate fails, it clears the resp before return
-        std::cout << "Looping over backends " << backend << "\n";
-        ret = data->memorySection.populate(local_descs, backend,
-                                           *handle->initiatorDescs);
-        std::cout << "After populate \n";
-        if (ret == NIXL_SUCCESS) {
+        ret1 = data->memorySection.populate(
+                     local_descs, backend, *handle->initiatorDescs);
+        ret2 = data->remoteSections[remote_agent]->populate(
+                     remote_descs, backend, *handle->targetDescs);
+
+        if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
+            // For Logging:
+            // std::cout << "Selected backend: " << backend->getType() << "\n";
             handle->engine = backend;
             break;
-            std::cout << "SUCCESS! \n";
         }
     }
+
+    delete backend_set;
 
     if (!handle->engine) {
         delete handle;
         return NIXL_ERR_NOT_FOUND;
+    }
+
+    if (extra_params && extra_params->hasNotif) {
+        opt_args.notifMsg = extra_params->notifMsg;
+        opt_args.hasNotif = true;
     }
 
     if (opt_args.hasNotif && (!handle->engine->supportsNotif())) {
@@ -663,34 +690,21 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    handle->targetDescs = new nixl_meta_dlist_t (
-                                  remote_descs.getType(),
-                                  remote_descs.isUnifiedAddr(),
-                                  remote_descs.isSorted());
-
-    // Based on the decided local backend, we check the remote counterpart
-    ret = data->remoteSections[remote_agent]->populate(remote_descs,
-               handle->engine, *handle->targetDescs);
-    if (ret!=NIXL_SUCCESS) {
-        delete handle;
-        return ret;
-    }
-
     handle->remoteAgent = remote_agent;
-    handle->notifMsg    = opt_args.notifMsg;
-    handle->hasNotif    = opt_args.hasNotif;
     handle->backendOp   = operation;
     handle->status      = NIXL_ERR_NOT_POSTED;
+    handle->notifMsg    = opt_args.notifMsg;
+    handle->hasNotif    = opt_args.hasNotif;
 
-    ret = handle->engine->prepXfer (handle->backendOp,
-                                    *handle->initiatorDescs,
-                                    *handle->targetDescs,
-                                    handle->remoteAgent,
-                                    handle->backendHandle,
-                                    &opt_args);
-    if (ret != NIXL_SUCCESS) {
+    ret1 = handle->engine->prepXfer (handle->backendOp,
+                                     *handle->initiatorDescs,
+                                     *handle->targetDescs,
+                                     handle->remoteAgent,
+                                     handle->backendHandle,
+                                     &opt_args);
+    if (ret1 != NIXL_SUCCESS) {
         delete handle;
-        return ret;
+        return ret1;
     }
 
     req_hndl = handle;
