@@ -57,7 +57,7 @@ int main(int argc, char *argv[])
         nixl_b_params_t         params;
         nixlBlobDesc            buf[NUM_TRANSFERS];
         nixlBlobDesc            ftrans[NUM_TRANSFERS];
-        nixlBackendH            *gds;
+        nixlBackendH            *gds, *ucx;
 
         nixl_reg_dlist_t        vram_for_gds(VRAM_SEG);
         nixl_reg_dlist_t        file_for_gds(FILE_SEG, false);
@@ -67,10 +67,9 @@ int main(int argc, char *argv[])
         std::cout << "Starting Agent for " << "GDS Test Agent" << "\n";
         nixlAgent agent("GDSTester", cfg);
 
+        // To also test the decision making of createXferReq
+        agent.createBackend("UCX", params, ucx);
         agent.createBackend("GDS", params, gds);
-
-        nixl_opt_args_t extra_params;
-        extra_params.backends.push_back(gds);
 
         if (gds == nullptr) {
             std::cerr <<"Error creating a new backend\n";
@@ -117,14 +116,15 @@ int main(int argc, char *argv[])
             ftrans[i].devId = fd[i];
             file_for_gds.addDesc(ftrans[i]);
         }
-        agent.registerMem(file_for_gds, &extra_params);
-        agent.registerMem(vram_for_gds, &extra_params);
+
+        agent.registerMem(file_for_gds);
+        agent.registerMem(vram_for_gds);
 
         nixl_xfer_dlist_t vram_for_gds_list = vram_for_gds.trim();
         nixl_xfer_dlist_t file_for_gds_list = file_for_gds.trim();
 
         ret = agent.createXferReq(NIXL_WRITE, vram_for_gds_list, file_for_gds_list,
-                                  "GDSTester", treq, &extra_params);
+                                  "GDSTester", treq);
         if (ret != NIXL_SUCCESS) {
             std::cerr << "Error creating transfer request\n" << ret;
             exit(-1);
@@ -143,8 +143,8 @@ int main(int argc, char *argv[])
         agent.releaseXferReq(treq);
 
         std::cout <<"Cleanup.. \n";
-        agent.deregisterMem(vram_for_gds, &extra_params);
-        agent.deregisterMem(file_for_gds, &extra_params);
+        agent.deregisterMem(vram_for_gds);
+        agent.deregisterMem(file_for_gds);
 
         return 0;
 }
