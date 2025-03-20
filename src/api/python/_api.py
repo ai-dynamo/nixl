@@ -363,7 +363,7 @@ class nixl_agent:
 
     # Extra notification APIs
     def send_notif(self, remote_agent_name, notif_msg):
-        self.agent.genNotif(remote_agent_name, notif_msg)
+        self.agent.genNotif(remote_agent_name, notif_msg, self.backends["UCX"])
 
     def get_agent_metadata(self):
         return self.agent.getLocalMD()
@@ -408,8 +408,9 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i] = (base_addr, region_len, gpu_id)
+            mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
             new_descs = nixlBind.nixlXferDList(
-                self.nixl_mems[str(tensor_type)], dlist, is_unified_addr, is_sorted
+                self.nixl_mems[mem_type], dlist, is_unified_addr, is_sorted
             )
         elif isinstance(descs, nixlBind.nixlRegDList):
             print("RegList type detected for transfer, please use XferList")
@@ -450,8 +451,9 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i] = (base_addr, region_len, gpu_id, "")
+            mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
             new_descs = nixlBind.nixlRegDList(
-                self.nixl_mems[str(tensor_type)], dlist, is_unified_addr, is_sorted
+                self.nixl_mems[mem_type], dlist, is_unified_addr, is_sorted
             )
         elif isinstance(descs, nixlBind.nixlXferDList):
             print("XferList type detected for registration, please use RegList")
