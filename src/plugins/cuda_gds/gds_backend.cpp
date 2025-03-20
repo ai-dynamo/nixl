@@ -338,15 +338,14 @@ nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle)
     }
     // Cleanup even if one batch fails
     if (status < 0) {
-       for (auto it = gds_handle->batch_io_list.begin();
-                 it != gds_handle->batch_io_list.end();
-                 it++) {
-               nixlGdsIOBatch *batch_ios = *it;
-               batch_ios->cancelBatch();
-               batch_ios->destroyBatch();
-               delete(batch_ios);
-               it = gds_handle->batch_io_list.erase(it);
-        }
+       auto it = gds_handle->batch_io_list.begin();
+       while (it != gds_handle->batch_io_list.end()) {
+           nixlGdsIOBatch *batch_ios = *it;
+           batch_ios->cancelBatch();
+           batch_ios->destroyBatch();
+           delete batch_ios;
+           it = gds_handle->batch_io_list.erase(it);
+       }
     }
     return status;
 }
