@@ -21,26 +21,21 @@
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
 class nixlXferReqH {
     private:
-        nixlBackendEngine* engine;
-        nixlBackendReqH*   backendHandle;
+        nixlBackendEngine* engine         = nullptr;
+        nixlBackendReqH*   backendHandle  = nullptr;
 
-        nixl_meta_dlist_t* initiatorDescs;
-        nixl_meta_dlist_t* targetDescs;
+        nixl_meta_dlist_t* initiatorDescs = nullptr;
+        nixl_meta_dlist_t* targetDescs    = nullptr;
 
         std::string        remoteAgent;
         nixl_blob_t        notifMsg;
-        bool               hasNotif;
+        bool               hasNotif       = false;
 
         nixl_xfer_op_t     backendOp;
         nixl_status_t      status;
 
     public:
-        inline nixlXferReqH() {
-            initiatorDescs = nullptr;
-            targetDescs    = nullptr;
-            engine         = nullptr;
-            backendHandle  = nullptr;
-        }
+        inline nixlXferReqH() { }
 
         inline ~nixlXferReqH() {
             // delete checks for nullptr itself
