@@ -218,9 +218,9 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args)
 {
-    void                *addr;
-    size_t              size;
-    size_t              offset;
+    void                *addr = NULL;
+    size_t              size = 0;
+    size_t              offset = 0;
     int                 rc = 0;
     size_t              buf_cnt  = local.descCount();
     size_t              file_cnt = remote.descCount();
