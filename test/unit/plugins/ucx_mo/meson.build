@@ -18,14 +18,15 @@ ucx_mo_backend_dep = declare_dependency(link_with: ucx_mo_backend_lib, include_d
 
 if cuda_dep.found()
     cuda_dependencies = [cuda_dep]
-    cpp_args = '-DUSE_VRAM'
+    cpp_args = '-DHAVE_CUDA'
 else
     cuda_dependencies = []
-    cpp_args = '-UUSE_VRAM'
+    cpp_args = '-UHAVE_CUDA'
 endif
 
 ucx_backend_test = executable('ucx_mo_backend_test',
         'ucx_mo_backend_test.cpp',
         dependencies: [nixl_dep, nixl_infra, ucx_backend_dep, ucx_mo_backend_dep, ucx_dep] + cuda_dependencies,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        cpp_args : cpp_args,
         install: true)

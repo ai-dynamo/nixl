@@ -149,8 +149,7 @@ nixl_mem_list_t
 nixlUcxMoEngine::getSupportedMems () const {
     nixl_mem_list_t mems;
     mems.push_back(DRAM_SEG);
-    // TODO: test and open this feature in a follow-up
-    //mems.push_back(VRAM_SEG);
+    mems.push_back(VRAM_SEG);
     return mems;
 }
 

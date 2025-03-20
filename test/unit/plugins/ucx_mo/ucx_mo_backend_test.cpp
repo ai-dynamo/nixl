@@ -23,9 +23,10 @@
 
 using namespace std;
 
-#ifdef USE_VRAM
+#ifdef HAVE_CUDA
 
 #include <cuda_runtime.h>
+#include <cuda.h>
 
 int gpu_id = 0;
 
@@ -99,7 +100,7 @@ void releaseEngine(nixlBackendEngine *ucx)
     delete ucx;
 }
 
-#ifdef USE_VRAM
+#ifdef HAVE_CUDA
 
 static int cudaQueryAddr(void *address, bool &is_dev,
                          CUdevice &dev, CUcontext &ctx)
@@ -137,7 +138,7 @@ void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
         //addr = calloc(1, len);
         posix_memalign(&addr, 4096, len);
         break;
-#ifdef USE_VRAM
+#ifdef HAVE_CUDA
     case VRAM_SEG:{
         bool is_dev;
         CUdevice dev;
@@ -164,7 +165,7 @@ void releaseBuffer(nixl_mem_t mem_type, int dev_id, void* &addr)
     case DRAM_SEG:
         free(addr);
         break;
-#ifdef USE_VRAM
+#ifdef HAVE_CUDA
     case VRAM_SEG:
         checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
         checkCudaError(cudaFree(addr), "Failed to allocate CUDA buffer 0");
@@ -182,7 +183,7 @@ void doMemset(nixl_mem_t mem_type, int dev_id, void *addr, char byte, size_t len
     case DRAM_SEG:
         memset(addr, byte, len);
         break;
-#ifdef USE_VRAM
+#ifdef HAVE_CUDA
     case VRAM_SEG:
         checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
         checkCudaError(cudaMemset(addr, byte, len), "Failed to memset");
@@ -200,7 +201,7 @@ void *getValidationPtr(nixl_mem_t mem_type, void *addr, size_t len)
     case DRAM_SEG:
         return addr;
         break;
-#ifdef USE_VRAM
+#ifdef HAVE_CUDA
     case VRAM_SEG: {
         void *ptr = calloc(len, 1);
         checkCudaError(cudaMemcpy(ptr, addr, len, cudaMemcpyDeviceToHost), "Failed to memcpy");
@@ -218,7 +219,7 @@ void *releaseValidationPtr(nixl_mem_t mem_type, void *addr)
     switch(mem_type) {
     case DRAM_SEG:
         break;
-#ifdef USE_VRAM
+#ifdef HAVE_CUDA
     case VRAM_SEG:
         free(addr);
         break;
@@ -541,7 +542,7 @@ int main()
 #define NUM_WORKERS 8
 
 int ndevices = NUM_WORKERS;
-#ifdef USE_VRAM
+#ifdef HAVE_CUDA
     int n_vram_dev;
     cudaGetDeviceCount(&n_vram_dev);
     std::cout << "Detected " << n_vram_dev << " CUDA devices" << std::endl;
@@ -562,7 +563,7 @@ int ndevices = NUM_WORKERS;
                                 ucx[i][0], DRAM_SEG, ndevices, dev_distr_rr,
                                 ucx[i][1], DRAM_SEG, ndevices, dev_distr_blk);
 
-#ifdef USE_VRAM
+#ifdef HAVE_CUDA
         if (n_vram_dev) {
             test_inter_agent_transfer(thread_on[i],
                                     ucx[i][0], VRAM_SEG, n_vram_dev, dev_distr_rr,
@@ -572,10 +573,10 @@ int ndevices = NUM_WORKERS;
                                     ucx[i][1], VRAM_SEG, n_vram_dev, dev_distr_blk);
             test_inter_agent_transfer(thread_on[i],
                                     ucx[i][0], VRAM_SEG, n_vram_dev, dev_distr_rr,
-                                    ucx[i][1], DRAM_SEG, n_vram_dev, dev_distr_bkl);
+                                    ucx[i][1], DRAM_SEG, n_vram_dev, dev_distr_blk);
             test_inter_agent_transfer(thread_on[i],
                                     ucx[i][0], DRAM_SEG, n_vram_dev, dev_distr_rr,
-                                    ucx[i][1], VRAM_SEG, n_vram_dev, dev_distr_bkl);
+                                    ucx[i][1], VRAM_SEG, n_vram_dev, dev_distr_blk);
         }
 #endif
     }
