@@ -43,7 +43,7 @@ else
 
     if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
-                    'echo "UCX_MO=' + ucx_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+                    'echo "UCX_MO=' + ucx_mo_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
                     check: true
                 )
     endif

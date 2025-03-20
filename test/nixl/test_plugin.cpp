@@ -91,6 +91,7 @@ int main(int argc, char** argv) {
 
     verify_plugin("UCX", plugin_manager);
     verify_plugin("GDS", plugin_manager);
+    verify_plugin("UCX_MO", plugin_manager);
 
     // List all loaded plugins
     std::cout << "\nLoaded plugins:" << std::endl;
@@ -100,6 +101,7 @@ int main(int argc, char** argv) {
 
     plugin_manager.unloadPlugin("UCX");
     plugin_manager.unloadPlugin("GDS");
+    plugin_manager.unloadPlugin("UCX_MO");
 
     // List all loaded plugins and make sure static plugins are present
     std::cout << "Loaded plugins after unload:" << std::endl;
