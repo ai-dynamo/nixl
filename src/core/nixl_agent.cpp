@@ -382,11 +382,11 @@ nixlAgent::prepXferDlist (const std::string &remote_agent,
 
     if (!extra_params || extra_params->backends.size() == 0) {
         if (remote_agent.size() != 0)
-          backend_set = data->remoteSections[remote_agent]->
-                              queryBackends(descs.getType());
+            backend_set = data->remoteSections[remote_agent]->
+                                queryBackends(descs.getType());
         else
-          backend_set = data->memorySection.
-                              queryBackends(descs.getType());
+            backend_set = data->memorySection.
+                                queryBackends(descs.getType());
 
         if (!backend_set || backend_set->empty())
             return NIXL_ERR_NOT_FOUND;
@@ -816,37 +816,41 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
                      const nixl_opt_args_t* extra_params) {
     notif_list_t    bknd_notif_list;
     nixl_status_t   ret, bad_ret=NIXL_SUCCESS;
-    bool            any_backend = false;
     backend_list_t* backend_list;
 
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->notifEngines;
+        if (backend_list->empty())
+            return NIXL_ERR_BACKEND;
     } else {
         backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
-            backend_list->push_back(elm->engine);
+            if (elm->engine->supportsNotif())
+                backend_list->push_back(elm->engine);
+
+        if (backend_list->empty()) {
+            delete backend_list;
+            return NIXL_ERR_BACKEND;
+        }
     }
 
     // Doing best effort, if any backend errors out we return
     // error but proceed with the rest. We can add metadata about
     // the backend to the msg, but user could put it themselves.
     for (auto & eng: *backend_list) {
-        if (eng->supportsNotif()) {
-            any_backend = true;
-            bknd_notif_list.clear();
-            ret = eng->getNotifs(bknd_notif_list);
-            if (ret < 0)
-                bad_ret=ret;
+        bknd_notif_list.clear();
+        ret = eng->getNotifs(bknd_notif_list);
+        if (ret < 0)
+            bad_ret=ret;
 
-            if (bknd_notif_list.size()==0)
-                continue;
+        if (bknd_notif_list.size() == 0)
+            continue;
 
-            for (auto & elm: bknd_notif_list) {
-                if (notif_map.count(elm.first)==0)
-                    notif_map[elm.first] = std::vector<nixl_blob_t>();
+        for (auto & elm: bknd_notif_list) {
+            if (notif_map.count(elm.first) == 0)
+                notif_map[elm.first] = std::vector<nixl_blob_t>();
 
-                notif_map[elm.first].push_back(elm.second);
-            }
+            notif_map[elm.first].push_back(elm.second);
         }
     }
 
@@ -855,8 +859,6 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
 
     if (bad_ret)
         return bad_ret;
-    else if (!any_backend)
-        return NIXL_ERR_BACKEND;
     else
         return NIXL_SUCCESS;
 }
@@ -871,15 +873,23 @@ nixlAgent::genNotif(const std::string &remote_agent,
 
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->notifEngines;
+        if (backend_list->empty())
+            return NIXL_ERR_BACKEND;
     } else {
         backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
-            backend_list->push_back(elm->engine);
+            if (elm->engine->supportsNotif())
+                backend_list->push_back(elm->engine);
+
+        if (backend_list->empty()) {
+            delete backend_list;
+            return NIXL_ERR_BACKEND;
+        }
     }
 
     for (auto & eng: *backend_list) {
-        if (eng->supportsNotif() &&
-           (data->remoteBackends[remote_agent].count(eng->getType()) != 0)) {
+        if (data->remoteBackends[remote_agent].count(
+                                 eng->getType()) != 0) {
             backend = eng;
             break;
         }
