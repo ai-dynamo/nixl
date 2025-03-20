@@ -15,6 +15,7 @@
 # limitations under the License.
 
 set -e
+set -x
 TEXT_YELLOW="\033[1;33m"
 TEXT_CLEAR="\033[0m"
 
