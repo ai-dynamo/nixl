@@ -15,6 +15,7 @@
 # limitations under the License.
 
 set -e
+set -x
 TEXT_YELLOW="\033[1;33m"
 TEXT_CLEAR="\033[0m"
 
@@ -39,6 +40,7 @@ cd ${INSTALL_DIR}
 ./bin/desc_example
 ./bin/agent_example
 ./bin/ucx_backend_test
+./bin/ucx_mo_backend_test
 ./bin/ucx_backend_multi
 ./bin/serdes_test
 
