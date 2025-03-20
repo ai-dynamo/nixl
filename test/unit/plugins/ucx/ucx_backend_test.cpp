@@ -398,9 +398,9 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t
     std::cout << "Local connection complete\n";
 
     // Number of transfer descriptors
-    int desc_cnt = 16;
+    int desc_cnt = 64;
     // Size of a single descriptor
-    size_t desc_size = 32 * 1024 * 1024;
+    size_t desc_size = 1 * 1024 * 1024;
     size_t len = desc_cnt * desc_size;
 
     void *addr1, *addr2;
@@ -484,9 +484,9 @@ void test_inter_agent_transfer(bool p_thread,
     std::cout << "Synchronous handshake complete\n";
 
     // Number of transfer descriptors
-    int desc_cnt = 16;
+    int desc_cnt = 64;
     // Size of a single descriptor
-    size_t desc_size = 32 * 1024 * 1024;
+    size_t desc_size = 1 * 1024 * 1024;
     size_t len = desc_cnt * desc_size;
 
     void *addr1 = NULL, *addr2 = NULL;
