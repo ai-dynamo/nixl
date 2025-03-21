@@ -47,7 +47,8 @@ NIXL agent is instantiated within inference processes managing one or more GPU d
 A Memory Section is a mixture of address ranges (segments) registered with the agent. NIXL supports multiple segment types, including DRAM, VRAM, NVMe-oF, Object storage, and File. The Memory Section comprise the local information required by the transfer backend engines as well the required details for remote agents to access the corresponding segments.
 
 ### Transfer Backend Interface
-During initialization, each transfer backend must be registered with the transfer agent. This registration process enables the transfer agent to gather sufficient information to determine the most suitable backend for a transfer based on memory section descriptors. It is possible for the same memory location to be registered with multiple backends, and the NIXL agent will select the optimal one based on the source and destination memory types, as well as the available backends on the remote node.
+Each transfer backend must be initialized for the corresponding transfer agent. This process enables the transfer agent to keep track of the available transfer engines.
+Using this information, the most suitable backend for a transfer can be determined based on segment descriptors. For example, it is possible for the same memory location to be registered with multiple backends. In this case, NIXL agent will select the optimal one based on the source and destination memory types, as well as the available backends on the remote node.
 
 ### Metadata Handler
 The Metadata Handler manages the data necessary for establishing data communication between the NIXL segments. This metadata can be exchanged via a side channel or through a centralized metadata server like "etcd" or Redis. The metadata includes connection information for each backend and remote segment identifiers. The metadata shared with remote NIXL agents excludes local information irrelevant on the remote side.
