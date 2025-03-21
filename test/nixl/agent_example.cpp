@@ -155,8 +155,9 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     status = A1->releaseXferReq(reqh2);
     assert (status == NIXL_SUCCESS);
 
-    status = A1->deregisterMem(mem_list1, &extra_params1);
-    assert (status == NIXL_SUCCESS);
+    // Commented out to test auto deregistration
+    // status = A1->deregisterMem(mem_list1, &extra_params1);
+    // assert (status == NIXL_SUCCESS);
     status = A2->deregisterMem(mem_list2, &extra_params2);
     assert (status == NIXL_SUCCESS);
 
@@ -311,10 +312,11 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     status = A1->releaseXferReq(req3);
     assert (status == NIXL_SUCCESS);
 
-    status = A1->deregisterMem(mem_list1, &extra_params1);
-    assert (status == NIXL_SUCCESS);
-    status = A2->deregisterMem(mem_list2, &extra_params2);
-    assert (status == NIXL_SUCCESS);
+    // Commented out to test auto deregistration
+    // status = A1->deregisterMem(mem_list1, &extra_params1);
+    // assert (status == NIXL_SUCCESS);
+    // status = A2->deregisterMem(mem_list2, &extra_params2);
+    // assert (status == NIXL_SUCCESS);
 
     status = A1->releasedDlistH(src_side);
     assert (status == NIXL_SUCCESS);

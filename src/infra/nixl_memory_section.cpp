@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <map>
+#include <iostream>
 #include "nixl.h"
 #include "nixl_descriptors.h"
 #include "mem_section.h"
@@ -166,7 +167,7 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_meta_dlist_t &mem_elms,
         target->remDesc(index);
     }
 
-    if (target->descCount()==0){
+    if (target->descCount()==0) {
         delete target;
         sectionMap.erase(sec_key);
         memToBackend[nixl_mem].erase(backend);
@@ -199,14 +200,23 @@ nixl_status_t nixlLocalSection::serialize(nixlSerDes* serializer) const {
 }
 
 nixlLocalSection::~nixlLocalSection() {
-    for (auto &seg : sectionMap)
-        remDescList(*seg.second, seg.first.second);
+    nixl_meta_dlist_t* m_desc;
+    nixlBackendEngine* eng;
+
+    for (auto &seg : sectionMap) {
+        eng    = seg.first.second;
+        m_desc = seg.second;
+        for (auto & elm : *m_desc)
+            eng->deregisterMem(elm.metadataP);
+        delete m_desc;
+    }
+    // nixlMemSection destructor will clean up the rest
 }
 
 /*** Class nixlRemoteSection implementation ***/
 
 nixlRemoteSection::nixlRemoteSection (const std::string &agent_name) {
-    this->agentName    = agent_name;
+    this->agentName = agent_name;
 }
 
 nixl_status_t nixlRemoteSection::addDescList (
@@ -294,11 +304,11 @@ nixl_status_t nixlRemoteSection::loadLocalData (
 }
 
 nixlRemoteSection::~nixlRemoteSection() {
-    nixl_meta_dlist_t *m_desc;
+    nixl_meta_dlist_t* m_desc;
     nixlBackendEngine* eng;
 
     for (auto &seg : sectionMap) {
-        eng = seg.first.second;
+        eng    = seg.first.second;
         m_desc = seg.second;
         for (auto & elm : *m_desc)
             eng->unloadMD(elm.metadataP);
