@@ -60,7 +60,7 @@ In the optimal mode of operation, the metadata exchange occurs on the control pa
 To support the dynamic nature of inference workloads, metadata caching is leveraged. This approach allows to:
 
 * Avoid fetching the same metadata on each transaction
-* Dynamically add new agents by providing its metadata to the cacheing subsystem of the agents that communicate with it.
+* Dynamically add new agents by providing its metadata to the caching subsystem of the agents that communicate with it.
 * Dynamically exclude an agent by invalidating the caches of the agent that previously interacted with it.
 
 # Example procedure
