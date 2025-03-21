@@ -61,9 +61,13 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :
-                                   name(name), config(cfg) {}
+                                   name(name), config(cfg) {
+        memorySection = new nixlLocalSection();
+}
 
 nixlAgentData::~nixlAgentData() {
+    delete memorySection;
+
     for (auto & elm: remoteSections)
         delete elm.second;
 
@@ -253,14 +257,14 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
         nixlBackendEngine* backend = (*backend_list)[i];
         // remote_self use to be passed to loadLocalData
         nixl_meta_dlist_t remote_self(descs.getType(), descs.isUnifiedAddr(), false);
-        ret = data->memorySection.addDescList(descs, backend, remote_self);
+        ret = data->memorySection->addDescList(descs, backend, remote_self);
         if (ret != NIXL_SUCCESS) {
             nixl_xfer_dlist_t trimmed = descs.trim();
             // deregister with the previous backends
             for (size_t j=0; j<i; ++j) {
-                ret2 = data->memorySection.populate(trimmed, (*backend_list)[j], remote_self);
+                ret2 = data->memorySection->populate(trimmed, (*backend_list)[j], remote_self);
                 if (ret2 == NIXL_SUCCESS)
-                    data->memorySection.remDescList(remote_self, (*backend_list)[j]);
+                    data->memorySection->remDescList(remote_self, (*backend_list)[j]);
             }
             if (extra_params && extra_params->backends.size() > 0)
                 delete backend_list;
@@ -277,9 +281,9 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
                     nixl_xfer_dlist_t trimmed = descs.trim();
                     // deregister with the previous backends
                     for (size_t j=0; j<i; ++j) {
-                        ret2 = data->memorySection.populate(trimmed, (*backend_list)[j], remote_self);
+                        ret2 = data->memorySection->populate(trimmed, (*backend_list)[j], remote_self);
                         if (ret2 == NIXL_SUCCESS)
-                            data->memorySection.remDescList(remote_self, (*backend_list)[j]);
+                            data->memorySection->remDescList(remote_self, (*backend_list)[j]);
                     }
                     if (extra_params && extra_params->backends.size() > 0)
                         delete backend_list;
@@ -305,7 +309,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     nixl_xfer_dlist_t trimmed = descs.trim();
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        backend_set = data->memorySection.queryBackends(
+        backend_set = data->memorySection->queryBackends(
                                           descs.getType());
         if (!backend_set || backend_set->empty())
             return NIXL_ERR_NOT_FOUND;
@@ -324,10 +328,10 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
         // TODO: can use getIndex for exact match before populate
         // Or in case of supporting overlapping registers with splitting,
         // add logic to find each (after todo in addDescList for local sec).
-        ret = data->memorySection.populate(trimmed, backend, resp);
+        ret = data->memorySection->populate(trimmed, backend, resp);
         if (ret != NIXL_SUCCESS)
             bad_ret = ret;
-        ret = data->memorySection.remDescList(resp, backend);
+        ret = data->memorySection->remDescList(resp, backend);
         if (ret != NIXL_SUCCESS)
             bad_ret = ret;
     }
@@ -385,7 +389,7 @@ nixlAgent::prepXferDlist (const std::string &remote_agent,
             backend_set = data->remoteSections[remote_agent]->
                                 queryBackends(descs.getType());
         else
-            backend_set = data->memorySection.
+            backend_set = data->memorySection->
                                 queryBackends(descs.getType());
 
         if (!backend_set || backend_set->empty())
@@ -413,7 +417,7 @@ nixlAgent::prepXferDlist (const std::string &remote_agent,
                                          descs.isUnifiedAddr(),
                                          descs.isSorted());
         if (remote_agent.size()==0)
-            ret = data->memorySection.populate(
+            ret = data->memorySection->populate(
                        descs, backend, *(handle->descs[backend]));
         else
             ret = data->remoteSections[remote_agent]->populate(
@@ -619,7 +623,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         // Finding backends that support the corresponding memories
         // locally and remotely, and find the common ones.
         backend_set_t* local_set =
-            data->memorySection.queryBackends(local_descs.getType());
+            data->memorySection->queryBackends(local_descs.getType());
         backend_set_t* remote_set =
             data->remoteSections[remote_agent]->queryBackends(
                                                 remote_descs.getType());
@@ -660,7 +664,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // preference list or more exhaustive search.
     for (auto & backend : *backend_set) {
         // If populate fails, it clears the resp before return
-        ret1 = data->memorySection.populate(
+        ret1 = data->memorySection->populate(
                      local_descs, backend, *handle->initiatorDescs);
         ret2 = data->remoteSections[remote_agent]->populate(
                      remote_descs, backend, *handle->targetDescs);
@@ -937,7 +941,7 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
     if(ret)
         return ret;
 
-    ret = data->memorySection.serialize(&sd);
+    ret = data->memorySection->serialize(&sd);
     if(ret)
         return ret;
 
