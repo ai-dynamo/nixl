@@ -54,7 +54,7 @@ class nixlUcxConnection : public nixlBackendConnMD {
 class nixlUcxPrivateMetadata : public nixlBackendMD {
     private:
         nixlUcxMem mem;
-        std::string rkeyStr;
+        nixl_blob_t rkeyStr;
 
     public:
         nixlUcxPrivateMetadata() : nixlBackendMD(true) {
@@ -174,6 +174,11 @@ class nixlUcxEngine : public nixlBackendEngine {
                            size_t header_length, void *data,
                            size_t length,
                            const ucp_am_recv_param_t *param);
+
+        // Memory management helpers
+        nixl_status_t internalMDHelper (const nixl_blob_t &blob,
+                                        const std::string &agent,
+                                        nixlBackendMD* &output);
 
         // Notifications
         static ucs_status_t notifAmCb(void *arg, const void *header,

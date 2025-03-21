@@ -306,6 +306,7 @@ nixlUcxMoEngine::registerMem (const nixlBlobDesc &mem,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    priv->memType = nixl_mem;
     priv->eidx = eidx;
     engines[eidx]->registerMem(mem, nixl_mem, priv->md);
 
@@ -340,29 +341,22 @@ nixlUcxMoEngine::deregisterMem (nixlBackendMD* meta)
     return NIXL_SUCCESS;
 }
 
+// To be cleaned up
 nixl_status_t
-nixlUcxMoEngine::loadLocalMD(nixlBackendMD* input,
-                             nixlBackendMD* &output)
-{
-    // TODO
-    return NIXL_ERR_NOT_FOUND;
-}
-
-nixl_status_t
-nixlUcxMoEngine::loadRemoteMD (const nixlBlobDesc &input,
-                               const nixl_mem_t &nixl_mem,
-                               const string &remote_agent,
-                               nixlBackendMD* &output)
+nixlUcxMoEngine::internalMDHelper (const nixl_blob_t &blob,
+                                   const nixl_mem_t &nixl_mem,
+                                   const std::string &agent,
+                                   nixlBackendMD* &output)
 {
     nixlUcxMoConnection conn;
     nixlSerDes sd;
-    string rkeyStr;
+    nixl_blob_t ucx_blob;
     nixl_status_t status;
     nixlBlobDesc input_int;
 
     nixlUcxMoPublicMetadata *md = new nixlUcxMoPublicMetadata;
 
-    auto search = remoteConnMap.find(remote_agent);
+    auto search = remoteConnMap.find(agent);
 
     if(search == remoteConnMap.end()) {
         //TODO: err: remote connection not found
@@ -370,27 +364,28 @@ nixlUcxMoEngine::loadRemoteMD (const nixlBlobDesc &input,
     }
     conn = (nixlUcxMoConnection) search->second;
 
-    status = sd.importStr(input.metaInfo);
+    status = sd.importStr(blob);
 
     ssize_t ret = sd.getBufLen("EngIdx");
     if (ret != sizeof(md->eidx)) {
         return NIXL_ERR_MISMATCH;
     }
+
     status = sd.getBuf("EngIdx", &md->eidx, ret);
     if (status != NIXL_SUCCESS) {
         return status;
     }
 
-    rkeyStr = sd.getStr("RkeyStr");
+    ucx_blob = sd.getStr("RkeyStr");
     if (status != NIXL_SUCCESS) {
         return status;
     }
 
     for (auto &e : engines) {
         nixlBackendMD *int_md;
-        input_int.metaInfo = rkeyStr;
+        input_int.metaInfo = ucx_blob;
         status = e->loadRemoteMD(input_int, nixl_mem,
-                                 getEngName(remote_agent, md->eidx),
+                                 getEngName(agent, md->eidx),
                                  int_md);
         if (status != NIXL_SUCCESS) {
             return status;
@@ -400,6 +395,23 @@ nixlUcxMoEngine::loadRemoteMD (const nixlBlobDesc &input,
 
     output = (nixlBackendMD*)md;
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxMoEngine::loadLocalMD(nixlBackendMD* input,
+                             nixlBackendMD* &output)
+{
+    nixlUcxMoPrivateMetadata* input_md = (nixlUcxMoPrivateMetadata*) input;
+    return internalMDHelper(input_md->rkeyStr, input_md->memType, localAgent, output);
+}
+
+nixl_status_t
+nixlUcxMoEngine::loadRemoteMD (const nixlBlobDesc &input,
+                               const nixl_mem_t &nixl_mem,
+                               const string &remote_agent,
+                               nixlBackendMD* &output)
+{
+    return internalMDHelper(input.metaInfo, nixl_mem, remote_agent, output);
 }
 
 nixl_status_t

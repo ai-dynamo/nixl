@@ -49,7 +49,8 @@ class nixlUcxMoPrivateMetadata : public nixlBackendMD
 private:
     uint32_t eidx;
     nixlBackendMD *md;
-    std::string rkeyStr;
+    nixl_mem_t  memType;
+    nixl_blob_t rkeyStr;
 public:
     nixlUcxMoPrivateMetadata() : nixlBackendMD(true) {
     }
@@ -133,6 +134,11 @@ private:
             }
     };
 
+    // Memory helper
+    nixl_status_t internalMDHelper (const nixl_blob_t &blob,
+                                    const nixl_mem_t &nixl_mem,
+                                    const std::string &agent,
+                                    nixlBackendMD* &output);
 
     // Data transfer
     nixl_status_t retHelper(nixl_status_t ret, nixlBackendEngine *eng,
@@ -143,7 +149,7 @@ public:
     ~nixlUcxMoEngine();
 
     bool supportsRemote () const { return true; }
-    bool supportsLocal () const { return false; }
+    bool supportsLocal () const { return true; }
     bool supportsNotif () const { return true; }
     bool supportsProgTh () const { return pthrOn; }
 

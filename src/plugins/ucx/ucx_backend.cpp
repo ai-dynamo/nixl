@@ -598,54 +598,17 @@ nixl_status_t nixlUcxEngine::getPublicData (const nixlBackendMD* meta,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlUcxEngine::loadLocalMD (nixlBackendMD* input,
-                                          nixlBackendMD* &output) {
-    nixlUcxConnection conn;
-    nixlUcxPrivateMetadata* input_md = (nixlUcxPrivateMetadata*) input;
-    nixlUcxPublicMetadata *md = new nixlUcxPublicMetadata;
-
-    //look up our own name
-    auto search = remoteConnMap.find(localAgent);
-
-    if(search == remoteConnMap.end()) {
-        //TODO: something wrong, local connection should have been established
-        return NIXL_ERR_NOT_FOUND;
-    }
-    conn = (nixlUcxConnection) search->second;
-
-    //directly copy underlying conn struct
-    md->conn = conn;
-
-    size_t size = input_md->rkeyStr.size();
-    char *addr = new char[size];
-    nixlSerDes::_stringToBytes(addr, input_md->rkeyStr, size);
-
-    int ret = uw->rkeyImport(conn.ep, addr, size, md->rkey);
-    if (ret) {
-        // TODO: error out. Should we indicate which desc failed or unroll everything prior
-        return NIXL_ERR_BACKEND;
-    }
-
-    output = (nixlBackendMD*) md;
-
-    delete[] addr;
-
-    return NIXL_SUCCESS;
-}
 
 // To be cleaned up
-nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
-                                           const nixl_mem_t &nixl_mem,
-                                           const std::string &remote_agent,
-                                           nixlBackendMD* &output) {
-    size_t size = input.metaInfo.size();
-    char *addr = new char[size];
-    int ret;
+nixl_status_t
+nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
+                                 const std::string &agent,
+                                 nixlBackendMD* &output) {
     nixlUcxConnection conn;
-
     nixlUcxPublicMetadata *md = new nixlUcxPublicMetadata;
+     size_t size = blob.size();
 
-    auto search = remoteConnMap.find(remote_agent);
+    auto search = remoteConnMap.find(agent);
 
     if(search == remoteConnMap.end()) {
         //TODO: err: remote connection not found
@@ -653,10 +616,13 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
     }
     conn = (nixlUcxConnection) search->second;
 
-    nixlSerDes::_stringToBytes(addr, input.metaInfo, size);
-
+    //directly copy underlying conn struct
     md->conn = conn;
-    ret = uw->rkeyImport(conn.ep, addr, size, md->rkey);
+
+    char *addr = new char[size];
+    nixlSerDes::_stringToBytes(addr, blob, size);
+
+    int ret = uw->rkeyImport(conn.ep, addr, size, md->rkey);
     if (ret) {
         // TODO: error out. Should we indicate which desc failed or unroll everything prior
         return NIXL_ERR_BACKEND;
@@ -666,6 +632,23 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
     delete[] addr;
 
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::loadLocalMD (nixlBackendMD* input,
+                            nixlBackendMD* &output)
+{
+    nixlUcxPrivateMetadata* input_md = (nixlUcxPrivateMetadata*) input;
+    return internalMDHelper(input_md->rkeyStr, localAgent, output);
+}
+
+// To be cleaned up
+nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
+                                           const nixl_mem_t &nixl_mem,
+                                           const std::string &remote_agent,
+                                           nixlBackendMD* &output)
+{
+    return internalMDHelper(input.metaInfo, remote_agent, output);
 }
 
 nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {

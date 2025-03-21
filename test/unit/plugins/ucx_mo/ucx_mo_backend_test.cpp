@@ -295,6 +295,8 @@ void createRemoteDescs(nixlBackendEngine *src_ucx,
                        nixlBackendEngine *dst_ucx,
                        nixl_meta_dlist_t &dst_descs)
 {
+    bool is_local = (src_ucx == dst_ucx);
+
     for(int i = 0; i < src_descs.descCount(); i++) {
         nixlBlobDesc desc_s;
         nixlMetaDesc desc_m;
@@ -302,10 +304,15 @@ void createRemoteDescs(nixlBackendEngine *src_ucx,
 
         *((nixlBasicDesc*)&desc_s) = (nixlBasicDesc)src_descs[i];
         *((nixlBasicDesc*)&desc_m) = (nixlBasicDesc)src_descs[i];
-        status = src_ucx->getPublicData(src_descs[i].metadataP, desc_s.metaInfo);
-        assert(NIXL_SUCCESS == status);
-        status = dst_ucx->loadRemoteMD (desc_s, src_descs.getType(),
-                                        agent, desc_m.metadataP);
+
+        if (is_local) {
+            status = dst_ucx->loadLocalMD(src_descs[i].metadataP, desc_m.metadataP);
+        } else {
+            status = src_ucx->getPublicData(src_descs[i].metadataP, desc_s.metaInfo);
+            assert(NIXL_SUCCESS == status);
+            status = dst_ucx->loadRemoteMD (desc_s, src_descs.getType(),
+                                            agent, desc_m.metadataP);
+        }
         assert(status == NIXL_SUCCESS);
         dst_descs.addDesc(desc_m);
     }
@@ -409,17 +416,23 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
     cout << "OK" << endl << flush;
 }
 
-void test_inter_agent_transfer(bool p_thread,
+void test_agent_transfer(bool p_thread,
                 nixlBackendEngine *ucx1, nixl_mem_t src_mem_type, int src_dev_cnt, dev_distr_t src_dist_f,
                 nixlBackendEngine *ucx2, nixl_mem_t dst_mem_type, int dst_dev_cnt, dev_distr_t dst_dist_f)
 {
     int iter = 10;
     nixl_status_t status;
+    bool is_local = (ucx1 == ucx2);
+
+    if (is_local) {
+        assert(ucx1->supportsLocal());
+    }
 
     std::cout << std::endl << std::endl;
     std::cout << "****************************************************" << std::endl;
-    std::cout << "    Inter-agent memory transfer test P-Thr=" <<
-                        (p_thread ? "ON" : "OFF") << std::endl;
+    std::cout << ((is_local) ? std::string("IntrA") : std::string("IntEr"))
+              << "-agent memory transfer test P-Thr="
+              << (p_thread ? "ON" : "OFF") << std::endl;
     std::cout << "         (" << memType2Str(src_mem_type) << " -> "
                 << memType2Str(dst_mem_type) << ")" << std::endl;
     std::cout << "****************************************************" << std::endl;
@@ -429,6 +442,7 @@ void test_inter_agent_transfer(bool p_thread,
     // with separate memory regions in DRAM
     std::string agent1("Agent1");
     std::string agent2("Agent2");
+    std::string *agent = &agent2;
 
     // We get the required connection info from UCX to be put on the central
     // location and ask for it for a remote node
@@ -441,7 +455,10 @@ void test_inter_agent_transfer(bool p_thread,
     assert(NIXL_SUCCESS == status);
 
     // We assumed we put them to central location and now receiving it on the other process
-    status = ucx1->loadRemoteConnInfo (agent2, conn_info2);
+    if (is_local) {
+        agent = &agent1;
+    }
+    status = ucx1->loadRemoteConnInfo (*agent, conn_info2);
     assert(NIXL_SUCCESS == status);
 
     // TODO: Causes race condition - investigate conn management implementation
@@ -494,12 +511,11 @@ void test_inter_agent_transfer(bool p_thread,
 
     for(int k = 0; k < iter; k++) {
         std::string test_str("test");
-        std::string tgt_agent("Agent2");
         notif_list_t target_notifs;
 
         cout << "\t gnNotif to Agent2" <<endl;
 
-        ucx1->genNotif(tgt_agent, test_str);
+        ucx1->genNotif(*agent, test_str);
 
         cout << "\t\tChecking notification flow: " << flush;
 
@@ -527,7 +543,7 @@ void test_inter_agent_transfer(bool p_thread,
     destroyLocalDescs(ucx2, ucx2_src_descs);
 
     // Test one-sided disconnect (initiator only)
-    ucx1->disconnect(agent2);
+    ucx1->disconnect(*agent);
 
     // TODO: Causes race condition - investigate conn management implementation
     //ucx2->disconnect(agent1);
@@ -559,24 +575,38 @@ int ndevices = NUM_WORKERS;
     }
 
     for(size_t i = 0; i < THREAD_ON_SIZE; i++) {
-        test_inter_agent_transfer(thread_on[i],
-                                ucx[i][0], DRAM_SEG, ndevices, dev_distr_rr,
-                                ucx[i][1], DRAM_SEG, ndevices, dev_distr_blk);
+        //Test local memory to local memory transfer
+        test_agent_transfer(thread_on[i],
+                            ucx[i][0], DRAM_SEG, ndevices, dev_distr_rr,
+                            ucx[i][0], DRAM_SEG, ndevices, dev_distr_blk);
+#ifdef HAVE_CUDA
+        if (n_vram_dev) {
+            test_agent_transfer(thread_on[i],
+                                ucx[i][0], VRAM_SEG, ndevices, dev_distr_rr,
+                                ucx[i][0], VRAM_SEG, ndevices, dev_distr_blk);
+        }
+#endif
+    }
+
+    for(size_t i = 0; i < THREAD_ON_SIZE; i++) {
+        test_agent_transfer(thread_on[i],
+                            ucx[i][0], DRAM_SEG, ndevices, dev_distr_rr,
+                            ucx[i][1], DRAM_SEG, ndevices, dev_distr_blk);
 
 #ifdef HAVE_CUDA
         if (n_vram_dev) {
-            test_inter_agent_transfer(thread_on[i],
-                                    ucx[i][0], VRAM_SEG, n_vram_dev, dev_distr_rr,
-                                    ucx[i][1], VRAM_SEG, n_vram_dev, dev_distr_blk);
-            test_inter_agent_transfer(thread_on[i],
-                                    ucx[i][0], VRAM_SEG, n_vram_dev, dev_distr_rr,
-                                    ucx[i][1], VRAM_SEG, n_vram_dev, dev_distr_blk);
-            test_inter_agent_transfer(thread_on[i],
-                                    ucx[i][0], VRAM_SEG, n_vram_dev, dev_distr_rr,
-                                    ucx[i][1], DRAM_SEG, n_vram_dev, dev_distr_blk);
-            test_inter_agent_transfer(thread_on[i],
-                                    ucx[i][0], DRAM_SEG, n_vram_dev, dev_distr_rr,
-                                    ucx[i][1], VRAM_SEG, n_vram_dev, dev_distr_blk);
+            test_agent_transfer(thread_on[i],
+                                ucx[i][0], VRAM_SEG, n_vram_dev, dev_distr_rr,
+                                ucx[i][1], VRAM_SEG, n_vram_dev, dev_distr_blk);
+            test_agent_transfer(thread_on[i],
+                                ucx[i][0], VRAM_SEG, n_vram_dev, dev_distr_rr,
+                                ucx[i][1], VRAM_SEG, n_vram_dev, dev_distr_blk);
+            test_agent_transfer(thread_on[i],
+                                ucx[i][0], VRAM_SEG, n_vram_dev, dev_distr_rr,
+                                ucx[i][1], DRAM_SEG, n_vram_dev, dev_distr_blk);
+            test_agent_transfer(thread_on[i],
+                                ucx[i][0], DRAM_SEG, n_vram_dev, dev_distr_rr,
+                                ucx[i][1], VRAM_SEG, n_vram_dev, dev_distr_blk);
         }
 #endif
     }
