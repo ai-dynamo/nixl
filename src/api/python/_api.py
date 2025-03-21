@@ -139,6 +139,10 @@ class nixl_agent:
         self.backend_mems[backend] = mem_types
         self.backend_options[backend] = backend_options
 
+    # For reg_list, it gets a) list of 4 element tuples, b) a tensor, c) a list
+    # of tensors, or d) a reg_dlist from output of get_reg_desc. is given.
+    # The next 3 optional parameters are dlist options, and finally an optional
+    # backend engine can be specified for registration.
     # The returned descriptor object can be used for call to deregister
     def register_memory(
         self,
@@ -176,6 +180,8 @@ class nixl_agent:
             return None
         return reg_descs
 
+    # The output from get_reg_descs (which is later passed to register_memory for
+    # registration) or direct output of register_memory is passed here
     def deregister_memory(self, dereg_list, backend=None):
         # based on backend type and mem_type, figure what deregistrations are needed
         if backend:
@@ -363,6 +369,7 @@ class nixl_agent:
 
     # Extra notification APIs
     def send_notif(self, remote_agent_name, notif_msg):
+        # To be updated when automatic backend selection is supported
         self.agent.genNotif(remote_agent_name, notif_msg, self.backends["UCX"])
 
     def get_agent_metadata(self):
@@ -377,6 +384,9 @@ class nixl_agent:
 
     # 4 methods to create and serialize/deserialize descriptors, provided through Agent
 
+    # For descs, it gets a) list of 3 element tuples, b) a tensor, c) a list
+    # of tensors, or d) passes along if an xfer_dlist is given. The other 3
+    # optional parameters are dlist options.
     def get_xfer_descs(
         self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
     ):
@@ -395,6 +405,19 @@ class nixl_agent:
             else:
                 print("3-tuple list needed for transfer")
                 new_descs = None
+        elif isinstance(descs, torch.Tensor):
+            mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+            base_addr = descs.data_ptr()
+            region_len = descs.numel() * descs.element_size()
+            gpu_id = descs.get_device()
+            if gpu_id == -1:  # DRAM
+                gpu_id = 0
+            new_descs = nixlBind.nixlRegDList(
+                self.nixl_mems[mem_type],
+                [(base_addr, region_len, gpu_id)],
+                is_unified_addr,
+                is_sorted,
+            )
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
             dlist = [(0, 0, 0)] * len(descs)
@@ -420,6 +443,9 @@ class nixl_agent:
 
         return new_descs
 
+    # For descs, it gets a) list of 4 element tuples, b) a tensor, c) a list
+    # of tensors, or d) passes along if an xfer_dlist is given. The other 3
+    # optional parameters are dlist options.
     def get_reg_descs(
         self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
     ):
@@ -438,6 +464,19 @@ class nixl_agent:
             else:
                 print("4-tuple list needed for registration")
                 new_descs = None
+        elif isinstance(descs, torch.Tensor):
+            mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+            base_addr = descs.data_ptr()
+            region_len = descs.numel() * descs.element_size()
+            gpu_id = descs.get_device()
+            if gpu_id == -1:  # DRAM
+                gpu_id = 0
+            new_descs = nixlBind.nixlRegDList(
+                self.nixl_mems[mem_type],
+                [(base_addr, region_len, gpu_id, "")],
+                is_unified_addr,
+                is_sorted,
+            )
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
             dlist = [(0, 0, 0, "")] * len(descs)
