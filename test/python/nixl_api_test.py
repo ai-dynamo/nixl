@@ -115,8 +115,9 @@ if __name__ == "__main__":
     assert local_prep_handle != 0
     assert remote_prep_handle != 0
 
+    # test empty message
     xfer_handle_2 = nixl_agent2.make_prepped_xfer(
-        "WRITE", local_prep_handle, [0, 1], remote_prep_handle, [1, 0], "UUID2"
+        "WRITE", local_prep_handle, [0, 1], remote_prep_handle, [1, 0], ""
     )
     if not local_prep_handle or not remote_prep_handle:
         print("Preparing transfer side handles failed.")
@@ -143,7 +144,7 @@ if __name__ == "__main__":
                 print("Initiator done")
 
         if not target_done:
-            if nixl_agent1.check_remote_xfer_done("initiator", "UUID2"):
+            if nixl_agent1.check_remote_xfer_done("initiator", "") is not None:
                 target_done = True
                 print("Target done")
 
