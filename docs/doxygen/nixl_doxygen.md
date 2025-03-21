@@ -85,7 +85,7 @@ foreach transfer_backend:
 ```
 
 ## Metadata Exchange
-Once backends and memory regions are registered with NIXL, 
+Once backends and memory regions are registered with NIXL,
 the runtime queries the metadata from each agent, either directly or by sending it to a central metadata server. This metadata is necessary for initiator agents to connect to target agents and facilitate data transfers between them. In the example provided, metadata is exchanged directly without a metadata server. However, agent A's metadata can also be sent to agent B if B needs to initiate a transfer to A.
 Following the metadata exchange, which includes connection information for each registered backend, the runtime can proactively call the makeConnection API using the target agent's name if the agents involved in the transfer are known in advance. Otherwise, the connection is established during the first transfer. This functionality is optional and up to the backend to specify what can happen during this stage.
 
