@@ -31,7 +31,7 @@
  */
 class nixlAgent {
     private:
-        //!< The stored private agent metadata for nixlAgent
+        /** @var  data The stored private agent metadata for nixlAgent */
         nixlAgentData* data;
 
     public:
