@@ -44,7 +44,7 @@ class nixlAgent {
         nixlAgent (const std::string &name,
                    const nixlAgentConfig &cfg);
         /**
-         * @brief Destructor for nixAgent object
+         * @brief Destructor for nixlAgent object
          */
         ~nixlAgent ();
 
@@ -61,6 +61,7 @@ class nixlAgent {
          * @param type   Provides the backend type
          * @param mems   List of memory types for nixl
          * @param params Plugin backend specific parameters for nixl Backend
+         * @return nixl_status_t    Value is returned after the call
          */
         nixl_status_t
         getPluginParams (const nixl_backend_t &type,
@@ -71,6 +72,7 @@ class nixlAgent {
          * @param backend   Provides the backend type
          * @param mems      List of memory types for nixl
          * @param params    Plugin backend specific parameters for nixl Backend
+         * @return nixl_status_t    Value is returned after the call
          */
         nixl_status_t
         getBackendParams (const nixlBackendH* backend,
@@ -82,6 +84,7 @@ class nixlAgent {
          * @param type         Provides th backend type
          * @param params       Plugin backend specific parameters for nixl Backend
          * @param backend      Backend handle for NIXL
+         * @return nixl_status_t    Value is returned after the call
          */
         nixl_status_t
         createBackend (const nixl_backend_t &type,
@@ -92,6 +95,7 @@ class nixlAgent {
          *        (via extra_params), the registration is limited to the specified backends.
          * @param descs        descriptor list for registering buffers
          * @param extra_params Optional additional parameters required for registering memory
+         * @return nixl_status_t    Value is returned after the call
          */
         nixl_status_t
         registerMem (const nixl_reg_dlist_t &descs,
@@ -102,6 +106,7 @@ class nixlAgent {
          *        (via extra_params), the registration is limited to the specified backends.
          * @param descs        descriptor list for registering buffers
          * @param extra_params Optional additional parameters required for registering memory
+         * @return nixl_status_t    Value is returned after the call
          */
         nixl_status_t
         deregisterMem (const nixl_reg_dlist_t &descs,
@@ -176,6 +181,9 @@ class nixlAgent {
          *	      2. A CreateXfer:
          * 		 createXferReq(NIXL_WRITE, local_desc, remote_desc,
          *                             "Agent-remote/self", req_hndl)
+         *
+         *           For the createXfer case, if the user is reusing transfer entries there is repeated computation 
+         *           for validity checks and pre-processing, so makeXferReq is better in this case.
          * Optionally, a list of backends in extra_params can be used to define a
          * subset of backends to be searched through, in the order of preference.
          * @param  operation           Operation selection for NIXL Transfer operations
