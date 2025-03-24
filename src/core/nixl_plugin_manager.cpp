@@ -182,6 +182,7 @@ nixlPluginManager::nixlPluginManager() {
     const char* plugin_dir = getenv("NIXL_PLUGIN_DIR");
     if (plugin_dir) {
         plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);  // Insert at the beginning for priority
+        discoverPluginsFromDir(plugin_dir);
     }
 }
 
@@ -220,6 +221,7 @@ void nixlPluginManager::addPluginDirectory(const std::string& directory) {
 
     // Prioritize the new directory by inserting it at the beginning
     plugin_dirs_.insert(plugin_dirs_.begin(), directory);
+    discoverPluginsFromDir(directory);
 }
 
 std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::string& plugin_name) {
@@ -250,6 +252,7 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
 
         auto plugin_handle = loadPluginFromPath(plugin_path);
         if (plugin_handle) {
+            loaded_plugins_[plugin_name] = plugin_handle;
             return plugin_handle;
         }
     }
@@ -257,6 +260,34 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
     // Failed to load the plugin
     std::cerr << "Failed to load plugin '" << plugin_name << "' from any directory" << std::endl;
     return nullptr;
+}
+
+void nixlPluginManager::discoverPluginsFromDir(const std::string& dirpath) {
+    DIR* dp = opendir(dirpath.c_str());
+    if (!dp) {
+        return;
+    }
+
+    struct dirent* entry;
+    while ((entry = readdir(dp))) {
+        std::string filename = entry->d_name;
+
+        // Check if this is a plugin file
+        if (filename.substr(0, 11) == "libplugin_" &&
+            filename.substr(filename.size() - 3) == ".so") {
+
+            // Extract plugin name
+            std::string plugin_name = filename.substr(11, filename.size() - 14);
+
+            // Try to load the plugin
+            auto plugin = loadPlugin(plugin_name);
+            if (plugin) {
+               std::cout << "Loaded plugin " << plugin_name << std::endl;
+            }
+        }
+    }
+
+    closedir(dp);
 }
 
 void nixlPluginManager::unloadPlugin(const nixl_backend_t& plugin_name) {

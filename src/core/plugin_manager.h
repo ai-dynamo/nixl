@@ -82,6 +82,9 @@ public:
     // Load a specific plugin
     std::shared_ptr<nixlPluginHandle> loadPlugin(const nixl_backend_t& plugin_name);
 
+    // Search a directory for plugins
+    void discoverPluginsFromDir(const std::string& dirpath);
+
     // Unload a plugin
     void unloadPlugin(const nixl_backend_t& plugin_name);
 
