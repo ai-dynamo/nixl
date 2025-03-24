@@ -1,0 +1,56 @@
+import click
+import yaml
+from custom_traffic_perftest import CTPerftest, TrafficPattern
+import logging
+from pathlib import Path
+from dist_utils import dist_utils
+
+@click.group()
+@click.option('--debug/--no-debug', default=False, help="Enable debug logging")
+def cli(debug):
+    """NIXL Performance Testing CLI"""
+    log_level = logging.DEBUG if debug else logging.INFO
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Set level for all existing loggers
+    for logger_name in logging.root.manager.loggerDict:
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(log_level)
+
+@cli.command()
+@click.argument('config_file', type=click.Path(exists=True))
+def ct_perftest(config_file):
+    """Run custom traffic performance test using patterns defined in YAML config"""
+    with open(config_file, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    if 'traffic_patterns' not in config:
+        raise ValueError("Config file must contain 'traffic_patterns' key")
+    
+    patterns = []
+    for tp_config in config['traffic_patterns']:
+        required_fields = ['matrix_file', 'shards', 'mem_type', 'xfer_op']
+        missing_fields = [field for field in required_fields if field not in tp_config]
+        
+        if missing_fields:
+            raise ValueError(f"Traffic pattern missing required fields: {missing_fields}")
+        
+        pattern = TrafficPattern(
+            matrix_file=Path(tp_config['matrix_file']),
+            shards=tp_config['shards'],
+            mem_type=tp_config.get('mem_type', 'dram').lower(),
+            xfer_op=tp_config.get('xfer_op', 'WRITE').upper()
+        )
+        patterns.append(pattern)
+    
+    perftest = CTPerftest(patterns)
+    perftest.run()
+    dist_utils.destroy_dist()
+
+if __name__ == '__main__':
+    cli()
