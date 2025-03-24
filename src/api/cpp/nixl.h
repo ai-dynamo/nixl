@@ -182,7 +182,7 @@ class nixlAgent {
          * 		 createXferReq(NIXL_WRITE, local_desc, remote_desc,
          *                             "Agent-remote/self", req_hndl)
          *
-         *           For the createXfer case, if the user is reusing transfer entries there is repeated computation 
+         *           For the createXfer case, if the user is reusing transfer entries there is repeated computation
          *           for validity checks and pre-processing, so makeXferReq is better in this case.
          * Optionally, a list of backends in extra_params can be used to define a
          * subset of backends to be searched through, in the order of preference.
