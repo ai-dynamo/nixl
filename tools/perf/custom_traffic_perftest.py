@@ -11,7 +11,6 @@ import time
 import numpy as np
 import torch
 
-
 from nixl._api import nixl_agent
 
 log = logging.getLogger(__name__)
@@ -131,8 +130,7 @@ class CTPerftest:
                 continue
             self.nixl_agent.remove_remote_agent(f"{other_rank}")
         
-
-    def run(self, verify_buffers: bool = False):
+    def run(self, verify_buffers: bool = False, print_recv_buffers: bool = False):
         tp_handles: list[list] = []
         tp_bufs = []
         for tp in self.traffic_patterns:
@@ -147,18 +145,26 @@ class CTPerftest:
         self.wait([h for handles in tp_handles for h in handles])
         end = time.time()
 
-        log.info(f"Total time taken to run all traffic patterns: {end - start} seconds")
+        log.info(f"Total time taken to run {len(self.traffic_patterns)} traffic patterns: {end - start} seconds")
 
         if verify_buffers:
             for i, tp in enumerate(self.traffic_patterns):
                 send_bufs, recv_bufs = tp_bufs[i]
                 matrix = load_matrix(tp.matrix_file)
                 for r, recv_buf in enumerate(recv_bufs):
+
                     if recv_buf is None:
                         if matrix[r][self.my_rank] > 0:
                             log.error(f"Rank {self.my_rank} expected {matrix[r][self.my_rank]} bytes from rank {r}, but got 0")
                             raise RuntimeError("Buffer verification failed")
                         continue
+
+                    if print_recv_buffers:
+                        s = ""
+                        for b in recv_buf.bufs:
+                            s += f"{b}\n"
+                        log.info(f"Recv buffer {r}:\n{s}")
+                        
                     # recv_buf has to be filled with the rank of the sender
                     # and its size has to be the same as matrix[r][my_rank]
                     full_recv_buf = torch.cat([b for b in recv_buf.bufs])
@@ -166,7 +172,6 @@ class CTPerftest:
                     assert torch.all(full_recv_buf == expected), f"Vector not equal to {r}, got {full_recv_buf}"
                     assert full_recv_buf.size(0) == matrix[r][self.my_rank], f"Size of vector {r} is not the same as matrix[r][{self.my_rank}], got {full_recv_buf.size(0)}"
                     log.info(f"Vector {r} verified successfully")
-
 
         self._destroy()
 

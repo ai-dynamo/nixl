@@ -24,7 +24,9 @@ def cli(debug):
 
 @cli.command()
 @click.argument('config_file', type=click.Path(exists=True))
-def ct_perftest(config_file):
+@click.option('--verify-buffers/--no-verify-buffers', default=False, help="Verify buffer contents after transfer")
+@click.option('--print-recv-buffers/--no-print-recv-buffers', default=False, help="Print received buffer contents")
+def ct_perftest(config_file, verify_buffers, print_recv_buffers):
     """Run custom traffic performance test using patterns defined in YAML config"""
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f)
@@ -49,7 +51,7 @@ def ct_perftest(config_file):
         patterns.append(pattern)
     
     perftest = CTPerftest(patterns)
-    perftest.run()
+    perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers)
     dist_utils.destroy_dist()
 
 if __name__ == '__main__':
