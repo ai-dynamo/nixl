@@ -24,7 +24,8 @@ else
 endif
 
 test_exe = executable('test_executable',
-    sources : ['main.cpp'],
+    sources : ['main.cpp', 'plugin_manager.cpp'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs],
     dependencies : [nixl_dep, cuda_dep, gtest_dep]
 )
 
