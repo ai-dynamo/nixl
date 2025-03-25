@@ -138,7 +138,7 @@ def test_agent():
     nixl_utils.verify_transfer(addr1 + offset, addr2 + offset, req_size)
     assert len(notifMap[name1]) == 1
     print(notifMap[name1][0])
-    assert notifMap[name1][0] == noti_str
+    assert notifMap[name1][0] == noti_str.encode()
 
     print("Transfer verified")
 
