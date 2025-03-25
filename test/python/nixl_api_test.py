@@ -83,26 +83,28 @@ if __name__ == "__main__":
         print("Creating transfer failed.")
         exit()
 
-    state = nixl_agent2.transfer(xfer_handle_1)
-    assert state != "ERR"
+    # test multiple postings
+    for _ in range(2):
+        state = nixl_agent2.transfer(xfer_handle_1)
+        assert state != "ERR"
 
-    target_done = False
-    init_done = False
+        target_done = False
+        init_done = False
 
-    while (not init_done) or (not target_done):
-        if not init_done:
-            state = nixl_agent2.check_xfer_state(xfer_handle_1)
-            if state == "ERR":
-                print("Transfer got to Error state.")
-                exit()
-            elif state == "DONE":
-                init_done = True
-                print("Initiator done")
+        while (not init_done) or (not target_done):
+            if not init_done:
+                state = nixl_agent2.check_xfer_state(xfer_handle_1)
+                if state == "ERR":
+                    print("Transfer got to Error state.")
+                    exit()
+                elif state == "DONE":
+                    init_done = True
+                    print("Initiator done")
 
-        if not target_done:
-            if nixl_agent1.check_remote_xfer_done("initiator", "UUID1"):
-                target_done = True
-                print("Target done")
+            if not target_done:
+                if nixl_agent1.check_remote_xfer_done("initiator", "UUID1"):
+                    target_done = True
+                    print("Target done")
 
     # prep transfer mode
     local_prep_handle = nixl_agent2.prep_xfer_dlist(
