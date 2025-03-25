@@ -15,6 +15,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import torch
 
 import nixl._utils as nixl_utils
@@ -23,6 +25,10 @@ from nixl._api import nixl_agent
 if __name__ == "__main__":
     buf_size = 256
     # Allocate memory and register with NIXL
+
+    print("Using NIXL Plugins from:")
+    print(os.environ["NIXL_PLUGIN_DIR"])
+
     nixl_agent1 = nixl_agent("target")
 
     plugin_list = nixl_agent1.get_plugin_list()
