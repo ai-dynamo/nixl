@@ -40,8 +40,42 @@ protected:
   bool IsLoaded() { return plugin_handle_ != nullptr; }
 };
 
+class LoadMultiplePluginsTestFixture
+    : public testing::TestWithParam<std::vector<std::string>> {
+protected:
+  /* Plugin Manager. */
+  nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
+  /* Added plugin. */
+  std::vector<std::shared_ptr<nixlPluginHandle>> plugin_handles_;
+
+  void SetUp() override {
+    for (const auto &plugin : GetParam()) {
+      plugin_handles_.push_back(plugin_manager_.loadPlugin(plugin));
+    }
+  }
+
+  void TearDown() override {
+    for (const auto &plugin : GetParam()) {
+      plugin_manager_.unloadPlugin(plugin);
+    }
+  }
+
+  /*
+   * Returns true if all the plugins were succesfully loaded, otherwise false.
+   */
+  bool AreAllLoaded() {
+    return all_of(
+        plugin_handles_.begin(), plugin_handles_.end(),
+        [](std::shared_ptr<nixlPluginHandle> ptr) { return ptr != nullptr; });
+  }
+};
+
 TEST_P(LoadSinglePluginTestFixture, SimlpeLifeCycleTest) {
   EXPECT_TRUE(IsLoaded());
+}
+
+TEST_P(LoadMultiplePluginsTestFixture, SimlpeLifeCycleTest) {
+  EXPECT_TRUE(AreAllLoaded());
 }
 
 /* Load single plugins tests instantiations. */
@@ -52,6 +86,20 @@ INSTANTIATE_TEST_SUITE_P(GdsLoadPluginInstantiation,
 INSTANTIATE_TEST_SUITE_P(UcxMoLoadPluginInstantiation,
                          LoadSinglePluginTestFixture,
                          testing::Values("UCX_MO"));
+
+/* Load single plugins tests instantiations. */
+INSTANTIATE_TEST_SUITE_P(UcxGdsLoadMultiplePluginInstantiation,
+                         LoadSinglePluginTestFixture,
+                         testing::Values("UCX, GDS"));
+INSTANTIATE_TEST_SUITE_P(UcxUcxMoLoadMultiplePluginInstantiation,
+                         LoadSinglePluginTestFixture,
+                         testing::Values("UCX", "UCX_MO"));
+INSTANTIATE_TEST_SUITE_P(GdsUcxMoLoadMultiplePluginInstantiation,
+                         LoadSinglePluginTestFixture,
+                         testing::Values("GDS", "UCX_MO"));
+INSTANTIATE_TEST_SUITE_P(UcxGdsUcxMoLoadMultiplePluginInstantiation,
+                         LoadSinglePluginTestFixture,
+                         testing::Values("UCX", "GDS", "UCX_MO"));
 
 } // namespace plugin_manager
 } // namespace gtest
