@@ -68,7 +68,8 @@ def multi_ct_perftest(config_file, verify_buffers, print_recv_buffers):
         raise ValueError("Config file must contain 'traffic_patterns' key")
     
     patterns = []
-    for tp_config in config['traffic_patterns']:
+    for instruction_config in config['traffic_patterns']:
+        tp_config = instruction_config
         required_fields = ['matrix_file', 'shards', 'mem_type', 'xfer_op']
         missing_fields = [field for field in required_fields if field not in tp_config]
         
@@ -80,6 +81,7 @@ def multi_ct_perftest(config_file, verify_buffers, print_recv_buffers):
             shards=tp_config['shards'],
             mem_type=tp_config.get('mem_type', 'dram').lower(),
             xfer_op=tp_config.get('xfer_op', 'WRITE').upper(),
+            sleep_after_finish_sec=tp_config.get('sleep_after_finish_sec', 0),
         )
         patterns.append(pattern)
     

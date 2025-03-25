@@ -96,8 +96,11 @@ class MultiCTPerftest(CTPerftest):
         start_ts_by_tp = [None for _ in tp_handles]
         start = time.time()
         for i, handles in enumerate(tp_handles):
-            self._run_tp(handles)
             start_ts_by_tp[i] = time.perf_counter()
+            self._run_tp(handles)
+            sleep = self.traffic_patterns[i].sleep_after_finish_sec
+            if sleep > 0:
+                time.sleep(sleep)
 
         end_ts_by_tp = self._wait(tp_handles)
         end = time.time()

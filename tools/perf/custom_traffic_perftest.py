@@ -27,6 +27,7 @@ class TrafficPattern:
         mem_type: Type of memory to use
         xfer_op: Transfer operation type 
         dtype: PyTorch data type for the buffers
+        sleep_sec: Number of seconds to sleep after finish
         id: Unique identifier for this traffic pattern
     """
     matrix_file: PathLike
@@ -34,6 +35,8 @@ class TrafficPattern:
     mem_type: Literal["cuda", "vram", "cpu", "dram"]
     xfer_op: Literal["WRITE", "READ"]
     dtype: torch.dtype = torch.float32
+    sleep_after_finish_sec: int = 0
+
     id: str = str(uuid.uuid4())
 
 class CTPerftest:
