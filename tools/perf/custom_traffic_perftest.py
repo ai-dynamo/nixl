@@ -25,6 +25,7 @@ class TrafficPattern:
 
     id: str = str(uuid.uuid4())
 
+
 class CTPerftest:
     def __init__(self, traffic_patterns: list[TrafficPattern]):
         self.my_rank = dist_utils.get_rank()
