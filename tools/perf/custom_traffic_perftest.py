@@ -22,6 +22,7 @@ class TrafficPattern:
     shards: int
     mem_type: Literal["cuda", "vram", "cpu", "dram"]
     xfer_op: Literal["WRITE", "READ"]  # Transfer operation type
+    dtype: torch.dtype = torch.float32
 
     id: str = str(uuid.uuid4())
 
@@ -71,9 +72,9 @@ class CTPerftest:
             recv_size = matrix[other_rank][self.my_rank]
             send_buf = recv_buf = None
             if send_size > 0:
-                send_buf = NixlBuffer(send_size, mem_type=tp.mem_type, nixl_agent=self.nixl_agent, fill_value=self.my_rank)
+                send_buf = NixlBuffer(send_size, mem_type=tp.mem_type, nixl_agent=self.nixl_agent, fill_value=self.my_rank, dtype=tp.dtype)
             if recv_size > 0:
-                recv_buf = NixlBuffer(recv_size, mem_type=tp.mem_type, nixl_agent=self.nixl_agent)
+                recv_buf = NixlBuffer(recv_size, mem_type=tp.mem_type, nixl_agent=self.nixl_agent, dtype=tp.dtype)
             send_bufs.append(send_buf)
             recv_bufs.append(recv_buf)
         

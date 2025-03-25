@@ -8,7 +8,7 @@ log = logging.getLogger(__name__)
 
 class NixlBuffer:
     """Can be sharded"""
-    def __init__(self, size: int, mem_type: str, nixl_agent: nixl_agent, shards=2, fill_value=0):
+    def __init__(self, size: int, mem_type: str, nixl_agent: nixl_agent, shards=2, fill_value=0, dtype: torch.dtype = torch.int8):
         if mem_type in ("cuda", "vram"):
             device = "cuda"
         elif mem_type in ("cpu", "dram"):
@@ -16,8 +16,6 @@ class NixlBuffer:
         else:
             raise ValueError(f"Unsupported memory type: {mem_type}")
         
-        dtype = torch.float32
-
         log.debug(f"[Rank {dist_utils.get_rank()}] Initializing NixlBuffer with size {size}, device {device}, shards {shards}, fill_value {fill_value}")
         self.bufs = []
         chunk_size = size // shards
