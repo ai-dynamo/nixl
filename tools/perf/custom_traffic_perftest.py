@@ -19,17 +19,31 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class TrafficPattern:
+    """Represents a communication pattern between distributed processes.
+    
+    Attributes:
+        matrix_file: Path to the file containing the communication matrix
+        shards: Number of shards for distributed processing
+        mem_type: Type of memory to use
+        xfer_op: Transfer operation type 
+        dtype: PyTorch data type for the buffers
+        id: Unique identifier for this traffic pattern
+    """
     matrix_file: PathLike
     shards: int
     mem_type: Literal["cuda", "vram", "cpu", "dram"]
-    xfer_op: Literal["WRITE", "READ"]  # Transfer operation type
+    xfer_op: Literal["WRITE", "READ"]
     dtype: torch.dtype = torch.float32
-
     id: str = str(uuid.uuid4())
-
 
 class CTPerftest:
     def __init__(self, traffic_pattern: TrafficPattern, iters: int = 1, warmup_iters: int = 0):
+        """
+        Args:
+            traffic_pattern: The communication pattern to test
+            iters: Number of test iterations
+            warmup_iters: Number of warmup iterations before timing
+        """
         self.my_rank = dist_utils.get_rank()
         self.world_size = dist_utils.get_world_size()
         self.traffic_pattern = traffic_pattern
@@ -44,8 +58,8 @@ class CTPerftest:
         self.recv_bufs: list[Optional[NixlBuffer]] = [] # [i]=None if no recv from rank i  
         self.dst_bufs_descs = [] # [i]=None if no recv from rank i else descriptor of the dst buffer
 
-    def _share_md(self):
-        """Needs to be run after init_buffers"""
+    def _share_md(self) -> None:
+        """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
         log.debug(f"[Rank {self.my_rank}] Sharing agent metadata with other ranks")
         md = self.nixl_agent.get_agent_metadata()
         mds = dist_utils.allgather_obj(md)
@@ -55,9 +69,15 @@ class CTPerftest:
             self.nixl_agent.add_remote_agent(metadata)
             log.debug(f"[Rank {self.my_rank}] Added remote agent {other_rank}'s metadata")
         
-    def _share_recv_buf_descs(self, my_recv_bufs: list[NixlBuffer]):
-        """Send descriptors of the buffers to the world as an alltoall (rank 0 get bufs[0], rank 1 get bufs[1], etc)"""
-
+    def _share_recv_buf_descs(self, my_recv_bufs: list[NixlBuffer]) -> list:
+        """Share receive buffer descriptors between all ranks, in alltoall style.
+        
+        Args:
+            my_recv_bufs: List of receive buffers for current rank
+            
+        Returns:
+            List of buffer descriptors from all ranks
+        """
         my_recv_bufs_descs = [buf.xfer_descs if buf is not None else None for buf in my_recv_bufs]
         my_recv_bufs_serdes = [self.nixl_agent.get_serialized_descs(des) for des in my_recv_bufs_descs]
 
@@ -66,7 +86,14 @@ class CTPerftest:
         return dst_bufs_descs
 
     def _init_buffers(self, tp: TrafficPattern) -> tuple[list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
-    
+        """Initialize send and receive buffers for the traffic pattern.
+        
+        Args:
+            tp: Traffic pattern configuration
+            
+        Returns:
+            Tuple of (send_buffers, receive_buffers) lists
+        """
         send_bufs = []
         recv_bufs = []
         for other_rank in range(self.world_size):
@@ -168,7 +195,16 @@ class CTPerftest:
         matrix = load_matrix(tp.matrix_file)
         return np.sum(matrix, axis=(0,1))
 
-    def run(self, verify_buffers: bool = False, print_recv_buffers: bool = False):
+    def run(self, verify_buffers: bool = False, print_recv_buffers: bool = False) -> float:
+        """Execute the performance test.
+        
+        Args:
+            verify_buffers: Whether to verify buffer contents after transfer
+            print_recv_buffers: Whether to print receive buffer contents
+            
+        Returns:
+            Total execution time in seconds
+        """
         handles, send_bufs, recv_bufs = self._prepare_tp(self.traffic_pattern)
 
         for _ in range(self.warmup_iters):
@@ -203,20 +239,3 @@ class CTPerftest:
 
         return end - start
     
-"""
-Total time for 1 iterations: 0.0014827251434326172 seconds
-I0325 10:06:33.480000 2235324 torch/_subclasses/fake_tensor.py:2796] FakeTensor cache stats:
-I0325 10:06:33.481000 2235324 torch/_subclasses/fake_tensor.py:2797]   cache_hits: 0
-I0325 10:06:33.481000 2235324 torch/_subclasses/fake_tensor.py:2798]   cache_misses: 0
-Initialized NIXL agent: 3
-Total time for 1 iterations: 0.002142667770385742 seconds
-I0325 10:06:33.514000 2235301 torch/_subclasses/fake_tensor.py:2796] FakeTensor cache stats:
-I0325 10:06:33.515000 2235301 torch/_subclasses/fake_tensor.py:2797]   cache_hits: 0
-I0325 10:06:33.516000 2235301 torch/_subclasses/fake_tensor.py:2798]   cache_misses: 0
-Initialized NIXL agent: 1
-Total time for 1 iterations: 0.0024819374084472656 seconds
-I0325 10:06:33.533000 2235323 torch/_subclasses/fake_tensor.py:2796] FakeTensor cache stats:
-I0325 10:06:33.534000 2235323 torch/_subclasses/fake_tensor.py:2797]   cache_hits: 0
-I0325 10:06:33.534000 2235323 torch/_subclasses/fake_tensor.py:2798]   cache_misses: 0
-Initialized NIXL agent: 2
-Total time for 1 iterations: 0.002760648727416992 seconds"""

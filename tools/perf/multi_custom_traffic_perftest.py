@@ -19,7 +19,18 @@ from custom_traffic_perftest import CTPerftest, TrafficPattern
 log = logging.getLogger(__name__)
 
 class MultiCTPerftest(CTPerftest):
-    def __init__(self, traffic_patterns: list[TrafficPattern]):
+    """Extends CTPerftest to handle multiple traffic patterns simultaneously.
+    The patterns are executed in parallel, and the results are aggregated.
+    
+    Allows testing multiple communication patterns in parallel between distributed processes.
+    """
+    
+    def __init__(self, traffic_patterns: list[TrafficPattern]) -> None:
+        """Initialize multi-pattern performance test.
+        
+        Args:
+            traffic_patterns: List of traffic patterns to test simultaneously
+        """
         self.my_rank = dist_utils.get_rank()
         self.world_size = dist_utils.get_world_size()
         self.traffic_patterns = traffic_patterns
@@ -32,7 +43,15 @@ class MultiCTPerftest(CTPerftest):
         self.recv_bufs: list[Optional[NixlBuffer]] = [] # [i]=None if no recv from rank i
         self.dst_bufs_descs = [] # [i]=None if no recv from rank i else descriptor of the dst buffer
 
-    def _wait(self, tp_handles: list[list]):
+    def _wait(self, tp_handles: list[list]) -> list[Optional[float]]:
+        """Wait for all transfers to complete and record completion times.
+        
+        Args:
+            tp_handles: List of transfer handles for each traffic pattern
+            
+        Returns:
+            List of completion timestamps for each traffic pattern
+        """
         # Wait for transfers to complete - report end time for each tp
         tp_done_ts = [None for _ in tp_handles]
         while True:
@@ -50,8 +69,22 @@ class MultiCTPerftest(CTPerftest):
 
             if not any(tp_handles):
                 break
+        
+        return tp_done_ts
 
-    def run(self, verify_buffers: bool = False, print_recv_buffers: bool = False):
+    def run(self, verify_buffers: bool = False, print_recv_buffers: bool = False) -> float:
+        """Execute all traffic patterns in parallel.
+        
+        Args:
+            verify_buffers: Whether to verify buffer contents after transfer
+            print_recv_buffers: Whether to print receive buffer contents
+            
+        Returns:
+            Total execution time in seconds
+        
+        This method initializes and executes multiple traffic patterns simultaneously,
+        measures their performance, and optionally verifies the results.
+        """
         tp_handles: list[list] = []
         tp_bufs = []
         for tp in self.traffic_patterns:
