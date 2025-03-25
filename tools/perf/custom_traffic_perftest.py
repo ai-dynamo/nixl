@@ -241,8 +241,6 @@ class CTPerftest:
         global_time = max(end_times) - min(start_times)
         avg_time_per_iter_sec = global_time / self.iters
 
-        if self.my_rank == 0:
-            breakpoint()
         total_size_gb = self._get_tp_total_size(self.traffic_pattern) / 1E9
         alg_bw_gbps = total_size_gb / avg_time_per_iter_sec / self.world_size
 
