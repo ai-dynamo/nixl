@@ -31,6 +31,7 @@ def ct_perftest(config_file, verify_buffers, print_recv_buffers):
     """Run custom traffic performance test using patterns defined in YAML config"""
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f)
+
     
     tp_config = config.get('traffic_pattern')
     if tp_config is None:
@@ -81,7 +82,7 @@ def multi_ct_perftest(config_file, verify_buffers, print_recv_buffers):
             shards=tp_config['shards'],
             mem_type=tp_config.get('mem_type', 'dram').lower(),
             xfer_op=tp_config.get('xfer_op', 'WRITE').upper(),
-            sleep_after_finish_sec=tp_config.get('sleep_after_finish_sec', 0),
+            sleep_after_launch_sec=tp_config.get('sleep_after_launch_sec', 0),
         )
         patterns.append(pattern)
     

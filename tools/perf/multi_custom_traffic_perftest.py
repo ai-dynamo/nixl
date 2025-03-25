@@ -43,22 +43,32 @@ class MultiCTPerftest(CTPerftest):
         self.recv_bufs: list[Optional[NixlBuffer]] = [] # [i]=None if no recv from rank i
         self.dst_bufs_descs = [] # [i]=None if no recv from rank i else descriptor of the dst buffer
 
-    def _wait(self, tp_handles: list[list]) -> list[Optional[float]]:
+    def _wait(self, tp_handles: list[list], blocking=True, tp_done_ts: list[Optional[float]] = None) -> list[Optional[float]]:
         """Wait for all transfers to complete and record completion times.
+        Can be non blocking
         
         Args:
             tp_handles: List of transfer handles for each traffic pattern
+            tp_done_ts: List of completion timestamps for each traffic pattern to fill, if not provided, will be created and filled
             
         Returns:
-            List of completion timestamps for each traffic pattern
+            List of completion timestamps for each traffic pattern, pending handles (in format of tp_handles)
+            if any(pending) is True, then the wait is not complete
         """
         # Wait for transfers to complete - report end time for each tp
-        tp_done_ts = [None for _ in tp_handles]
+        tp_done_ts = tp_done_ts or [None for _ in tp_handles]
         while True:
             pending = [[] for _ in tp_handles]
             for i, handles in enumerate(tp_handles):
+                if tp_done_ts[i] is not None:
+                    continue
                 for handle in handles:
-                    state = self.nixl_agent.check_xfer_state(handle)
+                    try:
+                        state = self.nixl_agent.check_xfer_state(handle)
+                    except Exception as e:
+                        print(f"Error checking xfer state for handle {handle}: {e}")
+                        import sys
+                        sys.exit(1)
                     assert state != "ERR", "Transfer got to Error state."
                     if state != "DONE":
                         pending[i].append(handle)
@@ -67,10 +77,10 @@ class MultiCTPerftest(CTPerftest):
 
             tp_handles = pending
 
-            if not any(tp_handles):
+            if not blocking or not any(tp_handles):
                 break
         
-        return tp_done_ts
+        return tp_done_ts, pending
 
     def run(self, verify_buffers: bool = False, print_recv_buffers: bool = False) -> float:
         """Execute all traffic patterns in parallel.
@@ -85,6 +95,8 @@ class MultiCTPerftest(CTPerftest):
         This method initializes and executes multiple traffic patterns simultaneously,
         measures their performance, and optionally verifies the results.
         """
+        # TODO ADD WARMUP
+
         tp_handles: list[list] = []
         tp_bufs = []
         for tp in self.traffic_patterns:
@@ -94,15 +106,31 @@ class MultiCTPerftest(CTPerftest):
         
 
         start_ts_by_tp = [None for _ in tp_handles]
+        end_ts_by_tp = [None for _ in tp_handles]
         start = time.time()
-        for i, handles in enumerate(tp_handles):
-            start_ts_by_tp[i] = time.perf_counter()
-            self._run_tp(handles)
-            sleep = self.traffic_patterns[i].sleep_after_finish_sec
-            if sleep > 0:
-                time.sleep(sleep)
+        tp_ix = 0
+        next_ts = 0
+        pending_tp_handles = [[] for _ in tp_handles]
 
-        end_ts_by_tp = self._wait(tp_handles)
+        while tp_ix < len(tp_handles): 
+            if time.time() < next_ts:
+                # Run wait in non-blocking mode to avoid blocking the main thread
+                end_ts_by_tp, pending_tp_handles = self._wait(
+                    pending_tp_handles, 
+                    blocking=False, 
+                    tp_done_ts=end_ts_by_tp, 
+                    )
+                continue
+            start_ts_by_tp[tp_ix] = time.perf_counter()
+            pending_tp_handles[tp_ix] = self._run_tp(tp_handles[tp_ix])
+            sleep = self.traffic_patterns[tp_ix].sleep_after_launch_sec
+
+            if sleep > 0:
+                next_ts = time.time() + sleep
+                
+            tp_ix += 1
+
+        self._wait(tp_handles, end_ts_by_tp, blocking=True)
         end = time.time()
 
         tp_times_sec = [end_ts_by_tp[i] - start_ts_by_tp[i] for i in range(len(tp_handles))]

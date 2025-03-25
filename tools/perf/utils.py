@@ -29,7 +29,6 @@ def parse_size(nbytes: str) -> int:
     return count
 
 def load_matrix(matrix_file: str) -> list[list[int]]:
-    log.debug(f"Loading matrix from {matrix_file}")
     # Cell i,j of the matrix is the size of the message to send from process i to process j
     matrix = []
     with open(matrix_file, 'r') as f:
@@ -39,7 +38,6 @@ def load_matrix(matrix_file: str) -> list[list[int]]:
             matrix.append(row)
     mat = np.array(matrix)
 
-    log.debug("Matrix loaded:")
     for row in mat:
         log.debug(row)
 

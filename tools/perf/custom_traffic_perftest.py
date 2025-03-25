@@ -35,7 +35,7 @@ class TrafficPattern:
     mem_type: Literal["cuda", "vram", "cpu", "dram"]
     xfer_op: Literal["WRITE", "READ"]
     dtype: torch.dtype = torch.float32
-    sleep_after_finish_sec: int = 0
+    sleep_after_launch_sec: int = 0
 
     id: str = str(uuid.uuid4())
 
@@ -89,14 +89,7 @@ class CTPerftest:
         return dst_bufs_descs
 
     def _init_buffers(self, tp: TrafficPattern) -> tuple[list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
-        """Initialize send and receive buffers for the traffic pattern.
-        
-        Args:
-            tp: Traffic pattern configuration
-            
-        Returns:
-            Tuple of (send_buffers, receive_buffers) lists
-        """
+    
         send_bufs = []
         recv_bufs = []
         for other_rank in range(self.world_size):
@@ -136,11 +129,14 @@ class CTPerftest:
         return handles, send_bufs, recv_bufs
     
     def _run_tp(self, handles: list):
+        pending = []
         for handle in handles:
             status = self.nixl_agent.transfer(handle)
             assert status != "ERR", "Transfer failed"
+            if status != "DONE":
+                pending.append(handle)
 
-        return
+        return pending
 
     def _wait(self, handles: list):
         # Wait for transfers to complete
@@ -211,13 +207,13 @@ class CTPerftest:
         handles, send_bufs, recv_bufs = self._prepare_tp(self.traffic_pattern)
 
         for _ in range(self.warmup_iters):
-            self._run_tp(handles)
-            self._wait(handles)
+            pending_handles = self._run_tp(handles)
+            self._wait(pending_handles)
 
         start = time.perf_counter()
-        for _ in range(self.iters):
-            self._run_tp(handles)
-            self._wait(handles)
+        for i in range(self.iters):
+            pending_handles = self._run_tp(handles)
+            self._wait(pending_handles)
         end = time.perf_counter()
 
         # Metrics report
