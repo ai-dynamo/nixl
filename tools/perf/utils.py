@@ -38,7 +38,4 @@ def load_matrix(matrix_file: str) -> list[list[int]]:
             matrix.append(row)
     mat = np.array(matrix)
 
-    for row in mat:
-        log.debug(row)
-
     return mat
