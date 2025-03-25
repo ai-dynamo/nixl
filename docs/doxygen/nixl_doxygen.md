@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 # NVIDIA Inference Xfer Library (NIXL)
-NIXL is targeted for accelerating point to point communications in AI inference frameworks such as [Dynamo](https://github.com/ai-dynamo/dynamo), while providing an abstraction over various types of memory (e.g., CPU and GPU) and storage (e.g., file, block and object store) through a modular plug-in architecture.
+NIXL is targeted for accelerating point to point communications in AI inference frameworks such as [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo), while providing an abstraction over various types of memory (e.g., CPU and GPU) and storage (e.g., file, block and object store) through a modular plug-in architecture.
 
 # Background
 Distributed inference workloads present complex challenges for systems, including but not limited to networking and communication issues. These challenges encompass high-performance requirements, heterogeneous data paths that span both memory and storage, and the need for dynamic scaling up and down.
@@ -24,7 +24,7 @@ NIXL is designed to support inference frameworks by addressing their challenges 
 
 # Overview
 
-The following figure illustrates NIXL's relationship to inference server stacks. NIXL functions as a standalone library, providing the necessary abstraction for various network and storage backends to support the dataplane operations of distributed inference platforms, such as Dynamo. The currently supported backends in NIXL are [UCX](https://github.com/openucx/ucx) and [NVIDIA Magnum IO GPUDirect Storage](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html). Support for other file systems (including DFS), block and object storage are in development. NIXL offers generic interfaces capable of supporting data transfers in the form of tensors, bytes, or objects.
+The following figure illustrates NIXL's relationship to inference server stacks. NIXL functions as a standalone library, providing the necessary abstraction for various network and storage backends to support the data plane operations of distributed inference platforms, such as NVIDIA Dynamo. The currently supported backends in NIXL are [UCX](https://github.com/openucx/ucx) and [NVIDIA Magnum IO GPUDirect Storage](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html). Support for other file systems (including DFS), block and object storage are in development. NIXL offers generic interfaces capable of supporting data transfers in the form of tensors, bytes, or objects.
 
 \image html doxygen/nixl.png "Figure of NIXL high level architecture" width=500px
 \image latex doxygen/nixl.png "Figure of NIXL high level architecture" width=500px
@@ -37,7 +37,7 @@ NIXL's Transfer Agent abstracts away three key entities:
 
 1. [Memory Section](#memory-sections): Unifies various types of memory and storage, allowing the agent to accept a buffer list primitive for transactions regardless of the memory type.
 2. [Transfer Backend Interface](#transfer-backend-interface): Abstracts different transfer backends from the agent, facilitating efficient transfers by selecting the most optimal backend.
-3. [Metadata Handler](#metadata-handler): Encapsulates the information required to perform data transfers between NIXl agents running on different workers (e.g., a single GPU or a DGX server).
+3. [Metadata Handler](#metadata-handler): Encapsulates the information required to perform data transfers between NIXl agents running on different workers (e.g., a single GPU or a DGX server). It also caches required remote agent information for the local agent.
 
 Using these components, the NIXL Transfer Agent provides the desired interface by receiving a buffer list primitive from the distributed inference conductor and returning an asynchronous handle to check the status. The agent supports multiple backends, allowing seamless data movement via [RoCE](https://docs.nvidia.com/networking/display/ofedv502180/rdma+over+converged+ethernet+(roce)), [Infiniband](https://www.nvidia.com/en-us/networking/products/infiniband/), [GPUDirect RDMA](https://developer.nvidia.com/gpudirect), NVMe-oF, TCP, NVLink(https://www.nvidia.com/en-us/data-center/nvlink/), and potentially file system emulation. NIXL determines the optimal transfer backend based on the memory types used in a transfer, as well as common backends available in both agents. For example, if the source is DRAM and the target is VRAM, UCX might be used. If the transfer involves VRAM as the source and PFS as the backend, GPUDirect Storage APIs could be employed. In cases where multiple backends that can perform a transfer request, NIXL internally decides which one to use.
 
@@ -52,7 +52,7 @@ Using this information, the most suitable backend for a transfer can be determin
 
 ### Metadata Handler
 The Metadata Handler manages the data necessary for establishing data communication between the NIXL agents. This metadata can be exchanged via a secure side channel or through a centralized metadata server like "etcd" or Redis. The metadata includes connection information for each backend, as well as remote segment identifiers. The metadata shared with remote NIXL agents is minimal and excludes any local information that is not necessary on the remote side.
-When loading metadata, the backend type that generated the remote identifiers is specified. This ensures that the received metadata is routed to the appropriate backend on the receiving agent. If that backend is not available, the relevant metadata portion is ignored.
+When loading metadata, the backend type that generated the remote identifiers is included within the serialized metada. This ensures that the received metadata is routed to the appropriate backend on the receiving agent. If that backend is not available, the relevant metadata portion is ignored.
 
 For example, a memory section tagged with UCX indicates it was generated by a UCX backend engine and should be delivered to a UCX backend engine on the receiving agent, if present.
 
@@ -60,11 +60,11 @@ In the optimal mode of operation, the metadata exchange occurs on the control pa
 
 To support the dynamic nature of inference workloads, metadata caching is leveraged. This approach allows to:
 
-* Avoid fetching the same metadata on each transaction
+* Avoid fetching the same metadata on each
 * Dynamically add new agents by providing its metadata to the caching subsystem of the agents that communicate with it.
-* Dynamically exclude an agent by invalidating the caches of the agent that previously interacted with it.
+* Dynamically exclude an agent by invalidating the caches of the agent that previously interacted with it
 
-Adding a remote agent metadata does not cause a connection to be initiated, as this might be just a prefetch optimization. If desired, there is an optional connection API for this usage. On the other hand, removing a remote agent metadata will result in a disconnect, if a connection was already established.
+Adding a remote agent metadata does not cause a connection to be initiated, as this might be just a prefetch optimization. If desired, there is an optional connection API for this usage. Conversely, removing a remote agent metadata will result in a disconnect, if a connection was already established.
 
 # Example procedure
 The following image shows a basic example of how to use NIXL between 2 nodes. The API usage is further reviewed in three parts: initialization, transfer, and dynamicity.
@@ -88,9 +88,8 @@ foreach alloced_mem:
 ```
 
 ## Metadata Exchange
-Once backends and memory regions are registered with NIXL,
-the runtime queries the metadata from each agent, either directly or by sending it to a central metadata server. This metadata is necessary for initiator agents to connect to target agents and facilitate data transfers between them. In the example provided, metadata is exchanged directly without a metadata server. However, agent A's metadata can also be sent to agent B if B needs to initiate a transfer to A.
-Following the metadata exchange, which includes connection information for each registered backend that can talk to remote agents, the runtime can proactively call the makeConnection API using the target agent's name if the agents involved in the transfer are known in advance. This will make a connection between all common backends between the two agents. Otherwise, the connection is established during the first transfer. This functionality is optional and up to the backend to specify what can happen during this stage.
+Once backends and memory regions are registered with NIXL, the runtime queries the metadata from each agent, either directly or by sending it to a central metadata server. This metadata is necessary for initiator agents to connect to target agents and facilitate data transfers between them. In the example provided, metadata is exchanged directly without a metadata server. However, agent A's metadata can also be sent to agent B if B needs to initiate a transfer to A.
+Following the metadata exchange, which includes connection information for each registered backend that can talk to remote agents, the runtime can proactively call the make_connection API using the target agent's name if the agents involved in the transfer are known in advance. This will make a connection between all common backends between the two agents. Otherwise, the connection is established during the first transfer. This functionality is optional and up to the backend to specify what can happen during this stage.
 
 ### Side channel
 ```
@@ -119,23 +118,23 @@ for each target_agent:
 ## Transfer
 To initiate a transfer, the initiator must provide a list of local buffer descriptions and a list of remote buffer descriptors. The remote buffers can be be communicated out of band. Both the local and remote buffers should be within the registered memories of their corresponding NIXL agent. The initiator agent checks the remote addresses based on the information available in the exchanged metadata. Using these descriptor lists, along with the target agent's name and the transfer operation (read or write), a transfer handle can be created. Optionally, a notification message can be specified for the operation at this time.
 
-The createXferRequest function performs the necessary checks for the transfer and determines which backend will be used, unless a backend is specifically requested. If successful, the runtime can subsequently post a transfer request described by the received handle one or more times (per transfer handle, there can be only 1 active transfer at any given point in time to avoid data corruption). The status of the transfer can be checked using the getXferStatus function. In the example provided, the process blocks on the transfer checks since it is the only transfer in the system and there is no computation to overlap it with.
+The create_xfer_req function performs the necessary checks for the transfer and determines which backend will be used, unless a backend is specifically requested. If successful, the runtime can subsequently post a transfer request described by the received handle one or more times (per transfer handle, there can be only 1 active transfer at any given point in time to avoid data corruption). The notification message can be given during post instead of handle creation too, or changed per repost. The status of the transfer can be checked using the get_xfer_status function. In the example provided, the process blocks on the transfer checks since it is the only transfer in the system and there is no computation to overlap it with.
 
 ```
 # On initiator agent
-hdl = create_transfer_request(operation (RD/WR),
-                              local_descs, target_descs,
-                              target_agent_name, notif_msg)
+hdl = create_xfer_req(operation (RD/WR),
+                      local_descs, target_descs,
+                      target_agent_name, notif_msg)
 
 # Example of reposting the same transfer request
 for n iterations:
     post_transfer_request(hdl)
-    while (get_transfer_status(hdl) != complete):
+    while (get_xfer_status(hdl) != complete):
         # do other tasks, non-blocking
 
 ```
 
-## Adding/removing agents
+## Adding/removing agents (dynamic scaling)
 Adding a new agent to a service involves creating the agent and exchanging its metadata with the existing agents in the service. To remove an agent or handle a failure, you can use one of the metadata invalidate APIs. This triggers disconnections for backends connected to the agent and purges the cached metadata values.
 
 ### Side channel
@@ -159,7 +158,7 @@ Invalidate local agent metadata()
 ```
 
 ## Teardown
-Similar to removing an agent, invalidating an agent's metadata is necessary through one of the two APIs. When an agent is destroyed (via its destructor), it deregisters all the remaining registered memory regions (not already deregistered by the user) with their corresponding backends, calls destructors of each backend which invalidate their internal transfer states, and releases other internal resources in the agent.
+Similar to removing an agent, invalidating an agent's metadata is necessary through one of the two APIs. When an agent is destroyed (via its destructor), it deregisters all the remaining registered memory regions (not already deregistered by the user), calls destructors of each backend which invalidate their internal transfer states, and releases other internal resources in the agent.
 
 ### Side channel
 
