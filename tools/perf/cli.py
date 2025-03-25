@@ -46,7 +46,8 @@ def ct_perftest(config_file, verify_buffers, print_recv_buffers):
         matrix_file=Path(tp_config['matrix_file']),
         shards=tp_config['shards'],
         mem_type=tp_config.get('mem_type', 'dram').lower(),
-        xfer_op=tp_config.get('xfer_op', 'WRITE').upper()
+        xfer_op=tp_config.get('xfer_op', 'WRITE').upper(),
+        iters=tp_config.get('iters', 1)
     )
     
     perftest = CTPerftest(pattern)
@@ -77,7 +78,8 @@ def multi_ct_perftest(config_file, verify_buffers, print_recv_buffers):
             matrix_file=Path(tp_config['matrix_file']),
             shards=tp_config['shards'],
             mem_type=tp_config.get('mem_type', 'dram').lower(),
-            xfer_op=tp_config.get('xfer_op', 'WRITE').upper()
+            xfer_op=tp_config.get('xfer_op', 'WRITE').upper(),
+            iters=tp_config.get('iters', 1)
         )
         patterns.append(pattern)
     

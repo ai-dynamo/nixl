@@ -22,6 +22,7 @@ class TrafficPattern:
     mem_type: Literal["cuda", "vram", "cpu", "dram"]
     xfer_op: Literal["WRITE", "READ"]  # Transfer operation type
     dtype: torch.dtype = torch.float32
+    iters: int = 1
 
     id: str = str(uuid.uuid4())
 
