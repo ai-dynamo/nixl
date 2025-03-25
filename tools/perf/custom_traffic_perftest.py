@@ -27,10 +27,10 @@ class TrafficPattern:
 
 
 class CTPerftest:
-    def __init__(self, traffic_patterns: list[TrafficPattern]):
+    def __init__(self, traffic_pattern: TrafficPattern):
         self.my_rank = dist_utils.get_rank()
         self.world_size = dist_utils.get_world_size()
-        self.traffic_patterns = traffic_patterns
+        self.traffic_pattern = traffic_pattern
 
         log.debug(f"[Rank {self.my_rank}] Initializing Nixl agent")
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
@@ -51,7 +51,7 @@ class CTPerftest:
             self.nixl_agent.add_remote_agent(metadata)
             log.debug(f"[Rank {self.my_rank}] Added remote agent {other_rank}'s metadata")
         
-    def share_recv_buf_descs(self, my_recv_bufs: list[NixlBuffer]):
+    def _share_recv_buf_descs(self, my_recv_bufs: list[NixlBuffer]):
         """Send descriptors of the buffers to the world as an alltoall (rank 0 get bufs[0], rank 1 get bufs[1], etc)"""
 
         my_recv_bufs_descs = [buf.xfer_descs if buf is not None else None for buf in my_recv_bufs]
@@ -61,7 +61,7 @@ class CTPerftest:
         dst_bufs_descs = [self.nixl_agent.deserialize_descs(serdes) for serdes in dst_bufs_serdes]
         return dst_bufs_descs
 
-    def init_buffers(self, tp: TrafficPattern) -> tuple[list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
+    def _init_buffers(self, tp: TrafficPattern) -> tuple[list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
     
         send_bufs = []
         recv_bufs = []
@@ -80,10 +80,10 @@ class CTPerftest:
         self._share_md()
         return send_bufs, recv_bufs
 
-    def prepare_tp(self, tp: TrafficPattern) -> list:
+    def _prepare_tp(self, tp: TrafficPattern) -> list:
 
-        send_bufs, recv_bufs = self.init_buffers(tp)
-        dst_bufs_descs = self.share_recv_buf_descs(recv_bufs)
+        send_bufs, recv_bufs = self._init_buffers(tp)
+        dst_bufs_descs = self._share_recv_buf_descs(recv_bufs)
 
         handles = []
         for other, buf in enumerate(send_bufs):
@@ -101,14 +101,14 @@ class CTPerftest:
         
         return handles, send_bufs, recv_bufs
     
-    def run_tp(self, handles: list):
+    def _run_tp(self, handles: list):
         for handle in handles:
             status = self.nixl_agent.transfer(handle)
             assert status != "ERR", "Transfer failed"
 
         return
 
-    def wait(self, handles: list):
+    def _wait(self, handles: list):
         # Wait for transfers to complete
         while True:
             pending = []
@@ -130,48 +130,49 @@ class CTPerftest:
                 continue
             self.nixl_agent.remove_remote_agent(f"{other_rank}")
         
+    def _verify_tp(self, tp: TrafficPattern, recv_bufs: list[Optional[NixlBuffer]], print_recv_buffers: bool = False):
+        matrix = load_matrix(tp.matrix_file)
+        for r, recv_buf in enumerate(recv_bufs):
+
+            if recv_buf is None:
+                if matrix[r][self.my_rank] > 0:
+                    log.error(f"Rank {self.my_rank} expected {matrix[r][self.my_rank]} bytes from rank {r}, but got 0")
+                    raise RuntimeError("Buffer verification failed")
+                continue
+
+            if print_recv_buffers:
+                s = ""
+                for b in recv_buf.bufs:
+                    s += f"{b}\n"
+                log.info(f"Recv buffer {r}:\n{s}")
+
+            # recv_buf has to be filled with the rank of the sender
+            # and its size has to be the same as matrix[r][my_rank]
+            full_recv_buf = torch.cat([b for b in recv_buf.bufs])
+            expected = torch.full_like(full_recv_buf, r)
+            assert torch.all(full_recv_buf == expected), f"Vector not equal to {r}, got {full_recv_buf}"
+            assert full_recv_buf.size(0) == matrix[r][self.my_rank], f"Size of vector {r} is not the same as matrix[r][{self.my_rank}], got {full_recv_buf.size(0)}"
+            log.info(f"Vector {r} verified successfully")
+
     def run(self, verify_buffers: bool = False, print_recv_buffers: bool = False):
-        tp_handles: list[list] = []
-        tp_bufs = []
-        for tp in self.traffic_patterns:
-            handles, send_bufs, recv_bufs = self.prepare_tp(tp)
-            tp_bufs.append((send_bufs, recv_bufs))
-            tp_handles.append(handles)
+        handles, send_bufs, recv_bufs = self._prepare_tp(self.traffic_pattern)
 
         start = time.time()
-        for handles in tp_handles:
-            self.run_tp(handles)
-        
-        self.wait([h for handles in tp_handles for h in handles])
+        self._run_tp(handles)
+        self._wait(handles)
         end = time.time()
 
-        log.info(f"Total time taken to run {len(self.traffic_patterns)} traffic patterns: {end - start} seconds")
+        # Metrics report
+        start_times = dist_utils.allgather_obj(start)
+        end_times = dist_utils.allgather_obj(end)
+
+        # This is the total time taken by all ranks to run all traffic patterns
+        global_total_time = max(end_times) - min(start_times)
+
+        log.info(f"Total time taken to run {self.traffic_pattern.id} traffic pattern: {end - start} seconds")
 
         if verify_buffers:
-            for i, tp in enumerate(self.traffic_patterns):
-                send_bufs, recv_bufs = tp_bufs[i]
-                matrix = load_matrix(tp.matrix_file)
-                for r, recv_buf in enumerate(recv_bufs):
-
-                    if recv_buf is None:
-                        if matrix[r][self.my_rank] > 0:
-                            log.error(f"Rank {self.my_rank} expected {matrix[r][self.my_rank]} bytes from rank {r}, but got 0")
-                            raise RuntimeError("Buffer verification failed")
-                        continue
-
-                    if print_recv_buffers:
-                        s = ""
-                        for b in recv_buf.bufs:
-                            s += f"{b}\n"
-                        log.info(f"Recv buffer {r}:\n{s}")
-                        
-                    # recv_buf has to be filled with the rank of the sender
-                    # and its size has to be the same as matrix[r][my_rank]
-                    full_recv_buf = torch.cat([b for b in recv_buf.bufs])
-                    expected = torch.full_like(full_recv_buf, r)
-                    assert torch.all(full_recv_buf == expected), f"Vector not equal to {r}, got {full_recv_buf}"
-                    assert full_recv_buf.size(0) == matrix[r][self.my_rank], f"Size of vector {r} is not the same as matrix[r][{self.my_rank}], got {full_recv_buf.size(0)}"
-                    log.info(f"Vector {r} verified successfully")
+            self._verify_tp(self.traffic_pattern, recv_bufs, print_recv_buffers)
 
         self._destroy()
 
