@@ -42,15 +42,16 @@ def ct_perftest(config_file, verify_buffers, print_recv_buffers):
     if missing_fields:
         raise ValueError(f"Traffic pattern missing required fields: {missing_fields}")
     
+    iters = config.get('iters', 1)
+    warmup_iters = config.get('warmup_iters', 0)
     pattern = TrafficPattern(
         matrix_file=Path(tp_config['matrix_file']),
         shards=tp_config['shards'],
         mem_type=tp_config.get('mem_type', 'dram').lower(),
         xfer_op=tp_config.get('xfer_op', 'WRITE').upper(),
-        iters=tp_config.get('iters', 1)
     )
     
-    perftest = CTPerftest(pattern)
+    perftest = CTPerftest(pattern, iters=iters, warmup_iters=warmup_iters)
     perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers)
     dist_utils.destroy_dist()
 
@@ -79,7 +80,6 @@ def multi_ct_perftest(config_file, verify_buffers, print_recv_buffers):
             shards=tp_config['shards'],
             mem_type=tp_config.get('mem_type', 'dram').lower(),
             xfer_op=tp_config.get('xfer_op', 'WRITE').upper(),
-            iters=tp_config.get('iters', 1)
         )
         patterns.append(pattern)
     

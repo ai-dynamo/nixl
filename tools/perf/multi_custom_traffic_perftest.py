@@ -1,4 +1,5 @@
 from dist_utils import dist_utils
+from tabulate import tabulate
 from pathlib import Path
 from utils import load_matrix
 from os import PathLike
@@ -28,8 +29,27 @@ class MultiCTPerftest(CTPerftest):
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
 
         self.send_bufs: list[Optional[NixlBuffer]] = [] # [i]=None if no send to rank i
-        self.recv_bufs: list[Optional[NixlBuffer]] = [] # [i]=None if no recv from rank i  
+        self.recv_bufs: list[Optional[NixlBuffer]] = [] # [i]=None if no recv from rank i
         self.dst_bufs_descs = [] # [i]=None if no recv from rank i else descriptor of the dst buffer
+
+    def _wait(self, tp_handles: list[list]):
+        # Wait for transfers to complete - report end time for each tp
+        tp_done_ts = [None for _ in tp_handles]
+        while True:
+            pending = [[] for _ in tp_handles]
+            for i, handles in enumerate(tp_handles):
+                for handle in handles:
+                    state = self.nixl_agent.check_xfer_state(handle)
+                    assert state != "ERR", "Transfer got to Error state."
+                    if state != "DONE":
+                        pending[i].append(handle)
+                if not pending[i]:
+                    tp_done_ts[i] = time.perf_counter()
+
+            tp_handles = pending
+
+            if not any(tp_handles):
+                break
 
     def run(self, verify_buffers: bool = False, print_recv_buffers: bool = False):
         tp_handles: list[list] = []
@@ -38,28 +58,43 @@ class MultiCTPerftest(CTPerftest):
             handles, send_bufs, recv_bufs = self._prepare_tp(tp)
             tp_bufs.append((send_bufs, recv_bufs))
             tp_handles.append(handles)
-
-        start = time.time()
-        for handles in tp_handles:
-            self._run_tp(handles)
         
-        self._wait([h for handles in tp_handles for h in handles])
+
+        start_ts_by_tp = [None for _ in tp_handles]
+        start = time.time()
+        for i, handles in enumerate(tp_handles):
+            self._run_tp(handles)
+            start_ts_by_tp[i] = time.perf_counter()
+
+        end_ts_by_tp = self._wait(tp_handles)
         end = time.time()
+
+        tp_times_sec = [end_ts_by_tp[i] - start_ts_by_tp[i] for i in range(len(tp_handles))]
+        tp_sizes_gb = [self._get_tp_total_size(tp) / 1E9 for tp in self.traffic_patterns]
+        tp_bandwidths_gbps = [tp_sizes_gb[i] / tp_times_sec[i] for i in range(len(tp_handles))]
+        avg_tp_bw = np.mean(tp_bandwidths_gbps)
 
         # Metrics report
         start_times = dist_utils.allgather_obj(start)
         end_times = dist_utils.allgather_obj(end)
+        avg_tp_bws = dist_utils.allgather_obj(avg_tp_bw)
 
         # This is the total time taken by all ranks to run all traffic patterns
         global_total_time = max(end_times) - min(start_times)
-
-        log.info(f"Total time taken to run {len(self.traffic_patterns)} traffic patterns: {end - start} seconds")
+        global_avg_tp_bw = np.mean(avg_tp_bws)
+    
+        if self.my_rank == 0:
+            headers = ["Total time (s)", "Avg pattern BW (GB/s)"]
+            data = [[global_total_time, global_avg_tp_bw]]
+            log.info("\n" + tabulate(data, headers=headers, floatfmt=".6f"))
 
         if verify_buffers:
             for i, tp in enumerate(self.traffic_patterns):
                 send_bufs, recv_bufs = tp_bufs[i]
                 self._verify_tp(tp, recv_bufs, print_recv_buffers)
 
-        self._destroy()
+        for i, tp in enumerate(self.traffic_patterns):
+            send_bufs, recv_bufs = tp_bufs[i]
+            self._destroy(tp_handles[i], send_bufs, recv_bufs)
 
         return end - start

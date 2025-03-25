@@ -9,6 +9,7 @@ log = logging.getLogger(__name__)
 class NixlBuffer:
     """Can be sharded"""
     def __init__(self, size: int, mem_type: str, nixl_agent: nixl_agent, shards=2, fill_value=0, dtype: torch.dtype = torch.int8):
+        self.nixl_agent = nixl_agent
         if mem_type in ("cuda", "vram"):
             device = "cuda"
         elif mem_type in ("cpu", "dram"):
@@ -30,4 +31,7 @@ class NixlBuffer:
 
         log.debug(f"[Rank {dist_utils.get_rank()}] Registering memory for bufs {self.bufs}")
         assert nixl_agent.register_memory(self.reg_descs) is not None, "Failed to register memory"
+    
+    def deregister(self):
+        self.nixl_agent.deregister_memory(self.reg_descs)
 
