@@ -27,9 +27,16 @@ subdir('mocks')
 
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
+cpp_flags = []
+
+if get_option('tests_skip_native_plugins')
+  cpp_flags+='-DSKIP_NATIVE_PLUGINS'
+endif
+
 test_exe = executable('test_executable',
-    sources : ['main.cpp'],
+    sources : ['main.cpp', 'plugin_manager.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
+    cpp_args : cpp_flags,
     dependencies : [nixl_dep, cuda_dep, gtest_dep]
 )
 
