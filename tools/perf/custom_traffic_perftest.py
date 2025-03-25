@@ -49,13 +49,14 @@ class CTPerftest:
         """
         self.my_rank = dist_utils.get_rank()
         self.world_size = dist_utils.get_world_size()
+        self._check_tp_config(traffic_pattern)
         self.traffic_pattern = traffic_pattern
         self.iters = iters
         self.warmup_iters = warmup_iters
 
-        log.debug(f"[Rank {self.my_rank}] Initializing Nixl agent")
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
+
 
         self.send_bufs: list[Optional[NixlBuffer]] = [] # [i]=None if no send to rank i
         self.recv_bufs: list[Optional[NixlBuffer]] = [] # [i]=None if no recv from rank i  
@@ -63,14 +64,12 @@ class CTPerftest:
 
     def _share_md(self) -> None:
         """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
-        log.debug(f"[Rank {self.my_rank}] Sharing agent metadata with other ranks")
         md = self.nixl_agent.get_agent_metadata()
         mds = dist_utils.allgather_obj(md)
         for other_rank, metadata in enumerate(mds):
             if other_rank == self.my_rank:
                 continue
             self.nixl_agent.add_remote_agent(metadata)
-            log.debug(f"[Rank {self.my_rank}] Added remote agent {other_rank}'s metadata")
         
     def _share_recv_buf_descs(self, my_recv_bufs: list[NixlBuffer]) -> list:
         """Share receive buffer descriptors between all ranks, in alltoall style.
@@ -166,6 +165,11 @@ class CTPerftest:
                 continue
             buf.deregister()
         
+    def _check_tp_config(self, tp: TrafficPattern):
+        matrix = load_matrix(tp.matrix_file)
+        # Matrix size should be world * world
+        assert matrix.shape == (self.world_size, self.world_size), f"Matrix size is not the same as world size, got {matrix.shape}, world_size={self.world_size}"
+
     def _verify_tp(self, tp: TrafficPattern, recv_bufs: list[Optional[NixlBuffer]], print_recv_buffers: bool = False):
         matrix = load_matrix(tp.matrix_file)
         for r, recv_buf in enumerate(recv_bufs):
@@ -188,11 +192,11 @@ class CTPerftest:
             expected = torch.full_like(full_recv_buf, r)
             assert torch.all(full_recv_buf == expected), f"Vector not equal to {r}, got {full_recv_buf}"
             assert full_recv_buf.size(0) == matrix[r][self.my_rank], f"Size of vector {r} is not the same as matrix[r][{self.my_rank}], got {full_recv_buf.size(0)}"
-            log.debug(f"Vector {r} verified successfully")
 
     def _get_tp_total_size(self, tp: TrafficPattern) -> int:
+        """Return total size of matrix in bytes"""
         matrix = load_matrix(tp.matrix_file)
-        return np.sum(matrix, axis=(0,1))
+        return np.sum(matrix, axis=(0,1)) * tp.dtype.itemsize
 
     def run(self, verify_buffers: bool = False, print_recv_buffers: bool = False) -> float:
         """Execute the performance test.
@@ -210,25 +214,28 @@ class CTPerftest:
             pending_handles = self._run_tp(handles)
             self._wait(pending_handles)
 
-        start = time.perf_counter()
+        start = time.time()
         for i in range(self.iters):
             pending_handles = self._run_tp(handles)
             self._wait(pending_handles)
-        end = time.perf_counter()
+        end = time.time()
 
         # Metrics report
-        total_time_sec = end - start
-        total_times_sec = dist_utils.allgather_obj(total_time_sec)
-        mean_total_time_sec = np.mean(total_times_sec)
-        mean_time_per_iter_sec = mean_total_time_sec / self.iters
+        start_times = dist_utils.allgather_obj(start)
+        end_times = dist_utils.allgather_obj(end)   
 
+        global_time = max(end_times) - min(start_times)
+        avg_time_per_iter_sec = global_time / self.iters
+
+        if self.my_rank == 0:
+            breakpoint()
         total_size_gb = self._get_tp_total_size(self.traffic_pattern) / 1E9
-        alg_bw_gbps = total_size_gb / mean_time_per_iter_sec
+        alg_bw_gbps = total_size_gb / avg_time_per_iter_sec / self.world_size
 
         # Print metrics as a table
         if self.my_rank == 0:
-            headers = ["Avg Total time (s)", "Avg Time/iter (s)", "Total size (GB)", "Alg BW (GB/s)"]
-            data = [[mean_total_time_sec, mean_time_per_iter_sec, total_size_gb, alg_bw_gbps]]
+            headers = ["Iters", "Total time (s)", "Avg Time/iter (s)", "Total size (GB)", "Alg BW (GB/s)"]
+            data = [[self.iters, global_time, avg_time_per_iter_sec, total_size_gb, alg_bw_gbps]]
             log.info("\n" + tabulate(data, headers=headers, floatfmt=".6f"))
 
         if verify_buffers:

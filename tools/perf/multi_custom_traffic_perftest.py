@@ -96,6 +96,7 @@ class MultiCTPerftest(CTPerftest):
         measures their performance, and optionally verifies the results.
         """
         # TODO ADD WARMUP
+        # TODO Add verification that rank i and j have only one connexion active (prevent from sending a buffer over another)
 
         tp_handles: list[list] = []
         tp_bufs = []
