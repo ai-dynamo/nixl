@@ -70,12 +70,107 @@ protected:
   }
 };
 
+class LoadedPluginTestFixture : public testing::Test {
+protected:
+  /* Plugin Manager. */
+  nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
+  /* Static plugins. */
+  std::set<std::string> static_plugins_;
+  /* Dynamically loaded plugins. */
+  std::set<std::string> loaded_plugins_;
+
+  void SetUp() override {
+    for (const auto &plugin : nixlPluginManager::getStaticPlugins()) {
+      static_plugins_.insert(plugin.name);
+    }
+  }
+
+  void TearDown() override {
+    for (const auto &plugin : loaded_plugins_) {
+      plugin_manager_.unloadPlugin(plugin);
+    }
+  }
+
+  /*
+   * Load a plugin to plugin manager.
+   *
+   * Returns true if the plugin loaded succesfully, otherwise false.
+   */
+  bool LoadPlugin(std::string name) {
+    loaded_plugins_.insert(name);
+    return plugin_manager_.loadPlugin(name) != nullptr;
+  }
+
+  /* Unload a plugin from plugin manager. */
+  void UnloadPlugin(std::string name) {
+    plugin_manager_.unloadPlugin(name);
+    loaded_plugins_.erase(name);
+  }
+
+  /*
+   * Returns true if the only non static plugins are similar to the loaded ones,
+   * otherwise false.
+   */
+  bool HasOnlyLoadedPlugins() {
+    const auto &pm_loaded = plugin_manager_.getLoadedPluginNames();
+    std::set<std::string> pm_loaded_set(pm_loaded.begin(), pm_loaded.end());
+    std::set<std::string> expected;
+
+    std::set_union(loaded_plugins_.begin(), loaded_plugins_.end(),
+                   static_plugins_.begin(), static_plugins_.end(),
+                   inserter(expected, expected.begin()));
+
+    return expected == pm_loaded_set;
+  }
+};
+
 TEST_P(LoadSinglePluginTestFixture, SimlpeLifeCycleTest) {
   EXPECT_TRUE(IsLoaded());
 }
 
 TEST_P(LoadMultiplePluginsTestFixture, SimlpeLifeCycleTest) {
   EXPECT_TRUE(AreAllLoaded());
+}
+
+TEST_F(LoadedPluginTestFixture, NoLoadedPluginsTest) {
+  EXPECT_TRUE(HasOnlyLoadedPlugins());
+}
+
+TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {
+  EXPECT_TRUE(LoadPlugin("UCX"));
+  EXPECT_TRUE(HasOnlyLoadedPlugins());
+}
+
+TEST_F(LoadedPluginTestFixture, LoadMultiplePluginsTest) {
+  EXPECT_TRUE(LoadPlugin("UCX"));
+  EXPECT_TRUE(LoadPlugin("GDS"));
+  EXPECT_TRUE(LoadPlugin("UCX_MO"));
+  EXPECT_TRUE(HasOnlyLoadedPlugins());
+}
+
+TEST_F(LoadedPluginTestFixture, LoadUnloadSimplePluginTest) {
+  const std::string &plugin = "UCX";
+
+  EXPECT_TRUE(LoadPlugin(plugin));
+  UnloadPlugin(plugin);
+  EXPECT_TRUE(HasOnlyLoadedPlugins());
+}
+
+TEST_F(LoadedPluginTestFixture, LoadUnloadComplexPluginTest) {
+  const std::string &plugin0 = "UCX";
+  const std::string &plugin1 = "GDS";
+
+  EXPECT_TRUE(LoadPlugin(plugin0));
+  EXPECT_TRUE(LoadPlugin(plugin1));
+  UnloadPlugin(plugin0);
+  EXPECT_TRUE(HasOnlyLoadedPlugins());
+
+  EXPECT_TRUE(LoadPlugin(plugin0));
+  EXPECT_TRUE(HasOnlyLoadedPlugins());
+
+  UnloadPlugin(plugin0);
+  UnloadPlugin(plugin1);
+  EXPECT_TRUE(HasOnlyLoadedPlugins());
 }
 
 /* Load single plugins tests instantiations. */
