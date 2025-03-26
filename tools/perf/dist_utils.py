@@ -12,18 +12,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import time
-import sys
-import os 
-from typing import *
 import logging
+import os
+import sys
+import time
 from abc import ABC, abstractmethod
+from typing import *
 
 from nixl._api import nixl_agent
 
 try:
     import torch
     import torch.distributed as dist
+
     has_torch = True
 except ImportError:
     has_torch = False
@@ -62,7 +63,7 @@ class _DistUtils(ABC):
     def get_world_size(self) -> int:
         pass
 
-    def share_world_metadata(self, nixl_agent: 'nixl_agent') -> None:
+    def share_world_metadata(self, nixl_agent: "nixl_agent") -> None:
         my_rank = self.get_rank()
 
         log.debug(f"[Rank {my_rank}] Sharing agent metadata with other ranks")
@@ -76,7 +77,6 @@ class _DistUtils(ABC):
 
 
 class _TorchDistUtils(_DistUtils):
-
     def get_rank(self) -> int:
         return dist.get_rank()
 
@@ -85,10 +85,10 @@ class _TorchDistUtils(_DistUtils):
 
     def init_dist(self) -> Tuple[int, int]:
         """Init torch distributed module
-        
+
         Returns:
             Tuple[int, int]: Tuple of (rank, world_size)
-            
+
         Raises:
             ValueError: If rank and world size cannot be determined
             RuntimeError: If CUDA is not available
@@ -107,16 +107,18 @@ class _TorchDistUtils(_DistUtils):
             raise ValueError("Could not parse rank and world size")
 
         dist.init_process_group(
-            backend='nccl',
+            backend="nccl",
             rank=rank,
             world_size=world_size,
         )
 
         rank = dist.get_rank()
 
-        if torch.cuda.device_count() == 0: 
-            print("No CUDA device have been detected, maybe you forgot to add --gpus-per-node option in srun?")
-            return 
+        if torch.cuda.device_count() == 0:
+            print(
+                "No CUDA device have been detected, maybe you forgot to add --gpus-per-node option in srun?"
+            )
+            return
 
         device = rank % torch.cuda.device_count()
         torch.cuda.set_device(device)
@@ -129,13 +131,13 @@ class _TorchDistUtils(_DistUtils):
         """Cleanup distributed process group"""
         if dist.is_initialized():
             dist.destroy_process_group()
-    
+
     def allgather_obj(self, obj: Any) -> List[Any]:
         """Allgather arbitrary object on world
-        
+
         Args:
             obj: Object to gather from all ranks
-            
+
         Returns:
             List[Any]: List of gathered objects, one from each rank
         """
@@ -145,33 +147,36 @@ class _TorchDistUtils(_DistUtils):
 
     def alltoall_obj(self, send_objs: List[Any]) -> List[Any]:
         """All-to-all communication of arbitrary objects on world
-        
+
         Args:
             send_objs: List of objects to send, length must equal world_size
-            
+
         Returns:
             List[Any]: List of received objects
-            
+
         Raises:
             AssertionError: If length of send_objs doesn't match world_size
         """
         my_rank = self.get_rank()
         world_size = self.get_world_size()
 
-        assert len(send_objs) == world_size, f"Invalid number of objects {len(send_objs)}, expected {world_size}"
+        assert (
+            len(send_objs) == world_size
+        ), f"Invalid number of objects {len(send_objs)}, expected {world_size}"
 
         recv_objs = [None for _ in range(len(send_objs))]
 
         for other_rank in range(world_size):
             output = [None]
             dist.scatter_object_list(
-                scatter_object_output_list=output, 
-                scatter_object_input_list=send_objs, 
-                src=other_rank
+                scatter_object_output_list=output,
+                scatter_object_input_list=send_objs,
+                src=other_rank,
             )
             recv_objs[other_rank] = output[0]
 
         return recv_objs
+
 
 dist_utils = _TorchDistUtils()
 dist_utils.init_dist()
