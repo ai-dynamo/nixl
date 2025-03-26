@@ -367,7 +367,7 @@ PYBIND11_MODULE(_bindings, m) {
                     return (uintptr_t) handle;
             })
         .def("prepXferDlist", [](nixlAgent &agent,
-                                 std::string &remote_agent,
+                                 std::string &agent_name,
                                  const nixl_xfer_dlist_t &descs,
                                  std::vector<uintptr_t> backends) -> uintptr_t {
                     nixlDlistH* handle = nullptr;
@@ -376,10 +376,10 @@ PYBIND11_MODULE(_bindings, m) {
                     for(uintptr_t backend: backends)
                         extra_params.backends.push_back((nixlBackendH*) backend);
 
-                    throw_nixl_exception(agent.prepXferDlist(remote_agent, descs, handle, &extra_params));
+                    throw_nixl_exception(agent.prepXferDlist(agent_name, descs, handle, &extra_params));
 
                     return (uintptr_t) handle;
-                }, py::arg("remote_agent"), py::arg("descs"), py::arg("backend") = std::vector<uintptr_t>({}))
+                }, py::arg("agent_name"), py::arg("descs"), py::arg("backend") = std::vector<uintptr_t>({}))
         .def("makeXferReq", [](nixlAgent &agent,
                                const nixl_xfer_op_t &operation,
                                uintptr_t local_side,
