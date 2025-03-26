@@ -95,18 +95,20 @@ class _TorchDistUtils(_DistUtils):
             return dist.get_rank(), dist.get_world_size()
 
         log.debug("Initializing torch distributed module")
-        try:
-            if os.environ.get("SLURM_PROCID"):
-                rank = int(os.environ["SLURM_PROCID"])
-                world_size = int(os.environ["SLURM_NTASKS"])
-            elif os.environ.get("RANK"):
-                rank = int(os.environ.get("RANK"))
-                world_size = int(os.environ.get("WORLD_SIZE"))
-            else:
-                raise ValueError("Could not parse rank and world size")
-        except ValueError as e:
-            log.error(f"Error parsing rank and world size: {e}")
-            raise e
+        if os.environ.get("SLURM_PROCID"):
+            rank_str = os.environ.get("SLURM_PROCID", "")
+            world_size_str = os.environ.get("SLURM_NTASKS", "")
+        elif os.environ.get("RANK"):
+            rank_str = os.environ.get("RANK", "")
+            world_size_str = os.environ.get("WORLD_SIZE", "")
+        else:
+            raise ValueError("Could not parse rank and world size")
+
+        if not rank_str.isdigit() or not world_size_str.isdigit():
+            raise ValueError("Could not parse rank and world size")
+
+        rank: int = int(rank_str)
+        world_size: int = int(world_size_str)
 
         dist.init_process_group(
             backend="nccl",
