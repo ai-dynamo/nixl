@@ -29,7 +29,7 @@ if __name__ == "__main__":
 
     start_time = time.perf_counter()
 
-    descs = agent.get_descs(("DRAM", addr_list), True)
+    descs = agent.get_xfer_descs(addr_list, "DRAM", is_sorted=True)
 
     end_time = time.perf_counter()
 
