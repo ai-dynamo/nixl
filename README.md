@@ -76,6 +76,6 @@ $ docker build -t nixl-container -f contrib/Dockerfile .
 
 ## Examples
 
-* [C++ examples](https://github.com/ai-dynamo/nixl/tree/main/test/nixl)
+* [C++ examples](https://github.com/ai-dynamo/nixl/tree/main/examples/cpp)
 
-* [Python examples](https://github.com/ai-dynamo/nixl/tree/main/test/python)
+* [Python examples](https://github.com/ai-dynamo/nixl/tree/main/examples/python)
