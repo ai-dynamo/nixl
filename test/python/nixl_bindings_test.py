@@ -78,10 +78,10 @@ def test_agent():
     reg_list2 = nixl.nixlRegDList(nixl.DRAM_SEG, False)
     reg_list2.addDesc((addr2, size, 0, "dead"))
 
-    ret = agent1.registerMem(reg_list1, ucx1)
+    ret = agent1.registerMem(reg_list1, [ucx1])
     assert ret == nixl.NIXL_SUCCESS
 
-    ret = agent2.registerMem(reg_list2, ucx2)
+    ret = agent2.registerMem(reg_list2, [ucx2])
     assert ret == nixl.NIXL_SUCCESS
 
     meta1 = agent1.getLocalMD()
@@ -144,10 +144,10 @@ def test_agent():
 
     agent1.releaseXferReq(handle)
 
-    ret = agent1.deregisterMem(reg_list1, ucx1)
+    ret = agent1.deregisterMem(reg_list1, [ucx1])
     assert ret == nixl.NIXL_SUCCESS
 
-    ret = agent2.deregisterMem(reg_list2, ucx2)
+    ret = agent2.deregisterMem(reg_list2, [ucx2])
     assert ret == nixl.NIXL_SUCCESS
 
     # Only initiator should call invalidate
