@@ -46,8 +46,7 @@ typedef enum {NIXL_READ, NIXL_WRITE} nixl_xfer_op_t;
 
 /**
  * @enum   nixl_status_t
- * @brief  An enumeration of status values and error codes for
- *         NIXL
+ * @brief  An enumeration of status values and error codes for NIXL
  */
 typedef enum {
     NIXL_IN_PROG = 1,
@@ -66,8 +65,7 @@ typedef enum {
 /**
  * @namespace nixlEnumStrings
  * @brief     This namespace to get string representation
- *             of different enums
- *
+ *            of different enums
  */
 namespace nixlEnumStrings {
     std::string memTypeStr(const nixl_mem_t &mem);
@@ -77,27 +75,31 @@ namespace nixlEnumStrings {
 
 
 /*** NIXL typedefs and defines used in the API ***/
+
 /**
  * @brief A typedef for a std::string to identify nixl backends
  */
-
 typedef std::string nixl_backend_t;
+
 /**
- * @brief A typedef for a std::string to identify nixl blob
- *        std::string supports \0 natively, So it can be looked as a void* of data,
+ * @brief A typedef for a std::string as nixl blob
+ *        std::string supports \0 natively, so it can be looked as a void* of data,
  *        with specified length. Giving it a new name to be clear in the API and
  *        preventing users to think it's a string and call c_str().
  */
 typedef std::string nixl_blob_t;
+
 /**
  * @brief A typedef for a std::vector<nixl_mem_t> to create nixl_mem_list_t objects.
  */
 typedef std::vector<nixl_mem_t> nixl_mem_list_t;
+
 /**
  * @brief A typedef for a  std::unordered_map<std::string, std::string>
  *        to hold nixl_b_params_t .
  */
 typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
+
 /**
  * @brief A typedef for a  std::unordered_map<std::string, std::vector<nixl_blob_t>>
  *        to hold nixl_notifs_t (nixl notifications)
@@ -106,33 +108,31 @@ typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
 
 /**
  * @class nixlAgentOptionalArgs
- * @brief A class for optional argument that can be provided to agent.
+ * @brief A class for optional argument that can be provided to relevant agent methods.
  */
-
 class nixlAgentOptionalArgs {
     public:
         /**
-         * @var backends Vector for holding different backends
-         *      Used in createBackend / createXferReq / prepXferDlist
-         *      makeXferReq   / GetNotifs     / GenNotif
-         *      As suggestion to limit the list of backends to be explored, and
-         *      the preference among them, first being the most preferred.
+         * @var backends vector to specify a list of backend handles, to limit the list
+         *      of backends to be considered. Used in
+         *      createBackend / createXferReq / prepXferDlist / makeXferReq / GetNotifs / GenNotif
          */
         std::vector<nixlBackendH*> backends;
 
         /**
-         * @var notifMsg A messaged Used in createXferReq / makeXferReq / postXferReq,
-         *               if a notification message is desired, and the corresponding indicator
+         * @var notifMsg A message to be used in createXferReq / makeXferReq / postXferReq,
+         *               if a notification message is desired
          */
         nixl_blob_t notifMsg;
         /**
-         * @var hasNotif boolean value to check if notification is provided
+         * @var hasNotif boolean value to indicate that a notification is provided,
+         *      as notification can be an empty blob. Or to remove notification during
+         *      a repost.
          */
         bool hasNotif = false;
 
         /**
-         * @var makeXferReq boolean to skip merging consecutive descriptors
-         *                  Used in makeXferReq, to skip merging of consecutive descriptors
+         * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
          */
         bool skipDescMerge = false;
 };
@@ -142,6 +142,10 @@ class nixlAgentOptionalArgs {
  */
 typedef nixlAgentOptionalArgs nixl_opt_args_t;
 
+/**
+ * @brief A define for an empty string, that indicates the descriptor list is being
+ *        prepared for the local agent as an initiator in prepXferDlist method.
+ */
 #define NIXL_INIT_AGENT ""
 
 #endif
