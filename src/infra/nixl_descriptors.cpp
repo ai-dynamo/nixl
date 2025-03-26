@@ -284,11 +284,10 @@ bool nixlDescList<T>::hasOverlaps () const {
 }
 
 template <class T>
-nixl_status_t nixlDescList<T>::remDesc (const int &index){
+void nixlDescList<T>::remDesc (const int &index){
     if (((size_t) index >= descs.size()) || (index < 0))
-        return NIXL_ERR_INVALID_PARAM;
+        throw std::out_of_range("Index is out of range");
     descs.erase(descs.begin() + index);
-    return NIXL_SUCCESS;
 }
 
 template <class T>

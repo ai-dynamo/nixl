@@ -60,7 +60,7 @@ int main(int argc, char *argv[])
         nixlBackendH            *gds, *ucx;
 
         nixl_reg_dlist_t        vram_for_gds(VRAM_SEG);
-        nixl_reg_dlist_t        file_for_gds(FILE_SEG, false);
+        nixl_reg_dlist_t        file_for_gds(FILE_SEG);
         nixlXferReqH            *treq;
         std::string             name;
 

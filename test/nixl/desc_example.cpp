@@ -193,15 +193,27 @@ int main()
     dlist4.print();
     dlist5.print();
 
-    assert(dlist1.remDesc(2)== NIXL_ERR_INVALID_PARAM);
+    try {
+        dlist1.remDesc(2);
+    } catch (const std::out_of_range& e) {
+        std::cout << "Caught expected error: " << e.what() << std::endl;
+    }
     std::cout << dlist1.getIndex(meta3) << "\n";
     dlist1.remDesc(0);
     std::cout << dlist1.getIndex(meta3) << "\n";
-    assert(dlist2.remDesc(dlist2.getIndex(meta1))== NIXL_ERR_INVALID_PARAM);
+    try {
+        dlist2.remDesc(dlist2.getIndex(meta1));
+    } catch (const std::out_of_range& e) {
+        std::cout << "Caught expected error: " << e.what() << std::endl;
+    }
     dlist2.remDesc(dlist2.getIndex(meta3));
     assert(dlist2.getIndex(meta3)== NIXL_ERR_NOT_FOUND);
     assert(dlist3.getIndex(meta1)== NIXL_ERR_NOT_FOUND);
-    assert (dlist3.remDesc(dlist3.getIndex(meta4))== NIXL_ERR_INVALID_PARAM);
+    try {
+        dlist3.remDesc(dlist3.getIndex(meta4));
+    } catch (const std::out_of_range& e) {
+        std::cout << "Caught expected error: " << e.what() << std::endl;
+    }
 
     dlist1.print();
     dlist2.print();

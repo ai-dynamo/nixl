@@ -200,6 +200,8 @@ class nixlDescList {
         /** @var NIXL memory type */
         nixl_mem_t     type;
         /** @var Flag for if list should be kept sorted
+         *       Comparison is done based on nixlBasicDesc (<) operator which
+         *       has comparison order of devID, then addr, then len.
          */
         bool           sorted;
         /** @var Vector for storing nixlDescs */
@@ -220,7 +222,7 @@ class nixlDescList {
          * @brief Deserializer constructor for nixlDescList from nixlSerDes object
          *        which serializes/deserializes our classes into/from blobs
          *
-         * @param nixlSerDes object to construct nixlDescList
+         * @param deserialize nixlSerDes object to construct nixlDescList
          */
         nixlDescList(nixlSerDes* deserializer);
         /**
@@ -310,10 +312,9 @@ class nixlDescList {
         void addDesc(const T &desc);
         /**
          * @brief Remove descriptor from list at index
-         *
-         * @return nixl_status_t Error code if removal was not successful
+         *        Can throw std::out_of_range exception.
          */
-        nixl_status_t remDesc(const int &index);
+        void remDesc(const int &index);
         /**
          * @brief Populate the `resp` nixlDescList by adding metadata to
          *        each element of `query` nixlDescList which has descriptors
@@ -322,6 +323,8 @@ class nixlDescList {
          *        covers the descriptor in `query`, and the metadata of the
          *        found descriptor is added to the `query` descriptor and added
          *        to the `resp` nixlDescList.
+         *        If the `query` is sorted and is going to be populated against
+         *        a sorted list, that enables an optimization to be in linear time.
          *
          * @param  query      nixlDescList object, made from nixlBasicDesc, as input query
          * @param  resp [out] populated response for the query, based on the current object
@@ -351,6 +354,8 @@ class nixlDescList {
         int getIndex(const nixlBasicDesc &query) const;
         /**
          * @brief Serialize a descriptor list with nixlSerDes class
+         * @param serializer nixlSerDes object to serialize nixlDescList
+         * @return nixl_status_t Error code if serialize was not successful
          */
         nixl_status_t serialize(nixlSerDes* serializer) const;
         /**
