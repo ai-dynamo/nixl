@@ -256,7 +256,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     for (size_t i=0; i<backend_list->size(); ++i) {
         nixlBackendEngine* backend = (*backend_list)[i];
         // remote_self use to be passed to loadLocalData
-        nixl_meta_dlist_t remote_self(descs.getType(), descs.isUnifiedAddr(), false);
+        nixl_meta_dlist_t remote_self(descs.getType(), false);
         ret = data->memorySection->addDescList(descs, backend, remote_self);
         if (ret != NIXL_SUCCESS) {
             nixl_xfer_dlist_t trimmed = descs.trim();
@@ -322,7 +322,6 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     // Doing best effort, and returning err if any
     for (auto & backend : *backend_set) {
         nixl_meta_dlist_t resp(descs.getType(),
-                               descs.isUnifiedAddr(),
                                descs.isSorted());
 
         // TODO: can use getIndex for exact match before populate
@@ -414,7 +413,6 @@ nixlAgent::prepXferDlist (const std::string &remote_agent,
     for (auto & backend : *backend_set) {
         handle->descs[backend] = new nixl_meta_dlist_t (
                                          descs.getType(),
-                                         descs.isUnifiedAddr(),
                                          descs.isSorted());
         if (remote_agent.size()==0)
             ret = data->memorySection->populate(
@@ -518,12 +516,10 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     nixlXferReqH* handle   = new nixlXferReqH;
     handle->initiatorDescs = new nixl_meta_dlist_t (
                                      local_descs->getType(),
-                                     local_descs->isUnifiedAddr(),
                                      false, desc_count);
 
     handle->targetDescs    = new nixl_meta_dlist_t (
                                      remote_descs->getType(),
-                                     remote_descs->isUnifiedAddr(),
                                      false, desc_count);
 
     if (extra_params && extra_params->skipDescMerge) {
@@ -652,12 +648,10 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     nixlXferReqH *handle   = new nixlXferReqH;
     handle->initiatorDescs = new nixl_meta_dlist_t (
                                      local_descs.getType(),
-                                     local_descs.isUnifiedAddr(),
                                      local_descs.isSorted());
 
     handle->targetDescs    = new nixl_meta_dlist_t (
                                      remote_descs.getType(),
-                                     remote_descs.isUnifiedAddr(),
                                      remote_descs.isSorted());
 
     // Currently we loop through and find first local match. Can use a

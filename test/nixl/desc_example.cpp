@@ -48,7 +48,7 @@ void testPerf(){
     std::cout << "time per desc " << time_per_desc << "us\n";
 
 
-    nixl_xfer_dlist_t dlist2 (DRAM_SEG, false, false, desc_count);
+    nixl_xfer_dlist_t dlist2 (DRAM_SEG, false, desc_count);
 
     gettimeofday(&start_time, NULL);
 
@@ -225,13 +225,13 @@ int main()
     nixlBasicDesc b5 (305, 30, 4);
     nixlBasicDesc b6 (100, 30, 3);
 
-    nixl_xfer_dlist_t dlist10 (DRAM_SEG, false, false);
-    nixl_xfer_dlist_t dlist11 (DRAM_SEG, false, true);
-    nixl_xfer_dlist_t dlist12 (DRAM_SEG, true,  true);
-    nixl_xfer_dlist_t dlist13 (DRAM_SEG, true,  true);
-    nixl_xfer_dlist_t dlist14 (DRAM_SEG, true,  true);
+    nixl_xfer_dlist_t dlist10 (DRAM_SEG, false);
+    nixl_xfer_dlist_t dlist11 (DRAM_SEG, true);
+    nixl_xfer_dlist_t dlist12 (DRAM_SEG, true);
+    nixl_xfer_dlist_t dlist13 (DRAM_SEG, true);
+    nixl_xfer_dlist_t dlist14 (DRAM_SEG, true);
 
-    nixl_reg_dlist_t dlist20 (DRAM_SEG, false,  true);
+    nixl_reg_dlist_t dlist20 (DRAM_SEG, true);
 
     dlist10.addDesc(b1);
     dlist10.addDesc(b2);
@@ -289,11 +289,11 @@ int main()
     importSList.print();
     std::cout << "\n";
 
-    nixl_reg_dlist_t dlist21 (DRAM_SEG, false,  false);
-    nixl_reg_dlist_t dlist22 (DRAM_SEG, false,  false);
-    nixl_reg_dlist_t dlist23 (DRAM_SEG, true,  false);
-    nixl_reg_dlist_t dlist24 (DRAM_SEG, true,  false);
-    nixl_reg_dlist_t dlist25 (DRAM_SEG, true,  false);
+    nixl_reg_dlist_t dlist21 (DRAM_SEG, false);
+    nixl_reg_dlist_t dlist22 (DRAM_SEG, false);
+    nixl_reg_dlist_t dlist23 (DRAM_SEG, false);
+    nixl_reg_dlist_t dlist24 (DRAM_SEG, false);
+    nixl_reg_dlist_t dlist25 (DRAM_SEG, false);
 
     dlist20.populate (dlist10, dlist21);
     dlist20.populate (dlist11, dlist22);

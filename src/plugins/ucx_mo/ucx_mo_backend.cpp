@@ -538,12 +538,10 @@ nixlUcxMoEngine::postXfer (const nixl_xfer_op_t &op,
         if (NULL == dlmatrix[lidx][ridx].first) {
             dlmatrix[lidx][ridx].first = new nixl_meta_dlist_t (
                                                 local.getType(),
-                                                local.isUnifiedAddr(),
                                                 local.isSorted());
 
             dlmatrix[lidx][ridx].second = new nixl_meta_dlist_t (
                                                 remote.getType(),
-                                                remote.isUnifiedAddr(),
                                                 remote.isSorted());
         }
 
