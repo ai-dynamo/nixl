@@ -139,23 +139,24 @@ class nixlAgent {
          * @brief  Prepare a list of descriptors for a transfer request, so later elements
          *         from this list can be used to create a transfer request by index. It should
          *         be done on the initiator agent, and for both sides of an transfer.
-         *         Considering loopback, there are 3 modes for remote_agent value:
+         *         Considering loopback, there are 3 modes for agent_name:
          *           - For local descriptors, it is set to NIXL_INIT_AGENT,
          *             indicating that this is a local preparation to be used as local_side handle.
          *           - For remote descriptors: it is set to the remote name, indicating
          *             that this is remote side preparation to be used for remote_side handle.
-         *           - For loopback descriptors, it is set to local agent name for local transfers.
+         *           - For loopback descriptors, it is set to local agent's name, indicating that
+         *             this is for a loopback (local) transfer to be uued for remote_side handle
          *         If a list of backends hints is provided (via extra_params), the preparation
          *         is limited to the specified backends.
          *
-         * @param  remote_agent     Remote agent name as a string for preparing xfer handle
+         * @param  agent_name       Agent name as a string for preparing xfer handle
          * @param  descs            The descriptor list to be prepared for transfer requests
          * @param  dlist_hndl [out] The prepared descriptor list handle for this transfer request
          * @param  extra_params     Optional additional parameters used in preparing dlist handle
          * @return nixl_status_t    Error code if call was not successful
          */
         nixl_status_t
-        prepXferDlist (const std::string &remote_agent,
+        prepXferDlist (const std::string &agent_name,
                        const nixl_xfer_dlist_t &descs,
                        nixlDlistH* &dlist_hndl,
                        const nixl_opt_args_t* extra_params = nullptr) const;

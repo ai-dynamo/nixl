@@ -188,11 +188,12 @@ class nixl_agent:
     def make_connection(self, remote_agent: str):
         self.agent.makeConnection(remote_agent)
 
-    # remote_agent should be "NIXL_INIT_AGENT" for local descriptors on the initiator side
+    # agent_name should be "NIXL_INIT_AGENT" for local descriptors on the initiator side. For a
+    # remote agent, it would be that agent's name, or for loopback, local agent's name as target.
     # xfer_list can be any of the types supported by get_xfer_descs
     def prep_xfer_dlist(
         self,
-        remote_agent: str,
+        agent_name: str,
         xfer_list,
         mem_type: Optional[str] = None,
         is_sorted: bool = False,
@@ -200,14 +201,14 @@ class nixl_agent:
     ) -> nixl_prepped_dlist_handle:
         descs = self.get_xfer_descs(xfer_list, mem_type, is_sorted)
 
-        if remote_agent == "NIXL_INIT_AGENT" or remote_agent == "":
-            remote_agent = nixlBind.NIXL_INIT_AGENT
+        if agent_name == "NIXL_INIT_AGENT" or agent_name == "":
+            agent_name = nixlBind.NIXL_INIT_AGENT
 
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
 
-        handle = self.agent.prepXferDlist(remote_agent, descs, handle_list)
+        handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
 
         return handle
 

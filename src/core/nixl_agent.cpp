@@ -367,7 +367,7 @@ nixlAgent::makeConnection(const std::string &remote_agent) {
 }
 
 nixl_status_t
-nixlAgent::prepXferDlist (const std::string &remote_agent,
+nixlAgent::prepXferDlist (const std::string &agent_name,
                           const nixl_xfer_dlist_t &descs,
                           nixlDlistH* &dlist_hndl,
                           const nixl_opt_args_t* extra_params) const {
@@ -376,16 +376,16 @@ nixlAgent::prepXferDlist (const std::string &remote_agent,
     backend_set_t* backend_set;
     nixl_status_t  ret;
     int            count = 0;
+    bool           init_side = (agent_name == NIXL_INIT_AGENT);
 
     // When central KV is supported, still it should return error,
     // just we can add a call to fetchRemoteMD for next time
-    if (remote_agent.size() != 0)
-        if (data->remoteSections.count(remote_agent) == 0)
-            return NIXL_ERR_NOT_FOUND;
+    if (!init_side && (data->remoteSections.count(agent_name) == 0))
+        return NIXL_ERR_NOT_FOUND;
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        if (remote_agent.size() != 0)
-            backend_set = data->remoteSections[remote_agent]->
+        if (!init_side)
+            backend_set = data->remoteSections[agent_name]->
                                 queryBackends(descs.getType());
         else
             backend_set = data->memorySection->
@@ -402,23 +402,23 @@ nixlAgent::prepXferDlist (const std::string &remote_agent,
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
     nixlDlistH *handle = new nixlDlistH;
-    if (remote_agent.size()==0) { // Local descriptor list
+    if (init_side) {
         handle->isLocal     = true;
         handle->remoteAgent = "";
     } else {
         handle->isLocal     = false;
-        handle->remoteAgent = remote_agent;
+        handle->remoteAgent = agent_name;
     }
 
     for (auto & backend : *backend_set) {
         handle->descs[backend] = new nixl_meta_dlist_t (
                                          descs.getType(),
                                          descs.isSorted());
-        if (remote_agent.size()==0)
+        if (init_side)
             ret = data->memorySection->populate(
                        descs, backend, *(handle->descs[backend]));
         else
-            ret = data->remoteSections[remote_agent]->populate(
+            ret = data->remoteSections[agent_name]->populate(
                        descs, backend, *(handle->descs[backend]));
         if (ret == NIXL_SUCCESS) {
             count++;
