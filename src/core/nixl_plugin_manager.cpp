@@ -272,12 +272,13 @@ void nixlPluginManager::discoverPluginsFromDir(const std::string& dirpath) {
     while ((entry = readdir(dp))) {
         std::string filename = entry->d_name;
 
+        if(filename.size() < 11) continue;
         // Check if this is a plugin file
-        if (filename.substr(0, 11) == "libplugin_" &&
+        if (filename.substr(0, 10) == "libplugin_" &&
             filename.substr(filename.size() - 3) == ".so") {
 
             // Extract plugin name
-            std::string plugin_name = filename.substr(11, filename.size() - 14);
+            std::string plugin_name = filename.substr(10, filename.size() - 13);
 
             // Try to load the plugin
             auto plugin = loadPlugin(plugin_name);

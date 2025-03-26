@@ -14,7 +14,7 @@
 # limitations under the License.
 
 [build-system]
-requires = ["meson-python", "pybind11", "patchelf", "libucx-cu12"]
+requires = ["meson-python", "pybind11", "patchelf"]
 build-backend = "mesonpy"
 
 [project]
@@ -32,4 +32,4 @@ authors = [
 ]
 
 [tool.meson-python.args]
-setup = ['-Ddisable_gds_backend=true', '-Dinstall_headers=false', '-Dstatic_plugins=UCX']
+setup = ['-Ddisable_gds_backend=true', '-Dinstall_headers=false']
