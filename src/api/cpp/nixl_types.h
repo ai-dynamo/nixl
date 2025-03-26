@@ -125,9 +125,8 @@ class nixlAgentOptionalArgs {
          */
         nixl_blob_t notifMsg;
         /**
-         * @var hasNotif boolean value to indicate that a notification is provided,
-         *      as notification can be an empty blob. Or to remove notification during
-         *      a repost.
+         * @var hasNotif boolean value to indicate that a notification is provided, or to
+         *      remove notification during a repost. If set to false, notifMsg is not checked.
          */
         bool hasNotif = false;
 

@@ -155,16 +155,15 @@ PYBIND11_MODULE(_bindings, m) {
     py::register_exception<nixlNotSupportedError>(m, "nixlNotSupportedError");
 
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
-        .def(py::init<nixl_mem_t, bool, bool, int>(), py::arg("type"), py::arg("unifiedAddr")=true, py::arg("sorted")=false, py::arg("init_size")=0)
-        .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool unifiedAddr, bool sorted) {
-                nixl_xfer_dlist_t new_list(mem, unifiedAddr, sorted, descs.size());
+        .def(py::init<nixl_mem_t, bool, int>(), py::arg("type"), py::arg("sorted")=false, py::arg("init_size")=0)
+        .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool sorted) {
+                nixl_xfer_dlist_t new_list(mem, sorted, descs.size());
                 for(long unsigned int i = 0; i<descs.size(); i++)
                     new_list[i] = nixlBasicDesc(descs[i][0].cast<uintptr_t>(), descs[i][1].cast<size_t>(), descs[i][2].cast<uint32_t>());
                 if (sorted) new_list.verifySorted();
                 return new_list;
-            }), py::arg("type"), py::arg("descs"), py::arg("unifiedAddr")=true, py::arg("sorted")=false)
+            }), py::arg("type"), py::arg("descs"), py::arg("sorted")=false)
         .def("getType", &nixl_xfer_dlist_t::getType)
-        .def("isUnifiedAddr", &nixl_xfer_dlist_t::isUnifiedAddr)
         .def("descCount", &nixl_xfer_dlist_t::descCount)
         .def("isEmpty", &nixl_xfer_dlist_t::isEmpty)
         .def("isSorted", &nixl_xfer_dlist_t::isSorted)
@@ -213,16 +212,15 @@ PYBIND11_MODULE(_bindings, m) {
         ));
 
     py::class_<nixl_reg_dlist_t>(m, "nixlRegDList")
-        .def(py::init<nixl_mem_t, bool, bool, int>(), py::arg("type"), py::arg("unifiedAddr")=true, py::arg("sorted")=false, py::arg("init_size")=0)
-        .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool unifiedAddr, bool sorted) {
-                nixl_reg_dlist_t new_list(mem, unifiedAddr, sorted, descs.size());
+        .def(py::init<nixl_mem_t, bool, int>(), py::arg("type"), py::arg("sorted")=false, py::arg("init_size")=0)
+        .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool sorted) {
+                nixl_reg_dlist_t new_list(mem, sorted, descs.size());
                 for(long unsigned int i = 0; i<descs.size(); i++)
                     new_list[i] = nixlBlobDesc(descs[i][0].cast<uintptr_t>(), descs[i][1].cast<size_t>(), descs[i][2].cast<uint32_t>(), descs[i][3].cast<std::string>());
                 if (sorted) new_list.verifySorted();
                 return new_list;
-            }), py::arg("type"), py::arg("descs"), py::arg("unifiedAddr")=true, py::arg("sorted")=false)
+            }), py::arg("type"), py::arg("descs"), py::arg("sorted")=false)
         .def("getType", &nixl_reg_dlist_t::getType)
-        .def("isUnifiedAddr", &nixl_reg_dlist_t::isUnifiedAddr)
         .def("descCount", &nixl_reg_dlist_t::descCount)
         .def("isEmpty", &nixl_reg_dlist_t::isEmpty)
         .def("isSorted", &nixl_reg_dlist_t::isSorted)

@@ -40,7 +40,7 @@ class nixlBasicDesc {
 
         /**
          * @brief Default constructor for nixlBasicDesc
-         *	  Does not initialize members to zero
+         *      Does not initialize members to zero
          */
         nixlBasicDesc() {};
         /**
@@ -67,7 +67,7 @@ class nixlBasicDesc {
          */
         nixlBasicDesc(const nixlBasicDesc &desc) = default;
         /**
-         * @brief Operator = overloading constructor
+         * @brief Operator (=) overloading constructor
          *        with nixlBasicDesc object
          *
          * @param desc   nixlBasicDesc object
@@ -77,6 +77,11 @@ class nixlBasicDesc {
          * @brief nixlBasicDesc destructor
          */
         ~nixlBasicDesc() = default;
+        /**
+         * @brief Operator overloading (<) to compare BasicDesc objects
+         *        Comparison criteria is devID, then addr, then len
+         */
+        bool operator<(const nixlBasicDesc &desc) const;
         /**
          * @brief Operator overloading (==) to compare BasicDesc objects
          *
@@ -121,7 +126,7 @@ class nixlBasicDesc {
          *
          * @param suffix gets prepended to the descriptor print
          */
-	    void print(const std::string &suffix) const;
+        void print(const std::string &suffix) const;
 };
 
 /**
@@ -180,7 +185,7 @@ class nixlBlobDesc : public nixlBasicDesc {
          * @brief Print nixlBlobDesc for debugging purpose
          *
          * @param suffix gets prepended to the descriptor print
-		 */
+         */
         void print(const std::string &suffix) const;
 };
 
@@ -194,20 +199,10 @@ class nixlDescList {
     private:
         /** @var NIXL memory type */
         nixl_mem_t     type;
-        /** @var Unified addressing flag
-		 *
-		 *       Should be true for DRAM/VRAM with global addressing over PCIe
-		 *       Should be false for file or other storage objects
-		 */
-        bool           unifiedAddr;
         /** @var Flag for if list should be kept sorted
-		 *
-         *       nixlDescList is sorted based on the unifiedAddr flag:
-         *         1- For unifiedAddr cases, the list is sorted just on address
-         *         2- For not unifiedAddr cases, the devID is considered before
-         *            address during the sort process. For example in case of a
-         *            file, each file has its own independent addressing.
-		 */
+         *       Comparison is done based on nixlBasicDesc (<) operator which
+         *       has comparison order of devID, then addr, then len.
+         */
         bool           sorted;
         /** @var Vector for storing nixlDescs */
         std::vector<T> descs;
@@ -217,17 +212,17 @@ class nixlDescList {
          * @brief Parametrized Constructor for nixlDescList
          *
          * @param type         NIXL memory type of descriptor list
-         * @param unifiedAddr  Flag to set unified addressing (default = true)
          * @param sorted       Flag to set sorted option (default = false)
          * @param init_size    initial size for descriptor list (default = 0)
          */
-        nixlDescList(const nixl_mem_t &type, const bool &unifiedAddr=true,
-                     const bool &sorted=false, const int &init_size=0);
+        nixlDescList(const nixl_mem_t &type,
+                     const bool &sorted=false,
+                     const int &init_size=0);
         /**
          * @brief Deserializer constructor for nixlDescList from nixlSerDes object
          *        which serializes/deserializes our classes into/from blobs
          *
-         * @param nixlSerDes object to construct nixlDescList
+         * @param deserialize nixlSerDes object to construct nixlDescList
          */
         nixlDescList(nixlSerDes* deserializer);
         /**
@@ -251,10 +246,6 @@ class nixlDescList {
          * @brief      Get NIXL memory type for this DescList
          */
         inline nixl_mem_t getType() const { return type; }
-        /**
-         * @brief       Get unifiedAddr flag
-         */
-        inline bool isUnifiedAddr() const { return unifiedAddr; }
         /**
          * @brief get sorted flag
          */
@@ -316,15 +307,14 @@ class nixlDescList {
         inline void clear() { descs.clear(); }
         /**
          * @brief     Add Descriptors to descriptor list
-         * 	          If nixlDescList object is sorted, this method keeps it sorted
+         *               If nixlDescList object is sorted, this method keeps it sorted
          */
         void addDesc(const T &desc);
         /**
          * @brief Remove descriptor from list at index
-         *
-         * @return nixl_status_t Error code if removal was not successful
+         *        Can throw std::out_of_range exception.
          */
-        nixl_status_t remDesc(const int &index);
+        void remDesc(const int &index);
         /**
          * @brief Populate the `resp` nixlDescList by adding metadata to
          *        each element of `query` nixlDescList which has descriptors
@@ -333,6 +323,8 @@ class nixlDescList {
          *        covers the descriptor in `query`, and the metadata of the
          *        found descriptor is added to the `query` descriptor and added
          *        to the `resp` nixlDescList.
+         *        If the `query` is sorted and is going to be populated against
+         *        a sorted list, that enables an optimization to be in linear time.
          *
          * @param  query      nixlDescList object, made from nixlBasicDesc, as input query
          * @param  resp [out] populated response for the query, based on the current object
@@ -362,6 +354,8 @@ class nixlDescList {
         int getIndex(const nixlBasicDesc &query) const;
         /**
          * @brief Serialize a descriptor list with nixlSerDes class
+         * @param serializer nixlSerDes object to serialize nixlDescList
+         * @return nixl_status_t Error code if serialize was not successful
          */
         nixl_status_t serialize(nixlSerDes* serializer) const;
         /**

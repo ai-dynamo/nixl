@@ -148,11 +148,10 @@ class nixl_agent:
         self,
         reg_list,
         mem_type=None,
-        is_unified_addr=True,
         is_sorted=False,
         backend=None,
     ):
-        reg_descs = self.get_reg_descs(reg_list, mem_type, is_unified_addr, is_sorted)
+        reg_descs = self.get_reg_descs(reg_list, mem_type, is_sorted)
 
         # based on backend type and mem_type, figure what registrations are meaningful
         if backend:
@@ -220,11 +219,10 @@ class nixl_agent:
         remote_agent,
         xfer_list,
         mem_type=None,
-        is_unified_addr=True,
         is_sorted=False,
         xfer_backend=None,
     ):
-        descs = self.get_xfer_descs(xfer_list, mem_type, is_unified_addr, is_sorted)
+        descs = self.get_xfer_descs(xfer_list, mem_type, is_sorted)
         if xfer_backend:
             handle = self.agent.prepXferDlist(remote_agent, descs, xfer_backend)
         else:
@@ -387,9 +385,7 @@ class nixl_agent:
     # For descs, it gets a) list of 3 element tuples, b) a tensor, c) a list
     # of tensors, or d) passes along if an xfer_dlist is given. The other 3
     # optional parameters are dlist options.
-    def get_xfer_descs(
-        self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
-    ):
+    def get_xfer_descs(self, descs, mem_type=None, is_sorted=False):
         # can add check for DLPack input
 
         if isinstance(descs, nixlBind.nixlXferDList):
@@ -397,7 +393,7 @@ class nixl_agent:
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
                 new_descs = nixlBind.nixlXferDList(
-                    self.nixl_mems[mem_type], descs, is_unified_addr, is_sorted
+                    self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
                 print("Please specify a mem type if not using Tensors")
@@ -415,7 +411,6 @@ class nixl_agent:
             new_descs = nixlBind.nixlRegDList(
                 self.nixl_mems[mem_type],
                 [(base_addr, region_len, gpu_id)],
-                is_unified_addr,
                 is_sorted,
             )
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
@@ -433,7 +428,7 @@ class nixl_agent:
                 dlist[i] = (base_addr, region_len, gpu_id)
             mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
             new_descs = nixlBind.nixlXferDList(
-                self.nixl_mems[mem_type], dlist, is_unified_addr, is_sorted
+                self.nixl_mems[mem_type], dlist, is_sorted
             )
         elif isinstance(descs, nixlBind.nixlRegDList):
             print("RegList type detected for transfer, please use XferList")
@@ -446,9 +441,7 @@ class nixl_agent:
     # For descs, it gets a) list of 4 element tuples, b) a tensor, c) a list
     # of tensors, or d) passes along if an xfer_dlist is given. The other 3
     # optional parameters are dlist options.
-    def get_reg_descs(
-        self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
-    ):
+    def get_reg_descs(self, descs, mem_type=None, is_sorted=False):
         # can add check for DLPack input
 
         if isinstance(descs, nixlBind.nixlRegDList):
@@ -456,7 +449,7 @@ class nixl_agent:
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 4:
                 new_descs = nixlBind.nixlRegDList(
-                    self.nixl_mems[mem_type], descs, is_unified_addr, is_sorted
+                    self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
                 print("Please specify a mem type if not using Tensors")
@@ -474,7 +467,6 @@ class nixl_agent:
             new_descs = nixlBind.nixlRegDList(
                 self.nixl_mems[mem_type],
                 [(base_addr, region_len, gpu_id, "")],
-                is_unified_addr,
                 is_sorted,
             )
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
@@ -492,7 +484,7 @@ class nixl_agent:
                 dlist[i] = (base_addr, region_len, gpu_id, "")
             mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
             new_descs = nixlBind.nixlRegDList(
-                self.nixl_mems[mem_type], dlist, is_unified_addr, is_sorted
+                self.nixl_mems[mem_type], dlist, is_sorted
             )
         elif isinstance(descs, nixlBind.nixlXferDList):
             print("XferList type detected for registration, please use RegList")

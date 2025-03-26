@@ -23,7 +23,7 @@ import nixl._utils as nixl_utils
 
 def test_list():
     descs = [(1000, 105, 0), (2000, 30, 0), (1010, 20, 0)]
-    test_list = nixl.nixlXferDList(nixl.DRAM_SEG, descs, True, False)
+    test_list = nixl.nixlXferDList(nixl.DRAM_SEG, descs, False)
 
     assert test_list.descCount() == 3
 
@@ -38,7 +38,6 @@ def test_list():
     assert unpickled_list == test_list
 
     assert test_list.getType() == nixl.DRAM_SEG
-    assert test_list.isUnifiedAddr()
 
     print(test_list.descCount())
     assert test_list.descCount() == 3
@@ -73,10 +72,10 @@ def test_agent():
 
     nixl_utils.ba_buf(addr1, size)
 
-    reg_list1 = nixl.nixlRegDList(nixl.DRAM_SEG, True, False)
+    reg_list1 = nixl.nixlRegDList(nixl.DRAM_SEG, False)
     reg_list1.addDesc((addr1, size, 0, "dead"))
 
-    reg_list2 = nixl.nixlRegDList(nixl.DRAM_SEG, True, False)
+    reg_list2 = nixl.nixlRegDList(nixl.DRAM_SEG, False)
     reg_list2.addDesc((addr2, size, 0, "dead"))
 
     ret = agent1.registerMem(reg_list1, ucx1)
@@ -101,10 +100,10 @@ def test_agent():
     offset = 8
     req_size = 8
 
-    src_list = nixl.nixlXferDList(nixl.DRAM_SEG, True, False)
+    src_list = nixl.nixlXferDList(nixl.DRAM_SEG, False)
     src_list.addDesc((addr1 + offset, req_size, 0))
 
-    dst_list = nixl.nixlXferDList(nixl.DRAM_SEG, True, False)
+    dst_list = nixl.nixlXferDList(nixl.DRAM_SEG, False)
     dst_list.addDesc((addr2 + offset, req_size, 0))
 
     print("Transfer from " + str(addr1 + offset) + " to " + str(addr2 + offset))
