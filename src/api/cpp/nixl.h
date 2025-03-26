@@ -39,6 +39,7 @@ class nixlAgent {
 
         /**
          * @brief Constructor for nixlAgent which gets agent name and configurations.
+         *
          * @param name A String name assigned to the Agent to initialize the class
          * @param cfg  Agent configuration of class type nixlAgentConfig
          */
@@ -50,16 +51,19 @@ class nixlAgent {
         ~nixlAgent ();
 
         /**
-         * @brief  Discovers the available supported plugins found in the plugin paths
-         * @param  plugins [out] Vector of backend plugins returned to the user
+         * @brief  Discover the available supported plugins found in the plugin paths
+         *
+         * @param  plugins [out] Vector of available backend plugins
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
         getAvailPlugins (std::vector<nixl_backend_t> &plugins);
 
         /**
-         * @brief  Provides the supported init configs with their default values
-         * @param  type          Plugin backend type as input
+         * @brief  Get the supported memory types, and init config parameters and their
+         *         default values for a backend plugin.
+         *
+         * @param  type          Plugin backend type
          * @param  mems [out]    List of supported memory types for nixl by the plugin
          * @param  params [out]  List of init parameters and their values for the plugin
          * @return nixl_status_t Error code if call was not successful
@@ -69,11 +73,11 @@ class nixlAgent {
                          nixl_mem_list_t &mems,
                          nixl_b_params_t &params) const;
         /**
-         * @brief  Returns the backend parameters after instantiation. User might have passed
-         *         a limited set of init parameters during creation of backend, while this
-         *         method will return all the used parameters by the backend during initialization,
-         *         such as the parameters set to their default values.
-         * @param  backend       Backend type as input
+         * @brief  Get the backend parameters after instantiation. This will be a comprehensive
+         *         list, for instance the default values used for parameters that were not
+         *         specified during the instantiation.
+         *
+         * @param  backend       Backend type
          * @param  mems [out]    List of supported memory types for nixl by the backend
          * @param  params [out]  List of init parameters and their values for the backend
          * @return nixl_status_t Error code if call was not successful
@@ -84,9 +88,10 @@ class nixlAgent {
                           nixl_b_params_t &params) const;
 
         /**
-         * @brief  Instantiates BackendEngine objects based on the corresponding parameters
-         * @param  type          Backend type as input
-         * @param  params        Plugin backend specific parameters for nixl Backend
+         * @brief  Instantiate a backend engine object based on the corresponding parameters
+         *
+         * @param  type          Backend type
+         * @param  params        Backend specific parameters
          * @param  backend [out] Backend handle for NIXL
          * @return nixl_status_t Error code if call was not successful
          */
@@ -97,6 +102,7 @@ class nixlAgent {
         /**
          * @brief  Register a memory/storage with NIXL. If a list of backends hints is provided
          *         (via extra_params), the registration is limited to the specified backends.
+         *
          * @param  descs         Descriptor list of the buffers to be registered
          * @param  extra_params  Optional additional parameters used in registering memory
          * @return nixl_status_t Error code if call was not successful
@@ -109,6 +115,7 @@ class nixlAgent {
          * @brief  Deregister a memory/storage from NIXL. If a list of backends hints is provided
          *         (via extra_params), the deregistration is limited to the specified backends.
          *         Each descriptor in the list should match a descriptor used during registration.
+         *
          * @param  descs         Descriptor list of the buffers to be deregistered
          * @param  extra_params  Optional additional parameters used in deregistering memory
          * @return nixl_status_t Error code if call was not successful
@@ -120,6 +127,7 @@ class nixlAgent {
         /**
          * @brief  Make connection proactively, instead of at the time of the first transfer
          *         towards the target agent.
+         *
          * @param  remote_agent  Name of the remote agent
          * @return nixl_status_t Error code if call was not successful
          */
@@ -128,7 +136,7 @@ class nixlAgent {
 
         /*** Transfer Request Preparation ***/
         /**
-         * @brief  Prepares a list of descriptors for a transfer request, so later elements
+         * @brief  Prepare a list of descriptors for a transfer request, so later elements
          *         from this list can be used to create a transfer request by index. It should
          *         be done on the initiator agent, and for both sides of an transfer.
          *         Considering loopback, there are 3 modes for remote_agent value:
@@ -139,6 +147,7 @@ class nixlAgent {
          *           - For loopback descriptors, it is set to local agent name for local transfers.
          *         If a list of backends hints is provided (via extra_params), the preparation
          *         is limited to the specified backends.
+         *
          * @param  remote_agent     Remote agent name as a string for preparing xfer handle
          * @param  descs            The descriptor list to be prepared for transfer requests
          * @param  dlist_hndl [out] The prepared descriptor list handle for this transfer request
@@ -151,11 +160,12 @@ class nixlAgent {
                        nixlDlistH* &dlist_hndl,
                        const nixl_opt_args_t* extra_params = nullptr) const;
         /**
-         * @brief  Makes a transfer request `req_handl` by selecting indices from already
+         * @brief  Make a transfer request `req_handl` by selecting indices from already
          *         prepared descriptor list handles. NIXL automatically determines the backend
          *         that can perform the transfer. If a list of backends hints is provided
          *         (via extra_params), the selection is limited to the specified backends.
          *         Optionally, a notification message can also be provided through extra_params.
+         *
          * @param  operation        Operation for transfer (e.g., NIXL_WRITE)
          * @param  local_side       Local prepared descriptor list handle
          * @param  local_indices    Indices list to the local prepared descriptor list handle
@@ -191,6 +201,7 @@ class nixlAgent {
          *         pre-processing done in the preparation step. If a list of backends hints is
          *         provided (via extra_params), the selection is limited to the specified backends.
          *         Optionally, a notification message can also be provided through extra_params.
+         *
          * @param  operation      Operation for transfer (e.g., NIXL_WRITE)
          * @param  local_descs    Local descriptor list
          * @param  remote_descs   Remote (or loopback) descriptor list
@@ -210,12 +221,13 @@ class nixlAgent {
         /*** Operations on prepared Transfer Request ***/
 
         /**
-         * @brief  Submits a transfer request `req_hndl` which initiates a transfer.
+         * @brief  Submit a transfer request `req_hndl` which initiates a transfer.
          *         After this, the transfer state can be checked asynchronously till completion.
          *         In case of small transfers that are completed within the call, return value
          *         will be NIXL_SUCCESS. Otherwise, the output status will be NIXL_IN_PROG until
          *         completion. Notification  message  can be preovided through the extra_params,
          *         and can be updated per re-post.
+         *
          * @param  req_hndl      Transfer request handle obtained from makeXferReq/createXferReq
          * @param  extra_params  Optional extra parameters used in posting a transfer request
          * @return nixl_status_t NIXL_IN_PROG or error code if call was not successful
@@ -226,6 +238,7 @@ class nixlAgent {
 
         /**
          * @brief  Check the status of transfer request `req_hndl`
+         *
          * @param  req_hndl      Transfer request handle after postXferReq
          * @return nixl_status_t NIXL_IN_PROG or error code if call was not successful
          */
@@ -235,6 +248,7 @@ class nixlAgent {
         /**
          * @brief  Query the backend associated with `req_hndl`. E.g., if for genNotif
          *         the same backend as a transfer is desired.
+         *
          * @param  req_hndl      Transfer request handle obtained from makeXferReq/createXferReq
          * @param  backend [out] Output backend handle chosen for the transfer request
          * @return nixl_status_t Error code if call was not successful
@@ -246,6 +260,7 @@ class nixlAgent {
         /**
          * @brief  Release the transfer request `req_hndl`. If the transfer is active,
          *         it will be canceled, or return an error if the transfer cannot be aborted.
+         *
          * @param  req_hndl      Transfer request handle to be released
          * @return nixl_status_t Error code if call was not successful
          */
@@ -254,6 +269,7 @@ class nixlAgent {
 
         /**
          * @brief  Release the prepared descriptor list handle `dlist_hndl`
+         *
          * @param  dlist_hndl    Prepared descriptor list handle to be released
          * @return nixl_status_t Error code if call was not successful
          */
@@ -268,6 +284,7 @@ class nixlAgent {
          *         from agent name to a list of notification received from that agent. Elements
          *         are released within the agent after this call. Optionally, a list of backends
          *         can be mentioned in extra_params to only get those backends notifications.
+         *
          * @param  notif_map     Input notifications list
          * @param  extra_params  Optional extra parameters used in getting notifications
          * @return nixl_status_t Error code if call was not successful
@@ -282,6 +299,7 @@ class nixlAgent {
          *         generated notification will be received alongside other notifications
          *         by getNotifs. Optionally, a backend can be specified for the notification
          *         through the extra_params.
+         *
          * @param  remote_agent  Remote agent name as string
          * @param  msg           Notification message to be sent
          * @param  extra_params  Optional extra parameters used in generating a standalone notif
@@ -295,6 +313,7 @@ class nixlAgent {
         /*** Metadata handling through side channel ***/
         /**
          * @brief  Get metadata blob for this agent, to be given to other agents.
+         *
          * @param  str [out]     The serialized metadata blob
          * @return nixl_status_t Error code if call was not successful
          */
@@ -304,6 +323,7 @@ class nixlAgent {
         /**
          * @brief  Load other agent's metadata and unpack it internally. Now the local
          *         agent can initiate transfers towards the remote agent.
+         *
          * @param  remote_metadata  Serialized metadata blob to be loaded
          * @param  agent_name [out] Agent name extracted from the loaded metadata blob
          * @return nixl_status_t    Error code if call was not successful
@@ -316,6 +336,7 @@ class nixlAgent {
          * @brief  Invalidate the remote agent metadata cached locally. This will
          *         disconnect from that agent if already connected, and no more
          *         transfers can be initiated towards that agent.
+         *
          * @param  remote_agent  Remote agent name to invalidate its metadata blob
          * @return nixl_status_t Error code if call was not successful
          */
