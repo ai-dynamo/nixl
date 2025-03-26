@@ -536,24 +536,24 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
             nixlMetaDesc remote_desc1 = (*remote_descs)[remote_indices[i]];
 
             if(i != (desc_count-1) ) {
-                nixlMetaDesc local_desc2  = (*local_descs) [local_indices[i+1]];
-                nixlMetaDesc remote_desc2 = (*remote_descs)[remote_indices[i+1]];
+                nixlMetaDesc* local_desc2  = &((*local_descs) [local_indices[i+1]]);
+                nixlMetaDesc* remote_desc2 = &((*remote_descs)[remote_indices[i+1]]);
 
-              while (((local_desc1.addr + local_desc1.len) == local_desc2.addr)
-                  && ((remote_desc1.addr + remote_desc1.len) == remote_desc2.addr)
-                  && (local_desc1.metadataP == local_desc2.metadataP)
-                  && (remote_desc1.metadataP == remote_desc2.metadataP)
-                  && (local_desc1.devId == local_desc2.devId)
-                  && (remote_desc1.devId == remote_desc2.devId)) {
+              while (((local_desc1.addr + local_desc1.len) == local_desc2->addr)
+                  && ((remote_desc1.addr + remote_desc1.len) == remote_desc2->addr)
+                  && (local_desc1.metadataP == local_desc2->metadataP)
+                  && (remote_desc1.metadataP == remote_desc2->metadataP)
+                  && (local_desc1.devId == local_desc2->devId)
+                  && (remote_desc1.devId == remote_desc2->devId)) {
 
-                    local_desc1.len += local_desc2.len;
-                    remote_desc1.len += remote_desc2.len;
+                    local_desc1.len += local_desc2->len;
+                    remote_desc1.len += remote_desc2->len;
 
                     i++;
                     if(i == (desc_count-1)) break;
 
-                    local_desc2  = (*local_descs) [local_indices[i+1]];
-                    remote_desc2 = (*remote_descs)[remote_indices[i+1]];
+                    local_desc2  = &((*local_descs) [local_indices[i+1]]);
+                    remote_desc2 = &((*remote_descs)[remote_indices[i+1]]);
                 }
             }
 
