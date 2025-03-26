@@ -14,10 +14,8 @@
 # limitations under the License.
 import logging
 import os
-import sys
-import time
 from abc import ABC, abstractmethod
-from typing import *
+from typing import Any, List, Tuple, final
 
 from nixl._api import nixl_agent
 
@@ -40,11 +38,11 @@ class _DistUtils(ABC):
         pass
 
     @abstractmethod
-    def init_dist():
+    def init_dist(self):
         pass
 
     @abstractmethod
-    def destroy_dist():
+    def destroy_dist(self):
         pass
 
     @abstractmethod
@@ -97,14 +95,18 @@ class _TorchDistUtils(_DistUtils):
             return dist.get_rank(), dist.get_world_size()
 
         log.debug("Initializing torch distributed module")
-        if os.environ.get("SLURM_PROCID"):
-            rank = int(os.environ["SLURM_PROCID"])
-            world_size = int(os.environ["SLURM_NTASKS"])
-        elif os.environ.get("RANK"):
-            rank = int(os.environ.get("RANK"))
-            world_size = int(os.environ.get("WORLD_SIZE"))
-        else:
-            raise ValueError("Could not parse rank and world size")
+        try:
+            if os.environ.get("SLURM_PROCID"):
+                rank = int(os.environ["SLURM_PROCID"])
+                world_size = int(os.environ["SLURM_NTASKS"])
+            elif os.environ.get("RANK"):
+                rank = int(os.environ.get("RANK"))
+                world_size = int(os.environ.get("WORLD_SIZE"))
+            else:
+                raise ValueError("Could not parse rank and world size")
+        except ValueError as e:
+            log.error(f"Error parsing rank and world size: {e}")
+            raise e
 
         dist.init_process_group(
             backend="nccl",
@@ -118,7 +120,7 @@ class _TorchDistUtils(_DistUtils):
             print(
                 "No CUDA device have been detected, maybe you forgot to add --gpus-per-node option in srun?"
             )
-            return
+            return rank, world_size
 
         device = rank % torch.cuda.device_count()
         torch.cuda.set_device(device)
@@ -157,7 +159,6 @@ class _TorchDistUtils(_DistUtils):
         Raises:
             AssertionError: If length of send_objs doesn't match world_size
         """
-        my_rank = self.get_rank()
         world_size = self.get_world_size()
 
         assert (

@@ -14,21 +14,14 @@
 # limitations under the License.
 import logging
 import time
-import uuid
-from dataclasses import dataclass
-from os import PathLike
-from pathlib import Path
-from typing import *
+from typing import Optional, Tuple
 
 import numpy as np
-import torch
-from common import NixlBuffer
 from custom_traffic_perftest import CTPerftest, TrafficPattern
 from dist_utils import dist_utils
 from tabulate import tabulate
 
 from nixl._api import nixl_agent
-from utils import load_matrix
 
 log = logging.getLogger(__name__)
 
@@ -54,20 +47,12 @@ class MultiCTPerftest(CTPerftest):
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
 
-        self.send_bufs: list[Optional[NixlBuffer]] = []  # [i]=None if no send to rank i
-        self.recv_bufs: list[
-            Optional[NixlBuffer]
-        ] = []  # [i]=None if no recv from rank i
-        self.dst_bufs_descs = (
-            []
-        )  # [i]=None if no recv from rank i else descriptor of the dst buffer
-
     def _wait(
         self,
         tp_handles: list[list],
         blocking=True,
-        tp_done_ts: list[Optional[float]] = None,
-    ) -> list[Optional[float]]:
+        tp_done_ts: Optional[list[float]] = None,
+    ) -> Tuple[list[float], list[list[int]]]:
         """Wait for all transfers to complete and record completion times.
         Can be non blocking
 
@@ -80,11 +65,11 @@ class MultiCTPerftest(CTPerftest):
             if any(pending) is True, then the wait is not complete
         """
         # Wait for transfers to complete - report end time for each tp
-        tp_done_ts = tp_done_ts or [None for _ in tp_handles]
+        tp_done_ts = tp_done_ts or [0.0 for _ in tp_handles]
         while True:
-            pending = [[] for _ in tp_handles]
+            pending: list[list[int]] = [[] for _ in tp_handles]
             for i, handles in enumerate(tp_handles):
-                if tp_done_ts[i] is not None:
+                if tp_done_ts[i] > 0.0:
                     continue
                 for handle in handles:
                     try:
@@ -123,7 +108,7 @@ class MultiCTPerftest(CTPerftest):
         measures their performance, and optionally verifies the results.
         """
         # TODO ADD WARMUP
-        # TODO Add verification that rank i and j have only one connexion active (prevent from sending a buffer over another)
+        # TODO Add verification that rank i and j have only one connection active (prevent from sending a buffer over another)
 
         tp_handles: list[list] = []
         tp_bufs = []
@@ -132,12 +117,12 @@ class MultiCTPerftest(CTPerftest):
             tp_bufs.append((send_bufs, recv_bufs))
             tp_handles.append(handles)
 
-        start_ts_by_tp = [None for _ in tp_handles]
-        end_ts_by_tp = [None for _ in tp_handles]
+        start_ts_by_tp = [0.0 for _ in tp_handles]
+        end_ts_by_tp = [0.0 for _ in tp_handles]
         start = time.time()
         tp_ix = 0
-        next_ts = 0
-        pending_tp_handles = [[] for _ in tp_handles]
+        next_ts = 0.0
+        pending_tp_handles: list[list[int]] = [[] for _ in tp_handles]
 
         while tp_ix < len(tp_handles):
             if time.time() < next_ts:
@@ -157,7 +142,7 @@ class MultiCTPerftest(CTPerftest):
 
             tp_ix += 1
 
-        self._wait(tp_handles, end_ts_by_tp, blocking=True)
+        self._wait(tp_handles, tp_done_ts=end_ts_by_tp, blocking=True)
         end = time.time()
 
         tp_times_sec = [

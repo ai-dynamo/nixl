@@ -13,13 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+from os import PathLike
 
 import numpy as np
 
 log = logging.getLogger(__name__)
 
 
-def format_size(nbytes: int, precision=2) -> str:
+def format_size(nbytes: float, precision=2) -> str:
     units = ["B", "K", "M", "G"]
     units_ix = 0
     while nbytes / 1024 >= 1 and units_ix < len(units) - 1:
@@ -44,14 +45,13 @@ def parse_size(nbytes: str) -> int:
     return count
 
 
-def load_matrix(matrix_file: str) -> list[list[int]]:
+def load_matrix(matrix_file: PathLike) -> np.ndarray:
     # Cell i,j of the matrix is the size of the message to send from process i to process j
     matrix = []
     with open(matrix_file, "r") as f:
         for line in f:
             row = line.strip().split()
-            row = [parse_size(x) for x in row]
-            matrix.append(row)
+            matrix.append([parse_size(x) for x in row])
     mat = np.array(matrix)
 
     return mat

@@ -18,8 +18,7 @@ import uuid
 from dataclasses import dataclass
 from itertools import chain
 from os import PathLike
-from pathlib import Path
-from typing import *
+from typing import Literal, Optional, Tuple
 
 import numpy as np
 import torch
@@ -77,14 +76,6 @@ class CTPerftest:
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
 
-        self.send_bufs: list[Optional[NixlBuffer]] = []  # [i]=None if no send to rank i
-        self.recv_bufs: list[
-            Optional[NixlBuffer]
-        ] = []  # [i]=None if no recv from rank i
-        self.dst_bufs_descs = (
-            []
-        )  # [i]=None if no recv from rank i else descriptor of the dst buffer
-
     def _share_md(self) -> None:
         """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
         md = self.nixl_agent.get_agent_metadata()
@@ -94,7 +85,7 @@ class CTPerftest:
                 continue
             self.nixl_agent.add_remote_agent(metadata)
 
-    def _share_recv_buf_descs(self, my_recv_bufs: list[NixlBuffer]) -> list:
+    def _share_recv_buf_descs(self, my_recv_bufs: list[Optional[NixlBuffer]]) -> list:
         """Share receive buffer descriptors between all ranks, in alltoall style.
 
         Args:
@@ -147,7 +138,9 @@ class CTPerftest:
         self._share_md()
         return send_bufs, recv_bufs
 
-    def _prepare_tp(self, tp: TrafficPattern) -> list:
+    def _prepare_tp(
+        self, tp: TrafficPattern
+    ) -> Tuple[list[int], list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
         send_bufs, recv_bufs = self._init_buffers(tp)
         dst_bufs_descs = self._share_recv_buf_descs(recv_bufs)
 
