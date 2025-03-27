@@ -13,6 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('nixl')
-subdir('unit')
-subdir('gtest')
+gtest_dep = dependency('gtest', version : '>=1.11.0')
+
+if cuda_dep.found()
+    cuda_dependencies = [cuda_dep]
+    cpp_args = '-DUSE_VRAM'
+else
+    cuda_dependencies = []
+    cpp_args = '-UUSE_VRAM'
+endif
+
+test_exe = executable('test_executable',
+    sources : ['main.cpp', 'plugin_manager.cpp'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs],
+    dependencies : [nixl_dep, cuda_dep, gtest_dep]
+)
+
+test('gtest', test_exe)
