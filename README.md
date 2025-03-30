@@ -25,37 +25,37 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 ## Prerequisites
 ### Ubuntu:
 
-`$ sudo apt install build-essential cmake pkg-config`
+`sudo apt install build-essential cmake pkg-config`
 
 ### Fedora:
 
-`$ sudo dnf install gcc-c++ cmake pkg-config`
+`sudo dnf install gcc-c++ cmake pkg-config`
 
 ### Python
 
-`$ pip3 install meson ninja pybind11`
+`pip3 install meson ninja pybind11`
 
 ### UCX
 
 NIXL was tested with UCX version 1.18.0.
 
 ```
-$ wget https://github.com/openucx/ucx/releases/download/v1.18.0/ucx-1.18.0.tar.gz
-$ tar xzf ucx-1.18.0.tar.gz
-$ cd ucx-1.18.0
-$ ./contrib/configure-release --prefix=<PATH_TO_INSTALL>/install
-$ make -j8
-$ make install
+wget https://github.com/openucx/ucx/releases/download/v1.18.0/ucx-1.18.0.tar.gz
+tar xzf ucx-1.18.0.tar.gz
+cd ucx-1.18.0
+./contrib/configure-release --prefix=<PATH_TO_INSTALL>/install
+make -j8
+make install
 ```
 
 ## Getting started
 ### Build & install
 
 ```
-$ meson setup <name_of_build_dir>
-$ cd <name_of_build_dir>
-$ ninja
-$ ninja-install
+meson setup <name_of_build_dir>
+cd <name_of_build_dir>
+ninja
+ninja-install
 ```
 
 ### pybind11 Python Interface
@@ -71,7 +71,7 @@ To build the docker container, first clone the current repository. Also make sur
 Run the following from the root folder of the cloned NIXL repository:
 
 ```
-$ docker build -t nixl-container -f contrib/Dockerfile .
+docker build -t nixl-container -f contrib/Dockerfile .
 ```
 
 ## Examples
