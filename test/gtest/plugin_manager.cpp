@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include "common.h"
 #include "nixl.h"
 #include "plugin_manager.h"
 
@@ -33,9 +34,6 @@ struct PluginDesc {
 void PrintTo(const PluginDesc &plugin_desc, ::std::ostream *os) {
   *os << plugin_desc.name;
 }
-
-static constexpr const char *mock_basic_plugin_name = "MOCK_BASIC_PLUGIN";
-static constexpr const char *mock_dram_plugin_name = "MOCK_DRAM_PLUGIN";
 
 const PluginDesc ucx_plugin_desc{.name = "UCX",
                                  .type = utils::PluginDesc::PluginType::Native};
@@ -184,33 +182,33 @@ TEST_F(LoadedPluginTestFixture, NoLoadedPluginsTest) {
 }
 
 TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {
-  EXPECT_TRUE(LoadPlugin(utils::mock_basic_plugin_name));
+  EXPECT_TRUE(LoadPlugin(mock_basic_plugin_name));
   EXPECT_TRUE(HasOnlyLoadedPlugins());
 }
 
 TEST_F(LoadedPluginTestFixture, LoadMultiplePluginsTest) {
-  EXPECT_TRUE(LoadPlugin(utils::mock_basic_plugin_name));
-  EXPECT_TRUE(LoadPlugin(utils::mock_dram_plugin_name));
+  EXPECT_TRUE(LoadPlugin(mock_basic_plugin_name));
+  EXPECT_TRUE(LoadPlugin(mock_dram_plugin_name));
   EXPECT_TRUE(HasOnlyLoadedPlugins());
 }
 
 TEST_F(LoadedPluginTestFixture, LoadUnloadSimplePluginTest) {
-  EXPECT_TRUE(LoadPlugin(utils::mock_basic_plugin_name));
-  UnloadPlugin(utils::mock_basic_plugin_name);
+  EXPECT_TRUE(LoadPlugin(mock_basic_plugin_name));
+  UnloadPlugin(mock_basic_plugin_name);
   EXPECT_TRUE(HasOnlyLoadedPlugins());
 }
 
 TEST_F(LoadedPluginTestFixture, LoadUnloadComplexPluginTest) {
-  EXPECT_TRUE(LoadPlugin(utils::mock_basic_plugin_name));
-  EXPECT_TRUE(LoadPlugin(utils::mock_dram_plugin_name));
-  UnloadPlugin(utils::mock_basic_plugin_name);
+  EXPECT_TRUE(LoadPlugin(mock_basic_plugin_name));
+  EXPECT_TRUE(LoadPlugin(mock_dram_plugin_name));
+  UnloadPlugin(mock_basic_plugin_name);
   EXPECT_TRUE(HasOnlyLoadedPlugins());
 
-  EXPECT_TRUE(LoadPlugin(utils::mock_basic_plugin_name));
+  EXPECT_TRUE(LoadPlugin(mock_basic_plugin_name));
   EXPECT_TRUE(HasOnlyLoadedPlugins());
 
-  UnloadPlugin(utils::mock_basic_plugin_name);
-  UnloadPlugin(utils::mock_dram_plugin_name);
+  UnloadPlugin(mock_basic_plugin_name);
+  UnloadPlugin(mock_dram_plugin_name);
   EXPECT_TRUE(HasOnlyLoadedPlugins());
 }
 
@@ -218,7 +216,7 @@ TEST_F(LoadedPluginTestFixture, LoadUnloadComplexPluginTest) {
 INSTANTIATE_TEST_SUITE_P(MockLoadPluginInstantiation,
                          LoadSinglePluginTestFixture,
                          testing::Values(utils::PluginDesc{
-                             .name = utils::mock_basic_plugin_name,
+                             .name = mock_basic_plugin_name,
                              .type = utils::PluginDesc::PluginType::Mock}));
 INSTANTIATE_TEST_SUITE_P(UcxLoadPluginInstantiation,
                          LoadSinglePluginTestFixture,

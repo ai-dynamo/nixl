@@ -34,7 +34,7 @@ if get_option('tests_skip_native_plugins')
 endif
 
 test_exe = executable('test_executable',
-    sources : ['main.cpp', 'plugin_manager.cpp'],
+    sources : ['main.cpp', 'plugin_manager.cpp', 'agent.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     cpp_args : cpp_flags,
     dependencies : [nixl_dep, cuda_dep, gtest_dep]
