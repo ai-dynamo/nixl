@@ -20,7 +20,7 @@ import numpy as np
 from custom_traffic_perftest import CTPerftest, TrafficPattern
 from dist_utils import dist_utils
 from tabulate import tabulate
-
+from common import NixlHandle
 from nixl._api import nixl_agent
 
 log = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class MultiCTPerftest(CTPerftest):
 
     def _wait(
         self,
-        tp_handles: list[list],
+        tp_handles: list[list[NixlHandle]],
         blocking=True,
         tp_done_ts: Optional[list[float]] = None,
     ) -> Tuple[list[float], list[list[int]]]:
@@ -73,7 +73,8 @@ class MultiCTPerftest(CTPerftest):
                     continue
                 for handle in handles:
                     try:
-                        state = self.nixl_agent.check_xfer_state(handle)
+                        state = self.nixl_agent.check_xfer_state(handle.handle)
+                        #state = self.nixl_agent.check_remote_xfer_done(f"{handle.remote_rank}", f"{handle.tp.id}_{self.my_rank}_{handle.remote_rank}")
                     except Exception as e:
                         print(f"Error checking xfer state for handle {handle}: {e}")
                         import sys

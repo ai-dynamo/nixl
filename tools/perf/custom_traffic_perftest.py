@@ -22,7 +22,7 @@ from typing import Literal, Optional, Tuple
 
 import numpy as np
 import torch
-from common import NixlBuffer
+from common import NixlBuffer, NixlHandle
 from dist_utils import dist_utils
 from tabulate import tabulate
 
@@ -140,11 +140,11 @@ class CTPerftest:
 
     def _prepare_tp(
         self, tp: TrafficPattern
-    ) -> Tuple[list[int], list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
+    ) -> Tuple[list[NixlHandle], list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
         send_bufs, recv_bufs = self._init_buffers(tp)
         dst_bufs_descs = self._share_recv_buf_descs(recv_bufs)
 
-        handles = []
+        handles: list[NixlHandle] = []
         for other, buf in enumerate(send_bufs):
             if buf is None:
                 continue
@@ -156,26 +156,27 @@ class CTPerftest:
                 f"{other}",
                 f"{tp.id}_{self.my_rank}_{other}",
             )
-            handles.append(handle)
+            handles.append(NixlHandle(other, handle, tp))
 
         return handles, send_bufs, recv_bufs
 
-    def _run_tp(self, handles: list):
+    def _run_tp(self, handles: list[NixlHandle]) -> list[NixlHandle]:
         pending = []
         for handle in handles:
-            status = self.nixl_agent.transfer(handle)
+            status = self.nixl_agent.transfer(handle.handle)
             assert status != "ERR", "Transfer failed"
             if status != "DONE":
                 pending.append(handle)
 
         return pending
-
-    def _wait(self, handles: list):
+    
+    def _wait(self, handles: list[NixlHandle]):
         # Wait for transfers to complete
         while True:
             pending = []
             for handle in handles:
-                state = self.nixl_agent.check_xfer_state(handle)
+                state = self.nixl_agent.check_xfer_state(handle.handle)
+                #state = self.nixl_agent.check_remote_xfer_done(f"{handle.remote_rank}", f"{handle.tp.id}_{self.my_rank}_{handle.remote_rank}")
                 assert state != "ERR", "Transfer got to Error state."
                 if state != "DONE":
                     pending.append(handle)
@@ -183,15 +184,15 @@ class CTPerftest:
             if not pending:
                 break
             handles = pending
-
+        
     def _destroy(
         self,
-        handles: list,
+        handles: list[NixlHandle],
         send_bufs: list[Optional[NixlBuffer]],
         recv_bufs: list[Optional[NixlBuffer]],
     ):
         for handle in handles:
-            self.nixl_agent.release_xfer_handle(handle)
+            self.nixl_agent.release_xfer_handle(handle.handle)
 
         for other_rank in range(self.world_size):
             if other_rank == self.my_rank:

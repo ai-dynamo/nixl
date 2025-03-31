@@ -21,6 +21,15 @@ from nixl._api import nixl_agent
 
 log = logging.getLogger(__name__)
 
+class NixlHandle:
+    def __init__(self, remote_rank, handle, traffic_pattern):
+        self.remote_rank = remote_rank
+        self.handle = handle
+        self.tp = traffic_pattern
+    
+    def __str__(self):
+        return f"to:{self.remote_rank}"
+
 
 class NixlBuffer:
     """Can be sharded"""
