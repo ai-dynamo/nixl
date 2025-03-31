@@ -16,7 +16,7 @@
 project('nixl', 'CPP', version: '0.1.0',
     default_options: ['buildtype=debug',
                 'werror=true',
-                'cpp_std=c++11',
+                'cpp_std=c++17',
                 'prefix=/opt/nvidia/nvda_nixl'],
     meson_version: '>= 0.64.0'
 )
