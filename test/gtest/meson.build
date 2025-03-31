@@ -23,10 +23,17 @@ else
     cpp_args = '-UUSE_VRAM'
 endif
 
+plugin_dir = get_option('tests_plugin_dir')
+if plugin_dir != ''
+  plugin_dir_arg = '--tests_plugin_dir=' + plugin_dir
+else
+  plugin_dir_arg = ''
+endif
+
 test_exe = executable('test_executable',
     sources : ['main.cpp', 'plugin_manager.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     dependencies : [nixl_dep, cuda_dep, gtest_dep]
 )
 
-test('gtest', test_exe)
+test('gtest', test_exe, args: [plugin_dir_arg])

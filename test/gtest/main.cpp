@@ -14,11 +14,39 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "plugin_manager.h"
 #include <gtest/gtest.h>
 
 namespace gtest {
+namespace utils {
+
+std::string ExtractValueFromArgument(const std::string &arg) {
+  const std::string delimiter = "=";
+  size_t pos = arg.find(delimiter);
+  if (pos != std::string::npos) {
+    return arg.substr(pos + delimiter.length());
+  }
+  return "";
+}
+} // namespace utils
+
+void ParseArguments(int argc, char **argv) {
+  for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]).find("--tests_plugin_dir=") == 0) {
+      const std::string plugin_dir = utils::ExtractValueFromArgument(argv[i]);
+
+      if (!plugin_dir.empty()) {
+        std::cout << "Adding plugin directory:" << plugin_dir << std::endl;
+        nixlPluginManager::getInstance().addPluginDirectory(plugin_dir);
+      }
+    }
+  }
+}
+
 int RunTests(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);
+  ParseArguments(argc, argv);
+
   return RUN_ALL_TESTS();
 }
 } // namespace gtest
