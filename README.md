@@ -63,15 +63,32 @@ The pybind11 bindings for the public facing NIXL API are available in src/bindin
 
 The preferred way is to build it through meson-python, which will just let it be installed with pip. This can be done from the root nixl directory:
 
-` $pip install .`
+` $ pip install .`
 
 ### Building Docker container
 To build the docker container, first clone the current repository. Also make sure you are able to pull docker images to your machine before attempting to build the container.
 
 Run the following from the root folder of the cloned NIXL repository:
-
 ```
-$ docker build -t nixl-container -f contrib/Dockerfile .
+$ ./contrib/build-container.sh
+```
+
+By default, the container is built with Ubuntu 24.04. To build a container for Ubuntu 22.04 use the --os option as follows:
+```
+$ ./contrib/build-container.sh --os 22.04
+```
+
+To see all the options supported by the container use:
+```
+$ ./contrib/build-container.sh -h
+```
+
+The container also includes a prebuilt python wheel in /workspace/dist if required for installing/distributing. Also, the wheel can be built with a separate script (see below).
+
+### Building the python wheel
+The contrib folder also includes a script to build the python wheel with the UCX dependencies. Note, that UCX and other NIXL dependencies are required to be installed.
+```
+$ ./contrib/build-wheel.sh
 ```
 
 ## Examples
