@@ -108,7 +108,7 @@ if __name__ == "__main__":
                     print("Initiator done")
 
             if not target_done:
-                if nixl_agent1.check_remote_xfer_done("initiator", "UUID1".encode()):
+                if nixl_agent1.check_remote_xfer_done("initiator", b'UUID1'):
                     target_done = True
                     print("Target done")
 
@@ -173,7 +173,7 @@ if __name__ == "__main__":
                 print("Initiator done")
 
         if not target_done:
-            if nixl_agent1.check_remote_xfer_done("initiator", "UUID2".encode()):
+            if nixl_agent1.check_remote_xfer_done("initiator", b'UUID2'):
                 target_done = True
                 print("Target done")
 
