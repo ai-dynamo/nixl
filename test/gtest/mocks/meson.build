@@ -19,5 +19,12 @@ mock_basic_plugin = shared_library('MOCK_BASIC_PLUGIN', 'mock_basic_plugin.cpp',
                link_with : [ucx_backend_lib],
                name_prefix: 'libplugin_')
 
+mock_dram_sources = ['mock_dram_plugin.cpp', 'mock_dram_engine.cpp']
+mock_dram_plugin = shared_library('MOCK_DRAM_PLUGIN', mock_dram_sources,
+               dependencies: [nixl_infra],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with : [ucx_backend_lib],
+               name_prefix: 'libplugin_')
+
 source_root = meson.source_root()
 mocks_dep = declare_dependency(variables : {'path' : meson.current_source_dir().split(source_root + '/')[1]})
