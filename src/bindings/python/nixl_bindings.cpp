@@ -26,6 +26,8 @@
 
 namespace py = pybind11;
 
+typedef std::map<std::string, std::vector<py::bytes>> nixl_py_notifs_t;
+
 class nixlNotPostedError : public std::runtime_error {
     public:
         nixlNotPostedError(const char* what) : runtime_error(what) {}
@@ -438,23 +440,17 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(ret);
                     return ret;
                 })
-        .def("getNotifs", [](nixlAgent &agent, nixl_notifs_t notif_map) -> nixl_notifs_t {
-                    nixl_status_t ret = agent.getNotifs(notif_map);
+        .def("getNotifs", [](nixlAgent &agent, nixl_py_notifs_t &notif_map) -> nixl_py_notifs_t {
+                    nixl_notifs_t new_notifs;
+                    nixl_status_t ret = agent.getNotifs(new_notifs);
 
                     throw_nixl_exception(ret);
-                    if (ret != NIXL_SUCCESS || notif_map.size() == 0) return notif_map;
 
-                    nixl_notifs_t ret_map;
-                    for (const auto& pair : notif_map) {
-                        std::vector<std::string> agent_notifs;
-
-                        for(const auto& str : pair.second)  {
-                            agent_notifs.push_back(py::bytes(str));
-                        }
-
-                        ret_map[pair.first] = agent_notifs;
+                    for (const auto& pair : new_notifs) {
+                        for(const auto& str : pair.second)
+                            notif_map[pair.first].push_back(py::bytes(str));
                     }
-                    return ret_map;
+                    return notif_map;
                 })
         .def("genNotif", [](nixlAgent &agent, const std::string &remote_agent,
                                               const std::string &msg,
