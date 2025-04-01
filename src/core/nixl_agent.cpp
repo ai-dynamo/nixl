@@ -89,7 +89,7 @@ nixlAgentData::~nixlAgentData() {
 /*** nixlAgent implementation ***/
 nixlAgent::nixlAgent(const std::string &name,
                      const nixlAgentConfig &cfg) {
-    if (name.size()==0)
+    if (name.size() == 0)
         throw std::invalid_argument("Agent needs a name");
     data = new nixlAgentData(name, cfg);
 }
@@ -271,7 +271,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
             return ret;
         } else {
             if (backend->supportsLocal()) {
-                if (data->remoteSections.count(data->name)==0)
+                if (data->remoteSections.count(data->name) == 0)
                     data->remoteSections[data->name] =
                           new nixlRemoteSection(data->name);
 
@@ -345,7 +345,7 @@ nixlAgent::makeConnection(const std::string &remote_agent) {
     nixl_status_t ret;
     int count = 0;
 
-    if (data->remoteBackends.count(remote_agent)==0)
+    if (data->remoteBackends.count(remote_agent) == 0)
         return NIXL_ERR_NOT_FOUND;
 
     // For now making all the possible connections, later might take hints
@@ -461,6 +461,12 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     if ((!local_side->isLocal) || (remote_side->isLocal))
         return NIXL_ERR_INVALID_PARAM;
 
+    // The remote was invalidated in between prepXferDlist and this call
+    if (data->remoteSections.count(remote_side->remoteAgent) == 0) {
+        delete req_hndl;
+        return NIXL_ERR_NOT_FOUND;
+    }
+
     for (auto & loc_bknd : local_side->descs) {
         for (auto & rem_bknd : remote_side->descs) {
             if (loc_bknd.first == rem_bknd.first) {
@@ -478,7 +484,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     nixl_meta_dlist_t* local_descs  = local_side->descs.at(backend);
     nixl_meta_dlist_t* remote_descs = remote_side->descs.at(backend);
 
-    if ((desc_count==0) || (remote_indices.size()==0) ||
+    if ((desc_count == 0) || (remote_indices.size() == 0) ||
         (desc_count != (int) remote_indices.size()))
         return NIXL_ERR_INVALID_PARAM;
 
@@ -502,12 +508,6 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     if ((opt_args.hasNotif) && (!backend->supportsNotif())) {
         return NIXL_ERR_BACKEND;
     }
-
-    // // The remote was invalidated
-    // if (data->remoteBackends.count(remote_side->remoteAgent)==0)
-    //     delete req_hndl;
-    //     return NIXL_ERR_BAD;
-    // }
 
     // Populate has been already done, no benefit in having sorted descriptors
     // which will be overwritten by [] assignment operator.
@@ -603,7 +603,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     req_hndl = nullptr;
 
-    if (data->remoteSections.count(remote_agent)==0)
+    if (data->remoteSections.count(remote_agent) == 0)
         return NIXL_ERR_NOT_FOUND;
 
     // Check the correspondence between descriptor lists
@@ -718,6 +718,12 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (!req_hndl)
         return NIXL_ERR_INVALID_PARAM;
 
+    // Check if the remote was invalidated before post/repost
+    if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
+        delete req_hndl;
+        return NIXL_ERR_NOT_FOUND;
+    }
+
     // We can't repost while a request is in progress
     if (req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
@@ -732,12 +738,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (req_hndl->status == NIXL_SUCCESS && req_hndl->backendHandle)
         req_hndl->status = req_hndl->engine->releaseReqH(
                                      req_hndl->backendHandle);
-
-    // // The remote was invalidated
-    // if (data->remoteBackends.count(req_hndl->remoteAgent)==0)
-    //     delete req_hndl;
-    //     return NIXL_ERR_BAD;
-    // }
 
     // Carrying over notification from xfer handle creation time
     if (req_hndl->hasNotif) {
@@ -776,16 +776,17 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
 nixl_status_t
 nixlAgent::getXferStatus (nixlXferReqH *req_hndl) {
-    // // The remote was invalidated
-    // if (data->remoteBackends.count(req_hndl->remoteAgent)==0)
-    //     delete req_hndl;
-    //     return NIXL_ERR_BAD;
-    // }
 
     // If the status is done, no need to recheck.
-    if (req_hndl->status != NIXL_SUCCESS)
+    if (req_hndl->status != NIXL_SUCCESS) {
+        // Check if the remote was invalidated before completion
+        if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
+            delete req_hndl;
+            return NIXL_ERR_NOT_FOUND;
+        }
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
+    }
 
     return req_hndl->status;
 }
@@ -962,7 +963,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
         return ret;
 
     std::string remote_agent = sd.getStr("Agent");
-    if (remote_agent.size()==0)
+    if (remote_agent.size() == 0)
         return NIXL_ERR_MISMATCH;
 
     if (remote_agent == data->name)
@@ -978,10 +979,10 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     for (size_t i=0; i<conn_cnt; ++i) {
         nixl_backend = sd.getStr("t");
-        if (nixl_backend.size()==0)
+        if (nixl_backend.size() == 0)
             return NIXL_ERR_MISMATCH;
         conn_info = sd.getStr("c");
-        if (conn_info.size()==0)
+        if (conn_info.size() == 0)
             return NIXL_ERR_MISMATCH;
 
         // Current agent might not support a remote backend
