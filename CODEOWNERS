@@ -1,0 +1,10 @@
+# CI/CD
+/.github/ @ai-dynamo/Devops
+CODEOWNERS @ai-dynamo/Devops
+
+# Legal
+/ATTRIBUTIONS.md @ai-dynamo/Devops
+/CODE_OF_CONDUCT.md @ai-dynamo/Devops
+/CONTRIBUTING.md @ai-dynamo/Devops
+/LICENSE @ai-dynamo/Devops
+/SECURITY.md @ai-dynamo/Devops
