@@ -79,6 +79,24 @@ The preferred way is to build it through meson-python, which will just let it be
 
 ` $ pip install .`
 
+### Build & install in conda environment
+```
+# install UCX following the above instructions
+
+$ conda activate <ENV_NAME>
+$ export PKG_CONFIG_PATH=<PATH_TO_UCX>/lib/pkgconfig:$PKG_CONFIG_PATH
+
+$ meson setup nixl-build -Ducx_path=<PATH_TO_UCX> --prefix=<PATH_TO_CONDA_ENV>
+$ cd nixl-build
+$ ninja
+$ ninja install
+
+$ cd ..
+$ pip install . --config-settings=setup-args="-Ducx_path=<PATH_TO_UCX>"
+$ pip list | grep nixl
+$ python -c "from nixl._api import nixl_agent; print('Success')"
+```
+
 ### Building Docker container
 To build the docker container, first clone the current repository. Also make sure you are able to pull docker images to your machine before attempting to build the container.
 
