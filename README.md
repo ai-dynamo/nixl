@@ -70,7 +70,7 @@ $ ldconfig
 $ meson setup <name_of_build_dir>
 $ cd <name_of_build_dir>
 $ ninja
-$ ninja-install
+$ ninja install
 ```
 
 ### pybind11 Python Interface
