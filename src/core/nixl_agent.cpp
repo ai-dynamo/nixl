@@ -304,29 +304,30 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
                          const nixl_opt_args_t* extra_params) {
 
 
-    backend_set_t*    backend_set;
+    backend_set_t     backend_set;
     nixl_status_t     ret, bad_ret=NIXL_SUCCESS;
     nixl_xfer_dlist_t trimmed = descs.trim();
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        backend_set = data->memorySection->queryBackends(
-                                          descs.getType());
-        if (!backend_set || backend_set->empty())
+        backend_set_t* avail_backends;
+        avail_backends = data->memorySection->queryBackends(
+                                              descs.getType());
+        if (!avail_backends || avail_backends->empty())
             return NIXL_ERR_NOT_FOUND;
+        // Make a copy as we might change it in remDescList
+        backend_set = *avail_backends;
     } else {
-        backend_set = new backend_set_t();
         for (auto & elm : extra_params->backends)
-            backend_set->insert(elm->engine);
+            backend_set.insert(elm->engine);
     }
 
     // Doing best effort, and returning err if any
-    for (auto & backend : *backend_set) {
+    for (auto & backend : backend_set) {
         nixl_meta_dlist_t resp(descs.getType(),
                                descs.isSorted());
 
-        // TODO: can use getIndex for exact match before populate
-        // Or in case of supporting overlapping registers with splitting,
-        // add logic to find each (after todo in addDescList for local sec).
+        // Now just populating the metadata part, inside remDescList,
+        // getIndex is used to make sure exact match
         ret = data->memorySection->populate(trimmed, backend, resp);
         if (ret != NIXL_SUCCESS)
             bad_ret = ret;
@@ -334,9 +335,6 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
         if (ret != NIXL_SUCCESS)
             bad_ret = ret;
     }
-
-    if (extra_params && extra_params->backends.size() > 0)
-        delete backend_set;
 
     return bad_ret;
 }
