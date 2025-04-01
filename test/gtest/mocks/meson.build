@@ -13,24 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-gtest_dep = dependency('gtest', version : '>=1.11.0')
+mock_basic_plugin = shared_library('MOCK_BASIC_PLUGIN', 'mock_basic_plugin.cpp',
+               dependencies: [nixl_infra],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with : [ucx_backend_lib],
+               name_prefix: 'libplugin_')
 
-if cuda_dep.found()
-    cuda_dependencies = [cuda_dep]
-    cpp_args = '-DUSE_VRAM'
-else
-    cuda_dependencies = []
-    cpp_args = '-UUSE_VRAM'
-endif
-
-subdir('mocks')
-
-plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
-
-test_exe = executable('test_executable',
-    sources : ['main.cpp'],
-    include_directories: [nixl_inc_dirs, utils_inc_dirs],
-    dependencies : [nixl_dep, cuda_dep, gtest_dep]
-)
-
-test('gtest', test_exe, args: [plugin_dirs_arg])
+source_root = meson.source_root()
+mocks_dep = declare_dependency(variables : {'path' : meson.current_source_dir().split(source_root + '/')[1]})
