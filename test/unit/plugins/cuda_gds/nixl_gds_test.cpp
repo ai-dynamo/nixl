@@ -552,6 +552,7 @@ int main(int argc, char *argv[])
             }
             printProgress(float(i + 1) / num_transfers);
         }
+        std::cout << "\nVerification completed successfully!" << std::endl;
     }
 
 cleanup:
