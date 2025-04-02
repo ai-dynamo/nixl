@@ -71,9 +71,13 @@ void print_usage(const char* program_name) {
               << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
               << "  -r, --no-read           Skip read test\n"
               << "  -w, --no-write          Skip write test\n"
+              << "  -p, --pool-size SIZE    Size of batch pool (default: 8, range: 1-32)\n"
+              << "  -b, --batch-limit SIZE  Maximum requests per batch (default: 128, range: 1-1024)\n"
+              << "  -m, --max-req-size SIZE Maximum size per request (default: 16M, range: 1M-1G)\n"
+              << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
               << "  -h, --help              Show this help message\n"
               << "\nExample:\n"
-              << "  " << program_name << " -d -n 100 -s 2M /path/to/dir  # 100 transfers of 2MB each using DRAM\n";
+              << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M /path/to/dir\n";
 }
 
 void printProgress(float progress) {
@@ -205,6 +209,9 @@ int main(int argc, char *argv[])
     int                     num_transfers = DEFAULT_NUM_TRANSFERS;
     bool                    skip_read = false;
     bool                    skip_write = false;
+    unsigned int            pool_size = 8;
+    unsigned int            batch_limit = 128;
+    size_t                  max_request_size = 16 * 1024 * 1024;
     std::chrono::microseconds total_time(0);
     double total_data_gb = 0;
 
@@ -216,11 +223,14 @@ int main(int argc, char *argv[])
         {"size", required_argument, 0, 's'},
         {"no-read", no_argument, 0, 'r'},
         {"no-write", no_argument, 0, 'w'},
+        {"pool-size", required_argument, 0, 'p'},
+        {"batch-limit", required_argument, 0, 'b'},
+        {"max-req-size", required_argument, 0, 'm'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwh", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:m:h", long_options, NULL)) != -1) {
         switch (opt) {
             case 'd':
                 use_dram = true;
@@ -247,6 +257,27 @@ int main(int argc, char *argv[])
                 break;
             case 'w':
                 skip_write = true;
+                break;
+            case 'p':
+                pool_size = atoi(optarg);
+                if (pool_size < 1 || pool_size > 32) {
+                    std::cerr << "Error: Pool size must be between 1 and 32\n";
+                    return 1;
+                }
+                break;
+            case 'b':
+                batch_limit = atoi(optarg);
+                if (batch_limit < 1 || batch_limit > 1024) {
+                    std::cerr << "Error: Batch limit must be between 1 and 1024\n";
+                    return 1;
+                }
+                break;
+            case 'm':
+                max_request_size = parse_size(optarg);
+                if (max_request_size < 1024*1024 || max_request_size > 1024*1024*1024) {
+                    std::cerr << "Error: Max request size must be between 1M and 1G\n";
+                    return 1;
+                }
                 break;
             case 'h':
                 print_usage(argv[0]);
@@ -287,6 +318,12 @@ int main(int argc, char *argv[])
     // Initialize NIXL components
     nixlAgentConfig         cfg(true);
     nixl_b_params_t         params;
+
+    // Set GDS backend parameters
+    params["batch_pool_size"] = std::to_string(pool_size);
+    params["batch_limit"] = std::to_string(batch_limit);
+    params["max_request_size"] = std::to_string(max_request_size);
+
     nixlBlobDesc            *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;
     nixlBlobDesc            *dram_buf = use_dram ? new nixlBlobDesc[num_transfers] : NULL;
     nixlBlobDesc            *ftrans = new nixlBlobDesc[num_transfers];
@@ -306,6 +343,9 @@ int main(int argc, char *argv[])
     std::cout << "- Number of transfers: " << num_transfers << std::endl;
     std::cout << "- Transfer size: " << transfer_size << " bytes" << std::endl;
     std::cout << "- Directory: " << dir_path << std::endl;
+    std::cout << "- Batch pool size: " << pool_size << std::endl;
+    std::cout << "- Batch limit: " << batch_limit << std::endl;
+    std::cout << "- Max request size: " << max_request_size << " bytes" << std::endl;
     std::cout << "- Operation: ";
     if (!skip_read && !skip_write) {
         std::cout << "Read and Write";
