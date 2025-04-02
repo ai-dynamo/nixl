@@ -127,19 +127,41 @@ nixl_status_t nixlGdsIOBatch::checkStatus()
     return current_status;
 }
 
-nixlGdsEngine::nixlGdsEngine (const nixlBackendInitParams* init_params)
-    : nixlBackendEngine (init_params)
+void nixlGdsIOBatch::reset() {
+    entries_completed = 0;
+    batch_size = 0;
+    current_status = NIXL_ERR_NOT_POSTED;
+}
+
+nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
+    : nixlBackendEngine(init_params)
 {
     gds_utils = new gdsUtil();
 
-    // nixl_b_params_t* custom_params = init_params->customParams;
-    // std::vector<std::string> mount_targets;
-    // if (custom_params->count("mount_targets")!=0)
-    //     mount_targets = str_split((*custom_params)["mount_targets"], ", ");
+    // Set default pool size
+    pool_size = 8;  // Default value if not specified in params
+
+    // Read custom parameters if available
+    nixl_b_params_t* custom_params = init_params->customParams;
+    if (custom_params && custom_params->count("pool_size") > 0) {
+        try {
+            pool_size = std::stoi((*custom_params)["pool_size"]);
+            // Ensure reasonable limits
+            if (pool_size < 1) pool_size = 1;
+            if (pool_size > 32) pool_size = 32;
+        } catch (...) {
+            // Keep default if conversion fails
+        }
+    }
 
     this->initErr = false;
     if (gds_utils->openGdsDriver() == NIXL_ERR_BACKEND)
         this->initErr = true;
+
+    // Pre-populate the batch pool with full pool size
+    for (unsigned int i = 0; i < pool_size; i++) {
+        batch_pool.push_back(new nixlGdsIOBatch(GDS_BATCH_LIMIT));
+    }
 }
 
 
@@ -211,6 +233,32 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
+nixlGdsIOBatch* nixlGdsEngine::getBatchFromPool(unsigned int size) {
+    // First try to find a batch of the right size in the pool
+    for (auto it = batch_pool.begin(); it != batch_pool.end(); ++it) {
+        if ((*it)->getMaxReqs() == size) {
+            nixlGdsIOBatch* batch = *it;
+            batch_pool.erase(it);
+            batch->reset();
+            return batch;
+        }
+    }
+
+    // If no suitable batch found, create a new one
+    nixlGdsIOBatch* batch = new nixlGdsIOBatch(size);
+    return batch;
+}
+
+void nixlGdsEngine::returnBatchToPool(nixlGdsIOBatch* batch) {
+    // Only keep up to pool_size batches
+    if (batch_pool.size() < pool_size) {
+        batch->reset();
+        batch_pool.push_back(batch);
+    } else {
+        delete batch;
+    }
+}
+
 nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
@@ -222,7 +270,7 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
     size_t              size = 0;
     size_t              offset = 0;
     int                 rc = 0;
-    size_t              buf_cnt  = local.descCount();
+    size_t              buf_cnt = local.descCount();
     size_t              file_cnt = remote.descCount();
     nixl_status_t       ret = NIXL_ERR_NOT_POSTED;
     int                 full_batches = 1;
@@ -233,36 +281,35 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
     nixlGdsBackendReqH  *gds_handle;
 
     if ((buf_cnt != file_cnt) ||
-            ((operation != NIXL_READ) && (operation != NIXL_WRITE)))  {
-        std::cerr <<"Error in count or operation selection\n";
+        ((operation != NIXL_READ) && (operation != NIXL_WRITE))) {
+        std::cerr << "Error in count or operation selection\n";
         return NIXL_ERR_INVALID_PARAM;
     }
 
     if ((remote.getType() != FILE_SEG) && (local.getType() != FILE_SEG)) {
-        std::cerr <<"Only support I/O between VRAM to file type\n";
+        std::cerr << "Only support I/O between VRAM to file type\n";
         return NIXL_ERR_INVALID_PARAM;
     }
 
     if ((remote.getType() == DRAM_SEG) || (local.getType() == DRAM_SEG)) {
-        std::cerr <<"Backend does not support DRAM to/from files\n";
+        std::cerr << "Backend does not support DRAM to/from files\n";
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    full_batches     = buf_cnt / GDS_BATCH_LIMIT;
-    remainder        = buf_cnt % GDS_BATCH_LIMIT;
-    total_batches    = full_batches + ((remainder > 0) ? 1 : 0);
+    full_batches = buf_cnt / GDS_BATCH_LIMIT;
+    remainder = buf_cnt % GDS_BATCH_LIMIT;
+    total_batches = full_batches + ((remainder > 0) ? 1 : 0);
 
     gds_handle = new nixlGdsBackendReqH();
     for (int j = 0; j < total_batches; j++) {
         int req_cnt = (j < full_batches) ? GDS_BATCH_LIMIT : remainder;
-        nixlGdsIOBatch *batch_ios = new nixlGdsIOBatch(req_cnt);
-        for (int i = curr_buf_cnt;
-                 i < (curr_buf_cnt + req_cnt);
-                 i++) {
+        nixlGdsIOBatch *batch_ios = getBatchFromPool(req_cnt);
+
+        for (int i = curr_buf_cnt; i < (curr_buf_cnt + req_cnt); i++) {
             if (local.getType() == VRAM_SEG) {
-                addr = (void *) local[i].addr;
+                addr = (void *)local[i].addr;
                 size = local[i].len;
-                offset = (size_t) remote[i].addr;
+                offset = (size_t)remote[i].addr;
 
                 auto it = gds_file_map.find(remote[i].devId);
                 if (it != gds_file_map.end()) {
@@ -270,11 +317,11 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
                 } else {
                     ret = NIXL_ERR_NOT_FOUND;
                     goto err_exit;
-               }
+                }
             } else if (local.getType() == FILE_SEG) {
-                addr        = (void *) remote[i].addr;
-                size        = remote[i].len;
-                offset      = (size_t) local[i].addr;
+                addr = (void *)remote[i].addr;
+                size = remote[i].len;
+                offset = (size_t)local[i].addr;
 
                 auto it = gds_file_map.find(local[i].devId);
                 if (it != gds_file_map.end()) {
@@ -284,12 +331,10 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
                     goto err_exit;
                 }
             }
-            CUfileOpcode_t op = (operation == NIXL_READ) ?
-                                 CUFILE_READ : CUFILE_WRITE;
-            rc = batch_ios->addToBatch(fh.cu_fhandle, addr,
-                                       size, offset, 0, op);
+            CUfileOpcode_t op = (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE;
+            rc = batch_ios->addToBatch(fh.cu_fhandle, addr, size, offset, 0, op);
             if (rc != 0) {
-                delete batch_ios;
+                returnBatchToPool(batch_ios);
                 ret = NIXL_ERR_BACKEND;
                 goto err_exit;
             }
@@ -297,7 +342,7 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
         curr_buf_cnt += req_cnt;
         rc = batch_ios->submitBatch(0);
         if (rc != 0) {
-            delete batch_ios;
+            returnBatchToPool(batch_ios);
             ret = NIXL_ERR_BACKEND;
             goto err_exit;
         }
@@ -310,8 +355,7 @@ err_exit:
     // Clean up any batches that were already created
     for (auto* batch : gds_handle->batch_io_list) {
         batch->cancelBatch();
-        batch->destroyBatch();
-        delete batch;
+        returnBatchToPool(batch);
     }
     delete gds_handle;
     return ret;
@@ -319,40 +363,40 @@ err_exit:
 
 nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle)
 {
-    nixlGdsBackendReqH  *gds_handle = (nixlGdsBackendReqH *) handle;
-    nixl_status_t       status = NIXL_IN_PROG;
+    nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *)handle;
+    nixl_status_t status = NIXL_IN_PROG;
 
     if (gds_handle->batch_io_list.size() == 0)
-            status = NIXL_SUCCESS;
+        status = NIXL_SUCCESS;
 
     for (auto it = gds_handle->batch_io_list.begin();
-         it != gds_handle->batch_io_list.end(); ) {
-            nixlGdsIOBatch    *batch_ios = *it;
-            nixl_status_t status     = batch_ios->checkStatus();
+         it != gds_handle->batch_io_list.end();) {
+        nixlGdsIOBatch *batch_ios = *it;
+        nixl_status_t batch_status = batch_ios->checkStatus();
 
-            if (status == NIXL_IN_PROG) {
-                return status;
-            } else if (status == NIXL_SUCCESS) {
-                delete(batch_ios);
-                it = gds_handle->batch_io_list.erase(it);
-            } else if (status < 0) {
-                // Failure of transfer
-                // lets kill every batch
-                    break;
-            } else {
-                    it++;
-            }
+        if (batch_status == NIXL_IN_PROG) {
+            return batch_status;
+        } else if (batch_status == NIXL_SUCCESS) {
+            returnBatchToPool(batch_ios);
+            it = gds_handle->batch_io_list.erase(it);
+        } else if (batch_status < 0) {
+            // Failure of transfer
+            // lets kill every batch
+            break;
+        } else {
+            it++;
+        }
     }
+
     // Cleanup even if one batch fails
     if (status < 0) {
-       auto it = gds_handle->batch_io_list.begin();
-       while (it != gds_handle->batch_io_list.end()) {
-           nixlGdsIOBatch *batch_ios = *it;
-           batch_ios->cancelBatch();
-           batch_ios->destroyBatch();
-           delete batch_ios;
-           it = gds_handle->batch_io_list.erase(it);
-       }
+        auto it = gds_handle->batch_io_list.begin();
+        while (it != gds_handle->batch_io_list.end()) {
+            nixlGdsIOBatch *batch_ios = *it;
+            batch_ios->cancelBatch();
+            returnBatchToPool(batch_ios);
+            it = gds_handle->batch_io_list.erase(it);
+        }
     }
     return status;
 }
@@ -367,6 +411,13 @@ nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle)
 }
 
 nixlGdsEngine::~nixlGdsEngine() {
+    // Clean up the batch pool
+    for (auto* batch : batch_pool) {
+        batch->destroyBatch();
+        delete batch;
+    }
+    batch_pool.clear();
+
     cuFileDriverClose();
     delete gds_utils;
 }
