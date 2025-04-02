@@ -277,6 +277,7 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
     size_t buf_cnt = local.descCount();
     size_t file_cnt = remote.descCount();
     nixlGdsBackendReqH* gds_handle = new nixlGdsBackendReqH();
+    nixl_status_t ret = NIXL_SUCCESS;
 
     // Basic validation
     if ((buf_cnt != file_cnt) ||
@@ -354,8 +355,39 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
         }
     }
 
+    // Create and prepare batches
+    size_t current_req = 0;
+    const auto& request_list = gds_handle->request_list;
+
+    while (current_req < request_list.size()) {
+        size_t batch_size = std::min(request_list.size() - current_req, (size_t)batch_limit);
+        nixlGdsIOBatch* batch_ios = getBatchFromPool(batch_size);
+
+        // Add requests to batch
+        for (size_t i = 0; i < batch_size; i++) {
+            const auto& req = request_list[current_req + i];
+            int rc = batch_ios->addToBatch(req.fh, req.addr, req.size,
+                                         req.file_offset, 0, req.op);
+            if (rc != 0) {
+                returnBatchToPool(batch_ios);
+                ret = NIXL_ERR_BACKEND;
+                goto err_exit;
+            }
+        }
+
+        gds_handle->batch_io_list.push_back(batch_ios);
+        current_req += batch_size;
+    }
+
     handle = gds_handle;
     return NIXL_SUCCESS;
+
+err_exit:
+    for (auto* batch : gds_handle->batch_io_list) {
+        returnBatchToPool(batch);
+    }
+    delete gds_handle;
+    return ret;
 }
 
 nixlGdsIOBatch* nixlGdsEngine::getBatchFromPool(unsigned int size) {
@@ -394,40 +426,18 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
     nixl_status_t ret = NIXL_ERR_NOT_POSTED;
     nixlGdsBackendReqH* gds_handle = (nixlGdsBackendReqH*)handle;
 
-    if (!gds_handle || gds_handle->request_list.empty()) {
+    if (!gds_handle || gds_handle->batch_io_list.empty()) {
         std::cerr << "Invalid or unprepared handle\n";
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    size_t current_req = 0;
-    const auto& request_list = gds_handle->request_list;
-
-    while (current_req < request_list.size()) {
-        size_t batch_size = std::min(request_list.size() - current_req, (size_t)batch_limit);
-        nixlGdsIOBatch* batch_ios = getBatchFromPool(batch_size);
-
-        // Add requests to batch
-        for (size_t i = 0; i < batch_size; i++) {
-            const auto& req = request_list[current_req + i];
-            int rc = batch_ios->addToBatch(req.fh, req.addr, req.size,
-                                         req.file_offset, 0, req.op);
-            if (rc != 0) {
-                returnBatchToPool(batch_ios);
-                ret = NIXL_ERR_BACKEND;
-                goto err_exit;
-            }
-        }
-
-        // Submit batch
-        int rc = batch_ios->submitBatch(0);
+    // Submit all prepared batches
+    for (auto* batch : gds_handle->batch_io_list) {
+        int rc = batch->submitBatch(0);
         if (rc != 0) {
-            returnBatchToPool(batch_ios);
             ret = NIXL_ERR_BACKEND;
             goto err_exit;
         }
-
-        gds_handle->batch_io_list.push_back(batch_ios);
-        current_req += batch_size;
     }
 
     return NIXL_SUCCESS;
