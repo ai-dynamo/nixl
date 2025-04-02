@@ -173,27 +173,36 @@ nixl_status_t nixlGdsEngine::registerMem (const nixlBlobDesc &mem,
     nixlGdsMetadata *md  = new nixlGdsMetadata();
 
     if (nixl_mem == FILE_SEG) {
-    // if the same file is reused - no need to re-register
+        // if the same file is reused - no need to re-register
         auto it = gds_file_map.find(mem.devId);
         if (it != gds_file_map.end()) {
-               md->handle.cu_fhandle   = it->second.cu_fhandle;
-           md->handle.fd           = mem.devId;
-           md->handle.size         = mem.len;
-           md->handle.metadata     = mem.metaInfo;
-           md->type                = nixl_mem;
-           status               = NIXL_SUCCESS;
-    } else {
-           status = gds_utils->registerFileHandle(mem.devId, mem.len,
+            md->handle.cu_fhandle   = it->second.cu_fhandle;
+            md->handle.fd           = mem.devId;
+            md->handle.size         = mem.len;
+            md->handle.metadata     = mem.metaInfo;
+            md->type                = nixl_mem;
+            status               = NIXL_SUCCESS;
+        } else {
+            status = gds_utils->registerFileHandle(mem.devId, mem.len,
                                              mem.metaInfo, md->handle);
-           if (NIXL_SUCCESS != status) {
-            delete md;
+            if (NIXL_SUCCESS != status) {
+                delete md;
                 return status;
-           }
-           md->type                = nixl_mem;
-           gds_file_map[mem.devId] = md->handle;
-    }
-
+            }
+            md->type                = nixl_mem;
+            gds_file_map[mem.devId] = md->handle;
+        }
     } else if (nixl_mem == VRAM_SEG) {
+        status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
+        if (NIXL_SUCCESS != status) {
+            delete md;
+            return status;
+        }
+        md->buf.base   = (void *)mem.addr;
+        md->buf.size   = mem.len;
+        md->type       = nixl_mem;
+    } else if (nixl_mem == DRAM_SEG) {
+        // For DRAM, we need to register it as a buffer with GDS
         status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
         if (NIXL_SUCCESS != status) {
             delete md;
@@ -204,10 +213,10 @@ nixl_status_t nixlGdsEngine::registerMem (const nixlBlobDesc &mem,
         md->type       = nixl_mem;
     } else {
         // Unsupported in the backend.
+        delete md;
         return NIXL_ERR_BACKEND;
     }
     out = (nixlBackendMD*) md;
-    // set value for gds handle here.
     return status;
 }
 
@@ -287,12 +296,13 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
     }
 
     if ((remote.getType() != FILE_SEG) && (local.getType() != FILE_SEG)) {
-        std::cerr << "Only support I/O between VRAM to file type\n";
+        std::cerr << "Only support I/O between memory (DRAM/VRAM) and file type\n";
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if ((remote.getType() == DRAM_SEG) || (local.getType() == DRAM_SEG)) {
-        std::cerr << "Backend does not support DRAM to/from files\n";
+    if ((remote.getType() != FILE_SEG && remote.getType() != DRAM_SEG && remote.getType() != VRAM_SEG) ||
+        (local.getType() != FILE_SEG && local.getType() != DRAM_SEG && local.getType() != VRAM_SEG)) {
+        std::cerr << "Backend only supports transfers between DRAM/VRAM and files\n";
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -306,7 +316,7 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
         nixlGdsIOBatch *batch_ios = getBatchFromPool(req_cnt);
 
         for (int i = curr_buf_cnt; i < (curr_buf_cnt + req_cnt); i++) {
-            if (local.getType() == VRAM_SEG) {
+            if (local.getType() == VRAM_SEG || local.getType() == DRAM_SEG) {
                 addr = (void *)local[i].addr;
                 size = local[i].len;
                 offset = (size_t)remote[i].addr;

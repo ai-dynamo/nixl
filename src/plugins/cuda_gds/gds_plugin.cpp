@@ -50,6 +50,7 @@ static nixl_b_params_t get_backend_options() {
 // Function to get supported backend mem types
 static nixl_mem_list_t get_backend_mems() {
     nixl_mem_list_t mems;
+    mems.push_back(DRAM_SEG);
     mems.push_back(VRAM_SEG);
     mems.push_back(FILE_SEG);
     return mems;
