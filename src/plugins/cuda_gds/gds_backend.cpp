@@ -287,6 +287,18 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    // Check for VRAM size limitation
+    if ((local.getType() == VRAM_SEG || remote.getType() == VRAM_SEG)) {
+        for (size_t i = 0; i < buf_cnt; i++) {
+            size_t size = (local.getType() == VRAM_SEG) ? local[i].len : remote[i].len;
+            if (size > (16 * 1024 * 1024)) {  // 16MB
+                std::cerr << "Error: VRAM transfers larger than 16MB are not supported in this plugin\n";
+                delete gds_handle;
+                return NIXL_ERR_INVALID_PARAM;
+            }
+        }
+    }
+
     if ((remote.getType() != FILE_SEG) && (local.getType() != FILE_SEG)) {
         std::cerr << "Only support I/O between memory (DRAM/VRAM) and file type\n";
         delete gds_handle;
