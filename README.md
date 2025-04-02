@@ -39,13 +39,28 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 
 NIXL was tested with UCX version 1.18.0.
 
+[GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
+
 ```
 $ wget https://github.com/openucx/ucx/releases/download/v1.18.0/ucx-1.18.0.tar.gz
 $ tar xzf ucx-1.18.0.tar.gz
 $ cd ucx-1.18.0
-$ ./contrib/configure-release --prefix=<PATH_TO_INSTALL>/install
-$ make -j8
-$ make install
+$ ./autogen.sh
+$ ./configure     					   \
+    --enable-shared             	   \
+    --disable-static            	   \
+    --disable-doxygen-doc       	   \
+    --enable-optimizations      	   \
+    --enable-cma                	   \
+    --enable-devel-headers      	   \
+    --with-cuda=<cuda install>  	   \
+    --with-verbs               	 	   \
+    --with-dm                   	   \
+    --with-gdrcopy=<gdrcopy install>   \
+    --enable-mt
+$ make -j
+$ make -j install-strip
+$ ldconfig
 ```
 
 ## Getting started
@@ -55,7 +70,7 @@ $ make install
 $ meson setup <name_of_build_dir>
 $ cd <name_of_build_dir>
 $ ninja
-$ ninja-install
+$ ninja install
 ```
 
 ### pybind11 Python Interface
