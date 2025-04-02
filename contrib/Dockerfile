@@ -29,7 +29,7 @@ ARG NSYS_URL=https://developer.nvidia.com/downloads/assets/tools/secure/nsight-s
 ARG NSYS_PKG=NsightSystems-linux-cli-public-2025.1.1.131-3554042.deb
 
 RUN apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install \
     autotools-dev \
     automake \
     libtool \
@@ -127,7 +127,7 @@ RUN uv venv $VIRTUAL_ENV --python 3.12 && \
     # pybind11 pip install needed for ubuntu 22.04
     uv pip install --upgrade meson pybind11 patchelf
 
-COPY . /workspace/nixl 
+COPY . /workspace/nixl
 
 RUN cd /workspace/nixl && \
     mkdir build && \
