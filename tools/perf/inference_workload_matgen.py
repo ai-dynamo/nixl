@@ -158,14 +158,19 @@ def gen_matrices_and_compute_time(
 
     workers_pool = cycle(workers_coupling)
     matrices = []
+
     sorted_batches = sorted(batches, key=lambda x: x.kv_cache_size(model_config))
+
+
     for batch in tqdm(sorted_batches, desc="Generating matrices"): # Sorting the batches so that the load is equally distributed on the workers
 
         prefill_worker, decode_worker = next(workers_pool)
         mat = gen_matrix(batch, world_size, prefill_worker, decode_worker, model_config, prefill_worker_config, decode_worker_config)
+
         compute_time = estimate_compute_time(batch, model_config)
         matrix_obj = TransferMatrix(matrix=mat, compute_time=compute_time, isl=batch.total_isl)
         matrices.append(matrix_obj)
+
 
     return matrices
 
@@ -178,14 +183,14 @@ def gen_matrix(
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
 ):
-    """TODO check logic"""
+    """TODO check logic """
     kv_size = batch.kv_cache_size(model_config)
     kv_slice_size = kv_size / prefill_worker_config.tp / prefill_worker_config.pp
 
     buf_size = kv_slice_size / decode_worker_config.tp
-    num_peers = decode_worker_config.tp // prefill_worker_config.tp
+    #print(f"kv_size: {format_size(kv_size)}, kv_slice_size: {format_size(kv_slice_size)}, buf_size: {format_size(buf_size)}, num_peers: {num_peers}")
 
-    print(f"kv_size: {format_size(kv_size)}, kv_slice_size: {format_size(kv_slice_size)}, buf_size: {format_size(buf_size)}, num_peers: {num_peers}")
+    num_peers = decode_worker_config.tp // prefill_worker_config.tp
 
     mat = np.zeros((world_size, world_size))
 
@@ -307,13 +312,16 @@ def main(
 if __name__ == "__main__":
     # LLaMA-3B config
     model_config = ModelConfig(hidden_size=2048, num_layers=32, num_heads=32, num_kv_heads=32, dtype_size=2)
+    num_prefill_nodes = 4
+    num_decode_nodes = 8
+    print("World size: ", num_prefill_nodes*8 + num_decode_nodes*8)
     main(
-        num_user_requests=1000,
+        num_user_requests=100,
         batch_size=1,
-        num_prefill_gpus=16,
-        num_decode_gpus=32,
+        num_prefill_gpus=num_prefill_nodes*8,
+        num_decode_gpus=num_decode_nodes*8,
         prefill_worker_config=WorkerConfig(tp=4, pp=1, cp=1),
         decode_worker_config=WorkerConfig(tp=8, pp=1, cp=1),
         model_config=model_config,
-        results_dir="/swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8"
+        results_dir=f"/swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-{num_prefill_nodes}Np_tp4-{num_decode_nodes}Nd_tp8"
     )

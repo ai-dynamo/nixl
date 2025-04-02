@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 
 
 class CTPerftest:
+
     def __init__(
         self, traffic_pattern: TrafficPattern, iters: int = 1, warmup_iters: int = 0
     ):
@@ -52,15 +53,17 @@ class CTPerftest:
         self.warmup_iters = warmup_iters
 
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
+
+        # Workaround for now
+        self.buffers_pool = [
+
+        ]
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
 
     def _share_md(self) -> None:
         """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
         md = self.nixl_agent.get_agent_metadata()
-        try:
-            mds = dist_utils.allgather_obj(md)
-        except Exception as e:
-            breakpoint()
+        mds = dist_utils.allgather_obj(md)
         for other_rank, metadata in enumerate(mds):
             if other_rank == self.my_rank:
                 continue
@@ -94,10 +97,10 @@ class CTPerftest:
 
         send_bufs = []
         recv_bufs = []
+        matrix = tp.matrix
         for other_rank in range(self.world_size):
-            matrix = tp.matrix
             if matrix.shape != (self.world_size, self.world_size):
-                raise ValueError(f"Matrix {tp.matrix_file} shape {matrix.shape} does not match world size {self.world_size}")
+                raise ValueError(f"Matrix shape {matrix.shape} does not match world size {self.world_size}")
             send_size = matrix[self.my_rank][other_rank]
             recv_size = matrix[other_rank][self.my_rank]
             send_buf = recv_buf = None
@@ -119,6 +122,7 @@ class CTPerftest:
             send_bufs.append(send_buf)
             recv_bufs.append(recv_buf)
 
+        #log.info(f"Created {len(send_bufs)} send buffers and {len(recv_bufs)} recv buffers of sizes {[b.size for b in send_bufs + recv_bufs]}\n Matrix: {matrix}")
         self._share_md()
         return send_bufs, recv_bufs
 
@@ -278,16 +282,14 @@ class CTPerftest:
         avg_time_per_iter_sec = global_time / self.iters
 
         total_size_gb = self._get_tp_total_size(self.traffic_pattern) / 1e9
-        alg_bw_gbps = total_size_gb / avg_time_per_iter_sec / self.world_size
 
         # Print metrics as a table
         if self.my_rank == 0:
             headers = [
                 "Iters",
                 "Total time (s)",
-                "Avg Time/iter (s)",
+                "Avg latency/iter (s)",
                 "Total size (GB)",
-                "Alg BW (GB/s)",
             ]
             data = [
                 [
@@ -295,7 +297,6 @@ class CTPerftest:
                     global_time,
                     avg_time_per_iter_sec,
                     total_size_gb,
-                    alg_bw_gbps,
                 ]
             ]
             log.info("\n" + tabulate(data, headers=headers, floatfmt=".6f"))

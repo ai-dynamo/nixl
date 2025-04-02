@@ -24,6 +24,9 @@ from dist_utils import dist_utils, ReduceOp
 from tabulate import tabulate
 from common import NixlHandle
 from nixl._api import nixl_agent
+from utils import format_size
+import yaml
+import tqdm
 
 log = logging.getLogger(__name__)
 
@@ -54,12 +57,14 @@ class SequentialCTPerftest(CTPerftest):
         dist_utils.barrier(tp.senders_ranks())
 
     def run(
-        self, verify_buffers: bool = False, print_recv_buffers: bool = False
+        self, verify_buffers: bool = False, print_recv_buffers: bool = False, 
+        yaml_output_path: Optional[str] = None
     ) -> float:
         """
         Args:
             verify_buffers: Whether to verify buffer contents after transfer
             print_recv_buffers: Whether to print receive buffer contents
+            yaml_output_path: Path to save results in YAML format
 
         Returns:
             Total execution time in seconds
@@ -67,13 +72,21 @@ class SequentialCTPerftest(CTPerftest):
         This method initializes and executes multiple traffic patterns simultaneously,
         measures their performance, and optionally verifies the results.
         """
-        # TODO ADD WARMUP
-        self._warmup()
+        #self._warmup()
         # TODO Add verification that rank i and j have only one connection active (prevent from sending a buffer over another)
 
+        if self.my_rank == 0:
+            log.info(f"[Rank {self.my_rank}] Preparing TPs")
         tp_handles: list[list] = []
         tp_bufs = []
-        for tp in self.traffic_patterns:
+        # for tp in self.traffic_patterns: # DEBUG
+        total_tps = len(self.traffic_patterns)
+        for i, tp in enumerate(self.traffic_patterns):
+            try:
+                if i > 0 and i % (total_tps // 10) == 0 and self.my_rank == 0:
+                    log.info(f"[Rank {self.my_rank}] Preparing TPs: {(i/total_tps)*100:.1f}% complete")
+            except:
+                pass # DEBUG
             handles, send_bufs, recv_bufs = self._prepare_tp(tp)
             tp_bufs.append((send_bufs, recv_bufs))
             tp_handles.append(handles)
@@ -82,7 +95,22 @@ class SequentialCTPerftest(CTPerftest):
         exec_time_by_tp: List[Optional[float]] = [None for _ in tp_handles]
         barrier_time_by_tp: List[Optional[float]] = [None for _ in tp_handles]
 
-        for tp_ix, handles in enumerate(tp_handles): # DEBUG remove [:2]
+        tp_starts = [None for _ in tp_handles]
+        tp_ends = [None for _ in tp_handles]
+
+        if self.my_rank == 0:
+            log.info(f"Running TPs")
+        total_handles = len(tp_handles)
+
+        # WARMUP
+        for _ in range(10):
+            for tp_ix, handles in enumerate(tp_handles):
+                self._run_tp(handles, blocking=True)
+        
+        for tp_ix, handles in enumerate(tp_handles):
+            # if tp_ix > 0 and tp_ix % (total_handles // 10) == 0 and self.my_rank == 0:
+            #     log.info(f"[Rank {self.my_rank}] Running TPs: {(tp_ix/total_handles)*100:.1f}% complete")
+
             tp = self.traffic_patterns[tp_ix]
 
             if self.my_rank not in tp.senders_ranks():
@@ -94,34 +122,40 @@ class SequentialCTPerftest(CTPerftest):
 
             # Run TP
             s = time.perf_counter()
+
+            tp_starts[tp_ix] = time.time()
             self._run_tp(handles, blocking=True)
             elapsed = time.perf_counter() - s
+            
             exec_time_by_tp[tp_ix] = elapsed
 
             # Check that all ranks have finished TP
             barrier_start = time.perf_counter()
             self._barrier_tp(tp) 
             barrier_time_by_tp[tp_ix] = time.perf_counter() - barrier_start
+            tp_ends[tp_ix] = time.time()
 
             if tp.sleep_after_launch_sec is not None:
                 time.sleep(tp.sleep_after_launch_sec)
 
+        if self.my_rank == 0:
+            log.info(f"Collecting results")
 
-        total_time_by_tp = [
-            None if exec_time_by_tp[i] is None or barrier_time_by_tp[i] is None 
-            else exec_time_by_tp[i] + barrier_time_by_tp[i] 
-            for i in range(len(tp_handles))
-        ]
+        # tp_starts_by_ranks = dist_utils.allgather_obj(tp_starts)
+        # tp_ends_by_ranks = dist_utils.allgather_obj(tp_ends)
+        # tp_latencies = []
+        # for i in range(len(self.traffic_patterns)):
+        #     starts = [tp_starts_by_ranks[rank][i] for rank in range(len(tp_starts_by_ranks))]
+        #     ends = [tp_ends_by_ranks[rank][i] for rank in range(len(tp_ends_by_ranks))]
+        #     starts = [x for x in starts if x is not None]
+        #     ends = [x for x in ends if x is not None]
+        #     if not ends or not starts:
+        #         tp_latencies.append(None)
+        #     else:
+        #         tp_latencies.append(max(ends) - min(starts))
 
-        log.info(
-            f"[Rank {self.my_rank}] Exec time by TP: {exec_time_by_tp}\n"
-            f"Barrier time by TP: {barrier_time_by_tp}\n"
-            f"Total time by TP: {total_time_by_tp}\n"
-        )
+        tp_sizes_gb = [ self._get_tp_total_size(tp)/1E9 for tp in self.traffic_patterns ]
 
-        tp_sizes_gb = [
-            self._get_tp_total_size(tp) / 1e9 for tp in self.traffic_patterns
-        ]
         bw_by_tp = [
             tp_sizes_gb[i] / exec_time_by_tp[i] if exec_time_by_tp[i] is not None else None for i in range(len(tp_handles))
         ]
@@ -141,22 +175,70 @@ class SequentialCTPerftest(CTPerftest):
         ]
 
         if self.my_rank == 0:
-            headers = ["TP size (GB)", "TP avg BW (GB/s)", "TP min BW (GB/s)", "TP max BW (GB/s)", "Num Senders"]
+            headers = ["TP size (GB)", "Latency (s)", "TP avg BW (GB/s)", "TP min BW (GB/s)", "TP max BW (GB/s)", "Num Senders"]
             data = [
-                [tp_sizes_gb[i], avg_bws[i], min_bws[i], max_bws[i], len(tp.senders_ranks())]
+                [tp_sizes_gb[i], 0, avg_bws[i], min_bws[i], max_bws[i], len(tp.senders_ranks())]
                 for i, tp in enumerate(self.traffic_patterns)
             ]
             log.info("\n" + tabulate(data, headers=headers, floatfmt=".2f"))
+            
+            # Output results in YAML format if path is provided
+            if yaml_output_path:
+                self._write_yaml_results(yaml_output_path, headers, data, self.traffic_patterns)
 
         if verify_buffers:
             for i, tp in enumerate(self.traffic_patterns):
                 send_bufs, recv_bufs = tp_bufs[i]
                 self._verify_tp(tp, recv_bufs, print_recv_buffers)
+        
 
         for i, tp in enumerate(self.traffic_patterns):
             send_bufs, recv_bufs = tp_bufs[i]
             self._destroy(tp_handles[i], send_bufs, recv_bufs)
 
-        # return end - start
     
+    def _write_yaml_results(self, output_path: str, headers: List[str], data: List[List], traffic_patterns: List[TrafficPattern]) -> None:
+        """Write performance test results to a YAML file.
+        
+        Args:
+            output_path: Path to save the YAML file
+            headers: Column headers for the results
+            data: Performance data rows
+            traffic_patterns: List of traffic patterns tested
+        """
+        results = {
+            "performance_results": {
+                "timestamp": time.time(),
+                "world_size": self.world_size,
+                "traffic_patterns": []
+            }
+        }
+        
+        for i, tp in enumerate(traffic_patterns):
+            tp_data = {}
+            for j, header in enumerate(headers):
+                # Convert header to a valid YAML key
+                key = header.lower().replace(" ", "_").replace("(", "").replace(")", "")
+                # Format floating point values to 2 decimal places for readability
+                if isinstance(data[i][j], float):
+                    tp_data[key] = round(data[i][j], 2)
+                else:
+                    tp_data[key] = data[i][j]
+                    
+            # Add traffic pattern name or index for reference
+            tp_data["pattern_index"] = i
+            
+            # You can add more pattern-specific information here if needed
+            # For example:
+            # tp_data["sender_ranks"] = list(tp.senders_ranks())
+            
+            results["performance_results"]["traffic_patterns"].append(tp_data)
+        
+        try:
+            with open(output_path, 'w') as f:
+                yaml.dump(results, f, default_flow_style=False, sort_keys=False)
+            log.info(f"Results saved to YAML file: {output_path}")
+        except Exception as e:
+            log.error(f"Failed to write YAML results to {output_path}: {e}")
+
     #def _get_tp_bw(self, tp: TrafficPattern, total_time: float) -> float:

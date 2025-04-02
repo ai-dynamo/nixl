@@ -30,7 +30,6 @@ log = logging.getLogger(__name__)
 
 
 
-
 class NixlHandle:
     def __init__(self, remote_rank, handle, traffic_pattern):
         self.remote_rank = remote_rank
@@ -53,6 +52,7 @@ class NixlBuffer:
         fill_value=0,
         dtype: torch.dtype = torch.int8,
     ):
+        self.size = size
         self.nixl_agent = nixl_agent
         if mem_type in ("cuda", "vram"):
             device = "cuda"
@@ -109,7 +109,7 @@ class TrafficPattern:
     mem_type: Literal["cuda", "vram", "cpu", "dram"]
     xfer_op: Literal["WRITE", "READ"] = "WRITE"
     shards: int = 1
-    dtype: torch.dtype = torch.float32
+    dtype: torch.dtype = torch.int8
     sleep_before_launch_sec: int = 0
     sleep_after_launch_sec: int = 0
 

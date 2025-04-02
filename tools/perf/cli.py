@@ -23,6 +23,7 @@ from sequential_custom_traffic_perftest import SequentialCTPerftest
 from dist_utils import dist_utils
 from multi_custom_traffic_perftest import MultiCTPerftest
 
+log = logging.getLogger(__name__)
 
 @click.group()
 @click.option("--debug/--no-debug", default=False, help="Enable debug logging")
@@ -62,17 +63,12 @@ def ct_perftest(config_file, verify_buffers, print_recv_buffers):
     if tp_config is None:
         raise ValueError("Config file must contain 'traffic_pattern' key")
 
-    required_fields = ["matrix_file", "shards", "mem_type", "xfer_op"]
-    missing_fields = [field for field in required_fields if field not in tp_config]
-
-    if missing_fields:
-        raise ValueError(f"Traffic pattern missing required fields: {missing_fields}")
-
     iters = config.get("iters", 1)
     warmup_iters = config.get("warmup_iters", 0)
+
     pattern = TrafficPattern(
         matrix=load_matrix(Path(tp_config["matrix_file"])),
-        shards=tp_config["shards"],
+        shards=tp_config.get("shards",1),
         mem_type=tp_config.get("mem_type", "dram").lower(),
         xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
     )
@@ -165,10 +161,9 @@ def sequential_ct_perftest(config_file, verify_buffers, print_recv_buffers):
             sleep_after_launch_sec=tp_config.get("sleep_after_launch_sec", 0),
         )
         patterns.append(pattern)
-
-    patterns = patterns[0] # DEBUG REMOVE TODO
+    
     perftest = SequentialCTPerftest(patterns)
-    perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers)
+    perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers, yaml_output_path="/swgwork/eshukrun/nixl/tools/perf/results.yaml")
     dist_utils.destroy_dist()
 
 
