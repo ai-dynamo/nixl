@@ -33,9 +33,8 @@ export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/x86_64-linux-gnu/plugins
 
 pip3 install --break-system-packages .
+pip3 install --break-system-packages pytest
 
 echo "==== Running python tests ===="
-cd test/python
-python3 ./nixl_api_test.py
-python3 ./nixl_exception_test.py
-python3 ./nixl_bindings_test.py
+python3 examples/python/nixl_api_example.py
+pytest test/python

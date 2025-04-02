@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -19,6 +17,8 @@ import pickle
 
 import nixl._bindings as nixl
 import nixl._utils as nixl_utils
+
+# These should automatically be run by pytest because of function names
 
 
 def test_list():
@@ -138,7 +138,7 @@ def test_agent():
     nixl_utils.verify_transfer(addr1 + offset, addr2 + offset, req_size)
     assert len(notifMap[name1]) == 1
     print(notifMap[name1][0])
-    assert notifMap[name1][0] == noti_str
+    assert notifMap[name1][0] == noti_str.encode()
 
     print("Transfer verified")
 
@@ -156,7 +156,3 @@ def test_agent():
 
     nixl_utils.free_passthru(addr1)
     nixl_utils.free_passthru(addr2)
-
-
-test_list()
-test_agent()

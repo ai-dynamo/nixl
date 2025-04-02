@@ -53,7 +53,7 @@ class nixl_agent:
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name
-        self.notifs: dict[str, list[str]] = {}
+        self.notifs: dict[str, list[bytes]] = {}
         self.backends: dict[str, nixl_backend_handle] = {}
         self.backend_mems: dict[str, list[str]] = {}
         self.backend_options: dict[str, dict[str, str]] = {}
@@ -300,19 +300,20 @@ class nixl_agent:
         self.agent.releasedDlistH(handle)
 
     # Returns new notifs, without touching self.notifs
-    def get_new_notifs(self) -> dict[str, list[str]]:
+    def get_new_notifs(self) -> dict[str, list[bytes]]:
         return self.agent.getNotifs({})
 
     # Adds new notifs to self.notifs and returns it
-    def update_notifs(self) -> dict[str, list[str]]:
+    def update_notifs(self) -> dict[str, list[bytes]]:
         self.notifs = self.agent.getNotifs(self.notifs)
         return self.notifs
 
     # Only removes the specific notification from self.notifs
-    def check_remote_xfer_done(self, remote_agent_name: str, lookup_msg: str) -> bool:
+    def check_remote_xfer_done(self, remote_agent_name: str, lookup_msg: bytes) -> bool:
         self.notifs = self.agent.getNotifs(self.notifs)  # Adds new notifs
         found = False
-        message = ""
+        message = None
+
         if remote_agent_name in self.notifs:
             for msg in self.notifs[remote_agent_name]:
                 if lookup_msg in msg:

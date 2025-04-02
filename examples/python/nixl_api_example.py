@@ -75,7 +75,7 @@ if __name__ == "__main__":
     # Exchange metadata
     meta = nixl_agent1.get_agent_metadata()
     remote_name = nixl_agent2.add_remote_agent(meta)
-    print("Loaded name from metadata:", remote_name)
+    print("Loaded name from metadata:", remote_name, flush=True)
 
     serdes = nixl_agent1.get_serialized_descs(agent1_reg_descs)
     src_descs_recvd = nixl_agent2.deserialize_descs(serdes)
@@ -108,7 +108,7 @@ if __name__ == "__main__":
                     print("Initiator done")
 
             if not target_done:
-                if nixl_agent1.check_remote_xfer_done("initiator", "UUID1"):
+                if nixl_agent1.check_remote_xfer_done("initiator", b"UUID1"):
                     target_done = True
                     print("Target done")
 
@@ -122,6 +122,26 @@ if __name__ == "__main__":
 
     assert local_prep_handle != 0
     assert remote_prep_handle != 0
+
+    # test send_notif
+
+    test_notif = str.encode("DESCS: ") + serdes
+    nixl_agent2.send_notif(remote_name, test_notif)
+
+    print("sent notif ")
+    print(test_notif)
+
+    notif_recv = False
+
+    while not notif_recv:
+        notif_map = nixl_agent1.get_new_notifs()
+        if "initiator" in notif_map:
+            print("received message from initiator")
+            for msg in notif_map["initiator"]:
+                if msg == test_notif:
+                    notif_recv = True
+
+    print("notif test complete, doing transfer 2\n")
 
     xfer_handle_2 = nixl_agent2.make_prepped_xfer(
         "WRITE", local_prep_handle, [0, 1], remote_prep_handle, [1, 0], "UUID2"
@@ -140,6 +160,8 @@ if __name__ == "__main__":
     target_done = False
     init_done = False
 
+    print("Transfer 2 started")
+
     while (not init_done) or (not target_done):
         if not init_done:
             state = nixl_agent2.check_xfer_state(xfer_handle_2)
@@ -151,7 +173,7 @@ if __name__ == "__main__":
                 print("Initiator done")
 
         if not target_done:
-            if nixl_agent1.check_remote_xfer_done("initiator", "UUID2"):
+            if nixl_agent1.check_remote_xfer_done("initiator", b"UUID2"):
                 target_done = True
                 print("Target done")
 

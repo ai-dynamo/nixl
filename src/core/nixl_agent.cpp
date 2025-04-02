@@ -801,9 +801,26 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
 
 nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) {
-    //destructor will call release to abort transfer if necessary
+
+    //attempt to cancel request
+    if(req_hndl->status == NIXL_IN_PROG) {
+        req_hndl->status = req_hndl->engine->checkXfer(
+                                     req_hndl->backendHandle);
+
+        if(req_hndl->status == NIXL_IN_PROG) {
+
+            req_hndl->status = req_hndl->engine->releaseReqH(
+                                         req_hndl->backendHandle);
+
+            if(req_hndl->status < 0)
+                return NIXL_ERR_REPOST_ACTIVE;
+
+            // just in case the backend doesn't set to NULL on success
+            // this will prevent calling releaseReqH again in destructor
+            req_hndl->backendHandle = nullptr;
+        }
+    }
     delete req_hndl;
-    //TODO: check if abort is supported and if so, successful
     return NIXL_SUCCESS;
 }
 
