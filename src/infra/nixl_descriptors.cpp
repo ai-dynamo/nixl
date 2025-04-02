@@ -111,12 +111,14 @@ nixlBlobDesc::nixlBlobDesc(const nixlBasicDesc &desc,
 
 nixlBlobDesc::nixlBlobDesc(const nixl_blob_t &blob) {
     size_t meta_size = blob.size() - sizeof(nixlBasicDesc);
-    if (meta_size>0) {
+    if (meta_size > 0) {
         metaInfo.resize(meta_size);
         blob.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
         blob.copy(reinterpret_cast<char*>(&metaInfo[0]),
                  meta_size, sizeof(nixlBasicDesc));
-    } else { // Error indicator, not possible by descList deserializer call
+    } else if (meta_size == 0) {
+        blob.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
+    } else { // Error
         addr  = 0;
         len   = 0;
         devId = 0;
