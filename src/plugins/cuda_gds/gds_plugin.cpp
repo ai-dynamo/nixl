@@ -27,7 +27,7 @@ static nixlBackendEngine* create_gds_engine(const nixlBackendInitParams* init_pa
     return new nixlGdsEngine(init_params);
 }
 
-static void destroy_gds_engine(nixlBackendEngine *engine) {
+static void destroy_gds_engine(nixlBackendEngine* engine) {
     delete engine;
 }
 
