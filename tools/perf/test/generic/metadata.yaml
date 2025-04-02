@@ -1,0 +1,4001 @@
+traffic_patterns:
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_0.txt
+  metadata:
+    isl: -63075
+  sleep_before_launch_sec: 14.48511488
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_1.txt
+  metadata:
+    isl: -48582
+  sleep_before_launch_sec: 8.593265000448
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_2.txt
+  metadata:
+    isl: -36119
+  sleep_before_launch_sec: 4.749838694627556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_3.txt
+  metadata:
+    isl: -33805
+  sleep_before_launch_sec: 4.160727813688889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_4.txt
+  metadata:
+    isl: -33347
+  sleep_before_launch_sec: 4.0487500331235555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_5.txt
+  metadata:
+    isl: -32676
+  sleep_before_launch_sec: 3.887453437952
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_6.txt
+  metadata:
+    isl: -32589
+  sleep_before_launch_sec: 3.866780270592
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_7.txt
+  metadata:
+    isl: -31653
+  sleep_before_launch_sec: 3.647851757568
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_8.txt
+  metadata:
+    isl: -29866
+  sleep_before_launch_sec: 3.247592629134222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_9.txt
+  metadata:
+    isl: -29804
+  sleep_before_launch_sec: 3.234123015054222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_10.txt
+  metadata:
+    isl: -29564
+  sleep_before_launch_sec: 3.182246465080889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_11.txt
+  metadata:
+    isl: -28462
+  sleep_before_launch_sec: 2.9494310921102223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_12.txt
+  metadata:
+    isl: -28330
+  sleep_before_launch_sec: 2.9221370083555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_13.txt
+  metadata:
+    isl: -27992
+  sleep_before_launch_sec: 2.8528260036835555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_14.txt
+  metadata:
+    isl: -26450
+  sleep_before_launch_sec: 2.5471749688888887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_15.txt
+  metadata:
+    isl: -25531
+  sleep_before_launch_sec: 2.3732477442275557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_16.txt
+  metadata:
+    isl: -25429
+  sleep_before_launch_sec: 2.3543226950542224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_17.txt
+  metadata:
+    isl: -23902
+  sleep_before_launch_sec: 2.0800602257635554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_18.txt
+  metadata:
+    isl: -23546
+  sleep_before_launch_sec: 2.0185601947875558
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_19.txt
+  metadata:
+    isl: -23513
+  sleep_before_launch_sec: 2.0129060873102222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_20.txt
+  metadata:
+    isl: -21693
+  sleep_before_launch_sec: 1.713352245248
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_21.txt
+  metadata:
+    isl: -20246
+  sleep_before_launch_sec: 1.4924022342542222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_22.txt
+  metadata:
+    isl: -19521
+  sleep_before_launch_sec: 1.387431493632
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_23.txt
+  metadata:
+    isl: -18763
+  sleep_before_launch_sec: 1.2817755486435556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_24.txt
+  metadata:
+    isl: -18485
+  sleep_before_launch_sec: 1.244074348088889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_25.txt
+  metadata:
+    isl: -18313
+  sleep_before_launch_sec: 1.2210302302435556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_26.txt
+  metadata:
+    isl: -18026
+  sleep_before_launch_sec: 1.1830583332408888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_27.txt
+  metadata:
+    isl: -16888
+  sleep_before_launch_sec: 1.0383980553102221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_28.txt
+  metadata:
+    isl: -16346
+  sleep_before_launch_sec: 0.9728153499875556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_29.txt
+  metadata:
+    isl: -16191
+  sleep_before_launch_sec: 0.954453491712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_30.txt
+  metadata:
+    isl: -16074
+  sleep_before_launch_sec: 0.940709117952
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_31.txt
+  metadata:
+    isl: -15666
+  sleep_before_launch_sec: 0.893559898112
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_32.txt
+  metadata:
+    isl: -15358
+  sleep_before_launch_sec: 0.8587697775502222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_33.txt
+  metadata:
+    isl: -15215
+  sleep_before_launch_sec: 0.8428520334222223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_34.txt
+  metadata:
+    isl: -14972
+  sleep_before_launch_sec: 0.8161445077902222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_35.txt
+  metadata:
+    isl: -14247
+  sleep_before_launch_sec: 0.739016736768
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_36.txt
+  metadata:
+    isl: -14239
+  sleep_before_launch_sec: 0.7381870218808889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_37.txt
+  metadata:
+    isl: -14163
+  sleep_before_launch_sec: 0.730327973888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_38.txt
+  metadata:
+    isl: -14108
+  sleep_before_launch_sec: 0.7246667375502223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_39.txt
+  metadata:
+    isl: -13965
+  sleep_before_launch_sec: 0.7100506112
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_40.txt
+  metadata:
+    isl: -13491
+  sleep_before_launch_sec: 0.662667558912
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_41.txt
+  metadata:
+    isl: -13461
+  sleep_before_launch_sec: 0.659723681792
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_42.txt
+  metadata:
+    isl: -13101
+  sleep_before_launch_sec: 0.624908337152
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_43.txt
+  metadata:
+    isl: -12446
+  sleep_before_launch_sec: 0.5639843057208889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_44.txt
+  metadata:
+    isl: -12444
+  sleep_before_launch_sec: 0.563803062272
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_45.txt
+  metadata:
+    isl: -12224
+  sleep_before_launch_sec: 0.5440441039075555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_46.txt
+  metadata:
+    isl: -11684
+  sleep_before_launch_sec: 0.49703906326755554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_47.txt
+  metadata:
+    isl: -11639
+  sleep_before_launch_sec: 0.49321782294755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_48.txt
+  metadata:
+    isl: -11177
+  sleep_before_launch_sec: 0.4548392422968889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_49.txt
+  metadata:
+    isl: -10888
+  sleep_before_launch_sec: 0.43162207664355556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_50.txt
+  metadata:
+    isl: -10846
+  sleep_before_launch_sec: 0.4282985713208889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_51.txt
+  metadata:
+    isl: -10833
+  sleep_before_launch_sec: 0.427272470528
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_52.txt
+  metadata:
+    isl: -10380
+  sleep_before_launch_sec: 0.3922853888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_53.txt
+  metadata:
+    isl: -10151
+  sleep_before_launch_sec: 0.3751673892408889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_54.txt
+  metadata:
+    isl: -8885
+  sleep_before_launch_sec: 0.28742351075555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_55.txt
+  metadata:
+    isl: -8808
+  sleep_before_launch_sec: 0.282463305728
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_56.txt
+  metadata:
+    isl: -8373
+  sleep_before_launch_sec: 0.255252267008
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_57.txt
+  metadata:
+    isl: -7743
+  sleep_before_launch_sec: 0.218286030848
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_58.txt
+  metadata:
+    isl: -7238
+  sleep_before_launch_sec: 0.19074123184355554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_59.txt
+  metadata:
+    isl: -6767
+  sleep_before_launch_sec: 0.16672463621688888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_60.txt
+  metadata:
+    isl: -6739
+  sleep_before_launch_sec: 0.16534776854755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_61.txt
+  metadata:
+    isl: -6570
+  sleep_before_launch_sec: 0.1571586048
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_62.txt
+  metadata:
+    isl: -6295
+  sleep_before_launch_sec: 0.14427759502222223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_63.txt
+  metadata:
+    isl: -6110
+  sleep_before_launch_sec: 0.1359220280888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_64.txt
+  metadata:
+    isl: -5937
+  sleep_before_launch_sec: 0.128333938688
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_65.txt
+  metadata:
+    isl: -5865
+  sleep_before_launch_sec: 0.1252401152
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_66.txt
+  metadata:
+    isl: -5795
+  sleep_before_launch_sec: 0.12226842168888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_67.txt
+  metadata:
+    isl: -5668
+  sleep_before_launch_sec: 0.11696801200355555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_68.txt
+  metadata:
+    isl: -5472
+  sleep_before_launch_sec: 0.109018349568
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_69.txt
+  metadata:
+    isl: -5169
+  sleep_before_launch_sec: 0.097279311872
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_70.txt
+  metadata:
+    isl: -5067
+  sleep_before_launch_sec: 0.093477961728
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_71.txt
+  metadata:
+    isl: -4751
+  sleep_before_launch_sec: 0.0821821476408889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_72.txt
+  metadata:
+    isl: -4549
+  sleep_before_launch_sec: 0.07534237377422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_73.txt
+  metadata:
+    isl: -4529
+  sleep_before_launch_sec: 0.07468133398755555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_74.txt
+  metadata:
+    isl: -3727
+  sleep_before_launch_sec: 0.050573872696888886
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_75.txt
+  metadata:
+    isl: -3513
+  sleep_before_launch_sec: 0.044932825088
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_76.txt
+  metadata:
+    isl: -3356
+  sleep_before_launch_sec: 0.04100637036088889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_77.txt
+  metadata:
+    isl: -2318
+  sleep_before_launch_sec: 0.019562947470222223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_78.txt
+  metadata:
+    isl: -2242
+  sleep_before_launch_sec: 0.01830116101688889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_79.txt
+  metadata:
+    isl: -2100
+  sleep_before_launch_sec: 0.01605632
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_80.txt
+  metadata:
+    isl: -2052
+  sleep_before_launch_sec: 0.015330705408
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_81.txt
+  metadata:
+    isl: -1438
+  sleep_before_launch_sec: 0.0075287902435555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_82.txt
+  metadata:
+    isl: -1392
+  sleep_before_launch_sec: 0.007054819328
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_83.txt
+  metadata:
+    isl: -1261
+  sleep_before_launch_sec: 0.005789453880888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_84.txt
+  metadata:
+    isl: -1026
+  sleep_before_launch_sec: 0.003832676352
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_85.txt
+  metadata:
+    isl: -973
+  sleep_before_launch_sec: 0.0034469350968888888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_86.txt
+  metadata:
+    isl: -904
+  sleep_before_launch_sec: 0.0029753926542222223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_87.txt
+  metadata:
+    isl: -895
+  sleep_before_launch_sec: 0.0029164430222222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_88.txt
+  metadata:
+    isl: -793
+  sleep_before_launch_sec: 0.0022895693368888887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_89.txt
+  metadata:
+    isl: -679
+  sleep_before_launch_sec: 0.0016785990542222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_90.txt
+  metadata:
+    isl: -145
+  sleep_before_launch_sec: 7.654968888888889e-05
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_91.txt
+  metadata:
+    isl: -77
+  sleep_before_launch_sec: 2.158683022222222e-05
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_92.txt
+  metadata:
+    isl: 48
+  sleep_before_launch_sec: 8.388608e-06
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_93.txt
+  metadata:
+    isl: 149
+  sleep_before_launch_sec: 8.083137422222222e-05
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_94.txt
+  metadata:
+    isl: 243
+  sleep_before_launch_sec: 0.000214990848
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_95.txt
+  metadata:
+    isl: 263
+  sleep_before_launch_sec: 0.00025183664355555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_96.txt
+  metadata:
+    isl: 295
+  sleep_before_launch_sec: 0.00031684835555555554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_97.txt
+  metadata:
+    isl: 454
+  sleep_before_launch_sec: 0.0007504454542222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_98.txt
+  metadata:
+    isl: 496
+  sleep_before_launch_sec: 0.0008957169208888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_99.txt
+  metadata:
+    isl: 525
+  sleep_before_launch_sec: 0.00100352
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_100.txt
+  metadata:
+    isl: 527
+  sleep_before_launch_sec: 0.0010111804302222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_101.txt
+  metadata:
+    isl: 618
+  sleep_before_launch_sec: 0.001390542848
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_102.txt
+  metadata:
+    isl: 684
+  sleep_before_launch_sec: 0.001703411712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_103.txt
+  metadata:
+    isl: 795
+  sleep_before_launch_sec: 0.0023011328
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_104.txt
+  metadata:
+    isl: 876
+  sleep_before_launch_sec: 0.002793930752
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_105.txt
+  metadata:
+    isl: 991
+  sleep_before_launch_sec: 0.003575647800888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_106.txt
+  metadata:
+    isl: 1390
+  sleep_before_launch_sec: 0.007034561422222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_107.txt
+  metadata:
+    isl: 1700
+  sleep_before_launch_sec: 0.01052216888888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_108.txt
+  metadata:
+    isl: 1751
+  sleep_before_launch_sec: 0.011162968974222223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_109.txt
+  metadata:
+    isl: 1766
+  sleep_before_launch_sec: 0.011355044067555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_110.txt
+  metadata:
+    isl: 1813
+  sleep_before_launch_sec: 0.011967488910222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_111.txt
+  metadata:
+    isl: 2031
+  sleep_before_launch_sec: 0.015018524672
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_112.txt
+  metadata:
+    isl: 2268
+  sleep_before_launch_sec: 0.018728091648
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_113.txt
+  metadata:
+    isl: 2450
+  sleep_before_launch_sec: 0.021854435555555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_114.txt
+  metadata:
+    isl: 2669
+  sleep_before_launch_sec: 0.025936094094222224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_115.txt
+  metadata:
+    isl: 2757
+  sleep_before_launch_sec: 0.027674574848
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_116.txt
+  metadata:
+    isl: 2758
+  sleep_before_launch_sec: 0.027694654350222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_117.txt
+  metadata:
+    isl: 2851
+  sleep_before_launch_sec: 0.029593876707555554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_118.txt
+  metadata:
+    isl: 3022
+  sleep_before_launch_sec: 0.03325035952355555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_119.txt
+  metadata:
+    isl: 3116
+  sleep_before_launch_sec: 0.03535105046755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_120.txt
+  metadata:
+    isl: 3257
+  sleep_before_launch_sec: 0.038622727736888886
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_121.txt
+  metadata:
+    isl: 3343
+  sleep_before_launch_sec: 0.04068929627022222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_122.txt
+  metadata:
+    isl: 3384
+  sleep_before_launch_sec: 0.041693478912
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_123.txt
+  metadata:
+    isl: 3584
+  sleep_before_launch_sec: 0.046767421667555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_124.txt
+  metadata:
+    isl: 3767
+  sleep_before_launch_sec: 0.051665265550222224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_125.txt
+  metadata:
+    isl: 3974
+  sleep_before_launch_sec: 0.05749937857422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_126.txt
+  metadata:
+    isl: 3997
+  sleep_before_launch_sec: 0.05816687365688889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_127.txt
+  metadata:
+    isl: 4358
+  sleep_before_launch_sec: 0.06914835888355556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_128.txt
+  metadata:
+    isl: 4368
+  sleep_before_launch_sec: 0.069466062848
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_129.txt
+  metadata:
+    isl: 4458
+  sleep_before_launch_sec: 0.072358166528
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_130.txt
+  metadata:
+    isl: 4638
+  sleep_before_launch_sec: 0.078319321088
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_131.txt
+  metadata:
+    isl: 4702
+  sleep_before_launch_sec: 0.08049569883022223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_132.txt
+  metadata:
+    isl: 4848
+  sleep_before_launch_sec: 0.085572190208
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_133.txt
+  metadata:
+    isl: 4919
+  sleep_before_launch_sec: 0.08809699009422223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_134.txt
+  metadata:
+    isl: 4961
+  sleep_before_launch_sec: 0.08960781334755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_135.txt
+  metadata:
+    isl: 5010
+  sleep_before_launch_sec: 0.0913866752
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_136.txt
+  metadata:
+    isl: 5101
+  sleep_before_launch_sec: 0.09473666070755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_137.txt
+  metadata:
+    isl: 5235
+  sleep_before_launch_sec: 0.0997793792
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_138.txt
+  metadata:
+    isl: 5492
+  sleep_before_launch_sec: 0.10981672368355555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_139.txt
+  metadata:
+    isl: 5812
+  sleep_before_launch_sec: 0.12298683824355555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_140.txt
+  metadata:
+    isl: 5846
+  sleep_before_launch_sec: 0.12442998465422223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_141.txt
+  metadata:
+    isl: 5993
+  sleep_before_launch_sec: 0.1307663437368889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_142.txt
+  metadata:
+    isl: 6087
+  sleep_before_launch_sec: 0.134900645888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_143.txt
+  metadata:
+    isl: 6151
+  sleep_before_launch_sec: 0.13775230657422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_144.txt
+  metadata:
+    isl: 6228
+  sleep_before_launch_sec: 0.141222739968
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_145.txt
+  metadata:
+    isl: 6392
+  sleep_before_launch_sec: 0.14875821488355556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_146.txt
+  metadata:
+    isl: 6393
+  sleep_before_launch_sec: 0.148804763648
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_147.txt
+  metadata:
+    isl: 6427
+  sleep_before_launch_sec: 0.1503917542968889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_148.txt
+  metadata:
+    isl: 6530
+  sleep_before_launch_sec: 0.15525077902222223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_149.txt
+  metadata:
+    isl: 6672
+  sleep_before_launch_sec: 0.162076295168
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_150.txt
+  metadata:
+    isl: 6956
+  sleep_before_launch_sec: 0.17616781676088888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_151.txt
+  metadata:
+    isl: 7201
+  sleep_before_launch_sec: 0.1887961124408889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_152.txt
+  metadata:
+    isl: 7325
+  sleep_before_launch_sec: 0.1953541688888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_153.txt
+  metadata:
+    isl: 7680
+  sleep_before_launch_sec: 0.2147483648
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_154.txt
+  metadata:
+    isl: 7704
+  sleep_before_launch_sec: 0.216092639232
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_155.txt
+  metadata:
+    isl: 7809
+  sleep_before_launch_sec: 0.222023155712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_156.txt
+  metadata:
+    isl: 7958
+  sleep_before_launch_sec: 0.23057663408355555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_157.txt
+  metadata:
+    isl: 7971
+  sleep_before_launch_sec: 0.231330578432
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_158.txt
+  metadata:
+    isl: 8002
+  sleep_before_launch_sec: 0.23313341189688888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_159.txt
+  metadata:
+    isl: 8011
+  sleep_before_launch_sec: 0.23365812588088888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_160.txt
+  metadata:
+    isl: 8165
+  sleep_before_launch_sec: 0.24272795875555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_161.txt
+  metadata:
+    isl: 8267
+  sleep_before_launch_sec: 0.24883032155022222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_162.txt
+  metadata:
+    isl: 8332
+  sleep_before_launch_sec: 0.25275860400355554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_163.txt
+  metadata:
+    isl: 8431
+  sleep_before_launch_sec: 0.25880079382755555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_164.txt
+  metadata:
+    isl: 8440
+  sleep_before_launch_sec: 0.25935362275555557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_165.txt
+  metadata:
+    isl: 8615
+  sleep_before_launch_sec: 0.2702203107555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_166.txt
+  metadata:
+    isl: 8643
+  sleep_before_launch_sec: 0.271979675648
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_167.txt
+  metadata:
+    isl: 8779
+  sleep_before_launch_sec: 0.2806063686542222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_168.txt
+  metadata:
+    isl: 8928
+  sleep_before_launch_sec: 0.290212282368
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_169.txt
+  metadata:
+    isl: 9300
+  sleep_before_launch_sec: 0.31490048
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_170.txt
+  metadata:
+    isl: 9416
+  sleep_before_launch_sec: 0.3228050536675556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_171.txt
+  metadata:
+    isl: 9732
+  sleep_before_launch_sec: 0.344835227648
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_172.txt
+  metadata:
+    isl: 9772
+  sleep_before_launch_sec: 0.34767570352355553
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_173.txt
+  metadata:
+    isl: 10172
+  sleep_before_launch_sec: 0.37672125872355555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_174.txt
+  metadata:
+    isl: 10454
+  sleep_before_launch_sec: 0.39789860545422223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_175.txt
+  metadata:
+    isl: 10649
+  sleep_before_launch_sec: 0.41288117270755553
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_176.txt
+  metadata:
+    isl: 10677
+  sleep_before_launch_sec: 0.415055249408
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_177.txt
+  metadata:
+    isl: 10693
+  sleep_before_launch_sec: 0.4163001421368889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_178.txt
+  metadata:
+    isl: 10922
+  sleep_before_launch_sec: 0.43432194139022223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_179.txt
+  metadata:
+    isl: 11024
+  sleep_before_launch_sec: 0.4424720420408889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_180.txt
+  metadata:
+    isl: 11038
+  sleep_before_launch_sec: 0.44359659611022223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_181.txt
+  metadata:
+    isl: 11079
+  sleep_before_launch_sec: 0.446898143232
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_182.txt
+  metadata:
+    isl: 11086
+  sleep_before_launch_sec: 0.44746304534755554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_183.txt
+  metadata:
+    isl: 11117
+  sleep_before_launch_sec: 0.44996904368355556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_184.txt
+  metadata:
+    isl: 11148
+  sleep_before_launch_sec: 0.452482039808
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_185.txt
+  metadata:
+    isl: 11158
+  sleep_before_launch_sec: 0.4532941764835556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_186.txt
+  metadata:
+    isl: 11183
+  sleep_before_launch_sec: 0.4553277039502222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_187.txt
+  metadata:
+    isl: 11222
+  sleep_before_launch_sec: 0.45850909445688887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_188.txt
+  metadata:
+    isl: 11272
+  sleep_before_launch_sec: 0.46260400219022224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_189.txt
+  metadata:
+    isl: 11314
+  sleep_before_launch_sec: 0.4660577930808889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_190.txt
+  metadata:
+    isl: 11318
+  sleep_before_launch_sec: 0.46638739547022223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_191.txt
+  metadata:
+    isl: 11483
+  sleep_before_launch_sec: 0.48008502021688887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_192.txt
+  metadata:
+    isl: 11506
+  sleep_before_launch_sec: 0.4820101292942222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_193.txt
+  metadata:
+    isl: 11554
+  sleep_before_launch_sec: 0.48604015638755554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_194.txt
+  metadata:
+    isl: 11578
+  sleep_before_launch_sec: 0.4880614613902222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_195.txt
+  metadata:
+    isl: 11623
+  sleep_before_launch_sec: 0.49186271323022224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_196.txt
+  metadata:
+    isl: 11804
+  sleep_before_launch_sec: 0.5073011270542223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_197.txt
+  metadata:
+    isl: 11811
+  sleep_before_launch_sec: 0.507902984192
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_198.txt
+  metadata:
+    isl: 11867
+  sleep_before_launch_sec: 0.5127306863502222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_199.txt
+  metadata:
+    isl: 11892
+  sleep_before_launch_sec: 0.514893283328
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_200.txt
+  metadata:
+    isl: 12150
+  sleep_before_launch_sec: 0.53747712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_201.txt
+  metadata:
+    isl: 12152
+  sleep_before_launch_sec: 0.5376540817635556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_202.txt
+  metadata:
+    isl: 12205
+  sleep_before_launch_sec: 0.5423541816888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_203.txt
+  metadata:
+    isl: 12351
+  sleep_before_launch_sec: 0.555407409152
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_204.txt
+  metadata:
+    isl: 12396
+  sleep_before_launch_sec: 0.559461957632
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_205.txt
+  metadata:
+    isl: 12531
+  sleep_before_launch_sec: 0.571714076672
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_206.txt
+  metadata:
+    isl: 12672
+  sleep_before_launch_sec: 0.584652423168
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_207.txt
+  metadata:
+    isl: 12768
+  sleep_before_launch_sec: 0.593544347648
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_208.txt
+  metadata:
+    isl: 12809
+  sleep_before_launch_sec: 0.5973623912675555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_209.txt
+  metadata:
+    isl: 12904
+  sleep_before_launch_sec: 0.6062561179875555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_210.txt
+  metadata:
+    isl: 13044
+  sleep_before_launch_sec: 0.619482447872
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_211.txt
+  metadata:
+    isl: 13144
+  sleep_before_launch_sec: 0.6290172076942222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_212.txt
+  metadata:
+    isl: 13164
+  sleep_before_launch_sec: 0.630932897792
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_213.txt
+  metadata:
+    isl: 13395
+  sleep_before_launch_sec: 0.6532702208
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_214.txt
+  metadata:
+    isl: 13426
+  sleep_before_launch_sec: 0.6562974415075555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_215.txt
+  metadata:
+    isl: 13514
+  sleep_before_launch_sec: 0.6649289696142222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_216.txt
+  metadata:
+    isl: 13600
+  sleep_before_launch_sec: 0.6734188088888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_217.txt
+  metadata:
+    isl: 13606
+  sleep_before_launch_sec: 0.6740131330275556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_218.txt
+  metadata:
+    isl: 13769
+  sleep_before_launch_sec: 0.6902592343608889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_219.txt
+  metadata:
+    isl: 13774
+  sleep_before_launch_sec: 0.6907606393742223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_220.txt
+  metadata:
+    isl: 14015
+  sleep_before_launch_sec: 0.7151442147555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_221.txt
+  metadata:
+    isl: 14244
+  sleep_before_launch_sec: 0.738705539072
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_222.txt
+  metadata:
+    isl: 14294
+  sleep_before_launch_sec: 0.7439007234275555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_223.txt
+  metadata:
+    isl: 14391
+  sleep_before_launch_sec: 0.754031296512
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_224.txt
+  metadata:
+    isl: 14398
+  sleep_before_launch_sec: 0.7547650193635556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_225.txt
+  metadata:
+    isl: 14579
+  sleep_before_launch_sec: 0.7738608881208889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_226.txt
+  metadata:
+    isl: 14621
+  sleep_before_launch_sec: 0.7783260742542222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_227.txt
+  metadata:
+    isl: 14625
+  sleep_before_launch_sec: 0.778752
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_228.txt
+  metadata:
+    isl: 14647
+  sleep_before_launch_sec: 0.7810966741902222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_229.txt
+  metadata:
+    isl: 14720
+  sleep_before_launch_sec: 0.7889019790222223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_230.txt
+  metadata:
+    isl: 14850
+  sleep_before_launch_sec: 0.80289792
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_231.txt
+  metadata:
+    isl: 14881
+  sleep_before_launch_sec: 0.8062535852942222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_232.txt
+  metadata:
+    isl: 14959
+  sleep_before_launch_sec: 0.8147278270008889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_233.txt
+  metadata:
+    isl: 14991
+  sleep_before_launch_sec: 0.818217254912
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_234.txt
+  metadata:
+    isl: 15051
+  sleep_before_launch_sec: 0.824780029952
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_235.txt
+  metadata:
+    isl: 15101
+  sleep_before_launch_sec: 0.8302690340408889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_236.txt
+  metadata:
+    isl: 15132
+  sleep_before_launch_sec: 0.833681358848
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_237.txt
+  metadata:
+    isl: 15199
+  sleep_before_launch_sec: 0.8410802895075555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_238.txt
+  metadata:
+    isl: 15231
+  sleep_before_launch_sec: 0.844625641472
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_239.txt
+  metadata:
+    isl: 15259
+  sleep_before_launch_sec: 0.8477339411342222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_240.txt
+  metadata:
+    isl: 15317
+  sleep_before_launch_sec: 0.8541907226168889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_241.txt
+  metadata:
+    isl: 15325
+  sleep_before_launch_sec: 0.8550832355555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_242.txt
+  metadata:
+    isl: 15335
+  sleep_before_launch_sec: 0.8561995320888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_243.txt
+  metadata:
+    isl: 15499
+  sleep_before_launch_sec: 0.8746106916408889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_244.txt
+  metadata:
+    isl: 15571
+  sleep_before_launch_sec: 0.8827555057208889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_245.txt
+  metadata:
+    isl: 15628
+  sleep_before_launch_sec: 0.8892302549902222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_246.txt
+  metadata:
+    isl: 15765
+  sleep_before_launch_sec: 0.9048891392
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_247.txt
+  metadata:
+    isl: 15772
+  sleep_before_launch_sec: 0.9056928981902223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_248.txt
+  metadata:
+    isl: 15801
+  sleep_before_launch_sec: 0.909026557952
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_249.txt
+  metadata:
+    isl: 15822
+  sleep_before_launch_sec: 0.911444410368
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_250.txt
+  metadata:
+    isl: 15827
+  sleep_before_launch_sec: 0.9120205628302223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_251.txt
+  metadata:
+    isl: 15839
+  sleep_before_launch_sec: 0.9134040714808889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_252.txt
+  metadata:
+    isl: 15914
+  sleep_before_launch_sec: 0.9220747573475555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_253.txt
+  metadata:
+    isl: 15950
+  sleep_before_launch_sec: 0.9262512355555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_254.txt
+  metadata:
+    isl: 16003
+  sleep_before_launch_sec: 0.9324171136568888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_255.txt
+  metadata:
+    isl: 16151
+  sleep_before_launch_sec: 0.9497433465742222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_256.txt
+  metadata:
+    isl: 16262
+  sleep_before_launch_sec: 0.9628426931768889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_257.txt
+  metadata:
+    isl: 16273
+  sleep_before_launch_sec: 0.9641457126968889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_258.txt
+  metadata:
+    isl: 16280
+  sleep_before_launch_sec: 0.9649753656888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_259.txt
+  metadata:
+    isl: 16365
+  sleep_before_launch_sec: 0.9750781952
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_260.txt
+  metadata:
+    isl: 16598
+  sleep_before_launch_sec: 1.0030416017635555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_261.txt
+  metadata:
+    isl: 16801
+  sleep_before_launch_sec: 1.0277268175075556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_262.txt
+  metadata:
+    isl: 16914
+  sleep_before_launch_sec: 1.041597857792
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_263.txt
+  metadata:
+    isl: 16932
+  sleep_before_launch_sec: 1.043815989248
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_264.txt
+  metadata:
+    isl: 16980
+  sleep_before_launch_sec: 1.0497425408
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_265.txt
+  metadata:
+    isl: 17037
+  sleep_before_launch_sec: 1.056802111488
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_266.txt
+  metadata:
+    isl: 17258
+  sleep_before_launch_sec: 1.0843971183502221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_267.txt
+  metadata:
+    isl: 17264
+  sleep_before_launch_sec: 1.0851512629475555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_268.txt
+  metadata:
+    isl: 17274
+  sleep_before_launch_sec: 1.086408753152
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_269.txt
+  metadata:
+    isl: 17381
+  sleep_before_launch_sec: 1.0999094786275556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_270.txt
+  metadata:
+    isl: 17411
+  sleep_before_launch_sec: 1.1037096928142223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_271.txt
+  metadata:
+    isl: 17587
+  sleep_before_launch_sec: 1.126136286776889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_272.txt
+  metadata:
+    isl: 17636
+  sleep_before_launch_sec: 1.1324201952142223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_273.txt
+  metadata:
+    isl: 17731
+  sleep_before_launch_sec: 1.144653090360889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_274.txt
+  metadata:
+    isl: 17740
+  sleep_before_launch_sec: 1.1458154040888888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_275.txt
+  metadata:
+    isl: 18010
+  sleep_before_launch_sec: 1.1809590840888888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_276.txt
+  metadata:
+    isl: 18312
+  sleep_before_launch_sec: 1.220896882688
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_277.txt
+  metadata:
+    isl: 18355
+  sleep_before_launch_sec: 1.2266374030222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_278.txt
+  metadata:
+    isl: 18363
+  sleep_before_launch_sec: 1.227706892288
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_279.txt
+  metadata:
+    isl: 18435
+  sleep_before_launch_sec: 1.2373532672
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_280.txt
+  metadata:
+    isl: 18442
+  sleep_before_launch_sec: 1.238293122616889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_281.txt
+  metadata:
+    isl: 18541
+  sleep_before_launch_sec: 1.251623571000889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_282.txt
+  metadata:
+    isl: 18560
+  sleep_before_launch_sec: 1.2541901027555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_283.txt
+  metadata:
+    isl: 18584
+  sleep_before_launch_sec: 1.257435795000889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_284.txt
+  metadata:
+    isl: 18650
+  sleep_before_launch_sec: 1.2663830755555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_285.txt
+  metadata:
+    isl: 18668
+  sleep_before_launch_sec: 1.2688287480035556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_286.txt
+  metadata:
+    isl: 18791
+  sleep_before_launch_sec: 1.2856039870008888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_287.txt
+  metadata:
+    isl: 18834
+  sleep_before_launch_sec: 1.291494490112
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_288.txt
+  metadata:
+    isl: 18876
+  sleep_before_launch_sec: 1.297261002752
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_289.txt
+  metadata:
+    isl: 18942
+  sleep_before_launch_sec: 1.306348617728
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_290.txt
+  metadata:
+    isl: 18976
+  sleep_before_launch_sec: 1.3110424953742221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_291.txt
+  metadata:
+    isl: 19051
+  sleep_before_launch_sec: 1.3214264015075556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_292.txt
+  metadata:
+    isl: 19070
+  sleep_before_launch_sec: 1.3240634936888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_293.txt
+  metadata:
+    isl: 19169
+  sleep_before_launch_sec: 1.3378466647608889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_294.txt
+  metadata:
+    isl: 19243
+  sleep_before_launch_sec: 1.348195847736889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_295.txt
+  metadata:
+    isl: 19410
+  sleep_before_launch_sec: 1.3716979712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_296.txt
+  metadata:
+    isl: 19470
+  sleep_before_launch_sec: 1.3801914368
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_297.txt
+  metadata:
+    isl: 19556
+  sleep_before_launch_sec: 1.392411119160889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_298.txt
+  metadata:
+    isl: 19560
+  sleep_before_launch_sec: 1.3929807872
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_299.txt
+  metadata:
+    isl: 19591
+  sleep_before_launch_sec: 1.3973996648675555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_300.txt
+  metadata:
+    isl: 19600
+  sleep_before_launch_sec: 1.3986838755555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_301.txt
+  metadata:
+    isl: 19609
+  sleep_before_launch_sec: 1.3999686760675556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_302.txt
+  metadata:
+    isl: 19621
+  sleep_before_launch_sec: 1.4016826609208888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_303.txt
+  metadata:
+    isl: 19648
+  sleep_before_launch_sec: 1.405542960696889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_304.txt
+  metadata:
+    isl: 19843
+  sleep_before_launch_sec: 1.4335805176035556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_305.txt
+  metadata:
+    isl: 20088
+  sleep_before_launch_sec: 1.469199679488
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_306.txt
+  metadata:
+    isl: 20134
+  sleep_before_launch_sec: 1.475936095800889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_307.txt
+  metadata:
+    isl: 20135
+  sleep_before_launch_sec: 1.4760827107555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_308.txt
+  metadata:
+    isl: 20180
+  sleep_before_launch_sec: 1.4826879203555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_309.txt
+  metadata:
+    isl: 20268
+  sleep_before_launch_sec: 1.495647387648
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_310.txt
+  metadata:
+    isl: 20386
+  sleep_before_launch_sec: 1.5131133578808889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_311.txt
+  metadata:
+    isl: 20536
+  sleep_before_launch_sec: 1.5354622261475555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_312.txt
+  metadata:
+    isl: 20584
+  sleep_before_launch_sec: 1.5426484670008889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_313.txt
+  metadata:
+    isl: 20647
+  sleep_before_launch_sec: 1.552105868856889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_314.txt
+  metadata:
+    isl: 20678
+  sleep_before_launch_sec: 1.5567701205902222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_315.txt
+  metadata:
+    isl: 20707
+  sleep_before_launch_sec: 1.5611397880035556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_316.txt
+  metadata:
+    isl: 20787
+  sleep_before_launch_sec: 1.573225791488
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_317.txt
+  metadata:
+    isl: 20807
+  sleep_before_launch_sec: 1.576254574136889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_318.txt
+  metadata:
+    isl: 20859
+  sleep_before_launch_sec: 1.584143040512
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_319.txt
+  metadata:
+    isl: 20867
+  sleep_before_launch_sec: 1.5853583983502222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_320.txt
+  metadata:
+    isl: 20900
+  sleep_before_launch_sec: 1.5903766755555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_321.txt
+  metadata:
+    isl: 20904
+  sleep_before_launch_sec: 1.590985490432
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_322.txt
+  metadata:
+    isl: 21083
+  sleep_before_launch_sec: 1.6183492207502221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_323.txt
+  metadata:
+    isl: 21308
+  sleep_before_launch_sec: 1.6530759279502223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_324.txt
+  metadata:
+    isl: 21451
+  sleep_before_launch_sec: 1.6753382777742223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_325.txt
+  metadata:
+    isl: 21514
+  sleep_before_launch_sec: 1.6851934176142223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_326.txt
+  metadata:
+    isl: 21601
+  sleep_before_launch_sec: 1.698850410040889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_327.txt
+  metadata:
+    isl: 21661
+  sleep_before_launch_sec: 1.7083011381475555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_328.txt
+  metadata:
+    isl: 21695
+  sleep_before_launch_sec: 1.7136681870222221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_329.txt
+  metadata:
+    isl: 21721
+  sleep_before_launch_sec: 1.7177780806542222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_330.txt
+  metadata:
+    isl: 21760
+  sleep_before_launch_sec: 1.7239521507555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_331.txt
+  metadata:
+    isl: 21876
+  sleep_before_launch_sec: 1.742381514752
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_332.txt
+  metadata:
+    isl: 22031
+  sleep_before_launch_sec: 1.767159893560889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_333.txt
+  metadata:
+    isl: 22052
+  sleep_before_launch_sec: 1.7705304209635555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_334.txt
+  metadata:
+    isl: 22138
+  sleep_before_launch_sec: 1.7843670366435556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_335.txt
+  metadata:
+    isl: 22150
+  sleep_before_launch_sec: 1.7863020088888888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_336.txt
+  metadata:
+    isl: 22232
+  sleep_before_launch_sec: 1.7995523832035556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_337.txt
+  metadata:
+    isl: 22239
+  sleep_before_launch_sec: 1.800685780992
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_338.txt
+  metadata:
+    isl: 22319
+  sleep_before_launch_sec: 1.8136642391608888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_339.txt
+  metadata:
+    isl: 22328
+  sleep_before_launch_sec: 1.815127232056889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_340.txt
+  metadata:
+    isl: 22352
+  sleep_before_launch_sec: 1.8190314300302222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_341.txt
+  metadata:
+    isl: 22371
+  sleep_before_launch_sec: 1.822125228032
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_342.txt
+  metadata:
+    isl: 22380
+  sleep_before_launch_sec: 1.8235916288
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_343.txt
+  metadata:
+    isl: 22401
+  sleep_before_launch_sec: 1.827015524352
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_344.txt
+  metadata:
+    isl: 22421
+  sleep_before_launch_sec: 1.8302793627875555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_345.txt
+  metadata:
+    isl: 22434
+  sleep_before_launch_sec: 1.832402419712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_346.txt
+  metadata:
+    isl: 22476
+  sleep_before_launch_sec: 1.839269937152
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_347.txt
+  metadata:
+    isl: 22497
+  sleep_before_launch_sec: 1.842708512768
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_348.txt
+  metadata:
+    isl: 22506
+  sleep_before_launch_sec: 1.844183171072
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_349.txt
+  metadata:
+    isl: 22554
+  sleep_before_launch_sec: 1.852057976832
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_350.txt
+  metadata:
+    isl: 22658
+  sleep_before_launch_sec: 1.8691776111502223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_351.txt
+  metadata:
+    isl: 22692
+  sleep_before_launch_sec: 1.874791497728
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_352.txt
+  metadata:
+    isl: 22757
+  sleep_before_launch_sec: 1.8855473570702221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_353.txt
+  metadata:
+    isl: 22821
+  sleep_before_launch_sec: 1.896167800832
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_354.txt
+  metadata:
+    isl: 22851
+  sleep_before_launch_sec: 1.901156401152
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_355.txt
+  metadata:
+    isl: 23008
+  sleep_before_launch_sec: 1.9273703023502222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_356.txt
+  metadata:
+    isl: 23013
+  sleep_before_launch_sec: 1.928208089088
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_357.txt
+  metadata:
+    isl: 23058
+  sleep_before_launch_sec: 1.935756361728
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_358.txt
+  metadata:
+    isl: 23098
+  sleep_before_launch_sec: 1.9424783164302222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_359.txt
+  metadata:
+    isl: 23403
+  sleep_before_launch_sec: 1.994116333568
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_360.txt
+  metadata:
+    isl: 23457
+  sleep_before_launch_sec: 2.003329384448
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_361.txt
+  metadata:
+    isl: 23581
+  sleep_before_launch_sec: 2.0245656407608887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_362.txt
+  metadata:
+    isl: 23675
+  sleep_before_launch_sec: 2.0407387022222223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_363.txt
+  metadata:
+    isl: 23763
+  sleep_before_launch_sec: 2.055937753088
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_364.txt
+  metadata:
+    isl: 23778
+  sleep_before_launch_sec: 2.058534125568
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_365.txt
+  metadata:
+    isl: 23809
+  sleep_before_launch_sec: 2.0639051539342224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_366.txt
+  metadata:
+    isl: 23986
+  sleep_before_launch_sec: 2.094706036280889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_367.txt
+  metadata:
+    isl: 24019
+  sleep_before_launch_sec: 2.1004738050275558
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_368.txt
+  metadata:
+    isl: 24079
+  sleep_before_launch_sec: 2.110980973454222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_369.txt
+  metadata:
+    isl: 24124
+  sleep_before_launch_sec: 2.118878552974222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_370.txt
+  metadata:
+    isl: 24289
+  sleep_before_launch_sec: 2.1479625013475556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_371.txt
+  metadata:
+    isl: 24307
+  sleep_before_launch_sec: 2.1511472888035557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_372.txt
+  metadata:
+    isl: 24408
+  sleep_before_launch_sec: 2.169061244928
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_373.txt
+  metadata:
+    isl: 24410
+  sleep_before_launch_sec: 2.1694167267555557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_374.txt
+  metadata:
+    isl: 24445
+  sleep_before_launch_sec: 2.175642373688889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_375.txt
+  metadata:
+    isl: 24549
+  sleep_before_launch_sec: 2.194194071552
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_376.txt
+  metadata:
+    isl: 24569
+  sleep_before_launch_sec: 2.197770735160889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_377.txt
+  metadata:
+    isl: 24653
+  sleep_before_launch_sec: 2.2128245291235555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_378.txt
+  metadata:
+    isl: 24659
+  sleep_before_launch_sec: 2.213901766200889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_379.txt
+  metadata:
+    isl: 24909
+  sleep_before_launch_sec: 2.259019661312
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_380.txt
+  metadata:
+    isl: 24960
+  sleep_before_launch_sec: 2.2682796032
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_381.txt
+  metadata:
+    isl: 25008
+  sleep_before_launch_sec: 2.277012144128
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_382.txt
+  metadata:
+    isl: 25013
+  sleep_before_launch_sec: 2.2779227486435554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_383.txt
+  metadata:
+    isl: 25079
+  sleep_before_launch_sec: 2.289959789454222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_384.txt
+  metadata:
+    isl: 25093
+  sleep_before_launch_sec: 2.292517178936889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_385.txt
+  metadata:
+    isl: 25095
+  sleep_before_launch_sec: 2.2928826368
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_386.txt
+  metadata:
+    isl: 25152
+  sleep_before_launch_sec: 2.303310430208
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_387.txt
+  metadata:
+    isl: 25174
+  sleep_before_launch_sec: 2.3073415204408887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_388.txt
+  metadata:
+    isl: 25265
+  sleep_before_launch_sec: 2.3240530147555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_389.txt
+  metadata:
+    isl: 25298
+  sleep_before_launch_sec: 2.330128125496889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_390.txt
+  metadata:
+    isl: 25308
+  sleep_before_launch_sec: 2.331970633728
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_391.txt
+  metadata:
+    isl: 25378
+  sleep_before_launch_sec: 2.3448885803235555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_392.txt
+  metadata:
+    isl: 25405
+  sleep_before_launch_sec: 2.3498807523555554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_393.txt
+  metadata:
+    isl: 25410
+  sleep_before_launch_sec: 2.3508058112
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_394.txt
+  metadata:
+    isl: 25475
+  sleep_before_launch_sec: 2.362848142222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_395.txt
+  metadata:
+    isl: 25478
+  sleep_before_launch_sec: 2.363404684856889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_396.txt
+  metadata:
+    isl: 25568
+  sleep_before_launch_sec: 2.380131438136889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_397.txt
+  metadata:
+    isl: 25692
+  sleep_before_launch_sec: 2.403273801728
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_398.txt
+  metadata:
+    isl: 25738
+  sleep_before_launch_sec: 2.4118873438435555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_399.txt
+  metadata:
+    isl: 25943
+  sleep_before_launch_sec: 2.4504611234702223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_400.txt
+  metadata:
+    isl: 25944
+  sleep_before_launch_sec: 2.450650038272
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_401.txt
+  metadata:
+    isl: 26025
+  sleep_before_launch_sec: 2.46597632
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_402.txt
+  metadata:
+    isl: 26062
+  sleep_before_launch_sec: 2.4729931102435554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_403.txt
+  metadata:
+    isl: 26146
+  sleep_before_launch_sec: 2.488960126520889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_404.txt
+  metadata:
+    isl: 26165
+  sleep_before_launch_sec: 2.4925788387555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_405.txt
+  metadata:
+    isl: 26169
+  sleep_before_launch_sec: 2.493341007872
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_406.txt
+  metadata:
+    isl: 26231
+  sleep_before_launch_sec: 2.505169527694222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_407.txt
+  metadata:
+    isl: 26323
+  sleep_before_launch_sec: 2.5227731089635554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_408.txt
+  metadata:
+    isl: 26396
+  sleep_before_launch_sec: 2.5367850225208888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_409.txt
+  metadata:
+    isl: 26409
+  sleep_before_launch_sec: 2.539284365312
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_410.txt
+  metadata:
+    isl: 26572
+  sleep_before_launch_sec: 2.5707267285902224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_411.txt
+  metadata:
+    isl: 26581
+  sleep_before_launch_sec: 2.572468446094222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_412.txt
+  metadata:
+    isl: 26644
+  sleep_before_launch_sec: 2.584676983694222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_413.txt
+  metadata:
+    isl: 26739
+  sleep_before_launch_sec: 2.603141332992
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_414.txt
+  metadata:
+    isl: 26786
+  sleep_before_launch_sec: 2.6123006261475554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_415.txt
+  metadata:
+    isl: 26828
+  sleep_before_launch_sec: 2.620499136056889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_416.txt
+  metadata:
+    isl: 26857
+  sleep_before_launch_sec: 2.6261675085368887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_417.txt
+  metadata:
+    isl: 26903
+  sleep_before_launch_sec: 2.6351712811235557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_418.txt
+  metadata:
+    isl: 26961
+  sleep_before_launch_sec: 2.646545825792
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_419.txt
+  metadata:
+    isl: 26966
+  sleep_before_launch_sec: 2.6475275368675555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_420.txt
+  metadata:
+    isl: 26997
+  sleep_before_launch_sec: 2.653618208768
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_421.txt
+  metadata:
+    isl: 27014
+  sleep_before_launch_sec: 2.6569612256142223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_422.txt
+  metadata:
+    isl: 27019
+  sleep_before_launch_sec: 2.657944866360889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_423.txt
+  metadata:
+    isl: 27064
+  sleep_before_launch_sec: 2.666805825080889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_424.txt
+  metadata:
+    isl: 27155
+  sleep_before_launch_sec: 2.6847697123555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_425.txt
+  metadata:
+    isl: 27222
+  sleep_before_launch_sec: 2.698034413568
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_426.txt
+  metadata:
+    isl: 27237
+  sleep_before_launch_sec: 2.701008601088
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_427.txt
+  metadata:
+    isl: 27269
+  sleep_before_launch_sec: 2.707359010360889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_428.txt
+  metadata:
+    isl: 27340
+  sleep_before_launch_sec: 2.7214756067555554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_429.txt
+  metadata:
+    isl: 27422
+  sleep_before_launch_sec: 2.737824960056889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_430.txt
+  metadata:
+    isl: 27535
+  sleep_before_launch_sec: 2.760435393422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_431.txt
+  metadata:
+    isl: 27612
+  sleep_before_launch_sec: 2.775895769088
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_432.txt
+  metadata:
+    isl: 27708
+  sleep_before_launch_sec: 2.795231510528
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_433.txt
+  metadata:
+    isl: 27733
+  sleep_before_launch_sec: 2.8002778735502223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_434.txt
+  metadata:
+    isl: 27740
+  sleep_before_launch_sec: 2.8016916707555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_435.txt
+  metadata:
+    isl: 27791
+  sleep_before_launch_sec: 2.812002963000889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_436.txt
+  metadata:
+    isl: 27826
+  sleep_before_launch_sec: 2.8190902991075557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_437.txt
+  metadata:
+    isl: 27973
+  sleep_before_launch_sec: 2.848954519096889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_438.txt
+  metadata:
+    isl: 27997
+  sleep_before_launch_sec: 2.8538452523235556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_439.txt
+  metadata:
+    isl: 28011
+  sleep_before_launch_sec: 2.856700116992
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_440.txt
+  metadata:
+    isl: 28100
+  sleep_before_launch_sec: 2.8748822755555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_441.txt
+  metadata:
+    isl: 28229
+  sleep_before_launch_sec: 2.9013385798542224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_442.txt
+  metadata:
+    isl: 28267
+  sleep_before_launch_sec: 2.9091550148835554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_443.txt
+  metadata:
+    isl: 28342
+  sleep_before_launch_sec: 2.924613045816889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_444.txt
+  metadata:
+    isl: 28619
+  sleep_before_launch_sec: 2.982059707960889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_445.txt
+  metadata:
+    isl: 28990
+  sleep_before_launch_sec: 3.059876204088889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_446.txt
+  metadata:
+    isl: 29001
+  sleep_before_launch_sec: 3.062198730752
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_447.txt
+  metadata:
+    isl: 29047
+  sleep_before_launch_sec: 3.071920661390222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_448.txt
+  metadata:
+    isl: 29111
+  sleep_before_launch_sec: 3.0854724576142223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_449.txt
+  metadata:
+    isl: 29138
+  sleep_before_launch_sec: 3.0911985673102222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_450.txt
+  metadata:
+    isl: 29161
+  sleep_before_launch_sec: 3.0960805514808887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_451.txt
+  metadata:
+    isl: 29235
+  sleep_before_launch_sec: 3.1118139392
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_452.txt
+  metadata:
+    isl: 29379
+  sleep_before_launch_sec: 3.142544556032
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_453.txt
+  metadata:
+    isl: 29517
+  sleep_before_launch_sec: 3.172136419328
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_454.txt
+  metadata:
+    isl: 29547
+  sleep_before_launch_sec: 3.178587783168
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_455.txt
+  metadata:
+    isl: 29608
+  sleep_before_launch_sec: 3.1917257668835557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_456.txt
+  metadata:
+    isl: 29610
+  sleep_before_launch_sec: 3.1921569792
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_457.txt
+  metadata:
+    isl: 29815
+  sleep_before_launch_sec: 3.2365107427555557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_458.txt
+  metadata:
+    isl: 29979
+  sleep_before_launch_sec: 3.272214085632
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_459.txt
+  metadata:
+    isl: 30061
+  sleep_before_launch_sec: 3.2901392010808888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_460.txt
+  metadata:
+    isl: 30087
+  sleep_before_launch_sec: 3.295832997888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_461.txt
+  metadata:
+    isl: 30124
+  sleep_before_launch_sec: 3.303944195640889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_462.txt
+  metadata:
+    isl: 30268
+  sleep_before_launch_sec: 3.335606996536889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_463.txt
+  metadata:
+    isl: 30287
+  sleep_before_launch_sec: 3.3397960030435554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_464.txt
+  metadata:
+    isl: 30333
+  sleep_before_launch_sec: 3.349948694528
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_465.txt
+  metadata:
+    isl: 30350
+  sleep_before_launch_sec: 3.3537046755555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_466.txt
+  metadata:
+    isl: 30366
+  sleep_before_launch_sec: 3.357241638912
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_467.txt
+  metadata:
+    isl: 30455
+  sleep_before_launch_sec: 3.376950021688889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_468.txt
+  metadata:
+    isl: 30503
+  sleep_before_launch_sec: 3.3876032043235558
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_469.txt
+  metadata:
+    isl: 30564
+  sleep_before_launch_sec: 3.401165832192
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_470.txt
+  metadata:
+    isl: 30583
+  sleep_before_launch_sec: 3.405395791416889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_471.txt
+  metadata:
+    isl: 30602
+  sleep_before_launch_sec: 3.4096283793635553
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_472.txt
+  metadata:
+    isl: 30628
+  sleep_before_launch_sec: 3.415424601656889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_473.txt
+  metadata:
+    isl: 30690
+  sleep_before_launch_sec: 3.4292662272
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_474.txt
+  metadata:
+    isl: 30803
+  sleep_before_launch_sec: 3.4545657045902223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_475.txt
+  metadata:
+    isl: 30843
+  sleep_before_launch_sec: 3.463543554048
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_476.txt
+  metadata:
+    isl: 30844
+  sleep_before_launch_sec: 3.463768149560889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_477.txt
+  metadata:
+    isl: 30886
+  sleep_before_launch_sec: 3.4732077365475558
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_478.txt
+  metadata:
+    isl: 31028
+  sleep_before_launch_sec: 3.505217659790222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_479.txt
+  metadata:
+    isl: 31036
+  sleep_before_launch_sec: 3.507025404814222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_480.txt
+  metadata:
+    isl: 31185
+  sleep_before_launch_sec: 3.5407798272
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_481.txt
+  metadata:
+    isl: 31219
+  sleep_before_launch_sec: 3.5485048322275556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_482.txt
+  metadata:
+    isl: 31328
+  sleep_before_launch_sec: 3.573327040056889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_483.txt
+  metadata:
+    isl: 31383
+  sleep_before_launch_sec: 3.585884848128
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_484.txt
+  metadata:
+    isl: 31396
+  sleep_before_launch_sec: 3.5888562758542224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_485.txt
+  metadata:
+    isl: 31408
+  sleep_before_launch_sec: 3.5916002244835554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_486.txt
+  metadata:
+    isl: 31409
+  sleep_before_launch_sec: 3.5918289342008887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_487.txt
+  metadata:
+    isl: 31498
+  sleep_before_launch_sec: 3.6122132625635555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_488.txt
+  metadata:
+    isl: 31591
+  sleep_before_launch_sec: 3.6335753662008887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_489.txt
+  metadata:
+    isl: 31591
+  sleep_before_launch_sec: 3.6335753662008887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_490.txt
+  metadata:
+    isl: 31653
+  sleep_before_launch_sec: 3.647851757568
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_491.txt
+  metadata:
+    isl: 31778
+  sleep_before_launch_sec: 3.676719910456889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_492.txt
+  metadata:
+    isl: 31790
+  sleep_before_launch_sec: 3.6794972387555553
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_493.txt
+  metadata:
+    isl: 31803
+  sleep_before_launch_sec: 3.682507194368
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_494.txt
+  metadata:
+    isl: 31821
+  sleep_before_launch_sec: 3.686676856832
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_495.txt
+  metadata:
+    isl: 31865
+  sleep_before_launch_sec: 3.6968792974222224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_496.txt
+  metadata:
+    isl: 31873
+  sleep_before_launch_sec: 3.6987358012302223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_497.txt
+  metadata:
+    isl: 31881
+  sleep_before_launch_sec: 3.700592771072
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_498.txt
+  metadata:
+    isl: 31945
+  sleep_before_launch_sec: 3.7154653070222223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_499.txt
+  metadata:
+    isl: 32000
+  sleep_before_launch_sec: 3.728270222222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_500.txt
+  metadata:
+    isl: 32057
+  sleep_before_launch_sec: 3.741564014136889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_501.txt
+  metadata:
+    isl: 32091
+  sleep_before_launch_sec: 3.749504909312
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_502.txt
+  metadata:
+    isl: 32177
+  sleep_before_launch_sec: 3.7696282769635556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_503.txt
+  metadata:
+    isl: 32375
+  sleep_before_launch_sec: 3.8161635555555558
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_504.txt
+  metadata:
+    isl: 32396
+  sleep_before_launch_sec: 3.8211158598542223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_505.txt
+  metadata:
+    isl: 32490
+  sleep_before_launch_sec: 3.8433226752
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_506.txt
+  metadata:
+    isl: 32551
+  sleep_before_launch_sec: 3.8577679055075556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_507.txt
+  metadata:
+    isl: 32665
+  sleep_before_launch_sec: 3.884836545422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_508.txt
+  metadata:
+    isl: 32794
+  sleep_before_launch_sec: 3.9155809794275553
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_509.txt
+  metadata:
+    isl: 32845
+  sleep_before_launch_sec: 3.927769179022222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_510.txt
+  metadata:
+    isl: 32974
+  sleep_before_launch_sec: 3.9586826959075556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_511.txt
+  metadata:
+    isl: 32988
+  sleep_before_launch_sec: 3.962044940288
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_512.txt
+  metadata:
+    isl: 33117
+  sleep_before_launch_sec: 3.993092784128
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_513.txt
+  metadata:
+    isl: 33127
+  sleep_before_launch_sec: 3.9955046545635557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_514.txt
+  metadata:
+    isl: 33243
+  sleep_before_launch_sec: 4.023535566848
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_515.txt
+  metadata:
+    isl: 33297
+  sleep_before_launch_sec: 4.036617863168
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_516.txt
+  metadata:
+    isl: 33334
+  sleep_before_launch_sec: 4.0455939176675555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_517.txt
+  metadata:
+    isl: 33376
+  sleep_before_launch_sec: 4.055795032974222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_518.txt
+  metadata:
+    isl: 33377
+  sleep_before_launch_sec: 4.056038073230222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_519.txt
+  metadata:
+    isl: 33476
+  sleep_before_launch_sec: 4.080135103374222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_520.txt
+  metadata:
+    isl: 33542
+  sleep_before_launch_sec: 4.096239439416889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_521.txt
+  metadata:
+    isl: 33555
+  sleep_before_launch_sec: 4.0994152448
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_522.txt
+  metadata:
+    isl: 33619
+  sleep_before_launch_sec: 4.115067921294222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_523.txt
+  metadata:
+    isl: 33704
+  sleep_before_launch_sec: 4.135902744120889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_524.txt
+  metadata:
+    isl: 33777
+  sleep_before_launch_sec: 4.153838174208
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_525.txt
+  metadata:
+    isl: 33825
+  sleep_before_launch_sec: 4.16565248
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_526.txt
+  metadata:
+    isl: 33847
+  sleep_before_launch_sec: 4.171072977123556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_527.txt
+  metadata:
+    isl: 33859
+  sleep_before_launch_sec: 4.1740310974008885
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_528.txt
+  metadata:
+    isl: 33870
+  sleep_before_launch_sec: 4.1767436288
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_529.txt
+  metadata:
+    isl: 33883
+  sleep_before_launch_sec: 4.179950483683555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_530.txt
+  metadata:
+    isl: 33894
+  sleep_before_launch_sec: 4.182664937472
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_531.txt
+  metadata:
+    isl: 33896
+  sleep_before_launch_sec: 4.1831585691875555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_532.txt
+  metadata:
+    isl: 34086
+  sleep_before_launch_sec: 4.230186401792
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_533.txt
+  metadata:
+    isl: 34140
+  sleep_before_launch_sec: 4.2436001792
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_534.txt
+  metadata:
+    isl: 34357
+  sleep_before_launch_sec: 4.297717801870222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_535.txt
+  metadata:
+    isl: 34386
+  sleep_before_launch_sec: 4.304976084992
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_536.txt
+  metadata:
+    isl: 34517
+  sleep_before_launch_sec: 4.337839814883556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_537.txt
+  metadata:
+    isl: 34518
+  sleep_before_launch_sec: 4.338091163648
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_538.txt
+  metadata:
+    isl: 34526
+  sleep_before_launch_sec: 4.340102215907556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_539.txt
+  metadata:
+    isl: 34614
+  sleep_before_launch_sec: 4.362254548992
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_540.txt
+  metadata:
+    isl: 34696
+  sleep_before_launch_sec: 4.382947249720889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_541.txt
+  metadata:
+    isl: 34847
+  sleep_before_launch_sec: 4.421180198456889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_542.txt
+  metadata:
+    isl: 35028
+  sleep_before_launch_sec: 4.467227885568
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_543.txt
+  metadata:
+    isl: 35068
+  sleep_before_launch_sec: 4.477436355470222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_544.txt
+  metadata:
+    isl: 35084
+  sleep_before_launch_sec: 4.4815230056675555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_545.txt
+  metadata:
+    isl: 35087
+  sleep_before_launch_sec: 4.482289460110223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_546.txt
+  metadata:
+    isl: 35089
+  sleep_before_launch_sec: 4.482800466147555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_547.txt
+  metadata:
+    isl: 35203
+  sleep_before_launch_sec: 4.511975957390222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_548.txt
+  metadata:
+    isl: 35232
+  sleep_before_launch_sec: 4.519412891648
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_549.txt
+  metadata:
+    isl: 35319
+  sleep_before_launch_sec: 4.541760438272
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_550.txt
+  metadata:
+    isl: 35343
+  sleep_before_launch_sec: 4.547934978048
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_551.txt
+  metadata:
+    isl: 35350
+  sleep_before_launch_sec: 4.549736675555556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_552.txt
+  metadata:
+    isl: 35427
+  sleep_before_launch_sec: 4.569578897408
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_553.txt
+  metadata:
+    isl: 35615
+  sleep_before_launch_sec: 4.618206230755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_554.txt
+  metadata:
+    isl: 35704
+  sleep_before_launch_sec: 4.641316376120889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_555.txt
+  metadata:
+    isl: 35714
+  sleep_before_launch_sec: 4.643916626147556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_556.txt
+  metadata:
+    isl: 35880
+  sleep_before_launch_sec: 4.6871871488
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_557.txt
+  metadata:
+    isl: 35907
+  sleep_before_launch_sec: 4.694244098048
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_558.txt
+  metadata:
+    isl: 35909
+  sleep_before_launch_sec: 4.694767046200889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_559.txt
+  metadata:
+    isl: 36092
+  sleep_before_launch_sec: 4.742740064483556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_560.txt
+  metadata:
+    isl: 36107
+  sleep_before_launch_sec: 4.746683092536889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_561.txt
+  metadata:
+    isl: 36227
+  sleep_before_launch_sec: 4.778286299363556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_562.txt
+  metadata:
+    isl: 36258
+  sleep_before_launch_sec: 4.786467504128
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_563.txt
+  metadata:
+    isl: 36275
+  sleep_before_launch_sec: 4.7909569422222225
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_564.txt
+  metadata:
+    isl: 36288
+  sleep_before_launch_sec: 4.794391461888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_565.txt
+  metadata:
+    isl: 36342
+  sleep_before_launch_sec: 4.808671100928
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_566.txt
+  metadata:
+    isl: 36361
+  sleep_before_launch_sec: 4.813700468280889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_567.txt
+  metadata:
+    isl: 36467
+  sleep_before_launch_sec: 4.841807285816889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_568.txt
+  metadata:
+    isl: 36488
+  sleep_before_launch_sec: 4.847385327843556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_569.txt
+  metadata:
+    isl: 36504
+  sleep_before_launch_sec: 4.851637420032
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_570.txt
+  metadata:
+    isl: 36521
+  sleep_before_launch_sec: 4.856157310520889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_571.txt
+  metadata:
+    isl: 36576
+  sleep_before_launch_sec: 4.870794903552
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_572.txt
+  metadata:
+    isl: 36616
+  sleep_before_launch_sec: 4.881454261134222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_573.txt
+  metadata:
+    isl: 36654
+  sleep_before_launch_sec: 4.891591442432
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_574.txt
+  metadata:
+    isl: 36710
+  sleep_before_launch_sec: 4.906549612088889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_575.txt
+  metadata:
+    isl: 36864
+  sleep_before_launch_sec: 4.947802324992
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_576.txt
+  metadata:
+    isl: 36890
+  sleep_before_launch_sec: 4.954784108088889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_577.txt
+  metadata:
+    isl: 37084
+  sleep_before_launch_sec: 5.0070343443342225
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_578.txt
+  metadata:
+    isl: 37137
+  sleep_before_launch_sec: 5.021356556288
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_579.txt
+  metadata:
+    isl: 37145
+  sleep_before_launch_sec: 5.0235201763555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_580.txt
+  metadata:
+    isl: 37245
+  sleep_before_launch_sec: 5.0506047488
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_581.txt
+  metadata:
+    isl: 37250
+  sleep_before_launch_sec: 5.051960888888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_582.txt
+  metadata:
+    isl: 37255
+  sleep_before_launch_sec: 5.053317211022223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_583.txt
+  metadata:
+    isl: 37434
+  sleep_before_launch_sec: 5.101993459712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_584.txt
+  metadata:
+    isl: 37446
+  sleep_before_launch_sec: 5.105265016832
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_585.txt
+  metadata:
+    isl: 37460
+  sleep_before_launch_sec: 5.109083158755555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_586.txt
+  metadata:
+    isl: 37507
+  sleep_before_launch_sec: 5.121911645070222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_587.txt
+  metadata:
+    isl: 37525
+  sleep_before_launch_sec: 5.126828942222223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_588.txt
+  metadata:
+    isl: 37551
+  sleep_before_launch_sec: 5.133935869952
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_589.txt
+  metadata:
+    isl: 37640
+  sleep_before_launch_sec: 5.158300694755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_590.txt
+  metadata:
+    isl: 37659
+  sleep_before_launch_sec: 5.163509645312
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_591.txt
+  metadata:
+    isl: 37663
+  sleep_before_launch_sec: 5.164606601443555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_592.txt
+  metadata:
+    isl: 37687
+  sleep_before_launch_sec: 5.171190784910222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_593.txt
+  metadata:
+    isl: 37864
+  sleep_before_launch_sec: 5.219878669880889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_594.txt
+  metadata:
+    isl: 37903
+  sleep_before_launch_sec: 5.2306371797902225
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_595.txt
+  metadata:
+    isl: 37942
+  sleep_before_launch_sec: 5.241406765283555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_596.txt
+  metadata:
+    isl: 37944
+  sleep_before_launch_sec: 5.241959350272
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_597.txt
+  metadata:
+    isl: 37956
+  sleep_before_launch_sec: 5.245275471872
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_598.txt
+  metadata:
+    isl: 38029
+  sleep_before_launch_sec: 5.265471136654222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_599.txt
+  metadata:
+    isl: 38182
+  sleep_before_launch_sec: 5.307924931470223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_600.txt
+  metadata:
+    isl: 38197
+  sleep_before_launch_sec: 5.312096243256889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_601.txt
+  metadata:
+    isl: 38280
+  sleep_before_launch_sec: 5.3352071168
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_602.txt
+  metadata:
+    isl: 38352
+  sleep_before_launch_sec: 5.355295735808
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_603.txt
+  metadata:
+    isl: 38371
+  sleep_before_launch_sec: 5.360603194254222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_604.txt
+  metadata:
+    isl: 38378
+  sleep_before_launch_sec: 5.3625592363235555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_605.txt
+  metadata:
+    isl: 38388
+  sleep_before_launch_sec: 5.365354201088
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_606.txt
+  metadata:
+    isl: 38611
+  sleep_before_launch_sec: 5.427871092280889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_607.txt
+  metadata:
+    isl: 38737
+  sleep_before_launch_sec: 5.463354641976889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_608.txt
+  metadata:
+    isl: 38827
+  sleep_before_launch_sec: 5.488770813496889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_609.txt
+  metadata:
+    isl: 38934
+  sleep_before_launch_sec: 5.519064563712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_610.txt
+  metadata:
+    isl: 38954
+  sleep_before_launch_sec: 5.524736194787556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_611.txt
+  metadata:
+    isl: 38994
+  sleep_before_launch_sec: 5.536088195072
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_612.txt
+  metadata:
+    isl: 39041
+  sleep_before_launch_sec: 5.549441683000889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_613.txt
+  metadata:
+    isl: 39070
+  sleep_before_launch_sec: 5.5576890936888885
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_614.txt
+  metadata:
+    isl: 39205
+  sleep_before_launch_sec: 5.596162821688889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_615.txt
+  metadata:
+    isl: 39242
+  sleep_before_launch_sec: 5.606730643683555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_616.txt
+  metadata:
+    isl: 39320
+  sleep_before_launch_sec: 5.629041413688889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_617.txt
+  metadata:
+    isl: 39421
+  sleep_before_launch_sec: 5.657996824120889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_618.txt
+  metadata:
+    isl: 39433
+  sleep_before_launch_sec: 5.661442007950222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_619.txt
+  metadata:
+    isl: 39494
+  sleep_before_launch_sec: 5.678971238627556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_620.txt
+  metadata:
+    isl: 39497
+  sleep_before_launch_sec: 5.679834030990222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_621.txt
+  metadata:
+    isl: 39521
+  sleep_before_launch_sec: 5.686738729187556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_622.txt
+  metadata:
+    isl: 39529
+  sleep_before_launch_sec: 5.689041227320889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_623.txt
+  metadata:
+    isl: 39544
+  sleep_before_launch_sec: 5.693359667427556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_624.txt
+  metadata:
+    isl: 39564
+  sleep_before_launch_sec: 5.699120136192
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_625.txt
+  metadata:
+    isl: 39586
+  sleep_before_launch_sec: 5.705460016014222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_626.txt
+  metadata:
+    isl: 39759
+  sleep_before_launch_sec: 5.755437350912
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_627.txt
+  metadata:
+    isl: 39910
+  sleep_before_launch_sec: 5.799237313422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_628.txt
+  metadata:
+    isl: 39997
+  sleep_before_launch_sec: 5.824548441656889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_629.txt
+  metadata:
+    isl: 40126
+  sleep_before_launch_sec: 5.862180184974222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_630.txt
+  metadata:
+    isl: 40140
+  sleep_before_launch_sec: 5.8662715392
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_631.txt
+  metadata:
+    isl: 40165
+  sleep_before_launch_sec: 5.873581078755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_632.txt
+  metadata:
+    isl: 40273
+  sleep_before_launch_sec: 5.905210587363555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_633.txt
+  metadata:
+    isl: 40295
+  sleep_before_launch_sec: 5.911664048355555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_634.txt
+  metadata:
+    isl: 40359
+  sleep_before_launch_sec: 5.930457792512
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_635.txt
+  metadata:
+    isl: 40397
+  sleep_before_launch_sec: 5.941630690190222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_636.txt
+  metadata:
+    isl: 40503
+  sleep_before_launch_sec: 5.972852768768
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_637.txt
+  metadata:
+    isl: 40746
+  sleep_before_launch_sec: 6.044736684032
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_638.txt
+  metadata:
+    isl: 40758
+  sleep_before_launch_sec: 6.048297648128
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_639.txt
+  metadata:
+    isl: 40825
+  sleep_before_launch_sec: 6.068198968888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_640.txt
+  metadata:
+    isl: 40867
+  sleep_before_launch_sec: 6.080691091683556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_641.txt
+  metadata:
+    isl: 41071
+  sleep_before_launch_sec: 6.141549831054222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_642.txt
+  metadata:
+    isl: 41074
+  sleep_before_launch_sec: 6.142447073507555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_643.txt
+  metadata:
+    isl: 41079
+  sleep_before_launch_sec: 6.143942623232
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_644.txt
+  metadata:
+    isl: 41369
+  sleep_before_launch_sec: 6.230995985294222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_645.txt
+  metadata:
+    isl: 41390
+  sleep_before_launch_sec: 6.237323628088889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_646.txt
+  metadata:
+    isl: 41639
+  sleep_before_launch_sec: 6.312596169614222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_647.txt
+  metadata:
+    isl: 41665
+  sleep_before_launch_sec: 6.320481985422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_648.txt
+  metadata:
+    isl: 41673
+  sleep_before_launch_sec: 6.322909380608
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_649.txt
+  metadata:
+    isl: 41773
+  sleep_before_launch_sec: 6.353291142030222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_650.txt
+  metadata:
+    isl: 41778
+  sleep_before_launch_sec: 6.354812141568
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_651.txt
+  metadata:
+    isl: 41821
+  sleep_before_launch_sec: 6.367900252387556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_652.txt
+  metadata:
+    isl: 41860
+  sleep_before_launch_sec: 6.379782508088889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_653.txt
+  metadata:
+    isl: 41939
+  sleep_before_launch_sec: 6.403885633080889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_654.txt
+  metadata:
+    isl: 42041
+  sleep_before_launch_sec: 6.435073341667556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_655.txt
+  metadata:
+    isl: 42084
+  sleep_before_launch_sec: 6.448243802112
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_656.txt
+  metadata:
+    isl: 42095
+  sleep_before_launch_sec: 6.451615152355555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_657.txt
+  metadata:
+    isl: 42132
+  sleep_before_launch_sec: 6.462961614848
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_658.txt
+  metadata:
+    isl: 42238
+  sleep_before_launch_sec: 6.4955228851768885
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_659.txt
+  metadata:
+    isl: 42262
+  sleep_before_launch_sec: 6.502906607843555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_660.txt
+  metadata:
+    isl: 42466
+  sleep_before_launch_sec: 6.565837595534222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_661.txt
+  metadata:
+    isl: 42504
+  sleep_before_launch_sec: 6.577593516032
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_662.txt
+  metadata:
+    isl: 42542
+  sleep_before_launch_sec: 6.589359951416889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_663.txt
+  metadata:
+    isl: 42604
+  sleep_before_launch_sec: 6.608580393187555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_664.txt
+  metadata:
+    isl: 42803
+  sleep_before_launch_sec: 6.670460915256889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_665.txt
+  metadata:
+    isl: 42899
+  sleep_before_launch_sec: 6.700415935374222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_666.txt
+  metadata:
+    isl: 42967
+  sleep_before_launch_sec: 6.721674677816889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_667.txt
+  metadata:
+    isl: 42989
+  sleep_before_launch_sec: 6.728559715214222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_668.txt
+  metadata:
+    isl: 42990
+  sleep_before_launch_sec: 6.7288727552
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_669.txt
+  metadata:
+    isl: 43022
+  sleep_before_launch_sec: 6.738893879523555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_670.txt
+  metadata:
+    isl: 43123
+  sleep_before_launch_sec: 6.770571961230222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_671.txt
+  metadata:
+    isl: 43197
+  sleep_before_launch_sec: 6.793828794368
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_672.txt
+  metadata:
+    isl: 43629
+  sleep_before_launch_sec: 6.930394284032
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_673.txt
+  metadata:
+    isl: 43643
+  sleep_before_launch_sec: 6.934842751203556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_674.txt
+  metadata:
+    isl: 43711
+  sleep_before_launch_sec: 6.956469893347555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_675.txt
+  metadata:
+    isl: 43795
+  sleep_before_launch_sec: 6.983232261688889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_676.txt
+  metadata:
+    isl: 43848
+  sleep_before_launch_sec: 7.000144478208
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_677.txt
+  metadata:
+    isl: 43930
+  sleep_before_launch_sec: 7.026350853688889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_678.txt
+  metadata:
+    isl: 43944
+  sleep_before_launch_sec: 7.030830006272
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_679.txt
+  metadata:
+    isl: 43960
+  sleep_before_launch_sec: 7.035950785422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_680.txt
+  metadata:
+    isl: 43988
+  sleep_before_launch_sec: 7.044916634510222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_681.txt
+  metadata:
+    isl: 44336
+  sleep_before_launch_sec: 7.156825733347556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_682.txt
+  metadata:
+    isl: 44377
+  sleep_before_launch_sec: 7.170068494563556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_683.txt
+  metadata:
+    isl: 44400
+  sleep_before_launch_sec: 7.17750272
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_684.txt
+  metadata:
+    isl: 44501
+  sleep_before_launch_sec: 7.2101942649742226
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_685.txt
+  metadata:
+    isl: 44627
+  sleep_before_launch_sec: 7.251081913230222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_686.txt
+  metadata:
+    isl: 44752
+  sleep_before_launch_sec: 7.291759289230222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_687.txt
+  metadata:
+    isl: 44773
+  sleep_before_launch_sec: 7.298604251363556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_688.txt
+  metadata:
+    isl: 44805
+  sleep_before_launch_sec: 7.3090408448
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_689.txt
+  metadata:
+    isl: 44967
+  sleep_before_launch_sec: 7.361990524928
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_690.txt
+  metadata:
+    isl: 45124
+  sleep_before_launch_sec: 7.413488302307556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_691.txt
+  metadata:
+    isl: 45199
+  sleep_before_launch_sec: 7.438152502840889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_692.txt
+  metadata:
+    isl: 45271
+  sleep_before_launch_sec: 7.4618686705208885
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_693.txt
+  metadata:
+    isl: 45315
+  sleep_before_launch_sec: 7.4763804672
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_694.txt
+  metadata:
+    isl: 45325
+  sleep_before_launch_sec: 7.479680568888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_695.txt
+  metadata:
+    isl: 45332
+  sleep_before_launch_sec: 7.481991073336889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_696.txt
+  metadata:
+    isl: 45377
+  sleep_before_launch_sec: 7.496852835896889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_697.txt
+  metadata:
+    isl: 45449
+  sleep_before_launch_sec: 7.520662326840889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_698.txt
+  metadata:
+    isl: 45454
+  sleep_before_launch_sec: 7.522317165454222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_699.txt
+  metadata:
+    isl: 45499
+  sleep_before_launch_sec: 7.537218904974222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_700.txt
+  metadata:
+    isl: 45505
+  sleep_before_launch_sec: 7.5392069176888885
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_701.txt
+  metadata:
+    isl: 45604
+  sleep_before_launch_sec: 7.572046974520889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_702.txt
+  metadata:
+    isl: 45610
+  sleep_before_launch_sec: 7.574039574755555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_703.txt
+  metadata:
+    isl: 45668
+  sleep_before_launch_sec: 7.593314892003556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_704.txt
+  metadata:
+    isl: 45694
+  sleep_before_launch_sec: 7.6019635031608885
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_705.txt
+  metadata:
+    isl: 45858
+  sleep_before_launch_sec: 7.656629731328
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_706.txt
+  metadata:
+    isl: 45880
+  sleep_before_launch_sec: 7.663977904355556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_707.txt
+  metadata:
+    isl: 45904
+  sleep_before_launch_sec: 7.671998112654222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_708.txt
+  metadata:
+    isl: 45905
+  sleep_before_launch_sec: 7.672332379022222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_709.txt
+  metadata:
+    isl: 45914
+  sleep_before_launch_sec: 7.6753411040142225
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_710.txt
+  metadata:
+    isl: 45927
+  sleep_before_launch_sec: 7.679688081408
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_711.txt
+  metadata:
+    isl: 46000
+  sleep_before_launch_sec: 7.704120888888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_712.txt
+  metadata:
+    isl: 46125
+  sleep_before_launch_sec: 7.746048
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_713.txt
+  metadata:
+    isl: 46142
+  sleep_before_launch_sec: 7.751758876216889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_714.txt
+  metadata:
+    isl: 46145
+  sleep_before_launch_sec: 7.752766896355555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_715.txt
+  metadata:
+    isl: 46360
+  sleep_before_launch_sec: 7.825178988088889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_716.txt
+  metadata:
+    isl: 46383
+  sleep_before_launch_sec: 7.832945328128
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_717.txt
+  metadata:
+    isl: 46394
+  sleep_before_launch_sec: 7.836661026360889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_718.txt
+  metadata:
+    isl: 46504
+  sleep_before_launch_sec: 7.873866468920889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_719.txt
+  metadata:
+    isl: 46506
+  sleep_before_launch_sec: 7.874543747072
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_720.txt
+  metadata:
+    isl: 46613
+  sleep_before_launch_sec: 7.910820591843556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_721.txt
+  metadata:
+    isl: 46669
+  sleep_before_launch_sec: 7.929839838094222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_722.txt
+  metadata:
+    isl: 46785
+  sleep_before_launch_sec: 7.9693094912
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_723.txt
+  metadata:
+    isl: 46816
+  sleep_before_launch_sec: 7.979874007267555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_724.txt
+  metadata:
+    isl: 46843
+  sleep_before_launch_sec: 7.989081061603556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_725.txt
+  metadata:
+    isl: 46896
+  sleep_before_launch_sec: 8.007169605632
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_726.txt
+  metadata:
+    isl: 46924
+  sleep_before_launch_sec: 8.016734075107555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_727.txt
+  metadata:
+    isl: 47148
+  sleep_before_launch_sec: 8.093455351808
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_728.txt
+  metadata:
+    isl: 47239
+  sleep_before_launch_sec: 8.124727736547555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_729.txt
+  metadata:
+    isl: 47276
+  sleep_before_launch_sec: 8.137460125240889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_730.txt
+  metadata:
+    isl: 47277
+  sleep_before_launch_sec: 8.137804382208
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_731.txt
+  metadata:
+    isl: 47311
+  sleep_before_launch_sec: 8.149513451747556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_732.txt
+  metadata:
+    isl: 47429
+  sleep_before_launch_sec: 8.190216113720888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_733.txt
+  metadata:
+    isl: 47536
+  sleep_before_launch_sec: 8.227212114147555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_734.txt
+  metadata:
+    isl: 47660
+  sleep_before_launch_sec: 8.270190273422223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_735.txt
+  metadata:
+    isl: 47752
+  sleep_before_launch_sec: 8.302149646563555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_736.txt
+  metadata:
+    isl: 47764
+  sleep_before_launch_sec: 8.306322804280889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_737.txt
+  metadata:
+    isl: 47770
+  sleep_before_launch_sec: 8.308409776355555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_738.txt
+  metadata:
+    isl: 47811
+  sleep_before_launch_sec: 8.322677768192
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_739.txt
+  metadata:
+    isl: 47814
+  sleep_before_launch_sec: 8.323722248192
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_740.txt
+  metadata:
+    isl: 47930
+  sleep_before_launch_sec: 8.364159067022221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_741.txt
+  metadata:
+    isl: 47985
+  sleep_before_launch_sec: 8.3833659392
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_742.txt
+  metadata:
+    isl: 48109
+  sleep_before_launch_sec: 8.426749518734223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_743.txt
+  metadata:
+    isl: 48111
+  sleep_before_launch_sec: 8.427450171392
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_744.txt
+  metadata:
+    isl: 48142
+  sleep_before_launch_sec: 8.438314012216889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_745.txt
+  metadata:
+    isl: 48218
+  sleep_before_launch_sec: 8.464977552270222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_746.txt
+  metadata:
+    isl: 48380
+  sleep_before_launch_sec: 8.521953371022223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_747.txt
+  metadata:
+    isl: 48456
+  sleep_before_launch_sec: 8.548748623872
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_748.txt
+  metadata:
+    isl: 48485
+  sleep_before_launch_sec: 8.558984214755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_749.txt
+  metadata:
+    isl: 48493
+  sleep_before_launch_sec: 8.561808903736889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_750.txt
+  metadata:
+    isl: 48515
+  sleep_before_launch_sec: 8.569579201422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_751.txt
+  metadata:
+    isl: 48545
+  sleep_before_launch_sec: 8.580180741688888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_752.txt
+  metadata:
+    isl: 48588
+  sleep_before_launch_sec: 8.595387711488
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_753.txt
+  metadata:
+    isl: 48613
+  sleep_before_launch_sec: 8.604235162510221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_754.txt
+  metadata:
+    isl: 48659
+  sleep_before_launch_sec: 8.620526363534223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_755.txt
+  metadata:
+    isl: 48859
+  sleep_before_launch_sec: 8.691536804067555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_756.txt
+  metadata:
+    isl: 49059
+  sleep_before_launch_sec: 8.762838515712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_757.txt
+  metadata:
+    isl: 49245
+  sleep_before_launch_sec: 8.8294105088
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_758.txt
+  metadata:
+    isl: 49336
+  sleep_before_launch_sec: 8.862072453347556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_759.txt
+  metadata:
+    isl: 49397
+  sleep_before_launch_sec: 8.884000482190222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_760.txt
+  metadata:
+    isl: 49529
+  sleep_before_launch_sec: 8.931544053987556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_761.txt
+  metadata:
+    isl: 49530
+  sleep_before_launch_sec: 8.9319047168
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_762.txt
+  metadata:
+    isl: 49570
+  sleep_before_launch_sec: 8.946337200355556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_763.txt
+  metadata:
+    isl: 49667
+  sleep_before_launch_sec: 8.981384356750223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_764.txt
+  metadata:
+    isl: 49845
+  sleep_before_launch_sec: 9.0458759168
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_765.txt
+  metadata:
+    isl: 49857
+  sleep_before_launch_sec: 9.050231963648
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_766.txt
+  metadata:
+    isl: 49997
+  sleep_before_launch_sec: 9.101129988323555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_767.txt
+  metadata:
+    isl: 50021
+  sleep_before_launch_sec: 9.109869694520889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_768.txt
+  metadata:
+    isl: 50213
+  sleep_before_launch_sec: 9.179938339043556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_769.txt
+  metadata:
+    isl: 50290
+  sleep_before_launch_sec: 9.208114198755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_770.txt
+  metadata:
+    isl: 50404
+  sleep_before_launch_sec: 9.249908384654223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_771.txt
+  metadata:
+    isl: 50485
+  sleep_before_launch_sec: 9.279661761422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_772.txt
+  metadata:
+    isl: 50602
+  sleep_before_launch_sec: 9.322723206030222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_773.txt
+  metadata:
+    isl: 50650
+  sleep_before_launch_sec: 9.340418275555555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_774.txt
+  metadata:
+    isl: 50693
+  sleep_before_launch_sec: 9.356284355470223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_775.txt
+  metadata:
+    isl: 50702
+  sleep_before_launch_sec: 9.359606866830223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_776.txt
+  metadata:
+    isl: 50715
+  sleep_before_launch_sec: 9.3644070912
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_777.txt
+  metadata:
+    isl: 50787
+  sleep_before_launch_sec: 9.391015231488
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_778.txt
+  metadata:
+    isl: 50791
+  sleep_before_launch_sec: 9.392494568334222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_779.txt
+  metadata:
+    isl: 50818
+  sleep_before_launch_sec: 9.402483139470222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_780.txt
+  metadata:
+    isl: 50824
+  sleep_before_launch_sec: 9.404703542840888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_781.txt
+  metadata:
+    isl: 50914
+  sleep_before_launch_sec: 9.438041050680889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_782.txt
+  metadata:
+    isl: 50978
+  sleep_before_launch_sec: 9.461783607523556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_783.txt
+  metadata:
+    isl: 51036
+  sleep_before_launch_sec: 9.483326062592
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_784.txt
+  metadata:
+    isl: 51120
+  sleep_before_launch_sec: 9.5145689088
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_785.txt
+  metadata:
+    isl: 51163
+  sleep_before_launch_sec: 9.530582153443556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_786.txt
+  metadata:
+    isl: 51266
+  sleep_before_launch_sec: 9.568994212067556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_787.txt
+  metadata:
+    isl: 51432
+  sleep_before_launch_sec: 9.631063605248
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_788.txt
+  metadata:
+    isl: 51445
+  sleep_before_launch_sec: 9.635932933688888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_789.txt
+  metadata:
+    isl: 51469
+  sleep_before_launch_sec: 9.644925696227556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_790.txt
+  metadata:
+    isl: 51707
+  sleep_before_launch_sec: 9.734330956003555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_791.txt
+  metadata:
+    isl: 51723
+  sleep_before_launch_sec: 9.740356190208
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_792.txt
+  metadata:
+    isl: 51728
+  sleep_before_launch_sec: 9.742239458190221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_793.txt
+  metadata:
+    isl: 51864
+  sleep_before_launch_sec: 9.793534164992
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_794.txt
+  metadata:
+    isl: 51883
+  sleep_before_launch_sec: 9.800711059683556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_795.txt
+  metadata:
+    isl: 51931
+  sleep_before_launch_sec: 9.818853871160888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_796.txt
+  metadata:
+    isl: 52001
+  sleep_before_launch_sec: 9.845342211640888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_797.txt
+  metadata:
+    isl: 52007
+  sleep_before_launch_sec: 9.847614301070223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_798.txt
+  metadata:
+    isl: 52044
+  sleep_before_launch_sec: 9.861631311872
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_799.txt
+  metadata:
+    isl: 52055
+  sleep_before_launch_sec: 9.86580045368889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_800.txt
+  metadata:
+    isl: 52118
+  sleep_before_launch_sec: 9.88969523973689
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_801.txt
+  metadata:
+    isl: 52182
+  sleep_before_launch_sec: 9.913998901248
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_802.txt
+  metadata:
+    isl: 52214
+  sleep_before_launch_sec: 9.926161916814221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_803.txt
+  metadata:
+    isl: 52348
+  sleep_before_launch_sec: 9.977175532430222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_804.txt
+  metadata:
+    isl: 52436
+  sleep_before_launch_sec: 10.010748139747555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_805.txt
+  metadata:
+    isl: 52700
+  sleep_before_launch_sec: 10.111804302222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_806.txt
+  metadata:
+    isl: 52751
+  sleep_before_launch_sec: 10.131385006307555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_807.txt
+  metadata:
+    isl: 52940
+  sleep_before_launch_sec: 10.204113942755555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_808.txt
+  metadata:
+    isl: 52951
+  sleep_before_launch_sec: 10.208354853774223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_809.txt
+  metadata:
+    isl: 52960
+  sleep_before_launch_sec: 10.211825345422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_810.txt
+  metadata:
+    isl: 52963
+  sleep_before_launch_sec: 10.212982307043555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_811.txt
+  metadata:
+    isl: 53021
+  sleep_before_launch_sec: 10.235363113187555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_812.txt
+  metadata:
+    isl: 53155
+  sleep_before_launch_sec: 10.287164165688889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_813.txt
+  metadata:
+    isl: 53233
+  sleep_before_launch_sec: 10.317377222883556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_814.txt
+  metadata:
+    isl: 53532
+  sleep_before_launch_sec: 10.433604354048
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_815.txt
+  metadata:
+    isl: 53631
+  sleep_before_launch_sec: 10.472231043072
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_816.txt
+  metadata:
+    isl: 53639
+  sleep_before_launch_sec: 10.475355508280888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_817.txt
+  metadata:
+    isl: 53722
+  sleep_before_launch_sec: 10.50779933445689
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_818.txt
+  metadata:
+    isl: 53939
+  sleep_before_launch_sec: 10.592859371747556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_819.txt
+  metadata:
+    isl: 54002
+  sleep_before_launch_sec: 10.617618446563556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_820.txt
+  metadata:
+    isl: 54003
+  sleep_before_launch_sec: 10.618011680768
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_821.txt
+  metadata:
+    isl: 54050
+  sleep_before_launch_sec: 10.636501902222221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_822.txt
+  metadata:
+    isl: 54315
+  sleep_before_launch_sec: 10.7410563072
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_823.txt
+  metadata:
+    isl: 54731
+  sleep_before_launch_sec: 10.906218445027555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_824.txt
+  metadata:
+    isl: 54743
+  sleep_before_launch_sec: 10.911001437070222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_825.txt
+  metadata:
+    isl: 54826
+  sleep_before_launch_sec: 10.944112507107555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_826.txt
+  metadata:
+    isl: 54877
+  sleep_before_launch_sec: 10.964482745230223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_827.txt
+  metadata:
+    isl: 55032
+  sleep_before_launch_sec: 11.026508546048
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_828.txt
+  metadata:
+    isl: 55265
+  sleep_before_launch_sec: 11.120076481422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_829.txt
+  metadata:
+    isl: 55272
+  sleep_before_launch_sec: 11.122893651968
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_830.txt
+  metadata:
+    isl: 55328
+  sleep_before_launch_sec: 11.145443861390222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_831.txt
+  metadata:
+    isl: 55374
+  sleep_before_launch_sec: 11.163984330752
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_832.txt
+  metadata:
+    isl: 55490
+  sleep_before_launch_sec: 11.210806977422223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_833.txt
+  metadata:
+    isl: 55534
+  sleep_before_launch_sec: 11.228592923534222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_834.txt
+  metadata:
+    isl: 55559
+  sleep_before_launch_sec: 11.238704855267555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_835.txt
+  metadata:
+    isl: 55657
+  sleep_before_launch_sec: 11.278387514936888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_836.txt
+  metadata:
+    isl: 55701
+  sleep_before_launch_sec: 11.296226967552
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_837.txt
+  metadata:
+    isl: 55916
+  sleep_before_launch_sec: 11.38359976300089
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_838.txt
+  metadata:
+    isl: 55919
+  sleep_before_launch_sec: 11.384821299427555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_839.txt
+  metadata:
+    isl: 56001
+  sleep_before_launch_sec: 11.418235338752
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_840.txt
+  metadata:
+    isl: 56022
+  sleep_before_launch_sec: 11.426800467968
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_841.txt
+  metadata:
+    isl: 56080
+  sleep_before_launch_sec: 11.450473221688888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_842.txt
+  metadata:
+    isl: 56197
+  sleep_before_launch_sec: 11.498301427256889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_843.txt
+  metadata:
+    isl: 56266
+  sleep_before_launch_sec: 11.526554532067555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_844.txt
+  metadata:
+    isl: 56274
+  sleep_before_launch_sec: 11.529832497152
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_845.txt
+  metadata:
+    isl: 56870
+  sleep_before_launch_sec: 11.77535155768889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_846.txt
+  metadata:
+    isl: 56959
+  sleep_before_launch_sec: 11.812236605667556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_847.txt
+  metadata:
+    isl: 57068
+  sleep_before_launch_sec: 11.85748900613689
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_848.txt
+  metadata:
+    isl: 57077
+  sleep_before_launch_sec: 11.861229309496888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_849.txt
+  metadata:
+    isl: 57131
+  sleep_before_launch_sec: 11.88368351596089
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_850.txt
+  metadata:
+    isl: 57142
+  sleep_before_launch_sec: 11.888260124216888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_851.txt
+  metadata:
+    isl: 57185
+  sleep_before_launch_sec: 11.90615895608889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_852.txt
+  metadata:
+    isl: 57335
+  sleep_before_launch_sec: 11.968702145422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_853.txt
+  metadata:
+    isl: 57424
+  sleep_before_launch_sec: 12.005888549774221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_854.txt
+  metadata:
+    isl: 57662
+  sleep_before_launch_sec: 12.10561420037689
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_855.txt
+  metadata:
+    isl: 58264
+  sleep_before_launch_sec: 12.359702558947555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_856.txt
+  metadata:
+    isl: 58362
+  sleep_before_launch_sec: 12.401315545088
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_857.txt
+  metadata:
+    isl: 58460
+  sleep_before_launch_sec: 12.442998465422223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_858.txt
+  metadata:
+    isl: 58671
+  sleep_before_launch_sec: 12.532981727232
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_859.txt
+  metadata:
+    isl: 58872
+  sleep_before_launch_sec: 12.619001888768
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_860.txt
+  metadata:
+    isl: 59615
+  sleep_before_launch_sec: 12.939530604088889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_861.txt
+  metadata:
+    isl: 59749
+  sleep_before_launch_sec: 12.997765806307555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_862.txt
+  metadata:
+    isl: 59899
+  sleep_before_launch_sec: 13.063109567374223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_863.txt
+  metadata:
+    isl: 59936
+  sleep_before_launch_sec: 13.079252886414222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_864.txt
+  metadata:
+    isl: 60006
+  sleep_before_launch_sec: 13.109821571072
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_865.txt
+  metadata:
+    isl: 60108
+  sleep_before_launch_sec: 13.154428387328
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_866.txt
+  metadata:
+    isl: 60110
+  sleep_before_launch_sec: 13.155303788088888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_867.txt
+  metadata:
+    isl: 60242
+  sleep_before_launch_sec: 13.213144638350222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_868.txt
+  metadata:
+    isl: 60673
+  sleep_before_launch_sec: 13.402887250830222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_869.txt
+  metadata:
+    isl: 60726
+  sleep_before_launch_sec: 13.426313265152
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_870.txt
+  metadata:
+    isl: 60727
+  sleep_before_launch_sec: 13.426755462030222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_871.txt
+  metadata:
+    isl: 60748
+  sleep_before_launch_sec: 13.436043278563556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_872.txt
+  metadata:
+    isl: 60789
+  sleep_before_launch_sec: 13.454185889792
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_873.txt
+  metadata:
+    isl: 60794
+  sleep_before_launch_sec: 13.45639924076089
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_874.txt
+  metadata:
+    isl: 61140
+  sleep_before_launch_sec: 13.6100052992
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_875.txt
+  metadata:
+    isl: 61161
+  sleep_before_launch_sec: 13.619356270592
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_876.txt
+  metadata:
+    isl: 61176
+  sleep_before_launch_sec: 13.626037501952
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_877.txt
+  metadata:
+    isl: 61247
+  sleep_before_launch_sec: 13.657684228323555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_878.txt
+  metadata:
+    isl: 61255
+  sleep_before_launch_sec: 13.66125235768889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_879.txt
+  metadata:
+    isl: 61319
+  sleep_before_launch_sec: 13.689814169827555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_880.txt
+  metadata:
+    isl: 61458
+  sleep_before_launch_sec: 13.751949590528
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_881.txt
+  metadata:
+    isl: 61605
+  sleep_before_launch_sec: 13.8178142208
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_882.txt
+  metadata:
+    isl: 61658
+  sleep_before_launch_sec: 13.841599925816888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_883.txt
+  metadata:
+    isl: 61742
+  sleep_before_launch_sec: 13.879339923683556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_884.txt
+  metadata:
+    isl: 61759
+  sleep_before_launch_sec: 13.886984031800889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_885.txt
+  metadata:
+    isl: 61801
+  sleep_before_launch_sec: 13.905878497507555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_886.txt
+  metadata:
+    isl: 61938
+  sleep_before_launch_sec: 13.967599730688
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_887.txt
+  metadata:
+    isl: 61952
+  sleep_before_launch_sec: 13.973914706830222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_888.txt
+  metadata:
+    isl: 61971
+  sleep_before_launch_sec: 13.982487314432
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_889.txt
+  metadata:
+    isl: 62031
+  sleep_before_launch_sec: 14.009575964672
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_890.txt
+  metadata:
+    isl: 62437
+  sleep_before_launch_sec: 14.193564672910222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_891.txt
+  metadata:
+    isl: 62676
+  sleep_before_launch_sec: 14.302434557952
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_892.txt
+  metadata:
+    isl: 62738
+  sleep_before_launch_sec: 14.330744901176889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_893.txt
+  metadata:
+    isl: 62906
+  sleep_before_launch_sec: 14.407597482894221
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_894.txt
+  metadata:
+    isl: 62907
+  sleep_before_launch_sec: 14.408055554048
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_895.txt
+  metadata:
+    isl: 63045
+  sleep_before_launch_sec: 14.4713392128
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_896.txt
+  metadata:
+    isl: 63390
+  sleep_before_launch_sec: 14.6301550592
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_897.txt
+  metadata:
+    isl: 63410
+  sleep_before_launch_sec: 14.639388353422222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_898.txt
+  metadata:
+    isl: 64088
+  sleep_before_launch_sec: 14.954120056376889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_899.txt
+  metadata:
+    isl: 64090
+  sleep_before_launch_sec: 14.95505342008889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_900.txt
+  metadata:
+    isl: 64108
+  sleep_before_launch_sec: 14.96345500421689
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_901.txt
+  metadata:
+    isl: 64138
+  sleep_before_launch_sec: 14.977462887310223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_902.txt
+  metadata:
+    isl: 64142
+  sleep_before_launch_sec: 14.97933110021689
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_903.txt
+  metadata:
+    isl: 64217
+  sleep_before_launch_sec: 15.014381664483556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_904.txt
+  metadata:
+    isl: 64240
+  sleep_before_launch_sec: 15.025138710755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_905.txt
+  metadata:
+    isl: 64381
+  sleep_before_launch_sec: 15.091168273294223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_906.txt
+  metadata:
+    isl: 64654
+  sleep_before_launch_sec: 15.219424245987556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_907.txt
+  metadata:
+    isl: 64678
+  sleep_before_launch_sec: 15.230725448590222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_908.txt
+  metadata:
+    isl: 64759
+  sleep_before_launch_sec: 15.268897973134223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_909.txt
+  metadata:
+    isl: 64815
+  sleep_before_launch_sec: 15.2953167872
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_910.txt
+  metadata:
+    isl: 64973
+  sleep_before_launch_sec: 15.369978689763556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_911.txt
+  metadata:
+    isl: 65234
+  sleep_before_launch_sec: 15.493710756067555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_912.txt
+  metadata:
+    isl: 65401
+  sleep_before_launch_sec: 15.573140551907555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_913.txt
+  metadata:
+    isl: 66074
+  sleep_before_launch_sec: 15.895296140174223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_914.txt
+  metadata:
+    isl: 66084
+  sleep_before_launch_sec: 15.900107866112
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_915.txt
+  metadata:
+    isl: 66090
+  sleep_before_launch_sec: 15.9029952512
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_916.txt
+  metadata:
+    isl: 66207
+  sleep_before_launch_sec: 15.959351656448
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_917.txt
+  metadata:
+    isl: 66334
+  sleep_before_launch_sec: 16.02063767233422
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_918.txt
+  metadata:
+    isl: 66403
+  sleep_before_launch_sec: 16.05398403845689
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_919.txt
+  metadata:
+    isl: 66520
+  sleep_before_launch_sec: 16.11060710968889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_920.txt
+  metadata:
+    isl: 66591
+  sleep_before_launch_sec: 16.145016717312
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_921.txt
+  metadata:
+    isl: 66845
+  sleep_before_launch_sec: 16.268416432355554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_922.txt
+  metadata:
+    isl: 67078
+  sleep_before_launch_sec: 16.38202694405689
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_923.txt
+  metadata:
+    isl: 67165
+  sleep_before_launch_sec: 16.424549398755556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_924.txt
+  metadata:
+    isl: 67292
+  sleep_before_launch_sec: 16.48672135941689
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_925.txt
+  metadata:
+    isl: 67556
+  sleep_before_launch_sec: 16.616336537827557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_926.txt
+  metadata:
+    isl: 67592
+  sleep_before_launch_sec: 16.634050656483556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_927.txt
+  metadata:
+    isl: 67664
+  sleep_before_launch_sec: 16.669507205347557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_928.txt
+  metadata:
+    isl: 67732
+  sleep_before_launch_sec: 16.703028607203557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_929.txt
+  metadata:
+    isl: 67957
+  sleep_before_launch_sec: 16.814185036003554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_930.txt
+  metadata:
+    isl: 68125
+  sleep_before_launch_sec: 16.89742222222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_931.txt
+  metadata:
+    isl: 68541
+  sleep_before_launch_sec: 17.104417882112
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_932.txt
+  metadata:
+    isl: 68629
+  sleep_before_launch_sec: 17.14836690625422
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_933.txt
+  metadata:
+    isl: 68894
+  sleep_before_launch_sec: 17.281053986360888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_934.txt
+  metadata:
+    isl: 69097
+  sleep_before_launch_sec: 17.383043195790222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_935.txt
+  metadata:
+    isl: 69147
+  sleep_before_launch_sec: 17.408209747968
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_936.txt
+  metadata:
+    isl: 69216
+  sleep_before_launch_sec: 17.442969485312
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_937.txt
+  metadata:
+    isl: 69505
+  sleep_before_launch_sec: 17.588934064355556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_938.txt
+  metadata:
+    isl: 69536
+  sleep_before_launch_sec: 17.604627282147554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_939.txt
+  metadata:
+    isl: 69761
+  sleep_before_launch_sec: 17.718739384547554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_940.txt
+  metadata:
+    isl: 69884
+  sleep_before_launch_sec: 17.78127651180089
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_941.txt
+  metadata:
+    isl: 70544
+  sleep_before_launch_sec: 18.118723123427557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_942.txt
+  metadata:
+    isl: 70703
+  sleep_before_launch_sec: 18.200491200056888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_943.txt
+  metadata:
+    isl: 71064
+  sleep_before_launch_sec: 18.386824200192
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_944.txt
+  metadata:
+    isl: 71383
+  sleep_before_launch_sec: 18.55226835035022
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_945.txt
+  metadata:
+    isl: 72311
+  sleep_before_launch_sec: 19.037773718414222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_946.txt
+  metadata:
+    isl: 72441
+  sleep_before_launch_sec: 19.106287091712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_947.txt
+  metadata:
+    isl: 72463
+  sleep_before_launch_sec: 19.117893837710223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_948.txt
+  metadata:
+    isl: 72684
+  sleep_before_launch_sec: 19.234684403712
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_949.txt
+  metadata:
+    isl: 72807
+  sleep_before_launch_sec: 19.299839541248
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_950.txt
+  metadata:
+    isl: 73179
+  sleep_before_launch_sec: 19.497564536832
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_951.txt
+  metadata:
+    isl: 73557
+  sleep_before_launch_sec: 19.699510837248
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_952.txt
+  metadata:
+    isl: 73606
+  sleep_before_launch_sec: 19.725765239694223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_953.txt
+  metadata:
+    isl: 74139
+  sleep_before_launch_sec: 20.012478267392
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_954.txt
+  metadata:
+    isl: 74748
+  sleep_before_launch_sec: 20.342605611008
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_955.txt
+  metadata:
+    isl: 75146
+  sleep_before_launch_sec: 20.559813075854223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_956.txt
+  metadata:
+    isl: 75161
+  sleep_before_launch_sec: 20.568021842147555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_957.txt
+  metadata:
+    isl: 75216
+  sleep_before_launch_sec: 20.598134669312
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_958.txt
+  metadata:
+    isl: 75528
+  sleep_before_launch_sec: 20.769373421568
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_959.txt
+  metadata:
+    isl: 76008
+  sleep_before_launch_sec: 21.034201776128
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_960.txt
+  metadata:
+    isl: 76031
+  sleep_before_launch_sec: 21.04693358956089
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_961.txt
+  metadata:
+    isl: 76137
+  sleep_before_launch_sec: 21.105660428288
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_962.txt
+  metadata:
+    isl: 76138
+  sleep_before_launch_sec: 21.106214844643556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_963.txt
+  metadata:
+    isl: 76257
+  sleep_before_launch_sec: 21.172242382848
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_964.txt
+  metadata:
+    isl: 76345
+  sleep_before_launch_sec: 21.221135792355554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_965.txt
+  metadata:
+    isl: 76653
+  sleep_before_launch_sec: 21.392706797568
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_966.txt
+  metadata:
+    isl: 76703
+  sleep_before_launch_sec: 21.42062440539022
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_967.txt
+  metadata:
+    isl: 77002
+  sleep_before_launch_sec: 21.587951630563555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_968.txt
+  metadata:
+    isl: 77120
+  sleep_before_launch_sec: 21.65416627768889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_969.txt
+  metadata:
+    isl: 77279
+  sleep_before_launch_sec: 21.743548064654224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_970.txt
+  metadata:
+    isl: 77446
+  sleep_before_launch_sec: 21.837625265720888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_971.txt
+  metadata:
+    isl: 78184
+  sleep_before_launch_sec: 22.255799340600888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_972.txt
+  metadata:
+    isl: 78426
+  sleep_before_launch_sec: 22.393787645952
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_973.txt
+  metadata:
+    isl: 78509
+  sleep_before_launch_sec: 22.441212426467555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_974.txt
+  metadata:
+    isl: 78620
+  sleep_before_launch_sec: 22.50471433102222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_975.txt
+  metadata:
+    isl: 78850
+  sleep_before_launch_sec: 22.63658040888889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_976.txt
+  metadata:
+    isl: 80622
+  sleep_before_launch_sec: 23.665438752768
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_977.txt
+  metadata:
+    isl: 81175
+  sleep_before_launch_sec: 23.99120270222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_978.txt
+  metadata:
+    isl: 81479
+  sleep_before_launch_sec: 24.171233065187554
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_979.txt
+  metadata:
+    isl: 81626
+  sleep_before_launch_sec: 24.258528600974223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_980.txt
+  metadata:
+    isl: 82270
+  sleep_before_launch_sec: 24.64282086968889
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_981.txt
+  metadata:
+    isl: 82850
+  sleep_before_launch_sec: 24.99150734222222
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_982.txt
+  metadata:
+    isl: 83008
+  sleep_before_launch_sec: 25.08691888901689
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_983.txt
+  metadata:
+    isl: 83451
+  sleep_before_launch_sec: 25.355402903552
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_984.txt
+  metadata:
+    isl: 83992
+  sleep_before_launch_sec: 25.685218878350224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_985.txt
+  metadata:
+    isl: 84358
+  sleep_before_launch_sec: 25.909556252216888
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_986.txt
+  metadata:
+    isl: 84464
+  sleep_before_launch_sec: 25.974710439480887
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_987.txt
+  metadata:
+    isl: 84503
+  sleep_before_launch_sec: 25.998702852323557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_988.txt
+  metadata:
+    isl: 84796
+  sleep_before_launch_sec: 26.179307714787555
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_989.txt
+  metadata:
+    isl: 85918
+  sleep_before_launch_sec: 26.876687606670224
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_990.txt
+  metadata:
+    isl: 86007
+  sleep_before_launch_sec: 26.932398030848
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_991.txt
+  metadata:
+    isl: 89516
+  sleep_before_launch_sec: 29.174858660067557
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_992.txt
+  metadata:
+    isl: 89876
+  sleep_before_launch_sec: 29.409991342307556
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_993.txt
+  metadata:
+    isl: 90581
+  sleep_before_launch_sec: 29.873193182094223
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_994.txt
+  metadata:
+    isl: 91399
+  sleep_before_launch_sec: 30.41517459137422
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_995.txt
+  metadata:
+    isl: 95274
+  sleep_before_launch_sec: 33.048840241152
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_996.txt
+  metadata:
+    isl: 96774
+  sleep_before_launch_sec: 34.097678385152
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_997.txt
+  metadata:
+    isl: 102947
+  sleep_before_launch_sec: 38.586449224590226
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_998.txt
+  metadata:
+    isl: 107131
+  sleep_before_launch_sec: 41.78666804929422
+- matrix_file: /swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-16ptp4-32dtp8/matrix_999.txt
+  metadata:
+    isl: 110230
+  sleep_before_launch_sec: 44.23917713635556

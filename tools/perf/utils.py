@@ -19,7 +19,6 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-
 def format_size(nbytes: float, precision=2) -> str:
     units = ["B", "K", "M", "G"]
     units_ix = 0
@@ -33,15 +32,15 @@ def format_size(nbytes: float, precision=2) -> str:
 
 def parse_size(nbytes: str) -> int:
     """Convert formatted string with unit to bytes"""
-    options = {"g": 1024 * 1024 * 1024, "m": 1024 * 1024, "k": 1024}
+    options = {"g": 1024 * 1024 * 1024, "m": 1024 * 1024, "k": 1024, "b": 1}
     unit = 1
     key = nbytes[-1].lower()
     if key in options:
         unit = options[key]
-        value = int(nbytes[:-1])
+        value = float(nbytes[:-1])
     else:
-        value = int(nbytes)
-    count = unit * value
+        value = float(nbytes)
+    count = int(unit * value)
     return count
 
 

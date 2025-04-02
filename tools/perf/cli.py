@@ -15,10 +15,11 @@
 
 import logging
 from pathlib import Path
-
+from utils import load_matrix
 import click
 import yaml
 from custom_traffic_perftest import CTPerftest, TrafficPattern
+from sequential_custom_traffic_perftest import SequentialCTPerftest
 from dist_utils import dist_utils
 from multi_custom_traffic_perftest import MultiCTPerftest
 
@@ -70,7 +71,7 @@ def ct_perftest(config_file, verify_buffers, print_recv_buffers):
     iters = config.get("iters", 1)
     warmup_iters = config.get("warmup_iters", 0)
     pattern = TrafficPattern(
-        matrix_file=Path(tp_config["matrix_file"]),
+        matrix=load_matrix(Path(tp_config["matrix_file"])),
         shards=tp_config["shards"],
         mem_type=tp_config.get("mem_type", "dram").lower(),
         xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
@@ -79,7 +80,6 @@ def ct_perftest(config_file, verify_buffers, print_recv_buffers):
     perftest = CTPerftest(pattern, iters=iters, warmup_iters=warmup_iters)
     perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers)
     dist_utils.destroy_dist()
-
 
 @cli.command()
 @click.argument("config_file", type=click.Path(exists=True))
@@ -104,7 +104,7 @@ def multi_ct_perftest(config_file, verify_buffers, print_recv_buffers):
     patterns = []
     for instruction_config in config["traffic_patterns"]:
         tp_config = instruction_config
-        required_fields = ["matrix_file", "shards", "mem_type", "xfer_op"]
+        required_fields = ["matrix_file"]
         missing_fields = [field for field in required_fields if field not in tp_config]
 
         if missing_fields:
@@ -113,15 +113,61 @@ def multi_ct_perftest(config_file, verify_buffers, print_recv_buffers):
             )
 
         pattern = TrafficPattern(
-            matrix_file=Path(tp_config["matrix_file"]),
-            shards=tp_config["shards"],
+            matrix=load_matrix(Path(tp_config["matrix_file"])),
+            shards=tp_config.get("shards", 1),
+            mem_type=tp_config.get("mem_type", "cuda").lower(),
+            xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
+            sleep_after_launch_sec=tp_config.get("sleep_after_launch_sec", 0),
+            sleep_before_launch_sec=tp_config.get("sleep_before_launch_sec", 0),
+        )
+        patterns.append(pattern)
+
+    perftest = MultiCTPerftest(patterns)
+    perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers)
+    dist_utils.destroy_dist()
+
+@cli.command()
+@click.argument("config_file", type=click.Path(exists=True))
+@click.option(
+    "--verify-buffers/--no-verify-buffers",
+    default=False,
+    help="Verify buffer contents after transfer",
+)
+@click.option(
+    "--print-recv-buffers/--no-print-recv-buffers",
+    default=False,
+    help="Print received buffer contents",
+)
+def sequential_ct_perftest(config_file, verify_buffers, print_recv_buffers):
+    """Run custom traffic performance test using patterns defined in YAML config"""
+    with open(config_file, "r") as f:
+        config = yaml.safe_load(f)
+
+    if "traffic_patterns" not in config:
+        raise ValueError("Config file must contain 'traffic_patterns' key")
+
+    patterns = []
+    for instruction_config in config["traffic_patterns"]:
+        tp_config = instruction_config
+        required_fields = ["matrix_file"]
+        missing_fields = [field for field in required_fields if field not in tp_config]
+
+        if missing_fields:
+            raise ValueError(
+                f"Traffic pattern missing required fields: {missing_fields}"
+            )
+
+        pattern = TrafficPattern(
+            matrix=load_matrix(Path(tp_config["matrix_file"])),
+            shards=tp_config.get("shards", 1),
             mem_type=tp_config.get("mem_type", "dram").lower(),
             xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
             sleep_after_launch_sec=tp_config.get("sleep_after_launch_sec", 0),
         )
         patterns.append(pattern)
 
-    perftest = MultiCTPerftest(patterns)
+    patterns = patterns[0] # DEBUG REMOVE TODO
+    perftest = SequentialCTPerftest(patterns)
     perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers)
     dist_utils.destroy_dist()
 

@@ -1,0 +1,11 @@
+traffic_patterns:
+  - matrix_file: "/swgwork/eshukrun/nixl/tools/perf/test/test_matrix1.txt"
+    shards: 4
+    mem_type: "cpu"
+    xfer_op: "WRITE"
+    sleep_after_launch_sec: 5
+
+  - matrix_file: "/swgwork/eshukrun/nixl/tools/perf/test/test_matrix2.txt"
+    shards: 8
+    mem_type: "cuda"
+    xfer_op: "READ"

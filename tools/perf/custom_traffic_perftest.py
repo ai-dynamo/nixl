@@ -22,7 +22,7 @@ from typing import Literal, Optional, Tuple
 
 import numpy as np
 import torch
-from common import NixlBuffer, NixlHandle
+from common import NixlBuffer, NixlHandle, TrafficPattern
 from dist_utils import dist_utils
 from tabulate import tabulate
 
@@ -32,28 +32,6 @@ from utils import load_matrix
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class TrafficPattern:
-    """Represents a communication pattern between distributed processes.
-
-    Attributes:
-        matrix_file: Path to the file containing the communication matrix
-        shards: Number of shards for distributed processing
-        mem_type: Type of memory to use
-        xfer_op: Transfer operation type
-        dtype: PyTorch data type for the buffers
-        sleep_sec: Number of seconds to sleep after finish
-        id: Unique identifier for this traffic pattern
-    """
-
-    matrix_file: PathLike
-    shards: int
-    mem_type: Literal["cuda", "vram", "cpu", "dram"]
-    xfer_op: Literal["WRITE", "READ"]
-    dtype: torch.dtype = torch.float32
-    sleep_after_launch_sec: int = 0
-
-    id: str = str(uuid.uuid4())
 
 
 class CTPerftest:
@@ -79,7 +57,10 @@ class CTPerftest:
     def _share_md(self) -> None:
         """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
         md = self.nixl_agent.get_agent_metadata()
-        mds = dist_utils.allgather_obj(md)
+        try:
+            mds = dist_utils.allgather_obj(md)
+        except Exception as e:
+            breakpoint()
         for other_rank, metadata in enumerate(mds):
             if other_rank == self.my_rank:
                 continue
@@ -110,10 +91,13 @@ class CTPerftest:
     def _init_buffers(
         self, tp: TrafficPattern
     ) -> tuple[list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
+
         send_bufs = []
         recv_bufs = []
         for other_rank in range(self.world_size):
-            matrix = load_matrix(tp.matrix_file)
+            matrix = tp.matrix
+            if matrix.shape != (self.world_size, self.world_size):
+                raise ValueError(f"Matrix {tp.matrix_file} shape {matrix.shape} does not match world size {self.world_size}")
             send_size = matrix[self.my_rank][other_rank]
             recv_size = matrix[other_rank][self.my_rank]
             send_buf = recv_buf = None
@@ -141,6 +125,10 @@ class CTPerftest:
     def _prepare_tp(
         self, tp: TrafficPattern
     ) -> Tuple[list[NixlHandle], list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
+        senders_ranks = tp.senders_ranks()
+
+        dist_utils.init_group(senders_ranks)
+
         send_bufs, recv_bufs = self._init_buffers(tp)
         dst_bufs_descs = self._share_recv_buf_descs(recv_bufs)
 
@@ -160,16 +148,27 @@ class CTPerftest:
 
         return handles, send_bufs, recv_bufs
 
-    def _run_tp(self, handles: list[NixlHandle]) -> list[NixlHandle]:
+    def _warmup(self, iters=15, fill_value: int = 100000, mem_type: Literal["cuda", "vram", "cpu", "dram"] = "cuda"):
+        full_matrix = np.full((self.world_size, self.world_size), fill_value=fill_value)
+        tp = TrafficPattern(matrix=full_matrix, mem_type=mem_type)
+        handles, send_bufs, recv_bufs = self._prepare_tp(tp)
+        for _ in range(iters):
+            self._run_tp(handles)
+            self._wait(handles)
+
+    def _run_tp(self, handles: list[NixlHandle], blocking=False) -> list[NixlHandle]:
         pending = []
         for handle in handles:
             status = self.nixl_agent.transfer(handle.handle)
             assert status != "ERR", "Transfer failed"
             if status != "DONE":
                 pending.append(handle)
-
-        return pending
-    
+        
+        if not blocking:
+            return pending
+        else:
+            self._wait(pending)
+        
     def _wait(self, handles: list[NixlHandle]):
         # Wait for transfers to complete
         while True:
@@ -205,12 +204,11 @@ class CTPerftest:
             buf.deregister()
 
     def _check_tp_config(self, tp: TrafficPattern):
-        matrix = load_matrix(tp.matrix_file)
         # Matrix size should be world * world
-        assert matrix.shape == (
+        assert tp.matrix.shape == (
             self.world_size,
             self.world_size,
-        ), f"Matrix size is not the same as world size, got {matrix.shape}, world_size={self.world_size}"
+        ), f"Matrix size is not the same as world size, got {tp.matrix.shape}, world_size={self.world_size}"
 
     def _verify_tp(
         self,
@@ -218,12 +216,11 @@ class CTPerftest:
         recv_bufs: list[Optional[NixlBuffer]],
         print_recv_buffers: bool = False,
     ):
-        matrix = load_matrix(tp.matrix_file)
         for r, recv_buf in enumerate(recv_bufs):
             if recv_buf is None:
-                if matrix[r][self.my_rank] > 0:
+                if tp.matrix[r][self.my_rank] > 0:
                     log.error(
-                        f"Rank {self.my_rank} expected {matrix[r][self.my_rank]} bytes from rank {r}, but got 0"
+                        f"Rank {self.my_rank} expected {tp.matrix[r][self.my_rank]} bytes from rank {r}, but got 0"
                     )
                     raise RuntimeError("Buffer verification failed")
                 continue
@@ -242,13 +239,12 @@ class CTPerftest:
                 full_recv_buf == expected
             ), f"Vector not equal to {r}, got {full_recv_buf}"
             assert (
-                full_recv_buf.size(0) == matrix[r][self.my_rank]
+                full_recv_buf.size(0) == tp.matrix[r][self.my_rank]
             ), f"Size of vector {r} is not the same as matrix[r][{self.my_rank}], got {full_recv_buf.size(0)}"
 
     def _get_tp_total_size(self, tp: TrafficPattern) -> int:
         """Return total size of matrix in bytes"""
-        matrix = load_matrix(tp.matrix_file)
-        return np.sum(matrix, axis=(0, 1)) * tp.dtype.itemsize
+        return np.sum(tp.matrix, axis=(0, 1)) * tp.dtype.itemsize
 
     def run(
         self, verify_buffers: bool = False, print_recv_buffers: bool = False

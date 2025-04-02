@@ -1,0 +1,2 @@
+traffic_patterns:
+  - matrix_file: "/swgwork/eshukrun/nixl/tools/perf/test/full_128M_8N.txt"

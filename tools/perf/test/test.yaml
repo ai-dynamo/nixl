@@ -1,0 +1,7 @@
+iters: 2
+warmup_iters: 0
+traffic_pattern:
+  matrix_file: "/swgwork/eshukrun/nixl/tools/perf/test/test_matrix1.txt"
+  shards: 4
+  mem_type: "cpu"
+  xfer_op: "WRITE"

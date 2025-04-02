@@ -1,0 +1,7 @@
+iters: 30
+warmup_iters: 20
+traffic_pattern:
+  matrix_file: "/swgwork/eshukrun/nixl/tools/perf/test/test_matrix1_8N.txt"
+  shards: 4
+  mem_type: "cuda"
+  xfer_op: "WRITE"

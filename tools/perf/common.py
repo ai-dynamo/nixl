@@ -13,13 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+from os import PathLike
+import uuid
+from dataclasses import dataclass
+from typing import Literal
 
+import numpy as np
+from utils import load_matrix
 import torch
 from dist_utils import dist_utils
+
 
 from nixl._api import nixl_agent
 
 log = logging.getLogger(__name__)
+
+
+
 
 class NixlHandle:
     def __init__(self, remote_rank, handle, traffic_pattern):
@@ -57,16 +67,13 @@ class NixlBuffer:
         self.bufs = []
         chunk_size = size // shards
         self.bufs = [
-            torch.full((chunk_size,), fill_value=fill_value, dtype=dtype, device=device)
+            torch.full((chunk_size,), fill_value, dtype=dtype, device=device)
             for _ in range(shards)
         ]
         if size % chunk_size != 0:
             self.bufs.append(
                 torch.full(
-                    (size % chunk_size,),
-                    fill_value=fill_value,
-                    dtype=dtype,
-                    device=device,
+                    (size % chunk_size,), fill_value, dtype=dtype, device=device
                 )
             )
 
@@ -82,3 +89,38 @@ class NixlBuffer:
 
     def deregister(self):
         self.nixl_agent.deregister_memory(self.reg_descs)
+
+
+@dataclass
+class TrafficPattern:
+    """Represents a communication pattern between distributed processes.
+
+    Attributes:
+        matrix_file: Path to the file containing the communication matrix
+        shards: Number of shards for distributed processing
+        mem_type: Type of memory to use
+        xfer_op: Transfer operation type
+        dtype: PyTorch data type for the buffers
+        sleep_sec: Number of seconds to sleep after finish
+        id: Unique identifier for this traffic pattern
+    """
+
+    matrix: np.ndarray
+    mem_type: Literal["cuda", "vram", "cpu", "dram"]
+    xfer_op: Literal["WRITE", "READ"] = "WRITE"
+    shards: int = 1
+    dtype: torch.dtype = torch.float32
+    sleep_before_launch_sec: int = 0
+    sleep_after_launch_sec: int = 0
+
+    id: str = str(uuid.uuid4())
+
+    def senders_ranks(self):
+        """Return the ranks that send messages"""
+        senders_ranks = []
+        for i in range(self.matrix.shape[0]):
+            for j in range(self.matrix.shape[1]):
+                if self.matrix[i, j] > 0:
+                    senders_ranks.append(i)
+                    break
+        return senders_ranks

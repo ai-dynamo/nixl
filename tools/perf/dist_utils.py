@@ -15,7 +15,8 @@
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Any, List, Tuple, final
+from typing import Any, List, Tuple, final, Dict, Optional
+from enum import Enum
 
 from nixl._api import nixl_agent
 
@@ -29,13 +30,19 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
+class ReduceOp(Enum):
+    SUM = "sum"
+    AVG = "avg"
+    MIN = "min"
+    MAX = "max"
 
 class _DistUtils(ABC):
     """Allow for different distributed backends"""
 
     @final
     def __init__(self):
-        pass
+        # Key is tuple of the sorted ranks, value is backend group 
+        self.groups: Dict[Tuple[int], Any] = {}
 
     @abstractmethod
     def init_dist(self):
@@ -54,11 +61,19 @@ class _DistUtils(ABC):
         pass
 
     @abstractmethod
+    def all_reduce(self, vals: List[float | int], op: ReduceOp) -> List[float | int]:
+        pass
+
+    @abstractmethod
     def get_rank(self) -> int:
         pass
 
     @abstractmethod
     def get_world_size(self) -> int:
+        pass
+
+    @abstractmethod
+    def init_group(self, ranks: List[int]):
         pass
 
     def share_world_metadata(self, nixl_agent: "nixl_agent") -> None:
@@ -72,6 +87,15 @@ class _DistUtils(ABC):
                 continue
             nixl_agent.add_remote_agent(metadata)
             log.debug(f"[Rank {my_rank}] Added remote agent {other_rank}'s metadata")
+    
+    def init_groups(self, groups_ranks: List[List[int]]):
+        """Initialize groups of ranks
+
+        Args:
+            groups_ranks: List of lists of ranks, each list is a group
+        """
+        for ranks in groups_ranks:
+            self.init_group(ranks)
 
 
 class _TorchDistUtils(_DistUtils):
@@ -80,6 +104,20 @@ class _TorchDistUtils(_DistUtils):
 
     def get_world_size(self) -> int:
         return dist.get_world_size()
+
+    def init_group(self, ranks: List[int]):
+        """Initialize a group of ranks
+
+        Args:
+            ranks: List of ranks to initialize a group for
+        """
+        if not ranks:
+            return None
+
+        key = tuple(sorted(ranks))
+        if key not in self.groups:
+            self.groups[key] = dist.new_group(ranks)
+        return key
 
     def init_dist(self) -> Tuple[int, int]:
         """Init torch distributed module
@@ -130,11 +168,44 @@ class _TorchDistUtils(_DistUtils):
         log.debug(f"[Rank {rank}] Using CUDA device {device}")
 
         return rank, world_size
+    
+    def barrier(self, ranks: Optional[List[int]] = None):
+        """Barrier for a group of ranks
+
+        Args:
+            ranks: List of ranks to barrier, if None, barrier for all ranks
+        """
+        if ranks is None:
+            dist.barrier()
+            return
+        
+        if self.get_rank() not in ranks:
+            return
+
+        key = tuple(sorted(ranks))
+        group = self.groups.get(key)
+        if group is None:
+            raise ValueError(f"[Rank {self.rank}] Group with ranks {ranks} was not created")
+
+        dist.barrier(group=group)
 
     def destroy_dist(self):
         """Cleanup distributed process group"""
         if dist.is_initialized():
             dist.destroy_process_group()
+    
+    def all_reduce(self, vals: List[float | int], op: ReduceOp) -> List[float | int]:
+        val_tensor = torch.tensor(vals, device=torch.device("cuda"))
+        if op == ReduceOp.SUM:
+            op = dist.ReduceOp.SUM
+        elif op == ReduceOp.AVG:
+            op = dist.ReduceOp.AVG
+        elif op == ReduceOp.MIN:
+            op = dist.ReduceOp.MIN
+        elif op == ReduceOp.MAX:
+            op = dist.ReduceOp.MAX
+        dist.all_reduce(val_tensor, op=op)
+        return val_tensor.tolist()
 
     def allgather_obj(self, obj: Any) -> List[Any]:
         """Allgather arbitrary object on world

@@ -17,7 +17,8 @@ import time
 from typing import Optional, Tuple
 
 import numpy as np
-from custom_traffic_perftest import CTPerftest, TrafficPattern
+from custom_traffic_perftest import CTPerftest
+from common import TrafficPattern
 from dist_utils import dist_utils
 from tabulate import tabulate
 from common import NixlHandle
@@ -39,6 +40,8 @@ class MultiCTPerftest(CTPerftest):
         Args:
             traffic_patterns: List of traffic patterns to test simultaneously
         """
+        self.active_conns: set[int] = set() # set of ranks that have active conns with me
+        self.failed_tps: dict[int, float] = {} # tp_ix -> time until tp finally run
         self.my_rank = dist_utils.get_rank()
         self.world_size = dist_utils.get_world_size()
         self.traffic_patterns = traffic_patterns
@@ -49,7 +52,7 @@ class MultiCTPerftest(CTPerftest):
 
     def _wait(
         self,
-        tp_handles: list[list[NixlHandle]],
+        tp_handles: list[list[Optional[NixlHandle]]],
         blocking=True,
         tp_done_ts: Optional[list[float]] = None,
     ) -> Tuple[list[float], list[list[int]]]:
@@ -69,6 +72,8 @@ class MultiCTPerftest(CTPerftest):
         while True:
             pending: list[list[int]] = [[] for _ in tp_handles]
             for i, handles in enumerate(tp_handles):
+                if handles is None:
+                    continue
                 if tp_done_ts[i] > 0.0:
                     continue
                 for handle in handles:
@@ -80,8 +85,11 @@ class MultiCTPerftest(CTPerftest):
                         import sys
 
                         sys.exit(1)
-                    assert state != "ERR", "Transfer got to Error state."
-                    if state != "DONE":
+                    assert state != "ERR", f"[{self.my_rank}] Transfer got to Error state with rank {handle.remote_rank}"
+                    if state == "DONE":
+                        log.info(f"[{self.my_rank}] Done with rank {handle.remote_rank}")
+                        self.active_conns.remove(handle.remote_rank)
+                    else:
                         pending[i].append(handle)
                 if not pending[i]:
                     tp_done_ts[i] = time.perf_counter()
@@ -92,6 +100,19 @@ class MultiCTPerftest(CTPerftest):
                 break
 
         return tp_done_ts, pending
+    
+    def _run_tp(self, handles: list[NixlHandle]) -> Optional[list[NixlHandle]]:
+        """
+        Return None if the TP failed to run
+        """
+        for h in handles:
+            if h.remote_rank in self.active_conns:
+                log.info(f"[{self.my_rank}] Rank {self.my_rank} has active conns with {h.remote_rank}, cannot run this tp (active_conns={self.active_conns})")
+                return None
+
+        pending = super()._run_tp(handles)
+        self.active_conns |= set(h.remote_rank for h in pending)
+        return pending
 
     def run(
         self, verify_buffers: bool = False, print_recv_buffers: bool = False
@@ -123,7 +144,8 @@ class MultiCTPerftest(CTPerftest):
         start = time.time()
         tp_ix = 0
         next_ts = 0.0
-        pending_tp_handles: list[list[int]] = [[] for _ in tp_handles]
+        pending_tp_handles: list[list[Optional[NixlHandle]]] = [[] for _ in tp_handles]
+        fail_start_ts = 0
 
         while tp_ix < len(tp_handles):
             if time.time() < next_ts:
@@ -133,15 +155,29 @@ class MultiCTPerftest(CTPerftest):
                     blocking=False,
                     tp_done_ts=end_ts_by_tp,
                 )
+                # Sleep ?
                 continue
-            start_ts_by_tp[tp_ix] = time.perf_counter()
-            pending_tp_handles[tp_ix] = self._run_tp(tp_handles[tp_ix])
-            sleep = self.traffic_patterns[tp_ix].sleep_after_launch_sec
 
+            start_ts_by_tp[tp_ix] = time.perf_counter()
+            pending_tp_handles[tp_ix] = self._run_tp(tp_handles[tp_ix]) # Returns None if the TP failed to run
+            # In case a TP is failed, wait until it can run, this is respective to this rank only, the other process other tps
+
+            if pending_tp_handles[tp_ix] is None:
+                log.info(f"[{self.my_rank}] TP Failed, {tp_ix}, pending_tp_handles[0]=[{','.join(str(h) for h in pending_tp_handles[0])}]")
+                fail_start_ts = time.perf_counter()
+                continue
+        
+            log.info(f"[{self.my_rank}] TP succeeded, {tp_ix}")
+                
+            if fail_start_ts > 0:
+                self.failed_tps[tp_ix] = time.perf_counter() - fail_start_ts
+
+            sleep = self.traffic_patterns[tp_ix].sleep_after_launch_sec
             if sleep > 0:
                 next_ts = time.time() + sleep
 
             tp_ix += 1
+            fail_start_ts = 0
 
         self._wait(tp_handles, tp_done_ts=end_ts_by_tp, blocking=True)
         end = time.time()
