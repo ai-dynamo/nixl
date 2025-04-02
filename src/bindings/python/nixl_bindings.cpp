@@ -26,6 +26,8 @@
 
 namespace py = pybind11;
 
+typedef std::map<std::string, std::vector<py::bytes>> nixl_py_notifs_t;
+
 class nixlNotPostedError : public std::runtime_error {
     public:
         nixlNotPostedError(const char* what) : runtime_error(what) {}
@@ -116,6 +118,8 @@ PYBIND11_MODULE(_bindings, m) {
     //TODO: each nixl class and/or function can be documented in place
     m.doc() = "pybind11 NIXL plugin: Implements NIXL descriptors and lists, as well as bindings of NIXL CPP APIs";
 
+    m.attr("NIXL_INIT_AGENT") = NIXL_INIT_AGENT;
+
     //cast types
     py::enum_<nixl_mem_t>(m, "nixl_mem_t")
         .value("DRAM_SEG", DRAM_SEG)
@@ -155,16 +159,15 @@ PYBIND11_MODULE(_bindings, m) {
     py::register_exception<nixlNotSupportedError>(m, "nixlNotSupportedError");
 
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
-        .def(py::init<nixl_mem_t, bool, bool, int>(), py::arg("type"), py::arg("unifiedAddr")=true, py::arg("sorted")=false, py::arg("init_size")=0)
-        .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool unifiedAddr, bool sorted) {
-                nixl_xfer_dlist_t new_list(mem, unifiedAddr, sorted, descs.size());
+        .def(py::init<nixl_mem_t, bool, int>(), py::arg("type"), py::arg("sorted")=false, py::arg("init_size")=0)
+        .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool sorted) {
+                nixl_xfer_dlist_t new_list(mem, sorted, descs.size());
                 for(long unsigned int i = 0; i<descs.size(); i++)
                     new_list[i] = nixlBasicDesc(descs[i][0].cast<uintptr_t>(), descs[i][1].cast<size_t>(), descs[i][2].cast<uint32_t>());
                 if (sorted) new_list.verifySorted();
                 return new_list;
-            }), py::arg("type"), py::arg("descs"), py::arg("unifiedAddr")=true, py::arg("sorted")=false)
+            }), py::arg("type"), py::arg("descs"), py::arg("sorted")=false)
         .def("getType", &nixl_xfer_dlist_t::getType)
-        .def("isUnifiedAddr", &nixl_xfer_dlist_t::isUnifiedAddr)
         .def("descCount", &nixl_xfer_dlist_t::descCount)
         .def("isEmpty", &nixl_xfer_dlist_t::isEmpty)
         .def("isSorted", &nixl_xfer_dlist_t::isSorted)
@@ -213,16 +216,15 @@ PYBIND11_MODULE(_bindings, m) {
         ));
 
     py::class_<nixl_reg_dlist_t>(m, "nixlRegDList")
-        .def(py::init<nixl_mem_t, bool, bool, int>(), py::arg("type"), py::arg("unifiedAddr")=true, py::arg("sorted")=false, py::arg("init_size")=0)
-        .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool unifiedAddr, bool sorted) {
-                nixl_reg_dlist_t new_list(mem, unifiedAddr, sorted, descs.size());
+        .def(py::init<nixl_mem_t, bool, int>(), py::arg("type"), py::arg("sorted")=false, py::arg("init_size")=0)
+        .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool sorted) {
+                nixl_reg_dlist_t new_list(mem, sorted, descs.size());
                 for(long unsigned int i = 0; i<descs.size(); i++)
                     new_list[i] = nixlBlobDesc(descs[i][0].cast<uintptr_t>(), descs[i][1].cast<size_t>(), descs[i][2].cast<uint32_t>(), descs[i][3].cast<std::string>());
                 if (sorted) new_list.verifySorted();
                 return new_list;
-            }), py::arg("type"), py::arg("descs"), py::arg("unifiedAddr")=true, py::arg("sorted")=false)
+            }), py::arg("type"), py::arg("descs"), py::arg("sorted")=false)
         .def("getType", &nixl_reg_dlist_t::getType)
-        .def("isUnifiedAddr", &nixl_reg_dlist_t::isUnifiedAddr)
         .def("descCount", &nixl_reg_dlist_t::descCount)
         .def("isEmpty", &nixl_reg_dlist_t::isEmpty)
         .def("isSorted", &nixl_reg_dlist_t::isSorted)
@@ -311,25 +313,26 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(agent.createBackend(type, initParams, backend));
                     return (uintptr_t) backend;
             })
-        .def("registerMem", [](nixlAgent &agent, nixl_reg_dlist_t descs, uintptr_t backend) -> nixl_status_t {
+        .def("registerMem", [](nixlAgent &agent, nixl_reg_dlist_t descs, std::vector<uintptr_t> backends) -> nixl_status_t {
                     nixl_opt_args_t extra_params;
                     nixl_status_t ret;
-                    if(backend != 0)
+                    for(uintptr_t backend: backends)
                         extra_params.backends.push_back((nixlBackendH*) backend);
 
                     ret = agent.registerMem(descs, &extra_params);
                     throw_nixl_exception(ret);
                     return ret;
-                })
-        .def("deregisterMem", [](nixlAgent &agent, nixl_reg_dlist_t descs, uintptr_t backend) -> nixl_status_t {
+                }, py::arg("descs"), py::arg("backends") = std::vector<uintptr_t>({}))
+        .def("deregisterMem", [](nixlAgent &agent, nixl_reg_dlist_t descs, std::vector<uintptr_t> backends) -> nixl_status_t {
                     nixl_opt_args_t extra_params;
                     nixl_status_t ret;
-                    extra_params.backends.push_back((nixlBackendH*) backend);
+                    for(uintptr_t backend: backends)
+                        extra_params.backends.push_back((nixlBackendH*) backend);
 
                     ret = agent.deregisterMem(descs, &extra_params);
                     throw_nixl_exception(ret);
                     return ret;
-                })
+                }, py::arg("descs"), py::arg("backends") = std::vector<uintptr_t>({}))
         .def("makeConnection", [](nixlAgent &agent, const std::string &remote_agent) {
                     nixl_status_t ret = agent.makeConnection(remote_agent);
                     throw_nixl_exception(ret);
@@ -341,11 +344,13 @@ PYBIND11_MODULE(_bindings, m) {
                                  const nixl_xfer_dlist_t &remote_descs,
                                  const std::string &remote_agent,
                                  const std::string &notif_msg,
-                                 uintptr_t backend) -> uintptr_t {
+                                 std::vector<uintptr_t> backends) -> uintptr_t {
                     nixlXferReqH* handle = nullptr;
                     nixl_opt_args_t extra_params;
-                    if (backend!=0)
+
+                    for(uintptr_t backend: backends)
                         extra_params.backends.push_back((nixlBackendH*) backend);
+
                     if (notif_msg.size()>0) {
                         extra_params.notifMsg = notif_msg;
                         extra_params.hasNotif = true;
@@ -357,23 +362,26 @@ PYBIND11_MODULE(_bindings, m) {
                 }, py::arg("operation"), py::arg("local_descs"),
                    py::arg("remote_descs"), py::arg("remote_agent"),
                    py::arg("notif_msg") = std::string(""),
-                   py::arg("backend") = ((uintptr_t) nullptr))
+                   py::arg("backend") = std::vector<uintptr_t>({}))
         .def("queryXferBackend", [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {
                     nixlBackendH* handle = nullptr;
                     throw_nixl_exception(agent.queryXferBackend((nixlXferReqH*) reqh, handle));
                     return (uintptr_t) handle;
             })
         .def("prepXferDlist", [](nixlAgent &agent,
-                                const std::string &remote_agent,
-                                const nixl_xfer_dlist_t &descs,
-                                uintptr_t backend) -> uintptr_t {
+                                 std::string &agent_name,
+                                 const nixl_xfer_dlist_t &descs,
+                                 std::vector<uintptr_t> backends) -> uintptr_t {
                     nixlDlistH* handle = nullptr;
                     nixl_opt_args_t extra_params;
-                    extra_params.backends.push_back((nixlBackendH*) backend);
-                    throw_nixl_exception(agent.prepXferDlist(remote_agent, descs, handle, &extra_params));
+
+                    for(uintptr_t backend: backends)
+                        extra_params.backends.push_back((nixlBackendH*) backend);
+
+                    throw_nixl_exception(agent.prepXferDlist(agent_name, descs, handle, &extra_params));
 
                     return (uintptr_t) handle;
-                })
+                }, py::arg("agent_name"), py::arg("descs"), py::arg("backend") = std::vector<uintptr_t>({}))
         .def("makeXferReq", [](nixlAgent &agent,
                                const nixl_xfer_op_t &operation,
                                uintptr_t local_side,
@@ -432,23 +440,17 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(ret);
                     return ret;
                 })
-        .def("getNotifs", [](nixlAgent &agent, nixl_notifs_t notif_map) -> nixl_notifs_t {
-                    nixl_status_t ret = agent.getNotifs(notif_map);
+        .def("getNotifs", [](nixlAgent &agent, nixl_py_notifs_t &notif_map) -> nixl_py_notifs_t {
+                    nixl_notifs_t new_notifs;
+                    nixl_status_t ret = agent.getNotifs(new_notifs);
 
                     throw_nixl_exception(ret);
-                    if (ret != NIXL_SUCCESS || notif_map.size() == 0) return notif_map;
 
-                    nixl_notifs_t ret_map;
-                    for (const auto& pair : notif_map) {
-                        std::vector<std::string> agent_notifs;
-
-                        for(const auto& str : pair.second)  {
-                            agent_notifs.push_back(py::bytes(str));
-                        }
-
-                        ret_map[pair.first] = agent_notifs;
+                    for (const auto& pair : new_notifs) {
+                        for(const auto& str : pair.second)
+                            notif_map[pair.first].push_back(py::bytes(str));
                     }
-                    return ret_map;
+                    return notif_map;
                 })
         .def("genNotif", [](nixlAgent &agent, const std::string &remote_agent,
                                               const std::string &msg,

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/bin/bash
 
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
@@ -15,14 +15,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from nixl._api import nixl_agent
+# install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-if __name__ == "__main__":
-    nixl_agent1 = nixl_agent("bad agent", None)
+source $HOME/.local/bin/env
 
-    try:
-        # oops, I can't spell
-        nixl_agent1.create_backend("UVX")
-    except Exception as e:
-        print("Caught you!")
-        print(e)
+# install auditwheel
+pip3 install auditwheel
+
+# build the wheel
+uv build --wheel
+
+# Fix up wheel
+auditwheel repair dist/nixl-*-cp31*.whl --plat manylinux_2_39_x86_64

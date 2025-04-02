@@ -90,7 +90,7 @@ if __name__ == "__main__":
         # For now the notification is just UUID, could be any python bytes.
         # Also can have more than UUID, and check_remote_xfer_done returns
         # the full python bytes, here it would be just UUID.
-        while not agent.check_remote_xfer_done(peer_name, "UUID"):
+        while not agent.check_remote_xfer_done(peer_name, b"UUID"):
             continue
     else:
         # If send_notif is used, get_new_notifs should listen for it,

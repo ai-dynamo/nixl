@@ -14,10 +14,16 @@
 # limitations under the License.
 
 import pickle
+from typing import Optional
 
 import torch
 
 import nixl._bindings as nixlBind
+
+# Opaque nixl handle types
+nixl_backend_handle = int
+nixl_prepped_dlist_handle = int
+nixl_xfer_handle = int
 
 
 class nixl_agent_config:
@@ -28,7 +34,12 @@ class nixl_agent_config:
 
 
 class nixl_agent:
-    def __init__(self, agent_name, nixl_conf=None, instantiate_all=False):
+    def __init__(
+        self,
+        agent_name: str,
+        nixl_conf: Optional[nixl_agent_config] = None,
+        instantiate_all: bool = False,
+    ):
         if nixl_conf and instantiate_all:
             instantiate_all = False
             print(
@@ -42,27 +53,27 @@ class nixl_agent:
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name
-        self.notifs = {}
-        self.backends = {}
-        self.backend_mems = {}
-        self.backend_options = {}
+        self.notifs: dict[str, list[bytes]] = {}
+        self.backends: dict[str, nixl_backend_handle] = {}
+        self.backend_mems: dict[str, list[str]] = {}
+        self.backend_options: dict[str, dict[str, str]] = {}
 
         self.plugin_list = self.agent.getAvailPlugins()
         if len(self.plugin_list) == 0:
             print("No plugins available, cannot start transfers!")
             raise RuntimeError("No plugins available for NIXL, cannot start transfers!")
 
-        self.plugin_b_options = {}
-        self.plugin_mem_types = {}
+        self.plugin_b_options: dict[str, dict[str, str]] = {}
+        self.plugin_mem_types: dict[str, list[str]] = {}
         for plugin in self.plugin_list:
             (backend_options, mem_types) = self.agent.getPluginParams(plugin)
             self.plugin_b_options[plugin] = backend_options
             self.plugin_mem_types[plugin] = mem_types
 
-        init = {}
+        # TODO: populate init from default parameters, or define a set of params in python
+        init: dict[str, str] = {}
 
         if instantiate_all:
-            # TODO: populate init from default parameters, or define a set of params in python
             for plugin in self.plugin_list:
                 self.backends[plugin] = self.agent.createBackend(plugin, init)
         else:
@@ -97,40 +108,41 @@ class nixl_agent:
 
         print("Initialized NIXL agent:", agent_name)
 
-    def get_plugin_list(self):
+    def get_plugin_list(self) -> list[str]:
         return self.plugin_list
 
-    def get_plugin_mem_types(self, backend):
+    def get_plugin_mem_types(self, backend: str) -> list[str]:
         if backend in self.plugin_mem_types:
             return self.plugin_mem_types[backend]
         else:
             print("Plugin", backend, "is not available to get its supported mem types.")
-            return None
+            return []
 
-    def get_plugin_params(self, backend):
+    def get_plugin_params(self, backend: str) -> dict[str, str]:
         if backend in self.plugin_b_options:
             return self.plugin_b_options[backend]
         else:
             print("Plugin", backend, "is not available to get its parameters.")
-            return None
+            return {}
 
-    def get_backend_mem_types(self, backend):
+    def get_backend_mem_types(self, backend: str) -> list[str]:
         if backend in self.backend_mems:
             return self.backend_mems[backend]
         else:
             print(
                 "Backend", backend, "not instantiated to get its supported mem types."
             )
-            return None
+            return []
 
-    def get_backend_params(self, backend):
+    def get_backend_params(self, backend: str) -> dict[str, str]:
         if backend in self.backend_options:
             return self.backend_options[backend]
         else:
             print("Backend", backend, "not instantiated to get its parameters.")
-            return None
+            return {}
 
-    def create_backend(self, backend, initParams={}):
+    # initParams is a Dict of strings (input params) to strings (values)
+    def create_backend(self, backend: str, initParams: dict[str, str] = {}):
         self.backends[backend] = self.agent.createBackend(backend, initParams)
 
         (backend_options, mem_types) = self.agent.getBackendParams(
@@ -147,122 +159,70 @@ class nixl_agent:
     def register_memory(
         self,
         reg_list,
-        mem_type=None,
-        is_unified_addr=True,
-        is_sorted=False,
-        backend=None,
-    ):
-        reg_descs = self.get_reg_descs(reg_list, mem_type, is_unified_addr, is_sorted)
+        mem_type: Optional[str] = None,
+        is_sorted: bool = False,
+        backends: list[str] = [],
+    ) -> nixlBind.nixlRegDList:
+        reg_descs = self.get_reg_descs(reg_list, mem_type, is_sorted)
 
         # based on backend type and mem_type, figure what registrations are meaningful
-        if backend:
-            ret = self.agent.registerMem(reg_descs, self.backends[backend])
-        else:
-            # TODO: rely on underlying capability to register with all when supported
-            if (reg_descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backends):
-                ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
-            elif (reg_descs.getType() == nixlBind.DRAM_SEG) and (
-                "UCX" in self.backends
-            ):
-                ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
-            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and (
-                "UCX" in self.backends
-            ):
-                ret = self.agent.registerMem(reg_descs, self.backends["UCX"])
-            elif (reg_descs.getType() == nixlBind.VRAM_SEG) and (
-                "GDS" in self.backends
-            ):
-                ret = self.agent.registerMem(reg_descs, self.backends["GDS"])
-            else:
-                return None
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        self.agent.registerMem(reg_descs, handle_list)
 
-        if ret != 0:
-            return None
         return reg_descs
 
     # The output from get_reg_descs (which is later passed to register_memory for
     # registration) or direct output of register_memory is passed here
-    def deregister_memory(self, dereg_list, backend=None):
+    def deregister_memory(
+        self, dereg_list: nixlBind.nixlRegDList, backends: list[str] = []
+    ):
         # based on backend type and mem_type, figure what deregistrations are needed
-        if backend:
-            self.agent.deregisterMem(dereg_list, self.backends[backend])
-        else:
-            # TODO: rely on underlying capability to register with all when supported
-            if (dereg_list.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backends):
-                ret = self.agent.deregisterMem(dereg_list, self.backends["GDS"])
-            elif (dereg_list.getType() == nixlBind.DRAM_SEG) and (
-                "UCX" in self.backends
-            ):
-                ret = self.agent.deregisterMem(dereg_list, self.backends["UCX"])
-            elif (dereg_list.getType() == nixlBind.VRAM_SEG) and (
-                "UCX" in self.backends
-            ):
-                ret = self.agent.deregisterMem(dereg_list, self.backends["UCX"])
-            elif (dereg_list.getType() == nixlBind.VRAM_SEG) and (
-                "GDS" in self.backends
-            ):
-                ret = self.agent.deregisterMem(dereg_list, self.backends["GDS"])
-            else:
-                return None
-
-        if ret != 0:
-            return None
-        # is this the best ret value?
-        return dereg_list
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        self.agent.deregisterMem(dereg_list, handle_list)
 
     # Optional proactive make connection
-    def make_connection(self, remote_agent):
+    def make_connection(self, remote_agent: str):
         self.agent.makeConnection(remote_agent)
 
-    # "" remote agent means local. example xfer can be used to know the backend
+    # agent_name should be "NIXL_INIT_AGENT" for local descriptors on the initiator side. For a
+    # remote agent, it would be that agent's name, or for loopback, local agent's name as target.
+    # xfer_list can be any of the types supported by get_xfer_descs
     def prep_xfer_dlist(
         self,
-        remote_agent,
+        agent_name: str,
         xfer_list,
-        mem_type=None,
-        is_unified_addr=True,
-        is_sorted=False,
-        xfer_backend=None,
-    ):
-        descs = self.get_xfer_descs(xfer_list, mem_type, is_unified_addr, is_sorted)
-        if xfer_backend:
-            handle = self.agent.prepXferDlist(remote_agent, descs, xfer_backend)
-        else:
-            # TODO: rely on underlying capability to register with all when supported
-            if (descs.getType() == nixlBind.FILE_SEG) and ("GDS" in self.backends):
-                handle = self.agent.prepXferDlist(
-                    remote_agent, descs, self.backends["GDS"]
-                )
-            elif (descs.getType() == nixlBind.DRAM_SEG) and ("UCX" in self.backends):
-                handle = self.agent.prepXferDlist(
-                    remote_agent, descs, self.backends["UCX"]
-                )
-            elif (descs.getType() == nixlBind.VRAM_SEG) and ("UCX" in self.backends):
-                handle = self.agent.prepXferDlist(
-                    remote_agent, descs, self.backends["UCX"]
-                )
-            elif (descs.getType() == nixlBind.VRAM_SEG) and ("GDS" in self.backends):
-                handle = self.agent.prepXferDlist(
-                    remote_agent, descs, self.backends["GDS"]
-                )
-            else:
-                return None
+        mem_type: Optional[str] = None,
+        is_sorted: bool = False,
+        backends: list[str] = [],
+    ) -> nixl_prepped_dlist_handle:
+        descs = self.get_xfer_descs(xfer_list, mem_type, is_sorted)
 
-        if handle == 0:
-            return None
+        if agent_name == "NIXL_INIT_AGENT" or agent_name == "":
+            agent_name = nixlBind.NIXL_INIT_AGENT
+
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+
+        handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
 
         return handle
 
+    # xfer_side parameters are opaque NIXL handles
     def make_prepped_xfer(
         self,
-        operation,
-        local_xfer_side,
-        local_indices,
-        remote_xfer_side,
-        remote_indices,
-        notif_msg="",
-        skip_desc_merge=False,
-    ):
+        operation: str,
+        local_xfer_side: nixl_prepped_dlist_handle,
+        local_indices: list[int],
+        remote_xfer_side: nixl_prepped_dlist_handle,
+        remote_indices: list[int],
+        notif_msg: str = "",
+        skip_desc_merge: bool = False,
+    ) -> nixl_xfer_handle:
         op = self.nixl_ops[operation]
         if op:
             handle = self.agent.makeXferReq(
@@ -274,45 +234,37 @@ class nixl_agent:
                 notif_msg,
                 skip_desc_merge,
             )
-            if handle == 0:
-                return None
 
             return handle
         else:
-            return None
+            raise nixlBind.nixlInvalidParamError("Invalid op code")
+            return nixlBind.nixlInvalidParamError
 
     def initialize_xfer(
         self,
-        operation,
-        local_descs,
-        remote_descs,
-        remote_agent,
-        notif_msg="",
-        xfer_backend=None,
-    ):
+        operation: str,
+        local_descs: nixlBind.nixlXferDList,
+        remote_descs: nixlBind.nixlXferDList,
+        remote_agent: str,
+        notif_msg: str = "",
+        backends: list[str] = [],
+    ) -> nixl_xfer_handle:
         op = self.nixl_ops[operation]
         if op:
-            if xfer_backend:
-                handle = self.agent.createXferReq(
-                    op,
-                    local_descs,
-                    remote_descs,
-                    remote_agent,
-                    notif_msg,
-                    xfer_backend,
-                )
-            else:
-                handle = self.agent.createXferReq(
-                    op, local_descs, remote_descs, remote_agent, notif_msg
-                )
+            handle_list = []
+            for backend_string in backends:
+                handle_list.append(self.backends[backend_string])
 
-            if handle == 0:
-                return None
-            return handle  # In case of error it will be None
+            handle = self.agent.createXferReq(
+                op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
+            )
+
+            return handle
         else:
-            return None
+            raise nixlBind.nixlInvalidParamError("Invalid op code")
+            return nixlBind.nixlInvalidParamError
 
-    def transfer(self, handle, notif_msg=""):
+    def transfer(self, handle: nixl_xfer_handle, notif_msg: str = "") -> str:
         status = self.agent.postXferReq(handle, notif_msg)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
@@ -321,7 +273,7 @@ class nixl_agent:
         else:
             return "ERR"
 
-    def check_xfer_state(self, handle):
+    def check_xfer_state(self, handle: nixl_xfer_handle) -> str:
         status = self.agent.getXferStatus(handle)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
@@ -330,56 +282,61 @@ class nixl_agent:
         else:
             return "ERR"
 
-    def query_xfer_backend(self, handle):
+    def query_xfer_backend(self, handle: nixl_xfer_handle) -> str:
         b_handle = self.agent.queryXferBackend(handle)
         # this works because there should not be multiple matching handles in the Dict
         return next(
-            backendS for backendS, backendH in self.backends if backendH == b_handle
+            backendS
+            for backendS, backendH in self.backends.items()
+            if backendH == b_handle
         )
 
-    def release_xfer_handle(self, handle):
+    def release_xfer_handle(self, handle: nixl_xfer_handle):
         # frees the handle too
         self.agent.releaseXferReq(handle)
 
-    def release_dlist_handle(self, handle):
+    def release_dlist_handle(self, handle: nixl_xfer_handle):
         # frees the handle too
         self.agent.releasedDlistH(handle)
 
     # Returns new notifs, without touching self.notifs
-    def get_new_notifs(self):
+    def get_new_notifs(self) -> dict[str, list[bytes]]:
         return self.agent.getNotifs({})
 
     # Adds new notifs to self.notifs and returns it
-    def update_notifs(self):
+    def update_notifs(self) -> dict[str, list[bytes]]:
         self.notifs = self.agent.getNotifs(self.notifs)
         return self.notifs
 
     # Only removes the specific notification from self.notifs
-    def check_remote_xfer_done(self, remote_agent_name, lookup_msg):
+    def check_remote_xfer_done(self, remote_agent_name: str, lookup_msg: bytes) -> bool:
         self.notifs = self.agent.getNotifs(self.notifs)  # Adds new notifs
+        found = False
         message = None
+
         if remote_agent_name in self.notifs:
             for msg in self.notifs[remote_agent_name]:
                 if lookup_msg in msg:
-                    message = msg
+                    message = lookup_msg
+                    found = True
                     break
         if message:
             self.notifs[remote_agent_name].remove(message)
-        return message
+        return found
 
     # Extra notification APIs
-    def send_notif(self, remote_agent_name, notif_msg):
+    def send_notif(self, remote_agent_name: str, notif_msg: str):
         # To be updated when automatic backend selection is supported
         self.agent.genNotif(remote_agent_name, notif_msg, self.backends["UCX"])
 
-    def get_agent_metadata(self):
+    def get_agent_metadata(self) -> bytes:
         return self.agent.getLocalMD()
 
-    def add_remote_agent(self, metadata):
+    def add_remote_agent(self, metadata: bytes) -> str:
         agent_name = self.agent.loadRemoteMD(metadata)
         return agent_name
 
-    def remove_remote_agent(self, agent):
+    def remove_remote_agent(self, agent: str):
         self.agent.invalidateRemoteMD(agent)
 
     # 4 methods to create and serialize/deserialize descriptors, provided through Agent
@@ -388,8 +345,11 @@ class nixl_agent:
     # of tensors, or d) passes along if an xfer_dlist is given. The other 3
     # optional parameters are dlist options.
     def get_xfer_descs(
-        self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
-    ):
+        self,
+        descs,
+        mem_type: Optional[str] = None,
+        is_sorted: bool = False,
+    ) -> nixlBind.nixlXferDList:
         # can add check for DLPack input
 
         if isinstance(descs, nixlBind.nixlXferDList):
@@ -397,7 +357,7 @@ class nixl_agent:
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
                 new_descs = nixlBind.nixlXferDList(
-                    self.nixl_mems[mem_type], descs, is_unified_addr, is_sorted
+                    self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
                 print("Please specify a mem type if not using Tensors")
@@ -415,7 +375,6 @@ class nixl_agent:
             new_descs = nixlBind.nixlRegDList(
                 self.nixl_mems[mem_type],
                 [(base_addr, region_len, gpu_id)],
-                is_unified_addr,
                 is_sorted,
             )
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
@@ -433,7 +392,7 @@ class nixl_agent:
                 dlist[i] = (base_addr, region_len, gpu_id)
             mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
             new_descs = nixlBind.nixlXferDList(
-                self.nixl_mems[mem_type], dlist, is_unified_addr, is_sorted
+                self.nixl_mems[mem_type], dlist, is_sorted
             )
         elif isinstance(descs, nixlBind.nixlRegDList):
             print("RegList type detected for transfer, please use XferList")
@@ -447,8 +406,11 @@ class nixl_agent:
     # of tensors, or d) passes along if an xfer_dlist is given. The other 3
     # optional parameters are dlist options.
     def get_reg_descs(
-        self, descs, mem_type=None, is_unified_addr=True, is_sorted=False
-    ):
+        self,
+        descs,
+        mem_type: Optional[str] = None,
+        is_sorted: bool = False,
+    ) -> nixlBind.nixlRegDList:
         # can add check for DLPack input
 
         if isinstance(descs, nixlBind.nixlRegDList):
@@ -456,7 +418,7 @@ class nixl_agent:
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 4:
                 new_descs = nixlBind.nixlRegDList(
-                    self.nixl_mems[mem_type], descs, is_unified_addr, is_sorted
+                    self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
                 print("Please specify a mem type if not using Tensors")
@@ -474,7 +436,6 @@ class nixl_agent:
             new_descs = nixlBind.nixlRegDList(
                 self.nixl_mems[mem_type],
                 [(base_addr, region_len, gpu_id, "")],
-                is_unified_addr,
                 is_sorted,
             )
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
@@ -492,7 +453,7 @@ class nixl_agent:
                 dlist[i] = (base_addr, region_len, gpu_id, "")
             mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
             new_descs = nixlBind.nixlRegDList(
-                self.nixl_mems[mem_type], dlist, is_unified_addr, is_sorted
+                self.nixl_mems[mem_type], dlist, is_sorted
             )
         elif isinstance(descs, nixlBind.nixlXferDList):
             print("XferList type detected for registration, please use RegList")
@@ -502,8 +463,9 @@ class nixl_agent:
 
         return new_descs
 
-    def get_serialized_descs(self, descs):
+    # nixl Descriptor Lists natively support pickling
+    def get_serialized_descs(self, descs) -> bytes:
         return pickle.dumps(descs)
 
-    def deserialize_descs(self, serialized_descs):
+    def deserialize_descs(self, serialized_descs: bytes):
         return pickle.loads(serialized_descs)

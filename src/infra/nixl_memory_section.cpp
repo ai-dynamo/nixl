@@ -57,7 +57,6 @@ nixl_reg_dlist_t nixlLocalSection::getStringDesc (
     nixlBlobDesc element;
     nixlBasicDesc *p = &element;
     nixl_reg_dlist_t output_desclist(d_list.getType(),
-                                     d_list.isUnifiedAddr(),
                                      d_list.isSorted());
 
     // The string information of each registered block are updated by
@@ -87,13 +86,9 @@ nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
     nixl_mem_t     nixl_mem     = mem_elms.getType();
     section_key_t  sec_key      = std::make_pair(nixl_mem, backend);
 
-    if ((nixl_mem == FILE_SEG) && mem_elms.isUnifiedAddr())
-        return NIXL_ERR_INVALID_PARAM;
-
     auto it = sectionMap.find(sec_key);
     if (it==sectionMap.end()) { // New desc list
-        sectionMap[sec_key] = new nixl_meta_dlist_t(
-                                  nixl_mem, mem_elms.isUnifiedAddr(), true);
+        sectionMap[sec_key] = new nixl_meta_dlist_t(nixl_mem, true);
         memToBackend[nixl_mem].insert(backend);
     }
     nixl_meta_dlist_t *target = sectionMap[sec_key];
@@ -231,8 +226,7 @@ nixl_status_t nixlRemoteSection::addDescList (
     nixl_mem_t nixl_mem   = mem_elms.getType();
     section_key_t sec_key = std::make_pair(nixl_mem, backend);
     if (sectionMap.count(sec_key) == 0)
-        sectionMap[sec_key] = new nixl_meta_dlist_t(
-                                  nixl_mem, mem_elms.isUnifiedAddr(), true);
+        sectionMap[sec_key] = new nixl_meta_dlist_t(nixl_mem, true);
     memToBackend[nixl_mem].insert(backend); // Fine to overwrite, it's a set
     nixl_meta_dlist_t *target = sectionMap[sec_key];
 
@@ -292,8 +286,7 @@ nixl_status_t nixlRemoteSection::loadLocalData (
     section_key_t sec_key = std::make_pair(nixl_mem, backend);
 
     if (sectionMap.count(sec_key) == 0)
-        sectionMap[sec_key] = new nixl_meta_dlist_t(
-                                  nixl_mem, mem_elms.isUnifiedAddr(), true);
+        sectionMap[sec_key] = new nixl_meta_dlist_t(nixl_mem, true);
     memToBackend[nixl_mem].insert(backend); // Fine to overwrite, it's a set
     nixl_meta_dlist_t *target = sectionMap[sec_key];
 

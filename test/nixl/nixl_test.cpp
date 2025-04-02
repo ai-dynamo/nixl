@@ -161,7 +161,7 @@ int main(int argc, char *argv[]) {
         dram_for_ucx.print();
 
         /** Serialize for MD transfer */
-        assert(dram_for_ucx.serialize(serdes) == NIXL_SUCCESS);
+        assert(dram_for_ucx.trim().serialize(serdes) == NIXL_SUCCESS);
 
         /** Sending both metadata strings together */
         str_desc                    = serdes->exportStr();

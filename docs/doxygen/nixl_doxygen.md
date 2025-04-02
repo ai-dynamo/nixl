@@ -26,7 +26,8 @@ NIXL is designed to support inference frameworks by addressing their challenges 
 
 The following figure illustrates NIXL's relationship to inference server stacks. NIXL functions as a standalone library, providing the necessary abstraction for various network and storage backends to support the data plane operations of distributed inference platforms, such as NVIDIA Dynamo. The currently supported backends in NIXL are [UCX](https://github.com/openucx/ucx) and [NVIDIA Magnum IO GPUDirect Storage](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html). Support for other file systems (including DFS), block and object storage are in development. NIXL offers generic interfaces capable of supporting data transfers in the form of tensors, bytes, or objects.
 
-![Figure of NIXL high level architecture](figures/nixl.svg)
+\image html doxygen/nixl.png "Figure of NIXL high level architecture" width=500px
+\image latex doxygen/nixl.png "Figure of NIXL high level architecture" width=500px
 
 NIXL operates under the assumption that it is managed by a conductor process responsible for orchestrating the inference process. This includes tasks such as memory allocations, handling user requests, and providing the means to exchange the necessary serialized metadata through a side-channel or a central metadata service such as "etcd" or Redis.
 
@@ -68,7 +69,8 @@ Adding a remote agent metadata does not cause a connection to be initiated, as t
 # Example procedure
 The following image shows a basic example of how to use NIXL between 2 nodes. The API usage is further reviewed in three parts: initialization, transfer, and dynamicity.
 
-![Example of NIXL with two nodes](figures/nixl_two_nodes.svg)
+\image html doxygen/nixl_two_nodes.png "Example of NIXL with two nodes" width=500px
+\image latex doxygen/nixl_two_nodes.png "Example of NIXL with two nodes" width=500px
 
 ## Initialization
 For each node in the system, the runtime creates an agent, and if necessary gives the list of devices to it (not shown in the above example). Then for each desired transfer backend that is supported for the system, it calls the create_transfer_backend API. Next, the NIXL segments are created by each relevant backend. Optionally, user can specify a list of backends or no backend, and NIXL agent will register the segment with those backends, or all backends that support that memory/storage type respectively. For instance, in the above example, we register all GPU HBM memory with UCX.
