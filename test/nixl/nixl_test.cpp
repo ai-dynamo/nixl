@@ -26,7 +26,8 @@
 #define NUM_TRANSFERS 1
 #define SIZE 1024
 
-
+static const char *delimiter = ";descriptor=";
+static const size_t delimiter_stride = (strlen(delimiter) - 1);
 /**
  * This test does p2p from using PUT.
  * intitator -> target so the metadata and
@@ -34,12 +35,13 @@
  * target to initiator
  */
 
-std::vector<std::string> split(const std::string& str, char delimiter) {
+std::vector<std::string> split(const std::string& str, const char *delimiter) {
     std::vector<std::string> tokens;
     std::string token;
     size_t start = 0, end = 0;
 
     while ((end = str.find(delimiter, start)) != std::string::npos) {
+        end += delimiter_stride;
         token = str.substr(start, end - start);
         tokens.push_back(token);
         start = end + 1;
@@ -165,7 +167,7 @@ int main(int argc, char *argv[]) {
 
         /** Sending both metadata strings together */
         str_desc                    = serdes->exportStr();
-        std::string sstr            = tgt_metadata + ";" + str_desc;
+        std::string sstr            = tgt_metadata + delimiter + str_desc;
 
         std::cout << " Serialize Metadata to string and Send to Initiator\n";
         std::cout << " \t -- To be handled by runtime - currently sent via a TCP Stream\n";
@@ -196,7 +198,7 @@ int main(int argc, char *argv[]) {
         std::cout << " \t -- To be handled by runtime - currently received via a TCP Stream\n";
         std::string rrstr = recvFromTarget(initiator_port);
 
-        std::vector<std::string> tokens = split(rrstr, ';');
+        std::vector<std::string> tokens = split(rrstr, delimiter);
         tgt_md_init = tokens[0];
         remote_desc = tokens[1];
 
