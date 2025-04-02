@@ -106,6 +106,7 @@ public:
 
     nixl_mem_list_t getSupportedMems() const {
         nixl_mem_list_t mems;
+        mems.push_back(DRAM_SEG);
         mems.push_back(VRAM_SEG);
         mems.push_back(FILE_SEG);
         return mems;
