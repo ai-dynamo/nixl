@@ -306,6 +306,13 @@ int main(int argc, char *argv[])
         use_vram = true;
     }
 
+    // Check if both DRAM and VRAM are specified
+    if (use_dram && use_vram) {
+        std::cerr << "Error: Cannot specify both DRAM (-d) and VRAM (-v) options\n";
+        print_usage(argv[0]);
+        return 1;
+    }
+
     // Allocate arrays based on num_transfers
     if (use_vram) {
         vram_addr = new void*[num_transfers];
