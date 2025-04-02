@@ -515,11 +515,14 @@ nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle)
 nixlGdsEngine::~nixlGdsEngine() {
     // Clean up the batch pool
     for (auto* batch : batch_pool) {
-        batch->destroyBatch();
-        delete batch;
+        delete batch;  // This will automatically call the nixlGdsIOBatch destructor
     }
     batch_pool.clear();
 
+    if (gds_utils) {
+        delete gds_utils;
+        gds_utils = nullptr;
+    }
+
     cuFileDriverClose();
-    delete gds_utils;
 }
