@@ -24,8 +24,18 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <list>
+#include <vector>
 #include "gds_utils.h"
 #include "backend/backend_engine.h"
+
+// Struct for transfer request
+struct TransferRequest {
+    void* addr;
+    size_t size;
+    size_t file_offset;
+    CUfileHandle_t fh;
+    CUfileOpcode_t op;
+};
 
 class nixlGdsMetadata : public nixlBackendMD {
 public:
@@ -66,6 +76,7 @@ public:
 class nixlGdsBackendReqH : public nixlBackendReqH {
 public:
     std::list<nixlGdsIOBatch *> batch_io_list;
+    std::vector<TransferRequest> request_list;  // Added to store prepared requests
 
     nixlGdsBackendReqH() {}
     ~nixlGdsBackendReqH() {
@@ -79,7 +90,9 @@ private:
     gdsUtil *gds_utils;
     std::unordered_map<int, gdsFileHandle> gds_file_map;
     std::list<nixlGdsIOBatch*> batch_pool;
-    unsigned int pool_size;  // Configurable pool size
+    unsigned int batch_pool_size;  // Renamed from pool_size
+    unsigned int batch_limit;      // Added for configurable batch limit
+    unsigned int max_request_size; // Added for configurable request size
 
     nixlGdsIOBatch* getBatchFromPool(unsigned int size);
     void returnBatchToPool(nixlGdsIOBatch* batch);
