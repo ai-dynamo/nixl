@@ -23,6 +23,9 @@
 #include <thread>
 #include <mutex>
 
+#include <cuda.h>
+#include <cuda_runtime.h>
+
 #include <doca_ctx.h>
 #include <doca_dev.h>
 #include <doca_error.h>
@@ -137,6 +140,8 @@ class nixlDocaEngine : public nixlBackendEngine {
             private:
                 int _completed;
             public:
+                cudaStream_t stream;
+                cudaEvent_t event;
                 std::string *amBuffer;
 
                 nixlDocaBckndReq() : nixlLinkElem(), nixlBackendReqH() {
@@ -154,22 +159,7 @@ class nixlDocaEngine : public nixlBackendEngine {
                 bool is_complete() { return _completed; }
                 void completed() { _completed = 1; }
         };
-#if 0
-        void vramInitCtx();
-        void vramFiniCtx();
-        int vramUpdateCtx(void *address, uint32_t  devId, bool &restart_reqd);
-        int vramApplyCtx();
 
-        // Threading infrastructure
-        //   TODO: move the thread management one outside of NIXL common infra
-        void progressFunc();
-        void progressThreadStart();
-        void progressThreadStop();
-        void progressThreadRestart();
-        bool isProgressThread(){
-            return (std::this_thread::get_id() == pthr.get_id());
-        }
-#endif
         // Request management
         static void _requestInit(void *request);
         static void _requestFini(void *request);
@@ -257,4 +247,21 @@ class nixlDocaEngine : public nixlBackendEngine {
 };
 
 doca_error_t doca_util_map_and_export(struct doca_dev *dev, uint32_t permissions, void *addr, uint32_t size, nixlDocaMem *mem);
+
+#if __cplusplus
+extern "C" {
+#endif
+
+/*
+ * Launch a CUDA kernel doing RDMA Write client
+ *
+ * @stream [in]: CUDA Stream to launch the kernel
+ * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+ */
+doca_error_t doca_kernel_write(cudaStream_t stream);
+
+#if __cplusplus
+}
+#endif
+
 #endif

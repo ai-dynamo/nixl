@@ -418,7 +418,13 @@ nixl_status_t nixlDocaEngine::prepXfer (const nixl_xfer_op_t &operation,
 									   nixlBackendReqH* &handle,
 									   const nixl_opt_b_args_t* opt_args)
 {
-	// No preprations needed
+	nixlDocaBckndReq *treq = new nixlDocaBckndReq;
+	treq->stream = (cudaStream_t)opt_args->customParam;
+	//Check cuda
+	cudaEventCreate(&treq->event);
+
+	handle = treq;
+
 	return NIXL_SUCCESS;
 }
 
@@ -429,16 +435,75 @@ nixl_status_t nixlDocaEngine::postXfer (const nixl_xfer_op_t &operation,
 									   nixlBackendReqH* &handle,
 									   const nixl_opt_b_args_t* opt_args)
 {
+	nixlDocaBckndReq *treq = (nixlDocaBckndReq *) handle;
+	// nixlDocaPrivateMetadata *lmd;
+    // nixlDocaPublicMetadata *rmd;
+    size_t lcnt = local.descCount();
+    size_t rcnt = remote.descCount();
+	cudaError_t ev_status;
+
+    if (lcnt != rcnt) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    for(size_t i = 0; i < lcnt; i++) {
+        void *laddr = (void*) local[i].addr;
+        size_t lsize = local[i].len;
+        void *raddr = (void*) remote[i].addr;
+        size_t rsize = remote[i].len;
+
+        // lmd = (nixlDocaPrivateMetadata*) local[i].metadataP;
+        // rmd = (nixlDocaPublicMetadata*) remote[i].metadataP;
+
+        if (lsize != rsize) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+	
+        switch (operation) {
+        case NIXL_READ:
+			std::cout << "READ KERNEL, local " << laddr << " remote " << raddr << " size " << lsize << "\n";
+			//cuda_stream_rdma_write
+			cudaEventRecord(treq->event, treq->stream);
+            break;
+        case NIXL_WRITE:
+			std::cout << "WRITE KERNEL, local " << laddr << " remote " << raddr << " size " << lsize << "\n";
+			doca_kernel_write(treq->stream);
+            //cuda_stream_rdma_read
+			cudaEventRecord(treq->event, treq->stream);
+            break;
+        default:
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
+        // if (retHelper(ret, head, req)) {
+        //     return ret;
+        // }
+    }
+
 	return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlDocaEngine::checkXfer (nixlBackendReqH* handle)
+nixl_status_t nixlDocaEngine::checkXfer(nixlBackendReqH* handle)
 {
-	return NIXL_SUCCESS;
+	cudaError_t ev_status;
+	nixlDocaBckndReq *treq = (nixlDocaBckndReq *) handle;
+
+	ev_status = cudaEventQuery(treq->event);
+	if (ev_status == cudaSuccess)
+		return NIXL_SUCCESS;
+	
+	if (ev_status == cudaErrorNotReady)
+		return NIXL_IN_PROG;
+	
+	return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t nixlDocaEngine::releaseReqH(nixlBackendReqH* handle)
 {
+	nixlDocaBckndReq *treq = (nixlDocaBckndReq *) handle;
+
+	cudaEventDestroy(treq->event);
+
 	return NIXL_SUCCESS;
 }
 

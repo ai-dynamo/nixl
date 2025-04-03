@@ -21,6 +21,7 @@
 #include <nixl_params.h>
 #include <nixl.h>
 #include <cassert>
+#include <cuda.h>
 #include <cuda_runtime.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -49,17 +50,25 @@ int main(int argc, char *argv[])
     // int                     status = 0;
     // int                     i;
     // int                     fd[NUM_TRANSFERS];
-    void                    *addr[NUM_TRANSFERS];
+    void                    *addr_local[NUM_TRANSFERS];
+    void                    *addr_remote[NUM_TRANSFERS];
     nixlAgentConfig         cfg(true);
     nixl_b_params_t         params;
-    nixlBlobDesc            buf[NUM_TRANSFERS];
+    nixlBlobDesc            buf_local[NUM_TRANSFERS];
+    nixlBlobDesc            buf_remote[NUM_TRANSFERS];
     // nixlBlobDesc            ftrans[NUM_TRANSFERS];
     nixlBackendH            *doca;
     nixlBlobDesc desc;
-    // nixlXferReqH            *treq;
+    nixlXferReqH            *treq;
     std::string             name = "DOCA";
     nixl_opt_args_t extra_params;
-    nixl_reg_dlist_t dram_for_doca(DRAM_SEG);
+    nixl_reg_dlist_t dram_for_doca_local(DRAM_SEG);
+    nixl_reg_dlist_t dram_for_doca_remote(DRAM_SEG);
+    cudaStream_t stream;
+    nixl_status_t status;
+    std::string target_name;
+    std::string target_metadata;
+    std::string tgt_metadata_init;
 
     std::cout << "Starting Agent for " << "DOCA Test Agent" << "\n";
 
@@ -84,63 +93,71 @@ int main(int argc, char *argv[])
     extra_params.backends.push_back(doca);
 
     for (int i = 0; i < NUM_TRANSFERS; i++) {
-        checkCudaError(cudaMalloc(&addr[i], SIZE), "Failed to allocate CUDA buffer 0");
-        checkCudaError(cudaMemset(addr[i], 0, SIZE), "Failed to memset CUDA buffer 0");
-        buf[i].addr  = (uintptr_t)(addr[i]);
-        buf[i].len   = SIZE;
-        buf[i].devId = 0;
-        dram_for_doca.addDesc(buf[i]);
+        checkCudaError(cudaMalloc(&addr_local[i], SIZE), "Failed to allocate CUDA buffer 0");
+        checkCudaError(cudaMemset(addr_local[i], 0, SIZE), "Failed to memset CUDA buffer 0");
+        buf_local[i].addr  = (uintptr_t)(addr_local[i]);
+        buf_local[i].len   = SIZE;
+        buf_local[i].devId = 0;
+        dram_for_doca_local.addDesc(buf_local[i]);
+        std::cout << "GPU alloc buffer " << i << "\n";
+    }
+    std::cout << "DOCA registerMem local\n";
+    agent.registerMem(dram_for_doca_local, &extra_params);
+
+    /* As this is a unit test single peer, fake the remote memory with different local memory */
+    for (int i = 0; i < NUM_TRANSFERS; i++) {
+        checkCudaError(cudaMalloc(&addr_remote[i], SIZE), "Failed to allocate CUDA buffer 0");
+        checkCudaError(cudaMemset(addr_remote[i], 0, SIZE), "Failed to memset CUDA buffer 0");
+        buf_remote[i].addr  = (uintptr_t)(addr_remote[i]);
+        buf_remote[i].len   = SIZE;
+        buf_remote[i].devId = 0;
+        dram_for_doca_remote.addDesc(buf_remote[i]);
         std::cout << "GPU alloc buffer " << i << "\n";
     }
 
-    std::cout << "DOCA registerMem " << "\n";
-    agent.registerMem(dram_for_doca, &extra_params);
+    std::cout << "DOCA registerMem remote\n";
+    agent.registerMem(dram_for_doca_remote, &extra_params);
+    agent.getLocalMD(target_metadata);
+    agent.loadRemoteMD(tgt_metadata_init, target_name);
+
+    checkCudaError(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), "Failed to create CUDA stream");
+
+    nixl_xfer_dlist_t dram_initiator_doca = dram_for_doca_local.trim();
+    nixl_xfer_dlist_t dram_target_doca = dram_for_doca_remote.trim();
+    extra_params.customParam = (uintptr_t)stream;
+
+    status = agent.createXferReq(NIXL_WRITE, dram_initiator_doca, dram_target_doca,
+        "DOCAUnitTest", treq, &extra_params);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Error creating transfer request\n";
+        exit(-1);
+    }
+    std::cout << " Post the request with DOCA backend\n ";
+    status = agent.postXferReq(treq);
+    std::cout << " Waiting for completion\n";
+
+    while (status != NIXL_SUCCESS) {
+        status = agent.getXferStatus(treq);
+        assert(status >= 0);
+    }
+    std::cout <<" Completed writing data using DOCA backend\n";
+    agent.releaseXferReq(treq);
+
 
     std::cout << "Memory cleanup.. \n";
-    agent.deregisterMem(dram_for_doca, &extra_params);
+    agent.deregisterMem(dram_for_doca_local, &extra_params);
+    agent.deregisterMem(dram_for_doca_remote, &extra_params);
     
     std::cout << "Closing.. \n";
 
-    // agent.getLocalMD(tgt_metadata);
+    cudaStreamDestroy(stream);
 
-        /** Argument Parsing */
-        // if (argc < 2) {
-        //     std::cout <<"Enter the required arguments\n" << std::endl;
-        //     std::cout <<"Directory path " << std::endl;
-        //     exit(-1);
-        // }
-#if 0
-        for (i = 0; i < NUM_TRANSFERS; i++) {
-        }
+    /** Argument Parsing */
+    // if (argc < 2) {
+    //     std::cout <<"Enter the required arguments\n" << std::endl;
+    //     std::cout <<"Directory path " << std::endl;
+    //     exit(-1);
+    // }
 
-        agent.registerMem(file_for_gds);
-        agent.registerMem(vram_for_gds);
-
-        nixl_xfer_dlist_t vram_for_gds_list = vram_for_gds.trim();
-        nixl_xfer_dlist_t file_for_gds_list = file_for_gds.trim();
-
-        ret = agent.createXferReq(NIXL_WRITE, vram_for_gds_list, file_for_gds_list,
-                                  "GDSTester", treq);
-        if (ret != NIXL_SUCCESS) {
-            std::cerr << "Error creating transfer request\n" << ret;
-            exit(-1);
-        }
-
-        std::cout << " Post the request with GDS backend\n ";
-        status = agent.postXferReq(treq);
-        std::cout << " GDS File IO has been posted\n";
-        std::cout << " Waiting for completion\n";
-
-        while (status != NIXL_SUCCESS) {
-            status = agent.getXferStatus(treq);
-            assert(status >= 0);
-        }
-        std::cout <<" Completed writing data using GDS backend\n";
-        agent.releaseXferReq(treq);
-
-        std::cout <<"Cleanup.. \n";
-        agent.deregisterMem(vram_for_gds);
-        agent.deregisterMem(file_for_gds);
-#endif
         return 0;
 }

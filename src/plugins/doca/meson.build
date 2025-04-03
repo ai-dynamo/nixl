@@ -19,7 +19,11 @@ doca_inc_path = doca_path + '/include'
 doca_dep0 = dependency('doca-common')
 doca_dep1 = dependency('doca-rdma')
 doca_dep2 = dependency('doca-gpunetio')
+gpunetio_device_path = doca_dep2.get_variable(pkgconfig : 'libdir')
+dependency_gpunetio_device = declare_dependency(compile_args : '-Wl,--whole-archive',
+                                                link_args : ['-L' + gpunetio_device_path , '-ldoca_gpunetio_device'],)
 
+gpu_cuda_args = []
 compile_flags += '-D DOCA_ALLOW_EXPERIMENTAL_API'
 #if doca_path != ''
 #  doca_lib_path = doca_path + '/lib/x86_64-linux-gnu'
@@ -31,19 +35,21 @@ compile_flags += '-D DOCA_ALLOW_EXPERIMENTAL_API'
 
 if 'DOCA' in static_plugins
     doca_backend_lib = static_library('DOCA',
-               'doca_backend.cpp', 'doca_backend.h', 'doca_plugin.cpp', #'doca_utils.cpp',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, doca_dep0, doca_dep1, doca_dep2],
-               include_directories: nixl_inc_dirs, doca_inc_path,
+               'doca_backend.cpp', 'doca_backend.h', 'doca_plugin.cpp', 'kernel_write.cu',
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, doca_dep0, doca_dep1, doca_dep2, dependency_gpunetio_device],
+               include_directories: nixl_inc_dirs,
                install: false,
                cpp_args : compile_flags,
+               cuda_args : gpu_cuda_args,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     doca_backend_lib = shared_library('DOCA',
-               'doca_backend.cpp', 'doca_backend.h', 'doca_plugin.cpp', #'doca_utils.cpp',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, doca_dep0, doca_dep1, doca_dep2],
+               'doca_backend.cpp', 'doca_backend.h', 'doca_plugin.cpp', 'kernel_write.cu',
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, doca_dep0, doca_dep1, doca_dep2, dependency_gpunetio_device],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],
+               cuda_args : gpu_cuda_args,
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir)
 
