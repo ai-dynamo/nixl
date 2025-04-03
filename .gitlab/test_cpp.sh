@@ -16,6 +16,8 @@
 
 set -e
 set -x
+TEXT_YELLOW="\033[1;33m"
+TEXT_CLEAR="\033[0m"
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
@@ -26,15 +28,30 @@ if [ -z "$INSTALL_DIR" ]; then
 fi
 
 export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/x86_64-linux-gnu:${INSTALL_DIR}/lib/x86_64-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
+
 export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/x86_64-linux-gnu/plugins
 
-pip3 install --break-system-packages .
-pip3 install --break-system-packages pytest
+echo "==== Running C++ tests ===="
+cd ${INSTALL_DIR}
+./bin/desc_example
+./bin/agent_example
+./bin/ucx_backend_test
+./bin/ucx_mo_backend_test
+./bin/ucx_backend_multi
+./bin/serdes_test
 
-echo "==== Running python tests ===="
-python3 examples/python/nixl_api_example.py
-pytest test/python
+# Run NIXL client-server test
+./bin/nixl_test initiator 127.0.0.1 1234&
+sleep 1
+./bin/nixl_test target 127.0.0.1 1234
+
+echo "${TEXT_YELLOW}==== Disabled tests==="
+echo "./bin/md_streamer disabled"
+echo "./bin/nixl_test disabled"
+echo "./bin/p2p_test disabled"
+echo "./bin/ucx_worker_test disabled"
+echo "${TEXT_CLEAR}"
