@@ -49,11 +49,12 @@ RUN uv venv $VIRTUAL_ENV --python 3.12 && \
 
 COPY . /workspace/nixl
 
+RUN rm -rf /workspace/nixl/build
+
 RUN cd /workspace/nixl && \
     mkdir build && \
     uv run meson setup build/ \
-        --prefix=/usr/local/nixl \
-        --Ducx_path=/opt/hpcx/ucx && \
+        --prefix=/usr/local/nixl && \
     cd build && \
     ninja && \
     ninja install
