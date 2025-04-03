@@ -472,50 +472,33 @@ nixlUcxMoEngine::prepXfer (const nixl_xfer_op_t &operation,
                            nixlBackendReqH* &handle,
                            const nixl_opt_b_args_t *opt_args)
 {
-    return NIXL_SUCCESS;
-}
-
-
-// Data transfer
-nixl_status_t
-nixlUcxMoEngine::postXfer (const nixl_xfer_op_t &op,
-                           const nixl_meta_dlist_t &local,
-                           const nixl_meta_dlist_t &remote,
-                           const std::string &remote_agent,
-                           nixlBackendReqH* &out_handle,
-                           const nixl_opt_b_args_t *opt_args)
-{
-    size_t l_eng_cnt = engines.size();
-    size_t r_eng_cnt;
+    // Number of local and remote descriptors must match
     int des_cnt = local.descCount();
-    nixlUcxMoRequestH *req = new nixlUcxMoRequestH;
-    remote_comm_it_t it = remoteConnMap.find(remote_agent);
-
-    // Input check
     if (des_cnt != remote.descCount()) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    // Check operation type
+    switch(operation) {
+        case NIXL_READ:
+        case NIXL_WRITE:
+            break;
+        default:
+            return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // Check that remote agent is known
+    remote_comm_it_t it = remoteConnMap.find(remote_agent);
     if(it == remoteConnMap.end()) {
         return NIXL_ERR_INVALID_PARAM;
     }
     nixlUcxMoConnection &conn = it->second;
 
-    /* Allocate temp distribution matrix */
-    r_eng_cnt = conn.num_engines;
-    typedef pair<nixl_meta_dlist_t *,nixl_meta_dlist_t *> _dlist_pair_t;
-    typedef vector<vector<_dlist_pair_t>> _dlist_matrix_t;
-    _dlist_matrix_t dlmatrix(l_eng_cnt, vector<_dlist_pair_t>(r_eng_cnt, _dlist_pair_t{NULL, NULL}));
+    /* Allocate request and fill communication distribution matrix */
+    size_t l_eng_cnt = engines.size();
+    size_t r_eng_cnt = conn.num_engines;
 
-
-    // Convert the operation type
-    switch(op) {
-    case NIXL_READ:
-    case NIXL_WRITE:
-        break;
-    default:
-        return NIXL_ERR_INVALID_PARAM;
-    }
+    nixlUcxMoRequestH *req = new nixlUcxMoRequestH(l_eng_cnt, r_eng_cnt);
 
     /* Go over all input */
     for(int i = 0; i < des_cnt; i++) {
@@ -529,44 +512,68 @@ nixlUcxMoEngine::postXfer (const nixl_xfer_op_t &op,
         size_t ridx = rmd->eidx;
 
         assert( (lidx < l_eng_cnt) && (ridx < r_eng_cnt));
+        if (!((lidx < l_eng_cnt) && (ridx < r_eng_cnt))) {
+            // TODO: err output
+            goto error;
+        }
         if (lsize != rsize) {
             // TODO: err output
-            return NIXL_ERR_INVALID_PARAM;
+            goto error;
         }
 
         /* Allocate internal dlists if needed */
-        if (NULL == dlmatrix[lidx][ridx].first) {
-            dlmatrix[lidx][ridx].first = new nixl_meta_dlist_t (
+        if (NULL == req->dlMatrix[lidx][ridx].first) {
+            req->dlMatrix[lidx][ridx].first = new nixl_meta_dlist_t (
                                                 local.getType(),
                                                 local.isSorted());
 
-            dlmatrix[lidx][ridx].second = new nixl_meta_dlist_t (
+            req->dlMatrix[lidx][ridx].second = new nixl_meta_dlist_t (
                                                 remote.getType(),
                                                 remote.isSorted());
         }
 
         nixlMetaDesc ldesc = local[i];
         ldesc.metadataP = lmd->md;
-        dlmatrix[lidx][ridx].first->addDesc(ldesc);
+        req->dlMatrix[lidx][ridx].first->addDesc(ldesc);
 
         nixlMetaDesc rdesc = remote[i];
         rdesc.metadataP = rmd->int_mds[lidx];
-        dlmatrix[lidx][ridx].second->addDesc(rdesc);
+        req->dlMatrix[lidx][ridx].second->addDesc(rdesc);
     }
 
-    for(size_t lidx = 0; lidx < l_eng_cnt; lidx++) {
-        for(size_t ridx = 0; ridx < r_eng_cnt; ridx++) {
+    handle = req;
+
+    return NIXL_SUCCESS;
+error:
+    delete req;
+    return NIXL_ERR_INVALID_PARAM;
+}
+
+
+// Data transfer
+nixl_status_t
+nixlUcxMoEngine::postXfer (const nixl_xfer_op_t &operation,
+                           const nixl_meta_dlist_t &local,
+                           const nixl_meta_dlist_t &remote,
+                           const std::string &remote_agent,
+                           nixlBackendReqH* &handle,
+                           const nixl_opt_b_args_t *opt_args)
+{
+    nixlUcxMoRequestH *req = (nixlUcxMoRequestH *)handle;
+
+    for(size_t lidx = 0; lidx < req->dlMatrix.size(); lidx++) {
+        for(size_t ridx = 0; ridx < req->dlMatrix[lidx].size(); ridx++) {
             string no_notif_msg;
             nixlBackendReqH *int_req;
             nixl_status_t ret;
 
-            if (NULL == dlmatrix[lidx][ridx].first) {
+            if (NULL == req->dlMatrix[lidx][ridx].first) {
                 // Skip unused matrix elements
                 continue;
             }
-            ret = engines[lidx]->postXfer(op,
-                                          *dlmatrix[lidx][ridx].first,
-                                          *dlmatrix[lidx][ridx].second,
+            ret = engines[lidx]->postXfer(operation,
+                                          *req->dlMatrix[lidx][ridx].first,
+                                          *req->dlMatrix[lidx][ridx].second,
                                           getEngName(remote_agent, ridx),
                                           int_req);
             ret = retHelper(ret, engines[lidx], req, int_req);
@@ -588,7 +595,6 @@ nixlUcxMoEngine::postXfer (const nixl_xfer_op_t &op,
     }
 
     if (req->reqs.size()) {
-        out_handle = req;
         return NIXL_IN_PROG;
     } else {
         delete req;
