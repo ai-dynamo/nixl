@@ -447,7 +447,6 @@ int main(int argc, char *argv[])
         std::cout << "PHASE 2: Memory to File Transfer (Write Test)" << std::endl;
         std::cout << "============================================================" << std::endl;
 
-        auto write_start = std::chrono::high_resolution_clock::now();
 
         ret = agent.createXferReq(NIXL_WRITE, src_list, file_for_gds_list,
                                  "GDSTester", treq);
@@ -456,6 +455,7 @@ int main(int argc, char *argv[])
             goto cleanup;
         }
 
+        auto write_start = std::chrono::high_resolution_clock::now();
         status = agent.postXferReq(treq);
         while (status != NIXL_SUCCESS) {
             status = agent.getXferStatus(treq);
@@ -503,7 +503,6 @@ int main(int argc, char *argv[])
         std::cout << "PHASE 4: File to Memory Transfer (Read Test)" << std::endl;
         std::cout << "============================================================" << std::endl;
 
-        auto read_start = std::chrono::high_resolution_clock::now();
 
         ret = agent.createXferReq(NIXL_READ, src_list, file_for_gds_list,
                                  "GDSTester", treq);
@@ -512,13 +511,13 @@ int main(int argc, char *argv[])
             goto cleanup;
         }
 
+        auto read_start = std::chrono::high_resolution_clock::now();
         status = agent.postXferReq(treq);
         while (status != NIXL_SUCCESS) {
             status = agent.getXferStatus(treq);
             assert(status >= 0);
         }
         agent.releaseXferReq(treq);
-
         auto read_end = std::chrono::high_resolution_clock::now();
         auto read_duration = std::chrono::duration_cast<std::chrono::microseconds>(read_end - read_start);
         total_time += read_duration;

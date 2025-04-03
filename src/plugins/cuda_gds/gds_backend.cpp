@@ -169,7 +169,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
                 batch_limit = std::stoi((*custom_params)["batch_limit"]);
                 // Ensure reasonable limits
                 if (batch_limit < 1) batch_limit = 1;
-                if (batch_limit > 1024) batch_limit = 1024;
+                if (batch_limit > 128) batch_limit = 128;
             } catch (...) {
                 // Keep default if conversion fails
             }
@@ -180,8 +180,8 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
             try {
                 max_request_size = std::stoul((*custom_params)["max_request_size"]);
                 // Ensure reasonable limits (minimum 1MB, maximum 1GB)
-                size_t min_size = 1024 * 1024;        // 1MB
-                size_t max_size = 1024 * 1024 * 1024; // 1GB
+                size_t min_size = 1;        // 1
+                size_t max_size = 16 * 1024 * 1024; // 16 MB
                 if (max_request_size < min_size) max_request_size = min_size;
                 if (max_request_size > max_size) max_request_size = max_size;
             } catch (...) {
@@ -194,9 +194,10 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
     if (gds_utils->openGdsDriver() == NIXL_ERR_BACKEND)
         this->initErr = true;
 
-    // Pre-populate the batch pool with full pool size
-    for (unsigned int i = 0; i < batch_pool_size; i++) {
-        batch_pool.push_back(new nixlGdsIOBatch(batch_limit));
+    if (!this->initErr) {
+        for (unsigned int i = 0; i < batch_pool_size; i++) {
+         batch_pool.push_back(new nixlGdsIOBatch(batch_limit));
+        }
     }
 }
 
