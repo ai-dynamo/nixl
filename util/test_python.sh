@@ -34,7 +34,7 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/x86_64-linux-gnu/plugins
 
 pip3 install --break-system-packages .
 pip3 install --break-system-packages pytest
-pip3 install --break-system-packages zmq torch
+pip3 install --break-system-packages zmq
 
 echo "==== Running python tests ===="
 python3 examples/python/nixl_api_example.py
