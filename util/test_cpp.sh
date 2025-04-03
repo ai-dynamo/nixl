@@ -44,6 +44,11 @@ cd ${INSTALL_DIR}
 ./bin/ucx_backend_multi
 ./bin/serdes_test
 
+# Run NIXL client-server test
+./bin/nixl_test initiator 127.0.0.1 1234&
+sleep 1
+./bin/nixl_test target 127.0.0.1 1234
+
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"
 echo "./bin/nixl_test disabled"
