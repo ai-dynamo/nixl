@@ -26,29 +26,12 @@
 #define NUM_TRANSFERS 1
 #define SIZE 1024
 
-
 /**
  * This test does p2p from using PUT.
  * intitator -> target so the metadata and
  * desc list needs to move from
  * target to initiator
  */
-
-std::vector<std::string> split(const std::string& str, char delimiter) {
-    std::vector<std::string> tokens;
-    std::string token;
-    size_t start = 0, end = 0;
-
-    while ((end = str.find(delimiter, start)) != std::string::npos) {
-        token = str.substr(start, end - start);
-        tokens.push_back(token);
-        start = end + 1;
-    }
-    // Add the last token
-    token = str.substr(start);
-    tokens.push_back(token);
-    return tokens;
-}
 
 bool allBytesAre(void* buffer, size_t size, uint8_t value) {
     uint8_t* byte_buffer = static_cast<uint8_t*>(buffer); // Cast void* to uint8_t*
@@ -79,10 +62,9 @@ int main(int argc, char *argv[]) {
     void                    *addr[NUM_TRANSFERS];
     std::string             role;
     const char              *initiator_ip;
-    std::string             str_desc;
-    std::string             remote_desc;
-    std::string             tgt_metadata;
-    std::string             tgt_md_init;
+    nixl_blob_t             remote_desc;
+    nixl_blob_t             tgt_metadata;
+    nixl_blob_t             tgt_md_init;
     int                     status = 0;
     bool                    rc = false;
 
@@ -160,16 +142,13 @@ int main(int argc, char *argv[]) {
         std::cout << " Desc List from Target to Initiator\n";
         dram_for_ucx.print();
 
-        /** Serialize for MD transfer */
-        assert(dram_for_ucx.trim().serialize(serdes) == NIXL_SUCCESS);
-
         /** Sending both metadata strings together */
-        str_desc                    = serdes->exportStr();
-        std::string sstr            = tgt_metadata + ";" + str_desc;
+        assert(serdes->addStr("AgentMD", tgt_metadata) == NIXL_SUCCESS);
+        assert(dram_for_ucx.trim().serialize(serdes) == NIXL_SUCCESS);
 
         std::cout << " Serialize Metadata to string and Send to Initiator\n";
         std::cout << " \t -- To be handled by runtime - currently sent via a TCP Stream\n";
-        sendToInitiator(initiator_ip, initiator_port, sstr);
+        sendToInitiator(initiator_ip, initiator_port, serdes->exportStr());
         std::cout << " End Control Path metadata exchanges \n";
 
         std::cout << " Start Data Path Exchanges \n";
@@ -196,18 +175,16 @@ int main(int argc, char *argv[]) {
         std::cout << " \t -- To be handled by runtime - currently received via a TCP Stream\n";
         std::string rrstr = recvFromTarget(initiator_port);
 
-        std::vector<std::string> tokens = split(rrstr, ';');
-        tgt_md_init = tokens[0];
-        remote_desc = tokens[1];
-
+        remote_serdes->importStr(rrstr);
+        tgt_md_init = remote_serdes->getStr("AgentMD");
+        assert (tgt_md_init != "");
         std::string target_name;
+        agent.loadRemoteMD(tgt_md_init, target_name);
 
         std::cout << " Verify Deserialized Target's Desc List at Initiator\n";
-        remote_serdes->importStr(remote_desc);
         nixl_xfer_dlist_t dram_target_ucx(remote_serdes);
         nixl_xfer_dlist_t dram_initiator_ucx = dram_for_ucx.trim();
         dram_target_ucx.print();
-        agent.loadRemoteMD(tgt_md_init, target_name);
 
         std::cout << " Got metadata from " << target_name << " \n";
         std::cout << " End Control Path metadata exchanges \n";
