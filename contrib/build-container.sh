@@ -29,10 +29,10 @@ fi
 VERSION=v$latest_tag.dev.$commit_id
 
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
-BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04
-WHL_PLATFORM=manylinux_2_34_x86_64
+BASE_IMAGE_TAG=25.03-cuda12.8-devel-ubuntu24.04
+WHL_PLATFORM=manylinux_2_39_x86_64
 WHL_PYTHON_VERSIONS="3.12"
-UBUNTUOS="22.04"
+UBUNTUOS="24.04"
 
 get_options() {
     while :; do
@@ -101,9 +101,9 @@ get_options() {
         shift
     done
 
-    if [[ $UBUNTUOS == "24.04" ]]; then
-        BASE_IMAGE_TAG=25.01-cuda12.8-devel-ubuntu24.04
-        WHL_PLATFORM=manylinux_2_39_x86_64
+    if [[ $UBUNTUOS == "22.04" ]]; then
+        BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04
+        WHL_PLATFORM=manylinux_2_34_x86_64
     fi
 
     if [ -z "$TAG" ]; then

@@ -14,12 +14,11 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="24.10-cuda12.6-devel-ubuntu22.04"
+ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
-ARG MOFED_VERSION=24.10-1.1.4.0
-ARG UBUNTUOS=22.04
+ARG UBUNTUOS=24.04
 ARG DEFAULT_PYTHON_VERSION="3.12"
 
 ENV TZ=America
@@ -30,93 +29,14 @@ ARG NSYS_PKG=NsightSystems-linux-cli-public-2025.1.1.131-3554042.deb
 
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
-    autotools-dev \
-    automake \
-    libtool \
-    libz-dev \
-    libiberty-dev \
-    flex \
-    cmake \
-    libgoogle-glog-dev \
-    libgtest-dev \
-    libjsoncpp-dev \
-    libboost-all-dev \
-    libgrpc-dev \
-    libgrpc++-dev \
-    libprotobuf-dev \
-    protobuf-compiler-grpc \
-    etcd-server \
-    net-tools \
-    pciutils \
-    libpci-dev \
-    tmux \
-    screen \
-    libibmad-dev \
-    googletest \
-    linux-tools-common \
-    linux-tools-generic \
-    ethtool \
-    iproute2 \
-    dkms \
-    linux-headers-generic \
     ninja-build \
     uuid-dev \
     gdb \
     python3-pip \
-    pybind11-dev
+    pybind11-dev \
+    cmake
 
 RUN wget ${NSYS_URL}${NSYS_PKG} && dpkg -i $NSYS_PKG && rm $NSYS_PKG
-
-RUN cd /usr/local/src && \
-    curl -fSsL "https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VERSION}/MLNX_OFED_LINUX-${MOFED_VERSION}-ubuntu${UBUNTUOS}-x86_64.tgz" -o mofed.tgz && \
-    tar -xf /usr/local/src/mofed.tgz && \
-    cd MLNX_OFED_LINUX-* && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ./DEBS/libibverbs* ./DEBS/ibverbs-providers* ./DEBS/librdmacm* ./DEBS/libibumad* && \
-    rm -rf /var/lib/apt/lists/* /usr/local/src/*
-
-ENV LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64 \
-    LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs
-
-ENV LIBRARY_PATH=$LIBRARY_PATH:/usr/local/lib \
-    LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
-
-RUN git clone https://github.com/NVIDIA/gdrcopy.git
-RUN PREFIX=/usr/local DESTLIB=/usr/local/lib make -C gdrcopy lib_install
-RUN cp gdrcopy/src/libgdrapi.so.2.* /usr/lib/x86_64-linux-gnu/
-RUN ldconfig
-
-ARG UCX_VERSION=v1.18.0
-
-RUN cd /usr/local/src && \
-    curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz && \
-    cd openucx-ucx* && \
-    ./autogen.sh && ./configure     \
-        --enable-shared             \
-        --disable-static            \
-        --disable-doxygen-doc       \
-        --enable-optimizations      \
-        --enable-cma                \
-        --enable-devel-headers      \
-        --with-cuda=/usr/local/cuda \
-        --with-verbs                \
-        --with-dm                   \
-        --with-gdrcopy=/usr/local   \
-        --enable-mt &&              \
-    make -j &&                      \
-    make -j install-strip &&        \
-    ldconfig
-
-ENV LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH
-ENV CPATH=/usr/include:$CPATH
-ENV PATH=/usr/bin:$PATH
-ENV PKG_CONFIG_PATH=/usr/lib/pkgconfig:$PKG_CONFIG_PATH
-SHELL ["/bin/bash", "-c"]
-
-ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
-ENV LD_LIBRARY_PATH=/usr/local/nixl/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH
-ENV PYTHONPATH=/usr/local/nixl/lib/python3/dist-packages/:$PYTHONPATH
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -131,7 +51,9 @@ COPY . /workspace/nixl
 
 RUN cd /workspace/nixl && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl && \
+    uv run meson setup build/ \
+        --prefix=/usr/local/nixl \
+        --Ducx_path=/opt/hpcx/ucx && \
     cd build && \
     ninja && \
     ninja install
