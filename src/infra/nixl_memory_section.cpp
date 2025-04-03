@@ -124,7 +124,8 @@ nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
         }
 
         *lp = mem_elms[i]; // Copy the basic desc part
-        if ((nixl_mem == FILE_SEG) && (lp->len==0))
+        if (((nixl_mem == BLK_SEG) || (nixl_mem == OBJ_SEG) ||
+             (nixl_mem == FILE_SEG)) && (lp->len==0))
             lp->len = SIZE_MAX; // File has no range limit
 
         target->addDesc(local_meta);
