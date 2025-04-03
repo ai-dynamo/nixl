@@ -354,6 +354,8 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
     // Posting a request, to be updated to return an async handler,
     // or an ID that later can be used to check the status as a new method
     // Also maybe we would remove the WRITE and let the backend class decide the op
+    status = ucx1->prepXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
+    assert(status == NIXL_SUCCESS || status == NIXL_IN_PROG);
     status = ucx1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
     assert(status == NIXL_SUCCESS || status == NIXL_IN_PROG);
 
