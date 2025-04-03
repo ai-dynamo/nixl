@@ -18,7 +18,6 @@ ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
-ARG UBUNTUOS=24.04
 ARG DEFAULT_PYTHON_VERSION="3.12"
 
 RUN apt-get update -y && \
@@ -36,7 +35,7 @@ WORKDIR /workspace/nixl
 ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN uv venv $VIRTUAL_ENV --python 3.12 && \
+RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
     uv pip install --upgrade meson pybind11 patchelf
 
@@ -63,3 +62,5 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     done
 RUN uv pip install auditwheel && \
     uv run auditwheel repair /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
+
+RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl

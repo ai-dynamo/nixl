@@ -32,7 +32,7 @@ BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
 BASE_IMAGE_TAG=25.03-cuda12.8-devel-ubuntu24.04
 WHL_PLATFORM=manylinux_2_39_x86_64
 WHL_PYTHON_VERSIONS="3.12"
-UBUNTUOS="24.04"
+OS="ubuntu24"
 
 get_options() {
     while :; do
@@ -59,7 +59,7 @@ get_options() {
             ;;
         --os)
             if [ "$2" ]; then
-                UBUNTUOS=$2
+                OS=$2
                 shift
             else
                 missing_requirement $1
@@ -101,7 +101,7 @@ get_options() {
         shift
     done
 
-    if [[ $UBUNTUOS == "22.04" ]]; then
+    if [[ $OS == "ubuntu22" ]]; then
         BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04
         WHL_PLATFORM=manylinux_2_34_x86_64
     fi
@@ -113,9 +113,12 @@ get_options() {
 
 show_build_options() {
     echo ""
-    echo "Building NIXL Image: '${TAG}' for Ubuntu${UBUNTUOS}"
+    echo "Building NIXL Image"
+    echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
-    echo "Build Args: ${BUILD_ARGS}"
+    echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+    echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
+    echo "Wheel Platform: ${WHL_PLATFORM}"
 }
 
 show_help() {
@@ -123,7 +126,7 @@ show_help() {
     echo "  [--base base image]"
     echo "  [--base-image-tag base image tag]"
     echo "  [--no-cache disable docker build cache]"
-    echo "  [--os [24.04|22.04] to select Ubuntu version]"
+    echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
     exit 0
@@ -146,7 +149,6 @@ if [ -d "$NIXL_DIR/build" ]; then
 fi
 
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
-BUILD_ARGS+=" --build-arg UBUNTUOS=$UBUNTUOS"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 
