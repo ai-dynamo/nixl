@@ -454,15 +454,19 @@ PYBIND11_MODULE(_bindings, m) {
                 })
         .def("genNotif", [](nixlAgent &agent, const std::string &remote_agent,
                                               const std::string &msg,
-                                              uintptr_t backend) {
+                                              std::vector<uintptr_t> backends) {
                     nixl_opt_args_t extra_params;
                     nixl_status_t ret;
-                    extra_params.backends.push_back((nixlBackendH*) backend);
+
+                    for(uintptr_t backend: backends)
+                        extra_params.backends.push_back((nixlBackendH*) backend);
+
+
                     ret = agent.genNotif(remote_agent, msg, &extra_params);
 
                     throw_nixl_exception(ret);
                     return ret;
-                })
+                }, py::arg("remote_agent"), py::arg("msg"), py::arg("backends") = std::vector<uintptr_t>({}))
         .def("getLocalMD", [](nixlAgent &agent) -> py::bytes {
                     //python can only interpret text strings
                     std::string ret_str("");

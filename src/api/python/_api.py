@@ -325,9 +325,14 @@ class nixl_agent:
         return found
 
     # Extra notification APIs
-    def send_notif(self, remote_agent_name: str, notif_msg: str):
-        # To be updated when automatic backend selection is supported
-        self.agent.genNotif(remote_agent_name, notif_msg, self.backends["UCX"])
+    def send_notif(
+        self, remote_agent_name: str, notif_msg: str, backends: list[str] = []
+    ):
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+
+        self.agent.genNotif(remote_agent_name, notif_msg, handle_list)
 
     def get_agent_metadata(self) -> bytes:
         return self.agent.getLocalMD()
