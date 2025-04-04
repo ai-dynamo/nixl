@@ -80,8 +80,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
-          --enable-mt \
-          --with-mlx5-dv && \
+          --enable-mt && \
         make -j && \
         make -j install-strip && \
         ldconfig \
