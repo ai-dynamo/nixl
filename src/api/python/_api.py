@@ -25,12 +25,32 @@ nixl_backend_handle = int
 nixl_prepped_dlist_handle = int
 nixl_xfer_handle = int
 
+"""
+@brief Configuration class for NIXL agent.
+
+@param enable_prog_thread Whether to enable the progress thread, if available.
+@param backends List of backend names for agent to initialize.
+        Default is UCX, other backends must be initialized with create_backend.
+"""
+
 
 class nixl_agent_config:
     def __init__(self, enable_prog_thread=True, backends=["UCX"]):
         # TODO: add backend init parameters
         self.backends = backends
         self.enable_pthread = enable_prog_thread
+
+
+"""
+@brief Main class for creating a NIXL agent and performing transfers.
+
+This class provides methods for initializing backends, creating descriptor lists,
+registering memory, performing data transfers, and destroying NIXL objects.
+
+@param agent_name Name of the agent.
+@param nixl_conf Optional configuration for the agent, described in nixl_agent_config.
+@param instantiate_all Whether to instantiate all available plugins.
+"""
 
 
 class nixl_agent:
@@ -108,8 +128,21 @@ class nixl_agent:
 
         print("Initialized NIXL agent:", agent_name)
 
+    """
+    @brief Get the list of available plugins from the plugin manager.
+
+    @return List of plugin names.
+    """
+
     def get_plugin_list(self) -> list[str]:
         return self.plugin_list
+
+    """
+    @brief Get the memory types supported by a plugin.
+
+    @param backend Name of the plugin backend.
+    @return List of supported memory types.
+    """
 
     def get_plugin_mem_types(self, backend: str) -> list[str]:
         if backend in self.plugin_mem_types:
@@ -118,12 +151,29 @@ class nixl_agent:
             print("Plugin", backend, "is not available to get its supported mem types.")
             return []
 
+    """
+    @brief Get the parameters of a plugin.
+            This is a map of strings (input option) to strings (default value for that option).
+
+    @param backend Name of the plugin backend to get params for.
+    @return Dictionary of plugin parameters, described above.
+    """
+
     def get_plugin_params(self, backend: str) -> dict[str, str]:
         if backend in self.plugin_b_options:
             return self.plugin_b_options[backend]
         else:
             print("Plugin", backend, "is not available to get its parameters.")
             return {}
+
+    """
+    @brief Get the memory types supported by a backend.
+            Here, a backend means an initialized plugin.
+            After a plugin is initialized, the supported memory types might have changed.
+
+    @param backend Name of the backend.
+    @return List of supported memory types.
+    """
 
     def get_backend_mem_types(self, backend: str) -> list[str]:
         if backend in self.backend_mems:
@@ -134,6 +184,15 @@ class nixl_agent:
             )
             return []
 
+    """
+    @brief Get the parameters of a backend.
+            Here, a backend means an initialized plugin.
+            Available initial parameters might have changed after initialization.
+
+    @param backend Name of the backend.
+    @return Dictionary of backend parameters, described in get_plugin_params.
+    """
+
     def get_backend_params(self, backend: str) -> dict[str, str]:
         if backend in self.backend_options:
             return self.backend_options[backend]
@@ -141,7 +200,14 @@ class nixl_agent:
             print("Backend", backend, "not instantiated to get its parameters.")
             return {}
 
-    # initParams is a Dict of strings (input params) to strings (values)
+    """
+    @brief Initialize a backend with the specified initialization parameters, described above.
+            NIXL API takes backend inputs as strings, but stores opaque handles internally.
+
+    @param backend Name of the backend.
+    @param initParams Dictionary of initialization parameters.
+    """
+
     def create_backend(self, backend: str, initParams: dict[str, str] = {}):
         self.backends[backend] = self.agent.createBackend(backend, initParams)
 
@@ -151,11 +217,16 @@ class nixl_agent:
         self.backend_mems[backend] = mem_types
         self.backend_options[backend] = backend_options
 
-    # For reg_list, it gets a) list of 4 element tuples, b) a tensor, c) a list
-    # of tensors, or d) a reg_dlist from output of get_reg_desc. is given.
-    # The next 3 optional parameters are dlist options, and finally an optional
-    # backend engine can be specified for registration.
-    # The returned descriptor object can be used for call to deregister
+    """
+    @brief Register memory regions, optionally with specified backends.
+
+    @param reg_list List of either memory regions, tensors, or nixlRegDList to register.
+    @param mem_type Optional memory type, if specifying a list of memory regions.
+    @param is_sorted Optional bool for a list of memory regions or tensors for if they are sorted.
+    @param backends Optional list of backend names for registration, otherwise NIXL will decide.
+    @return nixlRegDList for the registered memory, can be used with deregister_memory.
+    """
+
     def register_memory(
         self,
         reg_list,
@@ -165,7 +236,6 @@ class nixl_agent:
     ) -> nixlBind.nixlRegDList:
         reg_descs = self.get_reg_descs(reg_list, mem_type, is_sorted)
 
-        # based on backend type and mem_type, figure what registrations are meaningful
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
@@ -173,24 +243,41 @@ class nixl_agent:
 
         return reg_descs
 
-    # The output from get_reg_descs (which is later passed to register_memory for
-    # registration) or direct output of register_memory is passed here
+    """
+    @brief Deregister memory regions from the specified backends.
+
+    @param dereg_list nixlRegDList of memory to deregister, from register_memory or get_reg_descs.
+    @param backends Optional list of backend names for deregistration, otherwise NIXL will decide.
+    """
+
     def deregister_memory(
         self, dereg_list: nixlBind.nixlRegDList, backends: list[str] = []
     ):
-        # based on backend type and mem_type, figure what deregistrations are needed
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
         self.agent.deregisterMem(dereg_list, handle_list)
 
-    # Optional proactive make connection
+    """
+    @brief Optionally, proactively establish a connection with a remote agent.
+
+    @param remote_agent Name of the remote agent.
+    """
+
     def make_connection(self, remote_agent: str):
         self.agent.makeConnection(remote_agent)
 
-    # agent_name should be "NIXL_INIT_AGENT" for local descriptors on the initiator side. For a
-    # remote agent, it would be that agent's name, or for loopback, local agent's name as target.
-    # xfer_list can be any of the types supported by get_xfer_descs
+    """
+    @brief Prepare a transfer descriptor list for data transfer.
+
+    @param agent_name Name of the target agent, should be "NIXL_INIT_AGENT", for local descriptors.
+    @param xfer_list List of transfer descriptors, can be list of memory region tuples, tensors, or nixlXferDList.
+    @param mem_type Optional memory type for list of memory regions.
+    @param is_sorted Optional bool for whether memory region list or tensor list are sorted.
+    @param backends Optional list of backend names for the transfer, otherwise NIXL will decide.
+    @return Opaque handle to the prepared transfer descriptor list.
+    """
+
     def prep_xfer_dlist(
         self,
         agent_name: str,
@@ -212,7 +299,19 @@ class nixl_agent:
 
         return handle
 
-    # xfer_side parameters are opaque NIXL handles
+    """
+    @brief Prepare a transfer operation using prepped descriptor lists.
+
+    @param operation Type of operation ("WRITE" or "READ").
+    @param local_xfer_side Handle to the local transfer descriptor list, from prep_xfer_dlist.
+    @param local_indices List of indices for selecting local descriptors.
+    @param remote_xfer_side Handle to the remote transfer descriptor list, from prep_xfer_dlist.
+    @param remote_indices List of indices for selecting remote descriptors.
+    @param notif_msg Optional notification message to send after transfer.
+    @param skip_desc_merge Whether to skip descriptor merging optimization.
+    @return Opaque handle for posting/checking transfer.
+    """
+
     def make_prepped_xfer(
         self,
         operation: str,
@@ -240,6 +339,18 @@ class nixl_agent:
             raise nixlBind.nixlInvalidParamError("Invalid op code")
             return nixlBind.nixlInvalidParamError
 
+    """
+    @brief Initialize a transfer operation.
+
+    @param operation Type of operation ("WRITE" or "READ").
+    @param local_descs List of local transfer descriptors, from get_xfer_descs.
+    @param remote_descs List of remote transfer descriptors, from get_xfer_descs.
+    @param remote_agent Name of the remote agent.
+    @param notif_msg Optional notification message.
+    @param backends Optional list of backend names for the transfer, otherwise NIXL will decide.
+    @return Opaque handle for posting/checking transfer.
+    """
+
     def initialize_xfer(
         self,
         operation: str,
@@ -264,6 +375,14 @@ class nixl_agent:
             raise nixlBind.nixlInvalidParamError("Invalid op code")
             return nixlBind.nixlInvalidParamError
 
+    """
+    @brief Initiate a data transfer operation.
+
+    @param handle Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
+    @param notif_msg Optional notification message can be specified or respecified.
+    @return Status of the transfer operation ("DONE", "PROC", or "ERR").
+    """
+
     def transfer(self, handle: nixl_xfer_handle, notif_msg: str = "") -> str:
         status = self.agent.postXferReq(handle, notif_msg)
         if status == nixlBind.NIXL_SUCCESS:
@@ -272,6 +391,13 @@ class nixl_agent:
             return "PROC"
         else:
             return "ERR"
+
+    """
+    @brief Check the state of a transfer operation.
+
+    @param handle Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
+    @return Status of the transfer operation ("DONE", "PROC", or "ERR").
+    """
 
     def check_xfer_state(self, handle: nixl_xfer_handle) -> str:
         status = self.agent.getXferStatus(handle)
@@ -282,6 +408,13 @@ class nixl_agent:
         else:
             return "ERR"
 
+    """
+    @brief Query the backend used for a transfer operation.
+
+    @param handle Handle to the transfer operation.
+    @return Name of the backend used for the transfer.
+    """
+
     def query_xfer_backend(self, handle: nixl_xfer_handle) -> str:
         b_handle = self.agent.queryXferBackend(handle)
         # this works because there should not be multiple matching handles in the Dict
@@ -291,24 +424,54 @@ class nixl_agent:
             if backendH == b_handle
         )
 
+    """
+    @brief Releases a transfer handle, internally frees the memory.
+
+    @param handle Handle to the transfer operation from initialize_xfer or make_xfer.
+    """
+
     def release_xfer_handle(self, handle: nixl_xfer_handle):
-        # frees the handle too
         self.agent.releaseXferReq(handle)
 
+    """
+    @brief Release a descriptor list handle, internally frees the memory.
+
+    @param handle Handle to the descriptor list from make_prepped_dlist.
+    """
+
     def release_dlist_handle(self, handle: nixl_xfer_handle):
-        # frees the handle too
         self.agent.releasedDlistH(handle)
 
-    # Returns new notifs, without touching self.notifs
+    """
+    @brief Get new notifications that have come to the agent.
+
+    @return Dictionary of new notifications.
+            Return Dict is a map of remote agent names to a list of notification messages from that agent.
+    """
+
     def get_new_notifs(self) -> dict[str, list[bytes]]:
         return self.agent.getNotifs({})
 
-    # Adds new notifs to self.notifs and returns it
+    """
+    @brief Update notifications in a map
+            Same as get_new_notifs, but returns all unhandled notifications in agent.
+
+    @return Dictionary of updated notifications.
+    """
+
     def update_notifs(self) -> dict[str, list[bytes]]:
         self.notifs = self.agent.getNotifs(self.notifs)
         return self.notifs
 
-    # Only removes the specific notification from self.notifs
+    """
+    @brief Check if a remote transfer is done with a specific notification.
+           Will only remove the notification that is found.
+
+    @param remote_agent_name Name of the remote agent.
+    @param lookup_msg Message to look up in the notification map.
+    @return True if the notification is found, False otherwise.
+    """
+
     def check_remote_xfer_done(self, remote_agent_name: str, lookup_msg: bytes) -> bool:
         self.notifs = self.agent.getNotifs(self.notifs)  # Adds new notifs
         found = False
@@ -324,7 +487,13 @@ class nixl_agent:
             self.notifs[remote_agent_name].remove(message)
         return found
 
-    # Extra notification APIs
+    """
+    @brief Send a notification to a remote agent.
+
+    @param remote_agent_name Name of the remote agent.
+    @param notif_msg Message to send, it will be received as bytes.
+    """
+
     def send_notif(
         self, remote_agent_name: str, notif_msg: str, backends: list[str] = []
     ):
@@ -334,21 +503,48 @@ class nixl_agent:
 
         self.agent.genNotif(remote_agent_name, notif_msg, handle_list)
 
+    """
+    @brief Get the metadata of the local agent.
+
+    @return Metadata of the local agent, in bytes.
+    """
+
     def get_agent_metadata(self) -> bytes:
         return self.agent.getLocalMD()
+
+    """
+    @brief Add a remote agent using its metadata.
+
+    @param metadata Metadata of the remote agent, received OOB in bytes.
+    @return Name of the added remote agent.
+    """
 
     def add_remote_agent(self, metadata: bytes) -> str:
         agent_name = self.agent.loadRemoteMD(metadata)
         return agent_name
 
+    """
+    @brief Remove a remote agent.
+
+    @param agent Name of the remote agent.
+    """
+
     def remove_remote_agent(self, agent: str):
         self.agent.invalidateRemoteMD(agent)
 
-    # 4 methods to create and serialize/deserialize descriptors, provided through Agent
+    """
+    @brief Get nixlXferDList from different input types:
+            a) list of 3 element tuples
+            b) a tensor
+            c) a list of tensors
+            d) passes along if an xfer_dlist is given.
 
-    # For descs, it gets a) list of 3 element tuples, b) a tensor, c) a list
-    # of tensors, or d) passes along if an xfer_dlist is given. The other 3
-    # optional parameters are dlist options.
+    @param descs List of any of the above types
+    @param mem_type Optional memory type for (a).
+    @param is_sorted Optional bool for if the descriptors are sorted for (a) and (c)
+    @return Transfer descriptor list, nixlXferDList.
+    """
+
     def get_xfer_descs(
         self,
         descs,
@@ -407,9 +603,19 @@ class nixl_agent:
 
         return new_descs
 
-    # For descs, it gets a) list of 4 element tuples, b) a tensor, c) a list
-    # of tensors, or d) passes along if an xfer_dlist is given. The other 3
-    # optional parameters are dlist options.
+    """
+    @brief Get nixlRegDList from different input types:
+            a) list of 4 element tuples
+            b) a tensor
+            c) a list of tensors
+            d) passes along if an xfer_dlist is given.
+
+    @param descs List of any of the above types
+    @param mem_type Optional memory type for (a).
+    @param is_sorted Optional bool for if the descriptors are sorted for (a) and (c)
+    @return Registration descriptor list, nixlRegDList.
+    """
+
     def get_reg_descs(
         self,
         descs,
@@ -468,9 +674,22 @@ class nixl_agent:
 
         return new_descs
 
-    # nixl Descriptor Lists natively support pickling
+    """
+    @brief Serialize NIXL descriptor list with pickle.
+
+    @param descs NIXL list to serialize.
+    @return Serialized descriptor list.
+    """
+
     def get_serialized_descs(self, descs) -> bytes:
         return pickle.dumps(descs)
+
+    """
+    @brief Deserialize NIXL descriptor list.
+
+    @param serialized_descs Serialized NIXL descriptor list.
+    @return Deserialized NIXL descriptor list.
+    """
 
     def deserialize_descs(self, serialized_descs: bytes):
         return pickle.loads(serialized_descs)
