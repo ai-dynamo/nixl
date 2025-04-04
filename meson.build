@@ -51,7 +51,7 @@ if ucx_path != ''
     link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
     include_directories : include_directories(ucx_inc_path))
 else
-  ucx_dep = dependency('ucx')
+  ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'])
 endif
 
 if get_option('disable_gds_backend')
