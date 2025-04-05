@@ -98,6 +98,9 @@ class nixl_agent:
         self.nixl_mems = {
             "DRAM": nixlBind.DRAM_SEG,
             "VRAM": nixlBind.VRAM_SEG,
+            "FILE": nixlBind.FILE_SEG,
+            "BLOCK": nixlBind.BLK_SEG,
+            "OBJ": nixlBind.OBJ_SEG,
             "cpu": nixlBind.DRAM_SEG,
             "cuda": nixlBind.VRAM_SEG,
         }
