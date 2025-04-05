@@ -45,17 +45,16 @@ NIXL was tested with UCX version 1.18.0.
 $ wget https://github.com/openucx/ucx/releases/download/v1.18.0/ucx-1.18.0.tar.gz
 $ tar xzf ucx-1.18.0.tar.gz
 $ cd ucx-1.18.0
-$ ./autogen.sh
-$ ./configure     					   \
-    --enable-shared             	   \
-    --disable-static            	   \
-    --disable-doxygen-doc       	   \
-    --enable-optimizations      	   \
-    --enable-cma                	   \
-    --enable-devel-headers      	   \
-    --with-cuda=<cuda install>  	   \
-    --with-verbs               	 	   \
-    --with-dm                   	   \
+$ ./configure                          \
+    --enable-shared                    \
+    --disable-static                   \
+    --disable-doxygen-doc              \
+    --enable-optimizations             \
+    --enable-cma                       \
+    --enable-devel-headers             \
+    --with-cuda=<cuda install>         \
+    --with-verbs                       \
+    --with-dm                          \
     --with-gdrcopy=<gdrcopy install>   \
     --enable-mt
 $ make -j
