@@ -91,7 +91,6 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
         return 0;
     }
 
-    assert(dev == expected_dev);
     if (dev != expected_dev) {
         /* TODO: proper error codes */
         return -1;
@@ -158,7 +157,6 @@ int nixlUcxEngine::vramUpdateCtx(void *address, uint32_t  devId, bool &restart_r
     }
 
     ret = cudaCtx->cudaUpdateCtxPtr(address, devId, was_updated);
-    assert(!ret);
     if (ret) {
         return ret;
     }
@@ -559,8 +557,9 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
 
     if (nixl_mem == VRAM_SEG) {
         bool need_restart;
-        if (vramUpdateCtx((void*)mem.addr, mem.devId, need_restart)){
-            //TODO Log out
+        if (vramUpdateCtx((void*)mem.addr, mem.devId, need_restart)) {
+            return NIXL_ERR_NOT_SUPPORTED;
+            //TODO Add to logging
         }
         if (need_restart) {
             progressThreadRestart();
