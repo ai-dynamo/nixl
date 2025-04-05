@@ -240,7 +240,8 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
                        const nixl_opt_args_t* extra_params) {
 
     backend_list_t* backend_list;
-    nixl_status_t   ret, ret2;
+    nixl_status_t   ret;
+    unsigned int    count = 0;
 
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->memToBackend[descs.getType()];
@@ -252,51 +253,36 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
             backend_list->push_back(elm->engine);
     }
 
-    // Can be replaced to best effort instead
+    // Best effort, if at least one succeeds NIXL_SUCCESS is returned
+    // Can become more sophisticated to have a soft error case
     for (size_t i=0; i<backend_list->size(); ++i) {
         nixlBackendEngine* backend = (*backend_list)[i];
-        // remote_self use to be passed to loadLocalData
-        nixl_meta_dlist_t remote_self(descs.getType(), false);
-        ret = data->memorySection->addDescList(descs, backend, remote_self);
-        if (ret != NIXL_SUCCESS) {
-            nixl_xfer_dlist_t trimmed = descs.trim();
-            // deregister with the previous backends
-            for (size_t j=0; j<i; ++j) {
-                ret2 = data->memorySection->populate(trimmed, (*backend_list)[j], remote_self);
-                if (ret2 == NIXL_SUCCESS)
-                    data->memorySection->remDescList(remote_self, (*backend_list)[j]);
-            }
-            if (extra_params && extra_params->backends.size() > 0)
-                delete backend_list;
-            return ret;
-        } else {
+        // meta_descs use to be passed to loadLocalData
+        nixl_meta_dlist_t meta_descs(descs.getType(), false);
+        ret = data->memorySection->addDescList(descs, backend, meta_descs);
+        if (ret == NIXL_SUCCESS) {
             if (backend->supportsLocal()) {
                 if (data->remoteSections.count(data->name) == 0)
                     data->remoteSections[data->name] =
                           new nixlRemoteSection(data->name);
 
                 ret = data->remoteSections[data->name]->loadLocalData(
-                                                        remote_self, backend);
-                if (ret != NIXL_SUCCESS) {
-                    nixl_xfer_dlist_t trimmed = descs.trim();
-                    // deregister with the previous backends
-                    for (size_t j=0; j<i; ++j) {
-                        ret2 = data->memorySection->populate(trimmed, (*backend_list)[j], remote_self);
-                        if (ret2 == NIXL_SUCCESS)
-                            data->memorySection->remDescList(remote_self, (*backend_list)[j]);
-                    }
-                    if (extra_params && extra_params->backends.size() > 0)
-                        delete backend_list;
-                    return ret;
-                }
+                                                        meta_descs, backend);
+                if (ret == NIXL_SUCCESS)
+                    count++;
+                else
+                    data->memorySection->remDescList(meta_descs, backend);
             }
-        }
+        } // a bad_ret can be saved in an else
     }
 
     if (extra_params && extra_params->backends.size() > 0)
         delete backend_list;
 
-    return NIXL_SUCCESS;
+    if (count > 0)
+        return NIXL_SUCCESS;
+    else
+        return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
@@ -876,10 +862,7 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
     if (extra_params && extra_params->backends.size() > 0)
         delete backend_list;
 
-    if (bad_ret)
-        return bad_ret;
-    else
-        return NIXL_SUCCESS;
+    return bad_ret;
 }
 
 nixl_status_t
