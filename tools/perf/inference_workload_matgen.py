@@ -307,21 +307,30 @@ def main(
         print(f"Saved metadata to {metadata_path}")
 
     
-
-
 if __name__ == "__main__":
-    # LLaMA-3B config
-    model_config = ModelConfig(hidden_size=2048, num_layers=32, num_heads=32, num_kv_heads=32, dtype_size=2)
+    models = {
+        "llama-405b": ModelConfig(hidden_size=16384, num_layers=126, num_heads=128, num_kv_heads=8, dtype_size=2),
+    }
+
+    model = "llama-405b"
+
+    model_config = models[model]
     num_prefill_nodes = 4
     num_decode_nodes = 8
-    print("World size: ", num_prefill_nodes*8 + num_decode_nodes*8)
+
+    prefill_tp = 4
+    decode_tp = 8
+
+    print("World size: ", num_prefill_nodes*prefill_tp + num_decode_nodes*decode_tp)
+    print("Model config: ", model_config)
+
     main(
         num_user_requests=100,
         batch_size=1,
         num_prefill_gpus=num_prefill_nodes*8,
         num_decode_gpus=num_decode_nodes*8,
-        prefill_worker_config=WorkerConfig(tp=4, pp=1, cp=1),
-        decode_worker_config=WorkerConfig(tp=8, pp=1, cp=1),
+        prefill_worker_config=WorkerConfig(tp=prefill_tp, pp=1, cp=1),
+        decode_worker_config=WorkerConfig(tp=decode_tp, pp=1, cp=1),
         model_config=model_config,
-        results_dir=f"/swgwork/eshukrun/nixl/tools/perf/matrices_folders/llama-3b-8k-to-64k-{num_prefill_nodes}Np_tp4-{num_decode_nodes}Nd_tp8"
+        results_dir=f"/swgwork/eshukrun/nixl/tools/perf/matrices_folders/{model}-prefill_{num_prefill_nodes}Np_tp{prefill_tp}-decode_{num_decode_nodes}Nd_tp{decode_tp}"
     )
