@@ -21,6 +21,8 @@ project('nixl', 'CPP', version: '0.1.0',
     meson_version: '>= 0.64.0'
 )
 
+subdir('subprojects/packages')
+
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
 
