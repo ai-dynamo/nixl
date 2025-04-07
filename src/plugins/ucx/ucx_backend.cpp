@@ -83,6 +83,7 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
 
     was_updated = false;
 
+    /* TODO: proper error codes and log outputs through this method */
     if (expected_dev == -1)
         return -1;
 
@@ -101,14 +102,12 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
 
     if (dev != expected_dev) {
         // User provided address that does not match dev_id
-        /* TODO: proper error codes */
         return -1;
     }
 
     if (pthrCudaCtx) {
         // Context was already set previously, and does not match new context
         if (pthrCudaCtx != ctx) {
-            /* TODO: proper error codes */
             return -1;
         }
         return 0;
