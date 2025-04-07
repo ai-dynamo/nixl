@@ -16,7 +16,6 @@
  */
 #include "ucx_backend.h"
 #include "serdes/serdes.h"
-#include <cassert>
 
 #ifdef HAVE_CUDA
 
@@ -92,16 +91,16 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
     }
 
     if (dev != expected_dev) {
+        // User provided address that does not match dev_id
         /* TODO: proper error codes */
         return -1;
     }
 
     if (pthrCudaCtx) {
-        // Context was already set previously
-        assert(pthrCudaCtx == ctx);
+        // Context was already set previously, and does not match new context
         if (pthrCudaCtx != ctx) {
-            // Fatal error
-            abort();
+            /* TODO: proper error codes */
+            return -1;
         }
         return 0;
     }

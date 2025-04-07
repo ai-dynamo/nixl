@@ -217,6 +217,24 @@ void *releaseValidationPtr(nixl_mem_t mem_type, void *addr)
     return NULL;
 }
 
+void allocateWrongGPUTest(nixlBackendEngine* ucx, int dev_id)
+{
+    nixlBlobDesc desc;
+    nixlBackendMD* md;
+    void* buf;
+
+    allocateBuffer(VRAM_SEG, dev_id, desc.len, buf);
+
+    desc.devId = dev_id;
+    desc.addr = (uint64_t) buf;
+
+    int ret = ucx->registerMem(desc, VRAM_SEG, md);
+
+    assert(ret == NIXL_ERR_NOT_SUPPORTED);
+
+    releaseBuffer(VRAM_SEG, dev_id, buf);
+}
+
 void allocateAndRegister(nixlBackendEngine *ucx, int dev_id, nixl_mem_t mem_type,
                          void* &addr, size_t len, nixlBackendMD* &md)
 {
@@ -607,24 +625,32 @@ int main()
 
     for(int i = 0; i < 2; i++) {
         test_inter_agent_transfer(thread_on[i],
-                                ucx[i][0], DRAM_SEG, 0,
-                                ucx[i][1], DRAM_SEG, 0);
+                                  ucx[i][0], DRAM_SEG, 0,
+                                  ucx[i][1], DRAM_SEG, 0);
 #ifdef HAVE_CUDA
         if (n_vram_dev > 1) {
             test_inter_agent_transfer(thread_on[i],
-                                    ucx[i][0], VRAM_SEG, dev_ids[0],
-                                    ucx[i][1], VRAM_SEG, dev_ids[1]);
+                                      ucx[i][0], VRAM_SEG, dev_ids[0],
+                                      ucx[i][1], VRAM_SEG, dev_ids[1]);
             test_inter_agent_transfer(thread_on[i],
-                                    ucx[i][0], DRAM_SEG, 0,
-                                    ucx[i][1], VRAM_SEG, dev_ids[1]);
+                                      ucx[i][0], DRAM_SEG, dev_ids[0],
+                                      ucx[i][1], VRAM_SEG, dev_ids[1]);
             test_inter_agent_transfer(thread_on[i],
-                                    ucx[i][0], VRAM_SEG, 0,
-                                    ucx[i][1], DRAM_SEG, dev_ids[1]);
+                                      ucx[i][0], VRAM_SEG, dev_ids[0],
+                                      ucx[i][1], DRAM_SEG, dev_ids[1]);
         }
 #endif
     }
 
-    // Allocate UCX engines
+#ifdef HAVE_CUDA
+    if (n_vram_dev > 1) {
+		//Test if registering on a different GPU fails correctly
+		allocateWrongGPUTest(ucx[0][0], 1);
+		std::cout << "Verified registration on wrong GPU fails correctly\n";
+	}
+#endif
+
+    // Deallocate UCX engines
     for(int i = 0; i < 2; i++) {
         for(int j = 0; j < 2; j++) {
             releaseEngine(ucx[i][j]);
