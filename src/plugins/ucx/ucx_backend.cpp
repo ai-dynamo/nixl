@@ -16,7 +16,6 @@
  */
 #include "ucx_backend.h"
 #include "serdes/serdes.h"
-#include <cassert>
 
 #ifdef HAVE_CUDA
 
@@ -35,9 +34,11 @@ class nixlUcxCudaCtx {
 public:
 #ifdef HAVE_CUDA
     CUcontext pthrCudaCtx;
+    int myDevId;
 
     nixlUcxCudaCtx() {
         pthrCudaCtx = NULL;
+        myDevId = -1;
     }
 #endif
     void cudaResetCtxPtr();
@@ -82,6 +83,14 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
 
     was_updated = false;
 
+    /* TODO: proper error codes and log outputs through this method */
+    if (expected_dev == -1)
+        return -1;
+
+    // incorrect dev id from first registration
+    if (myDevId != -1 && expected_dev != myDevId)
+        return -1;
+
     ret = cudaQueryAddr(address, is_dev, dev, ctx);
     if (ret) {
         return ret;
@@ -91,24 +100,22 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
         return 0;
     }
 
-    assert(dev == expected_dev);
     if (dev != expected_dev) {
-        /* TODO: proper error codes */
+        // User provided address that does not match dev_id
         return -1;
     }
 
     if (pthrCudaCtx) {
-        // Context was already set previously
-        assert(pthrCudaCtx == ctx);
+        // Context was already set previously, and does not match new context
         if (pthrCudaCtx != ctx) {
-            // Fatal error
-            abort();
+            return -1;
         }
         return 0;
     }
 
     pthrCudaCtx = ctx;
     was_updated = true;
+    myDevId = expected_dev;
 
     return 0;
 }
@@ -158,7 +165,6 @@ int nixlUcxEngine::vramUpdateCtx(void *address, uint32_t  devId, bool &restart_r
     }
 
     ret = cudaCtx->cudaUpdateCtxPtr(address, devId, was_updated);
-    assert(!ret);
     if (ret) {
         return ret;
     }
@@ -559,8 +565,9 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
 
     if (nixl_mem == VRAM_SEG) {
         bool need_restart;
-        if (vramUpdateCtx((void*)mem.addr, mem.devId, need_restart)){
-            //TODO Log out
+        if (vramUpdateCtx((void*)mem.addr, mem.devId, need_restart)) {
+            return NIXL_ERR_NOT_SUPPORTED;
+            //TODO Add to logging
         }
         if (need_restart) {
             progressThreadRestart();
