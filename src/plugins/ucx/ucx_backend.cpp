@@ -34,9 +34,11 @@ class nixlUcxCudaCtx {
 public:
 #ifdef HAVE_CUDA
     CUcontext pthrCudaCtx;
+    int myDevId;
 
     nixlUcxCudaCtx() {
         pthrCudaCtx = NULL;
+        myDevId = -1;
     }
 #endif
     void cudaResetCtxPtr();
@@ -81,6 +83,13 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
 
     was_updated = false;
 
+    if (expected_dev == -1)
+        return -1;
+
+    // incorrect dev id from first registration
+    if (myDevId != -1 && expected_dev != myDevId)
+        return -1;
+
     ret = cudaQueryAddr(address, is_dev, dev, ctx);
     if (ret) {
         return ret;
@@ -107,6 +116,7 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
 
     pthrCudaCtx = ctx;
     was_updated = true;
+    myDevId = expected_dev;
 
     return 0;
 }
