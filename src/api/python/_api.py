@@ -30,7 +30,8 @@ nixl_xfer_handle = int
 
 @param enable_prog_thread Whether to enable the progress thread, if available.
 @param backends List of backend names for agent to initialize.
-        Default is UCX, other backends must be initialized with create_backend.
+        Default is UCX, other backends can be added to the list, or after
+        agent creation, can be initialized with create_backend.
 """
 
 
@@ -43,13 +44,12 @@ class nixl_agent_config:
 
 """
 @brief Main class for creating a NIXL agent and performing transfers.
-
-This class provides methods for initializing backends, creating descriptor lists,
-registering memory, performing data transfers, and destroying NIXL objects.
+        This class provides methods for initializing backends, creating descriptor lists,
+        registering memory, performing data transfers, and destroying NIXL objects.
 
 @param agent_name Name of the agent.
 @param nixl_conf Optional configuration for the agent, described in nixl_agent_config.
-@param instantiate_all Whether to instantiate all available plugins.
+@param instantiate_all Whether to instantiate all available backend plugins.
 """
 
 
@@ -153,7 +153,7 @@ class nixl_agent:
 
     """
     @brief Get the parameters of a plugin.
-            This is a map of strings (input option) to strings (default value for that option).
+            This is a dictionary of strings (option name) to strings (default value for that option).
 
     @param backend Name of the plugin backend to get params for.
     @return Dictionary of plugin parameters, described above.
@@ -187,7 +187,7 @@ class nixl_agent:
     """
     @brief Get the parameters of a backend.
             Here, a backend means an initialized plugin.
-            Available initial parameters might have changed after initialization.
+            Available initial parameters (described above) might have changed after initialization.
 
     @param backend Name of the backend.
     @return Dictionary of backend parameters, described in get_plugin_params.
@@ -202,7 +202,7 @@ class nixl_agent:
 
     """
     @brief Initialize a backend with the specified initialization parameters, described above.
-            NIXL API takes backend inputs as strings, but stores opaque handles internally.
+            NIXL API takes backend inputs as strings, but stores a corresponding opaque handle internally.
 
     @param backend Name of the backend.
     @param initParams Dictionary of initialization parameters.
@@ -221,9 +221,10 @@ class nixl_agent:
     @brief Register memory regions, optionally with specified backends.
 
     @param reg_list List of either memory regions, tensors, or nixlRegDList to register.
-    @param mem_type Optional memory type, if specifying a list of memory regions.
+    @param mem_type Optional memory type, necessary if specifying a list of memory regions.
     @param is_sorted Optional bool for a list of memory regions or tensors for if they are sorted.
-    @param backends Optional list of backend names for registration, otherwise NIXL will decide.
+    @param backends Optional list of backend names for registration, otherwise NIXL will try to
+            register with all backends that support this memory type.
     @return nixlRegDList for the registered memory, can be used with deregister_memory.
     """
 
@@ -247,7 +248,8 @@ class nixl_agent:
     @brief Deregister memory regions from the specified backends.
 
     @param dereg_list nixlRegDList of memory to deregister, from register_memory or get_reg_descs.
-    @param backends Optional list of backend names for deregistration, otherwise NIXL will decide.
+    @param backends Optional list of backend names for deregistration, otherwise NIXL will deregister
+            with all the backends that have these memory regions registered.
     """
 
     def deregister_memory(
@@ -259,7 +261,9 @@ class nixl_agent:
         self.agent.deregisterMem(dereg_list, handle_list)
 
     """
-    @brief Optionally, proactively establish a connection with a remote agent.
+    @brief Optional, to proactively establish a connection with a remote agent,
+            which will reduce the time spent in the first transfer between the two agents.
+            NIXL will establish the connection for all the backends that talk to remote agents.
 
     @param remote_agent Name of the remote agent.
     """
@@ -269,12 +273,22 @@ class nixl_agent:
 
     """
     @brief Prepare a transfer descriptor list for data transfer.
+            Later elements from this list can be used to create a transfer request by index.
+            It should be done on the initiator agent, and for both sides of an transfer.
+            Considering loopback, there are 3 modes for agent_name:
+              - For local descriptors, it is set to NIXL_INIT_AGENT,
+                indicating that this is a local preparation to be used as local_side handle.
+              - For remote descriptors: it is set to the remote name, indicating
+                that this is remote side preparation to be used for remote_side handle.
+              - For loopback descriptors, it is set to local agent's name, indicating that
+                this is for a loopback (local) transfer to be uued for remote_side handle
 
-    @param agent_name Name of the target agent, should be "NIXL_INIT_AGENT", for local descriptors.
+    @param agent_name Name of the agent, can be "NIXL_INIT_AGENT", local agent name, or remote agent name
     @param xfer_list List of transfer descriptors, can be list of memory region tuples, tensors, or nixlXferDList.
-    @param mem_type Optional memory type for list of memory regions.
+    @param mem_type Optional memory type necessary for list of memory regions.
     @param is_sorted Optional bool for whether memory region list or tensor list are sorted.
-    @param backends Optional list of backend names for the transfer, otherwise NIXL will decide.
+    @param backends Optional list of backend names to limit which backends NIXL will decide among
+            when the output handle is used for a transfer.
     @return Opaque handle to the prepared transfer descriptor list.
     """
 
@@ -303,11 +317,13 @@ class nixl_agent:
     @brief Prepare a transfer operation using prepped descriptor lists.
 
     @param operation Type of operation ("WRITE" or "READ").
-    @param local_xfer_side Handle to the local transfer descriptor list, from prep_xfer_dlist.
+    @param local_xfer_side Handle to the local transfer descriptor list,
+            from prep_xfer_dlist.
     @param local_indices List of indices for selecting local descriptors.
-    @param remote_xfer_side Handle to the remote transfer descriptor list, from prep_xfer_dlist.
+    @param remote_xfer_side Handle to the remote (or loopback) transfer descriptor list,
+            from prep_xfer_dlist.
     @param remote_indices List of indices for selecting remote descriptors.
-    @param notif_msg Optional notification message to send after transfer.
+    @param notif_msg Optional notification message to send after transfer is done.
     @param skip_desc_merge Whether to skip descriptor merging optimization.
     @return Opaque handle for posting/checking transfer.
     """
@@ -344,10 +360,10 @@ class nixl_agent:
 
     @param operation Type of operation ("WRITE" or "READ").
     @param local_descs List of local transfer descriptors, from get_xfer_descs.
-    @param remote_descs List of remote transfer descriptors, from get_xfer_descs.
+    @param remote_descs List of remote (or loopback) transfer descriptors, from get_xfer_descs.
     @param remote_agent Name of the remote agent.
     @param notif_msg Optional notification message.
-    @param backends Optional list of backend names for the transfer, otherwise NIXL will decide.
+    @param backends Optional list of backend names to limit which backends NIXL will decide among.
     @return Opaque handle for posting/checking transfer.
     """
 
@@ -379,7 +395,7 @@ class nixl_agent:
     @brief Initiate a data transfer operation.
 
     @param handle Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
-    @param notif_msg Optional notification message can be specified or respecified.
+    @param notif_msg Optional notification message can be specified or updated per each transfer call.
     @return Status of the transfer operation ("DONE", "PROC", or "ERR").
     """
 
@@ -409,10 +425,10 @@ class nixl_agent:
             return "ERR"
 
     """
-    @brief Query the backend used for a transfer operation.
+    @brief Query the backend decided for a transfer operation.
 
     @param handle Handle to the transfer operation.
-    @return Name of the backend used for the transfer.
+    @return Name of the backend decided for the transfer.
     """
 
     def query_xfer_backend(self, handle: nixl_xfer_handle) -> str:
@@ -425,7 +441,7 @@ class nixl_agent:
         )
 
     """
-    @brief Releases a transfer handle, internally frees the memory.
+    @brief Releases a transfer handle, internally frees the memory used for the handle.
 
     @param handle Handle to the transfer operation from initialize_xfer or make_xfer.
     """
@@ -434,7 +450,7 @@ class nixl_agent:
         self.agent.releaseXferReq(handle)
 
     """
-    @brief Release a descriptor list handle, internally frees the memory.
+    @brief Release a descriptor list handle, internally frees the memory used for the handle.
 
     @param handle Handle to the descriptor list from make_prepped_dlist.
     """
