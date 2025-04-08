@@ -87,6 +87,11 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
         ldconfig \
 )
 
+wget https://www.mellanox.com/downloads/DOCA/DOCA_v2.10.0/host/doca-host_2.10.0-093000-25.01-ubuntu2404_amd64.deb
+dpkg -i doca-host_2.10.0-093000-25.01-ubuntu2404_amd64.deb
+apt-get update
+apt-get -y install doca-all doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
+
 export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib
 export CPATH=${INSTALL_DIR}/include:$CPATH
