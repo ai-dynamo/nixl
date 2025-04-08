@@ -1,7 +1,6 @@
 """Utils to generate matrices that represent the communication patterns of an inference workload
 
-Q:
-    - the batch size is fixed?
+For now supports only Tensor Parallelism
 """
 
 from tqdm import tqdm
@@ -177,7 +176,6 @@ def gen_matrix(
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
 ):
-    """TODO check logic """
     kv_size = batch.kv_cache_size(model_config)
     kv_slice_size = kv_size / prefill_worker_config.tp / prefill_worker_config.pp
 

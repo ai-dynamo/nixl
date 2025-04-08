@@ -73,8 +73,6 @@ class SequentialCTPerftest(CTPerftest):
         This method initializes and executes multiple traffic patterns simultaneously,
         measures their performance, and optionally verifies the results.
         """
-        #self._warmup()
-        # TODO Add verification that rank i and j have only one connection active (prevent from sending a buffer over another)
         results = {
             "iterations_results": [],
             "metadata": {"ts": time.time()}
