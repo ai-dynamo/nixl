@@ -28,15 +28,6 @@
 #include "gds_utils.h"
 #include "backend/backend_engine.h"
 
-// Struct for transfer request
-struct TransferRequest {
-    void* addr;
-    size_t size;
-    size_t file_offset;
-    CUfileHandle_t fh;
-    CUfileOpcode_t op;
-};
-
 class nixlGdsMetadata : public nixlBackendMD {
 public:
     gdsFileHandle handle;
@@ -49,14 +40,14 @@ public:
 
 class nixlGdsIOBatch {
 private:
-    unsigned int max_reqs;
-    CUfileBatchHandle_t batch_handle;
-    CUfileIOEvents_t *io_batch_events;
-    CUfileIOParams_t *io_batch_params;
-    CUfileError_t init_err;
-    nixl_status_t current_status;
-    unsigned int entries_completed;
-    unsigned int batch_size;
+    unsigned int max_reqs{0};
+    CUfileBatchHandle_t batch_handle{nullptr};
+    CUfileIOEvents_t *io_batch_events{nullptr};
+    CUfileIOParams_t *io_batch_params{nullptr};
+    CUfileError_t init_err{};
+    nixl_status_t current_status{NIXL_ERR_NOT_POSTED};
+    unsigned int entries_completed{0};
+    unsigned int batch_size{0};
 
 public:
     nixlGdsIOBatch(unsigned int size);
@@ -73,10 +64,22 @@ public:
     unsigned int getMaxReqs() const { return max_reqs; }
 };
 
+class GdsTransferRequestH {
+public:
+    void* addr;
+    size_t size;
+    size_t file_offset;
+    CUfileHandle_t fh;
+    CUfileOpcode_t op;
+
+    GdsTransferRequestH() {}
+    ~GdsTransferRequestH() {}
+};
+
 class nixlGdsBackendReqH : public nixlBackendReqH {
 public:
     std::list<nixlGdsIOBatch *> batch_io_list;
-    std::vector<TransferRequest> request_list;  // Added to store prepared requests
+    std::vector<GdsTransferRequestH> request_list;  // Store GdsTransferRequestH objects
 
     nixlGdsBackendReqH() {}
     ~nixlGdsBackendReqH() {
@@ -96,6 +99,10 @@ private:
 
     nixlGdsIOBatch* getBatchFromPool(unsigned int size);
     void returnBatchToPool(nixlGdsIOBatch* batch);
+    nixl_status_t createBatches(const nixl_xfer_op_t &operation,
+                               const nixl_meta_dlist_t &local,
+                               const nixl_meta_dlist_t &remote,
+                               nixlGdsBackendReqH* gds_handle);
 
 public:
     nixlGdsEngine(const nixlBackendInitParams* init_params);
