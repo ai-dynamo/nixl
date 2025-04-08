@@ -40,6 +40,7 @@ echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
 ./bin/desc_example
 ./bin/agent_example
+./bin/nixl_example
 ./bin/ucx_backend_test
 ./bin/ucx_mo_backend_test
 ./bin/ucx_backend_multi
