@@ -22,6 +22,8 @@ from custom_traffic_perftest import CTPerftest, TrafficPattern
 from sequential_custom_traffic_perftest import SequentialCTPerftest
 from dist_utils import dist_utils
 from multi_custom_traffic_perftest import MultiCTPerftest
+import cProfile
+import pstats
 
 log = logging.getLogger(__name__)
 
@@ -134,7 +136,13 @@ def multi_ct_perftest(config_file, verify_buffers, print_recv_buffers):
     default=False,
     help="Print received buffer contents",
 )
-def sequential_ct_perftest(config_file, verify_buffers, print_recv_buffers):
+@click.option(
+    "--json-output-path",
+    type=click.Path(),
+    help="Path to save JSON output",
+    default=None,
+)
+def sequential_ct_perftest(config_file, verify_buffers, print_recv_buffers, json_output_path):
     """Run custom traffic performance test using patterns defined in YAML config"""
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
@@ -162,10 +170,20 @@ def sequential_ct_perftest(config_file, verify_buffers, print_recv_buffers):
         )
         patterns.append(pattern)
     
+    output_path = json_output_path
+
     perftest = SequentialCTPerftest(patterns)
-    perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers, yaml_output_path="/swgwork/eshukrun/nixl/tools/perf/results.yaml")
+    perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers, json_output_path=output_path)
     dist_utils.destroy_dist()
 
 
 if __name__ == "__main__":
+    # Profile the main function
+    profiler = cProfile.Profile()
+    profiler.enable()
     cli()
+    profiler.disable()
+
+    # Output the results
+    stats = pstats.Stats(profiler).sort_stats('cumulative')
+    stats.print_stats(20)  

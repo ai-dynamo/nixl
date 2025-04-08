@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import logging
 import time
 from typing import Optional, Tuple, List
@@ -38,7 +39,7 @@ class SequentialCTPerftest(CTPerftest):
     Allows testing multiple communication patterns sequentially between distributed processes.
     """
 
-    def __init__(self, traffic_patterns: list[TrafficPattern]) -> None:
+    def __init__(self, traffic_patterns: list[TrafficPattern], n_iters: int = 3) -> None:
         """Initialize multi-pattern performance test.
 
         Args:
@@ -47,6 +48,7 @@ class SequentialCTPerftest(CTPerftest):
         self.my_rank = dist_utils.get_rank()
         self.world_size = dist_utils.get_world_size()
         self.traffic_patterns = traffic_patterns
+        self.n_iters = n_iters
 
         log.debug(f"[Rank {self.my_rank}] Initializing Nixl agent")
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
@@ -57,8 +59,7 @@ class SequentialCTPerftest(CTPerftest):
         dist_utils.barrier(tp.senders_ranks())
 
     def run(
-        self, verify_buffers: bool = False, print_recv_buffers: bool = False, 
-        yaml_output_path: Optional[str] = None
+        self, verify_buffers: bool = False, print_recv_buffers: bool = False, json_output_path: Optional[str] = None
     ) -> float:
         """
         Args:
@@ -74,13 +75,18 @@ class SequentialCTPerftest(CTPerftest):
         """
         #self._warmup()
         # TODO Add verification that rank i and j have only one connection active (prevent from sending a buffer over another)
+        results = {
+            "iterations_results": [],
+            "metadata": {"ts": time.time()}
+        }
 
         if self.my_rank == 0:
             log.info(f"[Rank {self.my_rank}] Preparing TPs")
         tp_handles: list[list] = []
         tp_bufs = []
-        # for tp in self.traffic_patterns: # DEBUG
+        # for tp in self.traffic_patterns:
         total_tps = len(self.traffic_patterns)
+        s = time.time()
         for i, tp in enumerate(self.traffic_patterns):
             try:
                 if i > 0 and i % (total_tps // 10) == 0 and self.my_rank == 0:
@@ -90,107 +96,113 @@ class SequentialCTPerftest(CTPerftest):
             handles, send_bufs, recv_bufs = self._prepare_tp(tp)
             tp_bufs.append((send_bufs, recv_bufs))
             tp_handles.append(handles)
-
-        tp_ix = 0
-        exec_time_by_tp: List[Optional[float]] = [None for _ in tp_handles]
-        barrier_time_by_tp: List[Optional[float]] = [None for _ in tp_handles]
-
-        tp_starts = [None for _ in tp_handles]
-        tp_ends = [None for _ in tp_handles]
-
-        if self.my_rank == 0:
-            log.info(f"Running TPs")
-        total_handles = len(tp_handles)
-
-        # WARMUP
-        for _ in range(10):
-            for tp_ix, handles in enumerate(tp_handles):
-                self._run_tp(handles, blocking=True)
         
+        results["metadata"]["prepare_tp_time"] = time.time() - s
+
+        # Measure SOL for every matrix
+        isolated_tp_starts = [None for _ in tp_handles]
+        isolated_tp_ends = [None for _ in tp_handles]
+        n_isolation_iters = 20
+        results["metadata"]["sol_calculation_ts"] = time.time()
         for tp_ix, handles in enumerate(tp_handles):
-            # if tp_ix > 0 and tp_ix % (total_handles // 10) == 0 and self.my_rank == 0:
-            #     log.info(f"[Rank {self.my_rank}] Running TPs: {(tp_ix/total_handles)*100:.1f}% complete")
-
             tp = self.traffic_patterns[tp_ix]
+            for _ in range(10): # Warmup
+                self._run_tp(handles, blocking=True)
 
-            if self.my_rank not in tp.senders_ranks():
-                continue
+            dist_utils.barrier()
 
-            self._barrier_tp(tp) 
-            if tp.sleep_before_launch_sec is not None:
-                time.sleep(tp.sleep_before_launch_sec)
+            isolated_tp_starts[tp_ix] = time.time()
+            for _ in range(n_isolation_iters):
+                self._run_tp(handles, blocking=True)
+                self._barrier_tp(tp)
+            isolated_tp_ends[tp_ix] = time.time()
 
-            # Run TP
-            s = time.perf_counter()
+        isolated_tp_starts_by_ranks = dist_utils.allgather_obj(isolated_tp_starts)
+        isolated_tp_ends_by_ranks = dist_utils.allgather_obj(isolated_tp_ends)
+        isolated_tp_latencies = []
+        for i in range(len(self.traffic_patterns)):
+            starts = [isolated_tp_starts_by_ranks[rank][i] for rank in range(len(isolated_tp_starts_by_ranks))]
+            ends = [isolated_tp_ends_by_ranks[rank][i] for rank in range(len(isolated_tp_ends_by_ranks))]
+            starts = [x for x in starts if x is not None]
+            ends = [x for x in ends if x is not None]
+            if not ends or not starts:
+                isolated_tp_latencies.append(None)
+            else:
+                isolated_tp_latencies.append((max(ends) - min(starts)) / n_isolation_iters)
 
-            tp_starts[tp_ix] = time.time()
-            self._run_tp(handles, blocking=True)
-            elapsed = time.perf_counter() - s
+        for iter_ix in range(self.n_iters):
+            # WARMUP
+            for _ in range(10):
+                for tp_ix, handles in enumerate(tp_handles):
+                    self._run_tp(handles, blocking=True)
             
-            exec_time_by_tp[tp_ix] = elapsed
+            tp_starts = [None for _ in tp_handles]
+            tp_ends = [None for _ in tp_handles]
+            dist_utils.barrier()
+            results["metadata"][f"iter_{iter_ix}_ts"] = time.time()
+            for tp_ix, handles in enumerate(tp_handles):
 
-            # Check that all ranks have finished TP
-            barrier_start = time.perf_counter()
-            self._barrier_tp(tp) 
-            barrier_time_by_tp[tp_ix] = time.perf_counter() - barrier_start
-            tp_ends[tp_ix] = time.time()
+                tp = self.traffic_patterns[tp_ix]
 
-            if tp.sleep_after_launch_sec is not None:
-                time.sleep(tp.sleep_after_launch_sec)
+                if self.my_rank not in tp.senders_ranks():
+                    continue
 
-        if self.my_rank == 0:
-            log.info(f"Collecting results")
+                self._barrier_tp(tp) 
+                if tp.sleep_before_launch_sec is not None:
+                    time.sleep(tp.sleep_before_launch_sec)
 
-        # tp_starts_by_ranks = dist_utils.allgather_obj(tp_starts)
-        # tp_ends_by_ranks = dist_utils.allgather_obj(tp_ends)
-        # tp_latencies = []
-        # for i in range(len(self.traffic_patterns)):
-        #     starts = [tp_starts_by_ranks[rank][i] for rank in range(len(tp_starts_by_ranks))]
-        #     ends = [tp_ends_by_ranks[rank][i] for rank in range(len(tp_ends_by_ranks))]
-        #     starts = [x for x in starts if x is not None]
-        #     ends = [x for x in ends if x is not None]
-        #     if not ends or not starts:
-        #         tp_latencies.append(None)
-        #     else:
-        #         tp_latencies.append(max(ends) - min(starts))
+                # Run TP
+                tp_starts[tp_ix] = time.time()
+                self._run_tp(handles, blocking=True)
+                
+                # Check that all ranks have finished TP
+                self._barrier_tp(tp) 
+                tp_ends[tp_ix] = time.time()
 
-        tp_sizes_gb = [ self._get_tp_total_size(tp)/1E9 for tp in self.traffic_patterns ]
+                if tp.sleep_after_launch_sec is not None:
+                    time.sleep(tp.sleep_after_launch_sec)
 
-        bw_by_tp = [
-            tp_sizes_gb[i] / exec_time_by_tp[i] if exec_time_by_tp[i] is not None else None for i in range(len(tp_handles))
-        ]
+            tp_starts_by_ranks = dist_utils.allgather_obj(tp_starts)
+            tp_ends_by_ranks = dist_utils.allgather_obj(tp_ends)
 
-        bw_by_tp_per_rank = dist_utils.allgather_obj(bw_by_tp)
-        avg_bws = [
-            sum(bw[i] for bw in bw_by_tp_per_rank if bw[i] is not None) / sum(1 for bw in bw_by_tp_per_rank if bw[i] is not None)
-            for i in range(len(tp_handles))
-        ]
-        min_bws = [
-            min(bw[i] for bw in bw_by_tp_per_rank if bw[i] is not None)
-            for i in range(len(tp_handles))
-        ]
-        max_bws = [
-            max(bw[i] for bw in bw_by_tp_per_rank if bw[i] is not None)
-            for i in range(len(tp_handles))
-        ]
+            tp_latencies = []
+            for i in range(len(self.traffic_patterns)):
+                starts = [tp_starts_by_ranks[rank][i] for rank in range(len(tp_starts_by_ranks))]
+                ends = [tp_ends_by_ranks[rank][i] for rank in range(len(tp_ends_by_ranks))]
+                starts = [x for x in starts if x is not None]
+                ends = [x for x in ends if x is not None]
+                if not ends or not starts:
+                    tp_latencies.append(None)
+                else:
+                    tp_latencies.append(max(ends) - min(starts))
 
-        if self.my_rank == 0:
-            headers = ["TP size (GB)", "Latency (s)", "TP avg BW (GB/s)", "TP min BW (GB/s)", "TP max BW (GB/s)", "Num Senders"]
-            data = [
-                [tp_sizes_gb[i], 0, avg_bws[i], min_bws[i], max_bws[i], len(tp.senders_ranks())]
+            tp_sizes_gb = [ self._get_tp_total_size(tp)/1E9 for tp in self.traffic_patterns ]
+
+            if self.my_rank == 0:
+                headers = ["TP size (GB)", "Latency (ms)", "Isolated Latency (ms)", "Num Senders"]
+                data = [
+                    [tp_sizes_gb[i], tp_latencies[i]*1E3, isolated_tp_latencies[i]*1E3, len(tp.senders_ranks())]
+                    for i, tp in enumerate(self.traffic_patterns)
+                ]
+                log.info(f"Iteration {iter_ix+1}/{self.n_iters}")
+                log.info("\n" + tabulate(data, headers=headers, floatfmt=".3f"))
+                
+            if verify_buffers:
+                for i, tp in enumerate(self.traffic_patterns):
+                    send_bufs, recv_bufs = tp_bufs[i]
+                    self._verify_tp(tp, recv_bufs, print_recv_buffers)
+            
+            iter_results = [
+                {"size": tp_sizes_gb[i], "latency": tp_latencies[i]*1E3, "isolated_latency": isolated_tp_latencies[i]*1E3, "num_senders": len(tp.senders_ranks())}
                 for i, tp in enumerate(self.traffic_patterns)
             ]
-            log.info("\n" + tabulate(data, headers=headers, floatfmt=".2f"))
-            
-            # Output results in YAML format if path is provided
-            if yaml_output_path:
-                self._write_yaml_results(yaml_output_path, headers, data, self.traffic_patterns)
-
-        if verify_buffers:
-            for i, tp in enumerate(self.traffic_patterns):
-                send_bufs, recv_bufs = tp_bufs[i]
-                self._verify_tp(tp, recv_bufs, print_recv_buffers)
+            results["iterations_results"].append(iter_results)
         
+        results["metadata"]["finished_ts"] = time.time() 
+        if json_output_path and self.my_rank == 0:
+            print(f"Saving results to {json_output_path}")
+            with open(json_output_path, "w") as f:
+                json.dump(results, f)
 
         for i, tp in enumerate(self.traffic_patterns):
             send_bufs, recv_bufs = tp_bufs[i]

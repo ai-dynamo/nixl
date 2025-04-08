@@ -72,11 +72,11 @@ class UserRequest:
     isl: int
 
     @classmethod
-    def rand(cls, mean: int = 32000, scale: int = 10000):
+    def rand(cls, mean: int = 16000, scale: int = 10000, min_isl: int = 1000, max_isl: int = 128000):
         # Sample and clip to ensure we stay within bounds
         isl = int(np.random.normal(mean, scale))
         # Ensure ISL is positive
-        isl = min(max(8000, isl), 128000)
+        isl = min(max(min_isl, isl), max_isl)
         return cls(isl=isl)
 
 @dataclass
@@ -100,7 +100,6 @@ class TransferMatrix:
     matrix: np.ndarray
     compute_time: float
     isl: int
-
 
 
 def gen_batches(
@@ -152,17 +151,12 @@ def gen_matrices_and_compute_time(
     world_size = max(all_ranks) + 1
     assert set(all_ranks) == set(range(world_size)), "Ranks are missing"
 
-
     workers_coupling = list(zip(prefill_workers, decode_workers))
-
 
     workers_pool = cycle(workers_coupling)
     matrices = []
 
-    sorted_batches = sorted(batches, key=lambda x: x.kv_cache_size(model_config))
-
-
-    for batch in tqdm(sorted_batches, desc="Generating matrices"): # Sorting the batches so that the load is equally distributed on the workers
+    for batch in tqdm(batches, desc="Generating matrices"): 
 
         prefill_worker, decode_worker = next(workers_pool)
         mat = gen_matrix(batch, world_size, prefill_worker, decode_worker, model_config, prefill_worker_config, decode_worker_config)
@@ -241,7 +235,7 @@ def main(
     Returns:
         matrices
     """
-    # TODO Add assertions of dheeva rules of thumbs
+    # Rules of thumb
     assert prefill_worker_config.tp <= decode_worker_config.tp, "Prefill TP must be less than or equal to decode TP"
     assert prefill_worker_config.pp >= decode_worker_config.pp, "Prefill PP must be more or equal to decode PP"
     assert prefill_worker_config.cp >= decode_worker_config.cp, "Prefill CP must be more or equal to decode CP"
@@ -325,12 +319,12 @@ if __name__ == "__main__":
     print("Model config: ", model_config)
 
     main(
-        num_user_requests=100,
+        num_user_requests=1000,
         batch_size=1,
         num_prefill_gpus=num_prefill_nodes*8,
         num_decode_gpus=num_decode_nodes*8,
         prefill_worker_config=WorkerConfig(tp=prefill_tp, pp=1, cp=1),
         decode_worker_config=WorkerConfig(tp=decode_tp, pp=1, cp=1),
         model_config=model_config,
-        results_dir=f"/swgwork/eshukrun/nixl/tools/perf/matrices_folders/{model}-prefill_{num_prefill_nodes}Np_tp{prefill_tp}-decode_{num_decode_nodes}Nd_tp{decode_tp}"
+        results_dir="./matrices"
     )

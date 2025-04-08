@@ -55,9 +55,8 @@ class CTPerftest:
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
 
         # Workaround for now
-        self.buffers_pool = [
-
-        ]
+        self.buffers_pool = []
+        self.profile = {}
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
 
     def _share_md(self) -> None:
