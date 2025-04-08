@@ -85,6 +85,7 @@ subdir('src')
 
 if get_option('buildtype') != 'release'
   subdir('test')
+  subdir('examples')
 endif
 
 if get_option('install_headers')
