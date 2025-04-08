@@ -272,6 +272,8 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
                     count++;
                 else
                     data->memorySection->remDescList(meta_descs, backend);
+            } else {
+                count++;
             }
         } // a bad_ret can be saved in an else
     }
