@@ -92,11 +92,11 @@ dpkg -i doca-host_2.10.0-093000-25.01-ubuntu2404_amd64.deb
 apt-get update
 apt-get -y install doca-all doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 
-export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib
+export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64:/opt/mellanox/doca/lib/x86_64-linux-gnu
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib:/opt/mellanox/doca/lib/x86_64-linux-gnu
 export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
+export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:/opt/mellanox/doca/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
 
 # Disabling CUDA IPC not to use NVLINK, as it slows down local
 # UCX transfers and can cause contention with local collectives.
