@@ -23,3 +23,7 @@ if not disable_gds_backend and cuda_dep.found()
     subdir('cuda_gds')
 endif
 
+disable_doca_backend = get_option('disable_doca_backend')
+if not disable_doca_backend and cuda_dep.found()
+    subdir('doca')
+endif

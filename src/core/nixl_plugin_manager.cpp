@@ -372,4 +372,11 @@ void nixlPluginManager::registerBuiltinPlugins() {
         registerStaticPlugin("GDS", createStaticGdsPlugin);
     #endif
     #endif
+
+    #ifdef STATIC_PLUGIN_DOCA
+    #ifndef DISABLE_DOCA_BACKEND
+        extern nixlBackendPlugin* createStaticDocaPlugin();
+        registerStaticPlugin("DOCA", createStaticDocaPlugin);
+    #endif
+    #endif
 }

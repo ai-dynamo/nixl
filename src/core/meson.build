@@ -29,6 +29,12 @@ if not disable_gds_backend and cuda_dep.found()
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
 endif
 
+disable_doca_backend = get_option('disable_doca_backend')
+if not disable_doca_backend and cuda_dep.found()
+    nixl_lib_deps += [ doca_backend_interface, cuda_dep ]
+endif
+
+
 nixl_lib = library('nixl',
                    'nixl_agent.cpp',
                    'nixl_plugin_manager.cpp',
