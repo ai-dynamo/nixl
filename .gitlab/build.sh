@@ -96,7 +96,9 @@ export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64:/opt/mellanox/doca/lib/x
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib:/opt/mellanox/doca/lib/x86_64-linux-gnu
 export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:/opt/mellanox/doca/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
+export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:/opt/mellanox/doca/lib/x86_64-linux-gnu/pkgconfig:/opt/mellanox/dpdk/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
+
+ls -lh /opt/mellanox/doca/lib/x86_64-linux-gnu/pkgconfig
 
 # Disabling CUDA IPC not to use NVLINK, as it slows down local
 # UCX transfers and can cause contention with local collectives.
