@@ -134,6 +134,16 @@ class nixlAgentOptionalArgs {
          * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
          */
         bool skipDescMerge = false;
+
+        /**
+         * @var Backend GPU device ID to use
+         */
+         uint32_t devId;
+
+        /**
+         * @var Backend custom parameter
+         */
+         uintptr_t customParam;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

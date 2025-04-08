@@ -40,6 +40,24 @@ else
     include_directories : include_directories(cuda_inc_path))
 endif
 
+add_languages('CUDA')
+cuda = import('unstable-cuda')
+nvcc = meson.get_compiler('cuda')
+
+nvcc_flags = []
+nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
+nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
+add_project_arguments(nvcc_flags, language: 'cuda')
+
+# Refer to https://mesonbuild.com/Cuda-module.html
+add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
+add_project_arguments('-rdc=true', language: 'cuda')
+
+nvcc_flags_link = []
+nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
+nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
+add_project_link_arguments(nvcc_flags_link, language: 'cuda')
+
 prefix_path = get_option('prefix')
 prefix_inc = prefix_path + '/include'
 
@@ -56,6 +74,10 @@ endif
 
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
+endif
+
+if get_option('disable_doca_backend')
+    add_project_arguments('-DDISABLE_DOCA_BACKEND', language: 'cpp')
 endif
 
 static_plugins = []

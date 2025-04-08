@@ -1,4 +1,3 @@
-
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -14,16 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('ucx')
-subdir('ucx_mo')
-
-disable_gds_backend = get_option('disable_gds_backend')
-if not disable_gds_backend
-    subdir('cuda_gds')
-endif
-
-message('almost in doca build test')
-disable_doca_backend = get_option('disable_doca_backend')
-if not disable_doca_backend
-    subdir('doca')
-endif
+message('building doca test')
+nixl_doca_test = executable('nixl_doca_test', 'nixl_doca_test.cpp', 'kernel.cu',
+                          dependencies: [nixl_dep, nixl_infra, cuda_dep],
+                          include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                          link_with: [serdes_lib],
+                          install: true)

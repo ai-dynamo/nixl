@@ -702,6 +702,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
+    opt_args.devId = extra_params->devId;
+    opt_args.customParam = extra_params->customParam;
+
     handle->remoteAgent = remote_agent;
     handle->backendOp   = operation;
     handle->status      = NIXL_ERR_NOT_POSTED;
