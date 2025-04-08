@@ -93,6 +93,4 @@ doca_error_t doca_kernel_read(cudaStream_t stream, struct doca_gpu_dev_rdma *rdm
     return DOCA_SUCCESS;
 }
 
-
 } /* extern C */
-    

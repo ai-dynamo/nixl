@@ -68,7 +68,7 @@ struct nixlDocaMem {
     struct doca_buf_arr *barr;
     struct doca_gpu_buf_arr *barr_gpu;
 };
-    
+
 class nixlDocaConnection : public nixlBackendConnMD {
     private:
         std::string remoteAgent;
@@ -131,7 +131,7 @@ class nixlDocaEngine : public nixlBackendEngine {
         struct doca_gpu_dev_rdma *rdma_gpu; /* DOCA RDMA instance GPU handler */
         struct doca_ctx *rdma_ctx;	    /* DOCA context to be used with DOCA RDMA */
         const void *connection_details;	    /* Remote peer connection details */
-        size_t conn_det_len;		    /* Remote peer connection details data length */    
+        size_t conn_det_len;		    /* Remote peer connection details data length */
         struct doca_rdma_connection *connection;
         struct docaXferReqGpu *xferReqRingGpu;
         struct docaXferReqGpu *xferReqRingCpu;
