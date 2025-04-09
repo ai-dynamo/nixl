@@ -114,8 +114,8 @@ class nixlAgentOptionalArgs {
     public:
         /**
          * @var backends vector to specify a list of backend handles, to limit the list
-         *      of backends to be considered. Used in
-         *      createBackend / createXferReq / prepXferDlist / makeXferReq / GetNotifs / GenNotif
+         *      of backends to be considered. Used in registerMem / deregisterMem
+         *      makeConnection / prepXferDlist / makeXferReq / createXferReq / GetNotifs / GenNotif
          */
         std::vector<nixlBackendH*> backends;
 

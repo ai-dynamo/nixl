@@ -328,28 +328,46 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
 }
 
 nixl_status_t
-nixlAgent::makeConnection(const std::string &remote_agent) {
+nixlAgent::makeConnection(const std::string &remote_agent,
+                          const nixl_opt_args_t* extra_params) {
     nixlBackendEngine* eng;
     nixl_status_t ret;
+    std::set<nixl_backend_t>* backend_set;
     int count = 0;
 
     if (data->remoteBackends.count(remote_agent) == 0)
         return NIXL_ERR_NOT_FOUND;
 
-    // For now making all the possible connections, later might take hints
-    for (auto & r_eng: data->remoteBackends[remote_agent]) {
-        if (data->backendEngines.count(r_eng)!=0) {
-            eng = data->backendEngines[r_eng];
+    if (!extra_params || extra_params->backends.size() == 0) {
+        backend_set = &data->remoteBackends[remote_agent];
+        if (backend_set->empty())
+            return NIXL_ERR_NOT_FOUND;
+    } else {
+        backend_set = new std::set<nixl_backend_t>();
+        for (auto & elm : extra_params->backends)
+            backend_set->insert(elm->engine->getType());
+    }
+
+    // For now trying to make all the connections, can become best effort,
+    for (auto & backend: *backend_set) {
+        if (data->backendEngines.count(backend)!=0) {
+            eng = data->backendEngines[backend];
             ret = eng->connect(remote_agent);
             if (ret)
-                return ret;
+                break;
             count++;
         }
     }
 
-    if (count == 0) // No common backend
+    if (extra_params && extra_params->backends.size() > 0)
+        delete backend_set;
+
+    if (ret)
+        return ret;
+    else if (count == 0) // No common backend
         return NIXL_ERR_BACKEND;
-    return NIXL_SUCCESS;
+    else
+        return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -455,15 +473,25 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    for (auto & loc_bknd : local_side->descs) {
-        for (auto & rem_bknd : remote_side->descs) {
-            if (loc_bknd.first == rem_bknd.first) {
-                backend = loc_bknd.first;
+    if (extra_params && extra_params->backends.size() > 0) {
+        for (auto & elm : extra_params->backends) {
+            if ((local_side->descs.count(elm->engine) > 0) &&
+                (remote_side->descs.count(elm->engine) > 0)) {
+                backend = elm->engine;
                 break;
             }
         }
-        if (backend)
-            break;
+    } else {
+        for (auto & loc_bknd : local_side->descs) {
+            for (auto & rem_bknd : remote_side->descs) {
+                if (loc_bknd.first == rem_bknd.first) {
+                    backend = loc_bknd.first;
+                    break;
+                }
+            }
+            if (backend)
+                break;
+        }
     }
 
     if (!backend)
