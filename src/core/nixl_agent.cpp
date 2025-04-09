@@ -455,15 +455,25 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    for (auto & loc_bknd : local_side->descs) {
-        for (auto & rem_bknd : remote_side->descs) {
-            if (loc_bknd.first == rem_bknd.first) {
-                backend = loc_bknd.first;
+    if (extra_params && extra_params->backends.size() > 0) {
+        for (auto & elm : extra_params->backends) {
+            if ((local_side->descs.count(elm->engine) > 0) &&
+                (remote_side->descs.count(elm->engine) > 0)) {
+                backend = elm->engine;
                 break;
             }
         }
-        if (backend)
-            break;
+    } else {
+        for (auto & loc_bknd : local_side->descs) {
+            for (auto & rem_bknd : remote_side->descs) {
+                if (loc_bknd.first == rem_bknd.first) {
+                    backend = loc_bknd.first;
+                    break;
+                }
+            }
+            if (backend)
+                break;
+        }
     }
 
     if (!backend)

@@ -287,8 +287,7 @@ class nixl_agent:
     @param xfer_list List of transfer descriptors, can be list of memory region tuples, tensors, or nixlXferDList.
     @param mem_type Optional memory type necessary for list of memory regions.
     @param is_sorted Optional bool for whether memory region list or tensor list are sorted.
-    @param backends Optional list of backend names to limit which backends NIXL will decide among
-            when the output handle is used for a transfer.
+    @param backends Optional list of backend names to limit which backends are used during preparation
     @return Opaque handle to the prepared transfer descriptor list.
     """
 
@@ -324,6 +323,7 @@ class nixl_agent:
             from prep_xfer_dlist.
     @param remote_indices List of indices for selecting remote descriptors.
     @param notif_msg Optional notification message to send after transfer is done.
+    @param backends Optional list of backend names to limit which backends NIXL will decide among.
     @param skip_desc_merge Whether to skip descriptor merging optimization.
     @return Opaque handle for posting/checking transfer.
     """
@@ -336,10 +336,15 @@ class nixl_agent:
         remote_xfer_side: nixl_prepped_dlist_handle,
         remote_indices: list[int],
         notif_msg: str = "",
+        backends: list[str] = [],
         skip_desc_merge: bool = False,
     ) -> nixl_xfer_handle:
         op = self.nixl_ops[operation]
         if op:
+            handle_list = []
+            for backend_string in backends:
+                handle_list.append(self.backends[backend_string])
+
             handle = self.agent.makeXferReq(
                 op,
                 local_xfer_side,
@@ -347,6 +352,7 @@ class nixl_agent:
                 remote_xfer_side,
                 remote_indices,
                 notif_msg,
+                handle_list,
                 skip_desc_merge,
             )
 
@@ -356,7 +362,11 @@ class nixl_agent:
             return nixlBind.nixlInvalidParamError
 
     """
-    @brief Initialize a transfer operation.
+    @brief Initialize a transfer operation. This is a combined API, to create a transfer request
+            from two descriptor lists, where NIXL prepares the descriptor lists and then the transfer.
+            If there are common descriptors across different transfer requests, using
+            this combined API will result in repeated computation, such as validity checks and
+            pre-processing done in the preparation step.
 
     @param operation Type of operation ("WRITE" or "READ").
     @param local_descs List of local transfer descriptors, from get_xfer_descs.
@@ -393,6 +403,9 @@ class nixl_agent:
 
     """
     @brief Initiate a data transfer operation.
+            After this, the transfer state can be checked asynchronously till completion.
+            In case of small transfers that are completed within the call, return value
+            will be "DONE", otherwise "PROC" or "ERR".
 
     @param handle Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
     @param notif_msg Optional notification message can be specified or updated per each transfer call.
@@ -442,6 +455,8 @@ class nixl_agent:
 
     """
     @brief Releases a transfer handle, internally frees the memory used for the handle.
+            If the transfer is active, it will be canceled, or return an error if
+            the transfer cannot be aborted.
 
     @param handle Handle to the transfer operation from initialize_xfer or make_xfer.
     """
@@ -461,22 +476,30 @@ class nixl_agent:
     """
     @brief Get new notifications that have come to the agent.
 
+    @param backends Optional list of backend names to limit which backends are checked for notifications.
     @return Dictionary of new notifications.
             Return Dict is a map of remote agent names to a list of notification messages from that agent.
     """
 
-    def get_new_notifs(self) -> dict[str, list[bytes]]:
-        return self.agent.getNotifs({})
+    def get_new_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        return self.agent.getNotifs({}, handle_list)
 
     """
     @brief Update notifications in a map
             Same as get_new_notifs, but returns all unhandled notifications in agent.
 
+    @param backends Optional list of backend names to limit which backends are checked for notifications.
     @return Dictionary of updated notifications.
     """
 
-    def update_notifs(self) -> dict[str, list[bytes]]:
-        self.notifs = self.agent.getNotifs(self.notifs)
+    def update_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        self.notifs = self.agent.getNotifs(self.notifs, handle_list)  # Adds new notifs
         return self.notifs
 
     """
@@ -485,11 +508,17 @@ class nixl_agent:
 
     @param remote_agent_name Name of the remote agent.
     @param lookup_msg Message to look up in the notification map.
+    @param backends Optional list of backend names to limit which backends are checked for notifications.
     @return True if the notification is found, False otherwise.
     """
 
-    def check_remote_xfer_done(self, remote_agent_name: str, lookup_msg: bytes) -> bool:
-        self.notifs = self.agent.getNotifs(self.notifs)  # Adds new notifs
+    def check_remote_xfer_done(
+        self, remote_agent_name: str, lookup_msg: bytes, backends: list[str] = []
+    ) -> bool:
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        self.notifs = self.agent.getNotifs(self.notifs, handle_list)  # Adds new notifs
         found = False
         message = None
 
@@ -504,20 +533,20 @@ class nixl_agent:
         return found
 
     """
-    @brief Send a notification to a remote agent.
+    @brief Send a standalone notification to a remote agent, not bound to a transfer.
 
     @param remote_agent_name Name of the remote agent.
     @param notif_msg Message to send, it will be received as bytes.
+    @param backends Optional a backend name to use to send the notifications.
     """
 
     def send_notif(
-        self, remote_agent_name: str, notif_msg: str, backends: list[str] = []
+        self, remote_agent_name: str, notif_msg: str, backend: Optional[str] = None
     ):
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
-
-        self.agent.genNotif(remote_agent_name, notif_msg, handle_list)
+        if backend is None:
+            self.agent.genNotif(remote_agent_name, notif_msg)
+        else:
+            self.agent.genNotif(remote_agent_name, notif_msg, self.backends[backend])
 
     """
     @brief Get the metadata of the local agent.
@@ -529,7 +558,8 @@ class nixl_agent:
         return self.agent.getLocalMD()
 
     """
-    @brief Add a remote agent using its metadata.
+    @brief Add a remote agent using its metadata. After this call, current agent can
+            initiate transfers towards the remote agent.
 
     @param metadata Metadata of the remote agent, received OOB in bytes.
     @return Name of the added remote agent.
@@ -540,7 +570,9 @@ class nixl_agent:
         return agent_name
 
     """
-    @brief Remove a remote agent.
+    @brief Remove a remote agent. After this call, current agent cannot initiate
+            transfers towards the remote agent specified in the call anymore.
+            This call will also result in disconnect between the two agents.
 
     @param agent Name of the remote agent.
     """
@@ -550,14 +582,15 @@ class nixl_agent:
 
     """
     @brief Get nixlXferDList from different input types:
-            a) list of 3 element tuples
+            a) list of 3 element tuples (address, len, device ID) alongside a memory type
             b) a tensor
             c) a list of tensors
             d) passes along if an xfer_dlist is given.
 
     @param descs List of any of the above types
-    @param mem_type Optional memory type for (a).
+    @param mem_type Optional memory type necessary for (a).
     @param is_sorted Optional bool for if the descriptors are sorted for (a) and (c)
+            sort criteria has the comparison order of devID, then addr, then len.
     @return Transfer descriptor list, nixlXferDList.
     """
 
@@ -621,14 +654,15 @@ class nixl_agent:
 
     """
     @brief Get nixlRegDList from different input types:
-            a) list of 4 element tuples
+            a) list of 4 element tuples (address, len, device ID, meta info) alongside a memory type
             b) a tensor
             c) a list of tensors
             d) passes along if an xfer_dlist is given.
 
     @param descs List of any of the above types
-    @param mem_type Optional memory type for (a).
+    @param mem_type Optional memory type necessary for (a).
     @param is_sorted Optional bool for if the descriptors are sorted for (a) and (c)
+            sort criteria has the comparison order of devID, then addr, then len.
     @return Registration descriptor list, nixlRegDList.
     """
 
