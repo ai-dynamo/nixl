@@ -21,3 +21,4 @@ option('cudapath_inc', type: 'string', value: '', description: 'Include path for
 option('cudapath_lib', type: 'string', value: '', description: 'Library path for CUDA')
 option('cudapath_stub', type: 'string', value: '', description: 'Extra Stub path for CUDA')
 option('static_plugins', type: 'string', value: '', description: 'Plugins to be built-in, comma-separated')
+option('build_docs', type: 'boolean', value: false, description: 'Build Doxygen documentation')

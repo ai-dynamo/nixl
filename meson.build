@@ -101,3 +101,22 @@ if get_option('install_headers')
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
 endif
+
+# Doxygen documentation
+if get_option('build_docs')
+  doxygen = find_program('doxygen', required: false)
+  if not doxygen.found()
+    error('Doxygen not found, but documentation requested')
+  endif
+
+  docs_dir = join_paths(meson.current_source_dir(), 'docs')
+  doxyfile = join_paths(meson.current_source_dir(), 'Doxyfile')
+
+  custom_target('docs',
+    output: 'html',
+    command: [doxygen, doxyfile],
+    install: true,
+    install_dir: join_paths(get_option('datadir'), 'doc', meson.project_name()),
+    build_by_default: true
+  )
+endif
