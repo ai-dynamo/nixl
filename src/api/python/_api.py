@@ -204,7 +204,6 @@ class nixl_agent:
 
     """
     @brief  Initialize a backend with the specified initialization parameters, described above.
-            NIXL API takes backend inputs as strings, but stores a corresponding opaque handle internally.
 
     @param backend Name of the backend.
     @param initParams Dictionary of initialization parameters.
