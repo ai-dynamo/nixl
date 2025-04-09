@@ -17,12 +17,13 @@
 #include <iostream>
 #include "gds_utils.h"
 
-nixl_status_t gdsUtil::registerFileHandle(int fd, size_t size,
-        std::string metaInfo,
-        gdsFileHandle& gds_handle)
+nixl_status_t gdsUtil::registerFileHandle(int fd,
+                                          size_t size,
+                                          std::string metaInfo,
+                                          gdsFileHandle& gds_handle)
 {
-    CUfileError_t  status;
-    CUfileDescr_t  descr;
+    CUfileError_t status;
+    CUfileDescr_t descr;
     CUfileHandle_t handle;
 
     descr.handle.fd = fd;
@@ -30,8 +31,7 @@ nixl_status_t gdsUtil::registerFileHandle(int fd, size_t size,
 
     status = cuFileHandleRegister(&handle, &descr);
     if (status.err != CU_FILE_SUCCESS) {
-        std::cerr << "file register error:"
-                  << std::endl;
+        std::cerr << "file register error:" << std::endl;
         return NIXL_ERR_BACKEND;
     }
 
@@ -43,9 +43,11 @@ nixl_status_t gdsUtil::registerFileHandle(int fd, size_t size,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t gdsUtil::registerBufHandle(void *ptr, size_t size, int flags)
+nixl_status_t gdsUtil::registerBufHandle(void *ptr,
+                                         size_t size,
+                                         int flags)
 {
-    CUfileError_t  status;
+    CUfileError_t status;
 
     status = cuFileBufRegister(ptr, size, flags);
     if (status.err != CU_FILE_SUCCESS) {
@@ -57,12 +59,11 @@ nixl_status_t gdsUtil::registerBufHandle(void *ptr, size_t size, int flags)
 
 nixl_status_t gdsUtil::openGdsDriver()
 {
-    CUfileError_t   err;
-
+    CUfileError_t err;
 
     err = cuFileDriverOpen();
     if (err.err != CU_FILE_SUCCESS) {
-        std::cerr <<" Error initializing GPU Direct Storage driver\n";
+        std::cerr << "Error initializing GPU Direct Storage driver\n";
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
@@ -80,11 +81,11 @@ void gdsUtil::deregisterFileHandle(gdsFileHandle& handle)
 
 nixl_status_t gdsUtil::deregisterBufHandle(void *ptr)
 {
-    CUfileError_t  status;
+    CUfileError_t status;
 
     status = cuFileBufDeregister(ptr);
     if (status.err != CU_FILE_SUCCESS) {
-        std::cerr <<"Error De-Registering Buffer\n";
+        std::cerr << "Error De-Registering Buffer\n";
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;

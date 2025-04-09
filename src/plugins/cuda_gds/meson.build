@@ -15,39 +15,39 @@
 
 gds_path = get_option('gds_path')
 if gds_path != ''
-  gds_lib_path = gds_path + '/lib'
-  gds_inc_path = gds_path + '/include'
-  cufile_dep = declare_dependency(
-    link_args : ['-L' + gds_lib_path, '-lcufile'],
-    include_directories : include_directories(gds_inc_path))
+    gds_lib_path = gds_path + '/lib'
+    gds_inc_path = gds_path + '/include'
+    cufile_dep = declare_dependency(
+        link_args: ['-L' + gds_lib_path, '-lcufile'],
+        include_directories: include_directories(gds_inc_path))
 endif
 
 if 'GDS' in static_plugins
-  gds_backend_lib = static_library('GDS',
-                    'gds_utils.cpp', 'gds_utils.h',
-                    'gds_backend.cpp', 'gds_backend.h',
-                    'gds_plugin.cpp',
-                    dependencies: [ nixl_infra, cuda_dep, cufile_dep],
-                    include_directories: [nixl_inc_dirs,utils_inc_dirs],
-                    install: false,
-                    cpp_args : compile_flags,
-                    name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
+    gds_backend_lib = static_library('GDS',
+        'gds_utils.cpp', 'gds_utils.h',
+        'gds_backend.cpp', 'gds_backend.h',
+        'gds_plugin.cpp',
+        dependencies: [nixl_infra, cuda_dep, cufile_dep],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        install: false,
+        cpp_args: compile_flags,
+        name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
-  gds_backend_lib = shared_library('GDS',
-                    'gds_utils.cpp', 'gds_utils.h',
-                    'gds_backend.cpp', 'gds_backend.h',
-                    'gds_plugin.cpp',
-                    dependencies: [nixl_infra, cuda_dep, cufile_dep],
-                    include_directories: [nixl_inc_dirs,utils_inc_dirs],
-                    install: true,
-                    cpp_args : ['-fPIC'],
-                    name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
-                    install_dir: plugin_install_dir)
-  if get_option('buildtype') == 'debug'
+    gds_backend_lib = shared_library('GDS',
+        'gds_utils.cpp', 'gds_utils.h',
+        'gds_backend.cpp', 'gds_backend.h',
+        'gds_plugin.cpp',
+        dependencies: [nixl_infra, cuda_dep, cufile_dep],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        install: true,
+        cpp_args: ['-fPIC'],
+        name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
+        install_dir: plugin_install_dir)
+    if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
-                    'echo "GDS=' + gds_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
-                    check: true
-                )
+            'echo "GDS=' + gds_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+            check: true
+        )
     endif
 endif
 
