@@ -18,9 +18,9 @@
 #include "gds_utils.h"
 
 nixl_status_t gdsUtil::registerFileHandle(int fd,
-                                         size_t size,
-                                         std::string metaInfo,
-                                         gdsFileHandle& gds_handle)
+                                          size_t size,
+                                          std::string metaInfo,
+                                          gdsFileHandle& gds_handle)
 {
     CUfileError_t status;
     CUfileDescr_t descr;
@@ -44,8 +44,8 @@ nixl_status_t gdsUtil::registerFileHandle(int fd,
 }
 
 nixl_status_t gdsUtil::registerBufHandle(void *ptr,
-                                        size_t size,
-                                        int flags)
+                                         size_t size,
+                                         int flags)
 {
     CUfileError_t status;
 
