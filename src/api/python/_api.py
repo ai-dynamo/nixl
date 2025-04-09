@@ -295,6 +295,7 @@ class nixl_agent:
     @param xfer_list List of transfer descriptors, can be list of memory region tuples, tensors, or nixlXferDList.
     @param mem_type Optional memory type necessary for list of memory regions.
     @param is_sorted Optional bool for whether memory region list or tensor list are sorted.
+                     For long lists of transfer descriptors, sorting can speed up transfer preparation.
     @param backends Optional list of backend names to limit which backends are used during preparation
     @return Opaque handle to the prepared transfer descriptor list.
     """
