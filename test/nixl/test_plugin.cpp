@@ -18,16 +18,21 @@
 #include <iostream>
 #include <set>
 #include <string>
+
 #include "nixl.h"
 #include "plugin_manager.h"
 
-void print_usage(const char* program_name) {
+void
+print_usage(const char* program_name)
+{
     std::cout << "Usage: " << program_name << " [plugin_directory]" << std::endl;
     std::cout << "Environment variables:" << std::endl;
     std::cout << "  NIXL_PLUGIN_DIR   - Single directory containing plugins" << std::endl;
 }
 
-void printParams(const nixl_b_params_t& params) {
+void
+printParams(const nixl_b_params_t& params)
+{
     if (params.empty()) {
         std::cout << "Parameters: (empty)" << std::endl;
         return;
@@ -39,7 +44,8 @@ void printParams(const nixl_b_params_t& params) {
     }
 }
 
-int verify_plugin(std::string name, nixlPluginManager& plugin_manager)
+int
+verify_plugin(std::string name, nixlPluginManager& plugin_manager)
 {
     // Discover available plugins
     std::cout << "\nLoading " << name << " plugin..." << std::endl;
@@ -61,8 +67,10 @@ int verify_plugin(std::string name, nixlPluginManager& plugin_manager)
     return 0;
 }
 
-int main(int argc, char** argv) {
-    char *plugindir = NULL;
+int
+main(int argc, char** argv)
+{
+    char* plugindir = NULL;
     std::set<nixl_backend_t> staticPlugs;
 
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
@@ -110,8 +118,7 @@ int main(int argc, char** argv) {
     }
 
     // Plugins loaded should only be the static plugins
-    if (plugin_manager.getLoadedPluginNames().size() !=
-        staticPlugs.size()) {
+    if (plugin_manager.getLoadedPluginNames().size() != staticPlugs.size()) {
         std::cout << "Static Plugins not kept loaded" << std::endl;
         return -1;
     }

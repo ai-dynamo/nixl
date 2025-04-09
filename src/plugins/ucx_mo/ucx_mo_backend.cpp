@@ -15,12 +15,13 @@
  * limitations under the License.
  */
 #include <stdlib.h>
+
 #include <cassert>
 
 
 // Local includes
-#include <nixl.h>
 #include <common/nixl_time.h>
+#include <nixl.h>
 #include <serdes/serdes.h>
 #include <ucx_mo_backend.h>
 
@@ -28,13 +29,14 @@ using namespace std;
 
 /****************************************
  * CUDA related code
-*****************************************/
+ *****************************************/
 
 #ifdef HAVE_CUDA
 
 #include <cuda_runtime.h>
 
-static uint32_t _getNumVramDevices()
+static uint32_t
+_getNumVramDevices()
 {
     cudaError_t result;
     int n_vram_dev;
@@ -49,7 +51,9 @@ static uint32_t _getNumVramDevices()
 
 #else
 
-static uint32_t _getNumVramDevices(){
+static uint32_t
+_getNumVramDevices()
+{
     return 0;
 }
 
@@ -57,7 +61,7 @@ static uint32_t _getNumVramDevices(){
 
 /****************************************
  * UCX Engine management
-*****************************************/
+ *****************************************/
 
 
 int
@@ -78,28 +82,28 @@ int32_t
 nixlUcxMoEngine::getEngIdx(nixl_mem_t type, uint32_t devId)
 {
     switch (type) {
-    case VRAM_SEG:
-        assert(devId < _gpuCnt);
-        if (!(devId < _gpuCnt)) {
+        case VRAM_SEG:
+            assert(devId < _gpuCnt);
+            if (!(devId < _gpuCnt)) {
+                return -1;
+            }
+        case DRAM_SEG:
+            break;
+        default:
             return -1;
-        }
-    case DRAM_SEG:
-        break;
-    default:
-        return -1;
     }
     assert(devId < _engineCnt);
     return (devId < _engineCnt) ? devId : -1;
 }
 
 string
-nixlUcxMoEngine::getEngName(const string &baseName, uint32_t eidx)
+nixlUcxMoEngine::getEngName(const string& baseName, uint32_t eidx)
 {
     return baseName + ":" + to_string(eidx);
 }
 
 string
-nixlUcxMoEngine::getEngBase(const string &engName)
+nixlUcxMoEngine::getEngBase(const string& engName)
 {
     // find the last occurrence (agent name may have colon in its name)
     if (string::npos == engName.find_last_of(":")) {
@@ -111,18 +115,17 @@ nixlUcxMoEngine::getEngBase(const string &engName)
 
 /****************************************
  * Constructor/Destructor
-*****************************************/
+ *****************************************/
 
-nixlUcxMoEngine::nixlUcxMoEngine(const nixlBackendInitParams* init_params):
-                                 nixlBackendEngine(init_params)
+nixlUcxMoEngine::nixlUcxMoEngine(const nixlBackendInitParams* init_params) : nixlBackendEngine(init_params)
 {
     nixl_b_params_t* custom_params = init_params->customParams;
     uint32_t num_ucx_engines = 1;
     if (custom_params->count("num_ucx_engines")) {
-        const char *cptr = (*custom_params)["num_ucx_engines"].c_str();
-        char *eptr;
+        const char* cptr = (*custom_params)["num_ucx_engines"].c_str();
+        char* eptr;
         uint32_t tmp = strtoul(cptr, &eptr, 0);
-        if ( (size_t)(eptr - cptr) == (*custom_params)["num_ucx_engines"].length()) {
+        if ((size_t)(eptr - cptr) == (*custom_params)["num_ucx_engines"].length()) {
             num_ucx_engines = tmp;
         } else {
             this->initErr = true;
@@ -134,8 +137,8 @@ nixlUcxMoEngine::nixlUcxMoEngine(const nixlBackendInitParams* init_params):
     setEngCnt(num_ucx_engines);
     // Initialize required number of engines
     for (uint32_t i = 0; i < getEngCnt(); i++) {
-        nixlBackendEngine *e;
-        e = (nixlBackendEngine *)new nixlUcxEngine(init_params);
+        nixlBackendEngine* e;
+        e = (nixlBackendEngine*)new nixlUcxEngine(init_params);
         engines.push_back(e);
         if (engines[0]->getInitErr()) {
             this->initErr = true;
@@ -146,7 +149,8 @@ nixlUcxMoEngine::nixlUcxMoEngine(const nixlBackendInitParams* init_params):
 }
 
 nixl_mem_list_t
-nixlUcxMoEngine::getSupportedMems () const {
+nixlUcxMoEngine::getSupportedMems() const
+{
     nixl_mem_list_t mems;
     mems.push_back(DRAM_SEG);
     mems.push_back(VRAM_SEG);
@@ -155,17 +159,17 @@ nixlUcxMoEngine::getSupportedMems () const {
 
 nixlUcxMoEngine::~nixlUcxMoEngine()
 {
-    for( auto &e : engines ) {
+    for (auto& e : engines) {
         delete e;
     }
 }
 
 /****************************************
  * Connection management
-*****************************************/
+ *****************************************/
 
 nixl_status_t
-nixlUcxMoEngine::getConnInfo(std::string &str) const
+nixlUcxMoEngine::getConnInfo(std::string& str) const
 {
     nixlSerDes sd;
     nixl_status_t status;
@@ -174,7 +178,7 @@ nixlUcxMoEngine::getConnInfo(std::string &str) const
     size_t sz = engines.size();
     sd.addBuf("Count", &sz, sizeof(sz));
 
-    for( auto &e : engines ) {
+    for (auto& e : engines) {
         string s;
         status = e->getConnInfo(s);
         if (NIXL_SUCCESS != status) {
@@ -189,8 +193,7 @@ nixlUcxMoEngine::getConnInfo(std::string &str) const
 
 
 nixl_status_t
-nixlUcxMoEngine::loadRemoteConnInfo (const string  &remote_agent,
-                                     const string &remote_conn_info)
+nixlUcxMoEngine::loadRemoteConnInfo(const string& remote_agent, const string& remote_conn_info)
 {
     nixlSerDes sd;
     nixlUcxMoConnection conn;
@@ -198,7 +201,7 @@ nixlUcxMoEngine::loadRemoteConnInfo (const string  &remote_agent,
     size_t sz;
     remote_comm_it_t it = remoteConnMap.find(remote_agent);
 
-    if(it != remoteConnMap.end()) {
+    if (it != remoteConnMap.end()) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -220,10 +223,10 @@ nixlUcxMoEngine::loadRemoteConnInfo (const string  &remote_agent,
 
     conn.num_engines = sz;
 
-    for(size_t idx = 0; idx < sz; idx++) {
+    for (size_t idx = 0; idx < sz; idx++) {
         string cinfo;
         cinfo = sd.getStr("Value");
-        for (auto &e : engines) {
+        for (auto& e : engines) {
             status = e->loadRemoteConnInfo(getEngName(remote_agent, idx), cinfo);
             if (status != NIXL_SUCCESS) {
                 return status;
@@ -237,18 +240,18 @@ nixlUcxMoEngine::loadRemoteConnInfo (const string  &remote_agent,
 }
 
 nixl_status_t
-nixlUcxMoEngine::connect(const string &remote_agent)
+nixlUcxMoEngine::connect(const string& remote_agent)
 {
     remote_comm_it_t it = remoteConnMap.find(remote_agent);
     nixl_status_t status;
 
-    if(it == remoteConnMap.end()) {
+    if (it == remoteConnMap.end()) {
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixlUcxMoConnection &conn = it->second;
+    nixlUcxMoConnection& conn = it->second;
 
-    for (auto &e : engines) {
+    for (auto& e : engines) {
         for (uint32_t idx = 0; idx < conn.num_engines; idx++) {
             status = e->connect(getEngName(remote_agent, idx));
             if (status != NIXL_SUCCESS) {
@@ -261,18 +264,18 @@ nixlUcxMoEngine::connect(const string &remote_agent)
 }
 
 nixl_status_t
-nixlUcxMoEngine::disconnect(const string &remote_agent)
+nixlUcxMoEngine::disconnect(const string& remote_agent)
 {
     nixl_status_t status;
     remote_comm_it_t it = remoteConnMap.find(remote_agent);
 
-    if(it == remoteConnMap.end()) {
+    if (it == remoteConnMap.end()) {
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixlUcxMoConnection &conn = it->second;
+    nixlUcxMoConnection& conn = it->second;
 
-    for (auto &e : engines) {
+    for (auto& e : engines) {
         for (uint32_t idx = 0; idx < conn.num_engines; idx++) {
             status = e->disconnect(getEngName(remote_agent, idx));
             if (status != NIXL_SUCCESS) {
@@ -288,15 +291,13 @@ nixlUcxMoEngine::disconnect(const string &remote_agent)
 
 /****************************************
  * Memory management
-*****************************************/
+ *****************************************/
 
 
 nixl_status_t
-nixlUcxMoEngine::registerMem (const nixlBlobDesc &mem,
-                              const nixl_mem_t &nixl_mem,
-                              nixlBackendMD* &out)
+nixlUcxMoEngine::registerMem(const nixlBlobDesc& mem, const nixl_mem_t& nixl_mem, nixlBackendMD*& out)
 {
-    nixlUcxMoPrivateMetadata *priv = new nixlUcxMoPrivateMetadata;
+    nixlUcxMoPrivateMetadata* priv = new nixlUcxMoPrivateMetadata;
     int32_t eidx = getEngIdx(nixl_mem, mem.devId);
     nixlSerDes sd;
     string str;
@@ -317,24 +318,23 @@ nixlUcxMoEngine::registerMem (const nixlBlobDesc &mem,
     }
     sd.addStr("RkeyStr", str);
     priv->rkeyStr = sd.exportStr();
-    out = (nixlBackendMD*) priv;
+    out = (nixlBackendMD*)priv;
 
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlUcxMoEngine::getPublicData (const nixlBackendMD* meta,
-                                std::string &str) const
+nixlUcxMoEngine::getPublicData(const nixlBackendMD* meta, std::string& str) const
 {
-    const nixlUcxMoPrivateMetadata *priv = (nixlUcxMoPrivateMetadata*) meta;
+    const nixlUcxMoPrivateMetadata* priv = (nixlUcxMoPrivateMetadata*)meta;
     str = priv->get();
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlUcxMoEngine::deregisterMem (nixlBackendMD* meta)
+nixlUcxMoEngine::deregisterMem(nixlBackendMD* meta)
 {
-    nixlUcxMoPrivateMetadata *priv = (nixlUcxMoPrivateMetadata*) meta;
+    nixlUcxMoPrivateMetadata* priv = (nixlUcxMoPrivateMetadata*)meta;
 
     engines[priv->eidx]->deregisterMem(priv->md);
     delete priv;
@@ -343,10 +343,8 @@ nixlUcxMoEngine::deregisterMem (nixlBackendMD* meta)
 
 // To be cleaned up
 nixl_status_t
-nixlUcxMoEngine::internalMDHelper (const nixl_blob_t &blob,
-                                   const nixl_mem_t &nixl_mem,
-                                   const std::string &agent,
-                                   nixlBackendMD* &output)
+nixlUcxMoEngine::internalMDHelper(
+        const nixl_blob_t& blob, const nixl_mem_t& nixl_mem, const std::string& agent, nixlBackendMD*& output)
 {
     nixlUcxMoConnection conn;
     nixlSerDes sd;
@@ -354,15 +352,15 @@ nixlUcxMoEngine::internalMDHelper (const nixl_blob_t &blob,
     nixl_status_t status;
     nixlBlobDesc input_int;
 
-    nixlUcxMoPublicMetadata *md = new nixlUcxMoPublicMetadata;
+    nixlUcxMoPublicMetadata* md = new nixlUcxMoPublicMetadata;
 
     auto search = remoteConnMap.find(agent);
 
-    if(search == remoteConnMap.end()) {
-        //TODO: err: remote connection not found
+    if (search == remoteConnMap.end()) {
+        // TODO: err: remote connection not found
         return NIXL_ERR_NOT_FOUND;
     }
-    conn = (nixlUcxMoConnection) search->second;
+    conn = (nixlUcxMoConnection)search->second;
 
     status = sd.importStr(blob);
 
@@ -381,12 +379,10 @@ nixlUcxMoEngine::internalMDHelper (const nixl_blob_t &blob,
         return status;
     }
 
-    for (auto &e : engines) {
-        nixlBackendMD *int_md;
+    for (auto& e : engines) {
+        nixlBackendMD* int_md;
         input_int.metaInfo = ucx_blob;
-        status = e->loadRemoteMD(input_int, nixl_mem,
-                                 getEngName(agent, md->eidx),
-                                 int_md);
+        status = e->loadRemoteMD(input_int, nixl_mem, getEngName(agent, md->eidx), int_md);
         if (status != NIXL_SUCCESS) {
             return status;
         }
@@ -398,28 +394,25 @@ nixlUcxMoEngine::internalMDHelper (const nixl_blob_t &blob,
 }
 
 nixl_status_t
-nixlUcxMoEngine::loadLocalMD(nixlBackendMD* input,
-                             nixlBackendMD* &output)
+nixlUcxMoEngine::loadLocalMD(nixlBackendMD* input, nixlBackendMD*& output)
 {
-    nixlUcxMoPrivateMetadata* input_md = (nixlUcxMoPrivateMetadata*) input;
+    nixlUcxMoPrivateMetadata* input_md = (nixlUcxMoPrivateMetadata*)input;
     return internalMDHelper(input_md->rkeyStr, input_md->memType, localAgent, output);
 }
 
 nixl_status_t
-nixlUcxMoEngine::loadRemoteMD (const nixlBlobDesc &input,
-                               const nixl_mem_t &nixl_mem,
-                               const string &remote_agent,
-                               nixlBackendMD* &output)
+nixlUcxMoEngine::loadRemoteMD(
+        const nixlBlobDesc& input, const nixl_mem_t& nixl_mem, const string& remote_agent, nixlBackendMD*& output)
 {
     return internalMDHelper(input.metaInfo, nixl_mem, remote_agent, output);
 }
 
 nixl_status_t
-nixlUcxMoEngine::unloadMD (nixlBackendMD* input)
+nixlUcxMoEngine::unloadMD(nixlBackendMD* input)
 {
     nixl_status_t status;
 
-    nixlUcxMoPublicMetadata *md = (nixlUcxMoPublicMetadata *)input;
+    nixlUcxMoPublicMetadata* md = (nixlUcxMoPublicMetadata*)input;
     for (size_t i = 0; i < md->int_mds.size(); i++) {
         status = engines[i]->unloadMD(md->int_mds[i]);
         if (NIXL_SUCCESS != status) {
@@ -431,13 +424,13 @@ nixlUcxMoEngine::unloadMD (nixlBackendMD* input)
 
 /****************************************
  * Data movement
-*****************************************/
+ *****************************************/
 
 void
-nixlUcxMoEngine::cancelRequests(nixlUcxMoRequestH *req)
+nixlUcxMoEngine::cancelRequests(nixlUcxMoRequestH* req)
 {
     // Iterate over all elements cancelling each one
-    for ( auto &p : req->reqs ) {
+    for (auto& p : req->reqs) {
         p.first->releaseReqH(p.second);
         p.first = NULL;
         p.second = NULL;
@@ -446,31 +439,27 @@ nixlUcxMoEngine::cancelRequests(nixlUcxMoRequestH *req)
 
 
 nixl_status_t
-nixlUcxMoEngine::retHelper(nixl_status_t ret, nixlBackendEngine *eng,
-                           nixlUcxMoRequestH *req, nixlBackendReqH *&int_req)
+nixlUcxMoEngine::retHelper(nixl_status_t ret, nixlBackendEngine* eng, nixlUcxMoRequestH* req, nixlBackendReqH*& int_req)
 {
     /* if transfer wasn't immediately completed */
-    switch(ret) {
-    case NIXL_IN_PROG:
-        req->reqs.push_back(nixlUcxMoRequestH::req_pair_t{eng, int_req});
-    case NIXL_SUCCESS:
-        // Nothing to do
-        return NIXL_SUCCESS;
-    default:
-        // Error. Release all previously initiated ops and exit:
-        cancelRequests(req);
-        delete(req);
-        return ret;
+    switch (ret) {
+        case NIXL_IN_PROG:
+            req->reqs.push_back(nixlUcxMoRequestH::req_pair_t{eng, int_req});
+        case NIXL_SUCCESS:
+            // Nothing to do
+            return NIXL_SUCCESS;
+        default:
+            // Error. Release all previously initiated ops and exit:
+            cancelRequests(req);
+            delete (req);
+            return ret;
     }
 }
 
 nixl_status_t
-nixlUcxMoEngine::prepXfer (const nixl_xfer_op_t &operation,
-                           const nixl_meta_dlist_t &local,
-                           const nixl_meta_dlist_t &remote,
-                           const std::string &remote_agent,
-                           nixlBackendReqH* &handle,
-                           const nixl_opt_b_args_t *opt_args)
+nixlUcxMoEngine::prepXfer(
+        const nixl_xfer_op_t& operation, const nixl_meta_dlist_t& local, const nixl_meta_dlist_t& remote,
+        const std::string& remote_agent, nixlBackendReqH*& handle, const nixl_opt_b_args_t* opt_args)
 {
     // Number of local and remote descriptors must match
     int des_cnt = local.descCount();
@@ -479,7 +468,7 @@ nixlUcxMoEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
     // Check operation type
-    switch(operation) {
+    switch (operation) {
         case NIXL_READ:
         case NIXL_WRITE:
             break;
@@ -489,29 +478,29 @@ nixlUcxMoEngine::prepXfer (const nixl_xfer_op_t &operation,
 
     // Check that remote agent is known
     remote_comm_it_t it = remoteConnMap.find(remote_agent);
-    if(it == remoteConnMap.end()) {
+    if (it == remoteConnMap.end()) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    nixlUcxMoConnection &conn = it->second;
+    nixlUcxMoConnection& conn = it->second;
 
     /* Allocate request and fill communication distribution matrix */
     size_t l_eng_cnt = engines.size();
     size_t r_eng_cnt = conn.num_engines;
 
-    nixlUcxMoRequestH *req = new nixlUcxMoRequestH(l_eng_cnt, r_eng_cnt);
+    nixlUcxMoRequestH* req = new nixlUcxMoRequestH(l_eng_cnt, r_eng_cnt);
 
     /* Go over all input */
-    for(int i = 0; i < des_cnt; i++) {
+    for (int i = 0; i < des_cnt; i++) {
         size_t lsize = local[i].len;
         size_t rsize = remote[i].len;
-        nixlUcxMoPrivateMetadata *lmd;
-        lmd = (nixlUcxMoPrivateMetadata *)local[i].metadataP;
-        nixlUcxMoPublicMetadata *rmd;
-        rmd = (nixlUcxMoPublicMetadata *)remote[i].metadataP;
+        nixlUcxMoPrivateMetadata* lmd;
+        lmd = (nixlUcxMoPrivateMetadata*)local[i].metadataP;
+        nixlUcxMoPublicMetadata* rmd;
+        rmd = (nixlUcxMoPublicMetadata*)remote[i].metadataP;
         size_t lidx = lmd->eidx;
         size_t ridx = rmd->eidx;
 
-        assert( (lidx < l_eng_cnt) && (ridx < r_eng_cnt));
+        assert((lidx < l_eng_cnt) && (ridx < r_eng_cnt));
         if (!((lidx < l_eng_cnt) && (ridx < r_eng_cnt))) {
             // TODO: err output
             goto error;
@@ -523,13 +512,9 @@ nixlUcxMoEngine::prepXfer (const nixl_xfer_op_t &operation,
 
         /* Allocate internal dlists if needed */
         if (NULL == req->dlMatrix[lidx][ridx].first) {
-            req->dlMatrix[lidx][ridx].first = new nixl_meta_dlist_t (
-                                                local.getType(),
-                                                local.isSorted());
+            req->dlMatrix[lidx][ridx].first = new nixl_meta_dlist_t(local.getType(), local.isSorted());
 
-            req->dlMatrix[lidx][ridx].second = new nixl_meta_dlist_t (
-                                                remote.getType(),
-                                                remote.isSorted());
+            req->dlMatrix[lidx][ridx].second = new nixl_meta_dlist_t(remote.getType(), remote.isSorted());
         }
 
         nixlMetaDesc ldesc = local[i];
@@ -552,30 +537,25 @@ error:
 
 // Data transfer
 nixl_status_t
-nixlUcxMoEngine::postXfer (const nixl_xfer_op_t &operation,
-                           const nixl_meta_dlist_t &local,
-                           const nixl_meta_dlist_t &remote,
-                           const std::string &remote_agent,
-                           nixlBackendReqH* &handle,
-                           const nixl_opt_b_args_t *opt_args)
+nixlUcxMoEngine::postXfer(
+        const nixl_xfer_op_t& operation, const nixl_meta_dlist_t& local, const nixl_meta_dlist_t& remote,
+        const std::string& remote_agent, nixlBackendReqH*& handle, const nixl_opt_b_args_t* opt_args)
 {
-    nixlUcxMoRequestH *req = (nixlUcxMoRequestH *)handle;
+    nixlUcxMoRequestH* req = (nixlUcxMoRequestH*)handle;
 
-    for(size_t lidx = 0; lidx < req->dlMatrix.size(); lidx++) {
-        for(size_t ridx = 0; ridx < req->dlMatrix[lidx].size(); ridx++) {
+    for (size_t lidx = 0; lidx < req->dlMatrix.size(); lidx++) {
+        for (size_t ridx = 0; ridx < req->dlMatrix[lidx].size(); ridx++) {
             string no_notif_msg;
-            nixlBackendReqH *int_req;
+            nixlBackendReqH* int_req;
             nixl_status_t ret;
 
             if (NULL == req->dlMatrix[lidx][ridx].first) {
                 // Skip unused matrix elements
                 continue;
             }
-            ret = engines[lidx]->postXfer(operation,
-                                          *req->dlMatrix[lidx][ridx].first,
-                                          *req->dlMatrix[lidx][ridx].second,
-                                          getEngName(remote_agent, ridx),
-                                          int_req);
+            ret = engines[lidx]->postXfer(
+                    operation, *req->dlMatrix[lidx][ridx].first, *req->dlMatrix[lidx][ridx].second,
+                    getEngName(remote_agent, ridx), int_req);
             ret = retHelper(ret, engines[lidx], req, int_req);
             if (NIXL_SUCCESS != ret) {
                 return ret;
@@ -598,35 +578,35 @@ nixlUcxMoEngine::postXfer (const nixl_xfer_op_t &operation,
         return NIXL_IN_PROG;
     } else {
         delete req;
-        return  NIXL_SUCCESS;
+        return NIXL_SUCCESS;
     }
 }
 
 nixl_status_t
-nixlUcxMoEngine::checkXfer (nixlBackendReqH *handle)
+nixlUcxMoEngine::checkXfer(nixlBackendReqH* handle)
 {
-    nixlUcxMoRequestH *req = (nixlUcxMoRequestH *)handle;
-    nixlUcxMoRequestH::req_list_t &l = req->reqs;
+    nixlUcxMoRequestH* req = (nixlUcxMoRequestH*)handle;
+    nixlUcxMoRequestH::req_list_t& l = req->reqs;
     nixlUcxMoRequestH::req_list_it_t it;
     nixl_status_t out_ret = NIXL_SUCCESS;
 
-    for (it = l.begin(); it != l.end(); ) {
+    for (it = l.begin(); it != l.end();) {
         nixl_status_t ret;
 
         ret = it->first->checkXfer(it->second);
         switch (ret) {
-        case NIXL_SUCCESS:
-            /* Mark as completed */
-            it->first->releaseReqH(it->second);
-            it = l.erase(it);
-            break;
-        case NIXL_IN_PROG:
-            out_ret = NIXL_IN_PROG;
-            it++;
-            break;
-        default:
-            /* Any other ret value is unexpected */
-            return ret;
+            case NIXL_SUCCESS:
+                /* Mark as completed */
+                it->first->releaseReqH(it->second);
+                it = l.erase(it);
+                break;
+            case NIXL_IN_PROG:
+                out_ret = NIXL_IN_PROG;
+                it++;
+                break;
+            default:
+                /* Any other ret value is unexpected */
+                return ret;
         }
     }
 
@@ -648,7 +628,7 @@ nixlUcxMoEngine::checkXfer (nixlBackendReqH *handle)
 nixl_status_t
 nixlUcxMoEngine::releaseReqH(nixlBackendReqH* handle)
 {
-    cancelRequests((nixlUcxMoRequestH *)handle);
+    cancelRequests((nixlUcxMoRequestH*)handle);
     return NIXL_SUCCESS;
 }
 
@@ -657,20 +637,20 @@ nixlUcxMoEngine::progress()
 {
     int ret = 0;
     // Iterate over all elements cancelling each one
-    for ( auto &e : engines ) {
+    for (auto& e : engines) {
         ret += e->progress();
     }
     return ret;
 }
 
 nixl_status_t
-nixlUcxMoEngine::getNotifs(notif_list_t &notif_list)
+nixlUcxMoEngine::getNotifs(notif_list_t& notif_list)
 {
     return engines[0]->getNotifs(notif_list);
 }
 
 nixl_status_t
-nixlUcxMoEngine::genNotif(const string &remote_agent, const string &msg)
+nixlUcxMoEngine::genNotif(const string& remote_agent, const string& msg)
 {
     return engines[0]->genNotif(getEngName(remote_agent, 0), msg);
 }

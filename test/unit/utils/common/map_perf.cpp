@@ -14,18 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <iostream>
-#include <cassert>
-#include <random>
-#include <algorithm>
-#include <map>
-#include <unordered_map>
-
 #include <sys/time.h>
+
+#include <algorithm>
+#include <cassert>
+#include <iostream>
+#include <map>
+#include <random>
+#include <unordered_map>
 
 #include "common/str_tools.h"
 
-std::string generate_random_string(size_t length) {
+std::string
+generate_random_string(size_t length)
+{
     const std::string characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     std::random_device random_device;
     std::mt19937 generator(random_device());
@@ -38,8 +40,9 @@ std::string generate_random_string(size_t length) {
     return random_string;
 }
 
-void test_comparison_perf(const int n_entries, const size_t str_len) {
-
+void
+test_comparison_perf(const int n_entries, const size_t str_len)
+{
     int n_iters = 1000000;
 
     std::unordered_map<std::string, uint32_t> normal_map;
@@ -53,13 +56,13 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
 
     std::cout << "testing maps with " << n_entries << " entries and " << str_len << " len \n";
 
-    for(int i = 0; i<n_entries; i++) {
+    for (int i = 0; i < n_entries; i++) {
         std::string index = generate_random_string(str_len);
         ref[i] = index;
     }
 
     gettimeofday(&start_time, NULL);
-    for(int i = 0; i<n_iters; i++) {
+    for (int i = 0; i < n_iters; i++) {
         std::string index = ref.at(i % n_entries);
         normal_map[index] = i;
     }
@@ -67,11 +70,11 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
 
     timersub(&end_time, &start_time, &diff_time);
 
-    std::cout << "normal map insert test, total time for " << n_iters << " iters: "
-              << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
+    std::cout << "normal map insert test, total time for " << n_iters << " iters: " << diff_time.tv_sec << "s "
+              << diff_time.tv_usec << "us \n";
 
     gettimeofday(&start_time, NULL);
-    for(int i = 0; i<n_iters; i++) {
+    for (int i = 0; i < n_iters; i++) {
         std::string index = ref.at(i % n_entries);
         custom_map[index] = i;
     }
@@ -79,11 +82,11 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
 
     timersub(&end_time, &start_time, &diff_time);
 
-    std::cout << "custom map insert test, total time for " << n_iters << " iters: "
-              << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
+    std::cout << "custom map insert test, total time for " << n_iters << " iters: " << diff_time.tv_sec << "s "
+              << diff_time.tv_usec << "us \n";
 
     gettimeofday(&start_time, NULL);
-    for(int i = 0; i<n_iters; i++) {
+    for (int i = 0; i < n_iters; i++) {
         std::string index = ref.at(i % n_entries);
         ordered_map[index] = i;
     }
@@ -91,11 +94,11 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
 
     timersub(&end_time, &start_time, &diff_time);
 
-    std::cout << "ordered map insert test, total time for " << n_iters << " iters: "
-              << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
+    std::cout << "ordered map insert test, total time for " << n_iters << " iters: " << diff_time.tv_sec << "s "
+              << diff_time.tv_usec << "us \n";
 
     gettimeofday(&start_time, NULL);
-    for(int i = 0; i<n_iters; i++) {
+    for (int i = 0; i < n_iters; i++) {
         std::string index = ref.at(i % n_entries);
         sum1 += normal_map[index];
     }
@@ -103,11 +106,11 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
 
     timersub(&end_time, &start_time, &diff_time);
 
-    std::cout << "normal map lookup test, total time for " << n_iters << " iters: "
-              << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
+    std::cout << "normal map lookup test, total time for " << n_iters << " iters: " << diff_time.tv_sec << "s "
+              << diff_time.tv_usec << "us \n";
 
     gettimeofday(&start_time, NULL);
-    for(int i = 0; i<n_iters; i++) {
+    for (int i = 0; i < n_iters; i++) {
         std::string index = ref.at(i % n_entries);
         sum2 += custom_map[index];
     }
@@ -115,13 +118,13 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
 
     timersub(&end_time, &start_time, &diff_time);
 
-    std::cout << "custom map lookup test, total time for " << n_iters << " iters: "
-              << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
+    std::cout << "custom map lookup test, total time for " << n_iters << " iters: " << diff_time.tv_sec << "s "
+              << diff_time.tv_usec << "us \n";
 
     assert(sum1 == sum2);
 
     gettimeofday(&start_time, NULL);
-    for(int i = 0; i<n_iters; i++) {
+    for (int i = 0; i < n_iters; i++) {
         std::string index = ref.at(i % n_entries);
         sum2 += ordered_map[index];
     }
@@ -129,19 +132,20 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
 
     timersub(&end_time, &start_time, &diff_time);
 
-    std::cout << "ordered map lookup test, total time for " << n_iters << " iters: "
-              << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
+    std::cout << "ordered map lookup test, total time for " << n_iters << " iters: " << diff_time.tv_sec << "s "
+              << diff_time.tv_usec << "us \n";
 }
 
-int main()
+int
+main()
 {
     strEqual tester;
-    assert(tester.operator() ("abcdefgh","abcdefgh") == true);
-    assert(tester.operator() ("abcdefgh","abdcefgh") == false);
-    assert(tester.operator() ("abcdefgh123","abcdefgh123") == true);
-    assert(tester.operator() ("abcdefgh123","aadcefgh123") == false);
-    assert(tester.operator() ("12345678abcdefgh","12345678abcdefgh") == true);
-    assert(tester.operator() ("12345678abcdefgh","12345687abcdefgh") == false);
+    assert(tester.operator()("abcdefgh", "abcdefgh") == true);
+    assert(tester.operator()("abcdefgh", "abdcefgh") == false);
+    assert(tester.operator()("abcdefgh123", "abcdefgh123") == true);
+    assert(tester.operator()("abcdefgh123", "aadcefgh123") == false);
+    assert(tester.operator()("12345678abcdefgh", "12345678abcdefgh") == true);
+    assert(tester.operator()("12345678abcdefgh", "12345687abcdefgh") == false);
 
     test_comparison_perf(16, 8);
     test_comparison_perf(16, 16);

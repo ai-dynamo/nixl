@@ -55,11 +55,11 @@ typedef nixlBackendPlugin* (*nixlStaticPluginCreatorFunc)();
 
 // Plugin must implement these functions for dynamic loading
 extern "C" {
-    // Initialize the plugin
-    NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init();
+// Initialize the plugin
+NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init();
 
-    // Cleanup the plugin
-    NIXL_PLUGIN_EXPORT void nixl_plugin_fini();
+// Cleanup the plugin
+NIXL_PLUGIN_EXPORT void nixl_plugin_fini();
 }
 
-#endif // __BACKEND_PLUGIN_H
+#endif  // __BACKEND_PLUGIN_H

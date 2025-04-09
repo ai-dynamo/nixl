@@ -18,10 +18,11 @@
 #ifndef __PLUGIN_MANAGER_H
 #define __PLUGIN_MANAGER_H
 
-#include <string>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
+
 #include "backend/backend_plugin.h"
 
 // Forward declarations
@@ -30,7 +31,7 @@ struct nixlBackendInitParams;
 
 class nixlPluginHandle {
 private:
-    void* handle_;         // Handle to the dynamically loaded library
+    void* handle_;               // Handle to the dynamically loaded library
     nixlBackendPlugin* plugin_;  // Plugin interface
 
 public:
@@ -105,4 +106,4 @@ public:
     static std::vector<nixlStaticPluginInfo>& getStaticPlugins();
 };
 
-#endif // __PLUGIN_MANAGER_H
+#endif  // __PLUGIN_MANAGER_H

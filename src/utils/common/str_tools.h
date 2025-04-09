@@ -18,33 +18,36 @@
 #define __STR_TOOLS_H
 #include <regex>
 
-inline std::vector<std::string> str_split(const std::string& str, const std::string& delims) {
+inline std::vector<std::string>
+str_split(const std::string& str, const std::string& delims)
+{
     std::regex re(delims);
     std::sregex_token_iterator first{str.begin(), str.end(), re, -1}, last;
-    std::vector<std::string> output {first, last};
+    std::vector<std::string> output{first, last};
     return output;
 }
 
-class strEqual
-{
-    public:
-      bool operator() (const std::string &t1, const std::string &t2) const
-      {
-          size_t s1 = t1.size();
-          size_t s2 = t2.size();
+class strEqual {
+public:
+    bool operator()(const std::string& t1, const std::string& t2) const
+    {
+        size_t s1 = t1.size();
+        size_t s2 = t2.size();
 
-          if (s1 != s2) return false;
-          if (((s1&7) != 0) || (s1>64)) return (t1 == t2);
+        if (s1 != s2)
+            return false;
+        if (((s1 & 7) != 0) || (s1 > 64))
+            return (t1 == t2);
 
-          size_t i = 0;
-          const char* d1 = t1.data();
-          const char* d2 = t2.data();
+        size_t i = 0;
+        const char* d1 = t1.data();
+        const char* d2 = t2.data();
 
-          for (i=0; i<s1; i+=8) {
-              if (*((uint64_t*) (d1 + i)) != *((uint64_t*) (d2 + i)))
-                  return false;
-          }
-          return true;
-      }
+        for (i = 0; i < s1; i += 8) {
+            if (*((uint64_t*)(d1 + i)) != *((uint64_t*)(d2 + i)))
+                return false;
+        }
+        return true;
+    }
 };
 #endif

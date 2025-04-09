@@ -14,18 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "stream/metadata_stream.h"
+#include <algorithm>
 #include <iostream>
 #include <string>
-#include <algorithm>
 
-void run_server() {
+#include "stream/metadata_stream.h"
+
+void
+run_server()
+{
     nixlMDStreamListener listener(8082);
     listener.startListenerForClients();
     return;
 }
 
-void run_client() {
+void
+run_client()
+{
     nixlMDStreamClient client("127.0.0.1", 8082);
     client.connectListener();
     std::string data = "Hello NixL MD listener\n";
@@ -37,7 +42,9 @@ void run_client() {
     return;
 }
 
-int main (int argc, char *argv[]) {
+int
+main(int argc, char* argv[])
+{
     if (argc < 2) {
         std::cout << "Enter client/server\n";
         exit(-1);

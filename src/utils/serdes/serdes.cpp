@@ -16,25 +16,31 @@
  */
 #include "serdes.h"
 
-nixlSerDes::nixlSerDes() {
+nixlSerDes::nixlSerDes()
+{
     workingStr = "nixlSerDes|";
     des_offset = 11;
 
     mode = SERIALIZE;
 }
 
-std::string nixlSerDes::_bytesToString(const void *buf, ssize_t size) {
+std::string
+nixlSerDes::_bytesToString(const void* buf, ssize_t size)
+{
     std::string ret_str = std::string(reinterpret_cast<const char*>(buf), size);
     return ret_str;
 }
 
-void nixlSerDes::_stringToBytes(void* fill_buf, const std::string &s, ssize_t size){
-    s.copy(reinterpret_cast<char*>(fill_buf), size); 
+void
+nixlSerDes::_stringToBytes(void* fill_buf, const std::string& s, ssize_t size)
+{
+    s.copy(reinterpret_cast<char*>(fill_buf), size);
 }
 
 /* Ser/Des for Strings */
-nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str){
-
+nixl_status_t
+nixlSerDes::addStr(const std::string& tag, const std::string& str)
+{
     size_t len = str.size();
 
     workingStr.append(tag);
@@ -45,34 +51,36 @@ nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str)
     return NIXL_SUCCESS;
 }
 
-std::string nixlSerDes::getStr(const std::string &tag){
-
-    if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-       //incorrect tag
-       return "";
-    } 
+std::string
+nixlSerDes::getStr(const std::string& tag)
+{
+    if (workingStr.compare(des_offset, tag.size(), tag) != 0) {
+        // incorrect tag
+        return "";
+    }
     ssize_t len;
 
-    //skip tag
+    // skip tag
     des_offset += tag.size();
-    
-    //get len
+
+    // get len
     //_stringToBytes(&len, workingStr.data() + des_offset, sizeof(ssize_t));
     _stringToBytes(&len, workingStr.substr(des_offset, sizeof(ssize_t)), sizeof(ssize_t));
     des_offset += sizeof(ssize_t);
 
-    //get string
+    // get string
     std::string ret = workingStr.substr(des_offset, len);
-    
-    //move past string plus | delimiter
+
+    // move past string plus | delimiter
     des_offset += len + 1;
 
     return ret;
 }
 
 /* Ser/Des for Byte buffers */
-nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_t len){
-
+nixl_status_t
+nixlSerDes::addBuf(const std::string& tag, const void* buf, ssize_t len)
+{
     workingStr.append(tag);
     workingStr.append(_bytesToString(&len, sizeof(ssize_t)));
     workingStr.append(_bytesToString(buf, len));
@@ -81,51 +89,58 @@ nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_
     return NIXL_SUCCESS;
 }
 
-ssize_t nixlSerDes::getBufLen(const std::string &tag) const{
-    if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-       //incorrect tag
-       return -1;
-    } 
+ssize_t
+nixlSerDes::getBufLen(const std::string& tag) const
+{
+    if (workingStr.compare(des_offset, tag.size(), tag) != 0) {
+        // incorrect tag
+        return -1;
+    }
 
     ssize_t len;
 
-    //get len
+    // get len
     //_stringToBytes(&len, workingStr.data() + des_offset + tag.size(), sizeof(ssize_t));
     _stringToBytes(&len, workingStr.substr(des_offset + tag.size(), sizeof(ssize_t)), sizeof(ssize_t));
 
     return len;
 }
 
-nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len){
-    if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-       //incorrect tag
-       return NIXL_ERR_MISMATCH;
+nixl_status_t
+nixlSerDes::getBuf(const std::string& tag, void* buf, ssize_t len)
+{
+    if (workingStr.compare(des_offset, tag.size(), tag) != 0) {
+        // incorrect tag
+        return NIXL_ERR_MISMATCH;
     }
-    
-    //skip over tag and size, which we assume has been read previously
+
+    // skip over tag and size, which we assume has been read previously
     des_offset += tag.size() + sizeof(ssize_t);
 
     //_stringToBytes(buf, workingStr.data() + des_offset, len);
     _stringToBytes(buf, workingStr.substr(des_offset, len), len);
 
-    //bytes in string form are twice as long, skip those plus | delimiter
+    // bytes in string form are twice as long, skip those plus | delimiter
     des_offset += len + 1;
 
     return NIXL_SUCCESS;
 }
 
 /* Ser/Des buffer management */
-std::string nixlSerDes::exportStr() const {
-	std::string ret_str = workingStr;
+std::string
+nixlSerDes::exportStr() const
+{
+    std::string ret_str = workingStr;
     return ret_str;
 }
 
-nixl_status_t nixlSerDes::importStr(const std::string &sdbuf) {
- 
-    if(sdbuf.compare(0, 11, "nixlSerDes|") != 0){
-       //incorrect tag
-       return NIXL_ERR_MISMATCH;
-    }    
+nixl_status_t
+nixlSerDes::importStr(const std::string& sdbuf)
+{
+    if (sdbuf.compare(0, 11, "nixlSerDes|") != 0) {
+        // incorrect tag
+        return NIXL_ERR_MISMATCH;
+    }
 
     workingStr = sdbuf;
     mode = DESERIALIZE;

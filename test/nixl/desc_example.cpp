@@ -14,106 +14,108 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <iostream>
-#include <string>
-#include <cassert>
-#include "nixl.h"
-#include "serdes/serdes.h"
-#include "backend/backend_aux.h"
-
 #include <sys/time.h>
 
+#include <cassert>
+#include <iostream>
+#include <string>
 
-void testPerf(){
-    int desc_count = 24*64*1024;
+#include "backend/backend_aux.h"
+#include "nixl.h"
+#include "serdes/serdes.h"
+
+
+void
+testPerf()
+{
+    int desc_count = 24 * 64 * 1024;
     void* buf = malloc(256);
-    nixl_xfer_dlist_t dlist (DRAM_SEG);
+    nixl_xfer_dlist_t dlist(DRAM_SEG);
 
     struct timeval start_time, end_time, diff_time;
 
     gettimeofday(&start_time, NULL);
 
-    for(int i = 0; i<desc_count; i++)
-        dlist.addDesc(nixlBasicDesc((uintptr_t) buf, 256, 0));
+    for (int i = 0; i < desc_count; i++) dlist.addDesc(nixlBasicDesc((uintptr_t)buf, 256, 0));
 
     gettimeofday(&end_time, NULL);
 
-    assert(dlist.descCount() == 24*64*1024);
+    assert(dlist.descCount() == 24 * 64 * 1024);
     timersub(&end_time, &start_time, &diff_time);
-    std::cout << "add desc mode, total time for " << 24*64*1024 << " descs: "
-              << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
+    std::cout << "add desc mode, total time for " << 24 * 64 * 1024 << " descs: " << diff_time.tv_sec << "s "
+              << diff_time.tv_usec << "us \n";
 
     float time_per_desc = ((diff_time.tv_sec * 1000000) + diff_time.tv_usec);
-    time_per_desc /=  (24*64*1024) ;
+    time_per_desc /= (24 * 64 * 1024);
     std::cout << "time per desc " << time_per_desc << "us\n";
 
 
-    nixl_xfer_dlist_t dlist2 (DRAM_SEG, false, desc_count);
+    nixl_xfer_dlist_t dlist2(DRAM_SEG, false, desc_count);
 
     gettimeofday(&start_time, NULL);
 
-    for(int i = 0; i<desc_count; i++)
-        dlist2[i] = nixlBasicDesc((uintptr_t) buf, 256, 0);
+    for (int i = 0; i < desc_count; i++) dlist2[i] = nixlBasicDesc((uintptr_t)buf, 256, 0);
 
     gettimeofday(&end_time, NULL);
 
-    assert(dlist.descCount() == 24*64*1024);
+    assert(dlist.descCount() == 24 * 64 * 1024);
     timersub(&end_time, &start_time, &diff_time);
-    std::cout << "Operator [] mode, total time for " << 24*64*1024 << " descs: "
-              << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
+    std::cout << "Operator [] mode, total time for " << 24 * 64 * 1024 << " descs: " << diff_time.tv_sec << "s "
+              << diff_time.tv_usec << "us \n";
 
     time_per_desc = ((diff_time.tv_sec * 1000000) + diff_time.tv_usec);
-    time_per_desc /=  (24*64*1024) ;
+    time_per_desc /= (24 * 64 * 1024);
     std::cout << "time per desc " << time_per_desc << "us\n";
 
     free(buf);
- }
+}
 
-int main()
+int
+main()
 {
     // nixlBasicDesc functionality
     nixlBasicDesc buff1;
-    buff1.addr   = (uintptr_t) 1000;
-    buff1.len    = 105;
-    buff1.devId  = 0;
+    buff1.addr = (uintptr_t)1000;
+    buff1.len = 105;
+    buff1.devId = 0;
 
-    nixlBasicDesc buff2 (2000,23,3);
-    nixlBasicDesc buff3 (buff2);
+    nixlBasicDesc buff2(2000, 23, 3);
+    nixlBasicDesc buff3(buff2);
     nixlBasicDesc buff4;
     buff4 = buff1;
-    buff4.copyMeta (buff2);
-    nixlBasicDesc buff5 (1980,21,3);
-    nixlBasicDesc buff6 (1010,30,4);
-    nixlBasicDesc buff7 (1010,30,0);
-    nixlBasicDesc buff8 (1010,31,0);
+    buff4.copyMeta(buff2);
+    nixlBasicDesc buff5(1980, 21, 3);
+    nixlBasicDesc buff6(1010, 30, 4);
+    nixlBasicDesc buff7(1010, 30, 0);
+    nixlBasicDesc buff8(1010, 31, 0);
 
     nixlBasicDesc importDesc(buff2.serialize());
     assert(buff2 == importDesc);
 
-    assert (buff3==buff2);
-    assert (buff4==buff1);
-    assert (buff3!=buff1);
-    assert (buff8!=buff7);
+    assert(buff3 == buff2);
+    assert(buff4 == buff1);
+    assert(buff3 != buff1);
+    assert(buff8 != buff7);
 
-    assert (buff2.covers(buff3));
-    assert (buff4.overlaps(buff1));
-    assert (!buff1.covers(buff2));
-    assert (!buff1.overlaps(buff2));
-    assert (!buff2.covers(buff1));
-    assert (!buff2.overlaps(buff1));
-    assert (buff2.overlaps(buff5));
-    assert (buff5.overlaps(buff2));
-    assert (!buff2.covers(buff5));
-    assert (!buff5.covers(buff2));
-    assert (!buff1.covers(buff6));
-    assert (!buff6.covers(buff1));
-    assert (buff1.covers(buff7));
-    assert (!buff7.covers(buff1));
+    assert(buff2.covers(buff3));
+    assert(buff4.overlaps(buff1));
+    assert(!buff1.covers(buff2));
+    assert(!buff1.overlaps(buff2));
+    assert(!buff2.covers(buff1));
+    assert(!buff2.overlaps(buff1));
+    assert(buff2.overlaps(buff5));
+    assert(buff5.overlaps(buff2));
+    assert(!buff2.covers(buff5));
+    assert(!buff5.covers(buff2));
+    assert(!buff1.covers(buff6));
+    assert(!buff6.covers(buff1));
+    assert(buff1.covers(buff7));
+    assert(!buff7.covers(buff1));
 
     nixlBlobDesc stringd1;
-    stringd1.addr   = 2392382;
-    stringd1.len    = 23;
-    stringd1.devId  = 4;
+    stringd1.addr = 2392382;
+    stringd1.len = 23;
+    stringd1.devId = 4;
     stringd1.metaInfo = std::string("567");
 
     nixlBlobDesc importStringD(stringd1.serialize());
@@ -130,26 +132,26 @@ int main()
     std::cout << "\n";
 
     nixlBlobDesc stringd2;
-    stringd2.addr     = 1010;
-    stringd2.len      = 31;
-    stringd2.devId    = 0;
+    stringd2.addr = 1010;
+    stringd2.len = 31;
+    stringd2.devId = 0;
     stringd2.metaInfo = std::string("567f");
 
     nixlMetaDesc meta1;
-    meta1.addr      = 56;
-    meta1.len       = 1294;
-    meta1.devId     = 0;
+    meta1.addr = 56;
+    meta1.len = 1294;
+    meta1.devId = 0;
     meta1.metadataP = nullptr;
 
     nixlMetaDesc meta2;
-    meta2.addr      = 70;
-    meta2.len       = 43;
-    meta2.devId     = 0;
+    meta2.addr = 70;
+    meta2.len = 43;
+    meta2.devId = 0;
     meta2.metadataP = nullptr;
 
-    assert (stringd1!=buff1);
-    assert (stringd2==buff8);
-    nixlBasicDesc buff9 (stringd1);
+    assert(stringd1 != buff1);
+    assert(stringd2 == buff8);
+    nixlBasicDesc buff9(stringd1);
 
     buff1.print("");
     buff2.print("");
@@ -160,29 +162,29 @@ int main()
 
     // DescList functionality
     std::cout << "\n\n";
-    nixlMetaDesc meta3 (10070, 43, 0);
-    nixlMetaDesc meta4 (10070, 42, 0);
+    nixlMetaDesc meta3(10070, 43, 0);
+    nixlMetaDesc meta4(10070, 42, 0);
     meta3.metadataP = nullptr;
     meta4.metadataP = nullptr;
     int dummy;
 
-    nixl_meta_dlist_t dlist1 (DRAM_SEG);
+    nixl_meta_dlist_t dlist1(DRAM_SEG);
     dlist1.addDesc(meta1);
-    assert (dlist1.overlaps(meta2, dummy));
+    assert(dlist1.overlaps(meta2, dummy));
     dlist1.addDesc(meta3);
 
-    nixl_meta_dlist_t dlist2 (VRAM_SEG, false, false);
+    nixl_meta_dlist_t dlist2(VRAM_SEG, false, false);
     dlist2.addDesc(meta3);
     dlist2.addDesc(meta2);
-    assert (dlist2.overlaps(meta1, dummy));
+    assert(dlist2.overlaps(meta1, dummy));
 
-    nixl_meta_dlist_t dlist3 (VRAM_SEG, false, true);
+    nixl_meta_dlist_t dlist3(VRAM_SEG, false, true);
     dlist3.addDesc(meta3);
     dlist3.addDesc(meta2);
-    assert (dlist3.overlaps(meta1, dummy));
+    assert(dlist3.overlaps(meta1, dummy));
 
-    nixl_meta_dlist_t dlist4 (dlist1);
-    nixl_meta_dlist_t dlist5 (VRAM_SEG);
+    nixl_meta_dlist_t dlist4(dlist1);
+    nixl_meta_dlist_t dlist5(VRAM_SEG);
     dlist5 = dlist3;
 
     // TODO: test overlap_check flag
@@ -195,7 +197,8 @@ int main()
 
     try {
         dlist1.remDesc(2);
-    } catch (const std::out_of_range& e) {
+    }
+    catch (const std::out_of_range& e) {
         std::cout << "Caught expected error: " << e.what() << std::endl;
     }
     std::cout << dlist1.getIndex(meta3) << "\n";
@@ -203,15 +206,17 @@ int main()
     std::cout << dlist1.getIndex(meta3) << "\n";
     try {
         dlist2.remDesc(dlist2.getIndex(meta1));
-    } catch (const std::out_of_range& e) {
+    }
+    catch (const std::out_of_range& e) {
         std::cout << "Caught expected error: " << e.what() << std::endl;
     }
     dlist2.remDesc(dlist2.getIndex(meta3));
-    assert(dlist2.getIndex(meta3)== NIXL_ERR_NOT_FOUND);
-    assert(dlist3.getIndex(meta1)== NIXL_ERR_NOT_FOUND);
+    assert(dlist2.getIndex(meta3) == NIXL_ERR_NOT_FOUND);
+    assert(dlist3.getIndex(meta1) == NIXL_ERR_NOT_FOUND);
     try {
         dlist3.remDesc(dlist3.getIndex(meta4));
-    } catch (const std::out_of_range& e) {
+    }
+    catch (const std::out_of_range& e) {
         std::cout << "Caught expected error: " << e.what() << std::endl;
     }
 
@@ -221,29 +226,29 @@ int main()
 
     // Populate and unifiedAddr test
     std::cout << "\n\n";
-    nixlBlobDesc s1 (10070, 43, 0);
+    nixlBlobDesc s1(10070, 43, 0);
     s1.metaInfo = "s1";
-    nixlBlobDesc s2 (900, 43, 2);
+    nixlBlobDesc s2(900, 43, 2);
     s2.metaInfo = "s2";
-    nixlBlobDesc s3 (500, 43, 1);
+    nixlBlobDesc s3(500, 43, 1);
     s3.metaInfo = "s3";
-    nixlBlobDesc s4 (100, 43, 3);
+    nixlBlobDesc s4(100, 43, 3);
     s4.metaInfo = "s4";
 
-    nixlBasicDesc b1 (10075, 30, 0);
-    nixlBasicDesc b2 (905, 30, 2);
-    nixlBasicDesc b3 (505, 30, 1);
-    nixlBasicDesc b4 (105, 30, 3);
-    nixlBasicDesc b5 (305, 30, 4);
-    nixlBasicDesc b6 (100, 30, 3);
+    nixlBasicDesc b1(10075, 30, 0);
+    nixlBasicDesc b2(905, 30, 2);
+    nixlBasicDesc b3(505, 30, 1);
+    nixlBasicDesc b4(105, 30, 3);
+    nixlBasicDesc b5(305, 30, 4);
+    nixlBasicDesc b6(100, 30, 3);
 
-    nixl_xfer_dlist_t dlist10 (DRAM_SEG, false);
-    nixl_xfer_dlist_t dlist11 (DRAM_SEG, true);
-    nixl_xfer_dlist_t dlist12 (DRAM_SEG, true);
-    nixl_xfer_dlist_t dlist13 (DRAM_SEG, true);
-    nixl_xfer_dlist_t dlist14 (DRAM_SEG, true);
+    nixl_xfer_dlist_t dlist10(DRAM_SEG, false);
+    nixl_xfer_dlist_t dlist11(DRAM_SEG, true);
+    nixl_xfer_dlist_t dlist12(DRAM_SEG, true);
+    nixl_xfer_dlist_t dlist13(DRAM_SEG, true);
+    nixl_xfer_dlist_t dlist14(DRAM_SEG, true);
 
-    nixl_reg_dlist_t dlist20 (DRAM_SEG, true);
+    nixl_reg_dlist_t dlist20(DRAM_SEG, true);
 
     dlist10.addDesc(b1);
     dlist10.addDesc(b2);
@@ -285,11 +290,12 @@ int main()
     nixlSerDes* ser_des2 = new nixlSerDes();
 
     assert(dlist10.serialize(ser_des) == 0);
-    nixl_xfer_dlist_t importList (ser_des);;
+    nixl_xfer_dlist_t importList(ser_des);
+    ;
     assert(importList == dlist10);
 
     assert(dlist20.serialize(ser_des2) == 0);
-    nixl_reg_dlist_t importSList (ser_des2);
+    nixl_reg_dlist_t importSList(ser_des2);
     assert(importSList == dlist20);
 
     dlist10.print();
@@ -301,17 +307,17 @@ int main()
     importSList.print();
     std::cout << "\n";
 
-    nixl_reg_dlist_t dlist21 (DRAM_SEG, false);
-    nixl_reg_dlist_t dlist22 (DRAM_SEG, false);
-    nixl_reg_dlist_t dlist23 (DRAM_SEG, false);
-    nixl_reg_dlist_t dlist24 (DRAM_SEG, false);
-    nixl_reg_dlist_t dlist25 (DRAM_SEG, false);
+    nixl_reg_dlist_t dlist21(DRAM_SEG, false);
+    nixl_reg_dlist_t dlist22(DRAM_SEG, false);
+    nixl_reg_dlist_t dlist23(DRAM_SEG, false);
+    nixl_reg_dlist_t dlist24(DRAM_SEG, false);
+    nixl_reg_dlist_t dlist25(DRAM_SEG, false);
 
-    dlist20.populate (dlist10, dlist21);
-    dlist20.populate (dlist11, dlist22);
-    dlist20.populate (dlist12, dlist23);
-    dlist20.populate (dlist13, dlist24);
-    dlist20.populate (dlist14, dlist25);
+    dlist20.populate(dlist10, dlist21);
+    dlist20.populate(dlist11, dlist22);
+    dlist20.populate(dlist12, dlist23);
+    dlist20.populate(dlist13, dlist24);
+    dlist20.populate(dlist14, dlist25);
 
     std::cout << "\n";
     dlist21.print();

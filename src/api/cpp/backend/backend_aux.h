@@ -19,9 +19,10 @@
 
 #include <mutex>
 #include <string>
-#include "nixl_types.h"
-#include "nixl_descriptors.h"
+
 #include "common/nixl_time.h"
+#include "nixl_descriptors.h"
+#include "nixl_types.h"
 
 // Might be removed to be decided by backend, or changed to high
 // level direction or so.
@@ -29,10 +30,10 @@ typedef std::vector<std::pair<std::string, std::string>> notif_list_t;
 
 
 class nixlBackendOptionalArgs {
-    public:
-        // During postXfer, user might ask for a notification if supported
-        nixl_blob_t notifMsg;
-        bool        hasNotif = false;
+public:
+    // During postXfer, user might ask for a notification if supported
+    nixl_blob_t notifMsg;
+    bool hasNotif = false;
 };
 
 typedef nixlBackendOptionalArgs nixl_opt_b_args_t;
@@ -43,35 +44,32 @@ typedef nixlBackendOptionalArgs nixl_opt_b_args_t;
 // after the backend is initialized by agent. If we needed to make it private
 // from the user, we should make nixlBackendEngine/nixlAgent friend classes.
 class nixlBackendInitParams {
-    public:
-        std::string       localAgent;
+public:
+    std::string localAgent;
 
-        nixl_backend_t    type;
-        nixl_b_params_t*  customParams;
+    nixl_backend_t type;
+    nixl_b_params_t* customParams;
 
-        bool              enableProgTh;
-        nixlTime::us_t    pthrDelay;
+    bool enableProgTh;
+    nixlTime::us_t pthrDelay;
 };
 
 // Pure virtual class to have a common pointer type
 class nixlBackendReqH {
 public:
-    nixlBackendReqH() { }
-    ~nixlBackendReqH() { }
+    nixlBackendReqH() {}
+    ~nixlBackendReqH() {}
 };
 
 // Pure virtual class to have a common pointer type for different backendMD.
 class nixlBackendMD {
-    protected:
-        bool isPrivateMD;
+protected:
+    bool isPrivateMD;
 
-    public:
-        nixlBackendMD(bool isPrivate){
-            isPrivateMD = isPrivate;
-        }
+public:
+    nixlBackendMD(bool isPrivate) { isPrivateMD = isPrivate; }
 
-        virtual ~nixlBackendMD(){
-        }
+    virtual ~nixlBackendMD() {}
 };
 
 // Each backend can have different connection requirement
@@ -79,40 +77,38 @@ class nixlBackendMD {
 // a connection to a remote node. Note that local information
 // is passed during the constructor and through BackendInitParams
 class nixlBackendConnMD {
-  public:
+public:
     // And some other details
     std::string dstIpAddress;
-    uint16_t    dstPort;
+    uint16_t dstPort;
 };
 
 // A pointer required to a metadata object for backends next to each BasicDesc
 class nixlMetaDesc : public nixlBasicDesc {
-  public:
-        // To be able to point to any object
-        nixlBackendMD* metadataP;
+public:
+    // To be able to point to any object
+    nixlBackendMD* metadataP;
 
-        // Reuse parent constructor without the metadata pointer
-        using nixlBasicDesc::nixlBasicDesc;
+    // Reuse parent constructor without the metadata pointer
+    using nixlBasicDesc::nixlBasicDesc;
 
-        nixlMetaDesc() : nixlBasicDesc() { metadataP = nullptr; }
+    nixlMetaDesc() : nixlBasicDesc() { metadataP = nullptr; }
 
-        // No serializer or deserializer, using parent not to expose the metadata
+    // No serializer or deserializer, using parent not to expose the metadata
 
-        inline friend bool operator==(const nixlMetaDesc &lhs, const nixlMetaDesc &rhs) {
-            return (((nixlBasicDesc)lhs == (nixlBasicDesc)rhs) &&
-                          (lhs.metadataP == rhs.metadataP));
-        }
+    inline friend bool operator==(const nixlMetaDesc& lhs, const nixlMetaDesc& rhs)
+    {
+        return (((nixlBasicDesc)lhs == (nixlBasicDesc)rhs) && (lhs.metadataP == rhs.metadataP));
+    }
 
-        // Main use case is to take the BasicDesc from another object, so just
-        // the metadata part is separately copied here, used in DescList
-        inline void copyMeta (const nixlMetaDesc &meta) {
-            this->metadataP = meta.metadataP;
-        }
+    // Main use case is to take the BasicDesc from another object, so just
+    // the metadata part is separately copied here, used in DescList
+    inline void copyMeta(const nixlMetaDesc& meta) { this->metadataP = meta.metadataP; }
 
-        inline void print(const std::string &suffix) const {
-            nixlBasicDesc::print(", Backend ptr val: " +
-                                 std::to_string((uintptr_t)metadataP) + suffix);
-        }
+    inline void print(const std::string& suffix) const
+    {
+        nixlBasicDesc::print(", Backend ptr val: " + std::to_string((uintptr_t)metadataP) + suffix);
+    }
 };
 
 typedef nixlDescList<nixlMetaDesc> nixl_meta_dlist_t;

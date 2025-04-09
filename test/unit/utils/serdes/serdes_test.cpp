@@ -15,11 +15,13 @@
  * limitations under the License.
  */
 #include "serdes/serdes.h"
+
 #include <cassert>
 #include <iostream>
 
-int main() {
-
+int
+main()
+{
     int i = 0xff;
     std::string s = "testString";
     std::string t1 = "i", t2 = "s";
@@ -48,14 +50,14 @@ int main() {
     size_t osize = sd2.getBufLen(t1);
     assert(osize > 0);
 
-    void *ptr = malloc(osize);
+    void* ptr = malloc(osize);
     ret = sd2.getBuf(t1, ptr, osize);
     assert(ret == 0);
 
-    std::string s2 =  sd2.getStr(t2);
+    std::string s2 = sd2.getStr(t2);
     assert(s2.size() > 0);
 
-    assert(*((int*) ptr) == 0xff);
+    assert(*((int*)ptr) == 0xff);
 
     assert(s2.compare("testString") == 0);
 
