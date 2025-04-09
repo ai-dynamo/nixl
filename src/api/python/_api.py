@@ -264,14 +264,20 @@ class nixl_agent:
     """
     @brief  Proactively establish a connection with a remote agent,
             which will reduce the time spent in the first transfer between the two agents.
-            NIXL will establish the connection for all the backends that talk to remote agents.
-            This function is optional and may not be helpful for every backend.
+            NIXL will establish the connection for all the backends that talk to that remote
+            agent, or limit to the set of backends passed through the backends argument.
+            This function is optional.
 
+    @param backends Optional list of backend names to limit the connections to specific backends
     @param remote_agent Name of the remote agent.
     """
 
-    def make_connection(self, remote_agent: str):
-        self.agent.makeConnection(remote_agent)
+    def make_connection(self, remote_agent: str, backends: list[str] = []):
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+
+        self.agent.makeConnection(remote_agent, handle_list)
 
     """
     @brief  Prepare a transfer descriptor list for data transfer.

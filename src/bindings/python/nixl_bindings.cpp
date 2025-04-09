@@ -333,8 +333,15 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(ret);
                     return ret;
                 }, py::arg("descs"), py::arg("backends") = std::vector<uintptr_t>({}))
-        .def("makeConnection", [](nixlAgent &agent, const std::string &remote_agent) {
-                    nixl_status_t ret = agent.makeConnection(remote_agent);
+        .def("makeConnection", [](nixlAgent &agent,
+                                  const std::string &remote_agent,
+                                  std::vector<uintptr_t> backends) {
+                    nixl_opt_args_t extra_params;
+
+                    for(uintptr_t backend: backends)
+                        extra_params.backends.push_back((nixlBackendH*) backend);
+
+                    nixl_status_t ret = agent.makeConnection(remote_agent, &extra_params);
                     throw_nixl_exception(ret);
                     return ret;
                 })

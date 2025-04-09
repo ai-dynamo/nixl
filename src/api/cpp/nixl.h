@@ -126,13 +126,15 @@ class nixlAgent {
 
         /**
          * @brief  Make connection proactively, instead of at the time of the first transfer
-         *         towards the target agent.
+         *         towards the target agent. If a list of backends hints is provided
+         *         (via extra_params), the connection is made for the specified backends.
          *
          * @param  remote_agent  Name of the remote agent
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        makeConnection (const std::string &remote_agent);
+        makeConnection (const std::string &remote_agent,
+                        const nixl_opt_args_t* extra_params = nullptr);
 
         /*** Transfer Request Preparation ***/
         /**
