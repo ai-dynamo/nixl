@@ -329,11 +329,11 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
         size_t current_req = 0;
         for (auto* batch : gds_handle->batch_io_list) {
             batch->reset();  // Just reset counters
-            
+
             // Repopulate this batch
             size_t batch_size = std::min(gds_handle->request_list.size() - current_req,
                                        (size_t)batch->getMaxReqs());
-            
+
             for (size_t i = 0; i < batch_size; i++) {
                 const auto& req = gds_handle->request_list[current_req + i];
                 ret = batch->addToBatch(req.fh, req.addr, req.size,
