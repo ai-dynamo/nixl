@@ -19,17 +19,14 @@ build-backend = "mesonpy"
 
 [project]
 name = 'nixl'
-version = '0.1.0'
+version = '0.1.1'
 description = 'NIXL Python API'
 readme = 'README.md'
 license = {file = 'LICENSE'}
 requires-python = '>=3.9'
 authors = [
-  {name = 'Timothy Stamler', email = 'tstamler@nvidia.com'},
-  {name = 'Moein Khazraee', email = 'moein@nvidia.com'},
-  {name = 'Vishwanath Venkatesan', email = 'vvenkatesan@nvidia.com'},
-  {name = 'Omri Kahalon', email = 'omrik@nvidia.com'},
+  {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
 ]
 
 [tool.meson-python.args]
-setup = ['-Ddisable_gds_backend=true', '-Dinstall_headers=false']
+setup = ['-Dinstall_headers=false']
