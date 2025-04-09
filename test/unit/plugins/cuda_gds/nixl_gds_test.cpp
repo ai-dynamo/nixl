@@ -17,21 +17,19 @@
 #include <iostream>
 #include <string>
 #include <algorithm>
-#include <nixl_descriptors.h>
-#include <nixl_params.h>
-#include <nixl.h>
 #include <cassert>
 #include <cuda_runtime.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <ctime>
 #include <iomanip>
 #include <sstream>
 #include <cerrno>
 #include <cstring>
 #include <getopt.h>
-#include <stdlib.h>
-#include <chrono>
+#include "nixl_descriptors.h"
+#include "nixl_params.h"
+#include "nixl.h"
+#include "common/nixl_time.h"
 
 // Default values
 #define DEFAULT_NUM_TRANSFERS 250
@@ -185,8 +183,8 @@ bool validate_gpu_buffer(void* gpu_buffer, size_t size) {
 }
 
 // Helper function to format duration
-std::string format_duration(std::chrono::microseconds us) {
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(us).count();
+std::string format_duration(nixlTime::us_t us) {
+    nixlTime::ms_t ms = us/1000.0;
     if (ms < 1000) {
         return std::to_string(ms) + " ms";
     }
@@ -216,7 +214,7 @@ int main(int argc, char *argv[])
     unsigned int                pool_size = 8;
     unsigned int                batch_limit = 128;
     size_t                      max_request_size = 16 * 1024 * 1024;
-    std::chrono::microseconds   total_time(0);
+    nixlTime::us_t              total_time(0);
     double                      total_data_gb = 0;
     bool                        use_direct = false;
 
@@ -474,6 +472,8 @@ int main(int argc, char *argv[])
     nixl_xfer_dlist_t file_for_gds_list = file_for_gds.trim();
     nixl_xfer_dlist_t src_list = use_dram ? dram_for_gds.trim() : vram_for_gds.trim();
 
+    using namespace nixlTime;
+
     // Perform write test if not skipped
     if (!skip_write) {
         std::cout << "\n============================================================" << std::endl;
@@ -487,7 +487,7 @@ int main(int argc, char *argv[])
             goto cleanup;
         }
 
-        auto write_start = std::chrono::high_resolution_clock::now();
+        us_t write_start = getUs();
         status = agent.postXferReq(treq);
         if (status < 0) {
             std::cerr << "Failed to post write transfer request\n";
@@ -501,15 +501,15 @@ int main(int argc, char *argv[])
                 goto cleanup;
             }
         }
-        auto write_end = std::chrono::high_resolution_clock::now();
+        us_t write_end = getUs();
 
         agent.releaseXferReq(treq);
-        auto write_duration = std::chrono::duration_cast<std::chrono::microseconds>(write_end - write_start);
+        us_t write_duration = write_end - write_start;
         total_time += write_duration;
 
         double data_gb = (transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0);
         total_data_gb += data_gb;
-        double seconds = write_duration.count() / 1000000.0;
+        double seconds = write_duration / 1000000.0;
         double gbps = data_gb / seconds;
 
         std::cout << "Write completed:" << std::endl;
@@ -550,7 +550,7 @@ int main(int argc, char *argv[])
             goto cleanup;
         }
 
-        auto read_start = std::chrono::high_resolution_clock::now();
+        us_t read_start = getUs();
         status = agent.postXferReq(treq);
         if (status < 0) {
             std::cerr << "Failed to post read transfer request\n";
@@ -564,16 +564,16 @@ int main(int argc, char *argv[])
                 goto cleanup;
             }
         }
-        auto read_end = std::chrono::high_resolution_clock::now();
+        us_t read_end = getUs();
 
         agent.releaseXferReq(treq);
-        auto read_duration = std::chrono::duration_cast<std::chrono::microseconds>(read_end - read_start);
+        us_t read_duration = read_end - read_start;
         total_time += read_duration;
 
         double data_gb = (transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0);
         total_data_gb += data_gb;
         // Ensure we don't divide by zero and use microseconds for more precision
-        double seconds = std::max(read_duration.count() / 1000000.0, 0.000001); // minimum 1 microsecond
+        double seconds = std::max(read_duration / 1000000.0, 0.000001); // minimum 1 microsecond
         double gbps = data_gb / seconds;
 
         std::cout << "Read completed:" << std::endl;
