@@ -22,8 +22,9 @@
 
 /** Setting the default values to check the batch limit */
 #define DEFAULT_BATCH_LIMIT 128
-/** Setting the max request size to 256MB */
+/** Setting the max request size to 16 MB */
 #define DEFAULT_MAX_REQUEST_SIZE (16 * 1024 * 1024)  // 16MB
+/** Create a batch pool of size 8 */
 #define DEFAULT_BATCH_POOL_SIZE 8
 
 nixlGdsIOBatch::nixlGdsIOBatch(unsigned int size)
@@ -153,11 +154,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
         // Configure batch_pool_size
         if (custom_params->count("batch_pool_size") > 0) {
             try {
-                batch_pool_size =
-			std::stoi((*custom_params)["batch_pool_size"]);
-                // Ensure reasonable limits
-                batch_pool_size =
-			std::max(1u, std::min(128u, batch_pool_size));
+                batch_pool_size = std::stoi((*custom_params)["batch_pool_size"]);
             } catch (...) {
                 // Keep default if conversion fails
             }
@@ -167,8 +164,6 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
         if (custom_params->count("batch_limit") > 0) {
             try {
                 batch_limit = std::stoi((*custom_params)["batch_limit"]);
-                // Ensure reasonable limits
-                batch_limit = std::max(1u, std::min(128u, batch_limit));
             } catch (...) {
                 // Keep default if conversion fails
             }
@@ -178,16 +173,6 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
         if (custom_params->count("max_request_size") > 0) {
             try {
                 max_request_size = std::stoul((*custom_params)["max_request_size"]);
-                // Error out if max_request_size exceeds 256MB
-                const size_t max_allowed_size = 256 * 1024 * 1024; // 256MB
-                if (max_request_size > max_allowed_size) {
-                    std::cerr << "Error: max_request_size cannot exceed 256MB"
-			      << std::endl;
-                    this->initErr = true;
-                    return;
-                }
-                // Ensure minimum size
-                max_request_size = std::max(1u, max_request_size);
             } catch (...) {
                 // Keep default if conversion fails
             }
@@ -450,9 +435,9 @@ nixlGdsEngine::~nixlGdsEngine() {
 
 // Add helper function to create batches that can be called from both prepXfer and postXfer
 nixl_status_t nixlGdsEngine::createBatches(const nixl_xfer_op_t &operation,
-                                         const nixl_meta_dlist_t &local,
-                                         const nixl_meta_dlist_t &remote,
-                                         nixlGdsBackendReqH* gds_handle) {
+                                           const nixl_meta_dlist_t &local,
+                                           const nixl_meta_dlist_t &remote,
+                                           nixlGdsBackendReqH* gds_handle) {
     size_t buf_cnt = local.descCount();
     size_t file_cnt = remote.descCount();
 
@@ -463,22 +448,13 @@ nixl_status_t nixlGdsEngine::createBatches(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-#if 0
-    // Check for VRAM size limitation
-    if ((local.getType() == VRAM_SEG || remote.getType() == VRAM_SEG)) {
-        for (size_t i = 0; i < buf_cnt; i++) {
-            size_t size = (local.getType() == VRAM_SEG) ? local[i].len : remote[i].len;
-	    if (size > (16 * 1024 * 1024)) {  // 16MB
-                std::cerr << "Error: VRAM transfers larger than 16MB are not supported\n";
-                return NIXL_ERR_INVALID_PARAM;
-            }
-        }
-    }
-#endif
     if ((remote.getType() != FILE_SEG) && (local.getType() != FILE_SEG)) {
         std::cerr << "Only support I/O between memory (DRAM/VRAM) and file type\n";
         return NIXL_ERR_INVALID_PARAM;
     }
+
+    // Determine if local is the file segment
+    bool is_local_file = (local.getType() == FILE_SEG);
 
     // Clear existing request list and batches if any
     gds_handle->request_list.clear();
@@ -494,24 +470,24 @@ nixl_status_t nixlGdsEngine::createBatches(const nixl_xfer_op_t &operation,
         size_t base_offset;
         gdsFileHandle fh;
 
-        // Get transfer parameters based on transfer direction
-        if (local.getType() == VRAM_SEG || local.getType() == DRAM_SEG) {
-            base_addr = (void*)local[i].addr;
-            total_size = local[i].len;
-            base_offset = (size_t)remote[i].addr;
+        // Get transfer parameters based on whether local is file or memory
+        if (is_local_file) {
+            base_addr = (void*)remote[i].addr;
+            total_size = remote[i].len;
+            base_offset = (size_t)local[i].addr;
 
-            auto it = gds_file_map.find(remote[i].devId);
+            auto it = gds_file_map.find(local[i].devId);
             if (it == gds_file_map.end()) {
                 std::cerr << "File handle not found\n";
                 return NIXL_ERR_NOT_FOUND;
             }
             fh = it->second;
         } else {
-            base_addr = (void*)remote[i].addr;
-            total_size = remote[i].len;
-            base_offset = (size_t)local[i].addr;
+            base_addr = (void*)local[i].addr;
+            total_size = local[i].len;
+            base_offset = (size_t)remote[i].addr;
 
-            auto it = gds_file_map.find(local[i].devId);
+            auto it = gds_file_map.find(remote[i].devId);
             if (it == gds_file_map.end()) {
                 std::cerr << "File handle not found\n";
                 return NIXL_ERR_NOT_FOUND;
@@ -525,7 +501,7 @@ nixl_status_t nixlGdsEngine::createBatches(const nixl_xfer_op_t &operation,
 
         while (remaining_size > 0) {
             size_t request_size = std::min(remaining_size,
-					   (size_t)max_request_size);
+                                       (size_t)max_request_size);
 
             GdsTransferRequestH req;
             req.addr = (char*)base_addr + current_offset;

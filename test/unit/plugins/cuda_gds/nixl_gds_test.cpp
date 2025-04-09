@@ -39,6 +39,9 @@
 #define TEST_PHRASE "NIXL Storage Test Pattern 2025"
 #define TEST_PHRASE_LEN (sizeof(TEST_PHRASE) - 1)  // -1 to exclude null terminator
 
+// Get system page size
+static size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
+
 // Progress bar configuration
 #define PROGRESS_WIDTH 50
 
@@ -75,9 +78,10 @@ void print_usage(const char* program_name) {
               << "  -b, --batch-limit SIZE  Maximum requests per batch (default: 128, range: 1-1024)\n"
               << "  -m, --max-req-size SIZE Maximum size per request (default: 16M, range: 1M-1G)\n"
               << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
+              << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
               << "  -h, --help              Show this help message\n"
               << "\nExample:\n"
-              << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M /path/to/dir\n";
+              << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -D /path/to/dir\n";
 }
 
 void printProgress(float progress) {
@@ -194,43 +198,45 @@ std::string format_duration(std::chrono::microseconds us) {
 
 int main(int argc, char *argv[])
 {
-    nixl_status_t           ret = NIXL_SUCCESS;
-    void                    **vram_addr = NULL;
-    void                    **dram_addr = NULL;
-    std::string             role;
-    int                     status = 0;
-    int                     i;
-    int                     *fd = NULL;
-    bool                    use_dram = false;
-    bool                    use_vram = false;
-    int                     opt;
-    std::string             dir_path;
-    size_t                  transfer_size = DEFAULT_TRANSFER_SIZE;
-    int                     num_transfers = DEFAULT_NUM_TRANSFERS;
-    bool                    skip_read = false;
-    bool                    skip_write = false;
-    unsigned int            pool_size = 8;
-    unsigned int            batch_limit = 128;
-    size_t                  max_request_size = 16 * 1024 * 1024;
-    std::chrono::microseconds total_time(0);
-    double total_data_gb = 0;
+    nixl_status_t               ret = NIXL_SUCCESS;
+    void                        **vram_addr = NULL;
+    void                        **dram_addr = NULL;
+    std::string                 role;
+    int                         status = 0;
+    int                         i;
+    int                         *fd = NULL;
+    bool                        use_dram = false;
+    bool                        use_vram = false;
+    int                         opt;
+    std::string                 dir_path;
+    size_t                      transfer_size = DEFAULT_TRANSFER_SIZE;
+    int                         num_transfers = DEFAULT_NUM_TRANSFERS;
+    bool                        skip_read = false;
+    bool                        skip_write = false;
+    unsigned int                pool_size = 8;
+    unsigned int                batch_limit = 128;
+    size_t                      max_request_size = 16 * 1024 * 1024;
+    std::chrono::microseconds   total_time(0);
+    double                      total_data_gb = 0;
+    bool                        use_direct = false;
 
     // Parse command line options
     static struct option long_options[] = {
-        {"dram", no_argument, 0, 'd'},
-        {"vram", no_argument, 0, 'v'},
-        {"num-transfers", required_argument, 0, 'n'},
-        {"size", required_argument, 0, 's'},
-        {"no-read", no_argument, 0, 'r'},
-        {"no-write", no_argument, 0, 'w'},
-        {"pool-size", required_argument, 0, 'p'},
-        {"batch-limit", required_argument, 0, 'b'},
-        {"max-req-size", required_argument, 0, 'm'},
-        {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0}
+        {"dram",            no_argument,       0, 'd'},
+        {"vram",            no_argument,       0, 'v'},
+        {"num-transfers",   required_argument, 0, 'n'},
+        {"size",           required_argument, 0, 's'},
+        {"no-read",        no_argument,       0, 'r'},
+        {"no-write",       no_argument,       0, 'w'},
+        {"pool-size",      required_argument, 0, 'p'},
+        {"batch-limit",    required_argument, 0, 'b'},
+        {"max-req-size",   required_argument, 0, 'm'},
+        {"direct",         no_argument,       0, 'D'},
+        {"help",           no_argument,       0, 'h'},
+        {0,                0,                 0,  0}
     };
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:m:h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:m:Dh", long_options, NULL)) != -1) {
         switch (opt) {
             case 'd':
                 use_dram = true;
@@ -279,6 +285,9 @@ int main(int argc, char *argv[])
                     return 1;
                 }
                 break;
+            case 'D':
+                use_direct = true;
+                break;
             case 'h':
                 print_usage(argv[0]);
                 return 0;
@@ -323,24 +332,17 @@ int main(int argc, char *argv[])
     fd = new int[num_transfers];
 
     // Initialize NIXL components
-    nixlAgentConfig         cfg(true);
-    nixl_b_params_t         params;
-
-    // Set GDS backend parameters
-    params["batch_pool_size"] = std::to_string(pool_size);
-    params["batch_limit"] = std::to_string(batch_limit);
-    params["max_request_size"] = std::to_string(max_request_size);
-
-    nixlBlobDesc            *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;
-    nixlBlobDesc            *dram_buf = use_dram ? new nixlBlobDesc[num_transfers] : NULL;
-    nixlBlobDesc            *ftrans = new nixlBlobDesc[num_transfers];
-    nixlBackendH            *gds;
-
-    nixl_reg_dlist_t        vram_for_gds(VRAM_SEG);
-    nixl_reg_dlist_t        dram_for_gds(DRAM_SEG);
-    nixl_reg_dlist_t        file_for_gds(FILE_SEG);
-    nixlXferReqH            *treq;
-    std::string             name;
+    nixlAgentConfig             cfg(true);
+    nixl_b_params_t             params;
+    nixlBlobDesc                *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;
+    nixlBlobDesc                *dram_buf = use_dram ? new nixlBlobDesc[num_transfers] : NULL;
+    nixlBlobDesc                *ftrans = new nixlBlobDesc[num_transfers];
+    nixlBackendH                *gds;
+    nixl_reg_dlist_t            vram_for_gds(VRAM_SEG);
+    nixl_reg_dlist_t            dram_for_gds(DRAM_SEG);
+    nixl_reg_dlist_t            file_for_gds(FILE_SEG);
+    nixlXferReqH                *treq;
+    std::string                 name;
 
     std::cout << "\n============================================================" << std::endl;
     std::cout << "                 NIXL STORAGE TEST STARTING (GDS PLUGIN)                     " << std::endl;
@@ -349,10 +351,13 @@ int main(int argc, char *argv[])
     std::cout << "- Mode: " << (use_dram ? "DRAM" : "VRAM") << std::endl;
     std::cout << "- Number of transfers: " << num_transfers << std::endl;
     std::cout << "- Transfer size: " << transfer_size << " bytes" << std::endl;
+    std::cout << "- Total data: " << std::fixed << std::setprecision(2)
+              << ((transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0)) << " GB" << std::endl;
     std::cout << "- Directory: " << dir_path << std::endl;
     std::cout << "- Batch pool size: " << pool_size << std::endl;
     std::cout << "- Batch limit: " << batch_limit << std::endl;
     std::cout << "- Max request size: " << max_request_size << " bytes" << std::endl;
+    std::cout << "- Use O_DIRECT: " << (use_direct ? "Yes" : "No") << std::endl;
     std::cout << "- Operation: ";
     if (!skip_read && !skip_write) {
         std::cout << "Read and Write";
@@ -366,11 +371,17 @@ int main(int argc, char *argv[])
 
     nixlAgent agent("GDSTester", cfg);
 
-    // Create backends
-    agent.createBackend("GDS", params, gds);
+    // Set GDS backend parameters
+    params["batch_pool_size"] = std::to_string(pool_size);
+    params["batch_limit"] = std::to_string(batch_limit);
+    params["max_request_size"] = std::to_string(max_request_size);
 
-    if (gds == NULL) {
-        std::cerr << "Error creating GDS backend\n";
+    // Create backends
+    ret = agent.createBackend("GDS", params, gds);
+    if (ret != NIXL_SUCCESS || gds == NULL) {
+        std::cerr << "Error creating GDS backend: "
+                  << (ret != NIXL_SUCCESS ? "Failed to create backend" : "Backend handle is NULL")
+                  << std::endl;
         goto cleanup;
     }
 
@@ -392,7 +403,7 @@ int main(int argc, char *argv[])
 
         if (use_dram) {
             // Allocate and initialize DRAM buffer
-            if (posix_memalign(&dram_addr[i], 4096, transfer_size) != 0) {
+            if (posix_memalign(&dram_addr[i], PAGE_SIZE, transfer_size) != 0) {
                 std::cerr << "DRAM allocation failed\n";
                 goto cleanup;
             }
@@ -403,7 +414,11 @@ int main(int argc, char *argv[])
         name = generate_timestamped_filename("testfile");
         name = dir_path + "/" + name + "_" + std::to_string(i);
 
-        fd[i] = open(name.c_str(), O_RDWR|O_CREAT, 0744);
+        int flags = O_RDWR|O_CREAT;
+        if (use_direct) {
+            flags |= O_DIRECT;
+        }
+        fd[i] = open(name.c_str(), flags, 0744);
         if (fd[i] < 0) {
             std::cerr << "Failed to open file: " << name << " - " << strerror(errno) << std::endl;
             goto cleanup;
@@ -433,9 +448,27 @@ int main(int argc, char *argv[])
     }
 
     std::cout << "\n=== Registering memory ===" << std::endl;
-    agent.registerMem(file_for_gds);
-    if (use_vram) agent.registerMem(vram_for_gds);
-    if (use_dram) agent.registerMem(dram_for_gds);
+    ret = agent.registerMem(file_for_gds);
+    if (ret != NIXL_SUCCESS) {
+        std::cerr << "Failed to register file memory\n";
+        goto cleanup;
+    }
+
+    if (use_vram) {
+        ret = agent.registerMem(vram_for_gds);
+        if (ret != NIXL_SUCCESS) {
+            std::cerr << "Failed to register VRAM memory\n";
+            goto cleanup;
+        }
+    }
+
+    if (use_dram) {
+        ret = agent.registerMem(dram_for_gds);
+        if (ret != NIXL_SUCCESS) {
+            std::cerr << "Failed to register DRAM memory\n";
+            goto cleanup;
+        }
+    }
 
     // Prepare transfer lists
     nixl_xfer_dlist_t file_for_gds_list = file_for_gds.trim();
@@ -447,7 +480,6 @@ int main(int argc, char *argv[])
         std::cout << "PHASE 2: Memory to File Transfer (Write Test)" << std::endl;
         std::cout << "============================================================" << std::endl;
 
-
         ret = agent.createXferReq(NIXL_WRITE, src_list, file_for_gds_list,
                                  "GDSTester", treq);
         if (ret != NIXL_SUCCESS) {
@@ -457,13 +489,21 @@ int main(int argc, char *argv[])
 
         auto write_start = std::chrono::high_resolution_clock::now();
         status = agent.postXferReq(treq);
-        while (status != NIXL_SUCCESS) {
-            status = agent.getXferStatus(treq);
-            assert(status >= 0);
+        if (status < 0) {
+            std::cerr << "Failed to post write transfer request\n";
+            goto cleanup;
         }
-        agent.releaseXferReq(treq);
 
+        while (status == NIXL_IN_PROG) {
+            status = agent.getXferStatus(treq);
+            if (status < 0) {
+                std::cerr << "Error during write transfer\n";
+                goto cleanup;
+            }
+        }
         auto write_end = std::chrono::high_resolution_clock::now();
+
+        agent.releaseXferReq(treq);
         auto write_duration = std::chrono::duration_cast<std::chrono::microseconds>(write_end - write_start);
         total_time += write_duration;
 
@@ -503,7 +543,6 @@ int main(int argc, char *argv[])
         std::cout << "PHASE 4: File to Memory Transfer (Read Test)" << std::endl;
         std::cout << "============================================================" << std::endl;
 
-
         ret = agent.createXferReq(NIXL_READ, src_list, file_for_gds_list,
                                  "GDSTester", treq);
         if (ret != NIXL_SUCCESS) {
@@ -513,24 +552,34 @@ int main(int argc, char *argv[])
 
         auto read_start = std::chrono::high_resolution_clock::now();
         status = agent.postXferReq(treq);
-        while (status != NIXL_SUCCESS) {
-            status = agent.getXferStatus(treq);
-            assert(status >= 0);
+        if (status < 0) {
+            std::cerr << "Failed to post read transfer request\n";
+            goto cleanup;
         }
-        agent.releaseXferReq(treq);
+
+        while (status == NIXL_IN_PROG) {
+            status = agent.getXferStatus(treq);
+            if (status < 0) {
+                std::cerr << "Error during read transfer\n";
+                goto cleanup;
+            }
+        }
         auto read_end = std::chrono::high_resolution_clock::now();
+
+        agent.releaseXferReq(treq);
         auto read_duration = std::chrono::duration_cast<std::chrono::microseconds>(read_end - read_start);
         total_time += read_duration;
 
         double data_gb = (transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0);
         total_data_gb += data_gb;
-        double seconds = read_duration.count() / 1000000.0;
+        // Ensure we don't divide by zero and use microseconds for more precision
+        double seconds = std::max(read_duration.count() / 1000000.0, 0.000001); // minimum 1 microsecond
         double gbps = data_gb / seconds;
 
         std::cout << "Read completed:" << std::endl;
         std::cout << "- Time: " << format_duration(read_duration) << std::endl;
         std::cout << "- Data: " << std::fixed << std::setprecision(2) << data_gb << " GB" << std::endl;
-        std::cout << "- Speed: " << gbps << " GB/s" << std::endl;
+        std::cout << "- Speed: " << std::fixed << std::setprecision(2) << gbps << " GB/s" << std::endl;
 
         std::cout << "\n============================================================" << std::endl;
         std::cout << "PHASE 5: Validating read data" << std::endl;
@@ -614,10 +663,6 @@ cleanup:
     std::cout << "============================================================" << std::endl;
     std::cout << "Total time: " << format_duration(total_time) << std::endl;
     std::cout << "Total data: " << std::fixed << std::setprecision(2) << total_data_gb << " GB" << std::endl;
-    if (total_time.count() > 0) {
-        double avg_speed = total_data_gb / (total_time.count() / 1000000.0);
-        std::cout << "Average speed: " << avg_speed << " GB/s" << std::endl;
-    }
     std::cout << "============================================================" << std::endl;
     return 0;
 }
