@@ -64,7 +64,8 @@ apt-get -qq install -y curl \
                              libpci-dev \
                              uuid-dev \
                              ibverbs-utils \
-                             libibmad-dev
+                             libibmad-dev \
+                             doxygen
 
 curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
 ( \
@@ -96,7 +97,7 @@ export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dstatic_plugins=UCX
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dstatic_plugins=UCX -Dbuild_docs=true
 cd nixl_build && ninja && ninja install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
