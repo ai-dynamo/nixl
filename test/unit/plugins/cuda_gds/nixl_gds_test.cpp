@@ -34,6 +34,7 @@
 // Default values
 #define DEFAULT_NUM_TRANSFERS 250
 #define DEFAULT_TRANSFER_SIZE (10 * 1024 * 1024)  // 10MB
+#define DEFAULT_ITERATIONS 1  // Default number of iterations
 #define TEST_PHRASE "NIXL Storage Test Pattern 2025"
 #define TEST_PHRASE_LEN (sizeof(TEST_PHRASE) - 1)  // -1 to exclude null terminator
 
@@ -75,11 +76,11 @@ void print_usage(const char* program_name) {
               << "  -p, --pool-size SIZE    Size of batch pool (default: 8, range: 1-32)\n"
               << "  -b, --batch-limit SIZE  Maximum requests per batch (default: 128, range: 1-1024)\n"
               << "  -m, --max-req-size SIZE Maximum size per request (default: 16M, range: 1M-1G)\n"
-              << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
+              << "  -t, --iterations N      Number of iterations for each transfer (default: " << DEFAULT_ITERATIONS << ")\n"
               << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
               << "  -h, --help              Show this help message\n"
               << "\nExample:\n"
-              << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -D /path/to/dir\n";
+              << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -t 5 -D /path/to/dir\n";
 }
 
 void printProgress(float progress) {
@@ -217,6 +218,7 @@ int main(int argc, char *argv[])
     nixlTime::us_t              total_time(0);
     double                      total_data_gb = 0;
     bool                        use_direct = false;
+    unsigned int                iterations = DEFAULT_ITERATIONS;
 
     // Parse command line options
     static struct option long_options[] = {
@@ -229,12 +231,13 @@ int main(int argc, char *argv[])
         {"pool-size",      required_argument, 0, 'p'},
         {"batch-limit",    required_argument, 0, 'b'},
         {"max-req-size",   required_argument, 0, 'm'},
+        {"iterations",     required_argument, 0, 't'},
         {"direct",         no_argument,       0, 'D'},
         {"help",           no_argument,       0, 'h'},
         {0,                0,                 0,  0}
     };
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:m:Dh", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:m:t:Dh", long_options, NULL)) != -1) {
         switch (opt) {
             case 'd':
                 use_dram = true;
@@ -280,6 +283,13 @@ int main(int argc, char *argv[])
                 max_request_size = parse_size(optarg);
                 if (max_request_size < 1024*1024 || max_request_size > 1024*1024*1024) {
                     std::cerr << "Error: Max request size must be between 1M and 1G\n";
+                    return 1;
+                }
+                break;
+            case 't':
+                iterations = atoi(optarg);
+                if (iterations <= 0) {
+                    std::cerr << "Error: Number of iterations must be positive\n";
                     return 1;
                 }
                 break;
@@ -339,7 +349,6 @@ int main(int argc, char *argv[])
     nixl_reg_dlist_t            vram_for_gds(VRAM_SEG);
     nixl_reg_dlist_t            dram_for_gds(DRAM_SEG);
     nixl_reg_dlist_t            file_for_gds(FILE_SEG);
-    nixlXferReqH                *treq;
     std::string                 name;
 
     std::cout << "\n============================================================" << std::endl;
@@ -355,6 +364,7 @@ int main(int argc, char *argv[])
     std::cout << "- Batch pool size: " << pool_size << std::endl;
     std::cout << "- Batch limit: " << batch_limit << std::endl;
     std::cout << "- Max request size: " << max_request_size << " bytes" << std::endl;
+    std::cout << "- Number of iterations: " << iterations << std::endl;
     std::cout << "- Use O_DIRECT: " << (use_direct ? "Yes" : "No") << std::endl;
     std::cout << "- Operation: ";
     if (!skip_read && !skip_write) {
@@ -480,34 +490,69 @@ int main(int argc, char *argv[])
         std::cout << "PHASE 2: Memory to File Transfer (Write Test)" << std::endl;
         std::cout << "============================================================" << std::endl;
 
-        ret = agent.createXferReq(NIXL_WRITE, src_list, file_for_gds_list,
-                                 "GDSTester", treq);
+        us_t write_duration(0);
+        nixlXferReqH* write_req = nullptr;
+
+        // Create descriptor lists for all transfers
+        nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
+        nixl_reg_dlist_t file_reg(FILE_SEG);
+
+        // Add all descriptors
+        for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
+            if (use_dram) {
+                src_reg.addDesc(dram_buf[transfer_idx]);
+            } else {
+                src_reg.addDesc(vram_buf[transfer_idx]);
+            }
+            file_reg.addDesc(ftrans[transfer_idx]);
+            printProgress(float(transfer_idx + 1) / num_transfers);
+        }
+        std::cout << "\nAll descriptors added." << std::endl;
+
+        // Create transfer lists
+        nixl_xfer_dlist_t src_list = src_reg.trim();
+        nixl_xfer_dlist_t file_list = file_reg.trim();
+
+        // Create single transfer request for all transfers
+        ret = agent.createXferReq(NIXL_WRITE, src_list, file_list,
+                                "GDSTester", write_req);
         if (ret != NIXL_SUCCESS) {
-            std::cerr << "Failed to create write transfer request\n";
+            std::cerr << "Failed to create write transfer request" << std::endl;
             goto cleanup;
         }
+        std::cout << "Write transfer request created." << std::endl;
 
-        us_t write_start = getUs();
-        status = agent.postXferReq(treq);
-        if (status < 0) {
-            std::cerr << "Failed to post write transfer request\n";
-            goto cleanup;
-        }
+        // Now do the iterations
+        for (unsigned int iter = 0; iter < iterations; iter++) {
+            us_t iter_start = getUs();
 
-        while (status == NIXL_IN_PROG) {
-            status = agent.getXferStatus(treq);
+            status = agent.postXferReq(write_req);
             if (status < 0) {
-                std::cerr << "Error during write transfer\n";
+                std::cerr << "Failed to post write transfer request" << std::endl;
                 goto cleanup;
             }
-        }
-        us_t write_end = getUs();
 
-        agent.releaseXferReq(treq);
-        us_t write_duration = write_end - write_start;
+            // Wait for completion
+            while (status == NIXL_IN_PROG) {
+                status = agent.getXferStatus(write_req);
+                if (status < 0) {
+                    std::cerr << "Error during write transfer" << std::endl;
+                    goto cleanup;
+                }
+            }
+
+            us_t iter_end = getUs();
+            write_duration += (iter_end - iter_start);
+
+            if (iterations > 1) {
+                printProgress(float(iter + 1) / iterations);
+            }
+        }
+
+        agent.releaseXferReq(write_req);
         total_time += write_duration;
 
-        double data_gb = (transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0);
+        double data_gb = (transfer_size * num_transfers * iterations) / (1024.0 * 1024.0 * 1024.0);
         total_data_gb += data_gb;
         double seconds = write_duration / 1000000.0;
         double gbps = data_gb / seconds;
@@ -543,43 +588,77 @@ int main(int argc, char *argv[])
         std::cout << "PHASE 4: File to Memory Transfer (Read Test)" << std::endl;
         std::cout << "============================================================" << std::endl;
 
-        ret = agent.createXferReq(NIXL_READ, src_list, file_for_gds_list,
-                                 "GDSTester", treq);
+        us_t read_duration(0);
+        nixlXferReqH* read_req = nullptr;
+
+        // Create descriptor lists for all transfers
+        nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
+        nixl_reg_dlist_t file_reg(FILE_SEG);
+
+        // Add all descriptors
+        for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
+            if (use_dram) {
+                src_reg.addDesc(dram_buf[transfer_idx]);
+            } else {
+                src_reg.addDesc(vram_buf[transfer_idx]);
+            }
+            file_reg.addDesc(ftrans[transfer_idx]);
+            printProgress(float(transfer_idx + 1) / num_transfers);
+        }
+        std::cout << "\nAll descriptors added." << std::endl;
+
+        // Create transfer lists
+        nixl_xfer_dlist_t src_list = src_reg.trim();
+        nixl_xfer_dlist_t file_list = file_reg.trim();
+
+        // Create single transfer request for all transfers
+        ret = agent.createXferReq(NIXL_READ, src_list, file_list,
+                                "GDSTester", read_req);
         if (ret != NIXL_SUCCESS) {
-            std::cerr << "Failed to create read transfer request\n";
+            std::cerr << "Failed to create read transfer request" << std::endl;
             goto cleanup;
         }
+        std::cout << "Read transfer request created." << std::endl;
 
-        us_t read_start = getUs();
-        status = agent.postXferReq(treq);
-        if (status < 0) {
-            std::cerr << "Failed to post read transfer request\n";
-            goto cleanup;
-        }
+        // Now do the iterations
+        for (unsigned int iter = 0; iter < iterations; iter++) {
+            us_t iter_start = getUs();
 
-        while (status == NIXL_IN_PROG) {
-            status = agent.getXferStatus(treq);
+            status = agent.postXferReq(read_req);
             if (status < 0) {
-                std::cerr << "Error during read transfer\n";
+                std::cerr << "Failed to post read transfer request" << std::endl;
                 goto cleanup;
             }
-        }
-        us_t read_end = getUs();
 
-        agent.releaseXferReq(treq);
-        us_t read_duration = read_end - read_start;
+            // Wait for completion
+            while (status == NIXL_IN_PROG) {
+                status = agent.getXferStatus(read_req);
+                if (status < 0) {
+                    std::cerr << "Error during read transfer" << std::endl;
+                    goto cleanup;
+                }
+            }
+
+            us_t iter_end = getUs();
+            read_duration += (iter_end - iter_start);
+
+            if (iterations > 1) {
+                printProgress(float(iter + 1) / iterations);
+            }
+        }
+
+        agent.releaseXferReq(read_req);
         total_time += read_duration;
 
-        double data_gb = (transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0);
+        double data_gb = (transfer_size * num_transfers * iterations) / (1024.0 * 1024.0 * 1024.0);
         total_data_gb += data_gb;
-        // Ensure we don't divide by zero and use microseconds for more precision
-        double seconds = std::max(read_duration / 1000000.0, 0.000001); // minimum 1 microsecond
+        double seconds = read_duration / 1000000.0;
         double gbps = data_gb / seconds;
 
         std::cout << "Read completed:" << std::endl;
         std::cout << "- Time: " << format_duration(read_duration) << std::endl;
         std::cout << "- Data: " << std::fixed << std::setprecision(2) << data_gb << " GB" << std::endl;
-        std::cout << "- Speed: " << std::fixed << std::setprecision(2) << gbps << " GB/s" << std::endl;
+        std::cout << "- Speed: " << gbps << " GB/s" << std::endl;
 
         std::cout << "\n============================================================" << std::endl;
         std::cout << "PHASE 5: Validating read data" << std::endl;

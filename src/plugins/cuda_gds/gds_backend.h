@@ -64,28 +64,19 @@ class nixlGdsIOBatch {
         unsigned int getMaxReqs() const { return max_reqs; }
 };
 
-class GdsTransferRequestH {
-    public:
-        void* addr;
-        size_t size;
-        size_t file_offset;
-        CUfileHandle_t fh;
-        CUfileOpcode_t op;
-
-        GdsTransferRequestH() {}
-        ~GdsTransferRequestH() {}
+struct GdsTransferRequestH {
+    void*           addr;
+    size_t          size;
+    size_t          file_offset;
+    CUfileHandle_t  fh;
+    CUfileOpcode_t  op;
 };
 
-class nixlGdsBackendReqH : public nixlBackendReqH {
-    public:
-        std::list<nixlGdsIOBatch *> batch_io_list;
-        std::vector<GdsTransferRequestH> request_list;  // Store GdsTransferRequestH objects
-
-        nixlGdsBackendReqH() {}
-        ~nixlGdsBackendReqH() {
-            for (auto obj : batch_io_list)
-                delete obj;
-        }
+struct nixlGdsBackendReqH : public nixlBackendReqH {
+    nixlGdsBackendReqH() : needs_prep(true) {}
+    std::vector<GdsTransferRequestH> request_list;
+    std::vector<nixlGdsIOBatch*> batch_io_list;
+    bool needs_prep;
 };
 
 class nixlGdsEngine : public nixlBackendEngine {
