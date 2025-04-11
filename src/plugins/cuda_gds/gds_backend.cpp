@@ -365,47 +365,39 @@ nixl_status_t nixlGdsEngine::postXfer (const nixl_xfer_op_t &operation,
             return ret;
         }
     }
-    return NIXL_SUCCESS;
+    return NIXL_IN_PROG;
 }
 
 nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle)
 {
-    nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *)handle;
-    nixl_status_t status = NIXL_IN_PROG;
+    nixlGdsBackendReqH  *gds_handle = (nixlGdsBackendReqH *) handle;
+    nixl_status_t       status = NIXL_IN_PROG;
 
-    if (gds_handle->batch_io_list.size() == 0)
-        status = NIXL_SUCCESS;
+    if (gds_handle->batch_io_list.empty()) {
+        return NIXL_SUCCESS;
+    }
 
-    for (auto it = gds_handle->batch_io_list.begin();
-         it != gds_handle->batch_io_list.end();) {
-        nixlGdsIOBatch *batch_ios = *it;
-        nixl_status_t batch_status = batch_ios->checkStatus();
-
-        if (batch_status == NIXL_IN_PROG) {
-            return batch_status;
-        } else if (batch_status == NIXL_SUCCESS) {
-            // Reset the batch instead of returning it to pool
-            batch_ios->reset();
-            it++;
-        } else if (batch_status < 0) {
-            // Failure of transfer
-            // lets kill every batch
-            break;
-        } else {
-            it++;
+    // First check all batches
+    for (auto* batch : gds_handle->batch_io_list) {
+        status = batch->checkStatus();
+        if (status == NIXL_IN_PROG) {
+            return status;  // Exit early if any batch is still in progress
+        }
+        if (status < 0) {
+            break;  // Exit loop on first error
         }
     }
 
-    // Cleanup even if one batch fails
-    if (status < 0) {
-        auto it = gds_handle->batch_io_list.begin();
-        while (it != gds_handle->batch_io_list.end()) {
-            nixlGdsIOBatch *batch_ios = *it;
-            batch_ios->cancelBatch();
-            returnBatchToPool(batch_ios);
-            it = gds_handle->batch_io_list.erase(it);
+    // Now cleanup all batches - either all succeeded or we hit an error
+    for (auto* batch : gds_handle->batch_io_list) {
+        if (status < 0) {
+            batch->cancelBatch();
+            batch->destroyBatch();
         }
+        delete batch;
     }
+    gds_handle->batch_io_list.clear();
+
     return status;
 }
 
