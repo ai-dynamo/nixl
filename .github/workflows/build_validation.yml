@@ -3,9 +3,8 @@ name: NVIDIA NIXL Validation
 on:
   push:
     branches:
-      - main
-
-  pull_request:
+    - main
+    - "pull-request/[0-9]+"
 
 jobs:
   mirror_repo:
