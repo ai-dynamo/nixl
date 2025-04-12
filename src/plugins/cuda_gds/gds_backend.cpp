@@ -112,9 +112,9 @@ nixl_status_t nixlGdsIOBatch::submitBatch(int flags)
 nixl_status_t nixlGdsIOBatch::checkStatus()
 {
     CUfileError_t       errBatch;
-    unsigned int        nr = max_reqs;
+    unsigned int        nr = batch_size;
 
-    errBatch = cuFileBatchIOGetStatus(batch_handle, 0, &nr,
+    errBatch = cuFileBatchIOGetStatus(batch_handle, nr, &nr,
                                       io_batch_events, NULL);
     if (errBatch.err != 0) {
         std::cerr << "Error in IO Batch Get Status" << std::endl;
@@ -122,9 +122,9 @@ nixl_status_t nixlGdsIOBatch::checkStatus()
     }
 
     entries_completed += nr;
-    if (entries_completed < (unsigned int)max_reqs)
+    if (entries_completed < (unsigned int)batch_size)
         current_status = NIXL_IN_PROG;
-    else if (entries_completed > max_reqs)
+    else if (entries_completed > batch_size)
         current_status = NIXL_ERR_UNKNOWN;
     else
         current_status = NIXL_SUCCESS;
