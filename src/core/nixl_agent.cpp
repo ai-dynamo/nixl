@@ -332,24 +332,24 @@ nixlAgent::makeConnection(const std::string &remote_agent,
                           const nixl_opt_args_t* extra_params) {
     nixlBackendEngine* eng;
     nixl_status_t ret;
-    std::set<nixl_backend_t>* backend_set;
+    std::set<nixl_backend_t> backend_set;
     int count = 0;
 
     if (data->remoteBackends.count(remote_agent) == 0)
         return NIXL_ERR_NOT_FOUND;
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        backend_set = &data->remoteBackends[remote_agent];
-        if (backend_set->empty())
+        if (data->remoteBackends[remote_agent].empty())
             return NIXL_ERR_NOT_FOUND;
+        for (auto & [r_bknd, conn_info] : data->remoteBackends[remote_agent])
+            backend_set.insert(r_bknd);
     } else {
-        backend_set = new std::set<nixl_backend_t>();
         for (auto & elm : extra_params->backends)
-            backend_set->insert(elm->engine->getType());
+            backend_set.insert(elm->engine->getType());
     }
 
     // For now trying to make all the connections, can become best effort,
-    for (auto & backend: *backend_set) {
+    for (auto & backend: backend_set) {
         if (data->backendEngines.count(backend)!=0) {
             eng = data->backendEngines[backend];
             ret = eng->connect(remote_agent);
@@ -358,9 +358,6 @@ nixlAgent::makeConnection(const std::string &remote_agent,
             count++;
         }
     }
-
-    if (extra_params && extra_params->backends.size() > 0)
-        delete backend_set;
 
     if (ret)
         return ret;
@@ -1081,12 +1078,14 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
         // Current agent might not support a remote backend
         if (data->backendEngines.count(nixl_backend)!=0) {
 
-            // No need to reload same conn info, (TODO to cache the old val?)
-            if (data->remoteBackends.count(remote_agent)!=0)
-                if (data->remoteBackends[remote_agent].count(nixl_backend)!=0) {
-                    count++;
-                    continue;
-                }
+            // No need to reload same conn info, error if it changed
+            if (data->remoteBackends.count(remote_agent) != 0 &&
+                data->remoteBackends[remote_agent].count(nixl_backend) != 0) {
+                if (data->remoteBackends[remote_agent][nixl_backend] != conn_info)
+                    return NIXL_ERR_NOT_ALLOWED;
+                count++;
+                continue;
+            }
 
             eng = data->backendEngines[nixl_backend];
             if (eng->supportsRemote()) {
@@ -1094,7 +1093,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
                 if (ret)
                     return ret; // Error in load
                 count++;
-                data->remoteBackends[remote_agent].insert(nixl_backend);
+                data->remoteBackends[remote_agent].emplace(nixl_backend, conn_info);
             } else {
                 // If there was an issue and we return error while some connections
                 // are loaded, they will be deleted in the backend destructor.
@@ -1141,8 +1140,8 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
     }
 
     if (data->remoteBackends.count(remote_agent)!=0) {
-        for (auto & elm: data->remoteBackends[remote_agent])
-            data->backendEngines[elm]->disconnect(remote_agent);
+        for (auto & it: data->remoteBackends[remote_agent])
+            data->backendEngines[it.first]->disconnect(remote_agent);
         data->remoteBackends.erase(remote_agent);
         ret = NIXL_SUCCESS;
     }

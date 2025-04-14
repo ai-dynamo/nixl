@@ -42,7 +42,8 @@ class nixlAgentData {
         // Local section, and Remote sections and their available common backends
         nixlLocalSection*                                        memorySection;
 
-        std::unordered_map<std::string, std::set<nixl_backend_t>,
+        std::unordered_map<std::string,
+                           std::unordered_map<nixl_backend_t, std::string>,
                            std::hash<std::string>, strEqual>     remoteBackends;
         std::unordered_map<std::string, nixlRemoteSection*,
                            std::hash<std::string>, strEqual>     remoteSections;
