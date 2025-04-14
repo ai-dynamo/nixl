@@ -114,7 +114,7 @@ void rdma_cm_connect_failure_cb(struct doca_rdma_connection *connection,
 		DOCA_LOG_ERR("Failed to disconnect rdma cm connection: %s", doca_error_get_descr(result));
 		return;
 	}
-} 
+}
 
 void nixlDocaEngine::_requestInit(void *request)
 {
