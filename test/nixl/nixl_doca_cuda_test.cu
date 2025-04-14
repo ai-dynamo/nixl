@@ -103,7 +103,7 @@ int launch_target_wait_kernel(cudaStream_t stream, uintptr_t addr, size_t size)
     return 0;
 }
 
-__global__ void initiator_kernel(uintptr_t addr, size_t size) //, nixlDocaBckndReqGpu *treq)
+__global__ void initiator_kernel(uintptr_t addr, size_t size)
 {
     unsigned long long start, end;
 
