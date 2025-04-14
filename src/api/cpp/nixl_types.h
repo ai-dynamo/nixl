@@ -63,6 +63,16 @@ typedef enum {
 } nixl_status_t;
 
 /**
+ * @enum nixl_thread_sync_t
+ * @brief An enumeration of supported synchronization modes for NIXL
+ */
+enum class nixl_thread_sync_t {
+    NIXL_THREAD_SYNC_NONE,
+    NIXL_THREAD_SYNC_STRICT,
+    NIXL_THREAD_SYNC_DEFAULT = NIXL_THREAD_SYNC_NONE,
+};
+
+/**
  * @namespace nixlEnumStrings
  * @brief     This namespace to get string representation
  *            of different enums

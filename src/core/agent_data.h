@@ -20,6 +20,7 @@
 #include "common/str_tools.h"
 #include "mem_section.h"
 #include "stream/metadata_stream.h"
+#include "sync.h"
 
 constexpr int default_comm_port = 8888;
 
@@ -42,6 +43,7 @@ class nixlAgentData {
     private:
         std::string     name;
         nixlAgentConfig config;
+        nixlLock        lock;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
