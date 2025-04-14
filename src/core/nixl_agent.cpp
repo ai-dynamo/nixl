@@ -181,7 +181,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         // Plugin found, use it to create the backend
         backend = plugin_handle->createEngine(&init_params);
     } else {
-        std::cout << "Unsupported backend: " << type << std::endl;
+        std::cerr << "Unsupported backend: " << type << std::endl;
         return NIXL_ERR_NOT_FOUND;
     }
 

@@ -95,7 +95,7 @@ class nixl_agent:
 
         if instantiate_all:
             for plugin in self.plugin_list:
-                self.backends[plugin] = self.agent.createBackend(plugin, init)
+                self.create_backend(plugin, init)
         else:
             for bknd in nixl_conf.backends:
                 # TODO: populate init from nixl_conf when added
@@ -106,14 +106,7 @@ class nixl_agent:
                         "due to the missing plugin.",
                     )
                 else:
-                    self.backends[bknd] = self.agent.createBackend(bknd, init)
-
-        for backend in self.backends:
-            (backend_options, mem_types) = self.agent.getBackendParams(
-                self.backends[backend]
-            )
-            self.backend_mems[backend] = mem_types
-            self.backend_options[backend] = backend_options
+                    self.create_backend(bknd, init)
 
         self.nixl_mems = {
             "DRAM": nixlBind.DRAM_SEG,
@@ -220,6 +213,7 @@ class nixl_agent:
         )
         self.backend_mems[backend] = mem_types
         self.backend_options[backend] = backend_options
+        print("Backend", backend, "was instantiated")
 
     """
     @brief Register memory regions, optionally with specified backends.
