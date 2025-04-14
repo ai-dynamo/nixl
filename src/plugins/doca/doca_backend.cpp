@@ -91,7 +91,7 @@ void rdma_cm_connect_failure_cb(struct doca_rdma_connection *connection,
 	DOCA_LOG_ERR("Connection error");
 	eng->removeConnection((uint32_t)connection_user_data.u64);
 }
- 
+
 /*
  * RDMA CM disconnect callback
  *
@@ -258,9 +258,8 @@ uint32_t nixlDocaEngine::getGpuCudaId()
 
 void nixlDocaEngine::establishConnection(uint32_t connection_idx)
 {
-	connection_established[connection_idx] = 1;	
+	connection_established[connection_idx] = 1;
 }
-
 
 void nixlDocaEngine::removeConnection(uint32_t connection_idx)
 {
@@ -524,7 +523,7 @@ nixlDocaEngine::~nixlDocaEngine ()
 	result = doca_pe_destroy(pe);
 	if (result != DOCA_SUCCESS)
 		DOCA_LOG_ERR("Failed to destroy DOCA progress engine: %s", doca_error_get_descr(result));
-		
+
 	result = doca_dev_close(ddev);
 	if (result != DOCA_SUCCESS)
 		DOCA_LOG_ERR("Failed to close DOCA device: %s", doca_error_get_descr(result));
@@ -569,7 +568,7 @@ nixl_status_t nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent
 	}
 
 	nixlSerDes::_stringToBytes((void*) addr, remote_conn_info, size);
-	
+
 	result = doca_rdma_addr_create(cm_addr_type, addr, DOCA_RDMA_CM_LOCAL_PORT, &cm_addr);
 		if (result != DOCA_SUCCESS) {
 			DOCA_LOG_ERR("Failed to create rdma cm connection address %s", doca_error_get_descr(result));
