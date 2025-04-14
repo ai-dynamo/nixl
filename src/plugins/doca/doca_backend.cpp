@@ -68,6 +68,7 @@ void rdma_cm_connect_established_cb(struct doca_rdma_connection *connection,
 					union doca_data ctx_user_data)
 {
 	nixlDocaEngine *eng = (nixlDocaEngine *)ctx_user_data.ptr;
+
 	// Assume it won't accept more than DOCA_ENG_MAX_CONN connections
 	eng->addConnection(connection);
 }
@@ -188,8 +189,7 @@ void nixlDocaEngine::progressFunc()
 			if ((connection_established[last_connection_num] == 0) &&
 				(connection_error == false)) {
 				doca_pe_progress(pe);
-			} else
-				last_connection_num++;
+			}
 
 			if (connection_error) {
 				DOCA_LOG_ERR("Failed to connect to remote peer %d, connection error", last_connection_num);
@@ -238,9 +238,8 @@ void nixlDocaEngine::addConnection(struct doca_rdma_connection *connection_)
 
 	conn_idx = connection_num.fetch_add(1);
 	connection[conn_idx] = connection_;
-	last_connection_num = conn_idx;
 	connection_established[conn_idx] = 1;
-
+	last_connection_num = conn_idx;
 }
 
 uint32_t nixlDocaEngine::getConnectionLast()
@@ -575,15 +574,15 @@ nixl_status_t nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent
 		return NIXL_ERR_BACKEND;
 	}
 
-	DOCA_LOG_INFO("Client is waiting for a connection establishment");
+	DOCA_LOG_INFO("Client is waiting for a connection establishment on %d", last_connection_num);
 	/* Wait for a new connection */
 	while ((connection_established[last_connection_num] == 0) &&
 			(connection_error == false)) {
-		if (doca_pe_progress(pe) == 0) {
-			nixlTime::us_t start = nixlTime::getUs();
-			while( (start + DOCA_RDMA_SERVER_CONN_DELAY) > nixlTime::getUs()) {
-				std::this_thread::yield();
-			}
+		doca_pe_progress(pe);
+
+		nixlTime::us_t start = nixlTime::getUs();
+		while( (start + DOCA_RDMA_SERVER_CONN_DELAY) > nixlTime::getUs()) {
+			std::this_thread::yield();
 		}
 	}
 
