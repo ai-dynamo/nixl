@@ -61,7 +61,11 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :
-                                   name(name), config(cfg) {
+                                   name(name), config(cfg)
+#ifndef DISABLE_MT
+                                   , lock(cfg.syncMode)
+#endif
+{
         memorySection = new nixlLocalSection();
 }
 
@@ -100,6 +104,7 @@ nixlAgent::~nixlAgent() {
 
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
+    NIXL_LOCK_GUARD(data->lock);
     auto& plugin_manager = nixlPluginManager::getInstance();
     plugins = plugin_manager.getLoadedPluginNames();
     return NIXL_SUCCESS;
@@ -111,6 +116,8 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
                             nixl_b_params_t &params) const {
 
     // TODO: unify to uppercase/lowercase and do ltrim/rtrim for type
+
+    NIXL_LOCK_GUARD(data->lock);
 
     // First try to get options from a loaded plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -146,6 +153,7 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
     if (!backend)
         return NIXL_ERR_INVALID_PARAM;
 
+    NIXL_LOCK_GUARD(data->lock);
     mems   = backend->engine->getSupportedMems();
     params = backend->engine->getCustomParams();
     return NIXL_SUCCESS;
@@ -163,6 +171,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     std::string           str;
     backend_list_t*       backend_list;
 
+    NIXL_LOCK_GUARD(data->lock);
     // Registering same type of backend is not supported, unlikely and prob error
     if (data->backendEngines.count(type)!=0)
         return NIXL_ERR_INVALID_PARAM;
@@ -243,6 +252,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     nixl_status_t   ret;
     unsigned int    count = 0;
 
+    NIXL_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->memToBackend[descs.getType()];
         if (backend_list->empty())
@@ -296,6 +306,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     nixl_status_t     ret, bad_ret=NIXL_SUCCESS;
     nixl_xfer_dlist_t trimmed = descs.trim();
 
+    NIXL_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_set_t* avail_backends;
         avail_backends = data->memorySection->queryBackends(
@@ -335,6 +346,7 @@ nixlAgent::makeConnection(const std::string &remote_agent,
     std::set<nixl_backend_t>* backend_set;
     int count = 0;
 
+    NIXL_LOCK_GUARD(data->lock);
     if (data->remoteBackends.count(remote_agent) == 0)
         return NIXL_ERR_NOT_FOUND;
 
@@ -382,6 +394,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     int            count = 0;
     bool           init_side = (agent_name == NIXL_INIT_AGENT);
 
+    NIXL_LOCK_GUARD(data->lock);
     // When central KV is supported, still it should return error,
     // just we can add a call to fetchRemoteMD for next time
     if (!init_side && (data->remoteSections.count(agent_name) == 0))
@@ -467,6 +480,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     if ((!local_side->isLocal) || (remote_side->isLocal))
         return NIXL_ERR_INVALID_PARAM;
 
+    NIXL_LOCK_GUARD(data->lock);
     // The remote was invalidated in between prepXferDlist and this call
     if (data->remoteSections.count(remote_side->remoteAgent) == 0) {
         delete req_hndl;
@@ -619,6 +633,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     req_hndl = nullptr;
 
+    NIXL_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
         return NIXL_ERR_NOT_FOUND;
 
@@ -734,6 +749,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (!req_hndl)
         return NIXL_ERR_INVALID_PARAM;
 
+    NIXL_LOCK_GUARD(data->lock);
     // Check if the remote was invalidated before post/repost
     if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
         delete req_hndl;
@@ -793,6 +809,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 nixl_status_t
 nixlAgent::getXferStatus (nixlXferReqH *req_hndl) {
 
+    NIXL_LOCK_GUARD(data->lock);
     // If the status is done, no need to recheck.
     if (req_hndl->status != NIXL_SUCCESS) {
         // Check if the remote was invalidated before completion
@@ -811,6 +828,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) {
 nixl_status_t
 nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
                             nixlBackendH* &backend) const {
+    NIXL_LOCK_GUARD(data->lock);
     backend = data->backendHandles[req_hndl->engine->getType()];
     return NIXL_SUCCESS;
 }
@@ -818,6 +836,7 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
 nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) {
 
+    NIXL_LOCK_GUARD(data->lock);
     //attempt to cancel request
     if(req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
@@ -842,6 +861,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) {
 
 nixl_status_t
 nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
+    NIXL_LOCK_GUARD(data->lock);
     delete dlist_hndl;
     return NIXL_SUCCESS;
 }
@@ -853,6 +873,7 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
     nixl_status_t   ret, bad_ret=NIXL_SUCCESS;
     backend_list_t* backend_list;
 
+    NIXL_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->notifEngines;
         if (backend_list->empty())
@@ -903,6 +924,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
     nixlBackendEngine* backend = nullptr;
     backend_list_t*    backend_list;
 
+    NIXL_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->notifEngines;
         if (backend_list->empty())
@@ -938,10 +960,13 @@ nixlAgent::genNotif(const std::string &remote_agent,
 
 nixl_status_t
 nixlAgent::getLocalMD (nixl_blob_t &str) const {
-    // data->connMD was populated when the backend was created
-    size_t conn_cnt = data->connMD.size();
+    size_t conn_cnt;
     nixl_backend_t nixl_backend;
     nixl_status_t ret;
+
+    NIXL_LOCK_GUARD(data->lock);
+    // data->connMD was populated when the backend was created
+    conn_cnt = data->connMD.size();
 
     if (conn_cnt == 0) // Error, no backend supports remote
         return NIXL_ERR_INVALID_PARAM;
@@ -988,6 +1013,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     nixlBackendEngine* eng;
     nixl_status_t ret;
 
+    NIXL_LOCK_GUARD(data->lock);
     ret = sd.importStr(remote_metadata);
     if(ret)
         return ret;
@@ -1067,6 +1093,8 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
 nixl_status_t
 nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
+    NIXL_LOCK_GUARD(data->lock);
+
     if (remote_agent == data->name)
         return NIXL_ERR_INVALID_PARAM;
 

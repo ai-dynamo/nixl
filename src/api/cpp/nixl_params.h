@@ -43,15 +43,20 @@ class nixlAgentConfig {
          */
         uint64_t pthrDelay;
 
+        /** @var synchronization mode for multi-threaded environment execution */
+        nixl_sync_t syncMode;
+
         /**
          * @brief  Agent configuration constructor. Important configs such as
          *         useProgThread must be given and can't be changed.
          * @param use_prog_thread  flag to determine use of progress thread
          * @param pthr_delay_us    Optional delay for pthread in us
+         * @param sync_mode        Synchronization mode
          */
-        nixlAgentConfig(const bool use_prog_thread, const uint64_t pthr_delay_us=0) {
+        nixlAgentConfig(const bool use_prog_thread, const uint64_t pthr_delay_us=0, const nixl_sync_t sync_mode=NIXL_SYNC_DEFAULT) {
             this->useProgThread = use_prog_thread;
             this->pthrDelay     = pthr_delay_us;
+            this->syncMode      = sync_mode;
         }
 
         /**
