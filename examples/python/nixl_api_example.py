@@ -83,7 +83,7 @@ if __name__ == "__main__":
 
     # initialize transfer mode
     xfer_handle_1 = nixl_agent2.initialize_xfer(
-        "READ", agent2_xfer_descs, agent1_xfer_descs, remote_name, "UUID1"
+        "READ", agent2_xfer_descs, agent1_xfer_descs, remote_name, b"UUID1"
     )
     if not xfer_handle_1:
         print("Creating transfer failed.")
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     print("notif test complete, doing transfer 2\n")
 
     xfer_handle_2 = nixl_agent2.make_prepped_xfer(
-        "WRITE", local_prep_handle, [0, 1], remote_prep_handle, [1, 0], "UUID2"
+        "WRITE", local_prep_handle, [0, 1], remote_prep_handle, [1, 0], b"UUID2"
     )
     if not local_prep_handle or not remote_prep_handle:
         print("Preparing transfer side handles failed.")
