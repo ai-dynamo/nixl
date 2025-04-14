@@ -23,39 +23,32 @@
 #include <vector>
 #include <liburing.h>
 #include "posix_utils.h"
+#include "backend/backend_engine.h"
+//#include "posix_utils.h"
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
     public:
         unsigned int num_entries;
+        unsigned int num_completed;
         bool is_prepped = false;
 
-        nixlPosixBackendReqH() : req_id(req_id++) {}
-        ~nixlPosixBackendReqH() {
-            for (struct io_uring_cqe* cqe_ptr : cqe) {
-                if (cqe_ptr) {
-                    io_uring_cqe_seen(&nixlPosixEngine::uring, cqe_ptr);
-                }
-            }
-        }
 };
 
 class nixlPosixEngine : public nixlBackendEngine {
     private:
-        static posixUtil *posix_utils;
-        static int uring_init_status        = 1;
-        static io_uring_params uring_params = {
-            .cq_entries = NIXL_POSIX_RING_SIZE,
-        };
+//        static posixUtil *posix_utils;
+        static int uring_init_status;
+        static io_uring_params uring_params;
         static io_uring uring;
         
         static io_uring &uringGetInstance();
         static int uringGetInitStatus();
     
         std::unordered_map<long unsigned int, struct io_uring_cqe **> cqe_map;
-        void registerCompletions();
+        nixl_status_t registerCompletions();
 
     public:
-        nixlPosixEngine();
+        nixlPosixEngine(const nixlBackendInitParams* init_params);
         ~nixlPosixEngine();
 
         bool supportsNotif () const {
@@ -69,6 +62,13 @@ class nixlPosixEngine : public nixlBackendEngine {
         }
         bool supportsProgTh  () const {
             return false;
+        }
+
+        nixl_mem_list_t getSupportedMems () const {
+            nixl_mem_list_t mems;
+            mems.push_back(DRAM_SEG);
+            mems.push_back(FILE_SEG);
+            return mems;
         }
 
         nixl_status_t connect(const std::string &remote_agent)

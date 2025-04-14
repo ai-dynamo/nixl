@@ -15,21 +15,73 @@
  * limitations under the License.
  */
 
+#include "backend/backend_plugin.h"
 #include "posix_backend.h"
-#include <memory>
 
-namespace nixl {
+// Plugin version information
+static const char* PLUGIN_NAME = "POSIX";
+static const char* PLUGIN_VERSION = "0.1.0";
 
-std::unique_ptr<PosixBackend> create_posix_backend() {
-    return std::make_unique<PosixBackend>();
+// Function to create a new GDS backend engine instance
+static nixlBackendEngine* create_posix_engine(const nixlBackendInitParams* init_params) {
+    return new nixlPosixEngine(init_params);
 }
 
-void destroy_posix_backend(std::unique_ptr<PosixBackend> backend) {
-    backend.reset();
+static void destroy_posix_engine(nixlBackendEngine *engine) {
+    delete engine;
 }
 
-extern "C" {
+// Function to get the plugin name
+static const char* get_plugin_name() {
+    return PLUGIN_NAME;
+}
 
-} // extern "C"
+// Function to get the plugin version
+static const char* get_plugin_version() {
+    return PLUGIN_VERSION;
+}
 
-} // namespace nixl 
+// Function to get backend options
+static nixl_b_params_t get_backend_options() {
+    nixl_b_params_t params;
+    return params;
+}
+
+// Function to get supported backend mem types
+static nixl_mem_list_t get_backend_mems() {
+    nixl_mem_list_t mems;
+    mems.push_back(VRAM_SEG);
+    mems.push_back(FILE_SEG);
+    return mems;
+}
+
+// Static plugin structure
+static nixlBackendPlugin plugin = {
+    NIXL_PLUGIN_API_VERSION,
+    create_posix_engine,
+    destroy_posix_engine,
+    get_plugin_name,
+    get_plugin_version,
+    get_backend_options,
+    get_backend_mems
+};
+
+#ifdef STATIC_PLUGIN_POSIX
+
+nixlBackendPlugin* createStaticPosixPlugin() {
+    return &plugin; // Return the static plugin instance
+}
+
+#else
+
+// Plugin initialization function
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init() {
+    return &plugin;
+}
+
+// Plugin cleanup function
+extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {
+    // Cleanup any resources if needed
+}
+
+#endif

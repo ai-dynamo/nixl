@@ -18,14 +18,6 @@
 #include "posix_utils.h"
 #include <iostream>
 
-void posixUtil::fillHandle(int fd, size_t size, std::string metaInfo,
-                           posixFileHandle& posix_handle) {
-    
-    posix_handle.fd = fd;
-    posix_handle.size = size;
-    posix_handle.metadata = metaInfo;
-}
-
 namespace posix_utils {
 
 

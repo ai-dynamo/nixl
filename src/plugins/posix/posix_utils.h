@@ -21,26 +21,13 @@
 #include <string>
 #include <unistd.h>
 #include "posix_backend.h"
-#define POSIX_MEM_BUF_SIZE 4096
-
-struct posixFileHandle : public nixlBackendMD {
-    int         fd;
-    size_t      size;
-    std::string metadata;
-};
+#include "nixl_types.h"
 
 // Utility class for POSIX operations
 class posixUtil {
 public:
     posixUtil() {}
     ~posixUtil() {}
-    
-    // Register a file handle
-    nixl_status_t fillHandle(int fd, size_t size,
-                                    std::string metaInfo,
-                                    posixFileHandle& handle);
-                                    
-    unsigned int getWorkId(nixlPosixBackendReqH& handle, unsigned int idx);
 };
 
 #endif // POSIX_UTILS_H 

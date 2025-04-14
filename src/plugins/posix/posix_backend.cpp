@@ -14,26 +14,33 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <iostream>
 #include <liburing.h>
 #include "posix_backend.h"
 
 #define NIXL_POSIX_RING_SIZE 1024
 #define CQES_MAX_BATCH_SIZE 16
 
+int nixlPosixEngine::uring_init_status = 1;
+io_uring nixlPosixEngine::uring;
+io_uring_params nixlPosixEngine::uring_params = {
+    .cq_entries = NIXL_POSIX_RING_SIZE,
+};
+
 io_uring& nixlPosixEngine::uringGetInstance() {
-    return this->uring;
+    return nixlPosixEngine::uring;
 }
 
 int nixlPosixEngine::uringGetInitStatus() {
-    if (this->uring_init_status == 1)
-        this->uring_init_status = io_uring_init_params(NIXL_POSIX_RING_SIZE,
-                                                       &this->uring,
-                                                       &this->uring_params);
+    if (nixlPosixEngine::uring_init_status == 1)
+        nixlPosixEngine::uring_init_status =
+            io_uring_queue_init_params(NIXL_POSIX_RING_SIZE, &nixlPosixEngine::uring,
+                                       &nixlPosixEngine::uring_params);
 
-    return this->uring_init_status;
+    return nixlPosixEngine::uring_init_status;
 }
 
-nixl_status_t nixlPosixEngine::checkCompletions() {
+nixl_status_t nixlPosixEngine::registerCompletions() {
     struct io_uring_cqe *cqes[CQES_MAX_BATCH_SIZE];
     int num_ret_cqes;
     do {
@@ -49,7 +56,11 @@ nixl_status_t nixlPosixEngine::checkCompletions() {
     return NIXL_SUCCESS;
 }
 
-nixlPosixEngine::nixlPosixEngine() {
+nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams* init_params)
+    : nixlBackendEngine (init_params)
+{
+    //posix_utils = new posixUtil();
+    
     this->initErr = false;
     if (uringGetInitStatus() != 0) 
         this->initErr = true;
@@ -58,20 +69,15 @@ nixlPosixEngine::nixlPosixEngine() {
 nixlPosixEngine::~nixlPosixEngine() {
 }
 
-//TODO: ask Vishwarath if this needs implementation. Dont see a need for registering files or memory for posix backend.
+// use getSupportedMems
 nixl_status_t nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
                                            const nixl_mem_t &nixl_mem,
                                            nixlBackendMD* &out) {
-    nixlPosixMetadata *md  = new nixlPosixMetadata();
-    nixl_status_t status = NIXL_SUCCESS;
+    nixl_status_t status;
     switch (nixl_mem) {
         case FILE_SEG:
-            this->posix_utils->fillHandle(mem.devId, mem.len,mem.metaInfo, md->handle);
-            this->md_map[mem.devId] = md;
-            out = (nixlBackendMD*) md;
-            break;
         case DRAM_SEG:
-            status = NIXL_ERR_NOT_SUPPORTED;
+            status = NIXL_SUCCESS;
             break;
         default:
             status = NIXL_ERR_NOT_SUPPORTED;
@@ -80,18 +86,7 @@ nixl_status_t nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
 }
 
 nixl_status_t nixlPosixEngine::deregisterMem(nixlBackendMD *meta) {
-    nixl_status_t status = NIXL_SUCCESS;
-    nixlPosixMetadata *md = (nixlPosixMetadata *)meta;
-    if (md->type == FILE_SEG) {
-        auto it = this->md_map.find(md->handle.fd);
-        if (it != this->md_map.end())
-            // TODO: do i need to delete the md in the map
-            // or is it for the user to do so?
-            this->md_map.erase(it);
-        else
-            status = NIXL_ERR_NOT_FOUND;
-    }
-    return status;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
@@ -110,7 +105,6 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
     // }
     nixlPosixBackendReqH  *posix_handle = new nixlPosixBackendReqH();
     struct io_uring_sqe *entry;
-    unsigned int work_id;
 
     if (local.descCount() != remote.descCount()) {
         std::cerr <<"Error in count\n";
@@ -129,7 +123,7 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
                     goto err_exit;
                 }
                 // add checks for validity of the local and remote fields
-                io_uring_prep_read(entry, local.fd, remote[i].addr, local[i].len, local[i].addr);
+                io_uring_prep_read(entry, remote[i].devId, (void *)local[i].addr, remote[i].len, remote[i].addr);
                 io_uring_sqe_set_data(entry, (void *)posix_handle);
             }
             break;
@@ -142,7 +136,7 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
                     goto err_exit;
                 }
                 // add checks for validity of the local and remote fields
-                io_uring_prep_write(entry, remote[i].fd, local[i].addr, remote[i].len, remote[i].addr);
+                io_uring_prep_write(entry, remote[i].devId, (void *)local[i].addr, remote[i].len, remote[i].addr);
                 io_uring_sqe_set_data(entry, (void *)posix_handle);
             }
             break;
@@ -152,7 +146,7 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
             goto err_exit;
     }
 
-    handle->is_prepped = true;
+    posix_handle->is_prepped = true;
     handle = posix_handle;
     return status;
 
@@ -167,8 +161,9 @@ nixl_status_t nixlPosixEngine::postXfer(const nixl_xfer_op_t &operation,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) {
-    if (!handle->is_prepped)
-        this->prepXfer(opeation, local, remote, remote_agent, handle, opt_args);
+    nixlPosixBackendReqH  *posix_handle = (nixlPosixBackendReqH *)handle;
+    if (!posix_handle->is_prepped)
+        this->prepXfer(operation, local, remote, remote_agent, handle, opt_args);
     
     io_uring_submit(&this->uring);
     return NIXL_SUCCESS;
@@ -178,12 +173,10 @@ nixl_status_t nixlPosixEngine::checkXfer(nixlBackendReqH* handle) {
     nixl_status_t status = this->registerCompletions();
     if (status != NIXL_SUCCESS)
         return status;
-    // TODO: make more efficient (could make work_id a pointer to a struct that points to request handle and the index of the request
-    // then we can just increase the count of different requests completed and also know the status of each request)
     nixlPosixBackendReqH *posix_handle = (nixlPosixBackendReqH *)handle;
     if (posix_handle->num_completed != posix_handle->num_entries)
         status = NIXL_IN_PROG;
-        
+
     return status;
 }
 

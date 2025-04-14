@@ -24,15 +24,20 @@ posix_headers = files(
   'posix_utils.h'
 )
 
+posix_inc = include_directories('.')
+
+# Check for liburing dependency
+liburing_dep = dependency('liburing', required: true)
+
 posix_lib = library('posix',
   posix_sources,
   posix_headers,
-  include_directories: inc,
-  dependencies: [core_dep],
+  include_directories: [posix_inc, nixl_inc_dirs, utils_inc_dirs],
+  dependencies: [nixl_infra, liburing_dep],
   install: true
 )
 
 posix_dep = declare_dependency(
   link_with: posix_lib,
-  include_directories: inc
+  include_directories: posix_inc
 ) 
