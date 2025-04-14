@@ -137,11 +137,6 @@ class nixlAgentOptionalArgs {
         bool skipDescMerge = false;
 
         /**
-         * @var Backend GPU device ID to use
-         */
-        uint32_t devId;
-
-        /**
          * @var Backend custom parameter
          */
         uintptr_t customParam;

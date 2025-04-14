@@ -47,9 +47,8 @@ void rdma_cm_connect_request_cb(struct doca_rdma_connection *connection, union d
 		return;
 	}
 
-	eng->addConnection(connection);
-
 	connection_user_data.u64 = eng->getConnectionLast();
+
 	result = doca_rdma_connection_set_user_data(connection, connection_user_data);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to set server connection user data: %s", doca_error_get_descr(result));
@@ -68,10 +67,9 @@ void rdma_cm_connect_established_cb(struct doca_rdma_connection *connection,
 					union doca_data connection_user_data,
 					union doca_data ctx_user_data)
 {
-	(void)connection_user_data;
 	nixlDocaEngine *eng = (nixlDocaEngine *)ctx_user_data.ptr;
 	// Assume it won't accept more than DOCA_ENG_MAX_CONN connections
-	eng->establishConnection((uint32_t)connection_user_data.u64);
+	eng->addConnection(connection);
 }
 
 /*
@@ -85,8 +83,6 @@ void rdma_cm_connect_failure_cb(struct doca_rdma_connection *connection,
 				union doca_data connection_user_data,
 				union doca_data ctx_user_data)
 {
-	(void)connection;
-	(void)connection_user_data;
 	nixlDocaEngine *eng = (nixlDocaEngine *)ctx_user_data.ptr;
 	DOCA_LOG_ERR("Connection error");
 	eng->removeConnection((uint32_t)connection_user_data.u64);
@@ -103,7 +99,6 @@ void rdma_cm_connect_failure_cb(struct doca_rdma_connection *connection,
 	union doca_data connection_user_data,
 	union doca_data ctx_user_data)
 {
-	(void)connection_user_data;
 	doca_error_t result;
 	nixlDocaEngine *eng = (nixlDocaEngine *)ctx_user_data.ptr;
 
@@ -244,6 +239,8 @@ void nixlDocaEngine::addConnection(struct doca_rdma_connection *connection_)
 	conn_idx = connection_num.fetch_add(1);
 	connection[conn_idx] = connection_;
 	last_connection_num = conn_idx;
+	connection_established[conn_idx] = 1;
+
 }
 
 uint32_t nixlDocaEngine::getConnectionLast()
@@ -254,11 +251,6 @@ uint32_t nixlDocaEngine::getConnectionLast()
 uint32_t nixlDocaEngine::getGpuCudaId()
 {
 	return gdevs[0].first;
-}
-
-void nixlDocaEngine::establishConnection(uint32_t connection_idx)
-{
-	connection_established[connection_idx] = 1;
 }
 
 void nixlDocaEngine::removeConnection(uint32_t connection_idx)
@@ -667,6 +659,7 @@ nixl_status_t nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
 
 	priv->mem.addr = (void*)mem.addr;
 	priv->mem.len = mem.len;
+	priv->mem.devId = mem.devId;
 	priv->remoteMmapStr = nixlSerDes::_bytesToString((void*) priv->mem.export_mmap, priv->mem.export_len);
 
 	/* Local buffer array */
@@ -840,17 +833,23 @@ nixl_status_t nixlDocaEngine::prepXfer (const nixl_xfer_op_t &operation,
 	uint32_t rcnt = (uint32_t)remote.descCount();
 
 	treq->stream = (cudaStream_t)opt_args->customParam;
-	// treq->devId = (uint32_t)opt_args->devId;
+
+	#if 0
+		auto it = std::find_if(gdevs.begin(), gdevs.end(),
+				[&treq](std::pair<uint32_t, struct doca_gpu*> &x)
+				{ return x.first == treq->devId; }
+			);
+		if (it == gdevs.end()) {
+			std::cout << "Can't prepare transfer for unknown device " << treq->devId << std::endl;
+			return NIXL_ERR_INVALID_PARAM;
+		}
+	#endif
 
 	// check device id from local dlist mr that should be all the same and same of the engine
-
-	auto it = std::find_if(gdevs.begin(), gdevs.end(),
-							[&treq](std::pair<uint32_t, struct doca_gpu*> &x)
-							{ return x.first == treq->devId; }
-						);
-	if (it == gdevs.end()) {
-		std::cout << "Can't prepare transfer for unknown device " << treq->devId << std::endl;
-		return NIXL_ERR_INVALID_PARAM;
+	for (uint32_t idx = 0; idx < lcnt; idx++) {
+		lmd = (nixlDocaPrivateMetadata*) local[idx].metadataP;
+		if (lmd->mem.devId != gdevs[0].first)
+			return NIXL_ERR_INVALID_PARAM;
 	}
 
 	if (lcnt != rcnt)

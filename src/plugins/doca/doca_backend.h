@@ -53,7 +53,7 @@
 #define DOCA_XFER_REQ_SIZE 512
 #define DOCA_XFER_REQ_MAX 16
 #define DOCA_ENG_MAX_CONN 10
-#define DOCA_RDMA_CM_LOCAL_PORT 5678
+#define DOCA_RDMA_CM_LOCAL_PORT 1235
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define DOCA_RDMA_SERVER_ADDR_LEN (MAX(MAX(DOCA_DEVINFO_IPV4_ADDR_SIZE, DOCA_DEVINFO_IPV6_ADDR_SIZE), DOCA_GID_BYTE_LENGTH))
 #define DOCA_RDMA_SERVER_CONN_DELAY 500 //500us
@@ -68,6 +68,7 @@ struct nixlDocaMem {
     size_t export_len;
     struct doca_buf_arr *barr;
     struct doca_gpu_buf_arr *barr_gpu;
+    uint32_t devId;
 };
 
 class nixlDocaConnection : public nixlBackendConnMD {
@@ -253,7 +254,6 @@ class nixlDocaEngine : public nixlBackendEngine {
 
         void addConnection(struct doca_rdma_connection *connection);
         uint32_t getConnectionLast();
-        void establishConnection(uint32_t connection_idx);
         void removeConnection(uint32_t connection_idx);
         uint32_t getGpuCudaId();
 };
