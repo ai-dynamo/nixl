@@ -335,6 +335,7 @@ class nixl_agent:
             received from prep_xfer_dlist.
     @param remote_indices List of indices for selecting remote descriptors.
     @param notif_msg Optional notification message to send after transfer is done.
+           notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
     @param backends Optional list of backend names to limit which backends NIXL can use.
     @param skip_desc_merge Whether to skip descriptor merging optimization.
     @return Opaque handle for posting/checking transfer.
@@ -347,7 +348,7 @@ class nixl_agent:
         local_indices: list[int],
         remote_xfer_side: nixl_prepped_dlist_handle,
         remote_indices: list[int],
-        notif_msg: str = "",
+        notif_msg: bytes = b"",
         backends: list[str] = [],
         skip_desc_merge: bool = False,
     ) -> nixl_xfer_handle:
@@ -385,6 +386,7 @@ class nixl_agent:
     @param remote_descs List of remote (or loopback) transfer descriptors, from get_xfer_descs.
     @param remote_agent Name of the remote agent.
     @param notif_msg Optional notification message.
+           notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
     @param backends Optional list of backend names to limit which backends NIXL can use.
     @return Opaque handle for posting/checking transfer.
     """
@@ -395,7 +397,7 @@ class nixl_agent:
         local_descs: nixlBind.nixlXferDList,
         remote_descs: nixlBind.nixlXferDList,
         remote_agent: str,
-        notif_msg: str = "",
+        notif_msg: bytes = b"",
         backends: list[str] = [],
     ) -> nixl_xfer_handle:
         op = self.nixl_ops[operation]
@@ -421,10 +423,11 @@ class nixl_agent:
 
     @param handle Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
     @param notif_msg Optional notification message can be specified or updated per transfer call.
+           notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
     @return Status of the transfer operation ("DONE", "PROC", or "ERR").
     """
 
-    def transfer(self, handle: nixl_xfer_handle, notif_msg: str = "") -> str:
+    def transfer(self, handle: nixl_xfer_handle, notif_msg: bytes = b"") -> str:
         status = self.agent.postXferReq(handle, notif_msg)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
@@ -549,11 +552,12 @@ class nixl_agent:
 
     @param remote_agent_name Name of the remote agent.
     @param notif_msg Message to send, it will be received as bytes.
+           notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
     @param backends Optional a backend name to use to send the notifications.
     """
 
     def send_notif(
-        self, remote_agent_name: str, notif_msg: str, backend: Optional[str] = None
+        self, remote_agent_name: str, notif_msg: bytes, backend: Optional[str] = None
     ):
         if backend is None:
             self.agent.genNotif(remote_agent_name, notif_msg)
