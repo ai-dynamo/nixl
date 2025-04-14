@@ -60,7 +60,6 @@ __global__ void kernel_read(struct doca_gpu_dev_rdma *rdma_gpu, struct docaXferR
         // printf(">>>>>>> CUDA rdma read kernel pos %d num %d completed %d ops\n", pos, xferReqRing[pos].num, num_ops);
 
         xferReqRing[pos].num = 0;
-        __threadfence_system();
     }
 
 }

@@ -103,11 +103,13 @@ int launch_target_wait_kernel(cudaStream_t stream, uintptr_t addr, size_t size)
     return 0;
 }
 
-__global__ void initiator_kernel(uintptr_t addr, size_t size)
+__global__ void initiator_kernel(uintptr_t addr, size_t size) //, nixlDocaBckndReqGpu *treq)
 {
     unsigned long long start, end;
 
     ((uint8_t*)addr)[threadIdx.x] = INITIATOR_VALUE;
+
+    __syncthreads();
 
     /* Simulate a longer CUDA kernel to process initiator data */
     DEVICE_GET_TIME(start);
@@ -266,11 +268,11 @@ int main(int argc, char *argv[]) {
         sendToInitiator(initiator_ip, initiator_port, serdes->exportStr());
         std::cout << " End Control Path metadata exchanges \n";
 
-        std::string rrstr = recvFromTarget(initiator_port);
-        remote_serdes->importStr(rrstr);
-        remote_metadata = remote_serdes->getStr("AgentMD");
-        assert (remote_metadata != "");
-        agent.loadRemoteMD(remote_metadata, target_name);
+        // std::string rrstr = recvFromTarget(initiator_port);
+        // remote_serdes->importStr(rrstr);
+        // remote_metadata = remote_serdes->getStr("AgentMD");
+        // assert (remote_metadata != "");
+        // agent.loadRemoteMD(remote_metadata, target_name);
 
         std::cout << " Start Data Path Exchanges \n";
         std::cout << " Waiting to receive Data from Initiator\n";
@@ -293,10 +295,10 @@ int main(int argc, char *argv[]) {
         agent.loadRemoteMD(remote_metadata, target_name);
 
         /** Sending only local queue info for rdma remote connection */
-        std::cout << " Send queue metadata to Target \n";
-        std::cout << " \t -- To be handled by runtime - currently received via a TCP Stream\n";
-        assert(serdes->addStr("AgentMD", metadata) == NIXL_SUCCESS);
-        sendToInitiator(initiator_ip, initiator_port, serdes->exportStr());
+        // std::cout << " Send queue metadata to Target \n";
+        // std::cout << " \t -- To be handled by runtime - currently received via a TCP Stream\n";
+        // assert(serdes->addStr("AgentMD", metadata) == NIXL_SUCCESS);
+        // sendToInitiator(initiator_ip, initiator_port, serdes->exportStr());
 
         std::cout << " Verify Deserialized Target's Desc List at Initiator\n";
         nixl_xfer_dlist_t dram_target_doca(remote_serdes);
@@ -305,7 +307,7 @@ int main(int argc, char *argv[]) {
         std::cout << " Got metadata from " << target_name << " \n";
 
         std::cout << " Create transfer request with DOCA backend\n ";
-        extra_params.devId = 0;
+        // extra_params.devId = 0;
         extra_params.customParam = (uintptr_t)stream;
         PUSH_RANGE("createXferReq", 1)
         ret = agent.createXferReq(NIXL_WRITE, dram_initiator_doca, dram_target_doca,
@@ -317,7 +319,9 @@ int main(int argc, char *argv[]) {
         }
 
         std::cout << "Launch initiator send kernel on stream\n";
-        // Assume NUM_TRANSFERS == 1 for now
+        /*
+         * Synthetic simulation ....
+         */
         PUSH_RANGE("InitKernels", 2)
         for (int i = 0; i < NUM_TRANSFERS; i++)
             launch_initiator_send_kernel(stream, buf[i].addr, buf[i].len);

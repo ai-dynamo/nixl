@@ -25,6 +25,97 @@ DOCA_LOG_REGISTER(NIXL::DOCA);
  * DOCA request management
 *****************************************/
 
+/*
+ * RDMA CM connect_request callback
+ *
+ * @connection [in]: RDMA Connection
+ * @ctx_user_data [in]: Context user data
+ */
+void rdma_cm_connect_request_cb(struct doca_rdma_connection *connection, union doca_data ctx_user_data)
+{
+	// nixlDocaEngine *eng = (nixlDocaEngine *)ctx_user_data.ptr;
+	doca_error_t result;
+	union doca_data connection_user_data;
+	nixlDocaEngine *eng = (nixlDocaEngine *)ctx_user_data.ptr;
+
+	DOCA_LOG_ERR("rdma_cm_connect_request_cb");
+
+	result = doca_rdma_connection_accept(connection, NULL, 0);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to accept rdma cm connection: %s", doca_error_get_descr(result));
+		// (void)doca_ctx_stop(eng->rdma_ctx);
+		return;
+	}
+
+	eng->addConnection(connection);
+
+	connection_user_data.u64 = eng->getConnectionLast();
+	result = doca_rdma_connection_set_user_data(connection, connection_user_data);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to set server connection user data: %s", doca_error_get_descr(result));
+		// (void)doca_ctx_stop(eng->rdma_ctx);
+	}
+}
+
+/*
+ * RDMA CM connect_established callback
+ *
+ * @connection [in]: RDMA Connection
+ * @connection_user_data [in]: Connection user data
+ * @ctx_user_data [in]: Context user data
+ */
+void rdma_cm_connect_established_cb(struct doca_rdma_connection *connection,
+					union doca_data connection_user_data,
+					union doca_data ctx_user_data)
+{
+	(void)connection_user_data;
+	nixlDocaEngine *eng = (nixlDocaEngine *)ctx_user_data.ptr;
+	// Assume it won't accept more than DOCA_ENG_MAX_CONN connections
+	eng->establishConnection((uint32_t)connection_user_data.u64);
+}
+
+/*
+ * RDMA CM connect_failure callback
+ *
+ * @connection [in]: RDMA Connection
+ * @connection_user_data [in]: Connection user data
+ * @ctx_user_data [in]: Context user data
+ */
+void rdma_cm_connect_failure_cb(struct doca_rdma_connection *connection,
+				union doca_data connection_user_data,
+				union doca_data ctx_user_data)
+{
+	(void)connection;
+	(void)connection_user_data;
+	nixlDocaEngine *eng = (nixlDocaEngine *)ctx_user_data.ptr;
+	DOCA_LOG_ERR("Connection error");
+	eng->removeConnection((uint32_t)connection_user_data.u64);
+}
+ 
+/*
+ * RDMA CM disconnect callback
+ *
+ * @connection [in]: RDMA Connection
+ * @connection_user_data [in]: Connection user data
+ * @ctx_user_data [in]: Context user data
+ */
+ void rdma_cm_disconnect_cb(struct doca_rdma_connection *connection,
+	union doca_data connection_user_data,
+	union doca_data ctx_user_data)
+{
+	(void)connection_user_data;
+	doca_error_t result;
+	nixlDocaEngine *eng = (nixlDocaEngine *)ctx_user_data.ptr;
+
+	//WAR for internal connection GPU object set
+	cudaSetDevice(eng->getGpuCudaId());
+	result = doca_rdma_connection_disconnect(connection);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to disconnect rdma cm connection: %s", doca_error_get_descr(result));
+		return;
+	}
+} 
+
 void nixlDocaEngine::_requestInit(void *request)
 {
 	/* Initialize request in-place (aka "placement new")*/
@@ -37,10 +128,6 @@ void nixlDocaEngine::_requestFini(void *request)
 	nixlDocaBckndReq *req = (nixlDocaBckndReq*)request;
 	req->~nixlDocaBckndReq();
 }
-
-/****************************************
- * Constructor/Destructor
-*****************************************/
 
 static doca_error_t
 open_doca_device_with_ibdev_name(const uint8_t *value, size_t val_size, struct doca_dev **retval)
@@ -90,6 +177,103 @@ open_doca_device_with_ibdev_name(const uint8_t *value, size_t val_size, struct d
 	return res;
 }
 
+/****************************************
+ * Progress thread management
+*****************************************/
+
+void nixlDocaEngine::progressFunc()
+{
+    using namespace nixlTime;
+    pthrActive = 1;
+
+	while (!pthrStop) {
+        int i;
+        for(i = 0; i < noSyncIters; i++) {
+			/* Wait for a new connection */
+			if ((connection_established[last_connection_num] == 0) &&
+				(connection_error == false)) {
+				doca_pe_progress(pe);
+			} else
+				last_connection_num++;
+
+			if (connection_error) {
+				DOCA_LOG_ERR("Failed to connect to remote peer %d, connection error", last_connection_num);
+				// handle graceful exit
+			}
+        }
+
+        /* Wait for predefined number of */
+        nixlTime::us_t start = nixlTime::getUs();
+        while( (start + DOCA_RDMA_SERVER_CONN_DELAY) > nixlTime::getUs()) {
+            std::this_thread::yield();
+        }
+    }
+}
+
+void nixlDocaEngine::progressThreadStart()
+{
+    pthrStop = pthrActive = 0;
+    noSyncIters = 32;
+
+    // Start the thread
+    // TODO [Relaxed mem] mem barrier to ensure pthr_x updates are complete
+    new (&pthr) std::thread(&nixlDocaEngine::progressFunc, this);
+
+    // Wait for the thread to be started
+    while(!pthrActive){
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+void nixlDocaEngine::progressThreadStop()
+{
+    pthrStop = 1;
+    pthr.join();
+}
+
+void nixlDocaEngine::progressThreadRestart()
+{
+    progressThreadStop();
+    progressThreadStart();
+}
+
+void nixlDocaEngine::addConnection(struct doca_rdma_connection *connection_)
+{
+	uint32_t conn_idx;
+
+	conn_idx = connection_num.fetch_add(1);
+	connection[conn_idx] = connection_;
+	last_connection_num = conn_idx;
+}
+
+uint32_t nixlDocaEngine::getConnectionLast()
+{
+	return last_connection_num;
+}
+
+uint32_t nixlDocaEngine::getGpuCudaId()
+{
+	return gdevs[0].first;
+}
+
+void nixlDocaEngine::establishConnection(uint32_t connection_idx)
+{
+	connection_established[connection_idx] = 1;	
+}
+
+
+void nixlDocaEngine::removeConnection(uint32_t connection_idx)
+{
+	connection_error = true;
+	connection_established[connection_idx] = 2;
+
+	return;
+}
+
+/****************************************
+ * Constructor/Destructor
+*****************************************/
+
 nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams* init_params)
 : nixlBackendEngine (init_params)
 {
@@ -131,7 +315,7 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams* init_params)
 	tmp_gdevs = str_split((*custom_params)["gpu_devices"], " ");
 	for (auto &cuda_id : tmp_gdevs) {
 		gdevs.push_back(std::pair((uint32_t)std::stoi(cuda_id), nullptr));
-		std::cout << "cuda_id " << cuda_id << " int " << std::stoi(cuda_id) << "\n";
+		std::cout << "cuda_id " << cuda_id << "\n";
 	}
 	std::cout << std::endl;
 
@@ -145,7 +329,6 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams* init_params)
 
 	char pciBusId[DOCA_DEVINFO_IBDEV_NAME_SIZE];
 	for (auto &item : gdevs) {
-		std::cout << "item.first " << item.first << "\n";
 		cudaDeviceGetPCIBusId(pciBusId, DOCA_DEVINFO_IBDEV_NAME_SIZE, item.first);
 		result = doca_gpu_create(pciBusId, &item.second);
 		if (result != DOCA_SUCCESS) {
@@ -205,6 +388,43 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams* init_params)
 		DOCA_LOG_ERR("Failed to set GRH to DOCA RDMA: %s", doca_error_get_descr(result));
 	}
 
+	/* Set PE */
+	result = doca_pe_create(&(pe));
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to create DOCA progress engine: %s", doca_error_get_descr(result));
+		// goto destroy_doca_rdma;
+	}
+
+	result = doca_pe_connect_ctx(pe, rdma_ctx);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to connect progress engine to context: %s", doca_error_get_descr(result));
+		// goto destroy_doca_rdma;
+	}
+
+	result = doca_rdma_set_max_num_connections(rdma, DOCA_ENG_MAX_CONN);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed doca_rdma_set_max_num_connections: %s", doca_error_get_descr(result));
+		// goto destroy_doca_rdma;
+	}
+
+	/* Set rdma cm connection configuration callbacks */
+	result = doca_rdma_set_connection_state_callbacks(rdma,
+							  rdma_cm_connect_request_cb,
+							  rdma_cm_connect_established_cb,
+							  rdma_cm_connect_failure_cb,
+							  rdma_cm_disconnect_cb);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to set CM callbacks: %s", doca_error_get_descr(result));
+		// goto destroy_doca_rdma;
+	}
+
+	ctx_user_data.ptr = this;
+	result = doca_ctx_set_user_data(rdma_ctx, ctx_user_data);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to set context user data: %s", doca_error_get_descr(result));
+		// goto destroy_doca_rdma;
+	}
+
 	result = doca_ctx_start(rdma_ctx);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to start RDMA context: %s", doca_error_get_descr(result));
@@ -215,10 +435,14 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams* init_params)
 		DOCA_LOG_ERR("Failed to get RDMA GPU handler: %s", doca_error_get_descr(result));
 	}
 
-	result = doca_rdma_export(rdma, &(connection_details), &(conn_det_len), &connection);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to export RDMA with connection details");
-	}
+	doca_devinfo_get_ipv4_addr(doca_dev_as_devinfo(ddev),
+						    (uint8_t *)ipv4_addr,
+						    DOCA_DEVINFO_IPV4_ADDR_SIZE);
+
+	// result = doca_rdma_export(rdma, &(connection_details), &(conn_det_len), &connection);
+	// if (result != DOCA_SUCCESS) {
+	// 	DOCA_LOG_ERR("Failed to export RDMA with connection details");
+	// }
 
 	//GDRCopy
 	result = doca_gpu_mem_alloc(gdevs[0].second, sizeof(struct docaXferReqGpu) * DOCA_XFER_REQ_MAX,
@@ -238,6 +462,21 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams* init_params)
 
 	xferRingPos = 0;
 	firstXferRingPos = 0;
+	connection_num = 0;
+	last_connection_num = 0;
+	local_port = DOCA_RDMA_CM_LOCAL_PORT;
+	connection_error = false;
+
+	result = doca_rdma_start_listen_to_port(rdma, local_port);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Server failed to call doca_rdma_start_listen_to_port: %s",
+				 doca_error_get_descr(result));
+		//close connection?
+	}
+
+	//Input param: roce (ip4) or IB(gid)?
+	cm_addr_type = DOCA_RDMA_ADDR_TYPE_IPv4;
+	progressThreadStart();
 }
 
 nixl_mem_list_t nixlDocaEngine::getSupportedMems () const {
@@ -247,8 +486,8 @@ nixl_mem_list_t nixlDocaEngine::getSupportedMems () const {
 	return mems;
 }
 
-// Through parent destructor the unregister will be called.
-nixlDocaEngine::~nixlDocaEngine () {
+nixlDocaEngine::~nixlDocaEngine ()
+{
 	doca_error_t result;
 
 	// per registered memory deregisters it, which removes the corresponding metadata too
@@ -259,7 +498,20 @@ nixlDocaEngine::~nixlDocaEngine () {
 		return;
 	}
 
+	progressThreadStop();
+
 	doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
+
+	for (uint32_t idx = 0; idx < connection_num; idx++) {
+		std::cout << "Disconnect " << idx << std::endl;
+		result = doca_rdma_connection_disconnect(connection[idx]);
+		if (result != DOCA_SUCCESS)
+			DOCA_LOG_ERR("Failed to disconnect RDMA connection: %s", doca_error_get_descr(result));
+	}
+
+	result = doca_rdma_stop_listen_to_port(rdma, local_port);
+	if (result != DOCA_SUCCESS)
+		DOCA_LOG_ERR("Failed to stop listen to port: %s", doca_error_get_descr(result));
 
 	result = doca_ctx_stop(rdma_ctx);
 	if (result != DOCA_SUCCESS)
@@ -269,6 +521,10 @@ nixlDocaEngine::~nixlDocaEngine () {
 	if (result != DOCA_SUCCESS)
 		DOCA_LOG_ERR("Failed to destroy DOCA RDMA: %s", doca_error_get_descr(result));
 
+	result = doca_pe_destroy(pe);
+	if (result != DOCA_SUCCESS)
+		DOCA_LOG_ERR("Failed to destroy DOCA progress engine: %s", doca_error_get_descr(result));
+		
 	result = doca_dev_close(ddev);
 	if (result != DOCA_SUCCESS)
 		DOCA_LOG_ERR("Failed to close DOCA device: %s", doca_error_get_descr(result));
@@ -282,19 +538,11 @@ nixlDocaEngine::~nixlDocaEngine () {
  * Connection management
 *****************************************/
 
-nixl_status_t nixlDocaEngine::checkConn(const std::string &remote_agent) {
-	 if(remoteConnMap.find(remote_agent) == remoteConnMap.end()) {
-		return NIXL_ERR_NOT_FOUND;
-	}
-	return NIXL_SUCCESS;
-}
-
-nixl_status_t nixlDocaEngine::endConn(const std::string &remote_agent) {
-	return NIXL_SUCCESS;
-}
-
 nixl_status_t nixlDocaEngine::getConnInfo(std::string &str) const {
-	str = nixlSerDes::_bytesToString(connection_details, conn_det_len);
+	std::stringstream ss;
+    ss << (int)ipv4_addr[0] << "." << (int)ipv4_addr[1] << "." << (int)ipv4_addr[2] << "." << (int)ipv4_addr[3];
+    str = ss.str();
+	// str = nixlSerDes::_bytesToString(ipv4_addr, 4); //connection_details, conn_det_len);
 	return NIXL_SUCCESS;
 }
 
@@ -307,26 +555,57 @@ nixl_status_t nixlDocaEngine::disconnect(const std::string &remote_agent) {
 	return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlDocaEngine::loadRemoteConnInfo (const std::string &remote_agent,
-												 const std::string &remote_conn_info)
+nixl_status_t nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent, const std::string &remote_conn_info)
 {
 	doca_error_t result;
 	nixlDocaConnection conn;
 	size_t size = remote_conn_info.size();
 	//TODO: eventually std::byte?
 	char* addr = new char[size];
+	union doca_data connection_data;
 
-	std::cout << "loadRemoteConnInfo " << remote_agent << "\n";
 	if(remoteConnMap.find(remote_agent) != remoteConnMap.end()) {
 		return NIXL_ERR_INVALID_PARAM;
 	}
 
 	nixlSerDes::_stringToBytes((void*) addr, remote_conn_info, size);
-	result = doca_rdma_connect(rdma, addr, size, connection);
+	
+	result = doca_rdma_addr_create(cm_addr_type, addr, DOCA_RDMA_CM_LOCAL_PORT, &cm_addr);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to create rdma cm connection address %s", doca_error_get_descr(result));
+			return NIXL_ERR_BACKEND;
+		}
+
+	connection_data.ptr = (void *)this;
+	result = doca_rdma_connect_to_addr(rdma, cm_addr, connection_data);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Function doca_rdma_connect failed: %s", doca_error_get_descr(result));
+		DOCA_LOG_ERR("Client failed to call doca_rdma_connect_to_addr %s",
+					doca_error_get_descr(result));
 		return NIXL_ERR_BACKEND;
 	}
+
+	DOCA_LOG_INFO("Client is waiting for a connection establishment");
+	/* Wait for a new connection */
+	while ((connection_established[last_connection_num] == 0) &&
+			(connection_error == false)) {
+		if (doca_pe_progress(pe) == 0) {
+			nixlTime::us_t start = nixlTime::getUs();
+			while( (start + DOCA_RDMA_SERVER_CONN_DELAY) > nixlTime::getUs()) {
+				std::this_thread::yield();
+			}
+		}
+	}
+
+	if (connection_error) {
+		DOCA_LOG_ERR("Failed to connect to remote peer %d, connection error", last_connection_num);
+		// handle graceful exit
+	}
+
+	// result = doca_rdma_connect(rdma, addr, size, connection);
+	// if (result != DOCA_SUCCESS) {
+	// 	DOCA_LOG_ERR("Function doca_rdma_connect failed: %s", doca_error_get_descr(result));
+	// 	return NIXL_ERR_BACKEND;
+	// }
 
 	conn.remoteAgent = remote_agent;
 	conn.connected = true;
@@ -342,17 +621,13 @@ nixl_status_t nixlDocaEngine::loadRemoteConnInfo (const std::string &remote_agen
 /****************************************
  * Memory management
 *****************************************/
-nixl_status_t nixlDocaEngine::registerMem (const nixlBlobDesc &mem,
+nixl_status_t nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
 										  const nixl_mem_t &nixl_mem,
 										  nixlBackendMD* &out)
 {
 	nixlDocaPrivateMetadata *priv = new nixlDocaPrivateMetadata;
-	// uint64_t rkey_addr;
-	// size_t rkey_size;
 	uint32_t permissions = DOCA_ACCESS_FLAG_LOCAL_READ_WRITE | DOCA_ACCESS_FLAG_RDMA_WRITE | DOCA_ACCESS_FLAG_PCI_RELAXED_ORDERING;
 	doca_error_t result;
-	struct ibv_pd *pd;
-	uint32_t mkey;
 
 	auto it = std::find_if(gdevs.begin(), gdevs.end(),
 							[&mem](std::pair<uint32_t, struct doca_gpu*> &x)
@@ -367,7 +642,6 @@ nixl_status_t nixlDocaEngine::registerMem (const nixlBlobDesc &mem,
 	if (result != DOCA_SUCCESS)
 		return NIXL_ERR_BACKEND;
 
-	// RELAXED ORDERING
 	result = doca_mmap_set_permissions(priv->mem.mmap, permissions);
 	if (result != DOCA_SUCCESS)
 		goto error;
@@ -417,10 +691,6 @@ nixl_status_t nixlDocaEngine::registerMem (const nixlBlobDesc &mem,
 	if (result != DOCA_SUCCESS)
 		goto error;
 
-	doca_rdma_bridge_get_dev_pd(ddev, &pd);
-	doca_rdma_bridge_get_mmap_mkey_from_pd(priv->mem.mmap, pd, &mkey);
-
-	// printf("Local MMAP addr %p size %d mkey %x\n", priv->mem.addr, (int)mem.len, mkey);
 	out = (nixlBackendMD*) priv; //typecast?
 
 	return NIXL_SUCCESS;
@@ -439,6 +709,10 @@ nixl_status_t nixlDocaEngine::deregisterMem(nixlBackendMD* meta)
 {
 	doca_error_t result;
 	nixlDocaPrivateMetadata *priv = (nixlDocaPrivateMetadata*) meta;
+
+	result = doca_buf_arr_destroy(priv->mem.barr);
+	if (result != DOCA_SUCCESS)
+		DOCA_LOG_ERR("Failed to call doca_buf_arr_destroy: %s", doca_error_get_descr(result));
 
 	result = doca_mmap_destroy(priv->mem.mmap);
 	if (result != DOCA_SUCCESS)
@@ -543,7 +817,6 @@ nixl_status_t nixlDocaEngine::loadRemoteMD (const nixlBlobDesc &input,
 										   nixlBackendMD* &output)
 {
 	return internalMDHelper(input.metaInfo, remote_agent, output);
-	return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlDocaEngine::unloadMD (nixlBackendMD* input) {
@@ -568,7 +841,9 @@ nixl_status_t nixlDocaEngine::prepXfer (const nixl_xfer_op_t &operation,
 	uint32_t rcnt = (uint32_t)remote.descCount();
 
 	treq->stream = (cudaStream_t)opt_args->customParam;
-	treq->devId = (uint32_t)opt_args->devId;
+	// treq->devId = (uint32_t)opt_args->devId;
+
+	// check device id from local dlist mr that should be all the same and same of the engine
 
 	auto it = std::find_if(gdevs.begin(), gdevs.end(),
 							[&treq](std::pair<uint32_t, struct doca_gpu*> &x)

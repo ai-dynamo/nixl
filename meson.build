@@ -76,10 +76,6 @@ if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
 
-if get_option('disable_doca_backend')
-    add_project_arguments('-DDISABLE_DOCA_BACKEND', language: 'cpp')
-endif
-
 static_plugins = []
 
 # Check for static plugins, then set compiler flags to enable

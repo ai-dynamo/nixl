@@ -23,6 +23,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <sys/types.h>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -32,6 +33,7 @@
 #include <doca_error.h>
 #include <doca_log.h>
 #include <doca_gpunetio.h>
+#include <doca_pe.h>
 #include <doca_rdma.h>
 #include <doca_rdma_bridge.h>
 #include <doca_mmap.h>
@@ -50,14 +52,13 @@
 #define RDMA_SEND_QUEUE_SIZE 2048
 #define DOCA_XFER_REQ_SIZE 512
 #define DOCA_XFER_REQ_MAX 16
-
-typedef enum {CONN_CHECK, NOTIF_STR, DISCONNECT} ucx_cb_op_t;
+#define DOCA_ENG_MAX_CONN 10
+#define DOCA_RDMA_CM_LOCAL_PORT 5678
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+#define DOCA_RDMA_SERVER_ADDR_LEN (MAX(MAX(DOCA_DEVINFO_IPV4_ADDR_SIZE, DOCA_DEVINFO_IPV6_ADDR_SIZE), DOCA_GID_BYTE_LENGTH))
+#define DOCA_RDMA_SERVER_CONN_DELAY 500 //500us
 
 typedef void * nixlDocaReq;
-
-struct nixl_ucx_am_hdr {
-    ucx_cb_op_t op;
-};
 
 struct nixlDocaMem {
     void *addr;
@@ -130,9 +131,26 @@ class nixlDocaEngine : public nixlBackendEngine {
         struct doca_rdma *rdma;		    /* DOCA RDMA instance */
         struct doca_gpu_dev_rdma *rdma_gpu; /* DOCA RDMA instance GPU handler */
         struct doca_ctx *rdma_ctx;	    /* DOCA context to be used with DOCA RDMA */
-        const void *connection_details;	    /* Remote peer connection details */
+        struct doca_pe *pe;	    /* DOCA progress engine for RDMA CM mode */
+        uint32_t local_port;
+        int noSyncIters;
+        //Change it
+        std::atomic<uint32_t> connection_num;
+        uint32_t last_connection_num;
+        union doca_data ctx_user_data;
+        struct doca_rdma_connection *connection[DOCA_ENG_MAX_CONN];
+        volatile bool connection_error;
+        // const void *connection_details;	    /* Remote peer connection details */
+        // const uint8_t connection_details[DOCA_RDMA_SERVER_ADDR_LEN];	    /* Remote peer connection details */
+        uint8_t ipv4_addr[4];
         size_t conn_det_len;		    /* Remote peer connection details data length */
-        struct doca_rdma_connection *connection;
+        volatile uint8_t connection_established[DOCA_ENG_MAX_CONN];
+        struct doca_rdma_addr *cm_addr;		/* RDMA_CM server IPv4/IPv6/GID address */
+        enum doca_rdma_addr_type cm_addr_type;		/* RDMA_CM server address type, IPv4, IPv6 or GID. Only useful for client */
+
+        std::thread pthr;
+        volatile bool pthrStop, pthrActive;
+
         struct docaXferReqGpu *xferReqRingGpu;
         struct docaXferReqGpu *xferReqRingCpu;
         std::atomic<uint32_t> xferRingPos;
@@ -167,6 +185,14 @@ class nixlDocaEngine : public nixlBackendEngine {
         nixl_status_t internalMDHelper (const nixl_blob_t &blob,
                                         const std::string &agent,
                                         nixlBackendMD* &output);
+
+        // Threading infrastructure
+        //   TODO: move the thread management one outside of NIXL common infra
+        void progressFunc();
+        void progressThreadStart();
+        void progressThreadStop();
+        void progressThreadRestart();
+
     public:
         nixlDocaEngine(const nixlBackendInitParams* init_params);
         ~nixlDocaEngine();
@@ -225,9 +251,11 @@ class nixlDocaEngine : public nixlBackendEngine {
         nixl_status_t getNotifs(notif_list_t &notif_list);
         nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg);
 
-        //public function for UCX worker to mark connections as connected
-        nixl_status_t checkConn(const std::string &remote_agent);
-        nixl_status_t endConn(const std::string &remote_agent);
+        void addConnection(struct doca_rdma_connection *connection);
+        uint32_t getConnectionLast();
+        void establishConnection(uint32_t connection_idx);
+        void removeConnection(uint32_t connection_idx);
+        uint32_t getGpuCudaId();
 };
 
 doca_error_t doca_util_map_and_export(struct doca_dev *dev, uint32_t permissions, void *addr, uint32_t size, nixlDocaMem *mem);
