@@ -72,6 +72,44 @@ $ ninja
 $ ninja install
 ```
 
+### Build Options
+
+NIXL supports several build options that can be specified during the meson setup phase:
+
+```bash
+# Basic build setup with default options
+$ meson setup <name_of_build_dir>
+
+# Setup with custom options (example)
+$ meson setup <name_of_build_dir> \
+    -Dbuild_docs=true \           # Build Doxygen documentation
+    -Ducx_path=/path/to/ucx \     # Custom UCX installation path
+    -Dinstall_headers=true \      # Install development headers
+    -Ddisable_gds_backend=false   # Enable GDS backend
+```
+
+Common build options:
+- `build_docs`: Build Doxygen documentation (default: false)
+- `ucx_path`: Path to UCX installation (default: system path)
+- `install_headers`: Install development headers (default: true)
+- `disable_gds_backend`: Disable GDS backend (default: false)
+- `cudapath_inc`, `cudapath_lib`: Custom CUDA paths
+- `static_plugins`: Comma-separated list of plugins to build statically
+
+### Building Documentation
+
+If you have Doxygen installed, you can build the documentation:
+
+```bash
+# Configure with documentation enabled
+$ meson setup <name_of_build_dir> -Dbuild_docs=true
+$ cd <name_of_build_dir>
+$ ninja
+
+# Documentation will be generated in <name_of_build_dir>/html
+# After installation (ninja install), documentation will be available in <prefix>/share/doc/nixl/
+```
+
 ### pybind11 Python Interface
 The pybind11 bindings for the public facing NIXL API are available in src/bindings/python. These bindings implement the headers in the src/api/cpp directory.
 
