@@ -79,6 +79,9 @@ The preferred way is to build it through meson-python, which will just let it be
 
 ` $ pip install .`
 
+### Other build options
+See [contrib/README.md](contrib/README.md) for more build options.
+
 ### Building Docker container
 To build the docker container, first clone the current repository. Also make sure you are able to pull docker images to your machine before attempting to build the container.
 
