@@ -268,16 +268,9 @@ int main(int argc, char *argv[]) {
         sendToInitiator(initiator_ip, initiator_port, serdes->exportStr());
         std::cout << " End Control Path metadata exchanges \n";
 
-        // std::string rrstr = recvFromTarget(initiator_port);
-        // remote_serdes->importStr(rrstr);
-        // remote_metadata = remote_serdes->getStr("AgentMD");
-        // assert (remote_metadata != "");
-        // agent.loadRemoteMD(remote_metadata, target_name);
-
         std::cout << " Start Data Path Exchanges \n";
         std::cout << " Waiting to receive Data from Initiator\n";
 
-        //Only works with progress thread now, as backend is protected
         /** Sanity Check , assume NUM_TRANSFERS == 1 */
         for (int i = 0; i < NUM_TRANSFERS; i++)
             launch_target_wait_kernel(stream, (uintptr_t)addr[i], SIZE);
@@ -293,12 +286,6 @@ int main(int argc, char *argv[]) {
         remote_metadata = remote_serdes->getStr("AgentMD");
         assert (remote_metadata != "");
         agent.loadRemoteMD(remote_metadata, target_name);
-
-        /** Sending only local queue info for rdma remote connection */
-        // std::cout << " Send queue metadata to Target \n";
-        // std::cout << " \t -- To be handled by runtime - currently received via a TCP Stream\n";
-        // assert(serdes->addStr("AgentMD", metadata) == NIXL_SUCCESS);
-        // sendToInitiator(initiator_ip, initiator_port, serdes->exportStr());
 
         std::cout << " Verify Deserialized Target's Desc List at Initiator\n";
         nixl_xfer_dlist_t dram_target_doca(remote_serdes);
@@ -318,9 +305,7 @@ int main(int argc, char *argv[]) {
         }
 
         std::cout << "Launch initiator send kernel on stream\n";
-        /*
-         * Synthetic simulation ....
-         */
+        /* Synthetic simulation of GPU processing data before sending */
         PUSH_RANGE("InitKernels", 2)
         for (int i = 0; i < NUM_TRANSFERS; i++)
             launch_initiator_send_kernel(stream, buf[i].addr, buf[i].len);
