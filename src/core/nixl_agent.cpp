@@ -751,9 +751,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     // We CAN repost a previous request that is completed
-    if (req_hndl->status == NIXL_SUCCESS && req_hndl->backendHandle)
-        req_hndl->status = req_hndl->engine->releaseReqH(
-                                     req_hndl->backendHandle);
+
 
     // Carrying over notification from xfer handle creation time
     if (req_hndl->hasNotif) {

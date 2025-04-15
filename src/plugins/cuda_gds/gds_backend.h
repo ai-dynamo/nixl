@@ -38,32 +38,6 @@ class nixlGdsMetadata : public nixlBackendMD {
         ~nixlGdsMetadata() { }
 };
 
-class nixlGdsIOBatch {
-    private:
-        unsigned int max_reqs{0};
-        CUfileBatchHandle_t batch_handle{nullptr};
-        CUfileIOEvents_t *io_batch_events{nullptr};
-        CUfileIOParams_t *io_batch_params{nullptr};
-        CUfileError_t init_err{};
-        nixl_status_t current_status{NIXL_ERR_NOT_POSTED};
-        unsigned int entries_completed{0};
-        unsigned int batch_size{0};
-
-    public:
-        nixlGdsIOBatch(unsigned int size);
-        ~nixlGdsIOBatch();
-
-        nixl_status_t addToBatch(CUfileHandle_t fh, void *buffer,
-                                size_t size, size_t file_offset,
-                                size_t ptr_offset, CUfileOpcode_t type);
-        nixl_status_t submitBatch(int flags);
-        nixl_status_t checkStatus();
-        nixl_status_t cancelBatch();
-        void destroyBatch();
-        void reset();
-        unsigned int getMaxReqs() const { return max_reqs; }
-};
-
 struct GdsTransferRequestH {
     void*           addr;
     size_t          size;
@@ -90,6 +64,9 @@ class nixlGdsEngine : public nixlBackendEngine {
 
         nixlGdsIOBatch* getBatchFromPool(unsigned int size);
         void returnBatchToPool(nixlGdsIOBatch* batch);
+        nixl_status_t createAndSubmitBatch(const std::vector<GdsTransferRequestH>& requests,
+                                           size_t start_idx, size_t batch_size,
+                                           std::vector<nixlGdsIOBatch*>& batch_list);
         nixl_status_t createBatches(const nixl_xfer_op_t &operation,
                                    const nixl_meta_dlist_t &local,
                                    const nixl_meta_dlist_t &remote,
