@@ -130,7 +130,7 @@ $ ./contrib/build-container.sh
 
 By default, the container is built with Ubuntu 24.04. To build a container for Ubuntu 22.04 use the --os option as follows:
 ```
-$ ./contrib/build-container.sh --os 22.04
+$ ./contrib/build-container.sh --os ubuntu22
 ```
 
 To see all the options supported by the container use:
