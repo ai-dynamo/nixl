@@ -294,7 +294,10 @@ int main(int argc, char *argv[]) {
         std::cout << " Got metadata from " << target_name << " \n";
 
         std::cout << " Create transfer request with DOCA backend\n ";
-        extra_params.customParam = (uintptr_t)stream;
+
+        extra_params.customParam.resize(sizeof(uintptr_t));
+        *((uintptr_t*) extra_params.customParam.data()) = (uintptr_t)stream;
+
         PUSH_RANGE("createXferReq", 1)
         ret = agent.createXferReq(NIXL_WRITE, dram_initiator_doca, dram_target_doca,
                                   "target", treq, &extra_params);

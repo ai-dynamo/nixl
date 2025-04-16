@@ -831,7 +831,7 @@ nixl_status_t nixlDocaEngine::prepXfer (const nixl_xfer_op_t &operation,
 	uint32_t lcnt = (uint32_t)local.descCount();
 	uint32_t rcnt = (uint32_t)remote.descCount();
 
-	treq->stream = (cudaStream_t)opt_args->customParam;
+	treq->stream = (cudaStream_t)*((uintptr_t *)opt_args->customParam.data());
 
 	#if 0
 		auto it = std::find_if(gdevs.begin(), gdevs.end(),

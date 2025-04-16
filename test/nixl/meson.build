@@ -19,7 +19,7 @@ ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directo
 if cuda_dep.found()
     cuda_dependencies = [cuda_dep]
     cpp_args = '-DUSE_VRAM'
-    nvtx_dep = nvcc.find_library('nvToolsExt', required: true)
+    nvtx_dep = nvcc.find_library('nvToolsExt', dirs: '/usr/local/cuda/lib64', required: true)
 else
     cuda_dependencies = []
     cpp_args = '-UUSE_VRAM'
