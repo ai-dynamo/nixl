@@ -31,6 +31,10 @@ class nixlAgentConfig {
 
         /** @var Enable progress thread */
         bool     useProgThread;
+        /** @var Enable listener thread */
+        bool     useListenThread;
+        /** @var Port for listener thread to use */
+        int      listenPort;
 
     public:
 
@@ -44,14 +48,17 @@ class nixlAgentConfig {
         uint64_t pthrDelay;
 
         /**
-         * @brief  Agent configuration constructor. Important configs such as
-         *         useProgThread must be given and can't be changed.
+         * @brief  Agent configuration constructor for enabling various features.
          * @param use_prog_thread  flag to determine use of progress thread
+         * @param use_prog_thread  flag to determine use of listener thread
+         * @param port             specify port for listener thread to listen on
          * @param pthr_delay_us    Optional delay for pthread in us
          */
-        nixlAgentConfig(const bool use_prog_thread, const uint64_t pthr_delay_us=0) {
-            this->useProgThread = use_prog_thread;
-            this->pthrDelay     = pthr_delay_us;
+        nixlAgentConfig(const bool use_prog_thread, const bool use_listen_thread=false, const int port=0, const uint64_t pthr_delay_us=0) {
+            this->useProgThread   = use_prog_thread;
+            this->useListenThread = use_listen_thread;
+            this->listenPort      = port;
+            this->pthrDelay       = pthr_delay_us;
         }
 
         /**

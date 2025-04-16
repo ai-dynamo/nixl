@@ -19,8 +19,16 @@
 
 #include "common/str_tools.h"
 #include "mem_section.h"
+#include "stream/metadata_stream.h"
+
+#define DEFAULT_COMM_PORT 8888
 
 typedef std::vector<nixlBackendEngine*> backend_list_t;
+
+//Internal typedef to define metadata communication request types
+//To be extended with ETCD operations
+typedef enum { SOCK_SEND, SOCK_FETCH, SOCK_INVAL } nixl_comm_t;
+typedef std::tuple<nixl_comm_t, std::string, int> nixl_comm_req_t;
 
 class nixlAgentData {
     private:
@@ -47,7 +55,17 @@ class nixlAgentData {
         std::unordered_map<std::string, nixlRemoteSection*,
                            std::hash<std::string>, strEqual>     remoteSections;
 
-        nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
+        nixlMDStreamListener                  *listener;
+        std::unordered_map<std::string, int>  remoteSockets;
+        std::thread                           commThread;
+        std::vector<nixl_comm_req_t>          commQueue;
+        std::mutex                            commLock;
+        bool                                  commThreadStop;
+
+        void enqueueCommWork(nixl_comm_req_t request);
+        void getCommWork(std::vector<nixl_comm_req_t> &req_list);
+
+        nixlAgentData(nixlAgent* my_agent, const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();
 
     friend class nixlAgent;
