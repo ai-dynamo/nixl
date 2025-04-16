@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.1.1',
+project('nixl', ['cpp', 'rust'], version: '0.1.1',
     default_options: ['buildtype=debug',
                 'werror=true',
                 'cpp_std=c++17',
@@ -23,6 +23,7 @@ project('nixl', 'CPP', version: '0.1.1',
 
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
+rust = meson.get_compiler('rust')
 
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
@@ -39,6 +40,12 @@ else
     link_args : ['-L' + cuda_lib_path, '-L' + cuda_stub_path, '-lcuda', '-lcudart'],
     include_directories : include_directories(cuda_inc_path))
 endif
+
+# Add pthread dependency for thread support
+threads_dep = dependency('threads')
+
+# Add dl library for dynamic loading
+dl_dep = cpp.find_library('dl', required: true)
 
 prefix_path = get_option('prefix')
 prefix_inc = prefix_path + '/include'

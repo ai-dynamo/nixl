@@ -1,0 +1,14 @@
+[workspace]
+members = ["src/bindings/rust"]
+
+[workspace.package]
+description = "NIXL - NVIDIA Interconnect Library"
+authors = ["NVIDIA Corporation"]
+license = "Apache-2.0"
+homepage = "https://github.com/NVIDIA/nixl"
+repository = "https://github.com/NVIDIA/nixl"
+keywords = ["networking", "interconnect", "cuda", "gpu"]
+
+[workspace.dependencies]
+thiserror = "1.0"
+tracing = "0.1" 

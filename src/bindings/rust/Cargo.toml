@@ -1,0 +1,23 @@
+[package]
+name = "nixl-sys"
+version = "0.1.0"
+edition = "2021"
+description.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+links = "nixl"
+build = "build.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+libc = "0.2"
+
+[build-dependencies]
+bindgen = "0.71"
+cc = { version = "1.0", features = ["parallel"] }
+pkg-config = "0.3"

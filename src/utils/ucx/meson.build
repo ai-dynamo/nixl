@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = [ ucx_dep ]
+ucx_utils_dep = [ ucx_dep, cpp.find_library('pthread', required: true) ]
 if cuda_dep.found()
     ucx_utils_dep += [ cuda_dep ]
 endif
