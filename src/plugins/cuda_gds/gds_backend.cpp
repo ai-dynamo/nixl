@@ -91,9 +91,10 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
                                          const nixl_mem_t &nixl_mem,
                                          nixlBackendMD* &out)
 {
-    nixl_status_t status;
+    nixl_status_t status = NIXL_SUCCESS;
     nixlGdsMetadata *md = new nixlGdsMetadata();
     md->type = nixl_mem;
+    cudaError_t error_id;
 
     switch (nixl_mem) {
         case FILE_SEG: {
@@ -103,7 +104,6 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
                 md->handle = it->second;
                 md->handle.size = mem.len;
                 md->handle.metadata = mem.metaInfo;
-                status = NIXL_SUCCESS;
                 break;
             }
 
@@ -115,7 +115,22 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
             break;
         }
 
-        case VRAM_SEG:
+        case VRAM_SEG: {
+            error_id = cudaSetDevice(mem.devId);
+            if (error_id != cudaSuccess) {
+                std::cerr << "cudaSetDevice returned " << cudaGetErrorString(error_id)
+                          << " for device ID " << mem.devId << std::endl;
+                delete md;
+                return NIXL_ERR_BACKEND;
+            }
+            status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
+            if (status == NIXL_SUCCESS) {
+                md->buf.base = (void *)mem.addr;
+                md->buf.size = mem.len;
+            }
+            break;
+        }
+
         case DRAM_SEG: {
             status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
             if (status == NIXL_SUCCESS) {
