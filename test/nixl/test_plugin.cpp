@@ -95,6 +95,7 @@ int main(int argc, char** argv) {
     verify_plugin("UCX_MO", plugin_manager);
     verify_plugin("MOCK_BASIC", plugin_manager);
     verify_plugin("MOCK_DRAM", plugin_manager);
+    verify_plugin("DOCA", plugin_manager);
 
     // List all loaded plugins
     std::cout << "\nLoaded plugins:" << std::endl;
@@ -108,6 +109,7 @@ int main(int argc, char** argv) {
     plugin_manager.unloadPlugin("MOCK_BASIC");
     plugin_manager.unloadPlugin("MOCK_DRAM");
     plugin_manager.unloadPlugin("POSIX");
+    plugin_manager.unloadPlugin("DOCA");
 
     // List all loaded plugins and make sure static plugins are present
     std::cout << "Loaded plugins after unload:" << std::endl;

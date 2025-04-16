@@ -21,3 +21,8 @@ disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend
     subdir('cuda_gds')
 endif
+
+disable_doca_backend = get_option('disable_doca_backend')
+if not disable_doca_backend
+    subdir('doca')
+endif

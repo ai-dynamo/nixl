@@ -19,6 +19,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <cstdint>
 
 
 /*** Forward declarations ***/
@@ -167,6 +168,9 @@ class nixlAgentOptionalArgs {
          *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
          */
         int port = default_comm_port;
+         * @var Backend custom parameter
+         */
+        uintptr_t customParam;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

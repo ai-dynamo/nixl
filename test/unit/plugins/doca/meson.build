@@ -13,18 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_backend_inc_dirs = include_directories('./ucx')
-
-subdir('ucx')
-subdir('ucx_mo')
-subdir('posix')  # Always try to build POSIX backend, it will handle its own dependencies
-
-disable_gds_backend = get_option('disable_gds_backend')
-if not disable_gds_backend and cuda_dep.found()
-    subdir('cuda_gds')
-endif
-
-disable_doca_backend = get_option('disable_doca_backend')
-if not disable_doca_backend and cuda_dep.found()
-    subdir('doca')
-endif
+message('building doca test')
+nixl_doca_test = executable('nixl_doca_test', 'nixl_doca_test.cpp', 'kernel.cu',
+                          dependencies: [nixl_dep, nixl_infra, cuda_dep],
+                          include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                          link_with: [serdes_lib],
+                          install: true)

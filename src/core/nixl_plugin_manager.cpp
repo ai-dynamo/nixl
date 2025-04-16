@@ -395,4 +395,13 @@ void nixlPluginManager::registerBuiltinPlugins() {
         extern nixlBackendPlugin* createStaticPosixPlugin();
         registerStaticPlugin("POSIX", createStaticPosixPlugin);
 #endif // STATIC_PLUGIN_POSIX
+    #endif
+    #endif
+
+    #ifdef STATIC_PLUGIN_DOCA
+    #ifndef DISABLE_DOCA_BACKEND
+        extern nixlBackendPlugin* createStaticDocaPlugin();
+        registerStaticPlugin("DOCA", createStaticDocaPlugin);
+    #endif
+    #endif
 }
