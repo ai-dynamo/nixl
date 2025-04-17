@@ -38,19 +38,48 @@ class nixlGdsMetadata : public nixlBackendMD {
         ~nixlGdsMetadata() { }
 };
 
-struct GdsTransferRequestH {
-    void*           addr;
-    size_t          size;
-    size_t          file_offset;
-    CUfileHandle_t  fh;
-    CUfileOpcode_t  op;
+class GdsTransferRequestH {
+    public:
+        void*           addr;
+        size_t          size;
+        size_t          file_offset;
+        CUfileHandle_t  fh;
+        CUfileOpcode_t  op;
+
+        // Default constructor
+        GdsTransferRequestH() {
+            addr = nullptr;
+            size = 0;
+            file_offset = 0;
+            fh = nullptr;
+            op = CUFILE_READ;
+        }
+
+        // Constructor with parameters
+        GdsTransferRequestH(void* a, size_t s, size_t offset, CUfileHandle_t handle, CUfileOpcode_t operation) {
+            addr = a;
+            size = s;
+            file_offset = offset;
+            fh = handle;
+            op = operation;
+        }
 };
 
-struct nixlGdsBackendReqH : public nixlBackendReqH {
-    nixlGdsBackendReqH() : needs_prep(true) {}
-    std::vector<GdsTransferRequestH> request_list;
-    std::vector<nixlGdsIOBatch*> batch_io_list;
-    bool needs_prep;
+class nixlGdsBackendReqH : public nixlBackendReqH {
+    public:
+        std::vector<GdsTransferRequestH> request_list;
+        std::vector<nixlGdsIOBatch*> batch_io_list;
+        bool needs_prep;
+
+        nixlGdsBackendReqH() {
+            needs_prep = true;
+        }
+        ~nixlGdsBackendReqH() {
+            for (auto* batch : batch_io_list) {
+                delete batch;
+            }
+            batch_io_list.clear();
+        }
 };
 
 class nixlGdsEngine : public nixlBackendEngine {

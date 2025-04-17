@@ -415,9 +415,7 @@ nixlGdsEngine::~nixlGdsEngine() {
     batch_pool.clear();
 
     if (gds_utils) {
+        gds_utils->closeGdsDriver();
         delete gds_utils;
-        gds_utils = nullptr;
     }
-
-    cuFileDriverClose();
 }
