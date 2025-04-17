@@ -21,11 +21,6 @@
 #include "absl/log/check.h"
 #include "absl/log/initialize.h"
 
-/* Initialize logging. Should be called at the start of main() */
-inline void InitLogging() {
-    absl::InitializeLog();
-}
-
 /*-----------------------------------------------------------------------------*
  * Logging Macros (Abseil Stream-style)
  *-----------------------------------------------------------------------------*
