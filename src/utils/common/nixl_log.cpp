@@ -17,6 +17,10 @@
 
 #include "nixl_log.h"
 #include "absl/log/initialize.h"
+#include "absl/log/globals.h"
+#include "absl/strings/ascii.h"
+#include <cstdlib>
+#include <string>
 
 namespace {
 
@@ -26,6 +30,38 @@ public:
     LoggingInitializer() {
         // Initialize Abseil logging system.
         absl::InitializeLog();
+
+        // Set log level based on environment variable NIXL_LOG_LEVEL
+        // Levels: TRACE, DEBUG, INFO, WARNING, ERROR, FATAL
+        const char* env_log_level = std::getenv("NIXL_LOG_LEVEL");
+        std::string level_str = "INFO"; // Default level
+        if (env_log_level != nullptr) {
+            level_str = absl::AsciiStrToUpper(env_log_level);
+        }
+
+        if (level_str == "TRACE") {
+            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+            absl::SetVLogLevel("*", 2);
+        } else if (level_str == "DEBUG") {
+            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+            absl::SetVLogLevel("*", 1);
+        } else if (level_str == "INFO") {
+            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+            absl::SetVLogLevel("*", 0);
+        } else if (level_str == "WARNING") {
+            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kWarning);
+            absl::SetVLogLevel("*", 0);
+        } else if (level_str == "ERROR") {
+            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kError);
+            absl::SetVLogLevel("*", 0);
+        } else if (level_str == "FATAL") {
+            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kFatal);
+            absl::SetVLogLevel("*", 0);
+        } else {
+             // Unknown level, default to WARNING
+             absl::SetMinLogLevel(absl::LogSeverityAtLeast::kWarning);
+             absl::SetVLogLevel("*", 0);
+        }
     }
 };
 
