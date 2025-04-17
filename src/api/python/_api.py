@@ -523,7 +523,11 @@ class nixl_agent:
     """
 
     def check_remote_xfer_done(
-        self, remote_agent_name: str, lookup_tag: bytes, backends: list[str] = []
+        self,
+        remote_agent_name: str,
+        lookup_tag: bytes,
+        backends: list[str] = [],
+        full_search=False,
     ) -> bool:
         handle_list = []
         for backend_string in backends:
@@ -534,7 +538,9 @@ class nixl_agent:
 
         if remote_agent_name in self.notifs:
             for msg in self.notifs[remote_agent_name]:
-                if lookup_tag in msg:
+                if (full_search and lookup_tag in msg) or (
+                    not full_search and msg.startswith(lookup_tag)
+                ):
                     message = msg
                     found = True
                     break

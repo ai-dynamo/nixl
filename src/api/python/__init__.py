@@ -17,7 +17,7 @@ import os
 
 import nixl
 
-__all__ = [nixl]
+__all__ = ["nixl"]
 
 if "NIXL_PLUGIN_DIR" not in os.environ:
     # name for local installation
