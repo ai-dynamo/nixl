@@ -60,6 +60,13 @@ if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
 
+if get_option('buildtype') == 'release'
+    # Required by Abseil to strip logs at compile time based on verbosity
+    add_project_arguments('-DABSL_MIN_LOG_LEVEL=2', language : 'cpp') # 2 corresponds to absl::LogSeverity::kError
+    # Required by Abseil to strip DCHECK assertions at compile time
+    add_project_arguments('-DNDEBUG', language: 'cpp')
+endif
+
 static_plugins = []
 
 # Check for static plugins, then set compiler flags to enable

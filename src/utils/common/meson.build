@@ -13,7 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('ucx')
-subdir('serdes')
-subdir('stream')
+nixl_common_inc = include_directories('.')
+
+nixl_common_deps = [
+    absl_dep, # Dependency from root meson.build
+]
+
+# Define a static library for common utilities
+nixl_common_lib = static_library('nixl_common',
+    'nixl_log.cpp',
+    dependencies: nixl_common_deps,
+    include_directories: nixl_common_inc,
+    install: false, # Don't install this internal library directly
+)
+
+# Make the library and includes available to other parts of the build
+nixl_common_dep = declare_dependency(
+    include_directories: nixl_common_inc,
+    link_with: nixl_common_lib,
+    dependencies: nixl_common_deps
+)
