@@ -18,7 +18,9 @@
 #include <iostream>
 #include <set>
 #include <string>
+
 #include "nixl.h"
+#include "nixl_log.h"
 #include "plugin_manager.h"
 
 void print_usage(const char* program_name) {
@@ -62,6 +64,8 @@ int verify_plugin(std::string name, nixlPluginManager& plugin_manager)
 }
 
 int main(int argc, char** argv) {
+    InitLogging();
+
     char *plugindir = NULL;
     std::set<nixl_backend_t> staticPlugs;
 

@@ -23,6 +23,7 @@
 #include <cassert>
 #include "stream/metadata_stream.h"
 #include "serdes/serdes.h"
+#include "nixl_log.h"
 #define NUM_TRANSFERS 1
 #define SIZE 1024
 
@@ -57,6 +58,8 @@ void sendToInitiator(const char *ip, int port, std::string data) {
 }
 
 int main(int argc, char *argv[]) {
+    InitLogging();
+
     int                     initiator_port;
     nixl_status_t           ret = NIXL_SUCCESS;
     void                    *addr[NUM_TRANSFERS];
