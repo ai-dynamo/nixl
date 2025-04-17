@@ -56,7 +56,8 @@ class GdsTransferRequestH {
         }
 
         // Constructor with parameters
-        GdsTransferRequestH(void* a, size_t s, size_t offset, CUfileHandle_t handle, CUfileOpcode_t operation) {
+        GdsTransferRequestH(void* a, size_t s, size_t offset,
+			    CUfileHandle_t handle, CUfileOpcode_t operation) {
             addr = a;
             size = s;
             file_offset = offset;
