@@ -13,31 +13,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-posix_sources = files(
-  'posix_backend.cpp',
-  'posix_plugin.cpp',
-  'posix_utils.cpp'
-)
-
-posix_headers = files(
-  'posix_backend.h',
-  'posix_utils.h'
-)
-
-posix_inc = include_directories('.')
-
 # Check for liburing dependency
 liburing_dep = dependency('liburing', required: true)
 
-posix_lib = library('posix',
-  posix_sources,
-  posix_headers,
-  include_directories: [posix_inc, nixl_inc_dirs, utils_inc_dirs],
-  dependencies: [nixl_infra, liburing_dep],
-  install: true
-)
+if 'POSIX' in static_plugins
+    posix_backend_lib = static_library('POSIX',
+        'posix_backend.cpp', 'posix_backend.h',
+        'posix_plugin.cpp',
+        'posix_utils.cpp', 'posix_utils.h',
+        dependencies: [nixl_infra, liburing_dep],
+        link_args: ['-luring'],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        install: false,
+        cpp_args: compile_flags,
+        name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
+else
+    posix_backend_lib = shared_library('POSIX',
+        'posix_backend.cpp', 'posix_backend.h',
+        'posix_plugin.cpp',
+        'posix_utils.cpp', 'posix_utils.h',
+        dependencies: [nixl_infra, liburing_dep],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        link_args: ['-luring'],
+        install: true,
+        cpp_args: ['-fPIC'],
+        name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
+        install_dir: plugin_install_dir)
+    if get_option('buildtype') == 'debug'
+        run_command('sh', '-c',
+            'echo "POSIX=' + posix_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+            check: true
+        )
+    endif
+endif
 
-posix_dep = declare_dependency(
-  link_with: posix_lib,
-  include_directories: posix_inc
-) 
+posix_backend_interface = declare_dependency(link_with: posix_backend_lib) 

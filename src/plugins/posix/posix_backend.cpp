@@ -18,12 +18,13 @@
 #include <liburing.h>
 #include "posix_backend.h"
 
-#define NIXL_POSIX_RING_SIZE 1024
+#define NIXL_POSIX_RING_SIZE 64
 #define CQES_MAX_BATCH_SIZE 16
 
 int nixlPosixEngine::uring_init_status = 1;
 io_uring nixlPosixEngine::uring;
 io_uring_params nixlPosixEngine::uring_params = {
+    .sq_entries = NIXL_POSIX_RING_SIZE,
     .cq_entries = NIXL_POSIX_RING_SIZE,
 };
 
@@ -34,8 +35,7 @@ io_uring& nixlPosixEngine::uringGetInstance() {
 int nixlPosixEngine::uringGetInitStatus() {
     if (nixlPosixEngine::uring_init_status == 1)
         nixlPosixEngine::uring_init_status =
-            io_uring_queue_init_params(NIXL_POSIX_RING_SIZE, &nixlPosixEngine::uring,
-                                       &nixlPosixEngine::uring_params);
+            io_uring_queue_init(k, &nixlPosixEngine::uring, 0);
 
     return nixlPosixEngine::uring_init_status;
 }
@@ -116,7 +116,7 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
     switch (operation) {
         case NIXL_READ: // Remote -> Local (file -> DRAM)
             for (int i = 0; i < local.descCount(); i++) {
-                entry = io_uring_get_sqe(&this->uring);
+                entry = io_uring_get_sqe(&nixlPosixEngine::uring);
                 if (!entry) {
                     std::cerr <<"Error in getting sqe\n";
                     status = NIXL_ERR_BACKEND;
