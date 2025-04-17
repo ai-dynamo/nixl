@@ -65,6 +65,7 @@ public:
     }
 };
 
+// Executes the initializer when the program starts before main() is called.
 static LoggingInitializer global_initializer_instance;
 
 } // anonymous namespace 
