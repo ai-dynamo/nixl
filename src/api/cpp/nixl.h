@@ -324,6 +324,21 @@ class nixlAgent {
         getLocalMD (nixl_blob_t &str) const;
 
         /**
+         * @brief  Get partial metadata blob for this agent, to be given to other agents.
+         *
+         * @param  descs         [in]  Descriptor list to include in the metadata
+         * @param  get_conn_info [in]  Whether to include connection information in the metadata
+         * @param  str           [out] The serialized metadata blob
+         * @param  extra_params  [in]  Optional extra parameters used in getting partial metadata
+         * @return nixl_status_t       Error code if call was not successful
+         */
+        nixl_status_t
+        getLocalPartialMD(nixl_reg_dlist_t  &descs,
+                          bool get_conn_info,
+                          nixl_blob_t &str,
+                          const nixl_opt_args_t* extra_params = nullptr) const;
+
+        /**
          * @brief  Load other agent's metadata and unpack it internally. Now the local
          *         agent can initiate transfers towards the remote agent.
          *
