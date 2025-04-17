@@ -16,6 +16,17 @@
 """Utils to generate matrices that represent the communication patterns of an inference workload
 
 For now supports only Tensor Parallelism
+
+Example usage:
+python inference_workload_matgen.py generate \
+    --num-user-requests 10 \
+    --batch-size 1 \
+    --num-prefill-nodes 54 \
+    --num-decode-nodes 54 \
+    --prefill-tp 8 \
+    --decode-tp 8 \
+    --model llama-405b \
+    --results-dir /tmp/matrices
 """
 
 from tqdm import tqdm
@@ -158,7 +169,7 @@ def gen_matrices_and_compute_time(
         - batches: List of batches
     """
     # For now, every prefill worker is bound to a single decode worker
-    assert len(prefill_workers) == len(decode_workers)
+    assert len(prefill_workers) == len(decode_workers), f"Prefill and decode workers must have the same number of workers, got {len(prefill_workers)} and {len(decode_workers)}"
 
     # Assertions
     all_ranks = list(r for worker in prefill_workers + decode_workers for r in worker)
@@ -239,11 +250,14 @@ def main(
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
     model_config: ModelConfig,
-    results_dir: PathLike = None
+    results_dir: PathLike = None,
+    rail_optimized: bool = False,
 ):
     """
     Args:
         - prefill_gpus: List of GPUs ranks that are used for prefill
+        - rail_optimized: Whether to reorder the decode workers to match rail-optimized communication (assumption: 8 nic per nodes, nic 0 is connected to nic 0 and 4 of other nodes, 1 to 1/5 etc)
+            Only supported for 4 GPUs per prefill worker and 8 GPUs per decode worker
     
     Returns:
         matrices
@@ -253,6 +267,9 @@ def main(
     assert prefill_worker_config.pp >= decode_worker_config.pp, "Prefill PP must be more or equal to decode PP"
     assert prefill_worker_config.cp >= decode_worker_config.cp, "Prefill CP must be more or equal to decode CP"
     assert prefill_worker_config.ep <= decode_worker_config.ep, "Prefill EP must be less or equal to decode EP"
+    if rail_optimized:
+        assert decode_worker_config.tp == 8, "Rail optimized communication is only supported when decode worker is a full node (8 GPUs)"
+        assert prefill_worker_config.tp == 4, "Rail optimized communication is only supported when prefill worker is half a node (4 GPUs)"
 
     # Create workers - group of gpus that do prefill/decode
     prefill_worker_size = prefill_worker_config.tp * prefill_worker_config.pp * prefill_worker_config.cp
@@ -273,6 +290,15 @@ def main(
         decode_ranks[i:i + decode_worker_size]
         for i in range(0, len(decode_ranks), decode_worker_size) 
     ]
+    if rail_optimized:
+        # Reorder the decode workers to match rail-optimized communication
+        reordered = []
+        order = [0,4,1,5,2,6,3,7]
+        for worker in decode_workers:
+            new_worker = [worker[ix] for ix in order]
+            reordered.append(new_worker)
+
+        decode_workers = reordered
 
     print(f"Prefill workers: {prefill_workers}")
     print(f"Decode workers: {decode_workers}")
@@ -315,29 +341,72 @@ def main(
 
     
 if __name__ == "__main__":
-    models = {
+    import click
+
+    PREDEFINED_MODELS = {
         "llama-405b": ModelConfig(hidden_size=16384, num_layers=126, num_heads=128, num_kv_heads=8, dtype_size=2),
     }
 
-    model = "llama-405b"
+    @click.group()
+    def cli():
+        """Generate communication matrices for inference workloads"""
+        pass
 
-    model_config = models[model]
-    num_prefill_nodes = 4
-    num_decode_nodes = 8
+    @cli.command()
+    @click.option('--num-user-requests', type=int, default=1000, help='Number of user requests to simulate')
+    @click.option('--batch-size', type=int, default=1, help='Batch size for requests')
+    @click.option('--num-prefill-nodes', type=int, required=True, help='Number of nodes for prefill')
+    @click.option('--num-decode-nodes', type=int, required=True, help='Number of nodes for decode')
+    @click.option('--prefill-tp', type=int, default=1, help='Tensor parallelism for prefill')
+    @click.option('--prefill-pp', type=int, default=1, help='Pipeline parallelism for prefill')
+    @click.option('--prefill-cp', type=int, default=1, help='Communication parallelism for prefill')
+    @click.option('--decode-tp', type=int, default=1, help='Tensor parallelism for decode')
+    @click.option('--decode-pp', type=int, default=1, help='Pipeline parallelism for decode')
+    @click.option('--decode-cp', type=int, default=1, help='Communication parallelism for decode')
+    @click.option('--model', type=str, help='Name of predefined model')
+    @click.option('--hidden-size', type=int, help='Model hidden size (for custom model)')
+    @click.option('--num-layers', type=int, help='Number of model layers (for custom model)')
+    @click.option('--num-heads', type=int, help='Number of attention heads (for custom model)')
+    @click.option('--num-kv-heads', type=int, help='Number of KV attention heads (for custom model)')
+    @click.option('--dtype-size', type=int, help='Size of model dtype in bytes (for custom model)')
+    @click.option('--results-dir', type=str, help='Directory to save results')
+    @click.option('--rail-optimized/--no-rail-optimized', default=False, help='Whether to use rail optimization')
+    def generate(num_user_requests, batch_size, num_prefill_nodes, num_decode_nodes,
+                prefill_tp, prefill_pp, prefill_cp, decode_tp, decode_pp, decode_cp,
+                model, hidden_size, num_layers, num_heads, num_kv_heads, dtype_size,
+                results_dir, rail_optimized):
+        """Generate communication matrices for given configuration"""
+        
+        if model:
+            if model not in PREDEFINED_MODELS:
+                raise click.BadParameter(f"Unknown model {model}. Available models: {list(PREDEFINED_MODELS.keys())}")
+            model_config = PREDEFINED_MODELS[model]
+        else:
+            if not all([hidden_size, num_layers, num_heads, num_kv_heads, dtype_size]):
+                raise click.BadParameter("Must specify either --model or all custom model parameters")
+            model_config = ModelConfig(
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                num_heads=num_heads,
+                num_kv_heads=num_kv_heads,
+                dtype_size=dtype_size
+            )
 
-    prefill_tp = 4
-    decode_tp = 8
+        world_size = num_prefill_nodes * prefill_tp + num_decode_nodes * decode_tp
+        # print(f"World size: {world_size}")
+        # print(f"Model config: {model_config}")
 
-    print("World size: ", num_prefill_nodes*prefill_tp + num_decode_nodes*decode_tp)
-    print("Model config: ", model_config)
+        main(
+            num_user_requests=num_user_requests,
+            batch_size=batch_size,
+            num_prefill_gpus=num_prefill_nodes * 8,
+            num_decode_gpus=num_decode_nodes * 8,
+            prefill_worker_config=WorkerConfig(tp=prefill_tp, pp=prefill_pp, cp=prefill_cp),
+            decode_worker_config=WorkerConfig(tp=decode_tp, pp=decode_pp, cp=decode_cp),
+            model_config=model_config,
+            results_dir=results_dir,
+            rail_optimized=rail_optimized,
+        )
 
-    main(
-        num_user_requests=1000,
-        batch_size=1,
-        num_prefill_gpus=num_prefill_nodes*8,
-        num_decode_gpus=num_decode_nodes*8,
-        prefill_worker_config=WorkerConfig(tp=prefill_tp, pp=1, cp=1),
-        decode_worker_config=WorkerConfig(tp=decode_tp, pp=1, cp=1),
-        model_config=model_config,
-        results_dir="./matrices"
-    )
+
+    cli()
