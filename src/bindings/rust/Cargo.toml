@@ -13,5 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('python')
-subdir('rust')
+[package]
+name = "nixl-sys"
+version = "0.1.1"
+edition = "2021"
+links = "nixl"
+build = "build.rs"
+
+[dependencies]
+thiserror = { version = "*" }
+tracing = { version = "0.1" }
+
+libc = "0.2"
+
+[build-dependencies]
+bindgen = "0.71"
+cc = { version = "1.0", features = ["parallel"] }
+pkg-config = "0.3"
