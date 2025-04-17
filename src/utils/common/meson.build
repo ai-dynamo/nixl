@@ -20,9 +20,8 @@ nixl_common_deps = [
 ]
 
 # Define a static library for common utilities
-# Note: This is header-only for now, but defining it allows easy dependency management.
 nixl_common_lib = static_library('nixl_common',
-    # No sources needed yet, headers are handled by include_directories
+    'nixl_log.cpp',
     dependencies: nixl_common_deps,
     include_directories: nixl_common_inc,
     install: false, # Don't install this internal library directly
