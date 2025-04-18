@@ -519,6 +519,7 @@ class nixl_agent:
     @param lookup_tag A tag to match against available messages in the notification map.
            The tag Can be the same as the entire expected message.
     @param backends Optional list of backend names to limit which backends are checked for notifications.
+    @param tag_is_prefix Optionally specify that the tag you want to search with is just a prefix, or can be search as a substring of the full message.
     @return True if the notification is found, False otherwise.
     """
 
@@ -527,7 +528,7 @@ class nixl_agent:
         remote_agent_name: str,
         lookup_tag: bytes,
         backends: list[str] = [],
-        full_search=False,
+        tag_is_prefix=True,
     ) -> bool:
         handle_list = []
         for backend_string in backends:
@@ -538,8 +539,8 @@ class nixl_agent:
 
         if remote_agent_name in self.notifs:
             for msg in self.notifs[remote_agent_name]:
-                if (full_search and lookup_tag in msg) or (
-                    not full_search and msg.startswith(lookup_tag)
+                if (tag_is_prefix and msg.startswith(lookup_tag)) or (
+                    not tag_is_prefix and lookup_tag in msg
                 ):
                     message = msg
                     found = True
