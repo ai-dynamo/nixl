@@ -35,7 +35,15 @@ RUN apt-get update -y && \
     protobuf-compiler-grpc \
     libcpprest-dev \
     etcd-server \
-    etcd-client
+    etcd-client \
+    autotools-dev \
+    automake \
+    libtool \
+    libz-dev \
+    libiberty-dev \
+    flex \
+    build-essential \
+    libibverbs-dev
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
@@ -69,6 +77,27 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     uv pip install --upgrade meson pybind11 patchelf
 
 COPY . /workspace/nixl
+
+RUN rm -rf /usr/lib/ucx
+
+RUN cd /usr/local/src && \
+     git clone https://github.com/openucx/ucx.git && \
+     cd ucx && \
+     ./autogen.sh && ./configure     \
+         --enable-shared             \
+         --disable-static            \
+         --disable-doxygen-doc       \
+         --enable-optimizations      \
+         --enable-cma                \
+         --enable-devel-headers      \
+         --with-cuda=/usr/local/cuda \
+         --with-verbs                \
+         --with-dm                   \
+         --with-gdrcopy=/usr/local   \
+         --enable-mt &&              \
+     make -j &&                      \
+     make -j install-strip &&        \
+     ldconfig
 
 RUN rm -rf build && \
     mkdir build && \
