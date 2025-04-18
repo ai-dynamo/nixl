@@ -13,6 +13,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('nixl')
-subdir('unit')
-subdir('gtest')
+gtest_dep = dependency('gtest', version : '>=1.11.0')
+
+if cuda_dep.found()
+    cuda_dependencies = [cuda_dep]
+    cpp_args = '-DUSE_VRAM'
+else
+    cuda_dependencies = []
+    cpp_args = '-UUSE_VRAM'
+endif
+
+subdir('mocks')
+
+plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
+
+cpp_flags = []
+
+if get_option('test_all_plugins')
+  cpp_flags+='-DTEST_ALL_PLUGINS'
+endif
+
+test_exe = executable('test_executable',
+    sources : ['main.cpp', 'plugin_manager.cpp'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs],
+    cpp_args : cpp_flags,
+    dependencies : [nixl_dep, cuda_dep, gtest_dep]
+)
+
+test('gtest', test_exe, args: [plugin_dirs_arg])
