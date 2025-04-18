@@ -24,6 +24,14 @@ RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
     pybind11-dev \
+    autotools-dev \
+    automake \
+    libtool \
+    libz-dev \
+    libiberty-dev \
+    flex \
+    build-essential \
+    libibverbs-dev \
     cmake
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -40,6 +48,28 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     uv pip install --upgrade meson pybind11 patchelf
 
 COPY . /workspace/nixl
+
+RUN rm -rf /usr/lib/ucx
+
+RUN cd /usr/local/src && \
+     git clone https://github.com/tvegas1/ucx.git && \
+     cd ucx && \
+     git checkout dev/efa_srd && \
+     ./autogen.sh && ./configure     \
+         --enable-shared             \
+         --disable-static            \
+         --disable-doxygen-doc       \
+         --enable-optimizations      \
+         --enable-cma                \
+         --enable-devel-headers      \
+         --with-cuda=/usr/local/cuda \
+         --with-verbs                \
+         --with-dm                   \
+         --with-gdrcopy=/usr/local   \
+         --enable-mt &&              \
+     make -j &&                      \
+     make -j install-strip &&        \
+     ldconfig
 
 RUN rm -rf build && \
     mkdir build && \
