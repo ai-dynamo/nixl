@@ -16,6 +16,7 @@
 stream_lib = library('stream',
            'metadata_stream.cpp', 'metadata_stream.h',
            include_directories: nixl_inc_dirs,
+           dependencies: cpp.find_library('pthread', required: true),
            install: true)
 
 stream_interface = declare_dependency(link_with: stream_lib)

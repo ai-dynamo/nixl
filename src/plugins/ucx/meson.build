@@ -31,7 +31,7 @@ if 'UCX' in static_plugins
 else
     ucx_backend_lib = shared_library('UCX',
                'ucx_backend.cpp', 'ucx_backend.h', 'ucx_plugin.cpp',
-               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, cuda_dep, ucx_dep],
+               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, cuda_dep, ucx_dep, cpp.find_library('pthread', required: true)],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],

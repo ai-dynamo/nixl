@@ -33,7 +33,7 @@ nixl_lib = library('nixl',
                    'nixl_agent.cpp',
                    'nixl_plugin_manager.cpp',
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-                   dependencies: nixl_lib_deps,
+                   dependencies: [nixl_lib_deps, dl_dep],
                    install: true)
 
 nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)
