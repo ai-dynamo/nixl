@@ -24,6 +24,9 @@ project('nixl', 'CPP', version: '0.1.1',
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
 
+dl_dep = cpp.find_library('dl', required: true)
+thread_dep = dependency('threads')
+
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
