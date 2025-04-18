@@ -25,14 +25,15 @@ using namespace std;
 
 #ifdef HAVE_CUDA
 
-#include <hip/hip_runtime.h>
+#include <cuda_runtime.h>
+#include <cuda.h>
 
 int gpu_id = 0;
 
-static void checkCudaError(hipError_t result, const char *message) {
-    if (result != hipSuccess) {
+static void checkCudaError(cudaError_t result, const char *message) {
+    if (result != cudaSuccess) {
 	std::cerr << message << " (Error code: " << result << " - "
-                   << hipGetErrorString(result) << ")" << std::endl;
+                   << cudaGetErrorString(result) << ")" << std::endl;
         exit(EXIT_FAILURE);
     }
 }
@@ -102,29 +103,29 @@ void releaseEngine(nixlBackendEngine *ucx)
 #ifdef HAVE_CUDA
 
 static int cudaQueryAddr(void *address, bool &is_dev,
-                         hipDevice_t &dev, hipCtx_t &ctx)
+                         CUdevice &dev, CUcontext &ctx)
 {
-    hipMemoryType mem_type = hipMemoryTypeHost;
+    CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed = 0;
 #define NUM_ATTRS 4
-    hipPointer_attribute attr_type[NUM_ATTRS];
+    CUpointer_attribute attr_type[NUM_ATTRS];
     void *attr_data[NUM_ATTRS];
-    hipError_t result;
+    CUresult result;
 
-    attr_type[0] = HIP_POINTER_ATTRIBUTE_MEMORY_TYPE;
+    attr_type[0] = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
     attr_data[0] = &mem_type;
-    attr_type[1] = HIP_POINTER_ATTRIBUTE_IS_MANAGED;
+    attr_type[1] = CU_POINTER_ATTRIBUTE_IS_MANAGED;
     attr_data[1] = &is_managed;
-    attr_type[2] = HIP_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
+    attr_type[2] = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
     attr_data[2] = &dev;
-    attr_type[3] = HIP_POINTER_ATTRIBUTE_CONTEXT;
+    attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
     attr_data[3] = &ctx;
 
-    result = hipDrvPointerGetAttributes(4, attr_type, attr_data, (hipDeviceptr_t)address);
+    result = cuPointerGetAttributes(4, attr_type, attr_data, (CUdeviceptr)address);
 
-    is_dev = (mem_type == hipMemoryTypeDevice);
+    is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
 
-    return (hipSuccess != result);
+    return (CUDA_SUCCESS != result);
 }
 
 #endif
@@ -140,11 +141,11 @@ void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
 #ifdef HAVE_CUDA
     case VRAM_SEG:{
         bool is_dev;
-        hipDevice_t dev;
-        hipCtx_t ctx;
+        CUdevice dev;
+        CUcontext ctx;
 
-        checkCudaError(hipSetDevice(dev_id), "Failed to set device");
-        checkCudaError(hipMalloc(&addr, len), "Failed to allocate CUDA buffer 0");
+        checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
+        checkCudaError(cudaMalloc(&addr, len), "Failed to allocate CUDA buffer 0");
         cudaQueryAddr(addr, is_dev, dev, ctx);
         std::cout << "CUDA addr: " << std::hex << addr << " dev=" << std::dec << dev
             << " ctx=" << std::hex << ctx << std::dec << std::endl;
@@ -166,8 +167,8 @@ void releaseBuffer(nixl_mem_t mem_type, int dev_id, void* &addr)
         break;
 #ifdef HAVE_CUDA
     case VRAM_SEG:
-        checkCudaError(hipSetDevice(dev_id), "Failed to set device");
-        checkCudaError(hipFree(addr), "Failed to allocate CUDA buffer 0");
+        checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
+        checkCudaError(cudaFree(addr), "Failed to allocate CUDA buffer 0");
         break;
 #endif
     default:
@@ -184,8 +185,8 @@ void doMemset(nixl_mem_t mem_type, int dev_id, void *addr, char byte, size_t len
         break;
 #ifdef HAVE_CUDA
     case VRAM_SEG:
-        checkCudaError(hipSetDevice(dev_id), "Failed to set device");
-        checkCudaError(hipMemset(addr, byte, len), "Failed to memset");
+        checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
+        checkCudaError(cudaMemset(addr, byte, len), "Failed to memset");
         break;
 #endif
     default:
@@ -203,7 +204,7 @@ void *getValidationPtr(nixl_mem_t mem_type, void *addr, size_t len)
 #ifdef HAVE_CUDA
     case VRAM_SEG: {
         void *ptr = calloc(len, 1);
-        checkCudaError(hipMemcpy(ptr, addr, len, hipMemcpyDeviceToHost), "Failed to memcpy");
+        checkCudaError(cudaMemcpy(ptr, addr, len, cudaMemcpyDeviceToHost), "Failed to memcpy");
         return ptr;
     }
 #endif
@@ -561,7 +562,7 @@ int main()
 int ndevices = NUM_WORKERS;
 #ifdef HAVE_CUDA
     int n_vram_dev;
-    checkCudaError(hipGetDeviceCount(&n_vram_dev), "hipGetDeviceCount failed.");
+    cudaGetDeviceCount(&n_vram_dev);
     std::cout << "Detected " << n_vram_dev << " CUDA devices" << std::endl;
 #endif
 

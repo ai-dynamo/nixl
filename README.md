@@ -39,7 +39,7 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 
 NIXL was tested with UCX version 1.18.0.
 
-[GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
+GDRCopy dependency is removed from ROCm - https://ucfconsortium.org/wp-content/uploads/2021/04/Brad-Benton-AMD_ucx_workshop_20201123.pdf
 
 ```
 $ wget https://github.com/openucx/ucx/releases/download/v1.18.0/ucx-1.18.0.tar.gz
@@ -52,11 +52,11 @@ $ ./configure                          \
     --enable-optimizations             \
     --enable-cma                       \
     --enable-devel-headers             \
-    --with-cuda=<cuda install>         \
+    --with-rocm=<cuda install>         \
     --with-verbs                       \
     --with-dm                          \
-    --with-gdrcopy=<gdrcopy install>   \
-    --enable-mt
+    --enable-mt                        \
+    --prefix=/usr/local/ucx
 $ make -j
 $ make -j install-strip
 $ ldconfig
@@ -66,7 +66,13 @@ $ ldconfig
 ### Build & install
 
 ```
-$ meson setup <name_of_build_dir>
+$ meson setup <name_of_build_dir> \
+    -Ducx_path=/usr/local/ucx \
+    -Ddisable_gds_backend=true \
+    -Dcudapath_inc=/opt/rocm/include \
+    -Dcudapath_lib=/opt/rocm/lib \
+    --prefix=/usr/local/nixl
+
 $ cd <name_of_build_dir>
 $ ninja
 $ ninja install
@@ -85,7 +91,7 @@ $ meson setup <name_of_build_dir> \
     -Dbuild_docs=true \           # Build Doxygen documentation
     -Ducx_path=/path/to/ucx \     # Custom UCX installation path
     -Dinstall_headers=true \      # Install development headers
-    -Ddisable_gds_backend=false   # Enable GDS backend
+    -Ddisable_gds_backend=true    # Disable GDS backend
 ```
 
 Common build options:

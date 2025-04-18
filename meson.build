@@ -17,7 +17,7 @@ project('nixl', 'CPP', version: '0.1.1',
     default_options: ['buildtype=debug',
                 'werror=true',
                 'cpp_std=c++17',
-                'prefix=/opt/nvidia/nvda_nixl'],
+                'prefix=/opt/rocm/hip-nixl'],
     meson_version: '>= 0.64.0'
 )
 
@@ -36,7 +36,8 @@ else
         cuda_stub_path = cuda_lib_path + '/stubs'
     endif
     cuda_dep = declare_dependency(
-    link_args : ['-L' + cuda_lib_path, '-L' + cuda_stub_path, '-lcuda', '-lcudart'],
+    #link_args : ['-L' + cuda_lib_path, '-L' + cuda_stub_path, '-lcuda', '-lcudart'],
+    link_args : ['-L' + cuda_lib_path, '-lamdhip64', '-lhiprtc'],
     include_directories : include_directories(cuda_inc_path))
 endif
 
@@ -68,6 +69,8 @@ if get_option('static_plugins') != ''
         add_project_arguments(flagname, language: 'cpp')
     endforeach
 endif
+
+add_project_arguments('-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations', language: 'cpp')
 
 # Define a specific plugin directory
 plugin_install_dir = join_paths(get_option('libdir'), 'plugins')

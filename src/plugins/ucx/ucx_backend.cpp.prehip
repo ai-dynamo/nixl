@@ -19,8 +19,8 @@
 
 #ifdef HAVE_CUDA
 
-#include <hip/hip_runtime.h>
-//#include <cufile.h>
+#include <cuda_runtime.h>
+#include <cufile.h>
 
 #endif
 
@@ -33,7 +33,7 @@
 class nixlUcxCudaCtx {
 public:
 #ifdef HAVE_CUDA
-    hipCtx_t pthrCudaCtx;
+    CUcontext pthrCudaCtx;
     int myDevId;
 
     nixlUcxCudaCtx() {
@@ -49,36 +49,36 @@ public:
 #ifdef HAVE_CUDA
 
 static int cudaQueryAddr(void *address, bool &is_dev,
-                         hipDevice_t &dev, hipCtx_t &ctx)
+                         CUdevice &dev, CUcontext &ctx)
 {
-    hipMemoryType mem_type = hipMemoryTypeHost;
+    CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed = 0;
 #define NUM_ATTRS 4
-    hipPointer_attribute attr_type[NUM_ATTRS];
+    CUpointer_attribute attr_type[NUM_ATTRS];
     void *attr_data[NUM_ATTRS];
-    hipError_t result;
+    CUresult result;
 
-    attr_type[0] = HIP_POINTER_ATTRIBUTE_MEMORY_TYPE;
+    attr_type[0] = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
     attr_data[0] = &mem_type;
-    attr_type[1] = HIP_POINTER_ATTRIBUTE_IS_MANAGED;
+    attr_type[1] = CU_POINTER_ATTRIBUTE_IS_MANAGED;
     attr_data[1] = &is_managed;
-    attr_type[2] = HIP_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
+    attr_type[2] = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
     attr_data[2] = &dev;
-    attr_type[3] = HIP_POINTER_ATTRIBUTE_CONTEXT;
+    attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
     attr_data[3] = &ctx;
 
-    result = hipDrvPointerGetAttributes(4, attr_type, attr_data, (hipDeviceptr_t)address);
+    result = cuPointerGetAttributes(4, attr_type, attr_data, (CUdeviceptr)address);
 
-    is_dev = (mem_type == hipMemoryTypeDevice);
+    is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
 
-    return (hipSuccess != result);
+    return (CUDA_SUCCESS != result);
 }
 
 int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated)
 {
     bool is_dev;
-    hipDevice_t dev;
-    hipCtx_t ctx;
+    CUdevice dev;
+    CUcontext ctx;
     int ret;
 
     was_updated = false;
@@ -122,14 +122,14 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
 
 int nixlUcxCudaCtx::cudaSetCtx()
 {
-    hipError_t result;
+    CUresult result;
     if (NULL == pthrCudaCtx) {
         return 0;
     }
 
-    result = hipCtxSetCurrent(pthrCudaCtx);
+    result = cuCtxSetCurrent(pthrCudaCtx);
 
-    return (hipSuccess == result);
+    return (CUDA_SUCCESS == result);
 }
 
 #else
