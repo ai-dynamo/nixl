@@ -313,6 +313,38 @@ class nixlAgent {
                   const nixl_blob_t &msg,
                   const nixl_opt_args_t* extra_params = nullptr);
 
+        /*** Metadata handling through direct channels (p2p socket and ETCD) ***/
+        /**
+         * @brief  Send your own agent metadata to a remote location.
+         *
+         * @param  remote_ip     If specified, this is the remote IP address to send your metadata to
+         *                       If unspecified, this will send your data to the metadata server.
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        sendLocalMD (const std::string remote_ip = "") const;
+
+        /**
+         * @brief  Fetch other agent's metadata and unpack it internally.
+         *
+         * @param  remote_name      Name of remote agent to fetch from ETCD or socket.
+         * @param  remote_ip        If unspecified, will fetch from ETCD, otherwise will try socket
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        fetchRemoteMD (const std::string remote_name,
+                       const std::string remote_ip = "");
+
+        /**
+         * @brief  Invalidate your own memory in one/all remote agent(s).
+         *
+         * @param  remote_ip        If unspecified, will invalidate in ETCD, cascading invalidations to other agents.
+         *                          If specified, will only invalidate for a specific peer over sockets
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        invalidateLocalMD (const std::string remote_ip = "") const;
+
         /*** Metadata handling through side channel ***/
         /**
          * @brief  Get metadata blob for this agent, to be given to other agents.

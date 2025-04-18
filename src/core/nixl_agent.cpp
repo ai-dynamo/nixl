@@ -57,12 +57,119 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
     }
 }
 
+void nixlAgentData::commWorker(){
+
+    while(!commThreadStop) {
+
+        std::vector<nixl_comm_req_t> work_queue;
+
+        //first, accept new connections
+        int new_fd = 0;
+
+        while(new_fd != -1) {
+            new_fd = this->listener.acceptClient();
+
+            if(new_fd != -1){
+                //new to convert fd to IP address and add to client map
+                //but don't setupClient()
+            }
+        }
+
+
+        //second, do agent commands
+		this->getCommWork(work_queue);
+
+	    for(nixl_comm_req_t request: work_queue) {
+
+            //use remote IP for socket lookup
+            auto client = this->remoteSockets.find(request.second);
+
+			switch(request.first) {
+				case SOCK_SEND:
+                    //not connected
+                    if(client == this->remoteSockets.end()) {
+                        nixlMdStreamClient new_client(request.second, DEFAULT_COMM_PORT);
+                        this->remoteSockets[request.second] = new_client;
+                        new_client.setupClient();
+                        client = new_client;
+                    }
+                    nixl_blob_t my_MD;
+                    assert(myAgent->getLocalMD(my_MD) == NIXL_SUCCESS);
+
+                    client.sendData(std::string("SENT" + my_MD));
+				    break;
+				case: SOCK_FETCH:
+					//if connected, send MD, else
+                    if(client == this->remoteSockets.end()) {
+                        nixlMdStreamClient new_client(request.second, DEFAULT_COMM_PORT);
+                        this->remoteSockets[request.second] = new_client;
+                        new_client.setupClient();
+                        client = new_client;
+                    }
+                    //just a command to send MD eventually
+                    client.sendData(std::string("SEND"));
+					break;
+				case: SOCK_INVAL:
+                    if(client == this->remoteSockets.end()) {
+                        //improper usage, abort? exception?
+                    }
+                    client.sendData(std::string("INVL"));
+                    this->remoteSockets.erase(request.second);
+			}
+		}
+
+        //third, do remote commands
+		for (const auto& [ip_address, socketClient] : remoteSockets ) {
+            std::string command = socketClient.recvData();
+            //always just 4 chars
+            std::string header = command.substr(0, 4);
+
+            if(header == "SENT") {
+                std::string remote_agent;
+                assert(myAgent->loadRemoteMD(command.substr(4), remote_agen) == NIXL_SUCCESS);
+                //not sure what to do with remote_agent
+            } else if(header == "SEND") {
+                nixl_blob_t my_MD;
+                assert(myAgent->getLocalMD(my_MD) == NIXL_SUCCESS);
+
+                socketClient.sendData(std::string("SENT" + my_MD));
+            } else if(header == "INVL") {
+                remoteSockets.erase(ip_address);
+            }
+		}
+
+		//relatively large delay for now
+        us_t start = getUs();
+        while( (start + 100000) > getUs()) {
+            std::this_thread::yield();
+        }
+    }
+}
+
+void nixlAgentData::enqueueCommWork(std::pair<nixl_comm_t, std::string> request){
+    std::lock_guard<std::mutex> lock(commLock);
+    commQueue.push_back(request);
+}
+
+
+void nixlAgentData::getCommWork(std::vector<nixl_comm_req_t> &req_list){
+    std::lock_guard<std::mutex> lock(commLock);
+    req_list = commQueue;
+    commQueue.clear();
+}
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
-nixlAgentData::nixlAgentData(const std::string &name,
+nixlAgentData::nixlAgentData(nixlAgent* my_agent,
+                             const std::string &name,
                              const nixlAgentConfig &cfg) :
                                    name(name), config(cfg) {
         memorySection = new nixlLocalSection();
+
+        myAgent = my_agent;
+        listener = nixlMetadataStream(DEFAULT_COMM_PORT);
+		listener->setupListener();
+        commThreadStop = false;
+        commThread = std::thread(&nixlAgentData::commWorker());
 }
 
 nixlAgentData::~nixlAgentData() {
@@ -83,6 +190,9 @@ nixlAgentData::~nixlAgentData() {
 
     for (auto & elm: backendHandles)
         delete elm.second;
+
+    commThreadStop = true;
+    commThread.join();
 }
 
 
@@ -91,7 +201,7 @@ nixlAgent::nixlAgent(const std::string &name,
                      const nixlAgentConfig &cfg) {
     if (name.size() == 0)
         throw std::invalid_argument("Agent needs a name");
-    data = new nixlAgentData(name, cfg);
+    data = new nixlAgentData(this, name, cfg);
 }
 
 nixlAgent::~nixlAgent() {
@@ -974,6 +1084,47 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
         return ret;
 
     str = sd.exportStr();
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+sendLocalMD (const std::string remote_ip = "") const {
+
+    if(remote_ip.size() == 0){
+        std::cerr << "ETCD not supported yet, please specify IP\n";
+        return NIXL_NOT_SUPPORTED;
+    }
+
+	//should we support this?
+	data->enqueueCommWork(std::make_tuple(SOCK_SEND, remote_ip, ""));
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+fetchRemoteMD (const std::string remote_name,
+               const std::string remote_ip = "") {
+
+    if(remote_ip.size() == 0){
+        std::cerr << "ETCD not supported yet, please specify IP\n";
+        return NIXL_NOT_SUPPORTED;
+    }
+
+	data->enqueueCommWork(std::make_pair(SOCK_FETCH, remote_ip, remote_name));
+
+	return NIXL_SUCCESS;
+}
+
+nixl_status_t
+invalidateLocalMD (const std::string remote_ip = "") const {
+
+    if(remote_ip.size() == 0){
+        std::cerr << "ETCD not supported yet, please specify IP\n";
+        return NIXL_NOT_SUPPORTED;
+    }
+
+	data->enqueueCommWork(std::make_pair(SOCK_INVAL, remote_ip, ""));
+
     return NIXL_SUCCESS;
 }
 
