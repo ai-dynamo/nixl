@@ -41,6 +41,7 @@
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
+#include "backend/backend_plugin_doca_common.h"
 #include "common/str_tools.h"
 
 // Local includes
@@ -57,8 +58,6 @@
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define DOCA_RDMA_SERVER_ADDR_LEN (MAX(MAX(DOCA_DEVINFO_IPV4_ADDR_SIZE, DOCA_DEVINFO_IPV6_ADDR_SIZE), DOCA_GID_BYTE_LENGTH))
 #define DOCA_RDMA_SERVER_CONN_DELAY 500 //500us
-
-typedef void * nixlDocaReq;
 
 struct nixlDocaMem {
     void *addr;
@@ -115,13 +114,6 @@ class nixlDocaPublicMetadata : public nixlBackendMD {
 
         ~nixlDocaPublicMetadata(){
         }
-};
-
-struct docaXferReqGpu {
-    uintptr_t larr[DOCA_XFER_REQ_SIZE];
-    uintptr_t rarr[DOCA_XFER_REQ_SIZE];
-    size_t size[DOCA_XFER_REQ_SIZE];
-    uint16_t num;
 };
 
 class nixlDocaEngine : public nixlBackendEngine {
@@ -202,7 +194,8 @@ class nixlDocaEngine : public nixlBackendEngine {
         bool supportsLocal () const { return false; }
         bool supportsNotif () const { return false; }
         bool supportsProgTh () const { return false; }
-
+        bool supportsTreqGpu () const { return true; }
+        
         nixl_mem_list_t getSupportedMems () const;
 
         /* Object management */
@@ -237,6 +230,14 @@ class nixlDocaEngine : public nixlBackendEngine {
                                 nixlBackendReqH* &handle,
                                 const nixl_opt_b_args_t* opt_args=nullptr);
 
+        nixl_status_t prepXfer (const nixl_xfer_op_t &operation,
+                                    const nixl_meta_dlist_t &local,
+                                    const nixl_meta_dlist_t &remote,
+                                    const std::string &remote_agent,
+                                    nixlBackendReqH* &handle,
+                                    uintptr_t &handle_gpu,
+                                    const nixl_opt_b_args_t* opt_args);
+
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,
                                 const nixl_meta_dlist_t &remote,
@@ -264,6 +265,7 @@ doca_error_t doca_util_map_and_export(struct doca_dev *dev, uint32_t permissions
 extern "C" {
 #endif
 
+// prepXferGpu postXferGpuGet();
 doca_error_t doca_kernel_write(cudaStream_t stream, struct doca_gpu_dev_rdma *rdma_gpu, struct docaXferReqGpu *xferReqRing, uint32_t pos);
 doca_error_t doca_kernel_read(cudaStream_t stream, struct doca_gpu_dev_rdma *rdma_gpu, struct docaXferReqGpu *xferReqRing, uint32_t pos);
 

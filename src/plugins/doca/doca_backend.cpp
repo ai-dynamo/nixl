@@ -446,6 +446,17 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams* init_params)
 
 	cudaMemset(xferReqRingGpu, 0, sizeof(struct docaXferReqGpu) * DOCA_XFER_REQ_MAX);
 
+	// result = doca_gpu_mem_alloc(gdevs[0].second, sizeof(struct nixlXferReqHGpu) * DOCA_XFER_REQ_MAX,
+	// 	4096,
+	// 	DOCA_GPU_MEM_TYPE_GPU_CPU,
+	// 	(void **)&xferReqHndlGpu,
+	// 	(void **)&xferReqHndlCpu);
+	// if (result != DOCA_SUCCESS || xferReqHndlGpu == NULL || xferReqHndlCpu == NULL) {
+	// 	DOCA_LOG_ERR("Function doca_gpu_mem_alloc returned %s", doca_error_get_descr(result));
+	// }
+
+	// cudaMemset(xferReqHndlGpu, 0, sizeof(struct nixlXferReqHGpu) * DOCA_XFER_REQ_MAX);
+
 	// We may need a GPU warmup with relevant DOCA engine kernels
 	doca_kernel_write(0, rdma_gpu, nullptr, 0);
 	doca_kernel_read(0, rdma_gpu, nullptr, 0);
@@ -491,6 +502,7 @@ nixlDocaEngine::~nixlDocaEngine ()
 	progressThreadStop();
 
 	doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
+	// doca_gpu_mem_free(gdevs[0].second, xferReqHndlGpu);
 
 	for (uint32_t idx = 0; idx < connection_num; idx++) {
 		std::cout << "Disconnect " << idx << std::endl;
@@ -894,6 +906,63 @@ nixl_status_t nixlDocaEngine::prepXfer (const nixl_xfer_op_t &operation,
 	return NIXL_SUCCESS;
 }
 
+nixl_status_t nixlDocaEngine::prepXfer (const nixl_xfer_op_t &operation,
+	const nixl_meta_dlist_t &local,
+	const nixl_meta_dlist_t &remote,
+	const std::string &remote_agent,
+	nixlBackendReqH* &handle,
+	uintptr_t &handle_gpu,
+	const nixl_opt_b_args_t* opt_args)
+{
+	nixlDocaBckndReq *treq = new nixlDocaBckndReq;
+	nixlDocaPrivateMetadata *lmd;
+	nixlDocaPublicMetadata *rmd;
+	uint32_t lcnt = (uint32_t)local.descCount();
+	uint32_t rcnt = (uint32_t)remote.descCount();
+
+	// check device id from local dlist mr that should be all the same and same of the engine
+	for (uint32_t idx = 0; idx < lcnt; idx++) {
+		lmd = (nixlDocaPrivateMetadata*) local[idx].metadataP;
+		if (lmd->mem.devId != gdevs[0].first)
+			return NIXL_ERR_INVALID_PARAM;
+	}
+
+	if (lcnt != rcnt)
+		return NIXL_ERR_INVALID_PARAM;
+
+	if (lcnt == 0)
+		return NIXL_ERR_INVALID_PARAM;
+
+	if (lcnt > DOCA_XFER_REQ_SIZE || rcnt > DOCA_XFER_REQ_SIZE)
+		return NIXL_ERR_INVALID_PARAM;
+
+	treq->start_pos = (xferRingPos.fetch_add(1) & (DOCA_XFER_REQ_MAX - 1));
+
+	for (uint32_t idx = 0; idx < lcnt && idx < DOCA_XFER_REQ_SIZE; idx++) {
+		size_t lsize = local[idx].len;
+		size_t rsize = remote[idx].len;
+		if (lsize != rsize)
+			return NIXL_ERR_INVALID_PARAM;
+
+		lmd = (nixlDocaPrivateMetadata*) local[idx].metadataP;
+		rmd = (nixlDocaPublicMetadata*) remote[idx].metadataP;
+
+		xferReqRingCpu[treq->start_pos].larr[idx] = (uintptr_t)lmd->mem.barr_gpu;
+		xferReqRingCpu[treq->start_pos].rarr[idx] = (uintptr_t)rmd->mem.barr_gpu;
+		xferReqRingCpu[treq->start_pos].size[idx] = lsize;
+		xferReqRingCpu[treq->start_pos].backendOp = operation;
+		xferReqRingCpu[treq->start_pos].rdma_gpu = rdma_gpu;
+		xferReqRingCpu[treq->start_pos].num++;
+	}
+	//Only 1 struct for device mode
+	treq->end_pos = treq->start_pos;
+
+	handle = treq;
+	handle_gpu = (uintptr_t)(xferReqRingGpu + treq->start_pos);
+
+	return NIXL_SUCCESS;
+}
+
 nixl_status_t nixlDocaEngine::postXfer (const nixl_xfer_op_t &operation,
 									   const nixl_meta_dlist_t &local,
 									   const nixl_meta_dlist_t &remote,
@@ -956,8 +1025,6 @@ nixl_status_t nixlDocaEngine::getNotifs(notif_list_t &notif_list)
 nixl_status_t nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg)
 {
 	nixl_status_t ret = NIXL_SUCCESS;
-	// nixlDocaReq req;
-
 	// ret = notifSendPriv(remote_agent, msg, req);
 
 	switch(ret) {

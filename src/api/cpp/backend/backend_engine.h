@@ -85,6 +85,9 @@ class nixlBackendEngine {
         // Determines if a backend supports progress thread.
         virtual bool supportsProgTh () const = 0;
 
+        // Determines if a backend supports posting tranfers requests from GPU.
+        virtual bool supportsTreqGpu () const = 0;
+
         virtual nixl_mem_list_t getSupportedMems () const = 0;
 
 
@@ -114,6 +117,16 @@ class nixlBackendEngine {
                                         const nixl_opt_b_args_t* opt_args=nullptr
                                        ) = 0;
 
+        // Preparing a request to be posted from the GPU
+        virtual nixl_status_t prepXfer (const nixl_xfer_op_t &operation,
+                                        const nixl_meta_dlist_t &local,
+                                        const nixl_meta_dlist_t &remote,
+                                        const std::string &remote_agent,
+                                        nixlBackendReqH* &handle,
+                                        uintptr_t &handle_gpu,    
+                                        const nixl_opt_b_args_t* opt_args=nullptr
+                                      ) = 0;
+
         // Posting a request, which completes the async handle creation and posts it
         virtual nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                         const nixl_meta_dlist_t &local,
@@ -122,7 +135,7 @@ class nixlBackendEngine {
                                         nixlBackendReqH* &handle,
                                         const nixl_opt_b_args_t* opt_args=nullptr
                                        ) = 0;
-
+ 
         // Use a handle to progress backend engine and see if a transfer is completed or not
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) = 0;
 

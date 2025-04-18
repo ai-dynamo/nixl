@@ -124,6 +124,10 @@ class nixlGdsEngine : public nixlBackendEngine {
             return false;
         }
 
+        bool supportsTreqGpu () const {
+            return false;
+        }
+
         nixl_mem_list_t getSupportedMems() const {
             nixl_mem_list_t mems;
             mems.push_back(DRAM_SEG);
@@ -160,6 +164,16 @@ class nixlGdsEngine : public nixlBackendEngine {
                               const std::string &remote_agent,
                               nixlBackendReqH* &handle,
                               const nixl_opt_b_args_t* opt_args=nullptr);
+
+        nixl_status_t prepXfer (const nixl_xfer_op_t &operation,
+                                const nixl_meta_dlist_t &local,
+                                const nixl_meta_dlist_t &remote,
+                                const std::string &remote_agent,
+                                nixlBackendReqH* &handle,
+                                uintptr_t &handle_gpu,
+                                const nixl_opt_b_args_t* opt_args) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
 
         nixl_status_t postXfer(const nixl_xfer_op_t &operation,
                               const nixl_meta_dlist_t &local,

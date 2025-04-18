@@ -44,10 +44,24 @@ nixl_ucx_app  = executable('nixl_test', 'nixl_test.cpp',
                            include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/utils/serdes'],
                            link_with: [serdes_lib], install: true)
 
-nixl_doca_app  = executable('nixl_doca_cuda_test', 'nixl_doca_cuda_test.cu',
+nixl_doca_stream_app  = executable('nixl_doca_stream_test', 'nixl_doca_stream_test.cu',
                            dependencies: [nixl_dep, nixl_infra, stream_interface] + cuda_dep + nvtx_dep,
                            include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/utils/serdes'],
                            link_with: [serdes_lib], install: true)
+
+if dependency('doca-gpunetio').found()
+    gpunetio_device_path = dependency('doca-gpunetio').get_variable(pkgconfig : 'libdir')
+    dependency_gpunetio_device = declare_dependency(compile_args : '-Wl,--whole-archive',
+                                                link_args : ['-L' + gpunetio_device_path , '-ldoca_gpunetio_device'],)
+
+    plugin_doca_deps = [dependency('doca-common'), dependency('doca-rdma'), dependency('doca-gpunetio'), dependency_gpunetio_device]
+
+    nixl_doca_device_app  = executable('nixl_doca_device_test', 'nixl_doca_device_test.cu',
+                           dependencies: [nixl_dep, nixl_infra, stream_interface] + plugin_doca_deps + cuda_dep + nvtx_dep,
+                           include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/utils/serdes'],
+                           link_with: [serdes_lib], install: true)
+endif
+
 
 plugin_test = executable('test_plugin',
                         'test_plugin.cpp',

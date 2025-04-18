@@ -29,6 +29,10 @@ class nixlBackendH;
 class nixlXferReqH;
 class nixlAgentData;
 
+typedef struct nixlXferReqHGpu {
+    uintptr_t backendHandleGpu;
+    nixlXferReqH *treq;
+} nixlXferReqHGpu;
 
 /*** NIXL memory type, operation and status enums ***/
 

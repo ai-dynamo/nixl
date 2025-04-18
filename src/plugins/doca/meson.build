@@ -13,15 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-doca_path = get_option('doca_path')
-doca_inc_path = doca_path + '/include'
-
-doca_dep0 = dependency('doca-common')
-doca_dep1 = dependency('doca-rdma')
-doca_dep2 = dependency('doca-gpunetio')
-gpunetio_device_path = doca_dep2.get_variable(pkgconfig : 'libdir')
+gpunetio_device_path = dependency('doca-gpunetio').get_variable(pkgconfig : 'libdir')
 dependency_gpunetio_device = declare_dependency(compile_args : '-Wl,--whole-archive',
                                                 link_args : ['-L' + gpunetio_device_path , '-ldoca_gpunetio_device'],)
+
+plugin_doca_deps = [dependency('doca-common'), dependency('doca-rdma'), dependency('doca-gpunetio'), dependency_gpunetio_device]
 
 gpu_cuda_args = []
 compile_flags += '-D DOCA_ALLOW_EXPERIMENTAL_API'
@@ -29,16 +25,17 @@ compile_flags += '-D DOCA_ALLOW_EXPERIMENTAL_API'
 if 'DOCA' in static_plugins
     doca_backend_lib = static_library('DOCA',
                'doca_backend.cpp', 'doca_backend.h', 'doca_plugin.cpp', 'kernel_write.cu', 'kernel_read.cu',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, doca_dep0, doca_dep1, doca_dep2, dependency_gpunetio_device],
-               include_directories: nixl_inc_dirs,
-               install: false,
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_doca_deps],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               install: true,
                cpp_args : compile_flags,
-               cuda_args : gpu_cuda_args,
-               name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
+               cuda_args : gpu_cuda_args + ['-rdc=true'],
+               name_prefix: 'libplugin_',
+               install_dir: plugin_install_dir)  # Custom prefix for plugin libraries
 else
     doca_backend_lib = shared_library('DOCA',
                'doca_backend.cpp', 'doca_backend.h', 'doca_plugin.cpp', 'kernel_write.cu', 'kernel_read.cu',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, doca_dep0, doca_dep1, doca_dep2, dependency_gpunetio_device],
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_doca_deps],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],

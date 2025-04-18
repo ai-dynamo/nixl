@@ -23,6 +23,7 @@
 #include <cassert>
 #include "stream/metadata_stream.h"
 #include "serdes/serdes.h"
+
 #define NUM_TRANSFERS 32
 #define SIZE 1024
 #define INITIATOR_VALUE 0xbb
@@ -271,11 +272,10 @@ int main(int argc, char *argv[]) {
         std::cout << " Start Data Path Exchanges \n";
         std::cout << " Waiting to receive Data from Initiator\n";
 
-        /** Sanity Check , assume NUM_TRANSFERS == 1 */
-        for (int i = 0; i < NUM_TRANSFERS; i++)
+        for (int i = 0; i < NUM_TRANSFERS-1; i++)
             launch_target_wait_kernel(stream, (uintptr_t)addr[i], SIZE);
-
         cudaStreamSynchronize(stream);
+
         std::cout << " DOCA Transfer completed!\n";
     } else {
         std::cout << " Receive metadata from Target \n";
@@ -310,7 +310,7 @@ int main(int argc, char *argv[]) {
         std::cout << "Launch initiator send kernel on stream\n";
         /* Synthetic simulation of GPU processing data before sending */
         PUSH_RANGE("InitKernels", 2)
-        for (int i = 0; i < NUM_TRANSFERS; i++)
+        for (int i = 0; i < NUM_TRANSFERS-1; i++)
             launch_initiator_send_kernel(stream, buf[i].addr, buf[i].len);
         POP_RANGE
 
