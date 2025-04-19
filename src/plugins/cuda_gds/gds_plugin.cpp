@@ -20,7 +20,7 @@
 
 // Plugin version information
 static const char* PLUGIN_NAME = "GDS";
-static const char* PLUGIN_VERSION = "0.1.0";
+static const char* PLUGIN_VERSION = "0.1.1";
 
 // Function to create a new GDS backend engine instance
 static nixlBackendEngine* create_gds_engine(const nixlBackendInitParams* init_params) {

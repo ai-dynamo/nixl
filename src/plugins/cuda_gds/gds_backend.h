@@ -38,53 +38,48 @@ class nixlGdsMetadata : public nixlBackendMD {
         ~nixlGdsMetadata() { }
 };
 
-class nixlGdsIOBatch {
-    private:
-        unsigned int max_reqs{0};
-        CUfileBatchHandle_t batch_handle{nullptr};
-        CUfileIOEvents_t *io_batch_events{nullptr};
-        CUfileIOParams_t *io_batch_params{nullptr};
-        CUfileError_t init_err{};
-        nixl_status_t current_status{NIXL_ERR_NOT_POSTED};
-        unsigned int entries_completed{0};
-        unsigned int batch_size{0};
-
-    public:
-        nixlGdsIOBatch(unsigned int size);
-        ~nixlGdsIOBatch();
-
-        nixl_status_t addToBatch(CUfileHandle_t fh, void *buffer,
-                                size_t size, size_t file_offset,
-                                size_t ptr_offset, CUfileOpcode_t type);
-        nixl_status_t submitBatch(int flags);
-        nixl_status_t checkStatus();
-        nixl_status_t cancelBatch();
-        void destroyBatch();
-        void reset();
-        unsigned int getMaxReqs() const { return max_reqs; }
-};
-
 class GdsTransferRequestH {
     public:
-        void* addr;
-        size_t size;
-        size_t file_offset;
-        CUfileHandle_t fh;
-        CUfileOpcode_t op;
+        void*           addr;
+        size_t          size;
+        size_t          file_offset;
+        CUfileHandle_t  fh;
+        CUfileOpcode_t  op;
 
-        GdsTransferRequestH() {}
-        ~GdsTransferRequestH() {}
+        // Default constructor
+        GdsTransferRequestH() {
+            addr = nullptr;
+            size = 0;
+            file_offset = 0;
+            fh = nullptr;
+            op = CUFILE_READ;
+        }
+
+        // Constructor with parameters
+        GdsTransferRequestH(void* a, size_t s, size_t offset,
+			    CUfileHandle_t handle, CUfileOpcode_t operation) {
+            addr = a;
+            size = s;
+            file_offset = offset;
+            fh = handle;
+            op = operation;
+        }
 };
 
 class nixlGdsBackendReqH : public nixlBackendReqH {
     public:
-        std::list<nixlGdsIOBatch *> batch_io_list;
-        std::vector<GdsTransferRequestH> request_list;  // Store GdsTransferRequestH objects
+        std::vector<GdsTransferRequestH> request_list;
+        std::vector<nixlGdsIOBatch*> batch_io_list;
+        bool needs_prep;
 
-        nixlGdsBackendReqH() {}
+        nixlGdsBackendReqH() {
+            needs_prep = true;
+        }
         ~nixlGdsBackendReqH() {
-            for (auto obj : batch_io_list)
-                delete obj;
+            for (auto* batch : batch_io_list) {
+                delete batch;
+            }
+            batch_io_list.clear();
         }
 };
 
@@ -99,6 +94,9 @@ class nixlGdsEngine : public nixlBackendEngine {
 
         nixlGdsIOBatch* getBatchFromPool(unsigned int size);
         void returnBatchToPool(nixlGdsIOBatch* batch);
+        nixl_status_t createAndSubmitBatch(const std::vector<GdsTransferRequestH>& requests,
+                                           size_t start_idx, size_t batch_size,
+                                           std::vector<nixlGdsIOBatch*>& batch_list);
         nixl_status_t createBatches(const nixl_xfer_op_t &operation,
                                    const nixl_meta_dlist_t &local,
                                    const nixl_meta_dlist_t &remote,
