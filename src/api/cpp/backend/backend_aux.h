@@ -90,6 +90,7 @@ class nixlMetaDesc : public nixlBasicDesc {
   public:
         // To be able to point to any object
         nixlBackendMD* metadataP;
+        nixl_blob_t remoteMetaInfo;
 
         // Reuse parent constructor without the metadata pointer
         using nixlBasicDesc::nixlBasicDesc;

@@ -195,6 +195,41 @@ nixl_status_t nixlLocalSection::serialize(nixlSerDes* serializer) const {
     return NIXL_SUCCESS;
 }
 
+nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
+                                                 const backend_set_t &backends,
+                                                 const nixl_reg_dlist_t &mem_elms) const {
+    // TODO: consider concatenating 2 serializers instead of using mem_elms_to_serialize
+    std::vector<std::pair<nixlBackendEngine*, nixl_reg_dlist_t>> mem_elms_to_serialize;
+    nixl_xfer_dlist_t trimmed = mem_elms.trim();
+    nixl_mem_t nixl_mem = mem_elms.getType();
+    nixl_status_t ret;
+    size_t seg_count;
+
+    for (auto &backend : backends) {
+        section_key_t sec_key = std::make_pair(nixl_mem, backend);
+        if (sectionMap.count(sec_key) == 0)
+            continue;
+
+        nixl_meta_dlist_t resp(nixl_mem, mem_elms.isSorted());
+        ret = populate(trimmed, backend, resp);
+        if (ret) return ret;
+        mem_elms_to_serialize.emplace_back(backend, getStringDesc(backend, resp));
+    }
+
+    seg_count = mem_elms_to_serialize.size();
+    ret = serializer->addBuf("nixlSecElms", &seg_count, sizeof(seg_count));
+    if (ret) return ret;
+
+    for (auto &[backend, s_desc] : mem_elms_to_serialize) {
+        ret = serializer->addStr("bknd", backend->getType());
+        if (ret) return ret;
+        ret = s_desc.serialize(serializer);
+        if (ret) return ret;
+    }
+
+    return NIXL_SUCCESS;
+}
+
 nixlLocalSection::~nixlLocalSection() {
     nixl_meta_dlist_t* m_desc;
     nixlBackendEngine* eng;
@@ -237,16 +272,22 @@ nixl_status_t nixlRemoteSection::addDescList (
     nixlBasicDesc *p = &out;
     nixl_status_t ret;
     for (int i=0; i<mem_elms.descCount(); ++i) {
-        // TODO: remote might change the metadata, have to keep stringDesc to compare
-        //       if we support partial updates. Also Can add overlap checks (erroneous)
-        if (target->getIndex((const nixlBasicDesc) mem_elms[i]) < 0) {
+        // TODO: Can add overlap checks (erroneous)
+        int idx = target->getIndex(static_cast<nixlBasicDesc>(mem_elms[i]));
+        if (idx < 0) {
             ret = backend->loadRemoteMD(mem_elms[i], nixl_mem, agentName, out.metadataP);
             // In case of errors, no need to remove the previous entries
             // Agent will delete the full object.
             if (ret<0)
                 return ret;
             *p = mem_elms[i]; // Copy the basic desc part
+            out.remoteMetaInfo = mem_elms[i].metaInfo;
             target->addDesc(out);
+        } else {
+            const nixl_blob_t &prev_meta_info = (*target)[idx].remoteMetaInfo;
+            // TODO: Support metadata updates
+            if (prev_meta_info != mem_elms[i].metaInfo)
+                return NIXL_ERR_NOT_ALLOWED;
         }
     }
     return NIXL_SUCCESS;
@@ -270,8 +311,10 @@ nixl_status_t nixlRemoteSection::loadRemoteData (nixlSerDes* deserializer,
         nixl_reg_dlist_t s_desc(deserializer);
         if (s_desc.descCount()==0) // can be used for entry removal in future
             return NIXL_ERR_NOT_FOUND;
-        ret = addDescList(s_desc, backendToEngineMap[nixl_backend]);
-        if (ret) return ret;
+        if (backendToEngineMap.count(nixl_backend) != 0) {
+            ret = addDescList(s_desc, backendToEngineMap[nixl_backend]);
+            if (ret) return ret;
+        }
     }
     return NIXL_SUCCESS;
 }

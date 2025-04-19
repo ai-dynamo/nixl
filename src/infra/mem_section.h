@@ -67,6 +67,10 @@ class nixlLocalSection : public nixlMemSection {
 
         nixl_status_t serialize(nixlSerDes* serializer) const;
 
+        nixl_status_t serializePartial(nixlSerDes* serializer,
+                                       const backend_set_t &backends,
+                                       const nixl_reg_dlist_t &mem_elms) const;
+
         ~nixlLocalSection();
 };
 
