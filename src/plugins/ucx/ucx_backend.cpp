@@ -348,6 +348,7 @@ nixlUcxEngine::~nixlUcxEngine () {
     vramFiniCtx();
     delete uw;
     delete uc;
+    free(workerAddr);
 }
 
 /****************************************
@@ -587,6 +588,7 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
 
     out = (nixlBackendMD*) priv; //typecast?
 
+    free((void*)rkey_addr);
     return NIXL_SUCCESS; // Or errors
 }
 
