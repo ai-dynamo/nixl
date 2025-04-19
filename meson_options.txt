@@ -15,6 +15,7 @@
 
 option('ucx_path', type: 'string', value: '', description: 'Path to UCX install')
 option('disable_gds_backend', type : 'boolean', value : false, description : 'disable gds backend')
+option('enable_mooncake_backend', type : 'boolean', value : false, description : 'enable mooncake backend')
 option('install_headers', type : 'boolean', value : true, description : 'install headers')
 option('gds_path', type: 'string', value: '/usr/local/cuda/targets/x86_64-linux/', description: 'Path to GDS CuFile install')
 option('cudapath_inc', type: 'string', value: '', description: 'Include path for CUDA')
