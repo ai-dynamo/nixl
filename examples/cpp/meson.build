@@ -19,3 +19,15 @@ nixl_example = executable('nixl_example',
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            link_with: [serdes_lib],
            install: true)
+
+if get_option('enable_mooncake_backend')
+    cpp = meson.get_compiler('cpp')
+    gflags_lib = cpp.find_library('gflags')
+    glog_lib = cpp.find_library('glog')
+    nixl_benchmark = executable('nixl_benchmark',
+            'nixl_benchmark.cpp',
+            dependencies: [nixl_dep, nixl_infra, ucx_backend_dep, ucx_dep, gflags_lib, glog_lib],
+            include_directories: [nixl_inc_dirs, utils_inc_dirs],
+            link_with: [serdes_lib],
+            install: true)   
+endif
