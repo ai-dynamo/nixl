@@ -20,12 +20,20 @@ limitations under the License.
 This plugin uses NVIDIA GPUDirect storage cuFile APIs as an I/O backend for
 NIXL.
 
-[NVIDIA GDS](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html)
+[NVIDIA GDS](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html)<br />
 [CUDA GDS Install and Setup](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)
 
 ### cufile.json configuration
 This section provides the recommended configuration for the cufile.json file when using the NIXL GDS plugin in compatibility mode.
 The configuration ensures that sufficient POSIX buffers are available. Only the properties that need to be overridden are included in this cufile.json configuration.
+The cufile.json must be explicitely exported for applications to use this configuration using
+```
+export CUFILE_ENV_PATH_JSON="/path/to/cufile.json"
+
+```
+
+### Detailed cufile.json file
+
 ```
 {
     // NOTE : Application can override custom configuration via export CUFILE_ENV_PATH_JSON=<filepath>
