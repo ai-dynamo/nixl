@@ -37,6 +37,31 @@ class gdsMemBuf {
         size_t size;
 };
 
+class nixlGdsIOBatch {
+    public:
+        nixlGdsIOBatch(unsigned int size);
+        ~nixlGdsIOBatch();
+
+        nixl_status_t addToBatch(CUfileHandle_t fh, void *buffer,
+                                size_t size, size_t file_offset,
+                                size_t ptr_offset, CUfileOpcode_t type);
+        nixl_status_t submitBatch(int flags);
+        nixl_status_t checkStatus();
+        nixl_status_t cancelBatch();
+        void destroyBatch();
+        void reset();
+
+    private:
+        CUfileBatchHandle_t batch_handle;
+        CUfileIOEvents_t *io_batch_events = nullptr;
+        CUfileIOParams_t *io_batch_params = nullptr;
+        CUfileError_t init_err = {CU_FILE_SUCCESS};
+        unsigned int max_reqs = 0;
+        unsigned int batch_size = 0;
+        unsigned int entries_completed = 0;
+        nixl_status_t current_status = NIXL_ERR_NOT_POSTED;
+};
+
 class gdsUtil {
     public:
         gdsUtil() {}
@@ -50,5 +75,4 @@ class gdsUtil {
         nixl_status_t openGdsDriver();
         void closeGdsDriver();
 };
-
 #endif

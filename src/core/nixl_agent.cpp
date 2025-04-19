@@ -181,7 +181,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         // Plugin found, use it to create the backend
         backend = plugin_handle->createEngine(&init_params);
     } else {
-        std::cout << "Unsupported backend: " << type << std::endl;
+        std::cerr << "Unsupported backend: " << type << std::endl;
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -751,10 +751,14 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     // We CAN repost a previous request that is completed
-    if (req_hndl->status == NIXL_SUCCESS && req_hndl->backendHandle)
+    // If condition to be removed when UCX supports
+    // repost with same handle
+     if (req_hndl->status == NIXL_SUCCESS &&
+        req_hndl->backendHandle &&
+        req_hndl->engine->getType() != "GDS") {
         req_hndl->status = req_hndl->engine->releaseReqH(
                                      req_hndl->backendHandle);
-
+    }
     // Carrying over notification from xfer handle creation time
     if (req_hndl->hasNotif) {
         opt_args.notifMsg = req_hndl->notifMsg;

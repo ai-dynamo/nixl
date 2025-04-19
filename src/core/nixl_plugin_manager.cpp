@@ -214,7 +214,7 @@ void nixlPluginManager::addPluginDirectory(const std::string& directory) {
     // Check if directory is already in the list
     for (const auto& dir : plugin_dirs_) {
         if (dir == directory) {
-            std::cout << "Plugin directory already registered: " << directory << std::endl;
+            std::cout << "WARNING: Plugin directory already registered: " << directory << std::endl;
             return;
         }
     }
@@ -282,9 +282,9 @@ void nixlPluginManager::discoverPluginsFromDir(const std::string& dirpath) {
 
             // Try to load the plugin
             auto plugin = loadPlugin(plugin_name);
-            if (plugin) {
-               std::cout << "Loaded plugin " << plugin_name << std::endl;
-            }
+            // if (plugin) { // To be used in logging infra
+            //    std::cout << "Loaded plugin " << plugin_name << std::endl;
+            // }
         }
     }
 

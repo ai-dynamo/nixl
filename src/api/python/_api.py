@@ -95,7 +95,7 @@ class nixl_agent:
 
         if instantiate_all:
             for plugin in self.plugin_list:
-                self.backends[plugin] = self.agent.createBackend(plugin, init)
+                self.create_backend(plugin, init)
         else:
             for bknd in nixl_conf.backends:
                 # TODO: populate init from nixl_conf when added
@@ -106,14 +106,7 @@ class nixl_agent:
                         "due to the missing plugin.",
                     )
                 else:
-                    self.backends[bknd] = self.agent.createBackend(bknd, init)
-
-        for backend in self.backends:
-            (backend_options, mem_types) = self.agent.getBackendParams(
-                self.backends[backend]
-            )
-            self.backend_mems[backend] = mem_types
-            self.backend_options[backend] = backend_options
+                    self.create_backend(bknd, init)
 
         self.nixl_mems = {
             "DRAM": nixlBind.DRAM_SEG,
@@ -220,6 +213,7 @@ class nixl_agent:
         )
         self.backend_mems[backend] = mem_types
         self.backend_options[backend] = backend_options
+        print("Backend", backend, "was instantiated")
 
     """
     @brief Register memory regions, optionally with specified backends.
@@ -522,13 +516,19 @@ class nixl_agent:
            Will only remove the notification that is found.
 
     @param remote_agent_name Name of the remote agent.
-    @param lookup_msg Message to look up in the notification map.
+    @param lookup_tag A tag to match against available messages in the notification map.
+           The tag Can be the same as the entire expected message.
     @param backends Optional list of backend names to limit which backends are checked for notifications.
+    @param tag_is_prefix Optionally specify that the tag you want to search with is just a prefix, or can be search as a substring of the full message.
     @return True if the notification is found, False otherwise.
     """
 
     def check_remote_xfer_done(
-        self, remote_agent_name: str, lookup_msg: bytes, backends: list[str] = []
+        self,
+        remote_agent_name: str,
+        lookup_tag: bytes,
+        backends: list[str] = [],
+        tag_is_prefix=True,
     ) -> bool:
         handle_list = []
         for backend_string in backends:
@@ -539,8 +539,10 @@ class nixl_agent:
 
         if remote_agent_name in self.notifs:
             for msg in self.notifs[remote_agent_name]:
-                if lookup_msg in msg:
-                    message = lookup_msg
+                if (tag_is_prefix and msg.startswith(lookup_tag)) or (
+                    not tag_is_prefix and lookup_tag in msg
+                ):
+                    message = msg
                     found = True
                     break
         if message:
