@@ -26,13 +26,12 @@ NIXL.
 ### cufile.json configuration
 This section provides the recommended configuration for the cufile.json file when using the NIXL GDS plugin in compatibility mode.
 The configuration ensures that sufficient POSIX buffers are available. Only the properties that need to be overridden are included in this cufile.json configuration.
-The cufile.json must be explicitely exported for applications to use this configuration using
+The cufile.json must be explicitly exported for applications to use this configuration using
 ```
 export CUFILE_ENV_PATH_JSON="/path/to/cufile.json"
-
 ```
 
-### Detailed cufile.json file
+### Detailed cufile.json Options:
 
 ```
 {
