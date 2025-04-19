@@ -69,8 +69,8 @@ nixlMooncakeEngine::nixlMooncakeEngine (const nixlBackendInitParams* init_params
     if (!ips.empty()) segment_name = ips[0];
     if (getenv("NIXL_MOONCAKE_IP_ADDR"))
         segment_name = std::string(getenv("NIXL_MOONCAKE_IP_ADDR"));
-    engine_ = createTransferEngine("P2PHANDSHAKE", 
-                                   segment_name.c_str(), 
+    engine_ = createTransferEngine("P2PHANDSHAKE",
+                                   segment_name.c_str(),
                                    "", 0, true);
 }
 
@@ -235,9 +235,9 @@ nixl_status_t nixlMooncakeEngine::checkXfer (nixlBackendReqH* handle)
     for (size_t index = 0; index < priv->request_count; ++index) {
         transfer_status_t status;
         int rc = getTransferStatus(engine_, priv->batch_id, index, &status);
-        if (rc || status.status == STATUS_FAILED) 
+        if (rc || status.status == STATUS_FAILED)
             has_failed = true;
-        else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) 
+        else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING)
             return NIXL_IN_PROG;
     }
     return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;

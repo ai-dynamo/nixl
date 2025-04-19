@@ -29,5 +29,5 @@ if get_option('enable_mooncake_backend')
             dependencies: [nixl_dep, nixl_infra, ucx_backend_dep, ucx_dep, gflags_lib, glog_lib],
             include_directories: [nixl_inc_dirs, utils_inc_dirs],
             link_with: [serdes_lib],
-            install: true)   
+            install: true)
 endif

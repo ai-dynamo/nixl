@@ -1,16 +1,19 @@
-// Copyright 2024 KVCache.AI
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #include <gflags/gflags.h>
 #include <glog/logging.h>
@@ -84,7 +87,7 @@ static inline std::string calculateRate(uint64_t data_bytes, double duration) {
 volatile bool running = true;
 std::atomic<size_t> total_batch_count(0);
 
-void initiatorWorker(int thread_id, void* local_addr, uint64_t remote_base, 
+void initiatorWorker(int thread_id, void* local_addr, uint64_t remote_base,
                      nixlAgent *agent, nixl_opt_args_t *extra_params) {
     nixl_xfer_op_t opcode;
     if (FLAGS_operation == "read")
@@ -173,7 +176,7 @@ int initiator() {
         tcp::socket socket(io);
         socket.connect(tcp::endpoint(ip::make_address(FLAGS_segment_id), port));
         read(socket, buffer(buf), transfer_exactly(4096));
-        
+
         socket.shutdown(tcp::socket::shutdown_both);
         socket.close();
     } catch (std::exception& e) {
@@ -223,7 +226,6 @@ int initiator() {
 volatile bool target_running = true;
 
 int target() {
-    
     nixlAgentConfig cfg(true);
     nixlAgent agent("target", cfg);
     nixl_b_params_t init;
@@ -256,7 +258,7 @@ int target() {
     try {
         io_context io;
         tcp::acceptor acceptor(io, tcp::endpoint(tcp::v4(), port));
-        
+
         LOG(INFO) << "Start listening";
 
         tcp::socket socket(io);
@@ -269,7 +271,7 @@ int target() {
         memcpy((char *) data.data() + 2 * sizeof(uint64_t), meta.data(), meta_size);
         LOG(INFO) << addr << " " << meta_size;
         write(socket, buffer(data));
-        
+
         socket.shutdown(tcp::socket::shutdown_both);
         socket.close();
     } catch (std::exception& e) {
