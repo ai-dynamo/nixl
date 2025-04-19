@@ -51,8 +51,7 @@ nixl_status_t gdsUtil::registerBufHandle(void *ptr,
 
     status = cuFileBufRegister(ptr, size, flags);
     if (status.err != CU_FILE_SUCCESS) {
-        std::cerr << "Buffer registration failed\n";
-        return NIXL_ERR_BACKEND;
+        std::cerr << "Warning: Buffer registration failed - will use compat mode\n";
     }
     return NIXL_SUCCESS;
 }
