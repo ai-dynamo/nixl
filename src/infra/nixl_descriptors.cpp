@@ -30,7 +30,7 @@
 
 nixlBasicDesc::nixlBasicDesc(const uintptr_t &addr,
                              const size_t &len,
-                             const uint32_t &dev_id) {
+                             const uint64_t &dev_id) {
     this->addr  = addr;
     this->len   = len;
     this->devId = dev_id;
@@ -97,7 +97,7 @@ void nixlBasicDesc::print(const std::string &suffix) const {
 
 nixlBlobDesc::nixlBlobDesc(const uintptr_t &addr,
                            const size_t &len,
-                           const uint32_t &dev_id,
+                           const uint64_t &dev_id,
                            const nixl_blob_t &meta_info) :
                            nixlBasicDesc(addr, len, dev_id) {
     this->metaInfo = meta_info;
@@ -323,102 +323,103 @@ template <class T>
 nixl_status_t nixlDescList<T>::populate (const nixlDescList<nixlBasicDesc> &query,
                                          nixlDescList<T> &resp) const {
     // Populate only makes sense when there is extra metadata
-    if (std::is_same<nixlBasicDesc, T>::value)
+    if constexpr (std::is_same<nixlBasicDesc, T>::value) {
         return NIXL_ERR_INVALID_PARAM;
+    } else {
+        if ((type != query.getType()) || (type != resp.type))
+            return NIXL_ERR_INVALID_PARAM;
 
-    if ((type != query.getType()) || (type != resp.type))
-        return NIXL_ERR_INVALID_PARAM;
+        // 1-to-1 mapping cannot hold
+        if (query.isSorted() != resp.sorted)
+            return NIXL_ERR_INVALID_PARAM;
 
-    // 1-to-1 mapping cannot hold
-    if (query.isSorted() != resp.sorted)
-        return NIXL_ERR_INVALID_PARAM;
+        T new_elm;
+        nixlBasicDesc *p = &new_elm;
+        int count = 0, last_found = 0;
+        int s_index, q_index, size;
+        bool found, q_sorted = query.isSorted();
+        const nixlBasicDesc *q, *s;
 
-    T new_elm;
-    nixlBasicDesc *p = &new_elm;
-    int count = 0, last_found = 0;
-    int s_index, q_index, size;
-    bool found, q_sorted = query.isSorted();
-    const nixlBasicDesc *q, *s;
+        resp.resize(query.descCount());
 
-    resp.resize(query.descCount());
+        if (!sorted) {
+            for (int i=0; i<query.descCount(); ++i)
+                for (auto & elm : descs)
+                    if (elm.covers(query[i])){
+                        *p = query[i];
+                        new_elm.copyMeta(elm);
+                        resp.descs[i]=new_elm;
+                        count++;
+                        break;
+                    }
 
-    if (!sorted) {
-        for (int i=0; i<query.descCount(); ++i)
-            for (auto & elm : descs)
-                if (elm.covers(query[i])){
-                    *p = query[i];
-                    new_elm.copyMeta(elm);
-                    resp.descs[i]=new_elm;
-                    count++;
-                    break;
+            if (query.descCount()==count) {
+                return NIXL_SUCCESS;
+            } else {
+                resp.clear();
+                return NIXL_ERR_UNKNOWN;
+            }
+        } else {
+            if (q_sorted) {
+                size = (int) descs.size();
+                s_index = 0;
+                q_index = 0;
+
+                while (q_index<query.descCount()){
+                    s = &descs[s_index];
+                    q = &query[q_index];
+                    if ((*s).covers(*q)) {
+                        *p = *q;
+                        new_elm.copyMeta(descs[s_index]); // needs const nixlBasicDesc&
+                        resp.descs[q_index] = new_elm;
+                        q_index++;
+                    } else {
+                        s_index++;
+                        // if (*q < descs[s_index]) ||
+                        if (s_index==size) {
+                            resp.clear();
+                            return NIXL_ERR_UNKNOWN;
+                        }
+                    }
                 }
 
-        if (query.descCount()==count) {
-            return NIXL_SUCCESS;
-        } else {
-            resp.clear();
-            return NIXL_ERR_UNKNOWN;
-        }
-    } else {
-        if (q_sorted) {
-            size = (int) descs.size();
-            s_index = 0;
-            q_index = 0;
+                resp.sorted = true; // Should be redundant
+                return NIXL_SUCCESS;
 
-            while (q_index<query.descCount()){
-                s = &descs[s_index];
-                q = &query[q_index];
-                if ((*s).covers(*q)) {
-                    *p = *q;
-                    new_elm.copyMeta(descs[s_index]); // needs const nixlBasicDesc&
-                    resp.descs[q_index] = new_elm;
-                    q_index++;
-                } else {
-                    s_index++;
-                    // if (*q < descs[s_index]) ||
-                    if (s_index==size) {
+            } else {
+                for (int i=0; i<query.descCount(); ++i) {
+                    found = false;
+                    q = &query[i];
+                    auto itr = std::lower_bound(descs.begin() + last_found,
+                                                descs.end(), *q);
+
+                    // Same start address case
+                    if (itr != descs.end()){
+                        if ((*itr).covers(*q)) {
+                            found = true;
+                        }
+                    }
+
+                    // query starts starts later, try previous entry
+                    if ((!found) && (itr != descs.begin())){
+                        itr = std::prev(itr , 1);
+                        if ((*itr).covers(*q)) {
+                            found = true;
+                        }
+                    }
+
+                    if (found) {
+                        *p = *q;
+                        new_elm.copyMeta(*itr);
+                        resp.descs[i] = new_elm;
+                    } else {
                         resp.clear();
                         return NIXL_ERR_UNKNOWN;
                     }
                 }
+                resp.sorted = query.isSorted(); // Update as resize resets it
+                return NIXL_SUCCESS;
             }
-
-            resp.sorted = true; // Should be redundant
-            return NIXL_SUCCESS;
-
-        } else {
-            for (int i=0; i<query.descCount(); ++i) {
-                found = false;
-                q = &query[i];
-                auto itr = std::lower_bound(descs.begin() + last_found,
-                                            descs.end(), *q);
-
-                // Same start address case
-                if (itr != descs.end()){
-                    if ((*itr).covers(*q)) {
-                        found = true;
-                    }
-                }
-
-                // query starts starts later, try previous entry
-                if ((!found) && (itr != descs.begin())){
-                    itr = std::prev(itr , 1);
-                    if ((*itr).covers(*q)) {
-                        found = true;
-                    }
-                }
-
-                if (found) {
-                    *p = *q;
-                    new_elm.copyMeta(*itr);
-                    resp.descs[i] = new_elm;
-                } else {
-                    resp.clear();
-                    return NIXL_ERR_UNKNOWN;
-                }
-            }
-            resp.sorted = query.isSorted(); // Update as resize resets it
-            return NIXL_SUCCESS;
         }
     }
 }

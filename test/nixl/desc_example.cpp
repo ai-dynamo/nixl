@@ -81,7 +81,6 @@ int main()
     nixlBasicDesc buff3 (buff2);
     nixlBasicDesc buff4;
     buff4 = buff1;
-    buff4.copyMeta (buff2);
     nixlBasicDesc buff5 (1980,21,3);
     nixlBasicDesc buff6 (1010,30,4);
     nixlBasicDesc buff7 (1010,30,0);

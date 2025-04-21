@@ -152,7 +152,7 @@ void nixlUcxEngine::vramInitCtx()
     cudaCtx = new nixlUcxCudaCtx;
 }
 
-int nixlUcxEngine::vramUpdateCtx(void *address, uint32_t  devId, bool &restart_reqd)
+int nixlUcxEngine::vramUpdateCtx(void *address, uint64_t  devId, bool &restart_reqd)
 {
     int ret;
     bool was_updated;
