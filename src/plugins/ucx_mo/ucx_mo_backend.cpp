@@ -32,14 +32,14 @@ using namespace std;
 
 #ifdef HAVE_CUDA
 
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 
 static uint32_t _getNumVramDevices()
 {
-    cudaError_t result;
+    hipError_t result;
     int n_vram_dev;
-    result = cudaGetDeviceCount(&n_vram_dev);
-    if (result != cudaSuccess) {
+    result = hipGetDeviceCount(&n_vram_dev);
+    if (result != hipSuccess) {
         return 0;
     } else {
         return n_vram_dev;
