@@ -24,6 +24,16 @@ project('nixl', 'CPP', version: '0.1.1',
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
 
+# Forced to ignore this error due to:
+# https://github.com/abseil/abseil-cpp/issues/1779
+# This must be global since subprojects cannot be assigned with arguments.
+# Adding this configuration only for release build to consider it while developing.
+if get_option('buildtype') == 'release'
+  abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
+  add_global_arguments(abseil_flags, language: 'cpp')
+endif
+abseil_proj = subproject('abseil-cpp')
+
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
