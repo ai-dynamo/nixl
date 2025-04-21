@@ -142,7 +142,7 @@ class nixlUcxEngine : public nixlBackendEngine {
 
         void vramInitCtx();
         void vramFiniCtx();
-        int vramUpdateCtx(void *address, uint32_t  devId, bool &restart_reqd);
+        int vramUpdateCtx(void *address, uint64_t devId, bool &restart_reqd);
         int vramApplyCtx();
 
         // Threading infrastructure
