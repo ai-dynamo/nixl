@@ -278,7 +278,7 @@ nixlAgentData::~nixlAgentData() {
         delete elm.second;
 
     commThreadStop = true;
-    commThread.join();
+    if(commThread.joinable()) commThread.join();
     if(listener) delete listener;
 }
 
