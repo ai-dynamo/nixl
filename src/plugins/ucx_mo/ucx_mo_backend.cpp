@@ -75,7 +75,7 @@ nixlUcxMoEngine::getEngCnt()
 }
 
 int32_t
-nixlUcxMoEngine::getEngIdx(nixl_mem_t type, uint32_t devId)
+nixlUcxMoEngine::getEngIdx(nixl_mem_t type, uint64_t devId)
 {
     switch (type) {
     case VRAM_SEG:

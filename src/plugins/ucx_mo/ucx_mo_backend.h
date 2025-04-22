@@ -128,7 +128,7 @@ private:
     uint32_t _gpuCnt;
     int setEngCnt(uint32_t host_engines);
     uint32_t getEngCnt();
-    int32_t getEngIdx(nixl_mem_t type, uint32_t devId);
+    int32_t getEngIdx(nixl_mem_t type, uint64_t devId);
     std::string getEngName(const std::string &baseName, uint32_t eidx);
     std::string getEngBase(const std::string &engName);
     bool pthrOn;
