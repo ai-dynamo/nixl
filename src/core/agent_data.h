@@ -55,6 +55,7 @@ class nixlAgentData {
         std::unordered_map<std::string, nixlRemoteSection*,
                            std::hash<std::string>, strEqual>     remoteSections;
 
+        // State/methods for listener thread
         nixlMDStreamListener                  *listener;
         std::unordered_map<std::string, int>  remoteSockets;
         std::thread                           commThread;
