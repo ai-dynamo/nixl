@@ -24,6 +24,9 @@ project('nixl', 'CPP', version: '0.1.1',
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
 
+dl_dep = cpp.find_library('dl', required: true)
+thread_dep = dependency('threads')
+
 # Forced to ignore this error due to:
 # https://github.com/abseil/abseil-cpp/issues/1779
 # This must be global since subprojects cannot be assigned with arguments.

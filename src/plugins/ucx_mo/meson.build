@@ -24,7 +24,7 @@ endif
 if 'UCX_MO' in static_plugins
     ucx_mo_backend_lib = static_library('UCX_MO',
                'ucx_mo_backend.cpp', 'ucx_mo_backend.h', 'ucx_mo_plugin.cpp',
-               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, cuda_dep, ucx_dep],
+               dependencies: [nixl_infra, ucx_mo_utils_dep, serdes_interface, cuda_dep, ucx_dep],
                link_with: [ucx_backend_lib],
                include_directories: [nixl_inc_dirs, utils_inc_dirs, ucx_backend_inc_dirs],
                install: false,
@@ -33,7 +33,7 @@ if 'UCX_MO' in static_plugins
 else
     ucx_mo_backend_lib = shared_library('UCX_MO',
                'ucx_mo_backend.cpp', 'ucx_mo_backend.h', 'ucx_mo_plugin.cpp',
-               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, cuda_dep, ucx_dep],
+               dependencies: [nixl_infra, ucx_mo_utils_dep, serdes_interface, cuda_dep, ucx_dep],
                link_with: [ucx_backend_lib],
                include_directories: [nixl_inc_dirs, utils_inc_dirs, ucx_backend_inc_dirs],
                install: true,
