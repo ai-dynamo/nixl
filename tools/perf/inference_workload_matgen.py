@@ -24,9 +24,19 @@ python inference_workload_matgen.py generate \
     --num-prefill-nodes 54 \
     --num-decode-nodes 54 \
     --prefill-tp 8 \
+    --prefill-pp 1 \
+    --prefill-cp 1 \
     --decode-tp 8 \
+    --decode-pp 1 \
+    --decode-cp 1 \
     --model llama-405b \
-    --results-dir /tmp/matrices
+    --hidden-size 16384 \
+    --num-layers 126 \
+    --num-heads 128 \
+    --num-kv-heads 8 \
+    --dtype-size 2 \
+    --results-dir /tmp/matrices \
+    --rail-optimized
 """
 
 from tqdm import tqdm
@@ -89,7 +99,7 @@ class WorkerConfig:
     def __post_init__(self):
         assert self.pp == 1, "PP is not supported yet"
         assert self.ep == 1, "EP is not supported yet"
-        assert self.cp == 1, "CP is not supported yet"
+        #assert self.cp == 1, "CP is not supported yet"
 
 
 @dataclass
@@ -202,13 +212,15 @@ def gen_matrix(
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
 ):
-    kv_size = batch.kv_cache_size(model_config)
-    kv_slice_size = kv_size / prefill_worker_config.tp / prefill_worker_config.pp
+    kv_size = batch.kv_cache_size(model_config) 
+    kv_slice_size = kv_size / prefill_worker_config.tp / prefill_worker_config.pp / prefill_worker_config.cp
 
-    buf_size = kv_slice_size / decode_worker_config.tp
+    cp_factor = prefill_worker_config.cp / decode_worker_config.cp
+
+    num_peers = decode_worker_config.tp / prefill_worker_config.tp / prefill_worker_config.cp
+    buf_size = kv_slice_size / num_peers
+
     #print(f"kv_size: {format_size(kv_size)}, kv_slice_size: {format_size(kv_slice_size)}, buf_size: {format_size(buf_size)}, num_peers: {num_peers}")
-
-    num_peers = decode_worker_config.tp // prefill_worker_config.tp
 
     mat = np.zeros((world_size, world_size))
 
@@ -266,6 +278,7 @@ def main(
     assert prefill_worker_config.tp <= decode_worker_config.tp, "Prefill TP must be less than or equal to decode TP"
     assert prefill_worker_config.pp >= decode_worker_config.pp, "Prefill PP must be more or equal to decode PP"
     assert prefill_worker_config.cp >= decode_worker_config.cp, "Prefill CP must be more or equal to decode CP"
+    assert decode_worker_config.cp == 1, "Decode CP must be 1"
     assert prefill_worker_config.ep <= decode_worker_config.ep, "Prefill EP must be less or equal to decode EP"
     if rail_optimized:
         assert decode_worker_config.tp == 8, "Rail optimized communication is only supported when decode worker is a full node (8 GPUs)"
