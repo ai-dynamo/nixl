@@ -171,10 +171,6 @@ class nixlBlobDesc : public nixlBasicDesc {
          */
         nixl_blob_t serialize() const;
         /**
-         * @brief Copy nixlBlobDesc metadata from one object to another
-         */
-        void copyMeta (const nixlBlobDesc &info);
-        /**
          * @brief Print nixlBlobDesc for debugging purpose
          *
          * @param suffix gets prepended to the descriptor print
@@ -308,24 +304,6 @@ class nixlDescList {
          *        Can throw std::out_of_range exception.
          */
         void remDesc(const int &index);
-        /**
-         * @brief Populate the `resp` nixlDescList by adding metadata to
-         *        each element of `query` nixlDescList which has descriptors
-         *        of type nixlBasicDesc (no metadata). Per each descriptor in
-         *        `query`, an descriptor within current object is found that
-         *        covers the descriptor in `query`, and the metadata of the
-         *        found descriptor is added to the `query` descriptor and added
-         *        to the `resp` nixlDescList.
-         *        If the `query` is sorted and is going to be populated against
-         *        a sorted list, that enables an optimization to be in linear time.
-         *
-         * @param  query      nixlDescList object, made from nixlBasicDesc, as input query
-         * @param  resp [out] populated response for the query, based on the current object
-         *
-         * @return nixl_status_t Error code if population was not successful
-         */
-        nixl_status_t populate(const nixlDescList<nixlBasicDesc> &query,
-                               nixlDescList<T> &resp) const;
         /**
          * @brief Convert a nixlDescList with metadata by trimming it to a
          *        nixlDescList of nixlBasicDesc elements
