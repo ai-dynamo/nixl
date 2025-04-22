@@ -15,3 +15,4 @@
 
 subdir('nixl')
 subdir('unit')
+subdir('gtest')
