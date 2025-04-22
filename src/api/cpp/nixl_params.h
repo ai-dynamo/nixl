@@ -46,6 +46,14 @@ class nixlAgentConfig {
          *      amount of time has past.
          */
         uint64_t pthrDelay;
+        /**
+         * @var Listener thread frequency knob (in us)
+         *      Listener thread sleeps in a similar way to progress thread, desrcibed previously.
+         *      These will be combined into a unified NIXL Thread API in a future version.
+         */
+        uint64_t lthrDelay;
+
+
 
         /**
          * @brief  Agent configuration constructor for enabling various features.
@@ -54,11 +62,12 @@ class nixlAgentConfig {
          * @param port             specify port for listener thread to listen on
          * @param pthr_delay_us    Optional delay for pthread in us
          */
-        nixlAgentConfig(const bool use_prog_thread, const bool use_listen_thread=false, const int port=0, const uint64_t pthr_delay_us=0) {
+        nixlAgentConfig(const bool use_prog_thread, const bool use_listen_thread=false, const int port=0, const uint64_t pthr_delay_us=0, const uint64_t lthr_delay_us = 100000) {
             this->useProgThread   = use_prog_thread;
             this->useListenThread = use_listen_thread;
             this->listenPort      = port;
             this->pthrDelay       = pthr_delay_us;
+            this->lthrDelay       = lthr_delay_us;
         }
 
         /**

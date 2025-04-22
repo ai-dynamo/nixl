@@ -68,13 +68,11 @@ int connectToIP(std::string ip_addr, int port) {
 
     int ret_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (ret_fd == -1) {
-        throw std::runtime_error("Cannot create client socket\n");
         return -1;
     }
 
     if (inet_pton(AF_INET, ip_addr.c_str(),
                   &listenerAddr.sin_addr) <= 0) {
-        throw std::runtime_error("Invalid IP address\n");
         close(ret_fd);
         return -1;
     }
@@ -83,46 +81,48 @@ int connectToIP(std::string ip_addr, int port) {
     int orig_flags = fcntl(ret_fd, F_GETFL, 0);
     int new_flags = orig_flags ^ O_NONBLOCK;
 
-    if (fcntl(ret_fd, F_SETFL, new_flags) == -1)
-        throw std::runtime_error("fcntl 1");
+    fcntl(ret_fd, F_SETFL, new_flags);
 
     if (connect(ret_fd, (struct sockaddr*)&listenerAddr,
                     sizeof(listenerAddr)) < 0) {
         perror("async connect");
-        throw std::runtime_error("Cannot connect client " + ip_addr);
         close(ret_fd);
+        return -1;
     }
 
     //make nonblocking again
-    if (fcntl(ret_fd, F_SETFL, orig_flags) == -1)
-        throw std::runtime_error("fcntl 2");
+    fcntl(ret_fd, F_SETFL, orig_flags);
 
     return ret_fd;
 }
 
-void sendCommMessage(int fd, std::string msg){
+size_t sendCommMessage(int fd, std::string msg){
     size_t bytes;
     bytes = send(fd, msg.c_str(), msg.size(), 0);
     if(bytes < 0) {
-        throw std::runtime_error("Cannot send on socket\n");
+        std::cerr << "Cannot send on socket to fd " << fd << std::endl;
     }
+    return bytes;
 }
 
-void recvCommMessage(int fd, std::string &msg, size_t &recv_bytes){
+ssize_t recvCommMessage(int fd, std::string &msg){
     char buffer[16384];
     ssize_t one_recv_bytes = 0;
-    recv_bytes = 0;
+    ssize_t recv_bytes = 0;
     msg = std::string("");
 
     do {
         one_recv_bytes = recv(fd, buffer, sizeof(buffer), 0);
         if (one_recv_bytes == -1){
-            if(errno == EAGAIN || errno == EWOULDBLOCK) return;
-            throw std::runtime_error("Cannot recv on socket\n");
+            if(errno == EAGAIN || errno == EWOULDBLOCK) return recv_bytes;
+            std::cerr << "Cannot recv on socket fd " << fd << std::endl;
+            return one_recv_bytes;
         }
         msg.append(buffer, one_recv_bytes);
         recv_bytes += one_recv_bytes;
     } while(one_recv_bytes > 0);
+
+    return recv_bytes;
 }
 
 void nixlAgent::commWorker(){
@@ -179,10 +179,15 @@ void nixlAgent::commWorker(){
                     //not connected
                     if(client == data->remoteSockets.end()) {
                         int new_client = connectToIP(req_ip, req_port);
+                        if(new_client == -1) {
+                            std::cerr << "Listener thread could not connect to IP " << req_ip;
+                            break;
+                        }
                         data->remoteSockets[req_ip] = new_client;
                         client_fd = new_client;
-                    } else
+                    } else {
                         client_fd = client->second;
+                    }
 
                     nixl_blob_t my_MD;
                     getLocalMD(my_MD);
@@ -194,12 +199,15 @@ void nixlAgent::commWorker(){
                 {
                     if(client == data->remoteSockets.end()) {
                         int new_client = connectToIP(req_ip, req_port);
+                        if(new_client == -1) {
+                            std::cerr << "Listener thread could not connect to IP " << req_ip;
+                            break;
+                        }
                         data->remoteSockets[req_ip] = new_client;
                         client_fd = new_client;
                     } else
                         client_fd = client->second;
 
-                    //just a command to send MD eventually
                     sendCommMessage(client_fd, std::string("NIXLCOMM:SEND"));
                     break;
                 }
@@ -227,12 +235,11 @@ void nixlAgent::commWorker(){
         for (const auto& [ip_address, socketClient] : data->remoteSockets ) {
             std::string commands;
             std::vector<std::string> command_list;
-            size_t recv_bytes = 0;
             nixl_status_t ret;
 
-            recvCommMessage(socketClient, commands, recv_bytes);
+            ssize_t recv_bytes = recvCommMessage(socketClient, commands);
 
-            if(recv_bytes == 0) continue;
+            if(recv_bytes == 0 || recv_bytes == -1) continue;
 
             command_list = str_split_substr(commands, "NIXLCOMM:");
 
@@ -248,7 +255,7 @@ void nixlAgent::commWorker(){
                     std::string remote_agent;
                     ret = loadRemoteMD(remote_md, remote_agent);
                     if(ret != NIXL_SUCCESS) {
-                        throw std::runtime_error("loadRemoteMD in listener thread failed\n");
+                        throw std::runtime_error("loadRemoteMD in listener thread failed, critically failing\n");
                     }
                     //not sure what to do with remote_agent
                 } else if(header == "SEND") {
@@ -260,14 +267,14 @@ void nixlAgent::commWorker(){
                     close(socketClient);
                     data->remoteSockets.erase(ip_address);
                 } else {
-                    throw std::runtime_error("Received socket message with bad header" + header + "\n");
+                    throw std::runtime_error("Received socket message with bad header" + header + ", critically failing\n");
                 }
             }
         }
 
         //relatively large delay for now
         nixlTime::us_t start = nixlTime::getUs();
-        while( (start + 100000) > nixlTime::getUs()) {
+        while( (start + data->config.lthrDelay) > nixlTime::getUs()) {
             std::this_thread::yield();
         }
     }
