@@ -130,6 +130,7 @@ void nixlAgent::commWorker(){
             nixl_comm_t req_command = std::get<0>(request);
             std::string req_ip = std::get<1>(request);
             int req_port = std::get<2>(request);
+            std::string my_MD = std::get<3>(request);
 
             //use remote IP for socket lookup
             auto client = data->remoteSockets.find(req_ip);
@@ -150,9 +151,6 @@ void nixlAgent::commWorker(){
                     } else {
                         client_fd = client->second;
                     }
-
-                    nixl_blob_t my_MD;
-                    getLocalMD(my_MD);
 
                     sendCommMessage(client_fd, std::string("NIXLCOMM:SENT" + my_MD));
                     break;
@@ -242,7 +240,7 @@ void nixlAgent::commWorker(){
     }
 }
 
-void nixlAgentData::enqueueCommWork(std::tuple<nixl_comm_t, std::string, int> request){
+void nixlAgentData::enqueueCommWork(std::tuple<nixl_comm_t, std::string, int, std::string> request){
     std::lock_guard<std::mutex> lock(commLock);
     commQueue.push_back(request);
 }

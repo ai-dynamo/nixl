@@ -28,7 +28,13 @@ typedef std::vector<nixlBackendEngine*> backend_list_t;
 //Internal typedef to define metadata communication request types
 //To be extended with ETCD operations
 typedef enum { SOCK_SEND, SOCK_FETCH, SOCK_INVAL } nixl_comm_t;
-typedef std::tuple<nixl_comm_t, std::string, int> nixl_comm_req_t;
+
+//Command to be sent to listener thread from NIXL API
+// 1) Command type
+// 2) IP Address
+// 3) Port
+// 4) Metadata to send (for sendLocalMD calls)
+typedef std::tuple<nixl_comm_t, std::string, int, nixl_blob_t> nixl_comm_req_t;
 
 class nixlAgentData {
     private:

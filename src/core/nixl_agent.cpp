@@ -1006,7 +1006,11 @@ nixlAgent::sendLocalMD (const std::string remote_ip, const int port) const {
     int send_port = DEFAULT_COMM_PORT;
     if(port != 0) send_port = port;
 
-    data->enqueueCommWork(std::make_tuple(SOCK_SEND, remote_ip, send_port));
+    nixl_blob_t myMD;
+    nixl_status_t ret = getLocalMD(myMD);
+    if(ret < 0) return ret;
+
+    data->enqueueCommWork(std::make_tuple(SOCK_SEND, remote_ip, send_port, myMD));
 
     return NIXL_SUCCESS;
 }
@@ -1023,7 +1027,7 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
     int send_port = DEFAULT_COMM_PORT;
     if(port != 0) send_port = port;
 
-    data->enqueueCommWork(std::make_tuple(SOCK_FETCH, remote_ip, send_port));
+    data->enqueueCommWork(std::make_tuple(SOCK_FETCH, remote_ip, send_port, ""));
 
     return NIXL_SUCCESS;
 }
@@ -1038,7 +1042,7 @@ nixlAgent::invalidateLocalMD (const std::string remote_ip, const int port) const
     int send_port = DEFAULT_COMM_PORT;
     if(port != 0) send_port = port;
 
-    data->enqueueCommWork(std::make_tuple(SOCK_INVAL, remote_ip, send_port));
+    data->enqueueCommWork(std::make_tuple(SOCK_INVAL, remote_ip, send_port, ""));
 
     return NIXL_SUCCESS;
 }
