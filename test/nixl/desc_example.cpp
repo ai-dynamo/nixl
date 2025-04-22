@@ -306,19 +306,6 @@ int main()
     nixl_reg_dlist_t dlist24 (DRAM_SEG, false);
     nixl_reg_dlist_t dlist25 (DRAM_SEG, false);
 
-    dlist20.populate (dlist10, dlist21);
-    dlist20.populate (dlist11, dlist22);
-    dlist20.populate (dlist12, dlist23);
-    dlist20.populate (dlist13, dlist24);
-    dlist20.populate (dlist14, dlist25);
-
-    std::cout << "\n";
-    dlist21.print();
-    dlist22.print();
-    dlist23.print();
-    dlist24.print();
-    dlist25.print();
-
     testPerf();
 
     delete ser_des;
