@@ -32,59 +32,30 @@ void InitializeNixlLogging()
     // Initialize Abseil logging system.
     absl::InitializeLog();
 
-    // First, check for runtime override via environment variable
-    const char* env_log_level = std::getenv("NIXL_LOG_LEVEL");
-    if (env_log_level != nullptr) {
-        std::string level_str = absl::AsciiStrToUpper(env_log_level);
-        if (level_str == "TRACE") {
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
-            absl::SetVLogLevel("*", 2);
-        } else if (level_str == "DEBUG") {
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
-            absl::SetVLogLevel("*", 1);
-        } else if (level_str == "INFO") {
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
-            absl::SetVLogLevel("*", 0);
-        } else if (level_str == "WARNING") {
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kWarning);
-            absl::SetVLogLevel("*", 0);
-        } else if (level_str == "ERROR") {
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kError);
-            absl::SetVLogLevel("*", 0);
-        } else if (level_str == "FATAL") {
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kFatal);
-            absl::SetVLogLevel("*", 0);
-        } else {
-             // Unknown level from env var, default to WARNING
-             absl::SetMinLogLevel(absl::LogSeverityAtLeast::kWarning);
-             absl::SetVLogLevel("*", 0);
-        }
-    } else {
-        // If environment variable is not set, use the compile-time default level
-        #if defined(LOG_LEVEL_TRACE)
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
-            absl::SetVLogLevel("*", 2);
-        #elif defined(LOG_LEVEL_DEBUG)
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
-            absl::SetVLogLevel("*", 1);
-        #elif defined(LOG_LEVEL_INFO)
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
-            absl::SetVLogLevel("*", 0);
-        #elif defined(LOG_LEVEL_WARNING)
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kWarning);
-            absl::SetVLogLevel("*", 0);
-        #elif defined(LOG_LEVEL_ERROR)
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kError);
-            absl::SetVLogLevel("*", 0);
-        #elif defined(LOG_LEVEL_FATAL)
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kFatal);
-            absl::SetVLogLevel("*", 0);
-        #else
-            // Default compile-time level if none of the above are defined (should match meson default)
-            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kError); // Default to Error
-            absl::SetVLogLevel("*", 0);
-        #endif
-    }
+    // Log level is fixed at compile time.
+    #if defined(LOG_LEVEL_TRACE)
+        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+        absl::SetVLogLevel("*", 2);
+    #elif defined(LOG_LEVEL_DEBUG)
+        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+        absl::SetVLogLevel("*", 1);
+    #elif defined(LOG_LEVEL_INFO)
+        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+        absl::SetVLogLevel("*", 0);
+    #elif defined(LOG_LEVEL_WARNING)
+        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kWarning);
+        absl::SetVLogLevel("*", 0);
+    #elif defined(LOG_LEVEL_ERROR)
+        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kError);
+        absl::SetVLogLevel("*", 0);
+    #elif defined(LOG_LEVEL_FATAL)
+        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kFatal);
+        absl::SetVLogLevel("*", 0);
+    #else
+        // Default compile-time level if none of the above are defined (should match meson default)
+        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kError);
+        absl::SetVLogLevel("*", 0);
+    #endif
 }
 
 } // anonymous namespace

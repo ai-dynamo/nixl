@@ -80,9 +80,9 @@ buildtype = get_option('buildtype')
 actual_log_level = log_level_opt
 if actual_log_level == 'auto'
   if buildtype == 'debug'
-    actual_log_level = 'debug'
+    actual_log_level = 'trace'
   else # release, debugoptimized, or plain
-    actual_log_level = 'error'
+    actual_log_level = 'warning'
   endif
 endif
 
