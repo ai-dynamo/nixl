@@ -576,6 +576,36 @@ class nixl_agent:
         return self.agent.getLocalMD()
 
     """
+    @brief Get the metadata of the local agent.
+
+    @return Metadata of the local agent, in bytes.
+    """
+
+    def send_local_metadata(self, ip_addr: str = "", port: int = 0):
+        self.agent.sendLocalMD(ip_addr, port)
+
+
+    """
+    @brief Get the metadata of the local agent.
+
+    @return Metadata of the local agent, in bytes.
+    """
+
+    def fetch_remote_metadata(self, remote_agent: str, ip_addr: str = "", port: int = 0):
+        self.agent.fetchRemoteMD(remote_agent, ip_addr, port)
+
+    """
+    @brief Get the metadata of the local agent.
+
+    @return Metadata of the local agent, in bytes.
+    """
+
+    def remove_local_metadata(ip_addr: str = "", port: int = 0):
+        self.agent.invalidateLocalMD(ip_addr, port)
+
+
+
+    """
     @brief Add a remote agent using its metadata. After this call, current agent can
             initiate transfers towards the remote agent.
 
