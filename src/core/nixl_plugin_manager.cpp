@@ -49,27 +49,27 @@ nixlPluginHandle::~nixlPluginHandle() {
     }
 }
 
-nixlBackendEngine* nixlPluginHandle::createEngine(const nixlBackendInitParams* init_params) {
+nixlBackendEngine* nixlPluginHandle::createEngine(const nixlBackendInitParams* init_params) const {
     if (plugin_ && plugin_->create_engine) {
         return plugin_->create_engine(init_params);
     }
     return nullptr;
 }
 
-void nixlPluginHandle::destroyEngine(nixlBackendEngine* engine) {
+void nixlPluginHandle::destroyEngine(nixlBackendEngine* engine) const {
     if (plugin_ && plugin_->destroy_engine && engine) {
         plugin_->destroy_engine(engine);
     }
 }
 
-const char* nixlPluginHandle::getName() {
+const char* nixlPluginHandle::getName() const {
     if (plugin_ && plugin_->get_plugin_name) {
         return plugin_->get_plugin_name();
     }
     return "unknown";
 }
 
-const char* nixlPluginHandle::getVersion() {
+const char* nixlPluginHandle::getVersion() const {
     if (plugin_ && plugin_->get_plugin_version) {
         return plugin_->get_plugin_version();
     }
@@ -113,7 +113,7 @@ std::map<nixl_backend_t, std::string> loadPluginList(const std::string& filename
     return plugins;
 }
 
-std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPluginFromPath(const std::string& plugin_path) {
+std::shared_ptr<const nixlPluginHandle> nixlPluginManager::loadPluginFromPath(const std::string& plugin_path) {
     // Open the plugin file
     void* handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
@@ -150,7 +150,7 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPluginFromPath(const st
     }
 
     // Create and store the plugin handle
-    auto plugin_handle = std::make_shared<nixlPluginHandle>(handle, plugin);
+    auto plugin_handle = std::make_shared<const nixlPluginHandle>(handle, plugin);
 
     return plugin_handle;
 }
@@ -224,7 +224,7 @@ void nixlPluginManager::addPluginDirectory(const std::string& directory) {
     discoverPluginsFromDir(directory);
 }
 
-std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::string& plugin_name) {
+std::shared_ptr<const nixlPluginHandle> nixlPluginManager::loadPlugin(const std::string& plugin_name) {
     // Check if the plugin is already loaded
     // Static Plugins are preloaded so return handle
     auto it = loaded_plugins_.find(plugin_name);
@@ -301,7 +301,7 @@ void nixlPluginManager::unloadPlugin(const nixl_backend_t& plugin_name) {
     loaded_plugins_.erase(plugin_name);
 }
 
-std::shared_ptr<nixlPluginHandle> nixlPluginManager::getPlugin(const nixl_backend_t& plugin_name) {
+std::shared_ptr<const nixlPluginHandle> nixlPluginManager::getPlugin(const nixl_backend_t& plugin_name) {
     auto it = loaded_plugins_.find(plugin_name);
     if (it != loaded_plugins_.end()) {
         return it->second;
@@ -309,7 +309,7 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::getPlugin(const nixl_backen
     return nullptr;
 }
 
-nixl_b_params_t nixlPluginHandle::getBackendOptions() {
+nixl_b_params_t nixlPluginHandle::getBackendOptions() const {
     nixl_b_params_t params;
     if (plugin_ && plugin_->get_backend_options) {
         return plugin_->get_backend_options();
@@ -317,7 +317,7 @@ nixl_b_params_t nixlPluginHandle::getBackendOptions() {
     return params; // Return empty params if not implemented
 }
 
-nixl_mem_list_t nixlPluginHandle::getBackendMems() {
+nixl_mem_list_t nixlPluginHandle::getBackendMems() const {
     nixl_mem_list_t mems;
     if (plugin_ && plugin_->get_backend_mems) {
         return plugin_->get_backend_mems();
@@ -346,7 +346,7 @@ void nixlPluginManager::registerStaticPlugin(const char* name, nixlStaticPluginC
     nixlBackendPlugin* plugin = info.createFunc();
     if (plugin) {
         // Register the loaded plugin
-        auto plugin_handle = std::make_shared<nixlPluginHandle>(nullptr, plugin);
+        auto plugin_handle = std::make_shared<const nixlPluginHandle>(nullptr, plugin);
         loaded_plugins_[name] = plugin_handle;
     }
 }

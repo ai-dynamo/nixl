@@ -47,7 +47,7 @@ class LoadSinglePluginTestFixture
     : public testing::TestWithParam<PluginDesc> {
 protected:
   nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
-  std::shared_ptr<nixlPluginHandle> plugin_handle_;
+  std::shared_ptr<const nixlPluginHandle> plugin_handle_;
 
   void SetUp() override {
 #if !TEST_ALL_PLUGINS
@@ -73,7 +73,7 @@ class LoadMultiplePluginsTestFixture
     : public testing::TestWithParam<std::vector<PluginDesc>> {
 protected:
   nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
-  std::vector<std::shared_ptr<nixlPluginHandle>> plugin_handles_;
+  std::vector<std::shared_ptr<const nixlPluginHandle>> plugin_handles_;
 
   void SetUp() override {
     for (const auto &plugin : GetParam()) {
@@ -101,7 +101,7 @@ protected:
   bool AreAllLoaded() {
     return all_of(
         plugin_handles_.begin(), plugin_handles_.end(),
-        [](std::shared_ptr<nixlPluginHandle> ptr) { return ptr != nullptr; });
+        [](std::shared_ptr<const nixlPluginHandle> ptr) { return ptr != nullptr; });
   }
 };
 
