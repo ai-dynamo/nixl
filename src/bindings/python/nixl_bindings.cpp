@@ -278,7 +278,7 @@ PYBIND11_MODULE(_bindings, m) {
 
     py::class_<nixlAgentConfig>(m, "nixlAgentConfig")
         //implicit constructor
-        .def(py::init<bool>());
+        .def(py::init<bool, bool, int>());
 
     //note: pybind will automatically convert notif_map to python types:
     //so, a Dictionary of string: List<string>
