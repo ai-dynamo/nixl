@@ -17,89 +17,98 @@
 #include "mock_dram_engine.h"
 
 namespace mocks {
-MockDramBackendEngine::MockDramBackendEngine(
-    const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {}
 
 MockDramBackendEngine::~MockDramBackendEngine() {}
 
-bool MockDramBackendEngine::supportsRemote() const { return true; }
-bool MockDramBackendEngine::supportsLocal() const { return true; }
-bool MockDramBackendEngine::supportsNotif() const { return false; }
-bool MockDramBackendEngine::supportsProgTh() const { return false; };
-
-nixl_mem_list_t MockDramBackendEngine::getSupportedMems() const {
-  return nixl_mem_list_t{DRAM_SEG};
-}
-
-nixl_status_t MockDramBackendEngine::registerMem(const nixlBlobDesc &,
-                                                 const nixl_mem_t &,
-                                                 nixlBackendMD *&) {
+nixl_status_t MockDramBackendEngine::registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem,
+                                                nixlBackendMD *&out) {
+  sharedState++;
   return NIXL_SUCCESS;
 }
 
-nixl_status_t MockDramBackendEngine::deregisterMem(nixlBackendMD *) {
+nixl_status_t MockDramBackendEngine::deregisterMem(nixlBackendMD *meta) {
+  sharedState++;
   return NIXL_SUCCESS;
 }
-nixl_status_t MockDramBackendEngine::connect(const std::string &) {
-  return NIXL_SUCCESS;
-};
-nixl_status_t MockDramBackendEngine::disconnect(const std::string &) {
-  return NIXL_SUCCESS;
-};
-nixl_status_t MockDramBackendEngine::unloadMD(nixlBackendMD *) {
-  return NIXL_SUCCESS;
-};
-nixl_status_t MockDramBackendEngine::prepXfer(const nixl_xfer_op_t &,
-                                              const nixl_meta_dlist_t &,
-                                              const nixl_meta_dlist_t &,
-                                              const std::string &,
-                                              nixlBackendReqH *&,
-                                              const nixl_opt_b_args_t *) {
-  return NIXL_SUCCESS;
-};
-nixl_status_t MockDramBackendEngine::postXfer(const nixl_xfer_op_t &,
-                                              const nixl_meta_dlist_t &,
-                                              const nixl_meta_dlist_t &,
-                                              const std::string &,
-                                              nixlBackendReqH *&,
-                                              const nixl_opt_b_args_t *) {
-  return NIXL_SUCCESS;
-};
-nixl_status_t MockDramBackendEngine::checkXfer(nixlBackendReqH *) {
-  return NIXL_SUCCESS;
-};
-nixl_status_t MockDramBackendEngine::releaseReqH(nixlBackendReqH *) {
-  return NIXL_SUCCESS;
-};
 
-nixl_status_t MockDramBackendEngine::getPublicData(const nixlBackendMD *,
-                                                   std::string &) const {
-  return NIXL_SUCCESS;
-};
-nixl_status_t MockDramBackendEngine::getConnInfo(std::string &) const {
+nixl_status_t MockDramBackendEngine::connect(const std::string &remote_agent) {
+  sharedState++;
   return NIXL_SUCCESS;
 }
-nixl_status_t MockDramBackendEngine::loadRemoteConnInfo(const std::string &,
-                                                        const std::string &) {
+
+nixl_status_t MockDramBackendEngine::disconnect(const std::string &remote_agent) {
+  sharedState++;
   return NIXL_SUCCESS;
 }
-nixl_status_t MockDramBackendEngine::loadRemoteMD(const nixlBlobDesc &,
-                                                  const nixl_mem_t &,
-                                                  const std::string &,
-                                                  nixlBackendMD *&) {
+
+nixl_status_t MockDramBackendEngine::unloadMD(nixlBackendMD *input) {
+  sharedState++;
   return NIXL_SUCCESS;
 }
-nixl_status_t MockDramBackendEngine::loadLocalMD(nixlBackendMD *,
-                                                 nixlBackendMD *&) {
+
+nixl_status_t MockDramBackendEngine::prepXfer(const nixl_xfer_op_t &operation,
+                                             const nixl_meta_dlist_t &local,
+                                             const nixl_meta_dlist_t &remote,
+                                             const std::string &remote_agent,
+                                             nixlBackendReqH *&handle,
+                                             const nixl_opt_b_args_t *opt_args) {
+  sharedState++;
   return NIXL_SUCCESS;
 }
-nixl_status_t MockDramBackendEngine::getNotifs(notif_list_t &) {
+
+nixl_status_t MockDramBackendEngine::postXfer(const nixl_xfer_op_t &operation,
+                                             const nixl_meta_dlist_t &local,
+                                             const nixl_meta_dlist_t &remote,
+                                             const std::string &remote_agent,
+                                             nixlBackendReqH *&handle,
+                                             const nixl_opt_b_args_t *opt_args) {
+  sharedState++;
   return NIXL_SUCCESS;
 }
-nixl_status_t MockDramBackendEngine::genNotif(const std::string &,
-                                              const std::string &) {
+
+nixl_status_t MockDramBackendEngine::checkXfer(nixlBackendReqH *handle) {
+  sharedState++;
   return NIXL_SUCCESS;
 }
-int MockDramBackendEngine::progress() { return 0; }
+
+nixl_status_t MockDramBackendEngine::releaseReqH(nixlBackendReqH *handle) {
+  sharedState++;
+  return NIXL_SUCCESS;
+}
+
+nixl_status_t MockDramBackendEngine::loadRemoteConnInfo(const std::string &remote_agent,
+                                                       const std::string &remote_conn_info) {
+  sharedState++;
+  return NIXL_SUCCESS;
+}
+
+nixl_status_t MockDramBackendEngine::loadRemoteMD(const nixlBlobDesc &input,
+                                                 const nixl_mem_t &nixl_mem,
+                                                 const std::string &remote_agent,
+                                                 nixlBackendMD *&output) {
+  sharedState++;
+  return NIXL_SUCCESS;
+}
+
+nixl_status_t MockDramBackendEngine::loadLocalMD(nixlBackendMD *input,
+                                                nixlBackendMD *&output) {
+  sharedState++;
+  return NIXL_SUCCESS;
+}
+
+nixl_status_t MockDramBackendEngine::getNotifs(notif_list_t &notif_list) {
+  sharedState++;
+  return NIXL_SUCCESS;
+}
+
+nixl_status_t MockDramBackendEngine::genNotif(const std::string &remote_agent,
+                                             const std::string &msg) {
+  sharedState++;
+  return NIXL_SUCCESS;
+}
+
+int MockDramBackendEngine::progress() {
+  sharedState++;
+  return 0;
+}
 } // namespace mocks
