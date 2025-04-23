@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <vector>
+#include <mutex>
 #include "backend/backend_plugin.h"
 
 // Forward declarations
@@ -65,6 +66,7 @@ private:
     std::map<nixl_backend_t, std::shared_ptr<const nixlPluginHandle>> loaded_plugins_;
     std::vector<std::string> plugin_dirs_;
     std::vector<nixlStaticPluginInfo> static_plugins_;
+    std::mutex lock;
 
     void registerBuiltinPlugins();
     void registerStaticPlugin(const char* name, nixlStaticPluginCreatorFunc creator);

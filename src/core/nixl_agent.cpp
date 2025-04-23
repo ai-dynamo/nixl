@@ -115,7 +115,6 @@ nixlAgent::~nixlAgent() {
 
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
-    NIXL_LOCK_GUARD(data->lock);
     auto& plugin_manager = nixlPluginManager::getInstance();
     plugins = plugin_manager.getLoadedPluginNames();
     return NIXL_SUCCESS;
@@ -127,8 +126,6 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
                             nixl_b_params_t &params) const {
 
     // TODO: unify to uppercase/lowercase and do ltrim/rtrim for type
-
-    NIXL_LOCK_GUARD(data->lock);
 
     // First try to get options from a loaded plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -146,6 +143,8 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
     if (plugin_handle) {
         params = plugin_handle->getBackendOptions();
         mems   = plugin_handle->getBackendMems();
+
+        NIXL_LOCK_GUARD(data->lock);
 
         // We don't keep the plugin loaded if we didn't have it before
         if (data->backendEngines.count(type) == 0) {
