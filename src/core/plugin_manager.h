@@ -67,6 +67,7 @@ private:
     std::vector<nixlStaticPluginInfo> static_plugins_;
 
     void registerBuiltinPlugins();
+    void registerStaticPlugin(const char* name, nixlStaticPluginCreatorFunc creator);
 
     // Private constructor for singleton pattern
     nixlPluginManager();
@@ -105,7 +106,6 @@ public:
     void addPluginDirectory(const std::string& directory);
 
     // Static Plugin Helpers
-    void registerStaticPlugin(const char* name, nixlStaticPluginCreatorFunc creator);
     const std::vector<nixlStaticPluginInfo>& getStaticPlugins();
 };
 

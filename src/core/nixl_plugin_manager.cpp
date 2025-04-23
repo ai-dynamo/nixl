@@ -27,6 +27,7 @@
 #include <iostream>
 #include <string>
 #include <map>
+#include <mutex>
 
 // pluginHandle implementation
 nixlPluginHandle::nixlPluginHandle(void* handle, nixlBackendPlugin* plugin)
@@ -184,17 +185,14 @@ nixlPluginManager::nixlPluginManager() {
         plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);  // Insert at the beginning for priority
         discoverPluginsFromDir(plugin_dir);
     }
+
+    registerBuiltinPlugins();
 }
 
 nixlPluginManager& nixlPluginManager::getInstance() {
+    // Meyers singleton initialization is safe in multi-threaded environment.
+    // Consult standard [stmt.dcl] chapter for details.
     static nixlPluginManager instance;
-
-    // Only register built-in plugins once
-    static bool registered = false;
-    if (!registered) {
-        instance.registerBuiltinPlugins();
-        registered = true;
-    }
 
     return instance;
 }
