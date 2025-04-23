@@ -95,7 +95,7 @@ nixlAgent::nixlAgent(const std::string &name,
 
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
-        if(my_port == 0) my_port = DEFAULT_COMM_PORT;
+        if(my_port == 0) my_port = default_comm_port;
         data->listener = new nixlMDStreamListener(my_port);
         data->listener->setupListener();
         data->commThreadStop = false;
@@ -1002,7 +1002,7 @@ nixlAgent::sendLocalMD (const std::string remote_ip, const int port) const {
         std::cerr << "ETCD not supported yet, please specify IP\n";
         return NIXL_ERR_NOT_SUPPORTED;
     }
-    int send_port = DEFAULT_COMM_PORT;
+    int send_port = default_comm_port;
     if(port != 0) send_port = port;
 
     nixl_blob_t myMD;
@@ -1023,7 +1023,7 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
         std::cerr << "ETCD not supported yet, please specify IP\n";
         return NIXL_ERR_NOT_SUPPORTED;
     }
-    int send_port = DEFAULT_COMM_PORT;
+    int send_port = default_comm_port;
     if(port != 0) send_port = port;
 
     data->enqueueCommWork(std::make_tuple(SOCK_FETCH, remote_ip, send_port, ""));
@@ -1038,7 +1038,7 @@ nixlAgent::invalidateLocalMD (const std::string remote_ip, const int port) const
         std::cerr << "ETCD not supported yet, please specify IP\n";
         return NIXL_ERR_NOT_SUPPORTED;
     }
-    int send_port = DEFAULT_COMM_PORT;
+    int send_port = default_comm_port;
     if(port != 0) send_port = port;
 
     data->enqueueCommWork(std::make_tuple(SOCK_INVAL, remote_ip, send_port, ""));
