@@ -85,8 +85,8 @@ if __name__ == "__main__":
     if args.mode == "target":
         # If desired, can use send_notif instead. Also indicate
         # the notification that is expected to be received.
-        targer_descs = reg_descs.trim()
-        _socket.send(agent.get_serialized_descs(targer_descs))
+        target_descs = reg_descs.trim()
+        _socket.send(agent.get_serialized_descs(target_descs))
         # For now the notification is just UUID, could be any python bytes.
         # Also can have more than UUID, and check_remote_xfer_done returns
         # the full python bytes, here it would be just UUID.
@@ -95,11 +95,11 @@ if __name__ == "__main__":
     else:
         # If send_notif is used, get_new_notifs should listen for it,
         # or directly calling check_remote_xfer_done
-        targer_descs = agent.deserialize_descs(_socket.recv())
+        target_descs = agent.deserialize_descs(_socket.recv())
         initiator_descs = reg_descs.trim()
 
         xfer_handle = agent.initialize_xfer(
-            "READ", initiator_descs, targer_descs, peer_name, "UUID"
+            "READ", initiator_descs, target_descs, peer_name, "UUID"
         )
         if not xfer_handle:
             print("Creating transfer failed.")
