@@ -63,25 +63,28 @@ class nixlAgentConfig {
          * @param pthr_delay_us      Optional delay for pthread in us
          * @param pthr_delay_us      Optional delay for listener thread in us
          */
-        nixlAgentConfig(const bool use_prog_thread, const bool use_listen_thread=false, const int port=0, const uint64_t pthr_delay_us=0, const uint64_t lthr_delay_us = 100000) {
-            this->useProgThread   = use_prog_thread;
-            this->useListenThread = use_listen_thread;
-            this->listenPort      = port;
-            this->pthrDelay       = pthr_delay_us;
-            this->lthrDelay       = lthr_delay_us;
-        }
+        nixlAgentConfig (const bool use_prog_thread,
+                         const bool use_listen_thread=false,
+                         const int port=0,
+                         const uint64_t pthr_delay_us=0,
+                         const uint64_t lthr_delay_us = 100000) :
+                         useProgThread(use_prog_thread),
+                         useListenThread(use_listen_thread),
+                         listenPort(port),
+                         pthrDelay(pthr_delay_us),
+                         lthrDelay(lthr_delay_us) { }
 
         /**
          * @brief Copy constructor for nixlAgentConfig object
          *
          * @param cfg  nixlAgentConfig object
          */
-        nixlAgentConfig(const nixlAgentConfig &cfg) = default;
+        nixlAgentConfig (const nixlAgentConfig &cfg) = default;
 
         /**
          * @brief Default destructor for nixlAgentConfig
          */
-        ~nixlAgentConfig() = default;
+        ~nixlAgentConfig () = default;
 
     friend class nixlAgent;
 };
