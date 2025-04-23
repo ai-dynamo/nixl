@@ -488,6 +488,9 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(agent.getLocalMD(ret_str));
                     return py::bytes(ret_str);
                 })
+        .def("sendLocalMD", &nixlAgent::sendLocalMD)
+        .def("fetchRemoteMD", &nixlAgent::fetchRemoteMD)
+        .def("invalidateLocalMD", &nixlAgent::invalidateLocalMD)
         .def("loadRemoteMD", [](nixlAgent &agent, const std::string &remote_metadata) -> py::bytes {
                     //python can only interpret text strings
                     std::string remote_name("");
