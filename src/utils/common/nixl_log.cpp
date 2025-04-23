@@ -53,7 +53,7 @@ void InitializeNixlLogging()
         absl::SetVLogLevel("*", 0);
     #else
         // Default compile-time level if none of the above are defined (should match meson default)
-        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kError);
+        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kWarning);
         absl::SetVLogLevel("*", 0);
     #endif
 }
