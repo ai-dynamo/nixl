@@ -29,6 +29,9 @@ nixl_xfer_handle = int
 @brief Configuration class for NIXL agent.
 
 @param enable_prog_thread Whether to enable the progress thread, if available.
+@param enable_listen_thread Whether to enable the listener thread for metadata communication.
+@param listen_port Specify the port for the listener thread to listen on.
+
 @param backends List of backend names for agent to initialize.
         Default is UCX, other backends can be added to the list, or after
         agent creation, can be initialized with create_backend.
@@ -36,10 +39,18 @@ nixl_xfer_handle = int
 
 
 class nixl_agent_config:
-    def __init__(self, enable_prog_thread=True, backends=["UCX"]):
+    def __init__(
+        self,
+        enable_prog_thread: bool = True,
+        enable_listen_thread: bool = False,
+        listen_port: int = 0,
+        backends: list[str] = ["UCX"],
+    ):
         # TODO: add backend init parameters
         self.backends = backends
         self.enable_pthread = enable_prog_thread
+        self.enable_listen = enable_listen_thread
+        self.port = listen_port
 
 
 """
@@ -69,7 +80,9 @@ class nixl_agent:
             nixl_conf = nixl_agent_config()  # Using defaults set in nixl_agent_config
 
         # Set agent config and instantiate an agent
-        agent_config = nixlBind.nixlAgentConfig(nixl_conf.enable_pthread)
+        agent_config = nixlBind.nixlAgentConfig(
+            nixl_conf.enable_pthread, nixl_conf.enable_listen, nixl_conf.port
+        )
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name
@@ -576,34 +589,36 @@ class nixl_agent:
         return self.agent.getLocalMD()
 
     """
-    @brief Get the metadata of the local agent.
+    @brief Send all of your metadata to a peer or central metadata server.
 
-    @return Metadata of the local agent, in bytes.
+    @param ip_addr If specified, will only send metadata to one peer by IP address.
+    @param port    If specified, will try to send to specific port.
     """
 
     def send_local_metadata(self, ip_addr: str = "", port: int = 0):
         self.agent.sendLocalMD(ip_addr, port)
 
-
     """
-    @brief Get the metadata of the local agent.
+    @brief Request metadata be retrieved from central metadata server or sent by peer.
 
-    @return Metadata of the local agent, in bytes.
+    @param ip_addr If specified, will request metadata from one peer by IP address.
+    @param port    If specified, will try to request on specific port.
     """
 
-    def fetch_remote_metadata(self, remote_agent: str, ip_addr: str = "", port: int = 0):
+    def fetch_remote_metadata(
+        self, remote_agent: str, ip_addr: str = "", port: int = 0
+    ):
         self.agent.fetchRemoteMD(remote_agent, ip_addr, port)
 
     """
-    @brief Get the metadata of the local agent.
+    @brief Invalidate your own metadata in the central metadata server, or from a specific peer.
 
-    @return Metadata of the local agent, in bytes.
+    @param ip_addr If specified, will only send invalidation to one peer by IP address.
+    @param port    If specified, will try to send to specific port.
     """
 
-    def remove_local_metadata(ip_addr: str = "", port: int = 0):
+    def remove_local_metadata(self, ip_addr: str = "", port: int = 0):
         self.agent.invalidateLocalMD(ip_addr, port)
-
-
 
     """
     @brief Add a remote agent using its metadata. After this call, current agent can
