@@ -33,7 +33,6 @@ class nixlAgent {
     private:
         /** @var  data  The members in agent class wrapped into single nixlAgentData member. */
         nixlAgentData* data;
-        void commWorker();
 
     public:
         /*** Initialization and Registering Methods ***/

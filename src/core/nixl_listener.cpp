@@ -87,9 +87,9 @@ ssize_t recvCommMessage(int fd, std::string &msg){
     return recv_bytes;
 }
 
-void nixlAgent::commWorker(){
+void nixlAgentData::commWorker(nixlAgent* myAgent){
 
-    while(!(data->commThreadStop)) {
+    while(!(commThreadStop)) {
 
         std::vector<nixl_comm_req_t> work_queue;
 
@@ -97,7 +97,7 @@ void nixlAgent::commWorker(){
         int new_fd = 0;
 
         while(new_fd != -1) {
-            new_fd = data->listener->acceptClient();
+            new_fd = listener->acceptClient();
             std::string accepted_client;
 
             if(new_fd != -1){
@@ -111,7 +111,7 @@ void nixlAgent::commWorker(){
                 } else {
                     throw std::runtime_error("getpeername failed");
                 }
-                data->remoteSockets[accepted_client] = new_fd;
+                remoteSockets[accepted_client] = new_fd;
 
                 //make new socket nonblocking
                 int new_flags = fcntl(new_fd, F_GETFL, 0) | O_NONBLOCK;
@@ -123,7 +123,7 @@ void nixlAgent::commWorker(){
         }
 
         //second, do agent commands
-        data->getCommWork(work_queue);
+        getCommWork(work_queue);
 
         for(nixl_comm_req_t request: work_queue) {
 
@@ -133,20 +133,20 @@ void nixlAgent::commWorker(){
             std::string my_MD = std::get<3>(request);
 
             //use remote IP for socket lookup
-            auto client = data->remoteSockets.find(req_ip);
+            auto client = remoteSockets.find(req_ip);
             int client_fd;
 
             switch(req_command) {
                 case SOCK_SEND:
                 {
                     //not connected
-                    if(client == data->remoteSockets.end()) {
+                    if(client == remoteSockets.end()) {
                         int new_client = connectToIP(req_ip, req_port);
                         if(new_client == -1) {
                             std::cerr << "Listener thread could not connect to IP " << req_ip;
                             break;
                         }
-                        data->remoteSockets[req_ip] = new_client;
+                        remoteSockets[req_ip] = new_client;
                         client_fd = new_client;
                     } else {
                         client_fd = client->second;
@@ -157,13 +157,13 @@ void nixlAgent::commWorker(){
                 }
                 case SOCK_FETCH:
                 {
-                    if(client == data->remoteSockets.end()) {
+                    if(client == remoteSockets.end()) {
                         int new_client = connectToIP(req_ip, req_port);
                         if(new_client == -1) {
                             std::cerr << "Listener thread could not connect to IP " << req_ip;
                             break;
                         }
-                        data->remoteSockets[req_ip] = new_client;
+                        remoteSockets[req_ip] = new_client;
                         client_fd = new_client;
                     } else
                         client_fd = client->second;
@@ -173,14 +173,14 @@ void nixlAgent::commWorker(){
                 }
                 case SOCK_INVAL:
                 {
-                    if(client == data->remoteSockets.end()) {
+                    if(client == remoteSockets.end()) {
                         //improper usage
                         throw std::runtime_error("invalidate on closed socket\n");
                     }
                     client_fd = client->second;
                     sendCommMessage(client_fd, std::string("NIXLCOMM:INVL"));
                     close(client_fd);
-                    data->remoteSockets.erase(req_ip);
+                    remoteSockets.erase(req_ip);
                     break;
                 }
                 default:
@@ -192,7 +192,7 @@ void nixlAgent::commWorker(){
         }
 
         //third, do remote commands
-        for (const auto& [ip_address, socketClient] : data->remoteSockets ) {
+        for (const auto& [ip_address, socketClient] : remoteSockets ) {
             std::string commands;
             std::vector<std::string> command_list;
             nixl_status_t ret;
@@ -210,22 +210,22 @@ void nixlAgent::commWorker(){
                 //always just 4 chars:
                 std::string header = command.substr(0, 4);
 
-                if(header == "SENT") {
+                if(header == "LOAD") {
                     std::string remote_md = command.substr(4);
                     std::string remote_agent;
-                    ret = loadRemoteMD(remote_md, remote_agent);
+                    ret = myAgent->loadRemoteMD(remote_md, remote_agent);
                     if(ret != NIXL_SUCCESS) {
                         throw std::runtime_error("loadRemoteMD in listener thread failed, critically failing\n");
                     }
                     //not sure what to do with remote_agent
                 } else if(header == "SEND") {
                     nixl_blob_t my_MD;
-                    getLocalMD(my_MD);
+                    myAgent->getLocalMD(my_MD);
 
                     sendCommMessage(socketClient, std::string("NIXLCOMM:LOAD" + my_MD));
                 } else if(header == "INVL") {
                     close(socketClient);
-                    data->remoteSockets.erase(ip_address);
+                    remoteSockets.erase(ip_address);
                 } else {
                     throw std::runtime_error("Received socket message with bad header" + header + ", critically failing\n");
                 }
@@ -234,7 +234,7 @@ void nixlAgent::commWorker(){
 
         //relatively large delay for now
         nixlTime::us_t start = nixlTime::getUs();
-        while( (start + data->config.lthrDelay) > nixlTime::getUs()) {
+        while( (start + config.lthrDelay) > nixlTime::getUs()) {
             std::this_thread::yield();
         }
     }

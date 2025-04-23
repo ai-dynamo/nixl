@@ -69,6 +69,7 @@ class nixlAgentData {
         std::mutex                            commLock;
         bool                                  commThreadStop;
 
+        void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
 

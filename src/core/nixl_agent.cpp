@@ -99,7 +99,7 @@ nixlAgent::nixlAgent(const std::string &name,
         data->listener = new nixlMDStreamListener(my_port);
         data->listener->setupListener();
         data->commThreadStop = false;
-        data->commThread = std::thread(&nixlAgent::commWorker, this);
+        data->commThread = std::thread(&nixlAgentData::commWorker, data, this);
     }
 }
 
