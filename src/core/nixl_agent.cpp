@@ -58,8 +58,7 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
 }
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
-nixlAgentData::nixlAgentData(nixlAgent* my_agent,
-                             const std::string &name,
+nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :
                                    name(name), config(cfg) {
         memorySection = new nixlLocalSection();
@@ -92,7 +91,7 @@ nixlAgent::nixlAgent(const std::string &name,
                      const nixlAgentConfig &cfg) {
     if (name.size() == 0)
         throw std::invalid_argument("Agent needs a name");
-    data = new nixlAgentData(this, name, cfg);
+    data = new nixlAgentData(name, cfg);
 
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;

@@ -72,7 +72,7 @@ class nixlAgentData {
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
 
-        nixlAgentData(nixlAgent* my_agent, const std::string &name, const nixlAgentConfig &cfg);
+        nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();
 
     friend class nixlAgent;

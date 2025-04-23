@@ -152,7 +152,7 @@ void nixlAgent::commWorker(){
                         client_fd = client->second;
                     }
 
-                    sendCommMessage(client_fd, std::string("NIXLCOMM:SENT" + my_MD));
+                    sendCommMessage(client_fd, std::string("NIXLCOMM:LOAD" + my_MD));
                     break;
                 }
                 case SOCK_FETCH:
@@ -222,7 +222,7 @@ void nixlAgent::commWorker(){
                     nixl_blob_t my_MD;
                     getLocalMD(my_MD);
 
-                    sendCommMessage(socketClient, std::string("NIXLCOMM:SENT" + my_MD));
+                    sendCommMessage(socketClient, std::string("NIXLCOMM:LOAD" + my_MD));
                 } else if(header == "INVL") {
                     close(socketClient);
                     data->remoteSockets.erase(ip_address);
