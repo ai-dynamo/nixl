@@ -2193,17 +2193,5 @@ mod tests {
         // Verify memory patterns
         assert!(storage1.as_slice().iter().all(|&x| x == 0xbb));
         assert!(storage2.as_slice().iter().all(|&x| x == 0xbb));
-
-        drop(xfer_req);
-        drop(xfer_args);
-
-        drop(local_xfer_dlist);
-        drop(remote_xfer_dlist);
-
-        drop(storage1);
-        drop(storage2);
-
-        drop(agent1);
-        drop(agent2);
     }
 }
