@@ -49,23 +49,18 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
     if (it==sectionMap.end())
         return NIXL_ERR_NOT_FOUND;
 
-    nixlMetaDesc new_elm;
-    nixlBasicDesc *p = &new_elm;
-    int count = 0, last_found = 0;
-    int s_index, q_index, size;
-    bool found, q_sorted = query.isSorted();
-    const nixlBasicDesc *q, *s;
+    nixlBasicDesc *p;
     nixl_meta_dlist_t* base = it->second;
-
     resp.resize(query.descCount());
 
     if (!base->isSorted()) {
+        int count = 0;
         for (int i=0; i<query.descCount(); ++i)
             for (const auto & elm : *base)
                 if (elm.covers(query[i])){
+                    p = &resp[i];
                     *p = query[i];
-                    new_elm.metadataP = elm.metadataP;
-                    resp[i]=new_elm;
+                    resp[i].metadataP = elm.metadataP;
                     count++;
                     break;
                 }
@@ -77,7 +72,13 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
             return NIXL_ERR_UNKNOWN;
         }
     } else {
+        const nixlBasicDesc *q;
+        bool found, q_sorted = query.isSorted();
+
         if (q_sorted) {
+            int s_index, q_index, size;
+            const nixlMetaDesc *s;
+
             size = base->descCount();
             s_index = 0;
             q_index = 0;
@@ -85,14 +86,15 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
             while (q_index<query.descCount()){
                 s = &(*base)[s_index];
                 q = &query[q_index];
-                if ((*s).covers(*q)) {
+                if (s->covers(*q)) {
+                    p = &resp[q_index];
                     *p = *q;
-                    new_elm.metadataP = (*base)[s_index].metadataP;
-                    resp[q_index] = new_elm;
+                    resp[q_index].metadataP = s->metadataP;
                     q_index++;
                 } else {
                     s_index++;
-                    // if (*q < descs[s_index]) ||
+                    // TODO: add early termination if already (*q < *s),
+                    // but s was not properly covering q
                     if (s_index==size) {
                         resp.clear();
                         return NIXL_ERR_UNKNOWN;
@@ -105,6 +107,7 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
             return NIXL_SUCCESS;
 
         } else {
+            int last_found = 0;
             for (int i=0; i<query.descCount(); ++i) {
                 found = false;
                 q = &query[i];
@@ -113,7 +116,7 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
 
                 // Same start address case
                 if (itr != base->end()){
-                    if ((*itr).covers(*q)) {
+                    if (itr->covers(*q)) {
                         found = true;
                     }
                 }
@@ -121,15 +124,15 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
                 // query starts starts later, try previous entry
                 if ((!found) && (itr != base->begin())){
                     itr = std::prev(itr , 1);
-                    if ((*itr).covers(*q)) {
+                    if (itr->covers(*q)) {
                         found = true;
                     }
                 }
 
                 if (found) {
+                    p = &resp[i];
                     *p = *q;
-                    new_elm.metadataP = itr->metadataP;
-                    resp[i] = new_elm;
+                    resp[i].metadataP = itr->metadataP;
                 } else {
                     resp.clear();
                     return NIXL_ERR_UNKNOWN;
