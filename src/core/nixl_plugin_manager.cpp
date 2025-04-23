@@ -333,9 +333,6 @@ std::vector<nixl_backend_t> nixlPluginManager::getLoadedPluginNames() {
     return names;
 }
 
-// Static Plugin Helpers
-std::vector<nixlStaticPluginInfo> nixlPluginManager::static_plugins_;
-
 void nixlPluginManager::registerStaticPlugin(const char* name, nixlStaticPluginCreatorFunc creator) {
     nixlStaticPluginInfo info;
     info.name = name;
@@ -351,7 +348,7 @@ void nixlPluginManager::registerStaticPlugin(const char* name, nixlStaticPluginC
     }
 }
 
-std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
+const std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
     return static_plugins_;
 }
 

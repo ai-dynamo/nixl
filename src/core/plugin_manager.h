@@ -64,9 +64,7 @@ class nixlPluginManager {
 private:
     std::map<nixl_backend_t, std::shared_ptr<const nixlPluginHandle>> loaded_plugins_;
     std::vector<std::string> plugin_dirs_;
-
-    // Static Plugins
-    static std::vector<nixlStaticPluginInfo> static_plugins_;
+    std::vector<nixlStaticPluginInfo> static_plugins_;
 
     void registerBuiltinPlugins();
 
@@ -108,7 +106,7 @@ public:
 
     // Static Plugin Helpers
     void registerStaticPlugin(const char* name, nixlStaticPluginCreatorFunc creator);
-    static std::vector<nixlStaticPluginInfo>& getStaticPlugins();
+    const std::vector<nixlStaticPluginInfo>& getStaticPlugins();
 };
 
 #endif // __PLUGIN_MANAGER_H
