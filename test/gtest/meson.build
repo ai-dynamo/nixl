@@ -40,7 +40,8 @@ test_exe = executable('gtest',
     sources : ['main.cpp', 'plugin_manager.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, cuda_dep, gtest_dep]
+    dependencies : [nixl_dep, cuda_dep, gtest_dep],
+    install : true
 )
 
 test('gtest', test_exe, args: [plugin_dirs_arg])
