@@ -18,7 +18,7 @@
 #define SYNC_H
 #include "common/util.h"
 #include "nixl_params.h"
-#include <mutex>
+#include "absl/synchronization/mutex.h"
 
 class nixlLock {
     public:
@@ -27,19 +27,19 @@ class nixlLock {
 
         void lock() {
             if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) {
-                m.lock();
+                m.Lock();
             }
         }
 
         void unlock() {
             if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) {
-                m.unlock();
+                m.Unlock();
             }
         }
 
     private:
         nixl_thread_sync_t syncMode;
-        std::mutex m;
+        absl::Mutex m;
 };
 
 #define NIXL_LOCK_GUARD(lock) const std::lock_guard<nixlLock> UNIQUE_NAME(lock_guard) (lock)
