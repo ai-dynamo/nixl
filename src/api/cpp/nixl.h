@@ -337,6 +337,8 @@ class nixlAgent {
          *         backends supporting the memory type is also included.
          *         If `extra_params->backends` is non-empty, only the descriptors supported by the
          *         backends in the list and the backends' connection info are included in the metadata.
+         *         If 'extra_params->ip_addr' is set, the metadata will only be sent to a single peer.
+         *         If 'extra_params->port' can be set in addition to IP address.
          *
          * @param  descs         [in]  Descriptor list to include in the metadata
          * @param  str           [out] The serialized metadata blob
@@ -345,9 +347,7 @@ class nixlAgent {
          */
         nixl_status_t
         sendLocalPartialMD(nixl_reg_dlist_t  &descs,
-                           const nixl_opt_args_t* extra_params = nullptr,
-                           const std::string remote_ip = "",
-                           const int port = 0) const;
+                           const nixl_opt_args_t* extra_params = nullptr) const;
 
         /**
          * @brief  Fetch other agent's metadata and unpack it internally.

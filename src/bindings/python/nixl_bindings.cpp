@@ -511,8 +511,10 @@ PYBIND11_MODULE(_bindings, m) {
                     for(uintptr_t backend: backends)
                         extra_params.backends.push_back((nixlBackendH*) backend);
                     extra_params.includeConnInfo = inc_conn_info;
+                    extra_params.ipAddr = ip_addr;
+                    extra_params.port = port;
 
-                    throw_nixl_exception(agent.sendLocalPartialMD(descs, &extra_params, ip_addr, port));
+                    throw_nixl_exception(agent.sendLocalPartialMD(descs, &extra_params));
                 }, py::arg("descs"), py::arg("inc_conn_info") = false, py::arg("backends") = std::vector<uintptr_t>({}), py::arg("ip_addr") = std::string(""), py::arg("port") = 0)
         .def("fetchRemoteMD", &nixlAgent::fetchRemoteMD)
         .def("invalidateLocalMD", &nixlAgent::invalidateLocalMD)

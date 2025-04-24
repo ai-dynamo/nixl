@@ -140,6 +140,17 @@ class nixlAgentOptionalArgs {
          *                      used in getLocalPartialMD.
          */
         bool includeConnInfo = false;
+
+        /**
+         * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
+         *                      used in sendLocalPartialMD.
+         */
+        std::string ipAddr;
+        /**
+         * @var port Used to specify the port of a remote peer, ipAddr must also be set
+         *                      used in sendLocalPartialMD.
+         */
+        int port = 0;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

@@ -1070,21 +1070,19 @@ nixlAgent::sendLocalMD (const std::string remote_ip, const int port) const {
 
 nixl_status_t
 nixlAgent::sendLocalPartialMD(nixl_reg_dlist_t &descs,
-                              const nixl_opt_args_t* extra_params,
-                              const std::string remote_ip,
-                              const int port) const {
-    if(remote_ip.size() == 0){
+                              const nixl_opt_args_t* extra_params) const {
+    if(extra_params->ipAddr.size() == 0){
         std::cerr << "ETCD not supported yet, please specify IP\n";
         return NIXL_ERR_NOT_SUPPORTED;
     }
     int send_port = default_comm_port;
-    if(port != 0) send_port = port;
+    if(extra_params->port != 0) send_port = extra_params->port;
 
     nixl_blob_t myMD;
     nixl_status_t ret = getLocalPartialMD(descs, myMD, extra_params);
     if(ret < 0) return ret;
 
-    data->enqueueCommWork(std::make_tuple(SOCK_SEND, remote_ip, send_port, myMD));
+    data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, send_port, myMD));
 
     return NIXL_SUCCESS;
 
