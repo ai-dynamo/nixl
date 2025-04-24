@@ -173,7 +173,7 @@ void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
 nixlPluginManager::nixlPluginManager() {
 #ifdef NIXL_USE_PLUGIN_FILE
     std::string plugin_file = NIXL_USE_PLUGIN_FILE;
-    if (access(plugin_file.c_str(), F_OK) == 0) {
+    if (std::filesystem::exists(plugin_file)) {
         loadPluginsFromList(plugin_file);
     }
 #endif
@@ -206,7 +206,7 @@ void nixlPluginManager::addPluginDirectory(const std::string& directory) {
     }
 
     // Check if directory exists
-    if (access(directory.c_str(), F_OK | R_OK) != 0) {
+    if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory)) {
         std::cerr << "Plugin directory does not exist or is not readable: " << directory << std::endl;
         return;
     }
@@ -245,7 +245,7 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
         }
 
         // Check if the plugin file exists before attempting to load i
-        if (access(plugin_path.c_str(), F_OK) != 0) {
+        if (!std::filesystem::exists(plugin_path)) {
             std::cerr << "Plugin file does not exist: " << plugin_path << std::endl;
             continue;
         }
@@ -263,14 +263,16 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
 }
 
 void nixlPluginManager::discoverPluginsFromDir(const std::string& dirpath) {
-    DIR* dp = opendir(dirpath.c_str());
-    if (!dp) {
+    std::filesystem::path dir_path(dirpath);
+    std::error_code ec;
+    std::filesystem::directory_iterator dir_iter(dir_path, ec);
+    if (ec) {
+        std::cerr << "Error accessing directory: " << ec.message() << std::endl;
         return;
     }
 
-    struct dirent* entry;
-    while ((entry = readdir(dp))) {
-        std::string filename = entry->d_name;
+    for (const auto& entry : dir_iter) {
+        std::string filename = entry.path().filename().string();
 
         if(filename.size() < 11) continue;
         // Check if this is a plugin file
@@ -287,8 +289,6 @@ void nixlPluginManager::discoverPluginsFromDir(const std::string& dirpath) {
             // }
         }
     }
-
-    closedir(dp);
 }
 
 void nixlPluginManager::unloadPlugin(const nixl_backend_t& plugin_name) {
