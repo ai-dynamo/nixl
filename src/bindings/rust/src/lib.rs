@@ -97,7 +97,7 @@ pub enum NixlError {
 pub enum MemType {
     Dram,
     Vram,
-    Bulk,
+    Block,
     Object,
     File,
     Unknown
@@ -108,7 +108,7 @@ impl From<nixl_capi_mem_type_t> for MemType {
         match mem_type {
             0 => MemType::Dram,
             1 => MemType::Vram,
-            2 => MemType::Bulk,
+            2 => MemType::Block,
             3 => MemType::Object,
             4 => MemType::File,
             _ => MemType::Unknown,
@@ -124,7 +124,7 @@ impl fmt::Display for MemType {
             let mem_type = match self {
                 MemType::Dram => 0,
                 MemType::Vram => 1,
-                MemType::Bulk => 2,
+                MemType::Block => 2,
                 MemType::Object => 3,
                 MemType::File => 4,
                 MemType::Unknown => 5

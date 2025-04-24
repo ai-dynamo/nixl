@@ -675,7 +675,7 @@ nixl_capi_mem_type_to_string(nixl_capi_mem_type_t mem_type, const char** str)
     static const char* mem_type_strings[] = {
         "DRAM",
         "VRAM",
-        "BULK",
+        "BLOCK",
         "OBJECT",
         "FILE",
         "UNKNOWN"
