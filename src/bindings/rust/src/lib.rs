@@ -95,16 +95,22 @@ pub enum NixlError {
 /// Memory types supported by NIXL
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemType {
-    Unknown,
     Dram,
-    Gpu,
+    Vram,
+    Bulk,
+    Object,
+    File,
+    Unknown
 }
 
 impl From<nixl_capi_mem_type_t> for MemType {
     fn from(mem_type: nixl_capi_mem_type_t) -> Self {
         match mem_type {
-            1 => MemType::Dram,
-            2 => MemType::Gpu,
+            0 => MemType::Dram,
+            1 => MemType::Vram,
+            2 => MemType::Bulk,
+            3 => MemType::Object,
+            4 => MemType::File,
             _ => MemType::Unknown,
         }
     }
@@ -116,9 +122,12 @@ impl fmt::Display for MemType {
         let mut str_ptr = ptr::null();
         unsafe {
             let mem_type = match self {
-                MemType::Unknown => 0,
-                MemType::Dram => 1,
-                MemType::Gpu => 2,
+                MemType::Dram => 0,
+                MemType::Vram => 1,
+                MemType::Bulk => 2,
+                MemType::Object => 3,
+                MemType::File => 4,
+                MemType::Unknown => 5
             };
             nixl_capi_mem_type_to_string(mem_type, &mut str_ptr);
             let c_str = CStr::from_ptr(str_ptr);
@@ -809,7 +818,7 @@ pub struct RegistrationHandle {
     agent: Arc<RwLock<AgentInner>>,
     ptr: usize,
     size: usize,
-    dev_id: u32,
+    dev_id: u64,
     mem_type: MemType,
 }
 
@@ -1193,7 +1202,7 @@ impl<'a> XferDescList<'a> {
     }
 
     /// Adds a descriptor to the list
-    pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u32) -> Result<(), NixlError> {
+    pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
         let status = unsafe {
             nixl_capi_xfer_dlist_add_desc(self.inner.as_ptr(), addr as uintptr_t, len, dev_id)
         };
@@ -1334,7 +1343,7 @@ impl<'a> RegDescList<'a> {
     }
 
     /// Adds a descriptor to the list
-    pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u32) -> Result<(), NixlError> {
+    pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
         let status = unsafe {
             nixl_capi_reg_dlist_add_desc(self.inner.as_ptr(), addr as uintptr_t, len, dev_id)
         };
@@ -1462,7 +1471,7 @@ pub trait NixlDescriptor: MemoryRegion {
     fn mem_type(&self) -> MemType;
 
     /// Get the device ID for this memory region
-    fn device_id(&self) -> u32;
+    fn device_id(&self) -> u64;
 
     /// Is registered
     fn is_registered(&self) -> bool;
@@ -1519,7 +1528,7 @@ impl NixlDescriptor for SystemStorage {
         MemType::Dram
     }
 
-    fn device_id(&self) -> u32 {
+    fn device_id(&self) -> u64 {
         0
     }
 

@@ -673,9 +673,12 @@ nixl_capi_mem_type_to_string(nixl_capi_mem_type_t mem_type, const char** str)
 
   try {
     static const char* mem_type_strings[] = {
-        "Unknown",
         "DRAM",
-        "GPU",
+        "VRAM",
+        "BULK",
+        "OBJECT",
+        "FILE",
+        "UNKNOWN"
     };
 
     if (mem_type < 0 || mem_type >= sizeof(mem_type_strings) / sizeof(mem_type_strings[0])) {
@@ -757,7 +760,7 @@ nixl_capi_destroy_xfer_dlist(nixl_capi_xfer_dlist_t dlist)
 }
 
 nixl_capi_status_t
-nixl_capi_xfer_dlist_add_desc(nixl_capi_xfer_dlist_t dlist, uintptr_t addr, size_t len, uint32_t dev_id)
+nixl_capi_xfer_dlist_add_desc(nixl_capi_xfer_dlist_t dlist, uintptr_t addr, size_t len, uint64_t dev_id)
 {
   if (!dlist) {
     return NIXL_CAPI_ERROR_INVALID_PARAM;
@@ -874,7 +877,7 @@ nixl_capi_destroy_reg_dlist(nixl_capi_reg_dlist_t dlist)
 }
 
 nixl_capi_status_t
-nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist, uintptr_t addr, size_t len, uint32_t dev_id)
+nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist, uintptr_t addr, size_t len, uint64_t dev_id)
 {
   if (!dlist) {
     return NIXL_CAPI_ERROR_INVALID_PARAM;

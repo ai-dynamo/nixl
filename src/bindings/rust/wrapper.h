@@ -35,10 +35,12 @@ typedef enum {
 
 // Memory types enum (matching nixl's memory types)
 typedef enum {
-  NIXL_CAPI_MEM_UNKNOWN = 0,
-  NIXL_CAPI_MEM_DRAM = 1,
-  NIXL_CAPI_MEM_GPU = 2,
-  // Add other memory types as needed
+  NIXL_CAPI_MEM_DRAM = 0,
+  NIXL_CAPI_MEM_VRAM = 1,
+  NIXL_CAPI_MEM_BULK = 2,
+  NIXL_CAPI_MEM_OBJECT = 3,
+  NIXL_CAPI_MEM_FILE = 4,
+  NIXL_CAPI_MEM_UNKNOWN = 5
 } nixl_capi_mem_type_t;
 
 struct nixl_capi_agent_s;
@@ -166,7 +168,7 @@ nixl_capi_status_t nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req);
 nixl_capi_status_t nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t* dlist);
 nixl_capi_status_t nixl_capi_destroy_xfer_dlist(nixl_capi_xfer_dlist_t dlist);
 nixl_capi_status_t nixl_capi_xfer_dlist_add_desc(
-    nixl_capi_xfer_dlist_t dlist, uintptr_t addr, size_t len, uint32_t dev_id);
+    nixl_capi_xfer_dlist_t dlist, uintptr_t addr, size_t len, uint64_t dev_id);
 nixl_capi_status_t nixl_capi_xfer_dlist_len(nixl_capi_xfer_dlist_t dlist, size_t* len);
 nixl_capi_status_t nixl_capi_xfer_dlist_has_overlaps(nixl_capi_xfer_dlist_t dlist, bool* has_overlaps);
 nixl_capi_status_t nixl_capi_xfer_dlist_clear(nixl_capi_xfer_dlist_t dlist);
@@ -175,7 +177,7 @@ nixl_capi_status_t nixl_capi_xfer_dlist_resize(nixl_capi_xfer_dlist_t dlist, siz
 nixl_capi_status_t nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist);
 nixl_capi_status_t nixl_capi_destroy_reg_dlist(nixl_capi_reg_dlist_t dlist);
 nixl_capi_status_t nixl_capi_reg_dlist_add_desc(
-    nixl_capi_reg_dlist_t dlist, uintptr_t addr, size_t len, uint32_t dev_id);
+    nixl_capi_reg_dlist_t dlist, uintptr_t addr, size_t len, uint64_t dev_id);
 nixl_capi_status_t nixl_capi_reg_dlist_len(nixl_capi_reg_dlist_t dlist, size_t* len);
 nixl_capi_status_t nixl_capi_reg_dlist_has_overlaps(nixl_capi_reg_dlist_t dlist, bool* has_overlaps);
 nixl_capi_status_t nixl_capi_reg_dlist_clear(nixl_capi_reg_dlist_t dlist);
