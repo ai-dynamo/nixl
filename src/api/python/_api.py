@@ -642,7 +642,7 @@ class nixl_agent:
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
-        self.agent.getLocalPartialMD(descs, inc_conn_info, handle_list, ip_addr, port)
+        self.agent.sendLocalPartialMD(descs, inc_conn_info, handle_list, ip_addr, port)
 
     """
     @brief Request metadata be retrieved from central metadata server or sent by peer.
@@ -766,7 +766,7 @@ class nixl_agent:
             a) list of 4 element tuples (address, len, device ID, meta info) alongside a mandatory memory type
             b) a tensor
             c) a list of tensors
-            d) passes along if an xfer_dlist is given.
+            d) passes along if a reg_dlist is given.
 
     @param descs List of any of the above types
     @param mem_type Optional memory type necessary for (a).
