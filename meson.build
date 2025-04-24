@@ -82,7 +82,7 @@ if actual_log_level == 'auto'
   if buildtype == 'debug'
     actual_log_level = 'trace'
   else # release, debugoptimized, or plain
-    actual_log_level = 'warning'
+    actual_log_level = 'info'
   endif
 endif
 
@@ -100,7 +100,7 @@ if get_option('buildtype') == 'release'
         'error': 2, # kError
         'fatal': 3, # kFatal
     }
-    absl_min_log_level = absl_log_level_map.get(actual_log_level, 2) # Default to Error if level unknown
+    absl_min_log_level = absl_log_level_map.get(actual_log_level, 0) # Default to info if level unknown
 
     # Required by Abseil to strip logs at compile time based on the determined level
     add_project_arguments('-DABSL_MIN_LOG_LEVEL=@0@'.format(absl_min_log_level), language : 'cpp')

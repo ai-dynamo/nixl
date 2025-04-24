@@ -68,8 +68,9 @@ void InitializeNixlLogging()
             // Fall back to kDefaultLogLevel if env var is invalid
             invalid_env_var = true;
         }
-    } else {
-        // If Env Var not set, use the level set at compile time
+    }
+    if (env_log_level == nullptr || invalid_env_var) {
+        // Use the level set at compile time
         #if defined(LOG_LEVEL_TRACE)
             level_to_use = "TRACE";
         #elif defined(LOG_LEVEL_DEBUG)

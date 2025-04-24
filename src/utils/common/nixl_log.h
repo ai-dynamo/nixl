@@ -39,13 +39,11 @@
 
 /*
  * Logs messages unconditionally (maps to Abseil WARNING level)
- * Stripped from release buids.
  */
 #define NIXL_WARN LOG(WARNING)
 
 /*
  * Logs messages unconditionally (maps to Abseil INFO level)
- * Stripped from release buids.
  */
 #define NIXL_INFO LOG(INFO)
 
