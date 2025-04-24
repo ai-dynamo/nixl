@@ -134,6 +134,12 @@ class nixlAgentOptionalArgs {
          * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
          */
         bool skipDescMerge = false;
+
+        /**
+         * @var includeConnInfo boolean to include connection information in the metadata,
+         *                      used in getLocalPartialMD.
+         */
+        bool includeConnInfo = false;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

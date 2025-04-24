@@ -20,6 +20,7 @@
 #include "nixl_descriptors.h"
 #include "mem_section.h"
 #include "backend/backend_engine.h"
+#include "nixl_types.h"
 #include "serdes/serdes.h"
 
 /*** Class nixlMemSection implementation ***/
@@ -50,7 +51,7 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
         return NIXL_ERR_NOT_FOUND;
 
     nixlBasicDesc *p;
-    nixl_meta_dlist_t* base = it->second;
+    nixl_sec_dlist_t* base = it->second;
     resp.resize(query.descCount());
 
     if (!base->isSorted()) {
@@ -77,7 +78,7 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
 
         if (q_sorted) {
             int s_index, q_index, size;
-            const nixlMetaDesc *s;
+            const nixlSectionDesc *s;
 
             size = base->descCount();
             s_index = 0;
@@ -145,35 +146,10 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
 
 /*** Class nixlLocalSection implementation ***/
 
-nixl_reg_dlist_t nixlLocalSection::getStringDesc (
-                             const nixlBackendEngine* backend,
-                             const nixl_meta_dlist_t &d_list) const {
-    nixl_status_t ret;
-    nixlBlobDesc element;
-    nixlBasicDesc *p = &element;
-    nixl_reg_dlist_t output_desclist(d_list.getType(),
-                                     d_list.isSorted());
-
-    // The string information of each registered block are updated by
-    // required serialized metadata provided by the backend
-    for (int i=0; i<d_list.descCount(); ++i) {
-        *p = (nixlBasicDesc) d_list[i];
-        ret = backend->getPublicData(d_list[i].metadataP, element.metaInfo);
-        if(ret != NIXL_SUCCESS){
-            //something has gone wrong
-            output_desclist.clear();
-            return output_desclist;
-        }
-
-        output_desclist.addDesc(element);
-    }
-    return output_desclist;
-}
-
 // Calls into backend engine to register the memories in the desc list
 nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
                                              nixlBackendEngine* backend,
-                                             nixl_meta_dlist_t &remote_self) {
+                                             nixl_sec_dlist_t &remote_self) {
 
     if (!backend)
         return NIXL_ERR_INVALID_PARAM;
@@ -183,39 +159,42 @@ nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
 
     auto it = sectionMap.find(sec_key);
     if (it==sectionMap.end()) { // New desc list
-        sectionMap[sec_key] = new nixl_meta_dlist_t(nixl_mem, true);
+        sectionMap[sec_key] = new nixl_sec_dlist_t(nixl_mem, true);
         memToBackend[nixl_mem].insert(backend);
     }
-    nixl_meta_dlist_t *target = sectionMap[sec_key];
+    nixl_sec_dlist_t *target = sectionMap[sec_key];
 
     // Add entries to the target list
-    nixlMetaDesc local_meta, self_meta;
-    nixlBasicDesc *lp = &local_meta;
-    nixlBasicDesc *rp = &self_meta;
-    nixl_status_t ret1, ret2=NIXL_SUCCESS;
-    int index;
+    nixlSectionDesc local_sec, self_sec;
+    nixlBasicDesc *lp = &local_sec;
+    nixlBasicDesc *rp = &self_sec;
+    nixl_status_t ret;
 
-    for (int i=0; i<mem_elms.descCount(); ++i) {
+    int i;
+    for (i = 0; i < mem_elms.descCount(); ++i) {
         // TODO: For now trusting the user, but there can be a more checks mode
         //       where we find overlaps and split the memories or warn the user
-        ret1 = backend->registerMem(mem_elms[i], nixl_mem, local_meta.metadataP);
+        ret = backend->registerMem(mem_elms[i], nixl_mem, local_sec.metadataP);
+        if (ret != NIXL_SUCCESS)
+            break;
 
-        if ((ret1==NIXL_SUCCESS) && backend->supportsLocal()) {
-            ret2 = backend->loadLocalMD(local_meta.metadataP, self_meta.metadataP);
-        }
-
-        if ((ret1!=NIXL_SUCCESS) || (ret2!=NIXL_SUCCESS)) {
-            for (int j=0; j<i; ++j) {
-                index = target->getIndex(mem_elms[j]);
-                backend->deregisterMem
-                    ((*(const nixl_meta_dlist_t*)target)[index].metadataP);
-                target->remDesc(index);
+        if (backend->supportsLocal()) {
+            ret = backend->loadLocalMD(local_sec.metadataP, self_sec.metadataP);
+            if (ret != NIXL_SUCCESS) {
+                backend->deregisterMem(local_sec.metadataP);
+                break;
             }
-            remote_self.clear();
-            if (ret1!=NIXL_SUCCESS)
-                return ret1;
-            else
-                return ret2;
+        }
+        if (backend->supportsRemote()) {
+            ret = backend->getPublicData(local_sec.metadataP, local_sec.metaBlob);
+            if (ret != NIXL_SUCCESS) {
+                // A backend might use the same object for both initiator/target
+                // side of a transfer, so no need for unloadMD in that case.
+                if (backend->supportsLocal() && self_sec.metadataP != local_sec.metadataP)
+                    backend->unloadMD(self_sec.metadataP);
+                backend->deregisterMem(local_sec.metadataP);
+                break;
+            }
         }
 
         *lp = mem_elms[i]; // Copy the basic desc part
@@ -223,18 +202,34 @@ nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
              (nixl_mem == FILE_SEG)) && (lp->len==0))
             lp->len = SIZE_MAX; // File has no range limit
 
-        target->addDesc(local_meta);
+        target->addDesc(local_sec);
 
         if (backend->supportsLocal()) {
             *rp = *lp;
-            remote_self.addDesc(self_meta);
+            remote_self.addDesc(self_sec);
         }
     }
-    return NIXL_SUCCESS;
+
+    // Abort in case of error
+    if (ret != NIXL_SUCCESS) {
+        for (int j = 0; j < i; ++j) {
+            int index = target->getIndex(mem_elms[j]);
+
+            if (backend->supportsLocal()) {
+                int self_index = remote_self.getIndex(mem_elms[j]);
+                // Should never be negative, as we just added it in previous loop
+                if (self_index >= 0 && remote_self[self_index].metadataP != (*target)[index].metadataP)
+                    backend->unloadMD(remote_self[self_index].metadataP);
+            }
+            backend->deregisterMem((*target)[index].metadataP);
+            target->remDesc(index);
+        }
+        remote_self.clear();
+    }
+    return ret;
 }
 
-// Per each nixlBasicDesc, the full region that got registered should be deregistered
-nixl_status_t nixlLocalSection::remDescList (const nixl_meta_dlist_t &mem_elms,
+nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
                                              nixlBackendEngine *backend) {
     if (!backend)
         return NIXL_ERR_INVALID_PARAM;
@@ -243,18 +238,20 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_meta_dlist_t &mem_elms,
     auto it = sectionMap.find(sec_key);
     if (it==sectionMap.end())
         return NIXL_ERR_NOT_FOUND;
-    nixl_meta_dlist_t *target = it->second;
+    nixl_sec_dlist_t *target = it->second;
+
+    // First check if the mem_elms are present in the list,
+    // don't deregister anything in case any is missing.
+    for (auto & elm : mem_elms) {
+        int index = target->getIndex(elm);
+        if (index < 0)
+            return NIXL_ERR_NOT_FOUND;
+    }
 
     for (auto & elm : mem_elms) {
         int index = target->getIndex(elm);
-        // Errorful situation, not sure helpful to deregister the rest,
-        // registering back what was deregistered is not meaningful.
-        // Can be secured by going through all the list then deregister
-        if (index<0)
-            return NIXL_ERR_UNKNOWN;
-
-        backend->deregisterMem
-            ((*(const nixl_meta_dlist_t*)target)[index].metadataP);
+        // Already checked, elm should always be found. Can add a check in debug mode.
+        backend->deregisterMem((*target)[index].metadataP);
         target->remDesc(index);
     }
 
@@ -267,39 +264,83 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_meta_dlist_t &mem_elms,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlLocalSection::serialize(nixlSerDes* serializer) const {
+namespace {
+nixl_status_t serializeSections(nixlSerDes* serializer,
+                                const section_map_t &sections) {
     nixl_status_t ret;
-    size_t seg_count = sectionMap.size();
-    nixlBackendEngine* eng;
 
+    size_t seg_count = sections.size();
     ret = serializer->addBuf("nixlSecElms", &seg_count, sizeof(seg_count));
     if (ret) return ret;
 
-    for (auto &seg : sectionMap) {
-        eng = seg.first.second;
+    for (const auto &[sec_key, dlist] : sections) {
+        nixlBackendEngine* eng = sec_key.second;
         if (!eng->supportsRemote())
             continue;
 
-        nixl_reg_dlist_t s_desc = getStringDesc(eng, *seg.second);
         ret = serializer->addStr("bknd", eng->getType());
         if (ret) return ret;
-        ret = s_desc.serialize(serializer);
+        ret = dlist->serialize(serializer);
         if (ret) return ret;
     }
 
     return NIXL_SUCCESS;
 }
+};
+
+nixl_status_t nixlLocalSection::serialize(nixlSerDes* serializer) const {
+    return serializeSections(serializer, sectionMap);
+}
+
+nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
+                                                 const backend_set_t &backends,
+                                                 const nixl_reg_dlist_t &mem_elms) const {
+    nixl_mem_t nixl_mem = mem_elms.getType();
+    nixl_status_t ret = NIXL_SUCCESS;
+    section_map_t mem_elms_to_serialize;
+
+    // If there are no descriptors to serialize, just serialize empty list of sections
+    if (mem_elms.descCount() == 0)
+        return serializeSections(serializer, mem_elms_to_serialize);
+
+    // TODO: consider concatenating 2 serializers instead of using mem_elms_to_serialize
+    for (const auto &backend : backends) {
+        section_key_t sec_key = std::make_pair(nixl_mem, backend);
+        auto it = sectionMap.find(sec_key);
+        if (it == sectionMap.end())
+            continue;
+
+        // TODO: consider section_map_t to be a map of unique_ptr or instance of nixl_meta_dlist_t.
+        //       This will avoid the need to delete the nixl_sec_dlist_t instances.
+        const nixl_sec_dlist_t *base = it->second;
+        nixl_sec_dlist_t *resp = new nixl_sec_dlist_t(nixl_mem, mem_elms.isSorted());
+        for (const auto &desc : mem_elms) {
+            int index = base->getIndex(desc);
+            if (index < 0) {
+                ret = NIXL_ERR_NOT_FOUND;
+                break;
+            }
+            resp->addDesc((*base)[index]);
+        }
+        if (ret != NIXL_SUCCESS)
+            break;
+        mem_elms_to_serialize.emplace(sec_key, resp);
+    }
+
+    if (ret == NIXL_SUCCESS)
+        ret = serializeSections(serializer, mem_elms_to_serialize);
+
+    for (auto &[sec_key, m_desc] : mem_elms_to_serialize)
+        delete m_desc;
+    return ret;
+}
 
 nixlLocalSection::~nixlLocalSection() {
-    nixl_meta_dlist_t* m_desc;
-    nixlBackendEngine* eng;
-
-    for (auto &seg : sectionMap) {
-        eng    = seg.first.second;
-        m_desc = seg.second;
-        for (auto & elm : *m_desc)
+    for (auto &[sec_key, dlist] : sectionMap) {
+        nixlBackendEngine* eng = sec_key.second;
+        for (auto & elm : *dlist)
             eng->deregisterMem(elm.metadataP);
-        delete m_desc;
+        delete dlist;
     }
     // nixlMemSection destructor will clean up the rest
 }
@@ -322,26 +363,32 @@ nixl_status_t nixlRemoteSection::addDescList (
     nixl_mem_t nixl_mem   = mem_elms.getType();
     section_key_t sec_key = std::make_pair(nixl_mem, backend);
     if (sectionMap.count(sec_key) == 0)
-        sectionMap[sec_key] = new nixl_meta_dlist_t(nixl_mem, true);
+        sectionMap[sec_key] = new nixl_sec_dlist_t(nixl_mem, true);
     memToBackend[nixl_mem].insert(backend); // Fine to overwrite, it's a set
-    nixl_meta_dlist_t *target = sectionMap[sec_key];
+    nixl_sec_dlist_t *target = sectionMap[sec_key];
 
 
     // Add entries to the target list.
-    nixlMetaDesc out;
+    nixlSectionDesc out;
     nixlBasicDesc *p = &out;
     nixl_status_t ret;
     for (int i=0; i<mem_elms.descCount(); ++i) {
-        // TODO: remote might change the metadata, have to keep stringDesc to compare
-        //       if we support partial updates. Also Can add overlap checks (erroneous)
-        if (target->getIndex((const nixlBasicDesc) mem_elms[i]) < 0) {
+        // TODO: Can add overlap checks (erroneous)
+        int idx = target->getIndex(mem_elms[i]);
+        if (idx < 0) {
             ret = backend->loadRemoteMD(mem_elms[i], nixl_mem, agentName, out.metadataP);
             // In case of errors, no need to remove the previous entries
             // Agent will delete the full object.
             if (ret<0)
                 return ret;
             *p = mem_elms[i]; // Copy the basic desc part
+            out.metaBlob = mem_elms[i].metaInfo;
             target->addDesc(out);
+        } else {
+            const nixl_blob_t &prev_meta_info = (*target)[idx].metaBlob;
+            // TODO: Support metadata updates
+            if (prev_meta_info != mem_elms[i].metaInfo)
+                return NIXL_ERR_NOT_ALLOWED;
         }
     }
     return NIXL_SUCCESS;
@@ -365,14 +412,16 @@ nixl_status_t nixlRemoteSection::loadRemoteData (nixlSerDes* deserializer,
         nixl_reg_dlist_t s_desc(deserializer);
         if (s_desc.descCount()==0) // can be used for entry removal in future
             return NIXL_ERR_NOT_FOUND;
-        ret = addDescList(s_desc, backendToEngineMap[nixl_backend]);
-        if (ret) return ret;
+        if (backendToEngineMap.count(nixl_backend) != 0) {
+            ret = addDescList(s_desc, backendToEngineMap[nixl_backend]);
+            if (ret) return ret;
+        }
     }
     return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlRemoteSection::loadLocalData (
-                                 const nixl_meta_dlist_t& mem_elms,
+                                 const nixl_sec_dlist_t& mem_elms,
                                  nixlBackendEngine* backend) {
 
     if (mem_elms.descCount()==0) // Shouldn't happen
@@ -382,9 +431,9 @@ nixl_status_t nixlRemoteSection::loadLocalData (
     section_key_t sec_key = std::make_pair(nixl_mem, backend);
 
     if (sectionMap.count(sec_key) == 0)
-        sectionMap[sec_key] = new nixl_meta_dlist_t(nixl_mem, true);
+        sectionMap[sec_key] = new nixl_sec_dlist_t(nixl_mem, true);
     memToBackend[nixl_mem].insert(backend); // Fine to overwrite, it's a set
-    nixl_meta_dlist_t *target = sectionMap[sec_key];
+    nixl_sec_dlist_t *target = sectionMap[sec_key];
 
     for (auto & elm: mem_elms)
         target->addDesc(elm);
@@ -393,15 +442,11 @@ nixl_status_t nixlRemoteSection::loadLocalData (
 }
 
 nixlRemoteSection::~nixlRemoteSection() {
-    nixl_meta_dlist_t* m_desc;
-    nixlBackendEngine* eng;
-
-    for (auto &seg : sectionMap) {
-        eng    = seg.first.second;
-        m_desc = seg.second;
-        for (auto & elm : *m_desc)
+    for (auto &[sec_key, dlist] : sectionMap) {
+        nixlBackendEngine* eng = sec_key.second;
+        for (auto & elm : *dlist)
             eng->unloadMD(elm.metadataP);
-        delete m_desc;
+        delete dlist;
     }
     // nixlMemSection destructor will clean up the rest
 }
