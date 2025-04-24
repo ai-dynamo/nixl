@@ -111,7 +111,6 @@ if __name__ == "__main__":
                 target_done = True
                 print("Target done")
 
-
     # Second set of descs was not sent, should fail
     try:
         xfer_handle_2 = init_agent.initialize_xfer(
