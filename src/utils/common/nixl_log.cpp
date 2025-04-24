@@ -19,10 +19,31 @@
 #include "absl/log/initialize.h"
 #include "absl/log/globals.h"
 #include "absl/strings/ascii.h"
+#include "absl/container/flat_hash_map.h"
 #include <cstdlib>
 #include <string>
+#include <string_view>
 
 namespace {
+
+// Structure to hold logging settings
+struct LogLevelSettings {
+    absl::LogSeverityAtLeast min_severity;
+    int vlog_level;
+};
+
+// Map from log level string to settings
+const absl::flat_hash_map<std::string_view, LogLevelSettings> kLogLevelMap = {
+    {"TRACE", {absl::LogSeverityAtLeast::kInfo, 2}},
+    {"DEBUG", {absl::LogSeverityAtLeast::kInfo, 1}},
+    {"INFO",  {absl::LogSeverityAtLeast::kInfo, 0}},
+    {"WARN",  {absl::LogSeverityAtLeast::kWarning, 0}},
+    {"ERROR", {absl::LogSeverityAtLeast::kError, 0}},
+    {"FATAL", {absl::LogSeverityAtLeast::kFatal, 0}},
+};
+
+// Default log level if nothing else is specified
+constexpr std::string_view kDefaultLogLevel = "WARN";
 
 // Function to initialize logging, run before main() via constructor attribute.
 void InitializeNixlLogging() __attribute__((constructor));
@@ -32,30 +53,49 @@ void InitializeNixlLogging()
     // Initialize Abseil logging system.
     absl::InitializeLog();
 
-    // Log level is fixed at compile time.
-    #if defined(LOG_LEVEL_TRACE)
-        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
-        absl::SetVLogLevel("*", 2);
-    #elif defined(LOG_LEVEL_DEBUG)
-        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
-        absl::SetVLogLevel("*", 1);
-    #elif defined(LOG_LEVEL_INFO)
-        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
-        absl::SetVLogLevel("*", 0);
-    #elif defined(LOG_LEVEL_WARNING)
-        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kWarning);
-        absl::SetVLogLevel("*", 0);
-    #elif defined(LOG_LEVEL_ERROR)
-        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kError);
-        absl::SetVLogLevel("*", 0);
-    #elif defined(LOG_LEVEL_FATAL)
-        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kFatal);
-        absl::SetVLogLevel("*", 0);
-    #else
-        // Default compile-time level if none of the above are defined (should match meson default)
-        absl::SetMinLogLevel(absl::LogSeverityAtLeast::kWarning);
-        absl::SetVLogLevel("*", 0);
-    #endif
+    // This is the fallback log level, an option of last resort if nothing else is specified.
+    std::string_view level_to_use = kDefaultLogLevel;
+    bool invalid_env_var = false;
+
+    // Check environment variable, it has priority over compile-time default.
+    const char* env_log_level = std::getenv("NIXL_LOG_LEVEL");
+    std::string env_level_str_upper;
+    if (env_log_level != nullptr) {
+        env_level_str_upper = absl::AsciiStrToUpper(env_log_level);
+        if (kLogLevelMap.contains(env_level_str_upper)) {
+            level_to_use = env_level_str_upper;
+        } else {
+            // Fall back to kDefaultLogLevel if env var is invalid
+            invalid_env_var = true;
+        }
+    } else {
+        // If Env Var not set, use the level set at compile time
+        #if defined(LOG_LEVEL_TRACE)
+            level_to_use = "TRACE";
+        #elif defined(LOG_LEVEL_DEBUG)
+            level_to_use = "DEBUG";
+        #elif defined(LOG_LEVEL_INFO)
+            level_to_use = "INFO";
+        #elif defined(LOG_LEVEL_WARN)
+            level_to_use = "WARN";
+        #elif defined(LOG_LEVEL_ERROR)
+            level_to_use = "ERROR";
+        #elif defined(LOG_LEVEL_FATAL)
+            level_to_use = "FATAL";
+        #else
+            // Fall back to kDefaultLogLevel
+        #endif
+    }
+
+    // Apply the settings
+    auto it = kLogLevelMap.find(level_to_use);
+    const LogLevelSettings& settings = (it != kLogLevelMap.end()) ? it->second : kLogLevelMap.at(kDefaultLogLevel);
+    absl::SetMinLogLevel(settings.min_severity);
+    absl::SetVLogLevel("*", settings.vlog_level);
+
+    if (invalid_env_var) {
+        NIXL_WARN << "Invalid NIXL_LOG_LEVEL environment variable, using default log level: " << kDefaultLogLevel;
+    }
 }
 
 } // anonymous namespace
