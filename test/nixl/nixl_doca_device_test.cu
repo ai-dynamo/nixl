@@ -20,9 +20,11 @@
 #include <nixl_descriptors.h>
 #include <nixl_params.h>
 #include <nixl.h>
+#include "backend_plugin_doca_device.cuh"
 #include <cassert>
 #include "stream/metadata_stream.h"
 #include "serdes/serdes.h"
+
 #define NUM_TRANSFERS 32
 #define SIZE 1024
 #define INITIATOR_VALUE 0xbb
@@ -64,11 +66,11 @@ static void checkCudaError(cudaError_t result, const char *message) {
 	}
 }
 
-__global__ void target_kernel(uintptr_t addr, size_t size)
+__global__ void target_kernel_v2(uintptr_t addr, size_t size)
 {
     uint8_t ok = 1;
 
-    printf(">>>>>>> CUDA target waiting on addr %p size %d\n", (void*)addr, (uint32_t)size);
+    printf(">>>>>>> CUDA target v2 waiting on addr %p size %d\n", (void*)addr, (uint32_t)size);
     while(VOLATILE(((uint8_t*)addr)[0]) == 0);
     for (int i = 0; i < (int)size; i++) {
         if (((uint8_t*)addr)[i] != INITIATOR_VALUE) {
@@ -82,7 +84,7 @@ __global__ void target_kernel(uintptr_t addr, size_t size)
         printf(">>>>>>> CUDA target, not all received bytes are ok!\n");
 }
 
-int launch_target_wait_kernel(cudaStream_t stream, uintptr_t addr, size_t size)
+int launch_target_wait_kernel_v2(cudaStream_t stream, uintptr_t addr, size_t size)
 {
     cudaError_t result = cudaSuccess;
 
@@ -93,7 +95,7 @@ int launch_target_wait_kernel(cudaStream_t stream, uintptr_t addr, size_t size)
         return -1;
     }
 
-    target_kernel<<<1, 1, 0, stream>>>(addr, size);
+    target_kernel_v2<<<1, 1, 0, stream>>>(addr, size);
     result = cudaGetLastError();
     if (result != cudaSuccess) {
         fprintf(stderr, "[%s:%d] cuda failed with %s", __FILE__, __LINE__, cudaGetErrorString(result));
@@ -103,22 +105,16 @@ int launch_target_wait_kernel(cudaStream_t stream, uintptr_t addr, size_t size)
     return 0;
 }
 
-__global__ void initiator_kernel(uintptr_t addr, size_t size)
+__global__ void initiator_kernel_v2(uintptr_t addr, size_t size, uintptr_t gtreq)
 {
-    unsigned long long start, end;
-
     ((uint8_t*)addr)[threadIdx.x] = INITIATOR_VALUE;
 
     __syncthreads();
 
-    /* Simulate a longer CUDA kernel to process initiator data */
-    DEVICE_GET_TIME(start);
-    do {
-        DEVICE_GET_TIME(end);
-    } while (end - start < INITIATOR_THRESHOLD_NS);
+    prepXferReqGpu_DocaBlock(gtreq);
 }
 
-int launch_initiator_send_kernel(cudaStream_t stream, uintptr_t addr, size_t size)
+int launch_initiator_send_kernel_v2(cudaStream_t stream, uintptr_t addr, size_t size, uintptr_t gtreq)
 {
     cudaError_t result = cudaSuccess;
 
@@ -129,7 +125,7 @@ int launch_initiator_send_kernel(cudaStream_t stream, uintptr_t addr, size_t siz
         return -1;
     }
 
-    initiator_kernel<<<1, SIZE, 0, stream>>>(addr, size);
+    initiator_kernel_v2<<<1, SIZE, 0, stream>>>(addr, size, gtreq);
     result = cudaGetLastError();
     if (result != cudaSuccess) {
         fprintf(stderr, "[%s:%d] cuda failed with %s", __FILE__, __LINE__, cudaGetErrorString(result));
@@ -178,7 +174,8 @@ int main(int argc, char *argv[]) {
     nixl_blob_t             remote_desc;
     nixl_blob_t             metadata;
     nixl_blob_t             remote_metadata;
-    int                     status = 0;
+    nixlXferReqH* req_hndl;
+    nixlXferReqHGpu *gtreq;
 
     /** NIXL declarations */
     /** Agent and backend creation parameters */
@@ -194,7 +191,6 @@ int main(int argc, char *argv[]) {
 
     /** Descriptors and Transfer Request */
     nixl_reg_dlist_t  dram_for_doca(DRAM_SEG);
-    nixlXferReqH      *treq;
 
     /** Argument Parsing */
     if (argc < 4) {
@@ -271,10 +267,8 @@ int main(int argc, char *argv[]) {
         std::cout << " Start Data Path Exchanges \n";
         std::cout << " Waiting to receive Data from Initiator\n";
 
-        /** Sanity Check , assume NUM_TRANSFERS == 1 */
-        for (int i = 0; i < NUM_TRANSFERS; i++)
-            launch_target_wait_kernel(stream, (uintptr_t)addr[i], SIZE);
-
+        /* Extend to all buffers */
+        launch_target_wait_kernel_v2(stream, (uintptr_t)addr[0], SIZE);
         cudaStreamSynchronize(stream);
         std::cout << " DOCA Transfer completed!\n";
     } else {
@@ -295,12 +289,10 @@ int main(int argc, char *argv[]) {
 
         std::cout << " Create transfer request with DOCA backend\n ";
 
-        extra_params.customParam.resize(sizeof(uintptr_t));
-        *((uintptr_t*) extra_params.customParam.data()) = (uintptr_t)stream;
-
-        PUSH_RANGE("createXferReq", 1)
+        extra_params.gpuInitiated = true;
+        PUSH_RANGE("createXferReqGpu", 1)
         ret = agent.createXferReq(NIXL_WRITE, dram_initiator_doca, dram_target_doca,
-                                  "target", treq, &extra_params);
+                                  "target", req_hndl, &extra_params);
         POP_RANGE
         if (ret != NIXL_SUCCESS) {
             std::cerr << "Error creating transfer request\n";
@@ -308,27 +300,13 @@ int main(int argc, char *argv[]) {
         }
 
         std::cout << "Launch initiator send kernel on stream\n";
-        /* Synthetic simulation of GPU processing data before sending */
+
+        agent.getGpuXferH(req_hndl, gtreq);
+
+        /* Extend to all buffers */
         PUSH_RANGE("InitKernels", 2)
-        for (int i = 0; i < NUM_TRANSFERS; i++)
-            launch_initiator_send_kernel(stream, buf[i].addr, buf[i].len);
+        launch_initiator_send_kernel_v2(stream, buf[0].addr, buf[0].len, *gtreq);
         POP_RANGE
-
-        std::cout << " Post the request with DOCA backend\n ";
-        PUSH_RANGE("postXferReq", 3)
-        status = agent.postXferReq(treq);
-        POP_RANGE
-        std::cout << " Initiator posted Data Path transfer\n";
-        std::cout << " Waiting for completion\n";
-
-        PUSH_RANGE("getXferStatus", 4)
-        while (status != NIXL_SUCCESS) {
-            status = agent.getXferStatus(treq);
-            assert(status >= 0);
-        }
-        POP_RANGE
-        std::cout << " Completed Sending " << NUM_TRANSFERS << " transfers using DOCA backend\n";
-        agent.releaseXferReq(treq);
     }
 
     cudaStreamSynchronize(stream);

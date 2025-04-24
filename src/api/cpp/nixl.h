@@ -228,7 +228,6 @@ class nixlAgent {
                        const std::string &remote_agent,
                        nixlXferReqH* &req_hndl,
                        const nixl_opt_args_t* extra_params = nullptr) const;
-
         /*** Operations on prepared Transfer Request ***/
 
         /**
@@ -267,6 +266,17 @@ class nixlAgent {
         nixl_status_t
         queryXferBackend (const nixlXferReqH* req_hndl,
                           nixlBackendH* &backend) const;
+
+        /**
+         * @brief  Get the XferReqH for GPU communications created by the backend.
+         *
+         * @param  req_hndl      Transfer request handle obtained from makeXferReq/createXferReq
+         * @param  gpu_hndl [out] GPU handler for the input transfer request
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        getGpuXferH (const nixlXferReqH* req_hndl,
+                     nixlXferReqHGpu* &gpu_hndl) const;
 
         /**
          * @brief  Release the transfer request `req_hndl`. If the transfer is active,

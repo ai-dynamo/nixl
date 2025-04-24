@@ -34,6 +34,7 @@ class nixlBackendOptionalArgs {
         nixl_blob_t notifMsg;
         bool        hasNotif = false;
         nixl_blob_t customParam;
+        bool gpuInitiated = false;
 };
 
 typedef nixlBackendOptionalArgs nixl_opt_b_args_t;

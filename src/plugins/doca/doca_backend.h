@@ -41,6 +41,7 @@
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
+#include "public/backend_plugin_doca_common.h"
 #include "common/str_tools.h"
 
 // Local includes
@@ -57,8 +58,6 @@
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define DOCA_RDMA_SERVER_ADDR_LEN (MAX(MAX(DOCA_DEVINFO_IPV4_ADDR_SIZE, DOCA_DEVINFO_IPV6_ADDR_SIZE), DOCA_GID_BYTE_LENGTH))
 #define DOCA_RDMA_SERVER_CONN_DELAY 500 //500us
-
-typedef void * nixlDocaReq;
 
 struct nixlDocaMem {
     void *addr;
@@ -117,13 +116,6 @@ class nixlDocaPublicMetadata : public nixlBackendMD {
         }
 };
 
-struct docaXferReqGpu {
-    uintptr_t larr[DOCA_XFER_REQ_SIZE];
-    uintptr_t rarr[DOCA_XFER_REQ_SIZE];
-    size_t size[DOCA_XFER_REQ_SIZE];
-    uint16_t num;
-};
-
 class nixlDocaEngine : public nixlBackendEngine {
     private:
         std::vector<std::pair<uint32_t, struct doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
@@ -167,6 +159,7 @@ class nixlDocaEngine : public nixlBackendEngine {
                 uint32_t devId;
                 uint32_t start_pos;
                 uint32_t end_pos;
+                uintptr_t backendHandleGpu;
 
                 nixlDocaBckndReq() : nixlLinkElem(), nixlBackendReqH() {
                 }
@@ -202,6 +195,7 @@ class nixlDocaEngine : public nixlBackendEngine {
         bool supportsLocal () const { return false; }
         bool supportsNotif () const { return false; }
         bool supportsProgTh () const { return false; }
+        bool supportsGpuInitiated () const { return true; }
 
         nixl_mem_list_t getSupportedMems () const;
 
@@ -247,6 +241,8 @@ class nixlDocaEngine : public nixlBackendEngine {
         nixl_status_t checkXfer (nixlBackendReqH* handle);
         nixl_status_t releaseReqH(nixlBackendReqH* handle);
 
+        nixl_status_t getGpuXferH(const nixlBackendReqH* handle, nixlXferReqHGpu* &gpu_hndl);
+
         int progress();
 
         nixl_status_t getNotifs(notif_list_t &notif_list);
@@ -264,6 +260,7 @@ doca_error_t doca_util_map_and_export(struct doca_dev *dev, uint32_t permissions
 extern "C" {
 #endif
 
+// prepXferGpu postXferGpuGet();
 doca_error_t doca_kernel_write(cudaStream_t stream, struct doca_gpu_dev_rdma *rdma_gpu, struct docaXferReqGpu *xferReqRing, uint32_t pos);
 doca_error_t doca_kernel_read(cudaStream_t stream, struct doca_gpu_dev_rdma *rdma_gpu, struct docaXferReqGpu *xferReqRing, uint32_t pos);
 

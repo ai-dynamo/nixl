@@ -694,6 +694,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
     nixlXferReqH *handle   = new nixlXferReqH;
+
     handle->initiatorDescs = new nixl_meta_dlist_t (
                                      local_descs.getType(),
                                      local_descs.isSorted());
@@ -736,7 +737,13 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
+    if (extra_params->gpuInitiated && (!handle->engine->supportsGpuInitiated())) {
+        delete handle;
+        return NIXL_ERR_BACKEND;
+    }
+
     opt_args.customParam = extra_params->customParam;
+    opt_args.gpuInitiated = extra_params->gpuInitiated;
 
     handle->remoteAgent = remote_agent;
     handle->backendOp   = operation;
@@ -846,6 +853,18 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
                             nixlBackendH* &backend) const {
     NIXL_LOCK_GUARD(data->lock);
     backend = data->backendHandles[req_hndl->engine->getType()];
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::getGpuXferH (const nixlXferReqH* req_hndl,
+             nixlXferReqHGpu* &gpu_hndl) const {
+
+    if (req_hndl->engine->supportsGpuInitiated() == false)
+        return NIXL_ERR_NOT_SUPPORTED;
+
+    req_hndl->engine->getGpuXferH(req_hndl->backendHandle, gpu_hndl);
+
     return NIXL_SUCCESS;
 }
 
