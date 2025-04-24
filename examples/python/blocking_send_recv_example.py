@@ -22,6 +22,7 @@ import torch
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl._bindings import nixlNotFoundError
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ip", type=str, required=True)
@@ -38,7 +39,7 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    #initiator use default port
+    # initiator use default port
     listen_port = args.port
     if args.mode != "target":
         listen_port = 0
@@ -58,14 +59,14 @@ if __name__ == "__main__":
         print("Memory registration failed.")
         exit()
 
-    #Target code
+    # Target code
     if args.mode == "target":
         ready = False
 
         target_descs = reg_descs.trim()
         target_desc_str = agent.get_serialized_descs(target_descs)
 
-        #Send desc list to initiator when metadata is ready
+        # Send desc list to initiator when metadata is ready
         while not ready:
             try:
                 agent.send_notif("initiator", target_desc_str)
@@ -80,7 +81,7 @@ if __name__ == "__main__":
         # the full python bytes, here it would be just UUID.
         while not agent.check_remote_xfer_done("initiator", b"UUID"):
             continue
-    #Initiator code
+    # Initiator code
     else:
         print("Initiator sending to " + args.ip)
         agent.fetch_remote_metadata("target", args.ip, args.port)
@@ -94,7 +95,7 @@ if __name__ == "__main__":
         target_descs = agent.deserialize_descs(notifs["target"][0])
         initiator_descs = reg_descs.trim()
 
-        #Ensure remote metadata has arrived from fetch
+        # Ensure remote metadata has arrived from fetch
         ready = False
         while not ready:
             try:
