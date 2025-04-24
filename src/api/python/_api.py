@@ -617,7 +617,7 @@ class nixl_agent:
     @param port    If specified, will try to send to specific port.
     """
 
-    def remove_local_metadata(self, ip_addr: str = "", port: int = 0):
+    def invalidate_local_metadata(self, ip_addr: str = "", port: int = 0):
         self.agent.invalidateLocalMD(ip_addr, port)
 
     """

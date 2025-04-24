@@ -133,7 +133,7 @@ if __name__ == "__main__":
     if args.mode != "target":
         agent.remove_remote_agent("target")
         agent.release_xfer_handle(xfer_handle)
-        agent.remove_local_metadata(args.ip, args.port)
+        agent.invalidate_local_metadata(args.ip, args.port)
 
     agent.deregister_memory(reg_descs)
 
