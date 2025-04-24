@@ -93,27 +93,28 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
 
         std::vector<nixl_comm_req_t> work_queue;
 
-        //first, accept new connections
+        // first, accept new connections
         int new_fd = 0;
 
         while(new_fd != -1) {
             new_fd = listener->acceptClient();
-            std::string accepted_client;
+            nixl_socket_peer_t accepted_client;
 
             if(new_fd != -1){
-                //need to convert fd to IP address and add to client map
+                // need to convert fd to IP address and add to client map
                 sockaddr_in client_address;
                 socklen_t client_addrlen = sizeof(client_address);
                 if (getpeername(new_fd, (sockaddr*)&client_address, &client_addrlen) == 0) {
                     char client_ip[INET_ADDRSTRLEN];
                     inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
-                    accepted_client = std::string(client_ip);
+                    accepted_client.first = std::string(client_ip);
+                    accepted_client.second = client_address.sin_port;
                 } else {
                     throw std::runtime_error("getpeername failed");
                 }
                 remoteSockets[accepted_client] = new_fd;
 
-                //make new socket nonblocking
+                // make new socket nonblocking
                 int new_flags = fcntl(new_fd, F_GETFL, 0) | O_NONBLOCK;
 
                 if (fcntl(new_fd, F_SETFL, new_flags) == -1)
@@ -122,7 +123,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             }
         }
 
-        //second, do agent commands
+        // second, do agent commands
         getCommWork(work_queue);
 
         for(nixl_comm_req_t request: work_queue) {
@@ -132,21 +133,23 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             int req_port = std::get<2>(request);
             std::string my_MD = std::get<3>(request);
 
-            //use remote IP for socket lookup
-            auto client = remoteSockets.find(req_ip);
+            nixl_socket_peer_t req_sock = std::make_pair(req_ip, req_port);
+
+            // use remote IP for socket lookup
+            auto client = remoteSockets.find(req_sock);
             int client_fd;
 
             switch(req_command) {
                 case SOCK_SEND:
                 {
-                    //not connected
+                    // not connected
                     if(client == remoteSockets.end()) {
                         int new_client = connectToIP(req_ip, req_port);
                         if(new_client == -1) {
                             std::cerr << "Listener thread could not connect to IP " << req_ip;
                             break;
                         }
-                        remoteSockets[req_ip] = new_client;
+                        remoteSockets[req_sock] = new_client;
                         client_fd = new_client;
                     } else {
                         client_fd = client->second;
@@ -163,7 +166,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                             std::cerr << "Listener thread could not connect to IP " << req_ip;
                             break;
                         }
-                        remoteSockets[req_ip] = new_client;
+                        remoteSockets[req_sock] = new_client;
                         client_fd = new_client;
                     } else
                         client_fd = client->second;
@@ -174,13 +177,13 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                 case SOCK_INVAL:
                 {
                     if(client == remoteSockets.end()) {
-                        //improper usage
+                        // improper usage
                         throw std::runtime_error("invalidate on closed socket\n");
                     }
                     client_fd = client->second;
                     sendCommMessage(client_fd, std::string("NIXLCOMM:INVL"));
                     close(client_fd);
-                    remoteSockets.erase(req_ip);
+                    remoteSockets.erase(req_sock);
                     break;
                 }
                 default:
@@ -191,8 +194,8 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             }
         }
 
-        //third, do remote commands
-        for (const auto& [ip_address, socketClient] : remoteSockets ) {
+        // third, do remote commands
+        for (const auto& [sock_peer, socketClient] : remoteSockets ) {
             std::string commands;
             std::vector<std::string> command_list;
             nixl_status_t ret;
@@ -207,7 +210,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
 
                 if(command.size() < 4) continue;
 
-                //always just 4 chars:
+                // always just 4 chars:
                 std::string header = command.substr(0, 4);
 
                 if(header == "LOAD") {
@@ -217,7 +220,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     if(ret != NIXL_SUCCESS) {
                         throw std::runtime_error("loadRemoteMD in listener thread failed, critically failing\n");
                     }
-                    //not sure what to do with remote_agent
+                    // not sure what to do with remote_agent
                 } else if(header == "SEND") {
                     nixl_blob_t my_MD;
                     myAgent->getLocalMD(my_MD);
@@ -225,14 +228,13 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     sendCommMessage(socketClient, std::string("NIXLCOMM:LOAD" + my_MD));
                 } else if(header == "INVL") {
                     close(socketClient);
-                    remoteSockets.erase(ip_address);
+                    remoteSockets.erase(sock_peer);
                 } else {
                     throw std::runtime_error("Received socket message with bad header" + header + ", critically failing\n");
                 }
             }
         }
 
-        //relatively large delay for now
         nixlTime::us_t start = nixlTime::getUs();
         while( (start + config.lthrDelay) > nixlTime::getUs()) {
             std::this_thread::yield();
