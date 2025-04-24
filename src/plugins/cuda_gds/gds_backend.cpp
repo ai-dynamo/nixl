@@ -159,6 +159,7 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     nixlGdsMetadata *md = (nixlGdsMetadata *)meta;
     if (md->type == FILE_SEG) {
         gds_utils->deregisterFileHandle(md->handle);
+	gds_file_map.erase(md->handle.fd);
     } else {
         gds_utils->deregisterBufHandle(md->buf.base);
     }
