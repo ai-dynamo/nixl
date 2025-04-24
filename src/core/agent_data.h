@@ -53,12 +53,13 @@ class nixlAgentData {
 
         // Bookkeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, nixlBackendH*> backendHandles;
-        std::unordered_map<nixl_backend_t, std::string>   connMD;
+        std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
 
         // Local section, and Remote sections and their available common backends
         nixlLocalSection*                                        memorySection;
 
-        std::unordered_map<std::string, std::set<nixl_backend_t>,
+        std::unordered_map<std::string,
+                           std::unordered_map<nixl_backend_t, nixl_blob_t>,
                            std::hash<std::string>, strEqual>     remoteBackends;
         std::unordered_map<std::string, nixlRemoteSection*,
                            std::hash<std::string>, strEqual>     remoteSections;

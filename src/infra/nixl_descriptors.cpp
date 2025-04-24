@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include "nixl.h"
 #include "nixl_descriptors.h"
+#include "mem_section.h"
 #include "backend/backend_aux.h"
 #include "serdes/serdes.h"
 
@@ -165,8 +166,8 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
     if (str.size()==0)
         return;
 
-    // nixlMetaDesc should be internal and not be serialized
-    if (std::is_same<nixlMetaDesc, T>::value)
+    // nixlMetaDesc and nixlSectionDesc should be internal and not be serialized
+    if (std::is_same<nixlMetaDesc, T>::value || std::is_same<nixlSectionDesc, T>::value)
         return;
 
     if (deserializer->getBuf("t", &type, sizeof(type)))
@@ -369,7 +370,8 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     // descriptor. std::string_view(typeid(T).name()) is compiler dependent
     if (std::is_same<nixlBasicDesc, T>::value)
         ret = serializer->addStr("nixlDList", "nixlBDList");
-    else if (std::is_same<nixlBlobDesc, T>::value)
+    // We serialize SectionDesc the same as BlobDesc so it will be deserialized as BlobDesc on the other side
+    else if (std::is_same<nixlBlobDesc, T>::value || std::is_same<nixlSectionDesc, T>::value)
         ret = serializer->addStr("nixlDList", "nixlSDList");
     else
         return NIXL_ERR_INVALID_PARAM;
@@ -395,7 +397,7 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
                                  reinterpret_cast<const char*>(descs.data()),
                                  n_desc * sizeof(nixlBasicDesc)));
         if (ret) return ret;
-    } else { // already checked it can be only nixlBlobDesc
+    } else { // already checked it can be only nixlBlobDesc or nixlSectionDesc
         for (auto & elm : descs) {
             ret = serializer->addStr("", elm.serialize());
             if (ret) return ret;
@@ -432,6 +434,7 @@ bool operator==(const nixlDescList<T> &lhs, const nixlDescList<T> &rhs) {
 template class nixlDescList<nixlBasicDesc>;
 template class nixlDescList<nixlMetaDesc>;
 template class nixlDescList<nixlBlobDesc>;
+template class nixlDescList<nixlSectionDesc>;
 
 template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
                                          const nixlDescList<nixlBasicDesc> &rhs);
@@ -439,3 +442,5 @@ template bool operator==<nixlMetaDesc>  (const nixlDescList<nixlMetaDesc> &lhs,
                                          const nixlDescList<nixlMetaDesc> &rhs);
 template bool operator==<nixlBlobDesc>(const nixlDescList<nixlBlobDesc> &lhs,
                                        const nixlDescList<nixlBlobDesc> &rhs);
+template bool operator==<nixlSectionDesc>(const nixlDescList<nixlSectionDesc> &lhs,
+                                          const nixlDescList<nixlSectionDesc> &rhs);
