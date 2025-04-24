@@ -57,7 +57,6 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
     }
 }
 
-
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :
@@ -83,6 +82,7 @@ nixlAgentData::~nixlAgentData() {
 
     for (auto & elm: backendHandles)
         delete elm.second;
+
 }
 
 
@@ -92,9 +92,23 @@ nixlAgent::nixlAgent(const std::string &name,
     if (name.size() == 0)
         throw std::invalid_argument("Agent needs a name");
     data = new nixlAgentData(name, cfg);
+
+    if(cfg.useListenThread) {
+        int my_port = cfg.listenPort;
+        if(my_port == 0) my_port = default_comm_port;
+        data->listener = new nixlMDStreamListener(my_port);
+        data->listener->setupListener();
+        data->commThreadStop = false;
+        data->commThread = std::thread(&nixlAgentData::commWorker, data, this);
+    }
 }
 
 nixlAgent::~nixlAgent() {
+    if(data->config.useListenThread) {
+        data->commThreadStop = true;
+        if(data->commThread.joinable()) data->commThread.join();
+        if(data->listener) delete data->listener;
+    }
     delete data;
 }
 
@@ -750,15 +764,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         }
     }
 
-    // We CAN repost a previous request that is completed
-    // If condition to be removed when UCX supports
-    // repost with same handle
-     if (req_hndl->status == NIXL_SUCCESS &&
-        req_hndl->backendHandle &&
-        req_hndl->engine->getType() != "GDS") {
-        req_hndl->status = req_hndl->engine->releaseReqH(
-                                     req_hndl->backendHandle);
-    }
     // Carrying over notification from xfer handle creation time
     if (req_hndl->hasNotif) {
         opt_args.notifMsg = req_hndl->notifMsg;
@@ -978,6 +983,57 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
         return ret;
 
     str = sd.exportStr();
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::sendLocalMD (const std::string remote_ip, const int port) const {
+
+    if(remote_ip.size() == 0){
+        std::cerr << "ETCD not supported yet, please specify IP\n";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+    int send_port = default_comm_port;
+    if(port != 0) send_port = port;
+
+    nixl_blob_t myMD;
+    nixl_status_t ret = getLocalMD(myMD);
+    if(ret < 0) return ret;
+
+    data->enqueueCommWork(std::make_tuple(SOCK_SEND, remote_ip, send_port, myMD));
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::fetchRemoteMD (const std::string remote_name,
+                          const std::string remote_ip,
+                          const int port) {
+
+    if(remote_ip.size() == 0){
+        std::cerr << "ETCD not supported yet, please specify IP\n";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+    int send_port = default_comm_port;
+    if(port != 0) send_port = port;
+
+    data->enqueueCommWork(std::make_tuple(SOCK_FETCH, remote_ip, send_port, ""));
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::invalidateLocalMD (const std::string remote_ip, const int port) const {
+
+    if(remote_ip.size() == 0){
+        std::cerr << "ETCD not supported yet, please specify IP\n";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+    int send_port = default_comm_port;
+    if(port != 0) send_port = port;
+
+    data->enqueueCommWork(std::make_tuple(SOCK_INVAL, remote_ip, send_port, ""));
+
     return NIXL_SUCCESS;
 }
 

@@ -25,6 +25,21 @@ inline std::vector<std::string> str_split(const std::string& str, const std::str
     return output;
 }
 
+inline std::vector<std::string> str_split_substr(const std::string& str, const std::string& delimiter) {
+    std::vector<std::string> substrings;
+    std::string::size_type start = 0;
+    std::string::size_type end = str.find(delimiter);
+
+    while (end != std::string::npos) {
+        substrings.push_back(str.substr(start, end - start));
+        start = end + delimiter.length();
+        end = str.find(delimiter, start);
+    }
+
+    substrings.push_back(str.substr(start));
+    return substrings;
+}
+
 class strEqual
 {
     public:

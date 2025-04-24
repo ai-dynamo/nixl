@@ -118,31 +118,10 @@ class nixlUcxEngine : public nixlBackendEngine {
         std::unordered_map<std::string, nixlUcxConnection,
                            std::hash<std::string>, strEqual> remoteConnMap;
 
-        class nixlUcxBckndReq : public nixlLinkElem<nixlUcxBckndReq>, public nixlBackendReqH {
-            private:
-                int _completed;
-            public:
-                std::string *amBuffer;
-
-                nixlUcxBckndReq() : nixlLinkElem(), nixlBackendReqH() {
-                    _completed = 0;
-                    amBuffer = NULL;
-                }
-
-                ~nixlUcxBckndReq() {
-                    _completed = 0;
-                    if (amBuffer) {
-                        delete amBuffer;
-                    }
-                }
-
-                bool is_complete() { return _completed; }
-                void completed() { _completed = 1; }
-        };
 
         void vramInitCtx();
         void vramFiniCtx();
-        int vramUpdateCtx(void *address, uint32_t  devId, bool &restart_reqd);
+        int vramUpdateCtx(void *address, uint64_t devId, bool &restart_reqd);
         int vramApplyCtx();
 
         // Threading infrastructure
@@ -153,13 +132,6 @@ class nixlUcxEngine : public nixlBackendEngine {
         void progressThreadRestart();
         bool isProgressThread(){
             return (std::this_thread::get_id() == pthr.get_id());
-        }
-
-        // Request management
-        static void _requestInit(void *request);
-        static void _requestFini(void *request);
-        void requestReset(nixlUcxBckndReq *req) {
-            _requestInit((void *)req);
         }
 
         // Connection helper
@@ -190,10 +162,6 @@ class nixlUcxEngine : public nixlBackendEngine {
         void notifProgress();
         void notifCombineHelper(notif_list_t &src, notif_list_t &tgt);
         void notifProgressCombineHelper(notif_list_t &src, notif_list_t &tgt);
-
-
-        // Data transfer (priv)
-        nixl_status_t retHelper(nixl_status_t ret, nixlUcxBckndReq *head, nixlUcxReq &req);
 
     public:
         nixlUcxEngine(const nixlBackendInitParams* init_params);

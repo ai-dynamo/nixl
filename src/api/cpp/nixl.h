@@ -149,7 +149,8 @@ class nixlAgent {
          *           - For loopback descriptors, it is set to local agent's name, indicating that
          *             this is for a loopback (local) transfer to be uued for remote_side handle
          *         If a list of backends hints is provided (via extra_params), the preparation
-         *         is limited to the specified backends.
+         *         is limited to the specified backends. If `descs` has the sorted flag, that
+         *         enables an optimization to speed up the preparation process.
          *
          * @param  agent_name       Agent name as a string for preparing xfer handle
          * @param  descs            The descriptor list to be prepared for transfer requests
@@ -204,6 +205,8 @@ class nixlAgent {
          *         pre-processing done in the preparation step. If a list of backends hints is
          *         provided (via extra_params), the selection is limited to the specified backends.
          *         Optionally, a notification message can also be provided through extra_params.
+         *         If `local_descs` or `remote_descs` have the sorted flag, that enables an
+         *         optimization to speed up the preparation process.
          *
          * @param  operation      Operation for transfer (e.g., NIXL_WRITE)
          * @param  local_descs    Local descriptor list
@@ -312,6 +315,44 @@ class nixlAgent {
         genNotif (const std::string &remote_agent,
                   const nixl_blob_t &msg,
                   const nixl_opt_args_t* extra_params = nullptr);
+
+        /*** Metadata handling through direct channels (p2p socket and ETCD) ***/
+        /**
+         * @brief  Send your own agent metadata to a remote location.
+         *
+         * @param  remote_ip     If specified, this is the remote IP address to send your metadata to
+         *                       If unspecified, this will send your data to the metadata server.
+         * @param  port          Specific port to connect to, otherwise use DEFAULT_COMM_PORT
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        sendLocalMD (const std::string remote_ip = "", const int port = 0) const;
+
+        /**
+         * @brief  Fetch other agent's metadata and unpack it internally.
+         *
+         * @param  remote_name      Name of remote agent to fetch from ETCD or socket.
+         * @param  remote_ip        If unspecified, will fetch from ETCD, otherwise will try socket
+         * @param  port             Specific port to connect to, otherwise use DEFAULT_COMM_PORT
+         *
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        fetchRemoteMD (const std::string remote_name,
+                       const std::string remote_ip = "",
+                       const int port = 0);
+
+        /**
+         * @brief  Invalidate your own memory in one/all remote agent(s).
+         *
+         * @param  remote_ip        If unspecified, will invalidate in ETCD, cascading invalidations to other agents.
+         *                          If specified, will only invalidate for a specific peer over sockets
+         * @param  port             Specific port to connect to, otherwise use DEFAULT_COMM_PORT
+         *
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        invalidateLocalMD (const std::string remote_ip = "", const int port = 0) const;
 
         /*** Metadata handling through side channel ***/
         /**

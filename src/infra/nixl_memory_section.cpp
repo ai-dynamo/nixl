@@ -40,12 +40,107 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
 
     if (query.getType() != resp.getType())
         return NIXL_ERR_INVALID_PARAM;
+    // 1-to-1 mapping cannot hold
+    if (query.isSorted() != resp.isSorted())
+        return NIXL_ERR_INVALID_PARAM;
+
     section_key_t sec_key = std::make_pair(query.getType(), backend);
     auto it = sectionMap.find(sec_key);
     if (it==sectionMap.end())
         return NIXL_ERR_NOT_FOUND;
-    else
-        return it->second->populate(query, resp);
+
+    nixlBasicDesc *p;
+    nixl_meta_dlist_t* base = it->second;
+    resp.resize(query.descCount());
+
+    if (!base->isSorted()) {
+        int count = 0;
+        for (int i=0; i<query.descCount(); ++i)
+            for (const auto & elm : *base)
+                if (elm.covers(query[i])){
+                    p = &resp[i];
+                    *p = query[i];
+                    resp[i].metadataP = elm.metadataP;
+                    count++;
+                    break;
+                }
+
+        if (query.descCount()==count) {
+            return NIXL_SUCCESS;
+        } else {
+            resp.clear();
+            return NIXL_ERR_UNKNOWN;
+        }
+    } else {
+        const nixlBasicDesc *q;
+        bool found, q_sorted = query.isSorted();
+
+        if (q_sorted) {
+            int s_index, q_index, size;
+            const nixlMetaDesc *s;
+
+            size = base->descCount();
+            s_index = 0;
+            q_index = 0;
+
+            while (q_index<query.descCount()){
+                s = &(*base)[s_index];
+                q = &query[q_index];
+                if (s->covers(*q)) {
+                    p = &resp[q_index];
+                    *p = *q;
+                    resp[q_index].metadataP = s->metadataP;
+                    q_index++;
+                } else {
+                    s_index++;
+                    // TODO: add early termination if already (*q < *s),
+                    // but s was not properly covering q
+                    if (s_index==size) {
+                        resp.clear();
+                        return NIXL_ERR_UNKNOWN;
+                    }
+                }
+            }
+
+            // To be added only in debug mode
+            // resp.verifySorted();
+            return NIXL_SUCCESS;
+
+        } else {
+            int last_found = 0;
+            for (int i=0; i<query.descCount(); ++i) {
+                found = false;
+                q = &query[i];
+                auto itr = std::lower_bound(base->begin() + last_found,
+                                            base->end(), *q);
+
+                // Same start address case
+                if (itr != base->end()){
+                    if (itr->covers(*q)) {
+                        found = true;
+                    }
+                }
+
+                // query starts starts later, try previous entry
+                if ((!found) && (itr != base->begin())){
+                    itr = std::prev(itr , 1);
+                    if (itr->covers(*q)) {
+                        found = true;
+                    }
+                }
+
+                if (found) {
+                    p = &resp[i];
+                    *p = *q;
+                    resp[i].metadataP = itr->metadataP;
+                } else {
+                    resp.clear();
+                    return NIXL_ERR_UNKNOWN;
+                }
+            }
+            return NIXL_SUCCESS;
+        }
+    }
 }
 
 /*** Class nixlLocalSection implementation ***/
