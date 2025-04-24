@@ -45,6 +45,8 @@ cd ${INSTALL_DIR}
 ./bin/ucx_mo_backend_test
 ./bin/ucx_backend_multi
 ./bin/serdes_test
+./bin/gtest
+./bin/test_plugin
 
 # Run NIXL client-server test
 ./bin/nixl_test target 127.0.0.1 1234&
