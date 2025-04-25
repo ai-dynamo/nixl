@@ -20,6 +20,8 @@ import torch
 
 import nixl._bindings as nixlBind
 
+DEFAULT_COMM_PORT = nixlBind.DEFAULT_COMM_PORT
+
 # Opaque nixl handle types
 nixl_backend_handle = int
 nixl_prepped_dlist_handle = int
@@ -617,9 +619,7 @@ class nixl_agent:
     @param port    If specified, will try to send to specific port.
     """
 
-    def send_local_metadata(
-        self, ip_addr: str = "", port: int = nixlBind.DEFAULT_COMM_PORT
-    ):
+    def send_local_metadata(self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT):
         self.agent.sendLocalMD(ip_addr, port)
 
     """
@@ -639,7 +639,7 @@ class nixl_agent:
         inc_conn_info: bool = False,
         backends: list[str] = [],
         ip_addr: str = "",
-        port: int = nixlBind.DEFAULT_COMM_PORT,
+        port: int = DEFAULT_COMM_PORT,
     ):
         handle_list = []
         for backend_string in backends:
@@ -657,7 +657,7 @@ class nixl_agent:
         self,
         remote_agent: str,
         ip_addr: str = "",
-        port: int = nixlBind.DEFAULT_COMM_PORT,
+        port: int = DEFAULT_COMM_PORT,
     ):
         self.agent.fetchRemoteMD(remote_agent, ip_addr, port)
 
@@ -669,7 +669,7 @@ class nixl_agent:
     """
 
     def invalidate_local_metadata(
-        self, ip_addr: str = "", port: int = nixlBind.DEFAULT_COMM_PORT
+        self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT
     ):
         self.agent.invalidateLocalMD(ip_addr, port)
 
