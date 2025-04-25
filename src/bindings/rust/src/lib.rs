@@ -1460,8 +1460,7 @@ pub trait NixlDescriptor: MemoryRegion {
 
 /// A trait for types that can be registered with NIXL
 pub trait NixlRegistration: NixlDescriptor {
-    fn register(&mut self, agent: &Agent) -> Result<(), NixlError>;
-    fn register_with_args(&mut self, agent: &Agent, opt_args: &OptArgs) -> Result<(), NixlError>;
+    fn register(&mut self, agent: &Agent, opt_args: &OptArgs) -> Result<(), NixlError>;
 }
 
 /// System memory storage implementation using a Vec<u8>
