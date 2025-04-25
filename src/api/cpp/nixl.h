@@ -321,8 +321,9 @@ class nixlAgent {
          * @brief  Send your own agent metadata to a remote location.
          *
          * @param  extra_params  Only to optionally specify IP address and/or port.
-         *                       If specified, this will enable peer to peer sending of your metadata.
-         *                       If unspecified, this will send your data to the metadata server.
+         *                       If IP is specified, this will enable peer to peer sending of your metadata.
+         *                       If IP unspecified, this will send your data to the metadata server.
+         *                       Port can be specified or defaults to default_comm_port.
          *
          * @return nixl_status_t Error code if call was not successful
          */
@@ -339,7 +340,7 @@ class nixlAgent {
          *         If `extra_params->backends` is non-empty, only the descriptors supported by the
          *         backends in the list and the backends' connection info are included in the metadata.
          *         If 'extra_params->ip_addr' is set, the metadata will only be sent to a single peer.
-         *         If 'extra_params->port' can be set in addition to IP address.
+         *         If 'extra_params->port' can be set in addition to IP address, or will default to default_comm_port.
          *
          * @param  descs         [in]  Descriptor list to include in the metadata
          * @param  str           [out] The serialized metadata blob
@@ -355,8 +356,9 @@ class nixlAgent {
          *
          * @param  remote_name   Name of remote agent to fetch from ETCD or socket.
          * @param  extra_params  Only to optionally specify IP address and/or port.
-         *                       If specified, this will enable peer to peer fetching of metadata.
-         *                       If unspecified, this will fetch from the metadata server.
+         *                       If IP is specified, this will enable peer to peer fetching of metadata.
+         *                       If IP is unspecified, this will fetch from the metadata server.
+         *                       Port can be specified or defaults to default_comm_port.
          *
          * @return nixl_status_t    Error code if call was not successful
          */
@@ -368,8 +370,9 @@ class nixlAgent {
          * @brief  Invalidate your own memory in one/all remote agent(s).
          *
          * @param  extra_params  Only to optionally specify IP address and/or port.
-         *                       If specified, this will enable peer to peer invalidation of metadata.
-         *                       If unspecified, this will invalidate from the metadata server.
+         *                       If IP is specified, this will enable peer to peer invalidation of metadata.
+         *                       If IP is unspecified, this will invalidate from the metadata server.
+         *                       Port can be specified or defaults to default_comm_port.
          *
          * @return nixl_status_t    Error code if call was not successful
          */

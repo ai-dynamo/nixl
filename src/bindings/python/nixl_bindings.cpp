@@ -120,6 +120,8 @@ PYBIND11_MODULE(_bindings, m) {
 
     m.attr("NIXL_INIT_AGENT") = NIXL_INIT_AGENT;
 
+    m.attr("DEFAULT_COMM_PORT") = default_comm_port;
+
     //cast types
     py::enum_<nixl_mem_t>(m, "nixl_mem_t")
         .value("DRAM_SEG", DRAM_SEG)
@@ -524,7 +526,7 @@ PYBIND11_MODULE(_bindings, m) {
 
                     throw_nixl_exception(agent.sendLocalPartialMD(descs, &extra_params));
                 }, py::arg("descs"), py::arg("inc_conn_info") = false, py::arg("backends") = std::vector<uintptr_t>({}), py::arg("ip_addr") = std::string(""), py::arg("port") = 0)
-        .def("fetchRemotelMD", [](nixlAgent &agent, std::string remote_agent, std::string ip_addr, int port){
+        .def("fetchRemoteMD", [](nixlAgent &agent, std::string remote_agent, std::string ip_addr, int port){
                     nixl_opt_args_t extra_params;
 
                     extra_params.ipAddr = ip_addr;

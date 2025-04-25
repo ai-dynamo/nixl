@@ -617,7 +617,9 @@ class nixl_agent:
     @param port    If specified, will try to send to specific port.
     """
 
-    def send_local_metadata(self, ip_addr: str = "", port: int = 0):
+    def send_local_metadata(
+        self, ip_addr: str = "", port: int = nixlBind.DEFAULT_COMM_PORT
+    ):
         self.agent.sendLocalMD(ip_addr, port)
 
     """
@@ -637,7 +639,7 @@ class nixl_agent:
         inc_conn_info: bool = False,
         backends: list[str] = [],
         ip_addr: str = "",
-        port: int = 0,
+        port: int = nixlBind.DEFAULT_COMM_PORT,
     ):
         handle_list = []
         for backend_string in backends:
@@ -652,7 +654,10 @@ class nixl_agent:
     """
 
     def fetch_remote_metadata(
-        self, remote_agent: str, ip_addr: str = "", port: int = 0
+        self,
+        remote_agent: str,
+        ip_addr: str = "",
+        port: int = nixlBind.DEFAULT_COMM_PORT,
     ):
         self.agent.fetchRemoteMD(remote_agent, ip_addr, port)
 
@@ -663,7 +668,9 @@ class nixl_agent:
     @param port    If specified, will try to send to specific port.
     """
 
-    def invalidate_local_metadata(self, ip_addr: str = "", port: int = 0):
+    def invalidate_local_metadata(
+        self, ip_addr: str = "", port: int = nixlBind.DEFAULT_COMM_PORT
+    ):
         self.agent.invalidateLocalMD(ip_addr, port)
 
     """
