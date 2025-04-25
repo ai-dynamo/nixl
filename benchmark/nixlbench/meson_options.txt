@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+option('cudapath_inc', type: 'string', value: '/usr/local/cuda/include', description: 'Include path for CUDA')
+option('cudapath_lib', type: 'string', value: '/usr/local/cuda/lib64/', description: 'Library path for CUDA')
+option('cudapath_stub', type: 'string', value: '/usr/local/cuda/lib64/stubs', description: 'Extra Stub path for CUDA')
+option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD C++ Client includes')
+option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD C++ Client library')
+option('nixl_path', type: 'string', value: '/usr/local', description: 'Path to NiXL')
+option('nvshmem_inc_path', type: 'string', value: '', description: 'Path to NVSHMEM include directory')
+option('nvshmem_lib_path', type: 'string', value: '', description: 'Path to NVSHMEM library directory')
