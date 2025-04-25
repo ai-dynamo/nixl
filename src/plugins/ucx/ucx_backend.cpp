@@ -24,8 +24,6 @@
 
 #endif
 
-
-
 /****************************************
  * CUDA related code
  *****************************************/
@@ -558,6 +556,7 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
                                           const nixl_mem_t &nixl_mem,
                                           nixlBackendMD* &out)
 {
+    printf("nixlUcxEngine::registerMem called\n");
     int ret;
     nixlUcxPrivateMetadata *priv = new nixlUcxPrivateMetadata;
     uint64_t rkey_addr;
