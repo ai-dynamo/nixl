@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
 
     // Print list of static plugins available
     std::cout << "Available static plugins:" << std::endl;
-    for (const auto& plugin : nixlPluginManager::getStaticPlugins()) {
+    for (const auto& plugin : plugin_manager.getStaticPlugins()) {
         std::cout << " - " << plugin.name << std::endl;
         staticPlugs.insert(plugin.name);
     }

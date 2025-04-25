@@ -45,3 +45,19 @@ test_exe = executable('gtest',
 )
 
 test('gtest', test_exe, args: [plugin_dirs_arg])
+
+if get_option('b_sanitize').split(',').contains('thread')
+    test_env = environment()
+    test_env.set('TSAN_OPTIONS', 'halt_on_error=1')
+    test_env.set('NIXL_PLUGIN_DIR', mocks_dep.get_variable('path'))
+
+    mt_test_exe = executable('mt_test',
+        sources : ['main.cpp', 'multi_threading.cpp'],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        cpp_args : cpp_flags,
+        dependencies : [nixl_dep, nixl_infra, cuda_dep, gtest_dep],
+        link_with: [nixl_build_lib],
+    )
+
+    test('mt_test', mt_test_exe, is_parallel: false, env: test_env)
+endif

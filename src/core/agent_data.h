@@ -20,6 +20,7 @@
 #include "common/str_tools.h"
 #include "mem_section.h"
 #include "stream/metadata_stream.h"
+#include "sync.h"
 
 typedef std::vector<nixlBackendEngine*> backend_list_t;
 
@@ -40,6 +41,7 @@ class nixlAgentData {
     private:
         std::string     name;
         nixlAgentConfig config;
+        nixlLock        lock;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;

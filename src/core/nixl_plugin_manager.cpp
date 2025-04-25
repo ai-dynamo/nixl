@@ -28,6 +28,8 @@
 #include <string>
 #include <map>
 
+using lock_guard = const std::lock_guard<std::mutex>;
+
 // pluginHandle implementation
 nixlPluginHandle::nixlPluginHandle(void* handle, nixlBackendPlugin* plugin)
     : handle_(handle), plugin_(plugin) {
@@ -49,27 +51,27 @@ nixlPluginHandle::~nixlPluginHandle() {
     }
 }
 
-nixlBackendEngine* nixlPluginHandle::createEngine(const nixlBackendInitParams* init_params) {
+nixlBackendEngine* nixlPluginHandle::createEngine(const nixlBackendInitParams* init_params) const {
     if (plugin_ && plugin_->create_engine) {
         return plugin_->create_engine(init_params);
     }
     return nullptr;
 }
 
-void nixlPluginHandle::destroyEngine(nixlBackendEngine* engine) {
+void nixlPluginHandle::destroyEngine(nixlBackendEngine* engine) const {
     if (plugin_ && plugin_->destroy_engine && engine) {
         plugin_->destroy_engine(engine);
     }
 }
 
-const char* nixlPluginHandle::getName() {
+const char* nixlPluginHandle::getName() const {
     if (plugin_ && plugin_->get_plugin_name) {
         return plugin_->get_plugin_name();
     }
     return "unknown";
 }
 
-const char* nixlPluginHandle::getVersion() {
+const char* nixlPluginHandle::getVersion() const {
     if (plugin_ && plugin_->get_plugin_version) {
         return plugin_->get_plugin_version();
     }
@@ -113,7 +115,7 @@ std::map<nixl_backend_t, std::string> loadPluginList(const std::string& filename
     return plugins;
 }
 
-std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPluginFromPath(const std::string& plugin_path) {
+std::shared_ptr<const nixlPluginHandle> nixlPluginManager::loadPluginFromPath(const std::string& plugin_path) {
     // Open the plugin file
     void* handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
@@ -150,13 +152,15 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPluginFromPath(const st
     }
 
     // Create and store the plugin handle
-    auto plugin_handle = std::make_shared<nixlPluginHandle>(handle, plugin);
+    auto plugin_handle = std::make_shared<const nixlPluginHandle>(handle, plugin);
 
     return plugin_handle;
 }
 
 void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
     auto plugins = loadPluginList(filename);
+
+    lock_guard lg(lock);
 
     for (const auto& pair : plugins) {
         const std::string& name = pair.first;
@@ -184,17 +188,14 @@ nixlPluginManager::nixlPluginManager() {
         plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);  // Insert at the beginning for priority
         discoverPluginsFromDir(plugin_dir);
     }
+
+    registerBuiltinPlugins();
 }
 
 nixlPluginManager& nixlPluginManager::getInstance() {
+    // Meyers singleton initialization is safe in multi-threaded environment.
+    // Consult standard [stmt.dcl] chapter for details.
     static nixlPluginManager instance;
-
-    // Only register built-in plugins once
-    static bool registered = false;
-    if (!registered) {
-        instance.registerBuiltinPlugins();
-        registered = true;
-    }
 
     return instance;
 }
@@ -211,20 +212,27 @@ void nixlPluginManager::addPluginDirectory(const std::string& directory) {
         return;
     }
 
-    // Check if directory is already in the list
-    for (const auto& dir : plugin_dirs_) {
-        if (dir == directory) {
-            std::cout << "WARNING: Plugin directory already registered: " << directory << std::endl;
-            return;
+    {
+        lock_guard lg(lock);
+
+        // Check if directory is already in the list
+        for (const auto& dir : plugin_dirs_) {
+            if (dir == directory) {
+                std::cout << "WARNING: Plugin directory already registered: " << directory << std::endl;
+                return;
+            }
         }
+
+        // Prioritize the new directory by inserting it at the beginning
+        plugin_dirs_.insert(plugin_dirs_.begin(), directory);
     }
 
-    // Prioritize the new directory by inserting it at the beginning
-    plugin_dirs_.insert(plugin_dirs_.begin(), directory);
     discoverPluginsFromDir(directory);
 }
 
-std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::string& plugin_name) {
+std::shared_ptr<const nixlPluginHandle> nixlPluginManager::loadPlugin(const std::string& plugin_name) {
+    lock_guard lg(lock);
+
     // Check if the plugin is already loaded
     // Static Plugins are preloaded so return handle
     auto it = loaded_plugins_.find(plugin_name);
@@ -298,10 +306,15 @@ void nixlPluginManager::unloadPlugin(const nixl_backend_t& plugin_name) {
             return;
         }
     }
+
+    lock_guard lg(lock);
+
     loaded_plugins_.erase(plugin_name);
 }
 
-std::shared_ptr<nixlPluginHandle> nixlPluginManager::getPlugin(const nixl_backend_t& plugin_name) {
+std::shared_ptr<const nixlPluginHandle> nixlPluginManager::getPlugin(const nixl_backend_t& plugin_name) {
+    lock_guard lg(lock);
+
     auto it = loaded_plugins_.find(plugin_name);
     if (it != loaded_plugins_.end()) {
         return it->second;
@@ -309,7 +322,7 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::getPlugin(const nixl_backen
     return nullptr;
 }
 
-nixl_b_params_t nixlPluginHandle::getBackendOptions() {
+nixl_b_params_t nixlPluginHandle::getBackendOptions() const {
     nixl_b_params_t params;
     if (plugin_ && plugin_->get_backend_options) {
         return plugin_->get_backend_options();
@@ -317,7 +330,7 @@ nixl_b_params_t nixlPluginHandle::getBackendOptions() {
     return params; // Return empty params if not implemented
 }
 
-nixl_mem_list_t nixlPluginHandle::getBackendMems() {
+nixl_mem_list_t nixlPluginHandle::getBackendMems() const {
     nixl_mem_list_t mems;
     if (plugin_ && plugin_->get_backend_mems) {
         return plugin_->get_backend_mems();
@@ -326,6 +339,8 @@ nixl_mem_list_t nixlPluginHandle::getBackendMems() {
 }
 
 std::vector<nixl_backend_t> nixlPluginManager::getLoadedPluginNames() {
+    lock_guard lg(lock);
+
     std::vector<nixl_backend_t> names;
     for (const auto& pair : loaded_plugins_) {
         names.push_back(pair.first);
@@ -333,10 +348,9 @@ std::vector<nixl_backend_t> nixlPluginManager::getLoadedPluginNames() {
     return names;
 }
 
-// Static Plugin Helpers
-std::vector<nixlStaticPluginInfo> nixlPluginManager::static_plugins_;
-
 void nixlPluginManager::registerStaticPlugin(const char* name, nixlStaticPluginCreatorFunc creator) {
+    lock_guard lg(lock);
+
     nixlStaticPluginInfo info;
     info.name = name;
     info.createFunc = creator;
@@ -346,12 +360,12 @@ void nixlPluginManager::registerStaticPlugin(const char* name, nixlStaticPluginC
     nixlBackendPlugin* plugin = info.createFunc();
     if (plugin) {
         // Register the loaded plugin
-        auto plugin_handle = std::make_shared<nixlPluginHandle>(nullptr, plugin);
+        auto plugin_handle = std::make_shared<const nixlPluginHandle>(nullptr, plugin);
         loaded_plugins_[name] = plugin_handle;
     }
 }
 
-std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
+const std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
     return static_plugins_;
 }
 
