@@ -107,6 +107,11 @@ typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
 typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
 
 /**
+ * @brief A constant to define the default communication port.
+ */
+constexpr int default_comm_port = 8888;
+
+/**
  * @class nixlAgentOptionalArgs
  * @brief A class for optional argument that can be provided to relevant agent methods.
  */
@@ -140,6 +145,17 @@ class nixlAgentOptionalArgs {
          *                      used in getLocalPartialMD.
          */
         bool includeConnInfo = false;
+
+        /**
+         * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
+         *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+         */
+        std::string ipAddr;
+        /**
+         * @var port Used to specify the port of a remote peer, ipAddr must also be set
+         *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+         */
+        int port = default_comm_port;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

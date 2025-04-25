@@ -173,10 +173,13 @@ int main(int argc, char *argv[]) {
     } else {
 
         std::cout << " Exchange metadata with Target \n";
+        nixl_opt_args_t md_extra_params;
+        md_extra_params.ipAddr = target_ip;
+        md_extra_params.port = target_port;
 
-        agent.fetchRemoteMD("target", target_ip, target_port);
+        agent.fetchRemoteMD("target", &md_extra_params);
 
-        agent.sendLocalMD(target_ip, target_port);
+        agent.sendLocalMD(&md_extra_params);
 
         nixl_notifs_t notifs;
 
@@ -222,7 +225,7 @@ int main(int argc, char *argv[]) {
         }
         std::cout << " Completed Sending Data using UCX backend\n";
         agent.releaseXferReq(treq);
-        agent.invalidateLocalMD(target_ip, target_port);
+        agent.invalidateLocalMD(&md_extra_params);
     }
 
     std::cout <<"Cleanup.. \n";

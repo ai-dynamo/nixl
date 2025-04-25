@@ -21,8 +21,6 @@
 #include "mem_section.h"
 #include "stream/metadata_stream.h"
 
-constexpr int default_comm_port = 8888;
-
 typedef std::vector<nixlBackendEngine*> backend_list_t;
 
 //Internal typedef to define metadata communication request types
