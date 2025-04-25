@@ -24,36 +24,35 @@ RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
     pybind11-dev \
-    libclang-dev \
-    cmake
+    cmake \
+    libgflags-dev \
+    libgrpc-dev \
+    libgrpc++-dev \
+    libprotobuf-dev \
+    protobuf-compiler-grpc \
+    libcpprest-dev \
+    etcd-server \
+    etcd-client
+
+WORKDIR /workspace
+RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
+	cd etcd-cpp-apiv3 && mkdir build && cd build && \
+	cmake .. && make -j$(nproc) && make install
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH \
-    RUST_VERSION=1.86.0 \
-    RUSTARCH=x86_64-unknown-linux-gnu
-
-RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" && \
-    echo "a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f *rustup-init" | sha256sum -c - && \
-    chmod +x rustup-init && \
-    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
-    rm rustup-init && \
-    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+COPY --from=nixl . /workspace/nixl
+COPY --from=nixlbench . /workspace/nixlbench
 
 WORKDIR /workspace/nixl
 
 # LD_LIBRARY_PATH is needed for auditwheel to find libcuda.so.1
 # Set incorrectly to `compat/lib` in cuda-dl-base image
-ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
     uv pip install --upgrade meson pybind11 patchelf
-
-COPY . /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
@@ -62,13 +61,10 @@ RUN rm -rf build && \
     ninja && \
     ninja install
 
-ENV NIXL_PREFIX=/usr/local/nixl
 ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/x86_64-linux-gnu/plugins
 RUN echo "/usr/local/nixl/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/x86_64-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
-
-RUN cd src/bindings/rust && cargo build --release --locked
 
 # Create the wheel
 ARG WHL_PYTHON_VERSIONS="3.12"
@@ -81,3 +77,17 @@ RUN uv pip install auditwheel && \
     uv run auditwheel repair /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+
+WORKDIR /workspace/nixlbench
+
+RUN ls /usr/local/lib
+RUN echo $LD_LIBRARY_PATH
+RUN ldconfig
+
+RUN ls -ll /workspace/nixlbench
+RUN rm -rf build && \
+    mkdir build && \
+    uv run meson setup build -Dnixl_path=/usr/local/nixl/ && \
+    cd build && ninja
+
+WORKDIR /workspace/nixlbench/build

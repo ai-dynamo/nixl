@@ -195,17 +195,22 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
         }
 
         // third, do remote commands
-        for (const auto& [sock_peer, socketClient] : remoteSockets ) {
+        auto socket_iter = remoteSockets.begin();
+        while (socket_iter != remoteSockets.end()) {
             std::string commands;
             std::vector<std::string> command_list;
             nixl_status_t ret;
 
-            ssize_t recv_bytes = recvCommMessage(socketClient, commands);
+            ssize_t recv_bytes = recvCommMessage(socket_iter->second, commands);
 
-            if(recv_bytes == 0 || recv_bytes == -1) continue;
+            if(recv_bytes == 0 || recv_bytes == -1) {
+                socket_iter++;
+                continue;
+            }
 
             command_list = str_split_substr(commands, "NIXLCOMM:");
 
+            bool invl = false;
             for(std::string command : command_list) {
 
                 if(command.size() < 4) continue;
@@ -225,13 +230,20 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     nixl_blob_t my_MD;
                     myAgent->getLocalMD(my_MD);
 
-                    sendCommMessage(socketClient, std::string("NIXLCOMM:LOAD" + my_MD));
+                    sendCommMessage(socket_iter->second, std::string("NIXLCOMM:LOAD" + my_MD));
                 } else if(header == "INVL") {
-                    close(socketClient);
-                    remoteSockets.erase(sock_peer);
+                    invl = true;
+                    break;
                 } else {
                     throw std::runtime_error("Received socket message with bad header" + header + ", critically failing\n");
                 }
+            }
+
+            if (invl) {
+                close(socket_iter->second);
+                socket_iter = remoteSockets.erase(socket_iter);
+            } else {
+                socket_iter++;
             }
         }
 
