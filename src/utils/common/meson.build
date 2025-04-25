@@ -29,7 +29,7 @@ nixl_common_lib = shared_library('nixl_common',
     'nixl_log.cpp',
     dependencies: nixl_common_deps,
     include_directories: nixl_common_inc,
-    install: false, # Don't install this internal library directly
+    install: true,
 )
 
 # Make the library and includes available to other parts of the build
