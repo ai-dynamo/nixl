@@ -24,9 +24,23 @@ RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
     pybind11-dev \
+    libclang-dev \
     cmake
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH \
+    RUST_VERSION=1.86.0 \
+    RUSTARCH=x86_64-unknown-linux-gnu
+
+RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" && \
+    echo "a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f *rustup-init" | sha256sum -c - && \
+    chmod +x rustup-init && \
+    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
+    rm rustup-init && \
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
 WORKDIR /workspace/nixl
 
@@ -48,10 +62,13 @@ RUN rm -rf build && \
     ninja && \
     ninja install
 
+ENV NIXL_PREFIX=/usr/local/nixl
 ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/x86_64-linux-gnu/plugins
 RUN echo "/usr/local/nixl/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/x86_64-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
+
+RUN cd src/bindings/rust && cargo build --release --locked
 
 # Create the wheel
 ARG WHL_PYTHON_VERSIONS="3.12"
