@@ -505,6 +505,7 @@ impl Agent {
     pub fn register_memory(
         &self,
         descriptor: &dyn NixlDescriptor,
+        opt_args: &OptArgs,
     ) -> Result<RegistrationHandle, NixlError> {
         let mut reg_dlist = RegDescList::new(descriptor.mem_type())?;
         unsafe {
@@ -514,29 +515,6 @@ impl Agent {
                 self.inner.write().unwrap().handle.as_ptr(),
                 reg_dlist.inner.as_ptr(),
                 _opt_args.inner.as_ptr(),
-            );
-        }
-        Ok(RegistrationHandle {
-            agent: self.inner.clone(),
-            ptr: unsafe { descriptor.as_ptr() }.ok_or(NixlError::InvalidParam)? as usize,
-            size: descriptor.size(),
-            dev_id: descriptor.device_id(),
-            mem_type: descriptor.mem_type(),
-        })
-    }
-
-    pub fn register_memory_with_args(
-        &self,
-        descriptor: &dyn NixlDescriptor,
-        opt_args: &OptArgs,
-    ) -> Result<RegistrationHandle, NixlError> {
-        let mut reg_dlist = RegDescList::new(descriptor.mem_type())?;
-        unsafe {
-            reg_dlist.add_storage_desc(descriptor)?;
-            nixl_capi_register_mem(
-                self.inner.write().unwrap().handle.as_ptr(),
-                reg_dlist.inner.as_ptr(),
-                opt_args.inner.as_ptr(),
             );
         }
         Ok(RegistrationHandle {
@@ -1542,14 +1520,8 @@ impl NixlDescriptor for SystemStorage {
 }
 
 impl NixlRegistration for SystemStorage {
-    fn register(&mut self, agent: &Agent) -> Result<(), NixlError> {
-        let handle = agent.register_memory(self)?;
-        self.handle = Some(handle);
-        Ok(())
-    }
-
-    fn register_with_args(&mut self, agent: &Agent, opt_args: &OptArgs) -> Result<(), NixlError> {
-        let handle = agent.register_memory_with_args(self, opt_args)?;
+    fn register(&mut self, agent: &Agent, opt_args: &OptArgs) -> Result<(), NixlError> {
+        let handle = agent.register_memory(self, opt_args)?;
         self.handle = Some(handle);
         Ok(())
     }
