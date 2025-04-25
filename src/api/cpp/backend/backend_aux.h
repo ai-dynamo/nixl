@@ -103,12 +103,6 @@ class nixlMetaDesc : public nixlBasicDesc {
                           (lhs.metadataP == rhs.metadataP));
         }
 
-        // Main use case is to take the BasicDesc from another object, so just
-        // the metadata part is separately copied here, used in DescList
-        inline void copyMeta (const nixlMetaDesc &meta) {
-            this->metadataP = meta.metadataP;
-        }
-
         inline void print(const std::string &suffix) const {
             nixlBasicDesc::print(", Backend ptr val: " +
                                  std::to_string((uintptr_t)metadataP) + suffix);

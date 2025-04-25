@@ -123,6 +123,25 @@ The preferred way is to build it through meson-python, which will just let it be
 
 ` $ pip install .`
 
+### Rust Bindings
+```bash
+# Build with default NIXL installation (/opt/nvidia/nvda_nixl)
+$ cd src/bindings/rust
+$ cargo build --release
+
+# Or specify custom NIXL location
+$ NIXL_PREFIX=/path/to/nixl cargo build --release
+
+# Run tests
+$ cargo test
+```
+
+Use in your project by adding to `Cargo.toml`:
+```toml
+[dependencies]
+nixl-sys = { path = "path/to/nixl/bindings/rust" }
+```
+
 ### Other build options
 See [contrib/README.md](contrib/README.md) for more build options.
 

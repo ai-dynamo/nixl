@@ -24,6 +24,19 @@ project('nixl', 'CPP', version: '0.1.1',
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
 
+dl_dep = cpp.find_library('dl', required: true)
+thread_dep = dependency('threads')
+
+# Forced to ignore this error due to:
+# https://github.com/abseil/abseil-cpp/issues/1779
+# This must be global since subprojects cannot be assigned with arguments.
+# Adding this configuration only for release build to consider it while developing.
+if get_option('buildtype') == 'release'
+  abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
+  add_global_arguments(abseil_flags, language: 'cpp')
+endif
+abseil_proj = subproject('abseil-cpp')
+
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
@@ -57,6 +70,43 @@ endif
 
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
+endif
+
+# Logging
+
+# Determine the actual log level based on user choice or build type
+log_level_opt = get_option('log_level')
+buildtype = get_option('buildtype')
+
+actual_log_level = log_level_opt
+if actual_log_level == 'auto'
+  if buildtype == 'debug'
+    actual_log_level = 'trace'
+  else # release, debugoptimized, or plain
+    actual_log_level = 'info'
+  endif
+endif
+
+# Add define for the determined log level
+add_project_arguments('-DLOG_LEVEL_' + actual_log_level.to_upper() , language: 'cpp')
+
+# Configure Abseil log stripping and NDEBUG for release builds
+if get_option('buildtype') == 'release'
+    # Map our log levels to Abseil severity integers
+    absl_log_level_map = {
+        'trace': 0, # Treat trace/debug as below INFO for stripping
+        'debug': 0,
+        'info': 0, # kInfo
+        'warning': 1, # kWarning
+        'error': 2, # kError
+        'fatal': 3, # kFatal
+    }
+    absl_min_log_level = absl_log_level_map.get(actual_log_level, 0) # Default to info if level unknown
+
+    # Required by Abseil to strip logs at compile time based on the determined level
+    add_project_arguments('-DABSL_MIN_LOG_LEVEL=@0@'.format(absl_min_log_level), language : 'cpp')
+    # Required by Abseil to strip DCHECK assertions at compile time
+    add_project_arguments('-DNDEBUG', language: 'cpp')
 endif
 
 static_plugins = []

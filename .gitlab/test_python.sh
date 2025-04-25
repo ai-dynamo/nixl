@@ -43,6 +43,7 @@ pytest test/python
 
 echo "==== Running python example ===="
 cd examples/python
-python3 blocking_send_recv_example.py --name="B" --mode="target" --zmq_ip=127.0.0.1 --zmq_port=1234&
+python3 partial_md_example.py
+python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port=1234&
 sleep 1
-python3 blocking_send_recv_example.py --name="A" --mode="initiator" --zmq_ip=127.0.0.1 --zmq_port=1234
+python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port=1234

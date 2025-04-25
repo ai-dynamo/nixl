@@ -18,16 +18,15 @@
 import argparse
 
 import torch
-import zmq
 
-from nixl._api import nixl_agent
+from nixl._api import nixl_agent, nixl_agent_config
+from nixl._bindings import nixlNotFoundError
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", type=str, required=True)
-    parser.add_argument("--zmq_ip", type=str, required=True)
-    parser.add_argument("--zmq_port", type=int, default=5555)
+    parser.add_argument("--ip", type=str, required=True)
+    parser.add_argument("--port", type=int, default=5555)
     parser.add_argument(
         "--mode",
         type=str,
@@ -40,18 +39,15 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    # zmq as side channel
-    _ctx = zmq.Context()
-    _socket = _ctx.socket(zmq.PAIR)
-    connect_str = f"tcp://{args.zmq_ip}:{args.zmq_port}"
+    # initiator use default port
+    listen_port = args.port
+    if args.mode != "target":
+        listen_port = 0
 
-    if args.mode == "target":
-        _socket.bind(connect_str)
-    else:
-        _socket.connect(connect_str)
+    config = nixl_agent_config(True, True, listen_port)
 
     # Allocate memory and register with NIXL
-    agent = nixl_agent(args.name, None)
+    agent = nixl_agent(args.mode, config)
     if args.mode == "target":
         tensors = [torch.ones(10, dtype=torch.float32) for _ in range(2)]
     else:
@@ -63,44 +59,54 @@ if __name__ == "__main__":
         print("Memory registration failed.")
         exit()
 
-    # Exchange metadata
+    # Target code
     if args.mode == "target":
-        meta = agent.get_agent_metadata()
-        if not meta:
-            print("Acquiring metadata in target agent failed.")
-            exit()
+        ready = False
 
-        _socket.send(meta)
-        peer_name = _socket.recv_string()
-    else:
-        remote_meta = _socket.recv()
-        _socket.send_string(args.name)  # We just need the name, not full meta
+        target_descs = reg_descs.trim()
+        target_desc_str = agent.get_serialized_descs(target_descs)
 
-        peer_name = agent.add_remote_agent(remote_meta)
-        if not peer_name:
-            print("Loading target metadata in initiator agent failed.")
-            exit()
+        # Send desc list to initiator when metadata is ready
+        while not ready:
+            try:
+                agent.send_notif("initiator", target_desc_str)
+            except nixlNotFoundError:
+                ready = False
+            else:
+                ready = True
 
-    # Blocking send/recv (pull mode)
-    if args.mode == "target":
-        # If desired, can use send_notif instead. Also indicate
-        # the notification that is expected to be received.
-        targer_descs = reg_descs.trim()
-        _socket.send(agent.get_serialized_descs(targer_descs))
+        # Waiting for transfer
         # For now the notification is just UUID, could be any python bytes.
         # Also can have more than UUID, and check_remote_xfer_done returns
         # the full python bytes, here it would be just UUID.
-        while not agent.check_remote_xfer_done(peer_name, b"UUID"):
+        while not agent.check_remote_xfer_done("initiator", b"UUID"):
             continue
+    # Initiator code
     else:
-        # If send_notif is used, get_new_notifs should listen for it,
-        # or directly calling check_remote_xfer_done
-        targer_descs = agent.deserialize_descs(_socket.recv())
+        print("Initiator sending to " + args.ip)
+        agent.fetch_remote_metadata("target", args.ip, args.port)
+        agent.send_local_metadata(args.ip, args.port)
+
+        notifs = agent.get_new_notifs()
+
+        while len(notifs) == 0:
+            notifs = agent.get_new_notifs()
+
+        target_descs = agent.deserialize_descs(notifs["target"][0])
         initiator_descs = reg_descs.trim()
 
-        xfer_handle = agent.initialize_xfer(
-            "READ", initiator_descs, targer_descs, peer_name, "UUID"
-        )
+        # Ensure remote metadata has arrived from fetch
+        ready = False
+        while not ready:
+            try:
+                xfer_handle = agent.initialize_xfer(
+                    "READ", initiator_descs, target_descs, "target", "UUID"
+                )
+            except nixlNotFoundError:
+                ready = False
+            else:
+                ready = True
+
         if not xfer_handle:
             print("Creating transfer failed.")
             exit()
@@ -125,8 +131,9 @@ if __name__ == "__main__":
         print(f"{args.mode} Data verification passed - {tensors}")
 
     if args.mode != "target":
-        agent.remove_remote_agent(peer_name)
+        agent.remove_remote_agent("target")
         agent.release_xfer_handle(xfer_handle)
+        agent.invalidate_local_metadata(args.ip, args.port)
 
     agent.deregister_memory(reg_descs)
 
