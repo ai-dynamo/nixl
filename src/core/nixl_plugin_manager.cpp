@@ -17,6 +17,7 @@
 
 #include "plugin_manager.h"
 #include "nixl.h"
+#include "common/nixl_log.h"
 #include <dlfcn.h>
 #include <iostream>
 #include <filesystem>
@@ -81,7 +82,7 @@ std::map<nixl_backend_t, std::string> loadPluginList(const std::string& filename
     std::ifstream file(filename);
 
     if (!file.is_open()) {
-        std::cerr << "Failed to open plugin list file: " << filename << std::endl;
+        NIXL_ERROR << "Failed to open plugin list file: " << filename;
         return plugins;
     }
 
@@ -117,8 +118,7 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPluginFromPath(const st
     // Open the plugin file
     void* handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
-        std::cerr << "Failed to load plugin from " << plugin_path <<
-                     ": " << dlerror() << std::endl;
+        NIXL_ERROR << "Failed to load plugin from " << plugin_path << ": " << dlerror();
         return nullptr;
     }
 
@@ -126,8 +126,7 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPluginFromPath(const st
     typedef nixlBackendPlugin* (*init_func_t)();
     init_func_t init = (init_func_t) dlsym(handle, "nixl_plugin_init");
     if (!init) {
-        std::cerr << "Failed to find nixl_plugin_init in " << plugin_path
-                    << ": " << dlerror() << std::endl;
+        NIXL_ERROR << "Failed to find nixl_plugin_init in " << plugin_path << ": " << dlerror();
         dlclose(handle);
         return nullptr;
     }
@@ -135,16 +134,16 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPluginFromPath(const st
     // Call the initialization function
     nixlBackendPlugin* plugin = init();
     if (!plugin) {
-        std::cerr << "Plugin initialization failed for " << plugin_path << std::endl;
+        NIXL_ERROR << "Plugin initialization failed for " << plugin_path;
         dlclose(handle);
         return nullptr;
     }
 
     // Check API version
     if (plugin->api_version != NIXL_PLUGIN_API_VERSION) {
-        std::cerr << "Plugin API version mismatch for " << plugin_path
-                    << ": expected " << NIXL_PLUGIN_API_VERSION
-                    << ", got " << plugin->api_version << std::endl;
+        NIXL_ERROR << "Plugin API version mismatch for " << plugin_path
+                   << ": expected " << NIXL_PLUGIN_API_VERSION
+                   << ", got " << plugin->api_version;
         dlclose(handle);
         return nullptr;
     }
@@ -171,7 +170,9 @@ void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
 
 // PluginManager implementation
 nixlPluginManager::nixlPluginManager() {
+    // Force levels right before logging
 #ifdef NIXL_USE_PLUGIN_FILE
+    NIXL_DEBUG << "Loading plugins from file: " << NIXL_USE_PLUGIN_FILE;
     std::string plugin_file = NIXL_USE_PLUGIN_FILE;
     if (access(plugin_file.c_str(), F_OK) == 0) {
         loadPluginsFromList(plugin_file);
@@ -181,6 +182,7 @@ nixlPluginManager::nixlPluginManager() {
     // Check for NIXL_PLUGIN_DIR environment variable
     const char* plugin_dir = getenv("NIXL_PLUGIN_DIR");
     if (plugin_dir) {
+        NIXL_DEBUG << "Loading plugins from directory: " << plugin_dir;
         plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);  // Insert at the beginning for priority
         discoverPluginsFromDir(plugin_dir);
     }
@@ -201,20 +203,20 @@ nixlPluginManager& nixlPluginManager::getInstance() {
 
 void nixlPluginManager::addPluginDirectory(const std::string& directory) {
     if (directory.empty()) {
-        std::cerr << "Cannot add empty plugin directory" << std::endl;
+        NIXL_ERROR << "Cannot add empty plugin directory";
         return;
     }
 
     // Check if directory exists
     if (access(directory.c_str(), F_OK | R_OK) != 0) {
-        std::cerr << "Plugin directory does not exist or is not readable: " << directory << std::endl;
+        NIXL_ERROR << "Plugin directory does not exist or is not readable: " << directory;
         return;
     }
 
     // Check if directory is already in the list
     for (const auto& dir : plugin_dirs_) {
         if (dir == directory) {
-            std::cout << "WARNING: Plugin directory already registered: " << directory << std::endl;
+            NIXL_WARN << "Plugin directory already registered: " << directory;
             return;
         }
     }
@@ -246,7 +248,7 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
 
         // Check if the plugin file exists before attempting to load i
         if (access(plugin_path.c_str(), F_OK) != 0) {
-            std::cerr << "Plugin file does not exist: " << plugin_path << std::endl;
+            NIXL_WARN << "Plugin file does not exist, skipping: " << plugin_path;
             continue;
         }
 
@@ -258,7 +260,7 @@ std::shared_ptr<nixlPluginHandle> nixlPluginManager::loadPlugin(const std::strin
     }
 
     // Failed to load the plugin
-    std::cerr << "Failed to load plugin '" << plugin_name << "' from any directory" << std::endl;
+    NIXL_ERROR << "Failed to load plugin '" << plugin_name << "' from any directory";
     return nullptr;
 }
 
@@ -282,9 +284,9 @@ void nixlPluginManager::discoverPluginsFromDir(const std::string& dirpath) {
 
             // Try to load the plugin
             auto plugin = loadPlugin(plugin_name);
-            // if (plugin) { // To be used in logging infra
-            //    std::cout << "Loaded plugin " << plugin_name << std::endl;
-            // }
+            if (plugin) {
+                NIXL_DEBUG << "Discovered and loaded plugin: " << plugin_name;
+            }
         }
     }
 

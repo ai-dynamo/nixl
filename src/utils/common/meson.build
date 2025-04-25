@@ -24,8 +24,8 @@ nixl_common_deps = [
     absl_strings_dep,
 ]
 
-# Define a static library for common utilities
-nixl_common_lib = static_library('nixl_common',
+# Define a shared library for common utilities
+nixl_common_lib = shared_library('nixl_common',
     'nixl_log.cpp',
     dependencies: nixl_common_deps,
     include_directories: nixl_common_inc,

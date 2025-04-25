@@ -22,6 +22,7 @@
 #include "transfer_request.h"
 #include "agent_data.h"
 #include "plugin_manager.h"
+#include "common/nixl_log.h"
 
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
@@ -195,7 +196,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         // Plugin found, use it to create the backend
         backend = plugin_handle->createEngine(&init_params);
     } else {
-        std::cerr << "Unsupported backend: " << type << std::endl;
+        NIXL_ERROR << "Unsupported backend: " << type;
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -244,6 +245,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
         // TODO: Check if backend supports ProgThread
         //       when threading is in agent
+
+        NIXL_DEBUG << "Created backend: " << type;
     }
 
     return NIXL_SUCCESS;
@@ -578,13 +581,10 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
             j++;
             i++;
         }
-
+        NIXL_DEBUG << "reqH descList size down to " << j;
         handle->initiatorDescs->resize(j);
         handle->targetDescs->resize(j);
     }
-
-    // To be added to logging
-    //std::cout << "reqH descList size down to " << j << "\n";
 
     handle->engine      = backend;
     handle->remoteAgent = remote_side->remoteAgent;
@@ -1053,7 +1053,7 @@ nixl_status_t
 nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
 
     if(extra_params->ipAddr.size() == 0){
-        std::cerr << "ETCD not supported yet, please specify IP\n";
+        NIXL_ERROR << "ETCD not supported yet, please specify IP";
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -1070,7 +1070,7 @@ nixl_status_t
 nixlAgent::sendLocalPartialMD(nixl_reg_dlist_t &descs,
                               const nixl_opt_args_t* extra_params) const {
     if(extra_params->ipAddr.size() == 0){
-        std::cerr << "ETCD not supported yet, please specify IP\n";
+        NIXL_ERROR << "ETCD not supported yet, please specify IP";
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -1089,7 +1089,7 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
                           const nixl_opt_args_t* extra_params) {
 
     if(extra_params->ipAddr.size() == 0){
-        std::cerr << "ETCD not supported yet, please specify IP\n";
+        NIXL_ERROR << "ETCD not supported yet, please specify IP";
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -1102,7 +1102,7 @@ nixl_status_t
 nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
 
     if(extra_params->ipAddr.size() == 0){
-        std::cerr << "ETCD not supported yet, please specify IP\n";
+        NIXL_ERROR << "ETCD not supported yet, please specify IP";
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
