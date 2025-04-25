@@ -633,7 +633,10 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     NIXL_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
+    {
+        std::cerr << "no remote agent\n" << std::endl;
         return NIXL_ERR_NOT_FOUND;
+    }
 
     // Check the correspondence between descriptor lists
     if (local_descs.descCount() != remote_descs.descCount())
@@ -652,6 +655,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                 remote_descs.getType());
         if (!local_set || !remote_set) {
             delete backend_set;
+            std::cerr << "no sets\n" << std::endl;
             return NIXL_ERR_NOT_FOUND;
         }
 
@@ -661,6 +665,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
         if (backend_set->empty()) {
             delete backend_set;
+            std::cerr << "set empty\n" << std::endl;
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
@@ -702,6 +707,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     if (!handle->engine) {
         delete handle;
+        std::cerr << "no engine\n" << std::endl;
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1132,6 +1138,15 @@ nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
     data->enqueueCommWork(std::make_tuple(SOCK_INVAL, extra_params->ipAddr, extra_params->port, ""));
 
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::checkRemoteMD (const std::string remote_name) const {
+    NIXL_LOCK_GUARD(data->lock);
+    if (data->remoteSections.count(remote_name)!=0) {
+        return NIXL_SUCCESS;
+    }
+    return NIXL_ERR_NOT_FOUND;
 }
 
 nixl_status_t

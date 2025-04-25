@@ -674,6 +674,20 @@ class nixl_agent:
         self.agent.invalidateLocalMD(ip_addr, port)
 
     """
+    @brief Check if the remote metadata for a specific agent is available
+
+    @param agent Name of the remote agent.
+
+    @return True if available, False otherwise
+    """
+
+    def check_remote_metadata(self, agent: str) -> bool:
+        if self.agent.checkRemoteMD(agent) == nixlBind.NIXL_SUCCESS:
+            return True
+        else:
+            return False
+
+    """
     @brief Add a remote agent using its metadata. After this call, current agent can
             initiate transfers towards the remote agent.
 

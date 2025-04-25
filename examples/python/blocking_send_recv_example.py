@@ -68,12 +68,9 @@ if __name__ == "__main__":
 
         # Send desc list to initiator when metadata is ready
         while not ready:
-            try:
-                agent.send_notif("initiator", target_desc_str)
-            except nixlNotFoundError:
-                ready = False
-            else:
-                ready = True
+            ready = agent.check_remote_metadata("initiator")
+
+        agent.send_notif("initiator", target_desc_str)
 
         # Waiting for transfer
         # For now the notification is just UUID, could be any python bytes.
@@ -98,14 +95,11 @@ if __name__ == "__main__":
         # Ensure remote metadata has arrived from fetch
         ready = False
         while not ready:
-            try:
-                xfer_handle = agent.initialize_xfer(
-                    "READ", initiator_descs, target_descs, "target", "UUID"
-                )
-            except nixlNotFoundError:
-                ready = False
-            else:
-                ready = True
+            ready = agent.check_remote_metadata("target")
+
+        xfer_handle = agent.initialize_xfer(
+            "READ", initiator_descs, target_descs, "target", "UUID"
+        )
 
         if not xfer_handle:
             print("Creating transfer failed.")

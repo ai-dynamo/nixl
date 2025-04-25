@@ -379,6 +379,15 @@ class nixlAgent {
         nixl_status_t
         invalidateLocalMD (const nixl_opt_args_t* extra_params = nullptr) const;
 
+        /**
+         * @brief  Check if metadata is available for a remote agent.
+         *
+         * @param  str           Remote agent to check for
+         * @return nixl_status_t Error code, NOT_FOUND if metadata not found
+         */
+        nixl_status_t
+        checkRemoteMD (const std::string remote_name) const;
+
         /*** Metadata handling through side channel ***/
         /**
          * @brief  Get metadata blob for this agent, to be given to other agents.
