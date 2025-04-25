@@ -33,11 +33,14 @@ class nixlAgentConfig {
         bool     useProgThread;
         /** @var Enable listener thread */
         bool     useListenThread;
+	/** @var Enable etcd connection */
+	bool	 useEtcd;
         /** @var Port for listener thread to use */
         int      listenPort;
         /** @var synchronization mode for multi-threaded environment execution */
         nixl_thread_sync_t syncMode;
-
+	/** @var IP:PORT to connect for etcd server */
+	std::string etcd_ep;
 
     public:
 
@@ -57,26 +60,30 @@ class nixlAgentConfig {
         uint64_t lthrDelay;
 
 
-
         /**
          * @brief  Agent configuration constructor for enabling various features.
          * @param use_prog_thread    flag to determine use of progress thread
          * @param use_listen_thread  flag to determine use of listener thread
          * @param port               specify port for listener thread to listen on
-         * @param pthr_delay_us      Optional delay for pthread in us
-         * @param pthr_delay_us      Optional delay for listener thread in us
          * @param sync_mode          Thread synchronization mode
+         * @param pthr_delay_us      Optional delay for pthread in us
+         * @param lthr_delay_us      Optional delay for listener thread in us
+	 * @param etcd_ep            Optional endpoint in IP:PORT to connect to etcd
          */
         nixlAgentConfig (const bool use_prog_thread,
                          const bool use_listen_thread=false,
+			 const bool use_etcd=false,
                          const int port=0,
                          nixl_thread_sync_t sync_mode=nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT,
+			 const std::string etcdep = "",
                          const uint64_t pthr_delay_us=0,
                          const uint64_t lthr_delay_us = 100000) :
                          useProgThread(use_prog_thread),
                          useListenThread(use_listen_thread),
+			 useEtcd(use_etcd),
                          listenPort(port),
-                         syncMode(sync_mode),
+			 syncMode(sync_mode),
+			 etcd_ep(etcdep),
                          pthrDelay(pthr_delay_us),
                          lthrDelay(lthr_delay_us) { }
 

@@ -87,6 +87,97 @@ ssize_t recvCommMessage(int fd, std::string &msg){
     return recv_bytes;
 }
 
+// ETCD-related method implementations
+std::string nixlAgentData::makeEtcdKey(const std::string& metadata_type) const {
+    std::stringstream ss;
+    ss << namespace_prefix << "/" << name << "/" << metadata_type;
+    return ss.str();
+}
+
+nixl_status_t nixlAgentData::storeMetadataInEtcd(const std::string& metadata_type, const nixl_blob_t& metadata) const {
+    // Check if etcd client is available
+    if (!client) {
+        std::cerr << "ETCD client not available" << std::endl;
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    try {
+        // Create key for metadata
+        std::string metadata_key = makeEtcdKey(metadata_type);
+
+        // Store metadata in etcd
+        etcd::Response response = client->put(metadata_key, metadata).get();
+
+        if (response.is_ok()) {
+            std::cout << "Successfully stored " << metadata_type << " in etcd with key: " << metadata_key << std::endl;
+            return NIXL_SUCCESS;
+        } else {
+            std::cerr << "Failed to store " << metadata_type << " in etcd: " << response.error_message() << std::endl;
+            return NIXL_ERR_BACKEND;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error sending " << metadata_type << " to etcd: " << e.what() << std::endl;
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+nixl_status_t nixlAgentData::fetchMetadataFromEtcd(const std::string& agent_name, const std::string& metadata_type, nixl_blob_t& metadata) const {
+    // Check if etcd client is available
+    if (!client) {
+        std::cerr << "ETCD client not available" << std::endl;
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    try {
+        // Create key for agent's metadata
+        std::stringstream ss;
+        ss << namespace_prefix << "/" << agent_name << "/" << metadata_type;
+        std::string metadata_key = ss.str();
+
+        // Fetch metadata from etcd
+        etcd::Response response = client->get(metadata_key).get();
+
+        if (response.is_ok()) {
+            metadata = response.value().as_string();
+            std::cout << "Successfully fetched " << metadata_type << " for agent: " << agent_name << std::endl;
+            return NIXL_SUCCESS;
+        } else {
+            std::cerr << "Failed to fetch " << metadata_type << " from etcd: " << response.error_message() << std::endl;
+            return NIXL_ERR_BACKEND;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error fetching " << metadata_type << " from etcd: " << e.what() << std::endl;
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+nixl_status_t nixlAgentData::removeMetadataFromEtcd(const std::string& metadata_type) const {
+    // Check if etcd client is available
+    if (!client) {
+        std::cerr << "ETCD client not available" << std::endl;
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    try {
+        // Create key for metadata
+        std::string metadata_key = makeEtcdKey(metadata_type);
+
+        // Remove metadata from etcd
+        etcd::Response response = client->rm(metadata_key).get();
+
+        if (response.is_ok()) {
+            std::cout << "Successfully removed " << metadata_type << " from etcd for agent: " << name << std::endl;
+            return NIXL_SUCCESS;
+        } else {
+            std::cerr << "Warning: Failed to remove " << metadata_type << " from etcd: " << response.error_message() << std::endl;
+            return NIXL_ERR_BACKEND;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error removing " << metadata_type << " from etcd: " << e.what() << std::endl;
+        return NIXL_ERR_BACKEND;
+    }
+}
+
 void nixlAgentData::commWorker(nixlAgent* myAgent){
 
     while(!(commThreadStop)) {

@@ -21,6 +21,11 @@
 #include "mem_section.h"
 #include "stream/metadata_stream.h"
 #include "sync.h"
+#include <etcd/Client.hpp>
+
+namespace etcd {
+    class Client;
+}
 
 typedef std::vector<nixlBackendEngine*> backend_list_t;
 
@@ -75,6 +80,16 @@ class nixlAgentData {
         void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
+
+        // ETCD-related methods and data
+        std::string makeEtcdKey(const std::string& metadata_type) const;
+        nixl_status_t storeMetadataInEtcd(const std::string& metadata_type, const nixl_blob_t& metadata) const;
+        nixl_status_t fetchMetadataFromEtcd(const std::string& agent_name, const std::string& metadata_type, nixl_blob_t& metadata) const;
+        nixl_status_t removeMetadataFromEtcd(const std::string& metadata_type) const;
+
+	std::string etcd_eps;
+	std::string namespace_prefix;
+	std::unique_ptr<etcd::Client> client;
 
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();
