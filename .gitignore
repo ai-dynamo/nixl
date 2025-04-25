@@ -1,3 +1,5 @@
+# Rust
+**/target/
 
 # Abseil-CPP
 subprojects/abseil-cpp-*
