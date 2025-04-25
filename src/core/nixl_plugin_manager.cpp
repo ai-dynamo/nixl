@@ -295,7 +295,7 @@ void nixlPluginManager::discoverPluginsFromDir(const std::string& dirpath) {
             // Try to load the plugin
             auto plugin = loadPlugin(plugin_name);
             if (plugin) {
-                NIXL_DEBUG << "Discovered and loaded plugin: " << plugin_name;
+                NIXL_INFO << "Discovered and loaded plugin: " << plugin_name;
             }
         }
     }
