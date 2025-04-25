@@ -19,19 +19,35 @@
 
 #include "backend/backend_engine.h"
 #include "backend/backend_plugin.h"
+#include <cassert>
 
 namespace mocks {
 
 class MockDramBackendEngine : public nixlBackendEngine {
 public:
-  MockDramBackendEngine(const nixlBackendInitParams *init_params);
+  MockDramBackendEngine(const nixlBackendInitParams *init_params) : nixlBackendEngine(init_params), sharedState(1) {}
   ~MockDramBackendEngine();
 
-  bool supportsRemote() const override;
-  bool supportsLocal() const override;
-  bool supportsNotif() const override;
-  bool supportsProgTh() const override;
-  nixl_mem_list_t getSupportedMems() const override;
+  bool supportsRemote() const override {
+    assert(sharedState > 0);
+    return true;
+  }
+  bool supportsLocal() const override {
+    assert(sharedState > 0);
+    return true;
+  }
+  bool supportsNotif() const override {
+    assert(sharedState > 0);
+    return false;
+  }
+  bool supportsProgTh() const override {
+    assert(sharedState > 0);
+    return false;
+  }
+  nixl_mem_list_t getSupportedMems() const override {
+    assert(sharedState > 0);
+    return nixl_mem_list_t{DRAM_SEG};
+  }
   nixl_status_t registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem,
                             nixlBackendMD *&out) override;
   nixl_status_t deregisterMem(nixlBackendMD *meta) override;
@@ -52,9 +68,14 @@ public:
                          const nixl_opt_b_args_t *opt_args) override;
   nixl_status_t checkXfer(nixlBackendReqH *handle) override;
   nixl_status_t releaseReqH(nixlBackendReqH *handle) override;
-  nixl_status_t getPublicData(const nixlBackendMD *meta,
-                              std::string &str) const override;
-  nixl_status_t getConnInfo(std::string &str) const override;
+  nixl_status_t getPublicData(const nixlBackendMD *meta, std::string &str) const override {
+    assert(sharedState > 0);
+    return NIXL_SUCCESS;
+  }
+  nixl_status_t getConnInfo(std::string &str) const override {
+    assert(sharedState > 0);
+    return NIXL_SUCCESS;
+  }
   nixl_status_t loadRemoteConnInfo(const std::string &remote_agent,
                                    const std::string &remote_conn_info);
   nixl_status_t loadRemoteMD(const nixlBlobDesc &input,
@@ -66,6 +87,11 @@ public:
   nixl_status_t genNotif(const std::string &remote_agent,
                          const std::string &msg) override;
   int progress() override;
+
+private:
+  // This represents an engine shared state that is read in every const method and modified in non-cost ones
+  // The purpose is to trigger thread sanitizer in multi-threading tests
+  int sharedState;
 };
 } // namespace mocks
 
