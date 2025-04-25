@@ -316,6 +316,59 @@ class nixlAgent {
                   const nixl_blob_t &msg,
                   const nixl_opt_args_t* extra_params = nullptr);
 
+        /*** Metadata handling through side channel ***/
+        /**
+         * @brief  Get metadata blob for this agent, to be given to other agents.
+         *
+         * @param  str [out]     The serialized metadata blob
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        getLocalMD (nixl_blob_t &str) const;
+
+        /**
+         * @brief  Get partial metadata blob for this agent, to be given to other agents.
+         *         If `descs` is empty, only backends' connection info is included in the metadata,
+         *         regardless of the value of `extra_params->includeConnInfo` and `descs` memory type.
+         *         If `descs` is non-empty, the metadata of the descriptors in the list are included,
+         *         and if `extra_params->includeConnInfo` is true, the connection info of the
+         *         backends supporting the memory type is also included.
+         *         If `extra_params->backends` is non-empty, only the descriptors supported by the
+         *         backends in the list and the backends' connection info are included in the metadata.
+         *
+         * @param  descs         [in]  Descriptor list to include in the metadata
+         * @param  str           [out] The serialized metadata blob
+         * @param  extra_params  [in]  Optional extra parameters used in getting partial metadata
+         * @return nixl_status_t       Error code if call was not successful
+         */
+        nixl_status_t
+        getLocalPartialMD(const nixl_reg_dlist_t &descs,
+                          nixl_blob_t &str,
+                          const nixl_opt_args_t* extra_params = nullptr) const;
+
+        /**
+         * @brief  Load other agent's metadata and unpack it internally. Now the local
+         *         agent can initiate transfers towards the remote agent.
+         *
+         * @param  remote_metadata  Serialized metadata blob to be loaded
+         * @param  agent_name [out] Agent name extracted from the loaded metadata blob
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        loadRemoteMD (const nixl_blob_t &remote_metadata,
+                      std::string &agent_name);
+
+        /**
+         * @brief  Invalidate the remote agent metadata cached locally. This will
+         *         disconnect from that agent if already connected, and no more
+         *         transfers can be initiated towards that agent.
+         *
+         * @param  remote_agent  Remote agent name to invalidate its metadata blob
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        invalidateRemoteMD (const std::string &remote_agent);
+
         /*** Metadata handling through direct channels (p2p socket and ETCD) ***/
         /**
          * @brief  Send your own agent metadata to a remote location.
@@ -348,7 +401,7 @@ class nixlAgent {
          * @return nixl_status_t       Error code if call was not successful
          */
         nixl_status_t
-        sendLocalPartialMD(nixl_reg_dlist_t  &descs,
+        sendLocalPartialMD(const nixl_reg_dlist_t &descs,
                            const nixl_opt_args_t* extra_params = nullptr) const;
 
         /**
@@ -381,65 +434,16 @@ class nixlAgent {
 
         /**
          * @brief  Check if metadata is available for a remote agent.
+         *         For partial metadata methods are used, the descriptor list in question
+         *         can be specified; otherwise, empty `descs` can be passed.
          *
          * @param  str           Remote agent to check for
          * @return nixl_status_t Error code, NOT_FOUND if metadata not found
          */
         nixl_status_t
-        checkRemoteMD (const std::string remote_name) const;
+        checkRemoteMD (const std::string remote_name,
+                       const nixl_xfer_dlist_t &descs) const;
 
-        /*** Metadata handling through side channel ***/
-        /**
-         * @brief  Get metadata blob for this agent, to be given to other agents.
-         *
-         * @param  str [out]     The serialized metadata blob
-         * @return nixl_status_t Error code if call was not successful
-         */
-        nixl_status_t
-        getLocalMD (nixl_blob_t &str) const;
-
-        /**
-         * @brief  Get partial metadata blob for this agent, to be given to other agents.
-         *         If `descs` is empty, only backends' connection info is included in the metadata,
-         *         regardless of the value of `extra_params->includeConnInfo` and `descs` memory type.
-         *         If `descs` is non-empty, the metadata of the descriptors in the list are included,
-         *         and if `extra_params->includeConnInfo` is true, the connection info of the
-         *         backends supporting the memory type is also included.
-         *         If `extra_params->backends` is non-empty, only the descriptors supported by the
-         *         backends in the list and the backends' connection info are included in the metadata.
-         *
-         * @param  descs         [in]  Descriptor list to include in the metadata
-         * @param  str           [out] The serialized metadata blob
-         * @param  extra_params  [in]  Optional extra parameters used in getting partial metadata
-         * @return nixl_status_t       Error code if call was not successful
-         */
-        nixl_status_t
-        getLocalPartialMD(nixl_reg_dlist_t  &descs,
-                          nixl_blob_t &str,
-                          const nixl_opt_args_t* extra_params = nullptr) const;
-
-        /**
-         * @brief  Load other agent's metadata and unpack it internally. Now the local
-         *         agent can initiate transfers towards the remote agent.
-         *
-         * @param  remote_metadata  Serialized metadata blob to be loaded
-         * @param  agent_name [out] Agent name extracted from the loaded metadata blob
-         * @return nixl_status_t    Error code if call was not successful
-         */
-        nixl_status_t
-        loadRemoteMD (const nixl_blob_t &remote_metadata,
-                      std::string &agent_name);
-
-        /**
-         * @brief  Invalidate the remote agent metadata cached locally. This will
-         *         disconnect from that agent if already connected, and no more
-         *         transfers can be initiated towards that agent.
-         *
-         * @param  remote_agent  Remote agent name to invalidate its metadata blob
-         * @return nixl_status_t Error code if call was not successful
-         */
-        nixl_status_t
-        invalidateRemoteMD (const std::string &remote_agent);
 };
 
 #endif

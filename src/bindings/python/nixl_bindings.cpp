@@ -504,6 +504,13 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(agent.getLocalPartialMD(descs, ret_str, &extra_params));
                     return py::bytes(ret_str);
                 }, py::arg("descs"), py::arg("inc_conn_info") = false, py::arg("backends") = std::vector<uintptr_t>({}))
+        .def("loadRemoteMD", [](nixlAgent &agent, const std::string &remote_metadata) -> py::bytes {
+                    //python can only interpret text strings
+                    std::string remote_name("");
+                    throw_nixl_exception(agent.loadRemoteMD(remote_metadata, remote_name));
+                    return py::bytes(remote_name);
+                })
+        .def("invalidateRemoteMD", &nixlAgent::invalidateRemoteMD)
         .def("sendLocalMD", [](nixlAgent &agent, std::string ip_addr, int port){
                     nixl_opt_args_t extra_params;
 
@@ -542,12 +549,5 @@ PYBIND11_MODULE(_bindings, m) {
 
                     throw_nixl_exception(agent.invalidateLocalMD(&extra_params));
                 }, py::arg("ip_addr") = std::string(""), py::arg("port") = 0 )
-        .def("checkRemoteMD", &nixlAgent::checkRemoteMD)
-        .def("loadRemoteMD", [](nixlAgent &agent, const std::string &remote_metadata) -> py::bytes {
-                    //python can only interpret text strings
-                    std::string remote_name("");
-                    throw_nixl_exception(agent.loadRemoteMD(remote_metadata, remote_name));
-                    return py::bytes(remote_name);
-                })
-        .def("invalidateRemoteMD", &nixlAgent::invalidateRemoteMD);
+        .def("checkRemoteMD", &nixlAgent::checkRemoteMD);
 }

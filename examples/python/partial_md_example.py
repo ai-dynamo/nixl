@@ -80,7 +80,7 @@ if __name__ == "__main__":
     ready = False
 
     while not ready:
-        ready = init_agent.check_remote_metadata("target")
+        ready = init_agent.check_remote_metadata("target", target_xfer_descs1)
 
     xfer_handle_1 = init_agent.initialize_xfer(
         "READ", init_xfer_descs, target_xfer_descs1, "target", b"UUID1"

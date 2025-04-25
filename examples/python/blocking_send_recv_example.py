@@ -20,7 +20,6 @@ import argparse
 import torch
 
 from nixl._api import nixl_agent, nixl_agent_config
-from nixl._bindings import nixlNotFoundError
 
 
 def parse_args():
@@ -72,6 +71,8 @@ if __name__ == "__main__":
 
         agent.send_notif("initiator", target_desc_str)
 
+        print("Waiting for transfer")
+
         # Waiting for transfer
         # For now the notification is just UUID, could be any python bytes.
         # Also can have more than UUID, and check_remote_xfer_done returns
@@ -96,6 +97,8 @@ if __name__ == "__main__":
         ready = False
         while not ready:
             ready = agent.check_remote_metadata("target")
+
+        print("Ready for transfer")
 
         xfer_handle = agent.initialize_xfer(
             "READ", initiator_descs, target_descs, "target", "UUID"
