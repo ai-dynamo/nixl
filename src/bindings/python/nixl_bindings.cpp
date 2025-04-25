@@ -502,7 +502,15 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(agent.getLocalPartialMD(descs, ret_str, &extra_params));
                     return py::bytes(ret_str);
                 }, py::arg("descs"), py::arg("inc_conn_info") = false, py::arg("backends") = std::vector<uintptr_t>({}))
-        .def("sendLocalMD", &nixlAgent::sendLocalMD)
+        .def("sendLocalMD", [](nixlAgent &agent, std::string ip_addr, int port){
+                    nixl_opt_args_t extra_params;
+
+                    extra_params.ipAddr = ip_addr;
+                    extra_params.port = port;
+
+                    throw_nixl_exception(agent.sendLocalMD(&extra_params));
+                }, py::arg("ip_addr") = std::string(""), py::arg("port") = 0 )
+
         .def("sendLocalPartialMD", [](nixlAgent &agent, nixl_reg_dlist_t descs, bool inc_conn_info, std::vector<uintptr_t> backends, std::string ip_addr, int port) {
                     std::string ret_str("");
 
@@ -516,8 +524,22 @@ PYBIND11_MODULE(_bindings, m) {
 
                     throw_nixl_exception(agent.sendLocalPartialMD(descs, &extra_params));
                 }, py::arg("descs"), py::arg("inc_conn_info") = false, py::arg("backends") = std::vector<uintptr_t>({}), py::arg("ip_addr") = std::string(""), py::arg("port") = 0)
-        .def("fetchRemoteMD", &nixlAgent::fetchRemoteMD)
-        .def("invalidateLocalMD", &nixlAgent::invalidateLocalMD)
+        .def("fetchRemotelMD", [](nixlAgent &agent, std::string remote_agent, std::string ip_addr, int port){
+                    nixl_opt_args_t extra_params;
+
+                    extra_params.ipAddr = ip_addr;
+                    extra_params.port = port;
+
+                    throw_nixl_exception(agent.fetchRemoteMD(remote_agent, &extra_params));
+                }, py::arg("remote_agent"), py::arg("ip_addr") = std::string(""), py::arg("port") = 0 )
+        .def("invalidateLocalMD", [](nixlAgent &agent, std::string ip_addr, int port){
+                    nixl_opt_args_t extra_params;
+
+                    extra_params.ipAddr = ip_addr;
+                    extra_params.port = port;
+
+                    throw_nixl_exception(agent.invalidateLocalMD(&extra_params));
+                }, py::arg("ip_addr") = std::string(""), py::arg("port") = 0 )
         .def("loadRemoteMD", [](nixlAgent &agent, const std::string &remote_metadata) -> py::bytes {
                     //python can only interpret text strings
                     std::string remote_name("");

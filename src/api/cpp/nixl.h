@@ -320,13 +320,14 @@ class nixlAgent {
         /**
          * @brief  Send your own agent metadata to a remote location.
          *
-         * @param  remote_ip     If specified, this is the remote IP address to send your metadata to
+         * @param  extra_params  Only to optionally specify IP address and/or port.
+         *                       If specified, this will enable peer to peer sending of your metadata.
          *                       If unspecified, this will send your data to the metadata server.
-         * @param  port          Specific port to connect to, otherwise use DEFAULT_COMM_PORT
+         *
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        sendLocalMD (const std::string remote_ip = "", const int port = 0) const;
+        sendLocalMD (const nixl_opt_args_t* extra_params = nullptr) const;
 
         /**
          * @brief  Send partial metadata blob for this agent to peer or central metadata server
@@ -352,28 +353,28 @@ class nixlAgent {
         /**
          * @brief  Fetch other agent's metadata and unpack it internally.
          *
-         * @param  remote_name      Name of remote agent to fetch from ETCD or socket.
-         * @param  remote_ip        If unspecified, will fetch from ETCD, otherwise will try socket
-         * @param  port             Specific port to connect to, otherwise use DEFAULT_COMM_PORT
+         * @param  remote_name   Name of remote agent to fetch from ETCD or socket.
+         * @param  extra_params  Only to optionally specify IP address and/or port.
+         *                       If specified, this will enable peer to peer fetching of metadata.
+         *                       If unspecified, this will fetch from the metadata server.
          *
          * @return nixl_status_t    Error code if call was not successful
          */
         nixl_status_t
         fetchRemoteMD (const std::string remote_name,
-                       const std::string remote_ip = "",
-                       const int port = 0);
+                       const nixl_opt_args_t* extra_params = nullptr);
 
         /**
          * @brief  Invalidate your own memory in one/all remote agent(s).
          *
-         * @param  remote_ip        If unspecified, will invalidate in ETCD, cascading invalidations to other agents.
-         *                          If specified, will only invalidate for a specific peer over sockets
-         * @param  port             Specific port to connect to, otherwise use DEFAULT_COMM_PORT
+         * @param  extra_params  Only to optionally specify IP address and/or port.
+         *                       If specified, this will enable peer to peer invalidation of metadata.
+         *                       If unspecified, this will invalidate from the metadata server.
          *
          * @return nixl_status_t    Error code if call was not successful
          */
         nixl_status_t
-        invalidateLocalMD (const std::string remote_ip = "", const int port = 0) const;
+        invalidateLocalMD (const nixl_opt_args_t* extra_params = nullptr) const;
 
         /*** Metadata handling through side channel ***/
         /**
