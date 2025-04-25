@@ -492,7 +492,7 @@ class nixl_agent:
     @param handle Handle to the descriptor list from make_prepped_dlist.
     """
 
-    def release_dlist_handle(self, handle: nixl_xfer_handle):
+    def release_dlist_handle(self, handle: nixl_prepped_dlist_handle):
         self.agent.releasedDlistH(handle)
 
     """
