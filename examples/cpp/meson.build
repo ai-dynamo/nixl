@@ -19,3 +19,10 @@ nixl_example = executable('nixl_example',
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            link_with: [serdes_lib],
            install: true)
+
+etcd_example = executable('nixl_etcd_example',
+           'nixl_etcd_example.cpp',
+           dependencies: [nixl_dep, nixl_infra, ucx_backend_dep, ucx_dep],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
+           link_with: [serdes_lib],
+           install: true)
