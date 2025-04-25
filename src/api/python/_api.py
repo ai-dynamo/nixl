@@ -20,6 +20,8 @@ import torch
 
 import nixl._bindings as nixlBind
 
+DEFAULT_COMM_PORT = nixlBind.DEFAULT_COMM_PORT
+
 # Opaque nixl handle types
 nixl_backend_handle = int
 nixl_prepped_dlist_handle = int
@@ -492,7 +494,7 @@ class nixl_agent:
     @param handle Handle to the descriptor list from make_prepped_dlist.
     """
 
-    def release_dlist_handle(self, handle: nixl_xfer_handle):
+    def release_dlist_handle(self, handle: nixl_prepped_dlist_handle):
         self.agent.releasedDlistH(handle)
 
     """
@@ -580,7 +582,7 @@ class nixl_agent:
             self.agent.genNotif(remote_agent_name, notif_msg, self.backends[backend])
 
     """
-    @brief Get the metadata of the local agent.
+    @brief Get the full metadata of the local agent.
 
     @return Metadata of the local agent, in bytes.
     """
@@ -589,14 +591,60 @@ class nixl_agent:
         return self.agent.getLocalMD()
 
     """
+    @brief Get partial metadata of the local agent.
+
+    @param descs         The list of descriptors to include metadata about.
+                         List can be empty if only trying to send connection info.
+    @param inc_conn_info Whether to include connection info in the metadata.
+    @param backends      List of backends to consider when constructing partial metadata.
+
+    @return Metadata of the local agent, in bytes.
+    """
+
+    def get_partial_agent_metadata(
+        self,
+        descs: nixlBind.nixlRegDList,
+        inc_conn_info: bool = False,
+        backends: list[str] = [],
+    ) -> bytes:
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        return self.agent.getLocalPartialMD(descs, inc_conn_info, handle_list)
+
+    """
     @brief Send all of your metadata to a peer or central metadata server.
 
     @param ip_addr If specified, will only send metadata to one peer by IP address.
     @param port    If specified, will try to send to specific port.
     """
 
-    def send_local_metadata(self, ip_addr: str = "", port: int = 0):
+    def send_local_metadata(self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT):
         self.agent.sendLocalMD(ip_addr, port)
+
+    """
+    @brief Send partial metadata of the local agent.
+
+    @param descs         The list of descriptors to include metadata about.
+                         List can be empty if only trying to send connection info.
+    @param inc_conn_info Whether to include connection info in the metadata.
+    @param backends      List of backends to consider when constructing partial metadata.
+    @param ip_addr       If specified, will only send metadata to one peer by IP address.
+    @param port          If specified, will try to send to specific port.
+    """
+
+    def send_partial_agent_metadata(
+        self,
+        descs: nixlBind.nixlRegDList,
+        inc_conn_info: bool = False,
+        backends: list[str] = [],
+        ip_addr: str = "",
+        port: int = DEFAULT_COMM_PORT,
+    ):
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        self.agent.sendLocalPartialMD(descs, inc_conn_info, handle_list, ip_addr, port)
 
     """
     @brief Request metadata be retrieved from central metadata server or sent by peer.
@@ -606,7 +654,10 @@ class nixl_agent:
     """
 
     def fetch_remote_metadata(
-        self, remote_agent: str, ip_addr: str = "", port: int = 0
+        self,
+        remote_agent: str,
+        ip_addr: str = "",
+        port: int = DEFAULT_COMM_PORT,
     ):
         self.agent.fetchRemoteMD(remote_agent, ip_addr, port)
 
@@ -617,7 +668,9 @@ class nixl_agent:
     @param port    If specified, will try to send to specific port.
     """
 
-    def invalidate_local_metadata(self, ip_addr: str = "", port: int = 0):
+    def invalidate_local_metadata(
+        self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT
+    ):
         self.agent.invalidateLocalMD(ip_addr, port)
 
     """
@@ -720,7 +773,7 @@ class nixl_agent:
             a) list of 4 element tuples (address, len, device ID, meta info) alongside a mandatory memory type
             b) a tensor
             c) a list of tensors
-            d) passes along if an xfer_dlist is given.
+            d) passes along if a reg_dlist is given.
 
     @param descs List of any of the above types
     @param mem_type Optional memory type necessary for (a).

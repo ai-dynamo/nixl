@@ -146,7 +146,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     if(client == remoteSockets.end()) {
                         int new_client = connectToIP(req_ip, req_port);
                         if(new_client == -1) {
-                            std::cerr << "Listener thread could not connect to IP " << req_ip;
+                            std::cerr << "Listener thread could not connect to IP " << req_ip << " and port " << req_port << std::endl;
                             break;
                         }
                         remoteSockets[req_sock] = new_client;
