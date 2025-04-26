@@ -252,6 +252,12 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             std::this_thread::yield();
         }
     }
+
+    // Close remaining connections
+    for (auto &[remote, fd] : remoteSockets) {
+        shutdown(fd, SHUT_RDWR);
+        close(fd);
+    }
 }
 
 void nixlAgentData::enqueueCommWork(std::tuple<nixl_comm_t, std::string, int, std::string> request){
