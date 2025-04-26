@@ -31,7 +31,14 @@ typedef std::vector<nixlBackendEngine*> backend_list_t;
 
 //Internal typedef to define metadata communication request types
 //To be extended with ETCD operations
-typedef enum { SOCK_SEND, SOCK_FETCH, SOCK_INVAL } nixl_comm_t;
+enum nixl_comm_t {
+    SOCK_SEND,
+    SOCK_FETCH,
+    SOCK_INVAL,
+    ETCD_SEND,
+    ETCD_FETCH,
+    ETCD_INVAL
+};
 
 //Command to be sent to listener thread from NIXL API
 // 1) Command type
@@ -80,16 +87,6 @@ class nixlAgentData {
         void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
-
-        // ETCD-related methods and data
-        std::string makeEtcdKey(const std::string& metadata_type) const;
-        nixl_status_t storeMetadataInEtcd(const std::string& metadata_type, const nixl_blob_t& metadata) const;
-        nixl_status_t fetchMetadataFromEtcd(const std::string& agent_name, const std::string& metadata_type, nixl_blob_t& metadata) const;
-        nixl_status_t removeMetadataFromEtcd(const std::string& metadata_type) const;
-
-	std::string etcd_eps;
-	std::string namespace_prefix;
-	std::unique_ptr<etcd::Client> client;
 
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();

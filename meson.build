@@ -70,6 +70,11 @@ if not etcd_dep.found() and etcd_lib_path != ''
     endif
 endif
 
+if not etcd_dep.found()
+    message('ETCD library not found, will disable etcd support')
+    add_project_arguments('-DDISABLE_ETCD', language: 'cpp')
+endif
+
 prefix_path = get_option('prefix')
 prefix_inc = prefix_path + '/include'
 

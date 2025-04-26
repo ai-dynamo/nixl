@@ -37,11 +37,15 @@ void printStatus(const std::string& operation, nixl_status_t status) {
 // Initialize an agent with etcd enabled
 nixlAgent* createAgent(const std::string& name) {
     // Create agent configuration with etcd enabled
-    nixlAgentConfig cfg(true,   // Enable progress thread
-                        false,   // Enable listener thread
-                        true,   // Enable etcd
-                        0,      // Default port for listener
-                        ETCD_ENDPOINT); // etcd endpoint
+
+    if (getenv("NIXL_ETCD_ENDPOINTS")) {
+        std::cout << "NIXL_ETCD_ENDPOINTS is set" << std::endl;
+    } else {
+        std::cout << "NIXL_ETCD_ENDPOINTS is not set, setting to " << ETCD_ENDPOINT << std::endl;
+        setenv("NIXL_ETCD_ENDPOINTS", ETCD_ENDPOINT.c_str(), 1);
+    }
+
+    nixlAgentConfig cfg(true, false, true);      // Default port for listener
 
     // Create the agent with the configuration
     nixlAgent* agent = new nixlAgent(name, cfg);

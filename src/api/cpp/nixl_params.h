@@ -39,8 +39,6 @@ class nixlAgentConfig {
         int      listenPort;
         /** @var synchronization mode for multi-threaded environment execution */
         nixl_thread_sync_t syncMode;
-	/** @var IP:PORT to connect for etcd server */
-	std::string etcd_ep;
 
     public:
 
@@ -64,11 +62,11 @@ class nixlAgentConfig {
          * @brief  Agent configuration constructor for enabling various features.
          * @param use_prog_thread    flag to determine use of progress thread
          * @param use_listen_thread  flag to determine use of listener thread
+         * @param use_etcd           flag to determine use of etcd
          * @param port               specify port for listener thread to listen on
          * @param sync_mode          Thread synchronization mode
          * @param pthr_delay_us      Optional delay for pthread in us
          * @param lthr_delay_us      Optional delay for listener thread in us
-	 * @param etcd_ep            Optional endpoint in IP:PORT to connect to etcd
          */
         nixlAgentConfig (const bool use_prog_thread,
                          const bool use_listen_thread=false,
@@ -83,7 +81,6 @@ class nixlAgentConfig {
 			 useEtcd(use_etcd),
                          listenPort(port),
 			 syncMode(sync_mode),
-			 etcd_ep(etcdep),
                          pthrDelay(pthr_delay_us),
                          lthrDelay(lthr_delay_us) { }
 

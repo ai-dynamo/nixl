@@ -25,8 +25,6 @@
 #include "common/nixl_log.h"
 #include <etcd/Client.hpp>
 
-std::string default_etcd_namespace = "/nixl/agents";
-
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
     static std::array<std::string, FILE_SEG+1> nixl_mem_str = {
@@ -98,24 +96,21 @@ nixlAgent::nixlAgent(const std::string &name,
         throw std::invalid_argument("Agent needs a name");
     data = new nixlAgentData(name, cfg);
 
+    // Validate configuration: only one of useListenThread or useEtcd can be enabled
+    if (cfg.useListenThread && cfg.useEtcd) {
+        throw std::invalid_argument("Configuration error: only one of useListenThread or useEtcd can be enabled");
+    }
+
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
         if(my_port == 0) my_port = default_comm_port;
         data->listener = new nixlMDStreamListener(my_port);
         data->listener->setupListener();
+    }
+
+    if (cfg.useEtcd || cfg.useListenThread) {
         data->commThreadStop = false;
         data->commThread = std::thread(&nixlAgentData::commWorker, data, this);
-    }
-    try {
-        if (cfg.useEtcd && !cfg.etcd_ep.empty()) {
-            data->etcd_eps = cfg.etcd_ep;
-            data->client = std::make_unique<etcd::Client>(data->etcd_eps);
-            data->namespace_prefix = default_etcd_namespace;
-        } else if (cfg.useEtcd) {
-            throw std::invalid_argument("Invalid etcd configuration");
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "Error initializing etcd client: " << e.what() << std::endl;
     }
 }
 
@@ -1212,7 +1207,8 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
     }
 
     // If no IP is provided, use etcd
-    return data->storeMetadataInEtcd("metadata", myMD);
+    data->enqueueCommWork(std::make_tuple(ETCD_SEND, data->name + "/metadata", 0, myMD));
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -1229,7 +1225,8 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
     }
 
     // If no IP is provided, use etcd
-    return data->storeMetadataInEtcd("partial_metadata", myMD);
+    data->enqueueCommWork(std::make_tuple(ETCD_SEND, data->name + "/partial_metadata", 0, myMD));
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -1242,21 +1239,8 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
     }
 
     // If no IP is provided, use etcd
-    nixl_blob_t remote_metadata;
-    nixl_status_t ret = data->fetchMetadataFromEtcd(remote_name, "metadata", remote_metadata);
-
-    if (ret == NIXL_SUCCESS) {
-        std::string agent_name;
-        ret = loadRemoteMD(remote_metadata, agent_name);
-
-        if (ret == NIXL_SUCCESS) {
-            std::cout << "Successfully loaded metadata for agent: " << remote_name << std::endl;
-        } else {
-            std::cerr << "Failed to load remote metadata: " << ret << std::endl;
-        }
-    }
-
-    return ret;
+    data->enqueueCommWork(std::make_tuple(ETCD_FETCH, remote_name, 0, ""));
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -1268,11 +1252,8 @@ nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
     }
 
     // If no IP is provided, use etcd
-    nixl_status_t ret1 = data->removeMetadataFromEtcd("metadata");
-    nixl_status_t ret2 = data->removeMetadataFromEtcd("partial_metadata");
-
-    // Return success if at least the main metadata was removed successfully
-    return (ret1 == NIXL_SUCCESS || ret2 == NIXL_SUCCESS) ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
+    data->enqueueCommWork(std::make_tuple(ETCD_INVAL, data->name, 0, ""));
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
