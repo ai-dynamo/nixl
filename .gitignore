@@ -4,3 +4,6 @@
 # Abseil-CPP
 subprojects/abseil-cpp-*
 subprojects/packagecache/
+
+# AWS EFA test files
+contrib/aws-efa/aws_vars.json
