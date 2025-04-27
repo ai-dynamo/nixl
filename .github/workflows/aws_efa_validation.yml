@@ -1,0 +1,53 @@
+name: NVIDIA NIXL AWS EFA Validation
+
+on:
+  push:
+    branches:
+      - main
+      - "pull-request/[0-9]+"
+  workflow_dispatch:
+
+jobs:
+  run_aws_tests:
+    name: Run AWS Tests - ${{ matrix.test_type }}
+    environment: AWS
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test_type: [cpp, python]
+    container:
+      image: amazon/aws-cli
+      options: --entrypoint=""
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install additional tools
+        run: |
+          yum install -y jq gettext tar gzip git
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+      - name: Configure AWS credentials
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set region eu-central-1
+
+      - name: Run AWS tests
+        id: aws_tests
+        working-directory: ./contrib/aws-efa
+        timeout-minutes: 180
+        run: |
+          ./aws_test.sh "${{ matrix.test_type }}" 2>&1 | tee test_output.log
+          JOB_ID=$(grep 'JOB_ID=' test_output.log | head -n1 | cut -d= -f2)
+          echo "job_id=$JOB_ID" >> $GITHUB_OUTPUT
+
+      - name: Cleanup AWS resources
+        if: always()
+        working-directory: ./contrib/aws-efa
+        run: |
+          aws batch terminate-job \
+            --job-id ${{ steps.aws_tests.outputs.job_id }} \
+            --reason 'Terminated by GitHub Actions' || true
