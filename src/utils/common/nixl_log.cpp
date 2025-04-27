@@ -66,24 +66,6 @@ void InitializeNixlLogging()
             invalid_env_var = true;
         }
     }
-    if (env_log_level == nullptr || invalid_env_var) {
-        // Use the level set at compile time
-        #if defined(LOG_LEVEL_TRACE)
-            level_to_use = "TRACE";
-        #elif defined(LOG_LEVEL_DEBUG)
-            level_to_use = "DEBUG";
-        #elif defined(LOG_LEVEL_INFO)
-            level_to_use = "INFO";
-        #elif defined(LOG_LEVEL_WARN)
-            level_to_use = "WARN";
-        #elif defined(LOG_LEVEL_ERROR)
-            level_to_use = "ERROR";
-        #elif defined(LOG_LEVEL_FATAL)
-            level_to_use = "FATAL";
-        #else
-            // Fall back to kDefaultLogLevel
-        #endif
-    }
 
     // Apply the settings
     auto it = kLogLevelMap.find(level_to_use);
