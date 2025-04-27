@@ -54,7 +54,7 @@ else
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
-etcd_dep = dependency('etcd-cpp-api')
+etcd_dep = dependency('etcd-cpp-api', required : false)
 etcd_inc_path = get_option('etcd_inc_path')
 etcd_lib_path = get_option('etcd_lib_path')
 if not etcd_dep.found() and etcd_lib_path != ''
@@ -70,9 +70,10 @@ if not etcd_dep.found() and etcd_lib_path != ''
     endif
 endif
 
-if not etcd_dep.found()
-    message('ETCD library not found, will disable etcd support')
-    add_project_arguments('-DDISABLE_ETCD', language: 'cpp')
+if etcd_dep.found()
+    add_project_arguments('-DHAVE_ETCD', language: 'cpp')
+else
+    message('ETCD CPP API library not found, will disable etcd support')
 endif
 
 prefix_path = get_option('prefix')

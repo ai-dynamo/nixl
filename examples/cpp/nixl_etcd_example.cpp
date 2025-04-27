@@ -45,7 +45,7 @@ nixlAgent* createAgent(const std::string& name) {
         setenv("NIXL_ETCD_ENDPOINTS", ETCD_ENDPOINT.c_str(), 1);
     }
 
-    nixlAgentConfig cfg(true, false, true);      // Default port for listener
+    nixlAgentConfig cfg(true);
 
     // Create the agent with the configuration
     nixlAgent* agent = new nixlAgent(name, cfg);

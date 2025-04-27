@@ -23,7 +23,6 @@
 #include "agent_data.h"
 #include "plugin_manager.h"
 #include "common/nixl_log.h"
-#include <etcd/Client.hpp>
 
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
@@ -64,7 +63,14 @@ nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :
                                    name(name), config(cfg), lock(cfg.syncMode)
 {
-        memorySection = new nixlLocalSection();
+#if HAVE_ETCD
+    if (getenv("NIXL_ETCD_ENDPOINTS")) {
+        useEtcd = true;
+        NIXL_INFO << "NIXL ETCD is enabled";
+    }
+#endif // HAVE_ETCD
+
+    memorySection = new nixlLocalSection();
 }
 
 nixlAgentData::~nixlAgentData() {
@@ -88,18 +94,13 @@ nixlAgentData::~nixlAgentData() {
 
 }
 
-
 /*** nixlAgent implementation ***/
 nixlAgent::nixlAgent(const std::string &name,
                      const nixlAgentConfig &cfg) {
     if (name.size() == 0)
         throw std::invalid_argument("Agent needs a name");
-    data = new nixlAgentData(name, cfg);
 
-    // Validate configuration: only one of useListenThread or useEtcd can be enabled
-    if (cfg.useListenThread && cfg.useEtcd) {
-        throw std::invalid_argument("Configuration error: only one of useListenThread or useEtcd can be enabled");
-    }
+    data = new nixlAgentData(name, cfg);
 
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
@@ -108,18 +109,22 @@ nixlAgent::nixlAgent(const std::string &name,
         data->listener->setupListener();
     }
 
-    if (cfg.useEtcd || cfg.useListenThread) {
+    if (data->useEtcd || cfg.useListenThread) {
         data->commThreadStop = false;
         data->commThread = std::thread(&nixlAgentData::commWorker, data, this);
     }
 }
 
 nixlAgent::~nixlAgent() {
-    if(data->config.useListenThread) {
+    if (data->useEtcd || data->config.useListenThread) {
         data->commThreadStop = true;
         if(data->commThread.joinable()) data->commThread.join();
-        if(data->listener) delete data->listener;
+
+        if(data->config.useListenThread) {
+            if(data->listener) delete data->listener;
+        }
     }
+
     delete data;
 }
 
@@ -1206,9 +1211,16 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
         return NIXL_SUCCESS;
     }
 
-    // If no IP is provided, use etcd
-    data->enqueueCommWork(std::make_tuple(ETCD_SEND, data->name + "/metadata", 0, myMD));
-    return NIXL_SUCCESS;
+#if HAVE_ETCD
+    // If no IP is provided, use etcd (now via thread)
+    if (data->useEtcd) {
+        data->enqueueCommWork(std::make_tuple(ETCD_SEND, data->name + "/metadata", 0, myMD));
+        return NIXL_SUCCESS;
+    }
+    return NIXL_ERR_INVALID_PARAM;
+#else
+    return NIXL_ERR_NOT_SUPPORTED;
+#endif // HAVE_ETCD
 }
 
 nixl_status_t
@@ -1224,9 +1236,16 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
         return NIXL_SUCCESS;
     }
 
-    // If no IP is provided, use etcd
-    data->enqueueCommWork(std::make_tuple(ETCD_SEND, data->name + "/partial_metadata", 0, myMD));
-    return NIXL_SUCCESS;
+#if HAVE_ETCD
+    // If no IP is provided, use etcd (now via thread)
+    if (data->useEtcd) {
+        data->enqueueCommWork(std::make_tuple(ETCD_SEND, data->name + "/partial_metadata", 0, myMD));
+        return NIXL_SUCCESS;
+    }
+    return NIXL_ERR_INVALID_PARAM;
+#else
+    return NIXL_ERR_NOT_SUPPORTED;
+#endif // HAVE_ETCD
 }
 
 nixl_status_t
@@ -1238,9 +1257,16 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
         return NIXL_SUCCESS;
     }
 
-    // If no IP is provided, use etcd
-    data->enqueueCommWork(std::make_tuple(ETCD_FETCH, remote_name, 0, ""));
-    return NIXL_SUCCESS;
+#if HAVE_ETCD
+    // If no IP is provided, use etcd via thread with watch capability
+    if (data->useEtcd) {
+        data->enqueueCommWork(std::make_tuple(ETCD_FETCH, remote_name, 0, ""));
+        return NIXL_SUCCESS;
+    }
+    return NIXL_ERR_INVALID_PARAM;
+#else
+    return NIXL_ERR_NOT_SUPPORTED;
+#endif // HAVE_ETCD
 }
 
 nixl_status_t
@@ -1251,9 +1277,16 @@ nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
         return NIXL_SUCCESS;
     }
 
-    // If no IP is provided, use etcd
-    data->enqueueCommWork(std::make_tuple(ETCD_INVAL, data->name, 0, ""));
-    return NIXL_SUCCESS;
+#if HAVE_ETCD
+    // If no IP is provided, use etcd via thread
+    if (data->useEtcd) {
+        data->enqueueCommWork(std::make_tuple(ETCD_INVAL, data->name, 0, ""));
+        return NIXL_SUCCESS;
+    }
+    return NIXL_ERR_INVALID_PARAM;
+#else
+    return NIXL_ERR_NOT_SUPPORTED;
+#endif // HAVE_ETCD
 }
 
 nixl_status_t

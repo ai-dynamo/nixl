@@ -21,6 +21,10 @@
 #include "common/nixl_time.h"
 #include "common/str_tools.h"
 #include "agent_data.h"
+#include "common/nixl_log.h"
+#if HAVE_ETCD
+#include <etcd/Client.hpp>
+#endif // HAVE_ETCD
 
 int connectToIP(std::string ip_addr, int port) {
 
@@ -87,6 +91,7 @@ ssize_t recvCommMessage(int fd, std::string &msg){
     return recv_bytes;
 }
 
+#if HAVE_ETCD
 // Helper function to create etcd key
 static std::string makeEtcdKey(const std::string& agent_name,
                                 const std::string& namespace_prefix,
@@ -198,20 +203,21 @@ static std::unique_ptr<etcd::Client> createEtcdClient() {
         // First check if NIXL_ETCD_ENDPOINTS environment variable is set
         char* env_endpoints = getenv("NIXL_ETCD_ENDPOINTS");
         if (env_endpoints && strlen(env_endpoints) > 0) {
-            std::cout << "Using etcd endpoints from environment: " << env_endpoints << std::endl;
+            NIXL_INFO << "Using etcd endpoints from environment: " << env_endpoints;
         } else {
             // Fall back to provided endpoints if environment variable is not set
-            std::cerr << "No etcd endpoints provided" << std::endl;
+            NIXL_ERROR << "No etcd endpoints provided";
             return nullptr;
         }
 
         // Create and return new etcd client
         return std::make_unique<etcd::Client>(std::string(env_endpoints));
     } catch (const std::exception& e) {
-        std::cerr << "Error creating etcd client: " << e.what() << std::endl;
+        NIXL_ERROR << "Error creating etcd client: " << e.what();
         return nullptr;
     }
 }
+#endif // HAVE_ETCD
 
 void nixlAgentData::commWorker(nixlAgent* myAgent){
 
@@ -221,10 +227,16 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
 
         // first, accept new connections
         int new_fd = 0;
+
+#if HAVE_ETCD
         auto etcdclient = std::unique_ptr<etcd::Client>(nullptr);
         std::string namespace_prefix = getenv("NIXL_ETCD_NAMESPACE");
+        std::string etcd_endpoints = getenv("NIXL_ETCD_ENDPOINTS");
 
-        while(new_fd != -1 && !getenv("NIXL_ETCD_ENDPOINTS")) {
+        while(new_fd != -1 && !etcd_endpoints.empty()) {
+#else
+        while(new_fd != -1) {
+#endif // HAVE_ETCD
             new_fd = listener->acceptClient();
             nixl_socket_peer_t accepted_client;
 
@@ -251,9 +263,12 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             }
         }
 
-        if(!etcdclient && getenv("NIXL_ETCD_ENDPOINTS")) {
+#if HAVE_ETCD
+        if(!etcdclient && useEtcd) {
             etcdclient = createEtcdClient();
+            NIXL_INFO << "Created etcd client to " << etcd_endpoints;
         }
+#endif // HAVE_ETCD
 
         // second, do agent commands
         getCommWork(work_queue);
@@ -316,9 +331,14 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     sendCommMessage(client_fd, std::string("NIXLCOMM:INVL") + name);
                     break;
                 }
+#if HAVE_ETCD
                 // ETCD operations using existing methods
                 case ETCD_SEND:
                 {
+                    if (!useEtcd) {
+                        throw std::runtime_error("ETCD is not enabled");
+                    }
+
                     // Parse request parameters
                     std::string metadata_type = "metadata";
 
@@ -335,6 +355,10 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                 }
                 case ETCD_FETCH:
                 {
+                    if (!useEtcd) {
+                        throw std::runtime_error("ETCD is not enabled");
+                    }
+
                     // First try a direct get
                     nixl_blob_t remote_metadata;
                     nixl_status_t ret = fetchMetadataFromEtcd(req_ip, namespace_prefix, etcdclient, "metadata", remote_metadata);
@@ -382,6 +406,10 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                 }
                 case ETCD_INVAL:
                 {
+                    if (!useEtcd) {
+                        throw std::runtime_error("ETCD is not enabled");
+                    }
+
                     // The agent name comes in req_ip
                     try {
                         std::string agent = req_ip;
@@ -406,6 +434,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     }
                     break;
                 }
+#endif // HAVE_ETCD
                 default:
                 {
                     throw std::runtime_error("Impossible command\n");
