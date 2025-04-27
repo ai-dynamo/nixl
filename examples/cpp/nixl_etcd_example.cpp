@@ -117,26 +117,26 @@ int main() {
     }
 
     // Get UCX plugin parameters for DRAM memory type
-    status = agent1->getPluginParams(backend_type, mems1, params1);
     printStatus("Getting plugin parameters for agent1", status);
+    assert(status == NIXL_SUCCESS);
 
     status = agent2->getPluginParams(backend_type, mems2, params2);
-    printStatus("Getting plugin parameters for agent2", status);
+    assert(status == NIXL_SUCCESS);
 
     // Create backends
     nixlBackendH *backend1, *backend2;
     status = agent1->createBackend(backend_type, params1, backend1);
-    printStatus("Creating backend for agent1", status);
+    assert(status == NIXL_SUCCESS);
 
     status = agent2->createBackend(backend_type, params2, backend2);
-    printStatus("Creating backend for agent2", status);
+    assert(status == NIXL_SUCCESS);
 
     // Register memory with both agents
     status = registerMemory(agent1, backend1);
-    printStatus("Registering memory for agent1", status);
+    assert(status == NIXL_SUCCESS);
 
     status = registerMemory(agent2, backend2);
-    printStatus("Registering memory for agent2", status);
+    assert(status == NIXL_SUCCESS);
 
     std::cout << "\nEtcd Metadata Exchange Demo\n";
     std::cout << "==========================\n";
@@ -146,10 +146,10 @@ int main() {
 
     // Both agents send their metadata to etcd
     status = agent1->sendLocalMD();
-    printStatus("Agent1 sending metadata to etcd", status);
+    assert(status == NIXL_SUCCESS);
 
     status = agent2->sendLocalMD();
-    printStatus("Agent2 sending metadata to etcd", status);
+    assert(status == NIXL_SUCCESS);
 
     // Give etcd time to process
     std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -159,11 +159,11 @@ int main() {
 
     // Agent1 fetches metadata for Agent2
     status = agent1->fetchRemoteMD(AGENT2_NAME);
-    printStatus("Agent1 fetching metadata for Agent2", status);
+    assert(status == NIXL_SUCCESS);
 
     // Agent2 fetches metadata for Agent1
     status = agent2->fetchRemoteMD(AGENT1_NAME);
-    printStatus("Agent2 fetching metadata for Agent1", status);
+    assert(status == NIXL_SUCCESS);
 
     // 3. Partial Metadata Exchange
     std::cout << "\n3. Sending partial metadata to etcd...\n";
@@ -182,22 +182,23 @@ int main() {
 
     // Send partial metadata
     status = agent1->sendLocalPartialMD(empty_dlist1, &conn_params1);
-    printStatus("Agent1 sending partial metadata to etcd", status);
+    assert(status == NIXL_SUCCESS);
 
     status = agent2->sendLocalPartialMD(empty_dlist2, &conn_params2);
-    printStatus("Agent2 sending partial metadata to etcd", status);
+    assert(status == NIXL_SUCCESS);
 
     // 4. Invalidate Metadata
     std::cout << "\n4. Invalidating metadata in etcd...\n";
 
     // Invalidate agent1's metadata
     status = agent1->invalidateLocalMD();
-    printStatus("Agent1 invalidating its metadata in etcd", status);
+    assert(status == NIXL_SUCCESS);
+
+    std::this_thread::sleep_for(std::chrono::seconds(3));
 
     // Try fetching the invalidated metadata
     std::cout << "\nTrying to fetch invalidated metadata for Agent1...\n";
     status = agent2->fetchRemoteMD(AGENT1_NAME);
-    printStatus("Fetch result (should fail)", status);
 
     // Clean up
     delete agent1;

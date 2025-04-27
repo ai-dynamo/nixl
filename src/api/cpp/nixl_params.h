@@ -74,7 +74,7 @@ class nixlAgentConfig {
                          useProgThread(use_prog_thread),
                          useListenThread(use_listen_thread),
                          listenPort(port),
-			 syncMode(sync_mode),
+                         syncMode(sync_mode),
                          pthrDelay(pthr_delay_us),
                          lthrDelay(lthr_delay_us) { }
 
