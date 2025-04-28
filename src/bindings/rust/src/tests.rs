@@ -465,4 +465,302 @@ mod tests {
         assert!(storage1.as_slice().iter().all(|&x| x == 0xbb));
         assert!(storage2.as_slice().iter().all(|&x| x == 0xbb));
     }
+
+    #[test]
+    fn test_xfer_desc_list_new_and_new_sorted() {
+        let dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.is_empty().unwrap());
+        let dlist_sorted = XferDescList::new_sorted(MemType::Dram).unwrap();
+        assert!(dlist_sorted.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_new_sorted_sortedness() {
+        let dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
+        let sorted = dlist.is_sorted().unwrap();
+        assert!(sorted);
+        let dlist_unsorted = XferDescList::new(MemType::Dram).unwrap();
+        let unsorted = dlist_unsorted.is_sorted().unwrap();
+        assert!(!unsorted);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_get_type() {
+        let dlist = XferDescList::new(MemType::Vram).unwrap();
+        assert_eq!(dlist.get_type().unwrap(), MemType::Vram);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_get_type_after_add() {
+        let mut dlist = XferDescList::new(MemType::Block).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert_eq!(dlist.get_type().unwrap(), MemType::Block);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_verify_sorted_true() {
+        let mut dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
+
+        // list size should be at least 1 to be considered sorted
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.verify_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_verify_sorted_false() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x2000, 0x100, 0).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap(); // out of order
+        assert!(!dlist.verify_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_desc_count_basic() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 0);
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_desc_count_after_clear() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.clear().unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_is_empty_true() {
+        let dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_is_empty_false() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(!dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_is_sorted_true() {
+        let mut dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.is_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_is_sorted_false() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x2000, 0x100, 0).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(!dlist.is_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_trim_basic() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.trim().unwrap();
+        assert!(dlist.desc_count().unwrap() <= 1);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_trim_empty() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.trim().is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_rem_desc_basic() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.rem_desc(0).is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_rem_desc_out_of_bounds() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.rem_desc(0).is_err());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_clear_basic() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.clear().unwrap();
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_clear_empty() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.clear().is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_print_basic() {
+        let dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.print().is_ok());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_print_after_add() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.print().is_ok());
+    }
+
+    // ----------- RegDescList API TESTS -----------
+
+    #[test]
+    fn test_reg_desc_list_new_and_new_sorted() {
+        let dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.is_empty().unwrap());
+        let dlist_sorted = RegDescList::new_sorted(MemType::Dram).unwrap();
+        assert!(dlist_sorted.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_new_sorted_sortedness() {
+        let dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
+        assert!(dlist.is_sorted().unwrap());
+        let dlist_unsorted = RegDescList::new(MemType::Dram).unwrap();
+        assert!(!dlist_unsorted.is_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_get_type() {
+        let dlist = RegDescList::new(MemType::Vram).unwrap();
+        assert_eq!(dlist.get_type().unwrap(), MemType::Vram);
+    }
+
+    #[test]
+    fn test_reg_desc_list_get_type_after_add() {
+        let mut dlist = RegDescList::new(MemType::Block).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert_eq!(dlist.get_type().unwrap(), MemType::Block);
+    }
+
+    #[test]
+    fn test_reg_desc_list_verify_sorted_true() {
+        let mut dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
+
+        // list size should be at least 1 to be considered sorted
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.verify_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_verify_sorted_false() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x2000, 0x100, 0).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap(); // out of order
+        assert!(!dlist.verify_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_desc_count_basic() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 0);
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_reg_desc_list_desc_count_after_clear() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.clear().unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_reg_desc_list_is_empty_true() {
+        let dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_is_empty_false() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(!dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_is_sorted_true() {
+        let mut dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.is_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_is_sorted_false() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x2000, 0x100, 0).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(!dlist.is_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_trim_basic() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.trim().unwrap();
+        assert!(dlist.desc_count().unwrap() <= 1);
+    }
+
+    #[test]
+    fn test_reg_desc_list_trim_empty() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.trim().is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_rem_desc_basic() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.rem_desc(0).is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_rem_desc_out_of_bounds() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.rem_desc(0).is_err());
+    }
+
+    #[test]
+    fn test_reg_desc_list_clear_basic() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.clear().unwrap();
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_clear_empty() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.clear().is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_print_basic() {
+        let dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.print().is_ok());
+    }
+
+    #[test]
+    fn test_reg_desc_list_print_after_add() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.print().is_ok());
+    }
 }
