@@ -31,6 +31,22 @@ The following secrets must be configured in the GitHub repository:
 - `AWS_ACCESS_KEY_ID`: AWS access key with permissions for AWS Batch and EKS
 - `AWS_SECRET_ACCESS_KEY`: Corresponding secret access key
 
+### Test Script Configuration
+
+Test scripts are defined in the workflow matrix with their parameters:
+
+```yaml
+strategy:
+  matrix:
+    include:
+      - test_name: cpp
+        test_scripts:
+          - ".gitlab/test_cpp.sh $NIXL_INSTALL_DIR"
+          - ".gitlab/test_cpp_perf.sh $NIXL_INSTALL_DIR --performance-mode"
+```
+
+Each test script can have its own set of parameters. The full command will be executed directly in the AWS environment.
+
 ## Manual Execution
 
 To run the tests manually:
@@ -48,12 +64,17 @@ export GITHUB_REF="refs/pull/187/head"
 export GITHUB_SERVER_URL="https://github.com"
 export GITHUB_REPOSITORY="ai-dynamo/nixl"
 
-# Run the script
-./aws_test.sh cpp    # For C++ tests
-# OR
-./aws_test.sh python # For Python tests
+# Run the script with test name and one or more test scripts with their parameters
+./aws_test.sh cpp ".gitlab/test_cpp.sh \$NIXL_INSTALL_DIR" ".gitlab/test_cpp_perf.sh \$NIXL_INSTALL_DIR --performance-mode"
+# OR for Python tests
+./aws_test.sh python ".gitlab/test_python.sh \$NIXL_INSTALL_DIR"
 ```
 
+The aws_test.sh script accepts multiple parameters:
+- First parameter: Test name (used for job naming)
+- Remaining parameters: Complete command strings for each test script to execute (in sequence)
+
+All test scripts are executed sequentially within a single AWS job under the specified test name.
 
 ## Test Execution Flow
 

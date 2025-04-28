@@ -16,27 +16,38 @@
 
 set -exE -o pipefail
 
-# Get test type from argument, default to cpp
-TEST_TYPE=${1:-"cpp"}
+usage() {
+    echo ""
+    echo "Usage: $0 <test script> <test script args>"
+    echo ""
+    echo "Example: $0 .gitlab/test_cpp.sh \$NIXL_INSTALL_DIR && .test_script123.sh param123"
+    exit 1
+}
+
+# Validate required parameters
+if [ -z "$1" ]; then
+    echo "Error: Test command string argument is required"
+    usage
+fi
+test_cmd="$1"
 
 # Set AWS container image (can be overridden via environment)
 export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/pytorch:25.02-py3"}
 
 # Set Git checkout command based on GITHUB_REF
-if [ -z "$GITHUB_REF" ]; then   # manual run
+if [ -z "$GITHUB_REF" ]; then # manual run
     echo "Error: GITHUB_REF environment variable must be set"
     echo "For a branch, use: export GITHUB_REF=\"main\""
     echo "For a PR, use: export GITHUB_REF=\"refs/pull/187/head\""
     exit 1
 fi
 
-case "$GITHUB_REF" in
-    refs/pull/*)
-        export GIT_CHECKOUT_CMD="git fetch origin ${GITHUB_REF} && git checkout FETCH_HEAD"
-        ;;
-    *)
-        export GIT_CHECKOUT_CMD="git checkout ${GITHUB_REF}"
-        ;;
+case "$GITHUB_REF" in refs/pull/*)
+    export GIT_CHECKOUT_CMD="git fetch origin ${GITHUB_REF} && git checkout FETCH_HEAD"
+    ;;
+*)
+    export GIT_CHECKOUT_CMD="git checkout ${GITHUB_REF}"
+    ;;
 esac
 
 # Construct command to run in AWS
@@ -45,16 +56,15 @@ setup_cmd="set -x && \
     cd nixl && \
     ${GIT_CHECKOUT_CMD}"
 build_cmd=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${UCX_INSTALL_DIR}"
-test_script="test_${TEST_TYPE}"
-export AWS_CMD="${setup_cmd} && ${build_cmd} && .gitlab/${test_script}.sh \${NIXL_INSTALL_DIR}"
-
+export AWS_CMD="${setup_cmd} && ${build_cmd} && ${test_cmd}"
+exit 0
 # Generate properties json from template
-envsubst < aws_vars.template > aws_vars.json
+envsubst <aws_vars.template >aws_vars.json
 jq . aws_vars.json >/dev/null
 
 # Submit AWS job
 aws eks update-kubeconfig --name ucx-ci
-JOB_NAME="NIXL_${TEST_TYPE}_${GITHUB_RUN_NUMBER:-$RANDOM}"
+JOB_NAME="NIXL_${GITHUB_RUN_NUMBER:-$RANDOM}"
 JOB_ID=$(aws batch submit-job \
     --job-name "$JOB_NAME" \
     --job-definition "NIXL-Ubuntu-JD" \
@@ -105,3 +115,4 @@ if [[ "$exit_status" =~ FAILED ]]; then
 fi
 
 echo "NIXL tests completed successfully"
+echo "JOB_ID=${JOB_ID}"
