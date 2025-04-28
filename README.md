@@ -62,6 +62,29 @@ $ make -j install-strip
 $ ldconfig
 ```
 
+### ETCD (Optional)
+NIXL can use ETCD for metadata distribution and coordination between nodes in distributed environments. To use ETCD with NIXL:
+#### ETCD Server and Client
+ ```
+$ sudo apt install etcd etcd-server etcd-client
+
+# Or use Docker
+$ docker run -d -p 2379:2379 quay.io/coreos/etcd:v3.5.1
+```
+
+#### ETCD CPP API
+Installed from https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3
+
+```
+$ sudo apt install libgrpc-dev libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc
+$ sudo apt install libcpprest-dev
+$ git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git
+$ cd etcd-cpp-apiv3
+$ mkdir build && cd build
+$ cmake ..
+$ make -j$(nproc) && make install
+```
+
 ## Getting started
 ### Build & install
 
@@ -163,6 +186,45 @@ The container also includes a prebuilt python wheel in /workspace/dist if requir
 The contrib folder also includes a script to build the python wheel with the UCX dependencies. Note, that UCX and other NIXL dependencies are required to be installed.
 ```
 $ ./contrib/build-wheel.sh
+```
+
+## Running with ETCD
+NIXL can use ETCD for metadata exchange between distributed nodes. This is especially useful in containerized or cloud-native environments.
+
+### Environment Setup
+To use ETCD with NIXL, set the following environment variables:
+
+```bash
+# Set ETCD endpoints (required)
+export NIXL_ETCD_ENDPOINTS="http://localhost:2379"
+
+# Set ETCD namespace (optional, defaults to /nixl/agents)
+export NIXL_ETCD_NAMESPACE="/nixl/agents"
+```
+
+### Running the ETCD Example
+NIXL includes an example demonstrating metadata exchange and data transfer using ETCD:
+
+```bash
+# Start an ETCD server if not already running
+# For example:
+# docker run -d -p 2379:2379 quay.io/coreos/etcd:v3.5.1
+
+# Run the example. The two agents in the example will exchange metadata through ETCD
+# and perform data transfers
+./<nixl_build_path>/examples/nixl_etcd_example
+```
+
+### nixlbench Benchmark
+For more comprehensive testing, the nixlbench benchmarking tool supports ETCD for worker coordination:
+
+```bash
+# Build nixlbench (see benchmark/nixlbench/README.md for details)
+cd benchmark/nixlbench
+meson setup build && cd build && ninja
+
+# Run benchmark with ETCD
+./nixlbench --etcd-endpoints http://localhost:2379 --backend UCX --initiator_seg_type VRAM
 ```
 
 ## Examples
