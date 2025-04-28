@@ -31,10 +31,6 @@
                     },
                     "volumeMounts": [
                         {
-                            "name": "efs-volume",
-                            "mountPath": "/efs"
-                        },
-                        {
                             "name": "efa-volume",
                             "mountPath": "/dev/infiniband/uverbs0"
                         }
@@ -46,12 +42,6 @@
             ],
             "initContainers": [],
             "volumes": [
-                {
-                    "name": "efs-volume",
-                    "hostPath": {
-                        "path": "/mnt/efs"
-                    }
-                },
                 {
                     "name": "efa-volume",
                     "hostPath": {
