@@ -14,6 +14,8 @@
 # limitations under the License.
 
 option('ucx_path', type: 'string', value: '', description: 'Path to UCX install')
+option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD Headers')
+option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD Libraries')
 option('disable_gds_backend', type : 'boolean', value : false, description : 'disable gds backend')
 option('install_headers', type : 'boolean', value : true, description : 'install headers')
 option('gds_path', type: 'string', value: '/usr/local/cuda/targets/x86_64-linux/', description: 'Path to GDS CuFile install')

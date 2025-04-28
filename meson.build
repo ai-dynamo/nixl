@@ -53,6 +53,29 @@ else
     include_directories : include_directories(cuda_inc_path))
 endif
 
+# Check for etcd-cpp-api - use multiple methods for discovery
+etcd_dep = dependency('etcd-cpp-api', required : false)
+etcd_inc_path = get_option('etcd_inc_path')
+etcd_lib_path = get_option('etcd_lib_path')
+if not etcd_dep.found() and etcd_lib_path != ''
+    etcd_lib = cpp.find_library('etcd-cpp-api')
+    if etcd_lib.found()
+        if cpp.has_header('Client.hpp', args : '-I' + etcd_inc_path)
+            etcd_inc = include_directories(etcd_inc_path, is_system: true)
+            etcd_dep = declare_dependency(
+                        include_directories : etcd_inc,
+                        dependencies : etcd_lib)
+            break
+        endif
+    endif
+endif
+
+if etcd_dep.found()
+    add_project_arguments('-DHAVE_ETCD', language: 'cpp')
+else
+    message('ETCD CPP API library not found, will disable etcd support')
+endif
+
 prefix_path = get_option('prefix')
 prefix_inc = prefix_path + '/include'
 
