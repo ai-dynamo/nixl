@@ -83,7 +83,10 @@ class nixl_agent:
 
         # Set agent config and instantiate an agent
         agent_config = nixlBind.nixlAgentConfig(
-            nixl_conf.enable_pthread, nixl_conf.enable_listen, nixl_conf.port, nixlBind.NIXL_THREAD_SYNC_STRICT
+            nixl_conf.enable_pthread,
+            nixl_conf.enable_listen,
+            nixl_conf.port,
+            nixlBind.NIXL_THREAD_SYNC_STRICT,
         )
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
