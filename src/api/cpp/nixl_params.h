@@ -38,7 +38,6 @@ class nixlAgentConfig {
         /** @var synchronization mode for multi-threaded environment execution */
         nixl_thread_sync_t syncMode;
 
-
     public:
 
         /**
@@ -57,15 +56,14 @@ class nixlAgentConfig {
         uint64_t lthrDelay;
 
 
-
         /**
          * @brief  Agent configuration constructor for enabling various features.
          * @param use_prog_thread    flag to determine use of progress thread
          * @param use_listen_thread  flag to determine use of listener thread
          * @param port               specify port for listener thread to listen on
-         * @param pthr_delay_us      Optional delay for pthread in us
-         * @param pthr_delay_us      Optional delay for listener thread in us
          * @param sync_mode          Thread synchronization mode
+         * @param pthr_delay_us      Optional delay for pthread in us
+         * @param lthr_delay_us      Optional delay for listener thread in us
          */
         nixlAgentConfig (const bool use_prog_thread,
                          const bool use_listen_thread=false,

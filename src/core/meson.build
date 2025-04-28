@@ -14,7 +14,12 @@
 # limitations under the License.
 
 # Add dependency on the common utility library which brings in logging deps
+
 nixl_lib_deps = [nixl_infra, serdes_interface, stream_interface, dl_dep, nixl_common_dep, thread_dep]
+
+if etcd_dep.found()
+    nixl_lib_deps += [ etcd_dep ]
+endif
 
 if 'UCX' in static_plugins
     nixl_lib_deps += [ ucx_backend_interface, cuda_dep ]
