@@ -56,21 +56,21 @@ class nixlAgentData {
         std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
 
         // Local section, and Remote sections and their available common backends
-        nixlLocalSection*                                        memorySection;
+        std::unique_ptr<nixlLocalSection>				  memorySection;
 
         std::unordered_map<std::string,
                            std::unordered_map<nixl_backend_t, nixl_blob_t>,
                            std::hash<std::string>, strEqual>     remoteBackends;
-        std::unordered_map<std::string, nixlRemoteSection*,
+        std::unordered_map<std::string, std::unique_ptr<nixlRemoteSection>,
                            std::hash<std::string>, strEqual>     remoteSections;
 
         // State/methods for listener thread
-        nixlMDStreamListener               *listener;
-        std::map<nixl_socket_peer_t, int>  remoteSockets;
-        std::thread                        commThread;
-        std::vector<nixl_comm_req_t>       commQueue;
-        std::mutex                         commLock;
-        bool                               commThreadStop;
+        std::unique_ptr<nixlMDStreamListener> listener;
+        std::map<nixl_socket_peer_t, int>     remoteSockets;
+        std::thread                           commThread;
+        std::vector<nixl_comm_req_t>          commQueue;
+        std::mutex                            commLock;
+        bool                                  commThreadStop;
 
         void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);

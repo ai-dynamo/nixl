@@ -16,6 +16,7 @@
  */
 
 #include <iostream>
+#include <memory>
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
@@ -61,17 +62,12 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :
-                                   name(name), config(cfg), lock(cfg.syncMode)
+                                   name(name), config(cfg), lock(cfg.syncMode),
+                                   memorySection(std::make_unique<nixlLocalSection>())
 {
-        memorySection = new nixlLocalSection();
 }
 
 nixlAgentData::~nixlAgentData() {
-    delete memorySection;
-
-    for (auto & elm: remoteSections)
-        delete elm.second;
-
     for (auto & elm: backendEngines) {
         auto& plugin_manager = nixlPluginManager::getInstance();
         auto plugin_handle = plugin_manager.getPlugin(elm.second->getType());
@@ -98,7 +94,7 @@ nixlAgent::nixlAgent(const std::string &name,
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
         if(my_port == 0) my_port = default_comm_port;
-        data->listener = new nixlMDStreamListener(my_port);
+        data->listener = std::make_unique<nixlMDStreamListener>(my_port);
         data->listener->setupListener();
         data->commThreadStop = false;
         data->commThread = std::thread(&nixlAgentData::commWorker, data, this);
@@ -109,7 +105,6 @@ nixlAgent::~nixlAgent() {
     if(data->config.useListenThread) {
         data->commThreadStop = true;
         if(data->commThread.joinable()) data->commThread.join();
-        if(data->listener) delete data->listener;
     }
     delete data;
 }
@@ -262,6 +257,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
                        const nixl_opt_args_t* extra_params) {
 
     backend_list_t* backend_list;
+    backend_list_t  user_backend_list;
     nixl_status_t   ret;
     unsigned int    count = 0;
 
@@ -271,9 +267,9 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
         if (backend_list->empty())
             return NIXL_ERR_NOT_FOUND;
     } else {
-        backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
-            backend_list->push_back(elm->engine);
+            user_backend_list.push_back(elm->engine);
+        backend_list = &user_backend_list;
     }
 
     // Best effort, if at least one succeeds NIXL_SUCCESS is returned
@@ -287,7 +283,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
             if (backend->supportsLocal()) {
                 if (data->remoteSections.count(data->name) == 0)
                     data->remoteSections[data->name] =
-                          new nixlRemoteSection(data->name);
+                          std::make_unique<nixlRemoteSection>(data->name);
 
                 ret = data->remoteSections[data->name]->loadLocalData(
                                                         sec_descs, backend);
@@ -300,9 +296,6 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
             }
         } // a bad_ret can be saved in an else
     }
-
-    if (extra_params && extra_params->backends.size() > 0)
-        delete backend_list;
 
     if (count > 0)
         return NIXL_SUCCESS;
@@ -391,6 +384,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
     // Using a set as order is not important to revert the operation
     backend_set_t* backend_set;
+    backend_set_t usr_backend_set;
     nixl_status_t  ret;
     int            count = 0;
     bool           init_side = (agent_name == NIXL_INIT_AGENT);
@@ -412,9 +406,9 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         if (!backend_set || backend_set->empty())
             return NIXL_ERR_NOT_FOUND;
     } else {
-        backend_set = new backend_set_t();
         for (auto & elm : extra_params->backends)
-            backend_set->insert(elm->engine);
+            usr_backend_set.insert(elm->engine);
+        backend_set = &usr_backend_set;
     }
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
@@ -429,7 +423,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     }
 
     for (auto & backend : *backend_set) {
-        handle->descs[backend] = new nixl_meta_dlist_t (
+        handle->descs[backend] = std::make_unique<nixl_meta_dlist_t>(
                                          descs.getType(),
                                          descs.isSorted());
         if (init_side)
@@ -441,13 +435,9 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         if (ret == NIXL_SUCCESS) {
             count++;
         } else {
-            delete handle->descs[backend];
             handle->descs.erase(backend);
         }
     }
-
-    if (extra_params && extra_params->backends.size() > 0)
-        delete backend_set;
 
     if (count == 0) {
         delete handle;
@@ -512,8 +502,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     if (!backend)
         return NIXL_ERR_INVALID_PARAM;
 
-    nixl_meta_dlist_t* local_descs  = local_side->descs.at(backend);
-    nixl_meta_dlist_t* remote_descs = remote_side->descs.at(backend);
+    const auto &local_descs  = local_side->descs.at(backend);
+    const auto &remote_descs = remote_side->descs.at(backend);
 
     if ((desc_count == 0) || (remote_indices.size() == 0) ||
         (desc_count != (int) remote_indices.size()))
@@ -543,11 +533,11 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     // Populate has been already done, no benefit in having sorted descriptors
     // which will be overwritten by [] assignment operator.
     nixlXferReqH* handle   = new nixlXferReqH;
-    handle->initiatorDescs = new nixl_meta_dlist_t (
+    handle->initiatorDescs = std::make_unique<nixl_meta_dlist_t>(
                                      local_descs->getType(),
                                      false, desc_count);
 
-    handle->targetDescs    = new nixl_meta_dlist_t (
+    handle->targetDescs    = std::make_unique<nixl_meta_dlist_t>(
                                      remote_descs->getType(),
                                      false, desc_count);
 
@@ -627,7 +617,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          const nixl_opt_args_t* extra_params) const {
     nixl_status_t     ret1, ret2;
     nixl_opt_b_args_t opt_args;
-    backend_set_t*    backend_set = new backend_set_t();
+    std::unique_ptr<backend_set_t> backend_set = std::make_unique<backend_set_t>();
 
     req_hndl = nullptr;
 
@@ -651,7 +641,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             data->remoteSections[remote_agent]->queryBackends(
                                                 remote_descs.getType());
         if (!local_set || !remote_set) {
-            delete backend_set;
             return NIXL_ERR_NOT_FOUND;
         }
 
@@ -660,7 +649,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                 backend_set->insert(elm);
 
         if (backend_set->empty()) {
-            delete backend_set;
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
@@ -673,11 +661,11 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
     nixlXferReqH *handle   = new nixlXferReqH;
-    handle->initiatorDescs = new nixl_meta_dlist_t (
+    handle->initiatorDescs = std::make_unique<nixl_meta_dlist_t>(
                                      local_descs.getType(),
                                      local_descs.isSorted());
 
-    handle->targetDescs    = new nixl_meta_dlist_t (
+    handle->targetDescs    = std::make_unique<nixl_meta_dlist_t>(
                                      remote_descs.getType(),
                                      remote_descs.isSorted());
 
@@ -697,8 +685,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             break;
         }
     }
-
-    delete backend_set;
 
     if (!handle->engine) {
         delete handle;
@@ -864,6 +850,7 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
                      const nixl_opt_args_t* extra_params) {
     notif_list_t    bknd_notif_list;
     nixl_status_t   ret, bad_ret=NIXL_SUCCESS;
+    backend_list_t  user_backend_list;
     backend_list_t* backend_list;
 
     NIXL_LOCK_GUARD(data->lock);
@@ -872,15 +859,14 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
         if (backend_list->empty())
             return NIXL_ERR_BACKEND;
     } else {
-        backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
             if (elm->engine->supportsNotif())
-                backend_list->push_back(elm->engine);
+                user_backend_list.push_back(elm->engine);
 
-        if (backend_list->empty()) {
-            delete backend_list;
+        if (user_backend_list.empty()) {
             return NIXL_ERR_BACKEND;
         }
+        backend_list = &user_backend_list;
     }
 
     // Doing best effort, if any backend errors out we return
@@ -903,9 +889,6 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
         }
     }
 
-    if (extra_params && extra_params->backends.size() > 0)
-        delete backend_list;
-
     return bad_ret;
 }
 
@@ -915,6 +898,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
                     const nixl_opt_args_t* extra_params) {
 
     nixlBackendEngine* backend = nullptr;
+    backend_list_t     user_backend_list;
     backend_list_t*    backend_list;
 
     NIXL_LOCK_GUARD(data->lock);
@@ -923,15 +907,14 @@ nixlAgent::genNotif(const std::string &remote_agent,
         if (backend_list->empty())
             return NIXL_ERR_BACKEND;
     } else {
-        backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
             if (elm->engine->supportsNotif())
-                backend_list->push_back(elm->engine);
+                user_backend_list.push_back(elm->engine);
 
-        if (backend_list->empty()) {
-            delete backend_list;
+        if (user_backend_list.empty()) {
             return NIXL_ERR_BACKEND;
         }
+        backend_list = &user_backend_list;
     }
 
     for (auto & eng: *backend_list) {
@@ -941,9 +924,6 @@ nixlAgent::genNotif(const std::string &remote_agent,
             break;
         }
     }
-
-    if (extra_params && extra_params->backends.size() > 0)
-        delete backend_list;
 
     if (backend)
         return backend->genNotif(remote_agent, msg);
@@ -1204,7 +1184,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
         return NIXL_ERR_MISMATCH;
 
     if (data->remoteSections.count(remote_agent) == 0)
-        data->remoteSections[remote_agent] = new nixlRemoteSection(
+        data->remoteSections[remote_agent] = std::make_unique<nixlRemoteSection>(
                                                   remote_agent);
 
     ret = data->remoteSections[remote_agent]->loadRemoteData(&sd,
@@ -1212,7 +1192,6 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     // TODO: can be more graceful, if just the new MD blob was improper
     if (ret) {
-        delete data->remoteSections[remote_agent];
         data->remoteSections.erase(remote_agent);
         return ret;
     }
@@ -1230,7 +1209,6 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
 
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
     if (data->remoteSections.count(remote_agent)!=0) {
-        delete data->remoteSections[remote_agent];
         data->remoteSections.erase(remote_agent);
         ret = NIXL_SUCCESS;
     }
