@@ -86,9 +86,6 @@ if actual_log_level == 'auto'
   endif
 endif
 
-# Add define for the determined log level
-add_project_arguments('-DLOG_LEVEL_' + actual_log_level.to_upper() , language: 'cpp')
-
 # Configure Abseil log stripping and NDEBUG for release builds
 if get_option('buildtype') == 'release'
     # Map our log levels to Abseil severity integers
