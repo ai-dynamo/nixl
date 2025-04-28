@@ -66,7 +66,10 @@ nixlAgentData::nixlAgentData(const std::string &name,
 #if HAVE_ETCD
     if (getenv("NIXL_ETCD_ENDPOINTS")) {
         useEtcd = true;
-        NIXL_INFO << "NIXL ETCD is enabled";
+        NIXL_DEBUG << "NIXL ETCD is enabled";
+    } else {
+        useEtcd = false;
+        NIXL_DEBUG << "NIXL ETCD is disabled";
     }
 #endif // HAVE_ETCD
 
@@ -1111,9 +1114,13 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     if (remote_agent == data->name)
         return NIXL_ERR_INVALID_PARAM;
 
+    NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
+
     ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if(ret)
+    if(ret) {
+        NIXL_ERROR << "Error getting connection count: " << nixlEnumStrings::statusStr(ret);
         return ret;
+    }
 
     for (size_t i=0; i<conn_cnt; ++i) {
         nixl_backend = sd.getStr("t");

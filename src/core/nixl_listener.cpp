@@ -210,20 +210,15 @@ static nixl_status_t fetchMetadataFromEtcd(const std::string& agent_name,
 }
 
 // Create etcd client with specified endpoints or from environment variable
-static std::unique_ptr<etcd::Client> createEtcdClient() {
+static std::unique_ptr<etcd::Client> createEtcdClient(std::string etcd_endpoints) {
     try {
-        // First check if NIXL_ETCD_ENDPOINTS environment variable is set
-        char* env_endpoints = getenv("NIXL_ETCD_ENDPOINTS");
-        if (env_endpoints && strlen(env_endpoints) > 0) {
-            NIXL_INFO << "Using etcd endpoints from environment: " << env_endpoints;
-        } else {
-            // Fall back to provided endpoints if environment variable is not set
-            NIXL_ERROR << "No etcd endpoints provided";
-            return nullptr;
+        // Sanity check
+        if (etcd_endpoints.size() == 0) {
+            throw std::runtime_error("No etcd endpoints provided");
         }
 
         // Create and return new etcd client
-        return std::make_unique<etcd::Client>(std::string(env_endpoints));
+        return std::make_unique<etcd::Client>(etcd_endpoints);
     } catch (const std::exception& e) {
         NIXL_ERROR << "Error creating etcd client: " << e.what();
         return nullptr;
@@ -235,12 +230,22 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
 
 #if HAVE_ETCD
         auto etcdclient = std::unique_ptr<etcd::Client>(nullptr);
-        std::string namespace_prefix = getenv("NIXL_ETCD_NAMESPACE");
-        std::string etcd_endpoints = getenv("NIXL_ETCD_ENDPOINTS");
+        std::string etcd_endpoints;
+        std::string namespace_prefix;
 
+        // useEtcd is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
         if(useEtcd) {
-            etcdclient = createEtcdClient();
-            NIXL_INFO << "Created etcd client to " << etcd_endpoints;
+            etcd_endpoints = std::string(std::getenv("NIXL_ETCD_ENDPOINTS"));
+            etcdclient = createEtcdClient(etcd_endpoints);
+
+            NIXL_DEBUG << "Created etcd client to " << etcd_endpoints;
+
+            if (std::getenv("NIXL_ETCD_NAMESPACE")) {
+                namespace_prefix = std::string(std::getenv("NIXL_ETCD_NAMESPACE"));
+            } else {
+                namespace_prefix = NIXL_ETCD_NAMESPACE_DEFAULT;
+            }
+            NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
         }
 #endif // HAVE_ETCD
 
@@ -375,7 +380,8 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                         std::string remote_agent;
                         ret = myAgent->loadRemoteMD(remote_metadata, remote_agent);
                         if (ret == NIXL_SUCCESS) {
-                            NIXL_DEBUG << "Successfully loaded metadata for agent: " << req_ip << std::endl;
+                            NIXL_DEBUG << "Successfully loaded metadata "
+                                       << " for agent: " << req_ip << std::endl;
                         } else {
                             NIXL_ERROR << "Failed to load remote metadata: " << ret << std::endl;
                         }

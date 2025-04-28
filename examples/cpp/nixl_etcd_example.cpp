@@ -53,89 +53,120 @@ nixlAgent* createAgent(const std::string& name) {
     return agent;
 }
 
+void printParams(const nixl_b_params_t& params, const nixl_mem_list_t& mems) {
+    if (params.empty()) {
+        std::cout << "Parameters: (empty)" << std::endl;
+        return;
+    }
+
+    std::cout << "Parameters:" << std::endl;
+    for (const auto& pair : params) {
+        std::cout << "  " << pair.first << " = " << pair.second << std::endl;
+    }
+
+    if (mems.empty()) {
+        std::cout << "Mems: (empty)" << std::endl;
+        return;
+    }
+
+    std::cout << "Mems:" << std::endl;
+    for (const auto& elm : mems) {
+        std::cout << "  " << nixlEnumStrings::memTypeStr(elm) << std::endl;
+    }
+}
+
 // Register a memory buffer with the agent
-nixl_status_t registerMemory(nixlAgent* agent, nixlBackendH* backend) {
+nixl_status_t registerMemory(void** addr, nixlAgent* agent, nixl_reg_dlist_t* dlist, nixl_opt_args_t* extra_params, nixlBackendH* backend, uint8_t pattern) {
     // Create an optional parameters structure
-    nixl_opt_args_t extra_params;
-    extra_params.backends.push_back(backend);
+    extra_params->backends.push_back(backend);
 
     // Allocate and initialize a buffer
     size_t buffer_size = 1024;
-    void* buffer = malloc(buffer_size);
-    memset(buffer, 0xaa, buffer_size); // Initialize with pattern
+    *addr = malloc(buffer_size);
 
-    // Create a descriptor list
-    nixl_reg_dlist_t dlist(DRAM_SEG);
+    memset(*addr, pattern, buffer_size);
 
     // Create a descriptor for the buffer
     nixlBlobDesc desc;
-    desc.addr = (uintptr_t)buffer;
+    desc.addr = (uintptr_t)(*addr);
     desc.len = buffer_size;
     desc.devId = 0;
 
     // Add the descriptor to the list
-    dlist.addDesc(desc);
+    dlist->addDesc(desc);
 
     // Register the memory with the agent
-    nixl_status_t status = agent->registerMem(dlist, &extra_params);
+    nixl_status_t status = agent->registerMem(*dlist, extra_params);
+
+    std::cout << "Registered memory " << *addr << " with agent "
+              << agent << std::endl;
 
     return status;
 }
 
 int main() {
+    void* addr1 = nullptr;
+    void* addr2 = nullptr;
+    nixl_status_t ret1, ret2;
+    nixl_status_t status;
+
+    // Create two agents (normally these would be in separate processes or machines)
+    nixlAgentConfig cfg(true);
+    nixl_b_params_t init1, init2;
+    nixl_mem_list_t mems1, mems2;
+    nixl_reg_dlist_t dlist1(DRAM_SEG), dlist2(DRAM_SEG);
+
+    nixl_opt_args_t extra_params1, extra_params2;
+
     std::cout << "NIXL Etcd Metadata Example\n";
     std::cout << "==========================\n";
 
-    // Create two agents (normally these would be in separate processes or machines)
-    nixlAgent* agent1 = createAgent(AGENT1_NAME);
-    nixlAgent* agent2 = createAgent(AGENT2_NAME);
+    // populate required/desired inits
+    nixlAgent A1(AGENT1_NAME, cfg);
+    nixlAgent A2(AGENT2_NAME, cfg);
 
-    // Check for UCX backend
-    nixl_backend_t backend_type = "UCX";
-    nixl_b_params_t params1, params2;
-    nixl_mem_list_t mems1, mems2;
-
-    // Check if UCX is available
     std::vector<nixl_backend_t> plugins;
-    nixl_status_t status = agent1->getAvailPlugins(plugins);
-    printStatus("Getting available plugins", status);
 
-    std::cout << "Available plugins:" << std::endl;
-    bool ucx_available = false;
-    for (const auto& plugin : plugins) {
-        std::cout << "  - " << plugin << std::endl;
-        if (plugin == backend_type) {
-            ucx_available = true;
-        }
-    }
+    ret1 = A1.getAvailPlugins(plugins);
+    assert (ret1 == NIXL_SUCCESS);
 
-    if (!ucx_available) {
-        std::cerr << "UCX plugin not available, exiting" << std::endl;
-        delete agent1;
-        delete agent2;
-        return 1;
-    }
+    std::cout << "Available plugins:\n";
 
-    // Get UCX plugin parameters for DRAM memory type
-    printStatus("Getting plugin parameters for agent1", status);
-    assert(status == NIXL_SUCCESS);
+    for (nixl_backend_t b: plugins)
+        std::cout << b << "\n";
 
-    status = agent2->getPluginParams(backend_type, mems2, params2);
-    assert(status == NIXL_SUCCESS);
+    ret1 = A1.getPluginParams("UCX", mems1, init1);
+    ret2 = A2.getPluginParams("UCX", mems2, init2);
+
+    assert (ret1 == NIXL_SUCCESS);
+    assert (ret2 == NIXL_SUCCESS);
+
+    std::cout << "Params before init:\n";
+    printParams(init1, mems1);
+    printParams(init2, mems2);
 
     // Create backends
-    nixlBackendH *backend1, *backend2;
-    status = agent1->createBackend(backend_type, params1, backend1);
-    assert(status == NIXL_SUCCESS);
+    nixlBackendH* ucx1, *ucx2;
+    ret1 = A1.createBackend("UCX", init1, ucx1);
+    ret2 = A2.createBackend("UCX", init2, ucx2);
 
-    status = agent2->createBackend(backend_type, params2, backend2);
-    assert(status == NIXL_SUCCESS);
+    assert (ret1 == NIXL_SUCCESS);
+    assert (ret2 == NIXL_SUCCESS);
+
+    ret1 = A1.getBackendParams(ucx1, mems1, init1);
+    ret2 = A2.getBackendParams(ucx2, mems2, init2);
+
+    assert (ret1 == NIXL_SUCCESS);
+    assert (ret2 == NIXL_SUCCESS);
+
+    std::cout << "Params after init:\n";
+    printParams(init1, mems1);
+    printParams(init2, mems2);
 
     // Register memory with both agents
-    status = registerMemory(agent1, backend1);
+    status = registerMemory(&addr1, &A1, &dlist1, &extra_params1, ucx1, 0xaa);
     assert(status == NIXL_SUCCESS);
-
-    status = registerMemory(agent2, backend2);
+    status = registerMemory(&addr2, &A2, &dlist2, &extra_params2, ucx2, 0xbb);
     assert(status == NIXL_SUCCESS);
 
     std::cout << "\nEtcd Metadata Exchange Demo\n";
@@ -145,10 +176,10 @@ int main() {
     std::cout << "\n1. Sending local metadata to etcd...\n";
 
     // Both agents send their metadata to etcd
-    status = agent1->sendLocalMD();
+    status = A1.sendLocalMD();
     assert(status == NIXL_SUCCESS);
 
-    status = agent2->sendLocalMD();
+    status = A2.sendLocalMD();
     assert(status == NIXL_SUCCESS);
 
     // Give etcd time to process
@@ -158,12 +189,68 @@ int main() {
     std::cout << "\n2. Fetching remote metadata from etcd...\n";
 
     // Agent1 fetches metadata for Agent2
-    status = agent1->fetchRemoteMD(AGENT2_NAME);
+    status = A1.fetchRemoteMD(AGENT2_NAME);
     assert(status == NIXL_SUCCESS);
 
     // Agent2 fetches metadata for Agent1
-    status = agent2->fetchRemoteMD(AGENT1_NAME);
+    status = A2.fetchRemoteMD(AGENT1_NAME);
     assert(status == NIXL_SUCCESS);
+
+    // Do transfer from Agent 1 to Agent 2
+    size_t req_size = 8;
+    size_t dst_offset = 8;
+
+    std::cout << "Agent1's address: " << addr1 << std::endl;
+    std::cout << "Agent2's address: " << addr2 << std::endl;
+
+    nixl_xfer_dlist_t req_src_descs (DRAM_SEG);
+    nixlBasicDesc req_src;
+    req_src.addr     = (uintptr_t) (((char*) addr1) + 16); //random offset
+    req_src.len      = req_size;
+    req_src.devId    = 0;
+    req_src_descs.addDesc(req_src);
+
+    nixl_xfer_dlist_t req_dst_descs (DRAM_SEG);
+    nixlBasicDesc req_dst;
+    req_dst.addr   = (uintptr_t) ((char*) addr2) + dst_offset; //random offset
+    req_dst.len    = req_size;
+    req_dst.devId  = 0;
+    req_dst_descs.addDesc(req_dst);
+
+    std::cout << "Transfer request from " << req_src.addr << " to " << req_dst.addr << "\n";
+    nixlXferReqH *req_handle;
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    extra_params1.notifMsg = "notification";
+    extra_params1.hasNotif = true;
+    ret1 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_dst_descs, AGENT2_NAME, req_handle, &extra_params1);
+    std::cout << "Xfer request created, status: " << nixlEnumStrings::statusStr(ret1) << std::endl;
+
+    status = A1.postXferReq(req_handle);
+
+    std::cout << "Transfer was posted\n";
+
+    nixl_notifs_t notif_map;
+    int n_notifs = 0;
+
+    while (status != NIXL_SUCCESS || n_notifs == 0) {
+        if (status != NIXL_SUCCESS) status = A1.getXferStatus(req_handle);
+        if (n_notifs == 0) ret2 = A2.getNotifs(notif_map);
+        assert (status >= 0);
+        assert (ret2 == NIXL_SUCCESS);
+        n_notifs = notif_map.size();
+    }
+
+    std::cout << "Transfer verified\n";
+
+    ret1 = A1.releaseXferReq(req_handle);
+    assert (ret1 == NIXL_SUCCESS);
+
+    ret1 = A1.deregisterMem(dlist1, &extra_params1);
+    ret2 = A2.deregisterMem(dlist2, &extra_params2);
+    assert (ret1 == NIXL_SUCCESS);
+    assert (ret2 == NIXL_SUCCESS);
 
     // 3. Partial Metadata Exchange
     std::cout << "\n3. Sending partial metadata to etcd...\n";
@@ -175,34 +262,33 @@ int main() {
     // Create optional parameters with includeConnInfo set to true
     nixl_opt_args_t conn_params1, conn_params2;
     conn_params1.includeConnInfo = true;
-    conn_params1.backends.push_back(backend1);
+    conn_params1.backends.push_back(ucx1);
 
     conn_params2.includeConnInfo = true;
-    conn_params2.backends.push_back(backend2);
+    conn_params2.backends.push_back(ucx2);
 
     // Send partial metadata
-    status = agent1->sendLocalPartialMD(empty_dlist1, &conn_params1);
+    status = A1.sendLocalPartialMD(empty_dlist1, &conn_params1);
     assert(status == NIXL_SUCCESS);
 
-    status = agent2->sendLocalPartialMD(empty_dlist2, &conn_params2);
+    status = A2.sendLocalPartialMD(empty_dlist2, &conn_params2);
     assert(status == NIXL_SUCCESS);
 
     // 4. Invalidate Metadata
     std::cout << "\n4. Invalidating metadata in etcd...\n";
 
     // Invalidate agent1's metadata
-    status = agent1->invalidateLocalMD();
+    status = A1.invalidateLocalMD();
     assert(status == NIXL_SUCCESS);
 
-    std::this_thread::sleep_for(std::chrono::seconds(3));
+    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     // Try fetching the invalidated metadata
     std::cout << "\nTrying to fetch invalidated metadata for Agent1...\n";
-    status = agent2->fetchRemoteMD(AGENT1_NAME);
+    status = A2.fetchRemoteMD(AGENT1_NAME);
 
-    // Clean up
-    delete agent1;
-    delete agent2;
+    free(addr1);
+    free(addr2);
 
     std::cout << "\nExample completed.\n";
     return 0;
