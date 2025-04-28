@@ -58,7 +58,7 @@ JOB_NAME="NIXL_${TEST_TYPE}_${GITHUB_RUN_NUMBER:-$RANDOM}"
 JOB_ID=$(aws batch submit-job \
     --job-name "$JOB_NAME" \
     --job-definition "NIXL-Ubuntu-JD" \
-    --job-queue ucx-ci-JQ \
+    --job-queue ucx-nxil-jq \
     --eks-properties-override file://./aws_vars.json \
     --query 'jobId' --output text)
 

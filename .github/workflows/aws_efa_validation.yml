@@ -1,10 +1,7 @@
 name: NVIDIA NIXL AWS EFA Validation
 
 on:
-  push:
-    branches:
-      - main
-      - "pull-request/[0-9]+"
+  pull_request:
   workflow_dispatch:
 
 jobs:
