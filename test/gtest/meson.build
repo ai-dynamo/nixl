@@ -37,10 +37,10 @@ if get_option('test_all_plugins')
 endif
 
 test_exe = executable('gtest',
-    sources : ['main.cpp', 'plugin_manager.cpp'],
+    sources : ['main.cpp', 'plugin_manager.cpp', 'test_transfer.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, cuda_dep, gtest_dep],
+    dependencies : [nixl_dep, nixl_infra, nixl_common_dep, cuda_dep, gtest_dep, absl_strings_dep],
     install : true
 )
 

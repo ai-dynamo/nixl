@@ -131,6 +131,10 @@ nixlAgent::~nixlAgent() {
     delete data;
 }
 
+std::string nixlAgent::getName() const {
+    return data->name;
+}
+
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
     auto& plugin_manager = nixlPluginManager::getInstance();

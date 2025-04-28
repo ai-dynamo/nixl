@@ -51,6 +51,13 @@ class nixlAgent {
         ~nixlAgent ();
 
         /**
+         * @brief  Get the name of the agent
+         *
+         * @return std::string The name of the agent
+         */
+        std::string getName () const;
+
+        /**
          * @brief  Discover the available supported plugins found in the plugin paths
          *
          * @param  plugins [out] Vector of available backend plugins
