@@ -81,12 +81,18 @@ class nixl_agent:
         if not nixl_conf:
             nixl_conf = nixl_agent_config()  # Using defaults set in nixl_agent_config
 
+        thread_config = (
+            nixlBind.NIXL_THREAD_SYNC_STRICT
+            if nixl_conf.enable_listen
+            else nixlBind.NIXL_THREAD_SYNC_NONE
+        )
+
         # Set agent config and instantiate an agent
         agent_config = nixlBind.nixlAgentConfig(
             nixl_conf.enable_pthread,
             nixl_conf.enable_listen,
             nixl_conf.port,
-            nixlBind.NIXL_THREAD_SYNC_STRICT,
+            thread_config,
         )
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 

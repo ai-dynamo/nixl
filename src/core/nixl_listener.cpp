@@ -181,9 +181,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                         throw std::runtime_error("invalidate on closed socket\n");
                     }
                     client_fd = client->second;
-                    sendCommMessage(client_fd, std::string("NIXLCOMM:INVL"));
-                    close(client_fd);
-                    remoteSockets.erase(req_sock);
+                    sendCommMessage(client_fd, std::string("NIXLCOMM:INVL") + name);
                     break;
                 }
                 default:
@@ -210,7 +208,6 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
 
             command_list = str_split_substr(commands, "NIXLCOMM:");
 
-            bool invl = false;
             for(std::string command : command_list) {
 
                 if(command.size() < 4) continue;
@@ -232,19 +229,15 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
 
                     sendCommMessage(socket_iter->second, std::string("NIXLCOMM:LOAD" + my_MD));
                 } else if(header == "INVL") {
-                    invl = true;
+                    std::string remote_agent = command.substr(4);
+                    myAgent->invalidateRemoteMD(remote_agent);
                     break;
                 } else {
                     throw std::runtime_error("Received socket message with bad header" + header + ", critically failing\n");
                 }
             }
 
-            if (invl) {
-                close(socket_iter->second);
-                socket_iter = remoteSockets.erase(socket_iter);
-            } else {
-                socket_iter++;
-            }
+            socket_iter++;
         }
 
         nixlTime::us_t start = nixlTime::getUs();

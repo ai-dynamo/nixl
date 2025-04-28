@@ -634,7 +634,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     NIXL_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
     {
-        std::cerr << "no remote agent\n" << std::endl;
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -655,7 +654,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                 remote_descs.getType());
         if (!local_set || !remote_set) {
             delete backend_set;
-            std::cerr << "no sets\n" << std::endl;
             return NIXL_ERR_NOT_FOUND;
         }
 
@@ -665,7 +663,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
         if (backend_set->empty()) {
             delete backend_set;
-            std::cerr << "set empty\n" << std::endl;
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
@@ -707,7 +704,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     if (!handle->engine) {
         delete handle;
-        std::cerr << "no engine\n" << std::endl;
         return NIXL_ERR_NOT_FOUND;
     }
 
