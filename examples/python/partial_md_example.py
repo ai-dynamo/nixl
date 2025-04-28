@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import os
+import time
 
 import nixl._utils as nixl_utils
 from nixl._api import nixl_agent, nixl_agent_config
@@ -78,17 +79,13 @@ if __name__ == "__main__":
 
     # Wait for metadata to be loaded
     ready = False
-    xfer_handle_1 = 0
+
     while not ready:
-        try:
-            # initialize transfer mode
-            xfer_handle_1 = init_agent.initialize_xfer(
-                "READ", init_xfer_descs, target_xfer_descs1, "target", b"UUID1"
-            )
-        except nixlNotFoundError:
-            ready = False
-        else:
-            ready = True
+        ready = init_agent.check_remote_metadata("target", target_xfer_descs1)
+
+    xfer_handle_1 = init_agent.initialize_xfer(
+        "READ", init_xfer_descs, target_xfer_descs1, "target", b"UUID1"
+    )
 
     state = init_agent.transfer(xfer_handle_1)
     assert state != "ERR"
@@ -171,4 +168,6 @@ if __name__ == "__main__":
     for addr in malloc_addrs:
         nixl_utils.free_passthru(addr)
 
+    # Give sockets time to close
+    time.sleep(1)
     print("Test Complete.")

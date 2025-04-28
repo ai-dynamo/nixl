@@ -123,6 +123,12 @@ PYBIND11_MODULE(_bindings, m) {
     m.attr("DEFAULT_COMM_PORT") = default_comm_port;
 
     //cast types
+    py::enum_<nixl_thread_sync_t>(m, "nixl_thread_sync_t")
+        .value("NIXL_THREAD_SYNC_NONE", nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)
+        .value("NIXL_THREAD_SYNC_STRICT", nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT)
+        .value("NIXL_THREAD_SYNC_DEFAULT", nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT)
+        .export_values();
+
     py::enum_<nixl_mem_t>(m, "nixl_mem_t")
         .value("DRAM_SEG", DRAM_SEG)
         .value("VRAM_SEG", VRAM_SEG)
@@ -282,7 +288,8 @@ PYBIND11_MODULE(_bindings, m) {
         //implicit constructor
         .def(py::init<bool>())
         .def(py::init<bool, bool>())
-        .def(py::init<bool, bool, int>());
+        .def(py::init<bool, bool, int>())
+        .def(py::init<bool, bool, int, nixl_thread_sync_t>());
 
     //note: pybind will automatically convert notif_map to python types:
     //so, a Dictionary of string: List<string>
@@ -504,6 +511,13 @@ PYBIND11_MODULE(_bindings, m) {
                     throw_nixl_exception(agent.getLocalPartialMD(descs, ret_str, &extra_params));
                     return py::bytes(ret_str);
                 }, py::arg("descs"), py::arg("inc_conn_info") = false, py::arg("backends") = std::vector<uintptr_t>({}))
+        .def("loadRemoteMD", [](nixlAgent &agent, const std::string &remote_metadata) -> py::bytes {
+                    //python can only interpret text strings
+                    std::string remote_name("");
+                    throw_nixl_exception(agent.loadRemoteMD(remote_metadata, remote_name));
+                    return py::bytes(remote_name);
+                })
+        .def("invalidateRemoteMD", &nixlAgent::invalidateRemoteMD)
         .def("sendLocalMD", [](nixlAgent &agent, std::string ip_addr, int port){
                     nixl_opt_args_t extra_params;
 
@@ -542,11 +556,5 @@ PYBIND11_MODULE(_bindings, m) {
 
                     throw_nixl_exception(agent.invalidateLocalMD(&extra_params));
                 }, py::arg("ip_addr") = std::string(""), py::arg("port") = 0 )
-        .def("loadRemoteMD", [](nixlAgent &agent, const std::string &remote_metadata) -> py::bytes {
-                    //python can only interpret text strings
-                    std::string remote_name("");
-                    throw_nixl_exception(agent.loadRemoteMD(remote_metadata, remote_name));
-                    return py::bytes(remote_name);
-                })
-        .def("invalidateRemoteMD", &nixlAgent::invalidateRemoteMD);
+        .def("checkRemoteMD", &nixlAgent::checkRemoteMD);
 }
