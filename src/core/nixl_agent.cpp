@@ -633,7 +633,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     NIXL_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
+    {
         return NIXL_ERR_NOT_FOUND;
+    }
 
     // Check the correspondence between descriptor lists
     if (local_descs.descCount() != remote_descs.descCount())
@@ -996,7 +998,7 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
 }
 
 nixl_status_t
-nixlAgent::getLocalPartialMD(nixl_reg_dlist_t &descs,
+nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
                              nixl_blob_t &str,
                              const nixl_opt_args_t* extra_params) const {
     backend_list_t tmp_list;
@@ -1069,68 +1071,6 @@ nixlAgent::getLocalPartialMD(nixl_reg_dlist_t &descs,
         return ret;
 
     str = sd.exportStr();
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
-nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
-
-    if(extra_params->ipAddr.size() == 0){
-        NIXL_ERROR << "ETCD not supported yet, please specify IP";
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    nixl_blob_t myMD;
-    nixl_status_t ret = getLocalMD(myMD);
-    if(ret < 0) return ret;
-
-    data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, myMD));
-
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
-nixlAgent::sendLocalPartialMD(nixl_reg_dlist_t &descs,
-                              const nixl_opt_args_t* extra_params) const {
-    if(extra_params->ipAddr.size() == 0){
-        NIXL_ERROR << "ETCD not supported yet, please specify IP";
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    nixl_blob_t myMD;
-    nixl_status_t ret = getLocalPartialMD(descs, myMD, extra_params);
-    if(ret < 0) return ret;
-
-    data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, myMD));
-
-    return NIXL_SUCCESS;
-
-}
-
-nixl_status_t
-nixlAgent::fetchRemoteMD (const std::string remote_name,
-                          const nixl_opt_args_t* extra_params) {
-
-    if(extra_params->ipAddr.size() == 0){
-        NIXL_ERROR << "ETCD not supported yet, please specify IP";
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    data->enqueueCommWork(std::make_tuple(SOCK_FETCH, extra_params->ipAddr, extra_params->port, ""));
-
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
-nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
-
-    if(extra_params->ipAddr.size() == 0){
-        NIXL_ERROR << "ETCD not supported yet, please specify IP";
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    data->enqueueCommWork(std::make_tuple(SOCK_INVAL, extra_params->ipAddr, extra_params->port, ""));
-
     return NIXL_SUCCESS;
 }
 
@@ -1243,4 +1183,85 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
     }
 
     return ret;
+}
+
+nixl_status_t
+nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
+
+    if(extra_params->ipAddr.size() == 0){
+        std::cerr << "ETCD not supported yet, please specify IP\n";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    nixl_blob_t myMD;
+    nixl_status_t ret = getLocalMD(myMD);
+    if(ret < 0) return ret;
+
+    data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, myMD));
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
+                              const nixl_opt_args_t* extra_params) const {
+    if(extra_params->ipAddr.size() == 0){
+        std::cerr << "ETCD not supported yet, please specify IP\n";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    nixl_blob_t myMD;
+    nixl_status_t ret = getLocalPartialMD(descs, myMD, extra_params);
+    if(ret < 0) return ret;
+
+    data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, myMD));
+
+    return NIXL_SUCCESS;
+
+}
+
+nixl_status_t
+nixlAgent::fetchRemoteMD (const std::string remote_name,
+                          const nixl_opt_args_t* extra_params) {
+
+    if(extra_params->ipAddr.size() == 0){
+        std::cerr << "ETCD not supported yet, please specify IP\n";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    data->enqueueCommWork(std::make_tuple(SOCK_FETCH, extra_params->ipAddr, extra_params->port, ""));
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
+
+    if(extra_params->ipAddr.size() == 0){
+        std::cerr << "ETCD not supported yet, please specify IP\n";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    data->enqueueCommWork(std::make_tuple(SOCK_INVAL, extra_params->ipAddr, extra_params->port, ""));
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::checkRemoteMD (const std::string remote_name,
+                          const nixl_xfer_dlist_t &descs) const {
+    NIXL_LOCK_GUARD(data->lock);
+    if (data->remoteSections.count(remote_name) != 0) {
+        if (descs.descCount() == 0) {
+            return NIXL_SUCCESS;
+        } else {
+            nixl_meta_dlist_t dummy(descs.getType(), descs.isSorted());
+            for (const auto& [backend, conn_info] : data->remoteBackends[remote_name])
+                if (data->remoteSections[remote_name]->populate(
+                          descs, data->backendEngines[backend], dummy) == NIXL_SUCCESS)
+                    return NIXL_SUCCESS;
+            dummy.clear();
+        }
+    }
+    return NIXL_ERR_NOT_FOUND;
 }

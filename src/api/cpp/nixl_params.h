@@ -70,9 +70,9 @@ class nixlAgentConfig {
         nixlAgentConfig (const bool use_prog_thread,
                          const bool use_listen_thread=false,
                          const int port=0,
+                         nixl_thread_sync_t sync_mode=nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT,
                          const uint64_t pthr_delay_us=0,
-                         const uint64_t lthr_delay_us = 100000,
-                         nixl_thread_sync_t sync_mode=nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT) :
+                         const uint64_t lthr_delay_us = 100000) :
                          useProgThread(use_prog_thread),
                          useListenThread(use_listen_thread),
                          listenPort(port),
