@@ -217,7 +217,8 @@ int main() {
     req_dst.devId  = 0;
     req_dst_descs.addDesc(req_dst);
 
-    std::cout << "Transfer request from " << req_src.addr << " to " << req_dst.addr << "\n";
+    std::cout << "Transfer request from " << std::hex << (void*)req_src.addr
+              << " to " << std::hex << (void*)req_dst.addr << std::endl;
     nixlXferReqH *req_handle;
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
