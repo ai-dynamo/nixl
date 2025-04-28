@@ -123,6 +123,12 @@ PYBIND11_MODULE(_bindings, m) {
     m.attr("DEFAULT_COMM_PORT") = default_comm_port;
 
     //cast types
+    py::enum_<nixl_thread_sync_t>(m, "nixl_thread_sync_t")
+        .value("NIXL_THREAD_SYNC_NONE", NIXL_THREAD_SYNC_NONE)
+        .value("NIXL_THREAD_SYNC_NONE", NIXL_THREAD_SYNC_STRICT)
+        .value("NIXL_THREAD_SYNC_NONE", NIXL_THREAD_SYNC_DEFAULT)
+        .export_values();
+
     py::enum_<nixl_mem_t>(m, "nixl_mem_t")
         .value("DRAM_SEG", DRAM_SEG)
         .value("VRAM_SEG", VRAM_SEG)
@@ -282,7 +288,8 @@ PYBIND11_MODULE(_bindings, m) {
         //implicit constructor
         .def(py::init<bool>())
         .def(py::init<bool, bool>())
-        .def(py::init<bool, bool, int>());
+        .def(py::init<bool, bool, int>())
+        .def(py::init<bool, bool, int, nixl_thread_sync_t>());
 
     //note: pybind will automatically convert notif_map to python types:
     //so, a Dictionary of string: List<string>
