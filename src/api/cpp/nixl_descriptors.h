@@ -338,11 +338,11 @@ class nixlDescList {
  * @brief A typedef for a nixlDescList<nixlBasicDesc>
  *        used for creating transfer descriptor lists
  */
-typedef nixlDescList<nixlBasicDesc> nixl_xfer_dlist_t;
+using nixl_xfer_dlist_t = nixlDescList<nixlBasicDesc>;
 /**
  * @brief A typedef for a nixlDescList<nixlBlobDesc>
  *        used for creating registratoin descriptor lists
  */
-typedef nixlDescList<nixlBlobDesc>  nixl_reg_dlist_t;
+using nixl_reg_dlist_t = nixlDescList<nixlBlobDesc>;
 
 #endif
