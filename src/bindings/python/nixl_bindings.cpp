@@ -124,9 +124,9 @@ PYBIND11_MODULE(_bindings, m) {
 
     //cast types
     py::enum_<nixl_thread_sync_t>(m, "nixl_thread_sync_t")
-        .value("NIXL_THREAD_SYNC_NONE", NIXL_THREAD_SYNC_NONE)
-        .value("NIXL_THREAD_SYNC_NONE", NIXL_THREAD_SYNC_STRICT)
-        .value("NIXL_THREAD_SYNC_NONE", NIXL_THREAD_SYNC_DEFAULT)
+        .value("NIXL_THREAD_SYNC_NONE", nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)
+        .value("NIXL_THREAD_SYNC_NONE", nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT)
+        .value("NIXL_THREAD_SYNC_NONE", nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT)
         .export_values();
 
     py::enum_<nixl_mem_t>(m, "nixl_mem_t")
