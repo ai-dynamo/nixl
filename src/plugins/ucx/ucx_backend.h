@@ -23,6 +23,8 @@
 #include <thread>
 #include <mutex>
 #include <memory>
+#include <condition_variable>
+#include <atomic>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -103,8 +105,11 @@ class nixlUcxEngine : public nixlBackendEngine {
         size_t workerSize;
 
         /* Progress thread data */
-        volatile bool pthrStop, pthrActive, pthrOn;
-        int noSyncIters;
+        std::mutex pthrActiveLock;
+        std::condition_variable pthrActiveCV;
+        bool pthrActive;
+        std::atomic_bool pthrStop;
+        bool pthrOn;
         std::thread pthr;
         nixlTime::us_t pthrDelay;
 
