@@ -296,7 +296,7 @@ void allocateWrongGPUTest(nixlBackendEngine* ucx, int dev_id)
 
     int ret = ucx->registerMem(desc, VRAM_SEG, md);
 
-    assert(ret == NIXL_ERR_NOT_SUPPORTED);
+    assert(ret == NIXL_ERR_MISMATCH);
 
     releaseBuffer(VRAM_SEG, dev_id, buf);
 }
