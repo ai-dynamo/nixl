@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.1.1',
+project('nixl', 'CPP', version: '0.2.0',
     default_options: ['buildtype=debug',
                 'werror=true',
                 'cpp_std=c++17',
@@ -51,6 +51,29 @@ else
     cuda_dep = declare_dependency(
     link_args : ['-L' + cuda_lib_path, '-L' + cuda_stub_path, '-lcuda', '-lcudart'],
     include_directories : include_directories(cuda_inc_path))
+endif
+
+# Check for etcd-cpp-api - use multiple methods for discovery
+etcd_dep = dependency('etcd-cpp-api', required : false)
+etcd_inc_path = get_option('etcd_inc_path')
+etcd_lib_path = get_option('etcd_lib_path')
+if not etcd_dep.found() and etcd_lib_path != ''
+    etcd_lib = cpp.find_library('etcd-cpp-api')
+    if etcd_lib.found()
+        if cpp.has_header('Client.hpp', args : '-I' + etcd_inc_path)
+            etcd_inc = include_directories(etcd_inc_path, is_system: true)
+            etcd_dep = declare_dependency(
+                        include_directories : etcd_inc,
+                        dependencies : etcd_lib)
+            break
+        endif
+    endif
+endif
+
+if etcd_dep.found()
+    add_project_arguments('-DHAVE_ETCD', language: 'cpp')
+else
+    message('ETCD CPP API library not found, will disable etcd support')
 endif
 
 prefix_path = get_option('prefix')
