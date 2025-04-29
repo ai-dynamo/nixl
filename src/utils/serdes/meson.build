@@ -18,4 +18,5 @@ serdes_lib = library('serdes',
            include_directories: nixl_inc_dirs,
            install: true)
 
-serdes_interface = declare_dependency(link_with: serdes_lib)
+serdes_interface = declare_dependency(link_with: serdes_lib,
+                                      include_directories: utils_inc_dirs)
