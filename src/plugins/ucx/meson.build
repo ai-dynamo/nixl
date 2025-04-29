@@ -13,17 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = declare_dependency(link_with: ucx_utils_lib, include_directories: utils_inc_dirs )
 
 compile_flags = []
-if cuda_dep.found()
-    compile_flags = [ '-DHAVE_CUDA' ]
-endif
+
+ucx_backend_dep_list = [nixl_infra, nixl_common_dep, ucx_utils_interface,
+                        cuda_utils_interface, serdes_interface, thread_dep]
 
 if 'UCX' in static_plugins
     ucx_backend_lib = static_library('UCX',
                'ucx_backend.cpp', 'ucx_backend.h', 'ucx_plugin.cpp',
-               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, cuda_dep, ucx_dep, thread_dep, nixl_common_dep],
+               dependencies: ucx_backend_dep_list,
                include_directories: nixl_inc_dirs,
                install: false,
                cpp_args : compile_flags,
@@ -31,8 +30,8 @@ if 'UCX' in static_plugins
 else
     ucx_backend_lib = shared_library('UCX',
                'ucx_backend.cpp', 'ucx_backend.h', 'ucx_plugin.cpp',
-               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, cuda_dep, ucx_dep, thread_dep, nixl_common_dep],
-               include_directories: nixl_inc_dirs,
+               dependencies: ucx_backend_dep_list,
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
@@ -46,4 +45,6 @@ else
     endif
 endif
 
-ucx_backend_interface = declare_dependency(link_with: ucx_backend_lib)
+ucx_backend_interface = declare_dependency(link_with: ucx_backend_lib,
+                                           include_directories: include_directories('.'),
+                                           dependencies: ucx_backend_dep_list)

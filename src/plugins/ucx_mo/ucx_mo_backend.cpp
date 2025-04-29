@@ -27,35 +27,6 @@
 using namespace std;
 
 /****************************************
- * CUDA related code
-*****************************************/
-
-#ifdef HAVE_CUDA
-
-#include <cuda_runtime.h>
-
-static uint32_t _getNumVramDevices()
-{
-    cudaError_t result;
-    int n_vram_dev;
-    result = cudaGetDeviceCount(&n_vram_dev);
-    if (result != cudaSuccess) {
-        return 0;
-    } else {
-        return n_vram_dev;
-    }
-}
-
-
-#else
-
-static uint32_t _getNumVramDevices(){
-    return 0;
-}
-
-#endif
-
-/****************************************
  * UCX/MO Request management
 *****************************************/
 
@@ -118,7 +89,7 @@ public:
 int
 nixlUcxMoEngine::setEngCnt(uint32_t num_host)
 {
-    _gpuCnt = _getNumVramDevices();
+    _gpuCnt = nixlCuda::numDevices();
     _engineCnt = (_gpuCnt > num_host) ? _gpuCnt : num_host;
     return 0;
 }

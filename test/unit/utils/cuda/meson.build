@@ -13,8 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
-subdir('stream')
-subdir('ucx')
-subdir('cuda')
+# Check if VMM is supported
+func ='cuMemCreate'
+if cpp.has_function(func, dependencies: cuda_dep)
+    compile_flags += '-DHAVE_CUDA_VMM'
+endif
+
+
+if get_option('buildtype') != 'release'
+    if cuda_dep.found()
+        cuda_ptr_bin = executable('cuda_ptr_test',
+                                  'cuda_ptr_test.cpp',
+                                  dependencies: [ cuda_utils_interface, nixl_common_dep ],
+                                  include_directories: [nixl_inc_dirs],
+                                  link_with: cuda_utils_lib,
+                                  cpp_args: compile_flags,
+                                  install: true)
+    endif
+endif

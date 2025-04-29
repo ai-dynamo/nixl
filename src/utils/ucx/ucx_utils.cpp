@@ -21,7 +21,7 @@
 #include <stdexcept>
 
 #include "ucx_utils.h"
-#include "common/nixl_log.h"
+#include <nixl_log.h>
 
 using namespace std;
 
