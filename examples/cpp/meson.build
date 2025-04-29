@@ -19,7 +19,7 @@ nixl_example = executable('nixl_example',
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            link_with: [serdes_lib],
            install: true)
-        
+
 if etcd_dep.found()
     etcd_example = executable('nixl_etcd_example',
                'nixl_etcd_example.cpp',
