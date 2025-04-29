@@ -49,9 +49,13 @@ if __name__ == "__main__":
     # Allocate memory and register with NIXL
     agent = nixl_agent(args.mode, config)
     if args.mode == "target" and args.use_cuda:
-        tensors = [torch.ones(10, dtype=torch.float32, device="cuda:0") for _ in range(2)]
+        tensors = [
+            torch.ones(10, dtype=torch.float32, device="cuda:0") for _ in range(2)
+        ]
     elif args.use_cuda:
-        tensors = [torch.zeros(10, dtype=torch.float32, device="cuda:0") for _ in range(2)]
+        tensors = [
+            torch.zeros(10, dtype=torch.float32, device="cuda:0") for _ in range(2)
+        ]
     elif args.mode == "target" and not args.use_cuda:
         tensors = [torch.ones(10, dtype=torch.float32) for _ in range(2)]
     else:
