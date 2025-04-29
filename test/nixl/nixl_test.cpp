@@ -44,24 +44,12 @@ bool allBytesAre(void* buffer, size_t size, uint8_t value) {
     return true; // All bytes match the value
 }
 
-std::string recvFromTarget(int port) {
-    nixlMDStreamListener listener(port);
-    listener.startListenerForClient();
-    return listener.recvFromClient();
-}
-
-void sendToInitiator(const char *ip, int port, std::string data) {
-    nixlMDStreamClient client(ip, port);
-    client.connectListener();
-    client.sendData(data);
-}
-
 int main(int argc, char *argv[]) {
-    int                     initiator_port;
+    int                     target_port;
     nixl_status_t           ret = NIXL_SUCCESS;
     void                    *addr[NUM_TRANSFERS];
     std::string             role;
-    const char              *initiator_ip;
+    const char              *target_ip;
     nixl_blob_t             remote_desc;
     nixl_blob_t             tgt_metadata;
     nixl_blob_t             tgt_md_init;
@@ -70,7 +58,6 @@ int main(int argc, char *argv[]) {
 
     /** NIXL declarations */
     /** Agent and backend creation parameters */
-    nixlAgentConfig cfg(true);
     nixl_b_params_t params;
     nixlBlobDesc    buf[NUM_TRANSFERS];
     nixlBackendH    *ucx;
@@ -86,14 +73,14 @@ int main(int argc, char *argv[]) {
     /** Argument Parsing */
     if (argc < 4) {
         std::cout <<"Enter the required arguments\n" << std::endl;
-        std::cout <<"<Role> " <<"Initiator IP> <Initiator Port>"
+        std::cout <<"<Role> " <<"Target IP> <Target Port>"
                   << std::endl;
         exit(-1);
     }
 
     role = std::string(argv[1]);
-    initiator_ip   = argv[2];
-    initiator_port = std::stoi(argv[3]);
+    target_ip   = argv[2];
+    target_port = std::stoi(argv[3]);
     std::transform(role.begin(), role.end(), role.begin(), ::tolower);
 
     if (!role.compare("initiator") && !role.compare("target")) {
@@ -101,6 +88,16 @@ int main(int argc, char *argv[]) {
                       << "Currently "<< role <<std::endl;
             return 1;
     }
+
+    nixlAgentConfig cfg(true);
+    if ( role == "target" ) {
+        cfg = nixlAgentConfig(true, true, target_port);
+    } else {
+        //use default port
+        cfg = nixlAgentConfig(true, true);
+    }
+
+
     /*** End - Argument Parsing */
 
     /** Common to both Initiator and Target */
@@ -142,13 +139,17 @@ int main(int argc, char *argv[]) {
         std::cout << " Desc List from Target to Initiator\n";
         dram_for_ucx.print();
 
-        /** Sending both metadata strings together */
-        assert(serdes->addStr("AgentMD", tgt_metadata) == NIXL_SUCCESS);
+        /** Only send desc list */
         assert(dram_for_ucx.trim().serialize(serdes) == NIXL_SUCCESS);
 
-        std::cout << " Serialize Metadata to string and Send to Initiator\n";
-        std::cout << " \t -- To be handled by runtime - currently sent via a TCP Stream\n";
-        sendToInitiator(initiator_ip, initiator_port, serdes->exportStr());
+        std::cout << " Wait for initiator and then send xfer descs\n";
+
+        std::string message = serdes->exportStr();
+
+        do{
+            ret = agent.genNotif("initiator", message, &extra_params);
+        } while(ret != NIXL_SUCCESS);
+
         std::cout << " End Control Path metadata exchanges \n";
 
         std::cout << " Start Data Path Exchanges \n";
@@ -171,30 +172,45 @@ int main(int argc, char *argv[]) {
 
     } else {
 
-        std::cout << " Receive metadata from Target \n";
-        std::cout << " \t -- To be handled by runtime - currently received via a TCP Stream\n";
-        std::string rrstr = recvFromTarget(initiator_port);
+        std::cout << " Exchange metadata with Target \n";
+        nixl_opt_args_t md_extra_params;
+        md_extra_params.ipAddr = target_ip;
+        md_extra_params.port = target_port;
+
+        agent.fetchRemoteMD("target", &md_extra_params);
+
+        agent.sendLocalMD(&md_extra_params);
+
+        nixl_notifs_t notifs;
+
+        while(notifs.size() == 0) {
+            ret = agent.getNotifs(notifs, &extra_params);
+            assert(ret >= 0);
+        }
+        std::string rrstr = notifs["target"][0];
+        assert(rrstr.size() > 0);
 
         remote_serdes->importStr(rrstr);
-        tgt_md_init = remote_serdes->getStr("AgentMD");
-        assert (tgt_md_init != "");
-        std::string target_name;
-        agent.loadRemoteMD(tgt_md_init, target_name);
 
         std::cout << " Verify Deserialized Target's Desc List at Initiator\n";
         nixl_xfer_dlist_t dram_target_ucx(remote_serdes);
         nixl_xfer_dlist_t dram_initiator_ucx = dram_for_ucx.trim();
         dram_target_ucx.print();
 
-        std::cout << " Got metadata from " << target_name << " \n";
         std::cout << " End Control Path metadata exchanges \n";
         std::cout << " Start Data Path Exchanges \n\n";
         std::cout << " Create transfer request with UCX backend\n ";
 
-        ret = agent.createXferReq(NIXL_WRITE, dram_initiator_ucx, dram_target_ucx,
-                                  "target", treq, &extra_params);
+        // Need to do this in a loop with NIXL_ERR_NOT_FOUND
+        // UCX AM with desc list is faster than listener thread can recv/load MD with sockets
+        // Will be deprecated with ETCD or callbacks
+        do {
+            ret = agent.createXferReq(NIXL_WRITE, dram_initiator_ucx, dram_target_ucx,
+                                      "target", treq, &extra_params);
+        } while (ret == NIXL_ERR_NOT_FOUND);
+
         if (ret != NIXL_SUCCESS) {
-            std::cerr << "Error creating transfer request\n";
+            std::cerr << "Error creating transfer request " << ret <<"\n";
             exit(-1);
         }
 
@@ -209,6 +225,7 @@ int main(int argc, char *argv[]) {
         }
         std::cout << " Completed Sending Data using UCX backend\n";
         agent.releaseXferReq(treq);
+        agent.invalidateLocalMD(&md_extra_params);
     }
 
     std::cout <<"Cleanup.. \n";

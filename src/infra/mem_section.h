@@ -31,11 +31,40 @@ typedef std::pair<nixl_mem_t, nixlBackendEngine*>              section_key_t;
 typedef std::set<nixlBackendEngine*>                           backend_set_t;
 typedef std::unordered_map<nixl_backend_t, nixlBackendEngine*> backend_map_t;
 
+/**
+ * @brief Section descriptor for nixl
+ *
+ * This class is used to store a section descriptor for nixl.
+ * It is derived from nixlMetaDesc and contains the meta blob for the section.
+ */
+class nixlSectionDesc : public nixlMetaDesc {
+public:
+    nixl_blob_t metaBlob;
+
+    using nixlMetaDesc::nixlMetaDesc;
+
+    nixl_blob_t serialize() const {
+        // Serialize only the meta blob. metadataP is private so we don't include it.
+        // The other side will deserialize it as nixlBlobDesc.
+        return nixlBasicDesc::serialize() + metaBlob;
+    }
+
+    inline friend bool operator==(const nixlSectionDesc &lhs, const nixlSectionDesc &rhs) {
+        return (static_cast<nixlMetaDesc>(lhs) == static_cast<nixlMetaDesc>(rhs));
+    }
+
+    inline void print(const std::string &suffix) const {
+        nixlMetaDesc::print(", meta blob: " + metaBlob + suffix);
+    }
+};
+
+typedef nixlDescList<nixlSectionDesc>               nixl_sec_dlist_t;
+typedef std::map<section_key_t, nixl_sec_dlist_t*>  section_map_t;
 
 class nixlMemSection {
     protected:
         std::array<backend_set_t, FILE_SEG+1>         memToBackend;
-        std::map<section_key_t,   nixl_meta_dlist_t*> sectionMap;
+        section_map_t                                 sectionMap;
 
     public:
         nixlMemSection () {};
@@ -52,20 +81,20 @@ class nixlMemSection {
 
 
 class nixlLocalSection : public nixlMemSection {
-    private:
-        nixl_reg_dlist_t getStringDesc (
-                               const nixlBackendEngine* backend,
-                               const nixl_meta_dlist_t &d_list) const;
     public:
         nixl_status_t addDescList (const nixl_reg_dlist_t &mem_elms,
                                    nixlBackendEngine* backend,
-                                   nixl_meta_dlist_t &remote_self);
+                                   nixl_sec_dlist_t &remote_self);
 
         // Each nixlBasicDesc should be same as original registration region
-        nixl_status_t remDescList (const nixl_meta_dlist_t &mem_elms,
+        nixl_status_t remDescList (const nixl_reg_dlist_t &mem_elms,
                                    nixlBackendEngine* backend);
 
         nixl_status_t serialize(nixlSerDes* serializer) const;
+
+        nixl_status_t serializePartial(nixlSerDes* serializer,
+                                       const backend_set_t &backends,
+                                       const nixl_reg_dlist_t &mem_elms) const;
 
         ~nixlLocalSection();
 };
@@ -85,7 +114,7 @@ class nixlRemoteSection : public nixlMemSection {
                                       backend_map_t &backendToEngineMap);
 
         // When adding self as a remote agent for local operations
-        nixl_status_t loadLocalData (const nixl_meta_dlist_t& mem_elms,
+        nixl_status_t loadLocalData (const nixl_sec_dlist_t& mem_elms,
                                      nixlBackendEngine* backend);
         ~nixlRemoteSection();
 };

@@ -20,6 +20,8 @@ import torch
 
 import nixl._bindings as nixlBind
 
+DEFAULT_COMM_PORT = nixlBind.DEFAULT_COMM_PORT
+
 # Opaque nixl handle types
 nixl_backend_handle = int
 nixl_prepped_dlist_handle = int
@@ -29,6 +31,9 @@ nixl_xfer_handle = int
 @brief Configuration class for NIXL agent.
 
 @param enable_prog_thread Whether to enable the progress thread, if available.
+@param enable_listen_thread Whether to enable the listener thread for metadata communication.
+@param listen_port Specify the port for the listener thread to listen on.
+
 @param backends List of backend names for agent to initialize.
         Default is UCX, other backends can be added to the list, or after
         agent creation, can be initialized with create_backend.
@@ -36,10 +41,18 @@ nixl_xfer_handle = int
 
 
 class nixl_agent_config:
-    def __init__(self, enable_prog_thread=True, backends=["UCX"]):
+    def __init__(
+        self,
+        enable_prog_thread: bool = True,
+        enable_listen_thread: bool = False,
+        listen_port: int = 0,
+        backends: list[str] = ["UCX"],
+    ):
         # TODO: add backend init parameters
         self.backends = backends
         self.enable_pthread = enable_prog_thread
+        self.enable_listen = enable_listen_thread
+        self.port = listen_port
 
 
 """
@@ -68,8 +81,19 @@ class nixl_agent:
         if not nixl_conf:
             nixl_conf = nixl_agent_config()  # Using defaults set in nixl_agent_config
 
+        thread_config = (
+            nixlBind.NIXL_THREAD_SYNC_STRICT
+            if nixl_conf.enable_listen
+            else nixlBind.NIXL_THREAD_SYNC_NONE
+        )
+
         # Set agent config and instantiate an agent
-        agent_config = nixlBind.nixlAgentConfig(nixl_conf.enable_pthread)
+        agent_config = nixlBind.nixlAgentConfig(
+            nixl_conf.enable_pthread,
+            nixl_conf.enable_listen,
+            nixl_conf.port,
+            thread_config,
+        )
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name
@@ -479,7 +503,7 @@ class nixl_agent:
     @param handle Handle to the descriptor list from make_prepped_dlist.
     """
 
-    def release_dlist_handle(self, handle: nixl_xfer_handle):
+    def release_dlist_handle(self, handle: nixl_prepped_dlist_handle):
         self.agent.releasedDlistH(handle)
 
     """
@@ -567,13 +591,35 @@ class nixl_agent:
             self.agent.genNotif(remote_agent_name, notif_msg, self.backends[backend])
 
     """
-    @brief Get the metadata of the local agent.
+    @brief Get the full metadata of the local agent.
 
     @return Metadata of the local agent, in bytes.
     """
 
     def get_agent_metadata(self) -> bytes:
         return self.agent.getLocalMD()
+
+    """
+    @brief Get partial metadata of the local agent.
+
+    @param descs         The list of descriptors to include metadata about.
+                         List can be empty if only trying to send connection info.
+    @param inc_conn_info Whether to include connection info in the metadata.
+    @param backends      List of backends to consider when constructing partial metadata.
+
+    @return Metadata of the local agent, in bytes.
+    """
+
+    def get_partial_agent_metadata(
+        self,
+        descs: nixlBind.nixlRegDList,
+        inc_conn_info: bool = False,
+        backends: list[str] = [],
+    ) -> bytes:
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        return self.agent.getLocalPartialMD(descs, inc_conn_info, handle_list)
 
     """
     @brief Add a remote agent using its metadata. After this call, current agent can
@@ -597,6 +643,86 @@ class nixl_agent:
 
     def remove_remote_agent(self, agent: str):
         self.agent.invalidateRemoteMD(agent)
+
+    """
+    @brief Send all of your metadata to a peer or central metadata server.
+
+    @param ip_addr If specified, will only send metadata to one peer by IP address.
+    @param port    If specified, will try to send to specific port.
+    """
+
+    def send_local_metadata(self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT):
+        self.agent.sendLocalMD(ip_addr, port)
+
+    """
+    @brief Send partial metadata of the local agent.
+
+    @param descs         The list of descriptors to include metadata about.
+                         List can be empty if only trying to send connection info.
+    @param inc_conn_info Whether to include connection info in the metadata.
+    @param backends      List of backends to consider when constructing partial metadata.
+    @param ip_addr       If specified, will only send metadata to one peer by IP address.
+    @param port          If specified, will try to send to specific port.
+    """
+
+    def send_partial_agent_metadata(
+        self,
+        descs: nixlBind.nixlRegDList,
+        inc_conn_info: bool = False,
+        backends: list[str] = [],
+        ip_addr: str = "",
+        port: int = DEFAULT_COMM_PORT,
+    ):
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        self.agent.sendLocalPartialMD(descs, inc_conn_info, handle_list, ip_addr, port)
+
+    """
+    @brief Request metadata be retrieved from central metadata server or sent by peer.
+
+    @param ip_addr If specified, will request metadata from one peer by IP address.
+    @param port    If specified, will try to request on specific port.
+    """
+
+    def fetch_remote_metadata(
+        self,
+        remote_agent: str,
+        ip_addr: str = "",
+        port: int = DEFAULT_COMM_PORT,
+    ):
+        self.agent.fetchRemoteMD(remote_agent, ip_addr, port)
+
+    """
+    @brief Invalidate your own metadata in the central metadata server, or from a specific peer.
+
+    @param ip_addr If specified, will only send invalidation to one peer by IP address.
+    @param port    If specified, will try to send to specific port.
+    """
+
+    def invalidate_local_metadata(
+        self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT
+    ):
+        self.agent.invalidateLocalMD(ip_addr, port)
+
+    """
+    @brief Check if the remote metadata for a specific agent is available.
+           When partial metadata methods are used, the descriptor list in question can be specified.
+
+    @param agent Name of the remote agent.
+
+    @return True if available, False otherwise
+    """
+
+    def check_remote_metadata(
+        self, agent: str, descs: nixlBind.nixlXferDList = None
+    ) -> bool:
+        if descs is None:  # Just empty list, mem_type not important
+            descs = nixlBind.nixlXferDList(nixlBind.DRAM_SEG)
+        if self.agent.checkRemoteMD(agent, descs) == nixlBind.NIXL_SUCCESS:
+            return True
+        else:
+            return False
 
     """
     @brief Get nixlXferDList from different input types:
@@ -675,7 +801,7 @@ class nixl_agent:
             a) list of 4 element tuples (address, len, device ID, meta info) alongside a mandatory memory type
             b) a tensor
             c) a list of tensors
-            d) passes along if an xfer_dlist is given.
+            d) passes along if a reg_dlist is given.
 
     @param descs List of any of the above types
     @param mem_type Optional memory type necessary for (a).

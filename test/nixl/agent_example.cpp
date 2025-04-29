@@ -172,6 +172,203 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     free(dst_buf);
 }
 
+nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1, nixlBackendH* backend2) {
+    std::cout << "Starting partialMdTest\n";
+
+    nixl_status_t status;
+    nixl_opt_args_t extra_params1, extra_params2;
+    extra_params1.backends.push_back(backend1);
+    extra_params2.backends.push_back(backend2);
+
+    const int NUM_BUFFERS = 4;
+    const int NUM_UPDATES = 3;
+    const size_t BUF_SIZE = 1024;
+
+    // Allocate memory for the test
+    void* src_bufs[NUM_UPDATES][NUM_BUFFERS];
+    void* dst_bufs[NUM_UPDATES][NUM_BUFFERS];
+
+    // Create mem_lists for updates - using std::vector instead of C-style arrays
+    std::vector<nixl_reg_dlist_t> src_mem_lists(NUM_UPDATES, nixl_reg_dlist_t(DRAM_SEG));
+    std::vector<nixl_reg_dlist_t> dst_mem_lists(NUM_UPDATES, nixl_reg_dlist_t(DRAM_SEG));
+
+    // Allocate buffers and create memory descriptors
+    for (int update_idx = 0; update_idx < NUM_UPDATES; update_idx++) {
+        for (int buf_idx = 0; buf_idx < NUM_BUFFERS; buf_idx++) {
+            src_bufs[update_idx][buf_idx] = calloc(1, BUF_SIZE);
+            dst_bufs[update_idx][buf_idx] = calloc(1, BUF_SIZE);
+
+            nixlBlobDesc src_desc((uintptr_t)src_bufs[update_idx][buf_idx], BUF_SIZE, 0);
+            nixlBlobDesc dst_desc((uintptr_t)dst_bufs[update_idx][buf_idx], BUF_SIZE, 0);
+
+            src_mem_lists[update_idx].addDesc(src_desc);
+            dst_mem_lists[update_idx].addDesc(dst_desc);
+
+            // Fill source buffers with test pattern
+            memset(src_bufs[update_idx][buf_idx], 0xbb, BUF_SIZE);
+        }
+    }
+
+    // Register memory for each update
+    for (int update = 0; update < NUM_UPDATES; update++) {
+        status = A1->registerMem(src_mem_lists[update], &extra_params1);
+        assert(status == NIXL_SUCCESS);
+
+        status = A2->registerMem(dst_mem_lists[update], &extra_params2);
+        assert(status == NIXL_SUCCESS);
+    }
+
+    // Test metadata update with only backends and empty descriptor list
+    std::cout << "Metadata update - backends only\n";
+
+    // Agent2 might have already been previously loaded.
+    // Invalidate it just in case but don't care either way.
+    A1->invalidateRemoteMD(agent2);
+
+    nixl_reg_dlist_t empty_dlist(DRAM_SEG);
+    std::string partial_meta;
+    status = A2->getLocalPartialMD(empty_dlist, partial_meta, NULL);
+    assert(status == NIXL_SUCCESS);
+    assert(partial_meta.size() > 0);
+
+    std::string remote_name;
+    status = A1->loadRemoteMD(partial_meta, remote_name);
+    assert(status == NIXL_SUCCESS);
+    assert(remote_name == agent2);
+
+    // Make sure unregistered descriptors are not updated
+    for (int update = 0; update < NUM_UPDATES; update++) {
+        nixlDlistH *dst_side;
+        status = A1->prepXferDlist(agent2, dst_mem_lists[update].trim(), dst_side, &extra_params1);
+        assert(status != NIXL_SUCCESS);
+        assert(dst_side == nullptr);
+    }
+
+    // Invalidate remote agent metadata to make sure we received connection info
+    status = A1->invalidateRemoteMD(agent2);
+    assert(status == NIXL_SUCCESS);
+    std::cout << "Metadata update - backends only completed\n";
+
+    // Main test loop - update metadata multiple times
+    // and verify those that are not updatedare invalid on remote side.
+    extra_params2.includeConnInfo = false;
+    for (int update = 0; update < NUM_UPDATES; update++) {
+        // Toggle includeConnInfo to test that it doesn't affect metadata update
+        extra_params2.includeConnInfo = !extra_params2.includeConnInfo;
+
+        std::cout << "Metadata update #" << update << "\n";
+        // Get partial metadata from A2
+        status = A2->getLocalPartialMD(dst_mem_lists[update], partial_meta, &extra_params2);
+        assert(status == NIXL_SUCCESS);
+        assert(partial_meta.size() > 0);
+
+        // Load the partial metadata into A1
+        std::string remote_name;
+        status = A1->loadRemoteMD(partial_meta, remote_name);
+        assert(status == NIXL_SUCCESS);
+        assert(remote_name == agent2);
+
+        // Make sure loaded descriptors are updated
+        nixlDlistH *dst_side;
+        status = A1->prepXferDlist(agent2, dst_mem_lists[update].trim(), dst_side, &extra_params1);
+        assert(status == NIXL_SUCCESS);
+        assert(dst_side != nullptr);
+
+        // Make sure not-loaded descriptors are not updated
+        for (int invalid_idx = update + 1; invalid_idx < NUM_UPDATES; invalid_idx++) {
+            status = A1->prepXferDlist(agent2, dst_mem_lists[invalid_idx].trim(), dst_side, &extra_params1);
+            assert(status != NIXL_SUCCESS);
+            assert(dst_side == nullptr);
+        }
+        std::cout << "Metadata update #" << update << " completed\n";
+    }
+
+    // Prepare transfer dlists of all descriptors and buffers
+    nixl_xfer_dlist_t src_xfer_list(DRAM_SEG), dst_xfer_list(DRAM_SEG);
+
+    for (int update_idx = 0; update_idx < NUM_UPDATES; update_idx++) {
+        nixl_xfer_dlist_t tmp_src_list = src_mem_lists[update_idx].trim();
+        nixl_xfer_dlist_t tmp_dst_list = dst_mem_lists[update_idx].trim();
+
+        for (int buf_idx = 0; buf_idx < NUM_BUFFERS; buf_idx++) {
+            src_xfer_list.addDesc(tmp_src_list[buf_idx]);
+            dst_xfer_list.addDesc(tmp_dst_list[buf_idx]);
+        }
+    }
+
+    // Prepare for transfers of all descriptors and buffers
+    nixlDlistH *src_side, *dst_side;
+
+    status = A1->prepXferDlist(NIXL_INIT_AGENT, src_xfer_list, src_side, &extra_params1);
+    assert(status == NIXL_SUCCESS);
+
+    status = A1->prepXferDlist(agent2, dst_xfer_list, dst_side, &extra_params1);
+    assert(status == NIXL_SUCCESS);
+
+    std::cout << "Transfer preparation completed\n";
+
+    // Perform a single transfer for all descriptors and buffers
+    std::vector<int> indices;
+    for (int i = 0; i < NUM_UPDATES * NUM_BUFFERS; i++) {
+        indices.push_back(i);
+    }
+
+    nixlXferReqH *req;
+    extra_params1.notifMsg = "partialMdTest_notification";
+    extra_params1.hasNotif = true;
+
+    // Create and post the transfer request
+    status = A1->makeXferReq(NIXL_WRITE, src_side, indices, dst_side, indices, req, &extra_params1);
+    assert(status == NIXL_SUCCESS);
+
+    nixl_status_t xfer_status = A1->postXferReq(req);
+
+    // Wait for transfer completion
+    while (xfer_status != NIXL_SUCCESS) {
+        if (xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req);
+        assert (xfer_status >= 0);
+    }
+
+    // Verify transfer results
+    for (int update_idx = 0; update_idx < NUM_UPDATES; update_idx++) {
+        for (int buf_idx = 0; buf_idx < NUM_BUFFERS; buf_idx++) {
+            check_buf(dst_bufs[update_idx][buf_idx], BUF_SIZE);
+        }
+    }
+
+    std::cout << "Transfer verification completed\n";
+
+    // Cleanup
+    status = A1->releaseXferReq(req);
+    assert(status == NIXL_SUCCESS);
+
+    status = A1->releasedDlistH(src_side);
+    assert(status == NIXL_SUCCESS);
+
+    status = A1->releasedDlistH(dst_side);
+    assert(status == NIXL_SUCCESS);
+
+    // Deregister memory
+    for (int update = 0; update < NUM_UPDATES; update++) {
+        status = A1->deregisterMem(src_mem_lists[update], &extra_params1);
+        assert(status == NIXL_SUCCESS);
+
+        status = A2->deregisterMem(dst_mem_lists[update], &extra_params2);
+        assert(status == NIXL_SUCCESS);
+    }
+
+    // Free allocated memory
+    for (int update_idx = 0; update_idx < NUM_UPDATES; update_idx++) {
+        for (int buf_idx = 0; buf_idx < NUM_BUFFERS; buf_idx++) {
+            free(src_bufs[update_idx][buf_idx]);
+            free(dst_bufs[update_idx][buf_idx]);
+        }
+    }
+
+    std::cout << "partialMdTest completed successfully\n";
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handle, nixlBackendH* dst_backend) {
     std::cout << "Starting sideXferTest\n";
 
@@ -526,6 +723,10 @@ int main()
     n_notifs = 0;
 
     std::cout << "Transfer verified\n";
+
+    std::cout << "performing partialMdTest with backends " << ucx1 << " " << ucx2 << "\n";
+    ret1 = partialMdTest(&A1, &A2, ucx1, ucx2);
+    assert (ret1 == NIXL_SUCCESS);
 
     std::cout << "performing sideXferTest with backends " << ucx1 << " " << ucx2 << "\n";
     ret1 = sideXferTest(&A1, &A2, req_handle, ucx2);

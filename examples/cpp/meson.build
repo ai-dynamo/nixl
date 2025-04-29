@@ -19,7 +19,7 @@ nixl_example = executable('nixl_example',
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            link_with: [serdes_lib],
            install: true)
-
+        
 if get_option('enable_mooncake_backend')
     cpp = meson.get_compiler('cpp')
     gflags_lib = cpp.find_library('gflags')
@@ -30,4 +30,13 @@ if get_option('enable_mooncake_backend')
             include_directories: [nixl_inc_dirs, utils_inc_dirs],
             link_with: [serdes_lib],
             install: true)
+endif
+
+if etcd_dep.found()
+    etcd_example = executable('nixl_etcd_example',
+               'nixl_etcd_example.cpp',
+               dependencies: [nixl_dep, nixl_infra, ucx_backend_dep, ucx_dep],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with: [serdes_lib],
+               install: true)
 endif

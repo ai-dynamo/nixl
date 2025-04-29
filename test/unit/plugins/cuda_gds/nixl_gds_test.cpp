@@ -74,8 +74,8 @@ void print_usage(const char* program_name) {
               << "  -r, --no-read           Skip read test\n"
               << "  -w, --no-write          Skip write test\n"
               << "  -p, --pool-size SIZE    Size of batch pool (default: 8, range: 1-32)\n"
-              << "  -b, --batch-limit SIZE  Maximum requests per batch (default: 128, range: 1-1024)\n"
-              << "  -m, --max-req-size SIZE Maximum size per request (default: 16M, range: 1M-1G)\n"
+              << "  -b, --batch-limit SIZE  Maximum requests per batch  (default: 128, Max allowed: 1-128)\n"
+              << "  -m, --max-req-size SIZE Maximum size per request (default: 16M, Max allowed: 16M)\n"
               << "  -t, --iterations N      Number of iterations for each transfer (default: " << DEFAULT_ITERATIONS << ")\n"
               << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
               << "  -h, --help              Show this help message\n"
@@ -267,22 +267,18 @@ int main(int argc, char *argv[])
                 break;
             case 'p':
                 pool_size = atoi(optarg);
-                if (pool_size < 1 || pool_size > 32) {
-                    std::cerr << "Error: Pool size must be between 1 and 32\n";
-                    return 1;
-                }
                 break;
             case 'b':
                 batch_limit = atoi(optarg);
-                if (batch_limit < 1 || batch_limit > 1024) {
-                    std::cerr << "Error: Batch limit must be between 1 and 1024\n";
+                if (batch_limit < 1 || batch_limit > 128) {
+                    std::cerr << "Error: Batch limit must be between 1 and 128\n";
                     return 1;
                 }
                 break;
             case 'm':
                 max_request_size = parse_size(optarg);
-                if (max_request_size < 1024*1024 || max_request_size > 1024*1024*1024) {
-                    std::cerr << "Error: Max request size must be between 1M and 1G\n";
+                if (max_request_size > 16*1024*1024) {
+                    std::cerr << "Error: Max request size cannot be greater than  16M\n";
                     return 1;
                 }
                 break;

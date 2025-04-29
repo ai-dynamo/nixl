@@ -19,13 +19,48 @@
 
 #include "common/str_tools.h"
 #include "mem_section.h"
+#include "stream/metadata_stream.h"
+#include "sync.h"
+
+#if HAVE_ETCD
+#include <etcd/Client.hpp>
+
+namespace etcd {
+    class Client;
+}
+
+#define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"
+#endif // HAVE_ETCD
 
 typedef std::vector<nixlBackendEngine*> backend_list_t;
+
+//Internal typedef to define metadata communication request types
+//To be extended with ETCD operations
+enum nixl_comm_t {
+    SOCK_SEND,
+    SOCK_FETCH,
+    SOCK_INVAL,
+#if HAVE_ETCD
+    ETCD_SEND,
+    ETCD_FETCH,
+    ETCD_INVAL
+#endif // HAVE_ETCD
+};
+
+//Command to be sent to listener thread from NIXL API
+// 1) Command type
+// 2) IP Address
+// 3) Port
+// 4) Metadata to send (for sendLocalMD calls)
+typedef std::tuple<nixl_comm_t, std::string, int, nixl_blob_t> nixl_comm_req_t;
+
+typedef std::pair<std::string, int> nixl_socket_peer_t;
 
 class nixlAgentData {
     private:
         std::string     name;
         nixlAgentConfig config;
+        nixlLock        lock;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
@@ -37,15 +72,29 @@ class nixlAgentData {
 
         // Bookkeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, nixlBackendH*> backendHandles;
-        std::unordered_map<nixl_backend_t, std::string>   connMD;
+        std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
 
         // Local section, and Remote sections and their available common backends
         nixlLocalSection*                                        memorySection;
 
-        std::unordered_map<std::string, std::set<nixl_backend_t>,
+        std::unordered_map<std::string,
+                           std::unordered_map<nixl_backend_t, nixl_blob_t>,
                            std::hash<std::string>, strEqual>     remoteBackends;
         std::unordered_map<std::string, nixlRemoteSection*,
                            std::hash<std::string>, strEqual>     remoteSections;
+
+        // State/methods for listener thread
+        nixlMDStreamListener               *listener;
+        std::map<nixl_socket_peer_t, int>  remoteSockets;
+        std::thread                        commThread;
+        std::vector<nixl_comm_req_t>       commQueue;
+        std::mutex                         commLock;
+        bool                               commThreadStop;
+        bool                               useEtcd;
+
+        void commWorker(nixlAgent* myAgent);
+        void enqueueCommWork(nixl_comm_req_t request);
+        void getCommWork(std::vector<nixl_comm_req_t> &req_list);
 
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();

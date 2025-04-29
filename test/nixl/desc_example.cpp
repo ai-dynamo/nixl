@@ -81,7 +81,6 @@ int main()
     nixlBasicDesc buff3 (buff2);
     nixlBasicDesc buff4;
     buff4 = buff1;
-    buff4.copyMeta (buff2);
     nixlBasicDesc buff5 (1980,21,3);
     nixlBasicDesc buff6 (1010,30,4);
     nixlBasicDesc buff7 (1010,30,0);
@@ -306,19 +305,6 @@ int main()
     nixl_reg_dlist_t dlist23 (DRAM_SEG, false);
     nixl_reg_dlist_t dlist24 (DRAM_SEG, false);
     nixl_reg_dlist_t dlist25 (DRAM_SEG, false);
-
-    dlist20.populate (dlist10, dlist21);
-    dlist20.populate (dlist11, dlist22);
-    dlist20.populate (dlist12, dlist23);
-    dlist20.populate (dlist13, dlist24);
-    dlist20.populate (dlist14, dlist25);
-
-    std::cout << "\n";
-    dlist21.print();
-    dlist22.print();
-    dlist23.print();
-    dlist24.print();
-    dlist25.print();
 
     testPerf();
 

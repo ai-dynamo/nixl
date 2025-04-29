@@ -152,7 +152,7 @@ void nixlUcxEngine::vramInitCtx()
     cudaCtx = new nixlUcxCudaCtx;
 }
 
-int nixlUcxEngine::vramUpdateCtx(void *address, uint32_t  devId, bool &restart_reqd)
+int nixlUcxEngine::vramUpdateCtx(void *address, uint64_t  devId, bool &restart_reqd)
 {
     int ret;
     bool was_updated;
@@ -193,19 +193,141 @@ void nixlUcxEngine::vramFiniCtx()
  * UCX request management
 *****************************************/
 
-void nixlUcxEngine::_requestInit(void *request)
+
+class nixlUcxIntReq : public nixlLinkElem<nixlUcxIntReq> {
+    private:
+        int _completed;
+    public:
+        std::string *amBuffer;
+
+        nixlUcxIntReq() : nixlLinkElem() {
+            _completed = 0;
+            amBuffer = NULL;
+        }
+
+        ~nixlUcxIntReq() {
+            _completed = 0;
+            if (amBuffer) {
+                delete amBuffer;
+            }
+        }
+
+        bool is_complete() { return _completed; }
+        void completed() { _completed = 1; }
+};
+
+static void _internalRequestInit(void *request)
 {
     /* Initialize request in-place (aka "placement new")*/
-    new(request) nixlUcxBckndReq;
+    new(request) nixlUcxIntReq;
 }
 
-void nixlUcxEngine::_requestFini(void *request)
+static void _internalRequestFini(void *request)
 {
     /* Finalize request */
-    nixlUcxBckndReq *req = (nixlUcxBckndReq*)request;
-    req->~nixlUcxBckndReq();
+    nixlUcxIntReq *req = (nixlUcxIntReq*)request;
+    req->~nixlUcxIntReq();
 }
 
+
+static void _internalRequestReset(nixlUcxIntReq *req) {
+    _internalRequestFini((void *)req);
+    _internalRequestInit((void *)req);
+}
+
+/****************************************
+ * Backend request management
+*****************************************/
+
+class nixlUcxBackendH : public nixlBackendReqH {
+private:
+    nixlUcxIntReq head;
+    nixlUcxWorker* uw;
+
+public:
+
+    nixlUcxBackendH(nixlUcxWorker* _uw){
+        uw = _uw;
+    }
+
+    void append(nixlUcxIntReq *req) {
+        head.link(req);
+    }
+
+    nixl_status_t release()
+    {
+        nixlUcxIntReq *req = head.next();
+
+        if (!req) {
+            return NIXL_SUCCESS;
+        }
+
+        // TODO: Error log: uncompleted requests found! Cancelling ...
+        while(req) {
+            nixlUcxIntReq *cur = req;
+            bool done = cur->is_complete();
+            req = cur->unlink();
+            if (!done) {
+                // TODO: Need process this properly.
+                // it may not be enough to cancel UCX request
+                uw->reqCancel((nixlUcxReq)cur);
+            }
+            _internalRequestReset(cur);
+            uw->reqRelease((nixlUcxReq)cur);
+        }
+        return NIXL_SUCCESS;
+    }
+
+
+    nixl_status_t status()
+    {
+        nixlUcxIntReq *req = head.next();
+        nixl_status_t out_ret = NIXL_SUCCESS;
+
+        if (NULL == req) {
+            /* No pending transmissions */
+            return NIXL_SUCCESS;
+        }
+
+        /* Go over all request updating their status */
+        while(req) {
+            nixl_status_t ret;
+            if (!req->is_complete()) {
+                ret = uw->test((nixlUcxReq)req);
+                switch (ret) {
+                    case NIXL_SUCCESS:
+                        /* Mark as completed */
+                        req->completed();
+                        break;
+                    case NIXL_IN_PROG:
+                        out_ret = NIXL_IN_PROG;
+                        break;
+                    default:
+                        /* Any other ret value is ERR and will be returned */
+                        return ret;
+                }
+            }
+            req = req->next();
+        }
+
+        /* Remove completed requests keeping the first one as
+        request representative */
+        req = head.unlink();
+        while(req) {
+            nixlUcxIntReq *next_req = req->unlink();
+            if (req->is_complete()) {
+                _internalRequestReset(req);
+                uw->reqRelease((nixlUcxReq)req);
+            } else {
+                /* Enqueue back */
+                append(req);
+            }
+            req = next_req;
+        }
+
+        return out_ret;
+    }
+};
 
 /****************************************
  * Progress thread management
@@ -299,8 +421,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (custom_params->count("device_list")!=0)
         devs = str_split((*custom_params)["device_list"], ", ");
 
-    uc = new nixlUcxContext(devs, sizeof(nixlUcxBckndReq),
-                           _requestInit, _requestFini, NIXL_UCX_MT_WORKER);
+    uc = new nixlUcxContext(devs, sizeof(nixlUcxIntReq),
+                           _internalRequestInit, _internalRequestFini, NIXL_UCX_MT_WORKER);
     uw = new nixlUcxWorker(uc);
     uw->epAddr(n_addr, workerSize);
     workerAddr = (void*) n_addr;
@@ -348,6 +470,7 @@ nixlUcxEngine::~nixlUcxEngine () {
     vramFiniCtx();
     delete uw;
     delete uc;
+    free(workerAddr);
 }
 
 /****************************************
@@ -587,6 +710,7 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
 
     out = (nixlBackendMD*) priv; //typecast?
 
+    free((void*)rkey_addr);
     return NIXL_SUCCESS; // Or errors
 }
 
@@ -672,21 +796,18 @@ nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
  * Data movement
 *****************************************/
 
-nixl_status_t nixlUcxEngine::retHelper(nixl_status_t ret, nixlUcxBckndReq *head, nixlUcxReq &req)
+static nixl_status_t _retHelper(nixl_status_t ret,  nixlUcxBackendH *hndl, nixlUcxReq &req)
 {
     /* if transfer wasn't immediately completed */
     switch(ret) {
         case NIXL_IN_PROG:
-            head->link((nixlUcxBckndReq*)req);
-            break;
+            hndl->append((nixlUcxIntReq*)req);
         case NIXL_SUCCESS:
             // Nothing to do
             break;
         default:
             // Error. Release all previously initiated ops and exit:
-            if (head->next()) {
-                releaseReqH(head->next());
-            }
+            hndl->release();
             return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
@@ -699,7 +820,10 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args)
 {
-    // No preprations needed
+    /* TODO: try to get from a pool first */
+    nixlUcxBackendH *intHandle = new nixlUcxBackendH(uw);
+
+    handle = (nixlBackendReqH*)intHandle;
     return NIXL_SUCCESS;
 }
 
@@ -714,7 +838,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     size_t rcnt = remote.descCount();
     size_t i;
     nixl_status_t ret;
-    nixlUcxBckndReq dummy, *head = new (&dummy) nixlUcxBckndReq;
+    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
     nixlUcxPrivateMetadata *lmd;
     nixlUcxPublicMetadata *rmd;
     nixlUcxReq req;
@@ -750,105 +874,43 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        if (retHelper(ret, head, req)) {
+        if (_retHelper(ret, intHandle, req)) {
             return ret;
         }
     }
 
     rmd = (nixlUcxPublicMetadata*) remote[0].metadataP;
     ret = uw->flushEp(rmd->conn.ep, req);
-    if (retHelper(ret, head, req)) {
+    if (_retHelper(ret, intHandle, req)) {
         return ret;
     }
 
     if(opt_args && opt_args->hasNotif) {
         ret = notifSendPriv(remote_agent, opt_args->notifMsg, req);
-        if (retHelper(ret, head, req)) {
+        if (_retHelper(ret, intHandle, req)) {
             return ret;
         }
     }
 
-    handle = head->next();
-    return (NULL ==  head->next()) ? NIXL_SUCCESS : NIXL_IN_PROG;
+    return intHandle->status();
 }
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
 {
-    nixlUcxBckndReq *head = (nixlUcxBckndReq *)handle;
-    nixlUcxBckndReq *req = head;
-    nixl_status_t out_ret = NIXL_SUCCESS;
+    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
 
-    /* If transfer has returned DONE - no check transfer */
-    if (NULL == head) {
-        /* Nothing to do */
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    /* Go over all request updating their status */
-    while(req) {
-        nixl_status_t ret;
-        if (!req->is_complete()) {
-            ret = uw->test((nixlUcxReq)req);
-            switch (ret) {
-                case NIXL_SUCCESS:
-                    /* Mark as completed */
-                    req->completed();
-                    break;
-                case NIXL_IN_PROG:
-                    out_ret = NIXL_IN_PROG;
-                    break;
-                default:
-                    /* Any other ret value is ERR and will be returned */
-                    return ret;
-            }
-        }
-        req = req->next();
-    }
-
-    /* Remove completed requests keeping the first one as
-       request representative */
-    req = head->unlink();
-    while(req) {
-        nixlUcxBckndReq *next_req = req->unlink();
-        if (req->is_complete()) {
-            requestReset(req);
-            uw->reqRelease((nixlUcxReq)req);
-        } else {
-            /* Enqueue back */
-            head->link(req);
-        }
-        req = next_req;
-    }
-
-    return out_ret;
+    return intHandle->status();
 }
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle)
 {
-    nixlUcxBckndReq *head = (nixlUcxBckndReq *)handle;
-    nixlUcxBckndReq *req = head;
+    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    nixl_status_t status = intHandle->release();
 
-    //this case should not happen
-    //if (head == NULL) return;
+    /* TODO: return to a pool instead. */
+    delete intHandle;
 
-    if (head->next() || !head->is_complete()) {
-        // TODO: Error log: uncompleted requests found! Cancelling ...
-        while(head) {
-            bool done = req->is_complete();
-            req = head;
-            head = req->unlink();
-            requestReset(req);
-            if (!done) {
-                uw->reqCancel((nixlUcxReq)req);
-            }
-            uw->reqRelease((nixlUcxReq)req);
-        }
-    } else {
-        /* All requests have been completed.
-           Only release the head request */
-        uw->reqRelease((nixlUcxReq)head);
-    }
-    return NIXL_SUCCESS;
+    return status;
 }
 
 int nixlUcxEngine::progress() {
@@ -895,8 +957,10 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                      flags, req);
 
     if (ret == NIXL_IN_PROG) {
-        nixlUcxBckndReq* nReq = (nixlUcxBckndReq*)req;
+        nixlUcxIntReq* nReq = (nixlUcxIntReq*)req;
         nReq->amBuffer = ser_msg;
+    } else {
+        delete ser_msg;
     }
     return ret;
 }

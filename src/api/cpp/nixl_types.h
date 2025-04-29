@@ -63,6 +63,16 @@ typedef enum {
 } nixl_status_t;
 
 /**
+ * @enum nixl_thread_sync_t
+ * @brief An enumeration of supported synchronization modes for NIXL
+ */
+enum class nixl_thread_sync_t {
+    NIXL_THREAD_SYNC_NONE,
+    NIXL_THREAD_SYNC_STRICT,
+    NIXL_THREAD_SYNC_DEFAULT = NIXL_THREAD_SYNC_NONE,
+};
+
+/**
  * @namespace nixlEnumStrings
  * @brief     This namespace to get string representation
  *            of different enums
@@ -107,6 +117,11 @@ typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
 typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
 
 /**
+ * @brief A constant to define the default communication port.
+ */
+constexpr int default_comm_port = 8888;
+
+/**
  * @class nixlAgentOptionalArgs
  * @brief A class for optional argument that can be provided to relevant agent methods.
  */
@@ -134,6 +149,23 @@ class nixlAgentOptionalArgs {
          * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
          */
         bool skipDescMerge = false;
+
+        /**
+         * @var includeConnInfo boolean to include connection information in the metadata,
+         *                      used in getLocalPartialMD.
+         */
+        bool includeConnInfo = false;
+
+        /**
+         * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
+         *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+         */
+        std::string ipAddr;
+        /**
+         * @var port Used to specify the port of a remote peer, ipAddr must also be set
+         *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+         */
+        int port = default_comm_port;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs
