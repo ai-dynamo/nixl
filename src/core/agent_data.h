@@ -22,11 +22,30 @@
 #include "stream/metadata_stream.h"
 #include "sync.h"
 
+#if HAVE_ETCD
+#include <etcd/Client.hpp>
+
+namespace etcd {
+    class Client;
+}
+
+#define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"
+#endif // HAVE_ETCD
+
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
 //Internal typedef to define metadata communication request types
 //To be extended with ETCD operations
-enum nixl_comm_t { SOCK_SEND, SOCK_FETCH, SOCK_INVAL };
+enum nixl_comm_t {
+    SOCK_SEND,
+    SOCK_FETCH,
+    SOCK_INVAL,
+#if HAVE_ETCD
+    ETCD_SEND,
+    ETCD_FETCH,
+    ETCD_INVAL
+#endif // HAVE_ETCD
+};
 
 //Command to be sent to listener thread from NIXL API
 // 1) Command type
@@ -71,6 +90,7 @@ class nixlAgentData {
         std::vector<nixl_comm_req_t>       commQueue;
         std::mutex                         commLock;
         bool                               commThreadStop;
+        bool                               useEtcd;
 
         void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
