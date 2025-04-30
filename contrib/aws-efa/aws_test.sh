@@ -16,49 +16,66 @@
 
 set -exE -o pipefail
 
-# Get test type from argument, default to cpp
-TEST_TYPE=${1:-"cpp"}
+usage() {
+    echo ""
+    echo "Description: Run NIXL tests on AWS infrastructure"
+    echo ""
+    echo "Usage: $0 <test script> <test script args>"
+    echo ""
+    echo "Example: $0 .gitlab/test_cpp.sh \$NIXL_INSTALL_DIR && .test_script123.sh param123"
+    echo ""
+    echo "Required environment variables:"
+    echo "  GITHUB_REF        - Git reference to checkout (e.g., main)"
+    echo "  GITHUB_SERVER_URL - GitHub server URL (e.g., \"https://github.com\")"
+    echo "  GITHUB_REPOSITORY - GitHub repository (e.g., \"ai-dynamo/nixl\")"
+    echo ""
+    echo "Optional environment variables:"
+    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/pytorch:25.02-py3)"
+    exit 1
+}
 
-# Set AWS container image (can be overridden via environment)
+# Validate required parameters and environment variables
+if [ -z "$1" ]; then
+    echo "Error: Test command string argument is required"
+    usage
+fi
+
+if [ -z "$GITHUB_REF" ] || [ -z "$GITHUB_SERVER_URL" ] || [ -z "$GITHUB_REPOSITORY" ]; then
+    echo "Error: Missing required environment variables"
+    usage
+fi
+
+test_cmd="$1"
 export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/pytorch:25.02-py3"}
 
 # Set Git checkout command based on GITHUB_REF
-if [ -z "$GITHUB_REF" ]; then   # manual run
-    echo "Error: GITHUB_REF environment variable must be set"
-    echo "For a branch, use: export GITHUB_REF=\"main\""
-    echo "For a PR, use: export GITHUB_REF=\"refs/pull/187/head\""
-    exit 1
-fi
-
-case "$GITHUB_REF" in
-    refs/pull/*)
-        export GIT_CHECKOUT_CMD="git fetch origin ${GITHUB_REF} && git checkout FETCH_HEAD"
-        ;;
-    *)
-        export GIT_CHECKOUT_CMD="git checkout ${GITHUB_REF}"
-        ;;
+case "$GITHUB_REF" in refs/heads/*)
+    export GIT_CHECKOUT_CMD="git checkout -t origin/${GITHUB_REF#refs/heads/}"
+    ;;
+*)
+    export GIT_CHECKOUT_CMD="git checkout -t origin/$GITHUB_REF"
+    ;;
 esac
 
-# Construct command to run in AWS
+# Construct command sequence to run within the AWS container
 setup_cmd="set -x && \
     git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && \
     cd nixl && \
     ${GIT_CHECKOUT_CMD}"
 build_cmd=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${UCX_INSTALL_DIR}"
-test_script="test_${TEST_TYPE}"
-export AWS_CMD="${setup_cmd} && ${build_cmd} && .gitlab/${test_script}.sh \${NIXL_INSTALL_DIR}"
+export AWS_CMD="${setup_cmd} && ${build_cmd} && ${test_cmd}"
 
-# Generate properties json from template
+# Generate AWS job properties json from template
 envsubst < aws_vars.template > aws_vars.json
 jq . aws_vars.json >/dev/null
 
 # Submit AWS job
 aws eks update-kubeconfig --name ucx-ci
-JOB_NAME="NIXL_${TEST_TYPE}_${GITHUB_RUN_NUMBER:-$RANDOM}"
+JOB_NAME="NIXL_${GITHUB_RUN_NUMBER:-$RANDOM}"
 JOB_ID=$(aws batch submit-job \
     --job-name "$JOB_NAME" \
     --job-definition "NIXL-Ubuntu-JD" \
-    --job-queue ucx-ci-JQ \
+    --job-queue ucx-nxil-jq \
     --eks-properties-override file://./aws_vars.json \
     --query 'jobId' --output text)
 
