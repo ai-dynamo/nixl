@@ -53,6 +53,7 @@ apt-get -qq install -y curl \
                              libgrpc-dev \
                              libgrpc++-dev \
                              libprotobuf-dev \
+                             liburing-dev \
                              meson \
                              ninja-build \
                              pkg-config \
