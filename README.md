@@ -31,7 +31,7 @@ The nixl python API and libraries, including UCX, are available directly through
 pip install nixl
 ```
 
-## Prerequisites for souce build
+## Prerequisites for source build
 ### Ubuntu:
 
 `$ sudo apt install build-essential cmake pkg-config`
