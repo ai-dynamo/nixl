@@ -32,7 +32,7 @@ endif
 
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and cuda_dep.found()
-    nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
+    nixl_lib_deps += [ gds_backend_interface ]
 endif
 
 nixl_lib = library('nixl',

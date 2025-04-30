@@ -16,11 +16,11 @@
  */
 #include <iostream>
 #include <cassert>
+#include <cstring>
 
 #include <sys/time.h>
 
 #include "nixl.h"
-#include "ucx_backend.h"
 
 std::string agent1("Agent001");
 std::string agent2("Agent002");
