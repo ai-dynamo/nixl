@@ -97,7 +97,7 @@ export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dstatic_plugins=UCX -Dbuild_docs=true
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true
 cd nixl_build && ninja && ninja install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
