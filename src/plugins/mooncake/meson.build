@@ -17,9 +17,6 @@ cpp = meson.get_compiler('cpp')
 mooncake_lib = cpp.find_library('transfer_engine')
 
 compile_flags = []
-if cuda_dep.found()
-    compile_flags = [ '-DHAVE_CUDA' ]
-endif
 
 if 'Mooncake' in static_plugins
     mooncake_backend_lib = static_library('Mooncake',

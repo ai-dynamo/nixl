@@ -24,13 +24,6 @@
 #include <netdb.h>
 #include <sys/socket.h>
 
-#ifdef HAVE_CUDA
-
-#include <cuda_runtime.h>
-#include <cufile.h>
-
-#endif
-
 std::vector<std::string> findLocalIpAddresses() {
     std::vector<std::string> ips;
     struct ifaddrs *ifaddr, *ifa;
@@ -94,18 +87,14 @@ nixl_status_t nixlMooncakeEngine::getConnInfo(std::string &str) const {
     return NIXL_SUCCESS;
 }
 
+// It's enough for Transfer Engine to obtain connection information by loadRemoteConnInfo
+// so this function has no action
 nixl_status_t nixlMooncakeEngine::connect(const std::string &remote_agent) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!connected_agents_.count(remote_agent)) {
-        connected_agents_[remote_agent] = AgentInfo{};
-    }
     return NIXL_SUCCESS;
 }
 
+// Since connect() has no action, this function has no action as well
 nixl_status_t nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (connected_agents_.count(remote_agent))
-        connected_agents_.erase(remote_agent);
     return NIXL_SUCCESS;
 }
 
@@ -113,8 +102,9 @@ nixl_status_t nixlMooncakeEngine::loadRemoteConnInfo (const std::string &remote_
                                                       const std::string &remote_conn_info)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto &agent = connected_agents_[remote_agent];
-    agent.ip_and_port = remote_conn_info;
+    auto segment_id = openSegment(engine_, remote_conn_info.c_str());
+    if (segment_id < 0) return NIXL_ERR_BACKEND;
+        connected_agents_[remote_agent].segment_id = segment_id;
     return NIXL_SUCCESS;
 }
 
@@ -123,35 +113,52 @@ struct nixlMooncakeBackendMD : public nixlBackendMD {
     virtual ~nixlMooncakeBackendMD(){}
     void *addr;
     size_t length;
+    int ref_cnt;
 };
 
 nixl_status_t nixlMooncakeEngine::registerMem (const nixlBlobDesc &mem,
                                                const nixl_mem_t &nixl_mem,
                                                nixlBackendMD* &out)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (mem_reg_info_.count(mem.addr)) {
+        auto priv = mem_reg_info_[mem.addr];
+        priv->ref_cnt++;
+        out = priv;
+        return NIXL_SUCCESS;
+    }
     int err = registerLocalMemory(engine_, (void *) mem.addr, mem.len, "*", 1);
     if (err) return NIXL_ERR_BACKEND;
     auto priv = new nixlMooncakeBackendMD(true);
     priv->addr = (void *) mem.addr;
     priv->length = mem.len;
+    priv->ref_cnt = 1;
     out = priv;
+    mem_reg_info_[mem.addr] = priv;
     return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlMooncakeEngine::deregisterMem (nixlBackendMD* meta)
 {
-    return NIXL_SUCCESS;
+    std::lock_guard<std::mutex> lock(mutex_);
     auto priv = (nixlMooncakeBackendMD *) meta;
+    priv->ref_cnt--;
+    if (priv->ref_cnt) return NIXL_SUCCESS;
     int err = unregisterLocalMemory(engine_, priv->addr);
+    mem_reg_info_.erase((uint64_t)priv->addr);
     delete priv;
     return err == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
 }
 
+// Transfer Engine handles metadata exchange by itself, 
+// so this function has no action
 nixl_status_t nixlMooncakeEngine::getPublicData (const nixlBackendMD* meta,
                                                  std::string &str) const {
     return NIXL_SUCCESS;
 }
 
+// Transfer Engine handles metadata exchange by itself, 
+// so this function has no action
 nixl_status_t
 nixlMooncakeEngine::loadLocalMD (nixlBackendMD* input,
                                  nixlBackendMD* &output)
@@ -160,6 +167,8 @@ nixlMooncakeEngine::loadLocalMD (nixlBackendMD* input,
     return NIXL_SUCCESS;
 }
 
+// Transfer Engine handles metadata exchange by itself, 
+// so this function has no action
 nixl_status_t nixlMooncakeEngine::loadRemoteMD (const nixlBlobDesc &input,
                                                 const nixl_mem_t &nixl_mem,
                                                 const std::string &remote_agent,
@@ -169,6 +178,8 @@ nixl_status_t nixlMooncakeEngine::loadRemoteMD (const nixlBlobDesc &input,
     return NIXL_SUCCESS;
 }
 
+// Transfer Engine handles metadata exchange by itself, 
+// so this function has no action
 nixl_status_t nixlMooncakeEngine::unloadMD (nixlBackendMD* input) {
     return NIXL_SUCCESS;
 }
@@ -197,19 +208,17 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
                                             nixlBackendReqH* &handle,
                                             const nixl_opt_b_args_t* opt_args)
 {
-    std::string remote_ip_and_port;
+    int segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!connected_agents_.count(remote_agent))
             return NIXL_ERR_INVALID_PARAM;
-        remote_ip_and_port = connected_agents_[remote_agent].ip_and_port;
+        segment_id = connected_agents_[remote_agent].segment_id;
     }
     if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
     size_t request_count = local.descCount();
     uint64_t batch_id = allocateBatchID(engine_, request_count);
     if (batch_id == INVALID_BATCH) return NIXL_ERR_BACKEND;
-    auto target_id = openSegment(engine_, remote_ip_and_port.c_str());
-    if (target_id < 0) return NIXL_ERR_BACKEND;
     transfer_request_t *request = new transfer_request_t[request_count];
     for (size_t index = 0; index < request_count; ++index) {
         if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
@@ -217,7 +226,7 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
         request[index].source = (void *)local[index].addr;
         request[index].target_offset = remote[index].addr;
         request[index].length = local[index].len;
-        request[index].target_id = target_id;
+        request[index].target_id = segment_id;
     }
     int rc = submitTransfer(engine_, batch_id, request, request_count);
     if (rc) return NIXL_ERR_BACKEND;

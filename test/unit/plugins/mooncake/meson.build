@@ -1,4 +1,3 @@
-
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -14,15 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('ucx')
-subdir('ucx_mo')
+mooncake_backend_dep = declare_dependency(link_with: mooncake_backend_lib, include_directories: [nixl_inc_dirs, '../../../../src/plugins/mooncake'])
 
-disable_gds_backend = get_option('disable_gds_backend')
-if not disable_gds_backend
-    subdir('cuda_gds')
+if cuda_dep.found()
+    cuda_dependencies = [cuda_dep]
+    cpp_args = '-DHAVE_CUDA'
+else
+    cuda_dependencies = []
+    cpp_args = '-UHAVE_CUDA'
 endif
 
-disable_mooncake_backend = get_option('disable_mooncake_backend')
-if not disable_mooncake_backend
-    subdir('mooncake')
-endif
+mooncake_backend_test = executable('mooncake_backend_test',
+        'mooncake_backend_test.cpp',
+        dependencies: [nixl_dep, nixl_infra, mooncake_backend_dep, thread_dep] + cuda_dependencies,
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../../../src/plugins/mooncake'],
+        cpp_args : cpp_args,
+        install: true)

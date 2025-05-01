@@ -18,7 +18,7 @@ ucx_backend_inc_dirs = include_directories('./ucx')
 subdir('ucx')
 subdir('ucx_mo')
 
-if get_option('enable_mooncake_backend')
+if not get_option('disable_mooncake_backend')
     subdir('mooncake')
 endif
 

@@ -22,6 +22,7 @@
 #include <iostream>
 #include <thread>
 #include <mutex>
+#include <unordered_set>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -31,6 +32,8 @@
 #include "common/list_elem.h"
 
 #include "transfer_engine_c.h"
+
+class nixlMooncakeBackendMD;
 
 class nixlMooncakeEngine : public nixlBackendEngine {
     public:
@@ -88,12 +91,13 @@ class nixlMooncakeEngine : public nixlBackendEngine {
 
     private:
         struct AgentInfo {
-            std::string ip_and_port;
+            int segment_id;
         };
 
         std::mutex mutex_;
         transfer_engine_t engine_;
         std::string local_agent_name_;
+        std::unordered_map<uint64_t, nixlMooncakeBackendMD *> mem_reg_info_;
         std::unordered_map<std::string, AgentInfo> connected_agents_;
 };
 
