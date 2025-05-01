@@ -150,14 +150,14 @@ nixl_status_t nixlMooncakeEngine::deregisterMem (nixlBackendMD* meta)
     return err == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
 }
 
-// Transfer Engine handles metadata exchange by itself, 
+// Transfer Engine handles metadata exchange by itself,
 // so this function has no action
 nixl_status_t nixlMooncakeEngine::getPublicData (const nixlBackendMD* meta,
                                                  std::string &str) const {
     return NIXL_SUCCESS;
 }
 
-// Transfer Engine handles metadata exchange by itself, 
+// Transfer Engine handles metadata exchange by itself,
 // so this function has no action
 nixl_status_t
 nixlMooncakeEngine::loadLocalMD (nixlBackendMD* input,
@@ -167,7 +167,7 @@ nixlMooncakeEngine::loadLocalMD (nixlBackendMD* input,
     return NIXL_SUCCESS;
 }
 
-// Transfer Engine handles metadata exchange by itself, 
+// Transfer Engine handles metadata exchange by itself,
 // so this function has no action
 nixl_status_t nixlMooncakeEngine::loadRemoteMD (const nixlBlobDesc &input,
                                                 const nixl_mem_t &nixl_mem,
@@ -178,7 +178,7 @@ nixl_status_t nixlMooncakeEngine::loadRemoteMD (const nixlBlobDesc &input,
     return NIXL_SUCCESS;
 }
 
-// Transfer Engine handles metadata exchange by itself, 
+// Transfer Engine handles metadata exchange by itself,
 // so this function has no action
 nixl_status_t nixlMooncakeEngine::unloadMD (nixlBackendMD* input) {
     return NIXL_SUCCESS;
