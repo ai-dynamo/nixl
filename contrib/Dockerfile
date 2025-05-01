@@ -40,6 +40,8 @@ RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
 	cd etcd-cpp-apiv3 && mkdir build && cd build && \
 	cmake .. && make -j$(nproc) && make install
 
+RUN apt install liburing-dev
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 ENV RUSTUP_HOME=/usr/local/rustup \

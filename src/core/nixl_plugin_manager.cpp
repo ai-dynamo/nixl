@@ -387,5 +387,10 @@ void nixlPluginManager::registerBuiltinPlugins() {
         extern nixlBackendPlugin* createStaticGdsPlugin();
         registerStaticPlugin("GDS", createStaticGdsPlugin);
     #endif
+
+    #ifdef STATIC_PLUGIN_POSIX
+        extern nixlBackendPlugin* createStaticPosixPlugin();
+        registerStaticPlugin("POSIX", createStaticPosixPlugin);
+    #endif
     #endif
 }
