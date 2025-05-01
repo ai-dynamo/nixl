@@ -35,10 +35,12 @@ pip install nixl
 ### Ubuntu:
 
 `$ sudo apt install build-essential cmake pkg-config`
+`$ sudo apt install liburing-dev`
 
 ### Fedora:
 
 `$ sudo dnf install gcc-c++ cmake pkg-config`
+`$ sudo dnf install liburing-devel`
 
 ### Python
 
