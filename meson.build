@@ -94,37 +94,9 @@ if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
 
-# Logging
-
-# Determine the actual log level based on user choice or build type
-log_level_opt = get_option('log_level')
-buildtype = get_option('buildtype')
-
-actual_log_level = log_level_opt
-if actual_log_level == 'auto'
-  if buildtype == 'debug'
-    actual_log_level = 'trace'
-  else # release, debugoptimized, or plain
-    actual_log_level = 'info'
-  endif
-endif
-
-# Configure Abseil log stripping and NDEBUG for release builds
+# Configure NDEBUG for release builds
 if get_option('buildtype') == 'release'
-    # Map our log levels to Abseil severity integers
-    absl_log_level_map = {
-        'trace': 0, # Treat trace/debug as below INFO for stripping
-        'debug': 0,
-        'info': 0, # kInfo
-        'warning': 1, # kWarning
-        'error': 2, # kError
-        'fatal': 3, # kFatal
-    }
-    absl_min_log_level = absl_log_level_map.get(actual_log_level, 0) # Default to info if level unknown
-
-    # Required by Abseil to strip logs at compile time based on the determined level
-    add_project_arguments('-DABSL_MIN_LOG_LEVEL=@0@'.format(absl_min_log_level), language : 'cpp')
-    # Required by Abseil to strip DCHECK assertions at compile time
+    # Used by Abseil to strip DCHECK assertions and DVLOG at compile time
     add_project_arguments('-DNDEBUG', language: 'cpp')
 endif
 

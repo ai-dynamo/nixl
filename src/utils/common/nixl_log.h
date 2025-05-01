@@ -49,9 +49,8 @@
 
 /*
  * Logs messages unconditionally (maps to Abseil verbosity level 1)
- * Stripped from release buids.
  */
-#define NIXL_DEBUG DVLOG(1)
+#define NIXL_DEBUG VLOG(1)
 
 /*
  * Logs messages unconditionally (maps to Abseil verbosity level 2)
