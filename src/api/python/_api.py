@@ -766,7 +766,7 @@ class nixl_agent:
             gpu_id = descs.get_device()
             if gpu_id == -1:  # DRAM
                 gpu_id = 0
-            new_descs = nixlBind.nixlRegDList(
+            new_descs = nixlBind.nixlXferDList(
                 self.nixl_mems[mem_type],
                 [(base_addr, region_len, gpu_id)],
                 is_sorted,
