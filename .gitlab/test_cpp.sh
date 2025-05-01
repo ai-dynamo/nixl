@@ -41,6 +41,8 @@ env
 nvidia-smi topo -m || true
 ibv_devinfo || true
 
+apt-get -qq install liburing-dev
+
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
 ./bin/desc_example
