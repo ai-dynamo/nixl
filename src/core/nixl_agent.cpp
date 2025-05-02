@@ -17,6 +17,7 @@
 
 #include <iostream>
 #include "nixl.h"
+#include "nixl_types.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
 #include "transfer_request.h"
@@ -988,6 +989,10 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
     if(ret)
         return ret;
 
+    ret = sd.addStr("Op", "Load");
+    if(ret)
+        return ret;
+
     ret = sd.addBuf("Conns", &conn_cnt, sizeof(conn_cnt));
     if(ret)
         return ret;
@@ -1059,6 +1064,11 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     if(ret)
         return ret;
 
+    ret = sd.addStr("Op",
+                    (extra_params && extra_params->metadataForUnload) ? "Unload" : "Load");
+    if(ret)
+        return ret;
+
     // Only add connection info if requested via extra_params or empty dlist
     size_t conn_cnt = ((extra_params && extra_params->includeConnInfo) || descs.descCount() == 0) ?
                       found_iters.size() : 0;
@@ -1092,6 +1102,75 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
 }
 
 nixl_status_t
+nixlAgentData::unloadRemoteMD(nixlSerDes &sd, const std::string &remote_agent) {
+    std::vector<nixl_backend_t> backends_to_unload;
+    nixl_backend_t nixl_backend;
+    nixl_status_t ret;
+    size_t conn_cnt;
+
+    NIXL_DEBUG << "Unloading remote metadata for agent: " << remote_agent;
+
+    ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
+    if(ret)
+        return ret;
+
+    // Get backends to unload, will be unloaded after we unload remote sections data
+    for (size_t i = 0; i < conn_cnt; ++i) {
+        nixl_backend = sd.getStr("t");
+        if (nixl_backend.size() == 0)
+            return NIXL_ERR_MISMATCH;
+        backends_to_unload.push_back(nixl_backend);
+        sd.getStr("c"); // we don't need conn_info
+    }
+
+    if (sd.getStr("") != "MemSection")
+        return NIXL_ERR_MISMATCH;
+
+    ret = remoteSections[remote_agent]->unloadRemoteData(&sd, backendEngines);
+    // TODO: continue removing backends even if unloadRemoteData fails?
+    if (ret)
+        return ret;
+
+    if (backends_to_unload.size() == 0)
+        return NIXL_SUCCESS;
+
+    // Unload remote agent's backends along with all their memory sections
+    auto it = remoteBackends.find(remote_agent);
+    if (it != remoteBackends.end()) {
+        auto &rem_backends = it->second;
+        auto sections_it = remoteSections.find(remote_agent);
+
+        for (auto &backend : backends_to_unload) {
+            auto engine_it = backendEngines.find(backend);
+            if (engine_it == backendEngines.end())
+                continue;
+            auto &engine = engine_it->second;
+
+            if (sections_it != remoteSections.end()) {
+                auto &rem_section = sections_it->second;
+                rem_section->unloadBackend(engine);
+            }
+
+            auto rem_backend_it = rem_backends.find(backend);
+            if (rem_backend_it != rem_backends.end()) {
+                // TODO: check failure?
+                engine->disconnect(remote_agent);
+                rem_backends.erase(rem_backend_it);
+            }
+        }
+
+        if (sections_it != remoteSections.end() && sections_it->second->empty()) {
+            delete sections_it->second;
+            remoteSections.erase(sections_it);
+        }
+        if (rem_backends.size() == 0)
+            remoteBackends.erase(remote_agent);
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
 nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
                          std::string &agent_name) {
     int count = 0;
@@ -1113,6 +1192,19 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     if (remote_agent == data->name)
         return NIXL_ERR_INVALID_PARAM;
+
+    std::string op_str = sd.getStr("Op");
+    if (op_str.size() == 0)
+        return NIXL_ERR_MISMATCH;
+
+    if (op_str == "Unload") {
+        ret = data->unloadRemoteMD(sd, remote_agent);
+        if (ret == NIXL_SUCCESS)
+            agent_name = remote_agent;
+        return ret;
+    } else if (op_str != "Load") {
+        return NIXL_ERR_MISMATCH;
+    }
 
     NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
 

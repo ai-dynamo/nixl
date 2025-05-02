@@ -157,6 +157,12 @@ class nixlAgentOptionalArgs {
         bool includeConnInfo = false;
 
         /**
+         * @var metadataForUnload boolean to indicate that the metadata is for unloading,
+         *                        used in getLocalPartialMD and sendLocalPartialMD.
+         */
+        bool metadataForUnload = false;
+
+        /**
          * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
          *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
          */

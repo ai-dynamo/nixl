@@ -335,6 +335,8 @@ class nixlAgent {
          *         backends supporting the memory type is also included.
          *         If `extra_params->backends` is non-empty, only the descriptors supported by the
          *         backends in the list and the backends' connection info are included in the metadata.
+         *         If `extra_params->metadataForUnload` is true, return metadata for unloading on the remote.
+         *         If used for unloading, this should be called before deregisterMem.
          *
          * @param  descs         [in]  Descriptor list to include in the metadata
          * @param  str           [out] The serialized metadata blob
@@ -384,7 +386,7 @@ class nixlAgent {
         sendLocalMD (const nixl_opt_args_t* extra_params = nullptr) const;
 
         /**
-         * @brief  Send partial metadata blob for this agent to peer or central metadata server
+         * @brief  Send partial metadata blob for this agent to peer or central metadata server.
          *         If `descs` is empty, only backends' connection info is included in the metadata,
          *         regardless of the value of `extra_params->includeConnInfo` and `descs` memory type.
          *         If `descs` is non-empty, the metadata of the descriptors in the list are included,
@@ -394,6 +396,8 @@ class nixlAgent {
          *         backends in the list and the backends' connection info are included in the metadata.
          *         If 'extra_params->ip_addr' is set, the metadata will only be sent to a single peer.
          *         If 'extra_params->port' can be set in addition to IP address, or will default to default_comm_port.
+         *         If `extra_params->metadataForUnload` is true, return metadata for unloading on the remote.
+         *         If used for unloading, this should be called before deregisterMem.
          *
          * @param  descs         [in]  Descriptor list to include in the metadata
          * @param  str           [out] The serialized metadata blob

@@ -23,6 +23,7 @@
 #include <array>
 #include <string>
 #include <set>
+#include <memory>
 #include "nixl_descriptors.h"
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -58,8 +59,8 @@ public:
     }
 };
 
-typedef nixlDescList<nixlSectionDesc>               nixl_sec_dlist_t;
-typedef std::map<section_key_t, nixl_sec_dlist_t*>  section_map_t;
+typedef nixlDescList<nixlSectionDesc>                              nixl_sec_dlist_t;
+typedef std::map<section_key_t, std::unique_ptr<nixl_sec_dlist_t>> section_map_t;
 
 class nixlMemSection {
     protected:
@@ -104,18 +105,28 @@ class nixlRemoteSection : public nixlMemSection {
     private:
         std::string agentName;
 
-        nixl_status_t addDescList (
-                           const nixl_reg_dlist_t &mem_elms,
-                           nixlBackendEngine *backend);
+        nixl_status_t addDescList (const nixl_reg_dlist_t &mem_elms,
+                                   nixlBackendEngine *backend);
+
+        nixl_status_t remDescList (const nixl_reg_dlist_t &mem_elms,
+                                   nixlBackendEngine *backend);
     public:
         nixlRemoteSection (const std::string &agent_name);
 
         nixl_status_t loadRemoteData (nixlSerDes* deserializer,
                                       backend_map_t &backendToEngineMap);
 
+        nixl_status_t unloadRemoteData (nixlSerDes* deserializer,
+                                        backend_map_t &backendToEngineMap);
+
+        void unloadBackend (nixlBackendEngine* backend);
+
         // When adding self as a remote agent for local operations
         nixl_status_t loadLocalData (const nixl_sec_dlist_t& mem_elms,
                                      nixlBackendEngine* backend);
+
+        bool empty() const { return sectionMap.empty(); }
+
         ~nixlRemoteSection();
 };
 

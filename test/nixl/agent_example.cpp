@@ -348,6 +348,85 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
     status = A1->releasedDlistH(dst_side);
     assert(status == NIXL_SUCCESS);
 
+    // Test partial metadata unload here
+    std::cout << "Testing partial metadata unload\n";
+
+    // First verify all descriptors are still valid
+    for (int update = 0; update < NUM_UPDATES; update++) {
+        nixlDlistH *test_side;
+        status = A1->prepXferDlist(agent2, dst_mem_lists[update].trim(), test_side, &extra_params1);
+        assert(status == NIXL_SUCCESS);
+        assert(test_side != nullptr);
+
+        status = A1->releasedDlistH(test_side);
+        assert(status == NIXL_SUCCESS);
+    }
+
+    // Unload metadata one dlist at a time in reverse order and verify results
+    extra_params2.includeConnInfo = false;
+    extra_params2.metadataForUnload = true;
+    for (int update = NUM_UPDATES - 1; update >= 0; update--) {
+        std::cout << "Metadata unload #" << update << "\n";
+
+        // Get partial metadata for unload from A2
+        std::string partial_meta;
+        status = A2->getLocalPartialMD(dst_mem_lists[update], partial_meta, &extra_params2);
+        assert(status == NIXL_SUCCESS);
+        assert(partial_meta.size() > 0);
+
+        // Apply the unload metadata to A1
+        std::string remote_name;
+        status = A1->loadRemoteMD(partial_meta, remote_name);
+        assert(status == NIXL_SUCCESS);
+        assert(remote_name == agent2);
+
+        // Verify the unloaded descriptors are now invalid
+        nixlDlistH *test_side = nullptr;
+        status = A1->prepXferDlist(agent2, dst_mem_lists[update].trim(), test_side, &extra_params1);
+        assert(status != NIXL_SUCCESS);
+        assert(test_side == nullptr);
+
+        // Verify descriptors that haven't been unloaded are still valid
+        for (int valid_idx = 0; valid_idx < update; valid_idx++) {
+            nixlDlistH *test_side = nullptr;
+            status = A1->prepXferDlist(agent2, dst_mem_lists[valid_idx].trim(), test_side, &extra_params1);
+            assert(status == NIXL_SUCCESS);
+            assert(test_side != nullptr);
+
+            status = A1->releasedDlistH(test_side);
+            assert(status == NIXL_SUCCESS);
+        }
+
+        std::cout << "Metadata unload #" << update << " completed\n";
+    }
+
+    // Verify all descriptors are now unloaded
+    for (int update = 0; update < NUM_UPDATES; update++) {
+        nixlDlistH *test_side = nullptr;
+        status = A1->prepXferDlist(agent2, dst_mem_lists[update].trim(), test_side, &extra_params1);
+        assert(status != NIXL_SUCCESS);
+        assert(test_side == nullptr);
+    }
+
+    // Unload connection info
+    partial_meta.clear();
+    extra_params2.includeConnInfo = true;
+    extra_params2.metadataForUnload = true;
+    status = A2->getLocalPartialMD(empty_dlist, partial_meta, &extra_params2);
+    assert(status == NIXL_SUCCESS);
+    assert(partial_meta.size() > 0);
+
+    remote_name.clear();
+    status = A1->loadRemoteMD(partial_meta, remote_name);
+    assert(status == NIXL_SUCCESS);
+    assert(remote_name == agent2);
+
+    // Fail to invalidate remote agent since all metadata is unloaded
+    status = A1->invalidateRemoteMD(agent2);
+    assert(status != NIXL_SUCCESS);
+
+    std::cout << "Partial metadata unload test completed\n";
+
     // Deregister memory
     for (int update = 0; update < NUM_UPDATES; update++) {
         status = A1->deregisterMem(src_mem_lists[update], &extra_params1);

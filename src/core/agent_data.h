@@ -96,6 +96,8 @@ class nixlAgentData {
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
 
+        nixl_status_t unloadRemoteMD(nixlSerDes &sd, const std::string &remote_agent);
+
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();
 
