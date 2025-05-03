@@ -41,9 +41,6 @@ env
 nvidia-smi topo -m || true
 ibv_devinfo || true
 
-apt-get -qq update
-apt-get -qq install liburing-dev
-
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
 ./bin/desc_example
@@ -51,7 +48,10 @@ cd ${INSTALL_DIR}
 ./bin/nixl_example
 ./bin/ucx_backend_test
 ./bin/ucx_mo_backend_test
-./bin/nixl_posix_test
+
+# POSIX test disabled until we solve io_uring and Docker compatibility
+#./bin/nixl_posix_test
+
 ./bin/ucx_backend_multi
 ./bin/serdes_test
 ./bin/gtest
