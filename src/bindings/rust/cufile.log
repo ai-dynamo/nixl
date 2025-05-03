@@ -1,4 +1,0 @@
- 03-05-2025 17:17:47:536 [pid=148979 tid=148985] ERROR  cufio_core:977 cuInit Failed, error CUDA_ERROR_COMPAT_NOT_SUPPORTED_ON_DEVICE
- 03-05-2025 17:17:47:537 [pid=148979 tid=148985] ERROR  cufio_core:1097 cuFile initialization failed
- 03-05-2025 17:18:28:207 [pid=149528 tid=149534] ERROR  cufio_core:977 cuInit Failed, error CUDA_ERROR_COMPAT_NOT_SUPPORTED_ON_DEVICE
- 03-05-2025 17:18:28:207 [pid=149528 tid=149534] ERROR  cufio_core:1097 cuFile initialization failed
