@@ -324,9 +324,6 @@ pub struct Agent {
     inner: Arc<RwLock<AgentInner>>,
 }
 
-unsafe impl Send for Agent {}
-unsafe impl Sync for Agent {}
-
 impl Agent {
     /// Creates a new agent with the given name
     pub fn new(name: &str) -> Result<Self, NixlError> {
