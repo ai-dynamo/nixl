@@ -32,6 +32,8 @@ fn main() {
 
     // Tell cargo to look for shared libraries in the specified directories
     println!("cargo:rustc-link-search={}", nixl_lib_path);
+    // Add rpath to embed library path in the binary
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", nixl_lib_path);
 
     // Build the C++ wrapper
     cc::Build::new()
