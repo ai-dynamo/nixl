@@ -30,7 +30,7 @@ RUN apt-get update -y && \
     libgrpc-dev \
     libgrpc++-dev \
     libprotobuf-dev \
-    liburing-dev \
+    libaio-dev \
     protobuf-compiler-grpc \
     libcpprest-dev \
     etcd-server \

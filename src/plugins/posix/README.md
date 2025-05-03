@@ -17,12 +17,33 @@ limitations under the License.
 
 # NIXL POSIX Plugin
 
-This plugin uses liburing as an I/O backend for NIXL.
+This backend provides POSIX-compliant I/O operations using either Linux AIO (libaio) by default
+Optionally POSIX plugin can also use liburing.
 
-# Install
+## Dependencies
+To enable Linux AIO support, you need to install the libaio package:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libaio-dev
+
+# RHEL/CentOS/Fedora
+sudo dnf install libaio-devel
+```
+
+
+To enable liburing support you need to install the liburing package:
+
+```bash
+# Ubuntu/Debian
 sudo apt install liburing-dev
+# RHEL/CentOS/Fedora
+sudo dnf install liburing-devel
+```
 
-# Running with Docker
+To use liburing with POSIX plugin use params["use_uring"] = "true"
+
+# Running liburing with Docker
 Docker by default blocks io_uring syscalls to the host system. These need to be explicitly enabled when running NIXL agents that use the posix plugin in Docker.
 
 ## Create a seccomp json file

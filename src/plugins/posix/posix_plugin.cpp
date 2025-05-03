@@ -15,12 +15,25 @@
  * limitations under the License.
  */
 
-#include "backend/backend_plugin.h"
+#include <memory>
 #include "posix_backend.h"
+#include "backend/backend_plugin.h"
 
-// Function to create a new GDS backend engine instance
+// Function to create a new POSIX backend engine instance
 static nixlBackendEngine* create_posix_engine(const nixlBackendInitParams* init_params) {
-    return new nixlPosixEngine(init_params);
+    try {
+        auto engine = new nixlPosixEngine(init_params);
+        nixl_status_t status = engine->init();
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to initialize POSIX engine";
+            delete engine;
+            return nullptr;
+        }
+        return engine;
+    } catch (const std::exception& e) {
+        NIXL_ERROR << "Failed to create POSIX engine: " << e.what();
+        return nullptr;
+    }
 }
 
 static void destroy_posix_engine(nixlBackendEngine *engine) {
@@ -34,7 +47,7 @@ static const char* get_plugin_name() {
 
 // Function to get the plugin version
 static const char* get_plugin_version() {
-    return "0.1.0";
+    return "0.2.1";
 }
 
 // Function to get backend options
@@ -45,8 +58,10 @@ static nixl_b_params_t get_backend_options() {
 
 // Function to get supported backend mem types
 static nixl_mem_list_t get_backend_mems() {
-    return {VRAM_SEG, FILE_SEG};
+    return {DRAM_SEG, FILE_SEG};
 }
+
+#ifdef STATIC_PLUGIN_POSIX
 
 // Static plugin structure
 static nixlBackendPlugin plugin = {
@@ -59,8 +74,6 @@ static nixlBackendPlugin plugin = {
     get_backend_mems
 };
 
-#ifdef STATIC_PLUGIN_POSIX
-
 nixlBackendPlugin* createStaticPosixPlugin() {
     return &plugin; // Return the static plugin instance
 }
@@ -69,7 +82,19 @@ nixlBackendPlugin* createStaticPosixPlugin() {
 
 // Plugin initialization function
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init() {
-    return &plugin;
+    try {
+        std::unique_ptr<nixlBackendPlugin> plugin = std::make_unique<nixlBackendPlugin>();
+        plugin->create_engine = create_posix_engine;
+        plugin->destroy_engine = destroy_posix_engine;
+        plugin->get_plugin_name = get_plugin_name;
+        plugin->get_plugin_version = get_plugin_version;
+        plugin->get_backend_options = get_backend_options;
+        plugin->get_backend_mems = get_backend_mems;
+        plugin->api_version = NIXL_PLUGIN_API_VERSION;  // Set the API version
+        return plugin.release();
+    } catch (const std::exception& e) {
+        return nullptr;
+    }
 }
 
 // Plugin cleanup function
