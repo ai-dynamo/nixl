@@ -40,6 +40,8 @@ fn main() {
         .compile("wrapper");
 
     // Link against NIXL libraries in correct order
+    println!("cargo:rustc-link-lib=dylib=stream");
+    println!("cargo:rustc-link-lib=dylib=nixl_common");
     println!("cargo:rustc-link-lib=dylib=nixl");
     println!("cargo:rustc-link-lib=dylib=nixl_build");
     println!("cargo:rustc-link-lib=dylib=serdes");
