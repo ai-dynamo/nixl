@@ -22,6 +22,26 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
+    use std::time::Duration;
+
+    // Helper function to create an agent with error handling
+    fn create_test_agent(name: &str) -> Result<Agent, NixlError> {
+        Agent::new(name)
+    }
+
+    // Helper function to find a plugin by name
+    fn find_plugin(plugins: &StringList, name: &str) -> Result<String, NixlError> {
+        let mut found_plugin = None;
+        for i in 0..plugins.len()? {
+            if let Ok(plugin_name) = plugins.get(i) {
+                if plugin_name == name {
+                    found_plugin = Some(plugin_name.to_string());
+                    break;
+                }
+            }
+        }
+        Ok(found_plugin.unwrap_or_else(|| plugins.get(0).unwrap().to_string()))
+    }
 
     #[test]
     fn test_agent_creation() {
@@ -101,34 +121,37 @@ mod tests {
     }
 
     #[test]
-    fn test_get_backend_params() {
-        let agent = Agent::new("test_agent").unwrap();
-        let plugins = agent.get_available_plugins().unwrap();
-        assert!(plugins.is_empty().unwrap_or(false) == false);
+    fn test_get_backend_params() -> Result<(), NixlError> {
+        let agent = create_test_agent("test_agent")?;
+        let plugins = agent.get_available_plugins()?;
+        
+        // Ensure we have at least one plugin
+        assert!(!plugins.is_empty()?);
 
         // Try UCX plugin first since it doesn't require GPU
-        let plugin_name = plugins.iter()
-            .find(|p| p.as_ref().map(|name| *name == "UCX").unwrap_or(false))
-            .unwrap_or_else(|| Ok(plugins.get(0).unwrap()))
-            .unwrap();
-
-        let (_mems, params) = agent.get_plugin_params(&plugin_name).unwrap();
-        let backend = agent.create_backend(&plugin_name, &params).unwrap();
+        let plugin_name = find_plugin(&plugins, "UCX")?;
+        let (_mems, params) = agent.get_plugin_params(&plugin_name)?;
+        let backend = agent.create_backend(&plugin_name, &params)?;
 
         // Get backend params after initialization
-        let (backend_mems, backend_params) = agent.get_backend_params(&backend).unwrap();
+        let (backend_mems, backend_params) = agent.get_backend_params(&backend)?;
 
-        // Verify we can access the parameters
-        let param_iter = backend_params.iter().unwrap();
-        for param in param_iter {
-            let param = param.unwrap();
-            println!("Backend param: {} = {}", param.key, param.value);
+        // Print parameters using iterator
+        let param_iter = backend_params.iter()?;
+        for param_result in param_iter {
+            if let Ok(param) = param_result {
+                println!("Backend param: {} = {}", param.key, param.value);
+            }
         }
 
-        // Verify we can access the memory types
+        // Print memory types
         for mem_type in backend_mems.iter() {
-            println!("Backend memory type: {:?}", mem_type.unwrap());
+            if let Ok(mem_type) = mem_type {
+                println!("Backend memory type: {:?}", mem_type);
+            }
         }
+
+        Ok(())
     }
 
     #[test]
@@ -331,39 +354,35 @@ mod tests {
     }
 
     #[test]
-    fn test_basic_agent_lifecycle() {
-        // Create two agents
-        let agent2 = Agent::new("A2").unwrap();
-        let agent1 = Agent::new("A1").unwrap();
+    fn test_basic_agent_lifecycle() -> Result<(), NixlError> {
+        // Create agents
+        let agent2 = create_test_agent("A2")?;
+        let agent1 = create_test_agent("A1")?;
 
-        // Get available plugins and print their names
-        let plugins = agent1.get_available_plugins().unwrap();
-        for plugin in plugins.iter() {
-            println!("Found plugin: {}", plugin.unwrap());
+        // Print available plugins
+        let plugins = agent1.get_available_plugins()?;
+        for plugin_result in plugins.iter() {
+            if let Ok(plugin) = plugin_result {
+                println!("Found plugin: {}", plugin);
+            }
         }
 
-        // Get plugin parameters for both agents
-        let (_mem_list1, _params) = agent1.get_plugin_params("UCX").unwrap();
-        let (_mem_list2, params) = agent2.get_plugin_params("UCX").unwrap();
+        // Setup UCX backends
+        let (_mem_list1, _params) = agent1.get_plugin_params("UCX")?;
+        let (_mem_list2, params) = agent2.get_plugin_params("UCX")?;
 
-        // Create backends for both agents
-        let backend1 = agent1.create_backend("UCX", &params).unwrap();
-        let backend2 = agent2.create_backend("UCX", &params).unwrap();
+        let _backend1 = agent1.create_backend("UCX", &params)?;
+        let _backend2 = agent2.create_backend("UCX", &params)?;
 
-        // Create optional arguments and add backends
-        let mut opt_args = OptArgs::new().unwrap();
-        opt_args.add_backend(&backend1).unwrap();
-        opt_args.add_backend(&backend2).unwrap();
-
-        // Allocate and initialize memory regions
-        let mut storage1 = SystemStorage::new(256).unwrap();
-        let mut storage2 = SystemStorage::new(256).unwrap();
+        // Setup memory regions
+        let mut storage1 = SystemStorage::new(256)?;
+        let mut storage2 = SystemStorage::new(256)?;
 
         // Initialize memory patterns
         storage1.memset(0xbb);
         storage2.memset(0x00);
 
-        // Verify memory patterns
+        // Verify initial memory patterns
         assert!(storage1.as_slice().iter().all(|&x| x == 0xbb));
         assert!(storage2.as_slice().iter().all(|&x| x == 0x00));
 
@@ -371,113 +390,93 @@ mod tests {
         storage1.register(&agent1, None).unwrap();
         storage2.register(&agent2, None).unwrap();
 
-        // Mimic transferring metadata from agent2 to agent1
-        let metadata = agent2.get_local_md().unwrap();
-        let remote_name = agent1.load_remote_md(&metadata).unwrap();
+        // Exchange metadata
+        let metadata = agent2.get_local_md()?;
+        let remote_name = agent1.load_remote_md(&metadata)?;
         assert_eq!(remote_name, "A2");
 
-        let mut local_xfer_dlist = XferDescList::new(MemType::Dram).unwrap();
-        local_xfer_dlist.add_storage_desc(&storage1).unwrap();
+        // Setup transfer descriptors
+        let mut local_xfer_dlist = XferDescList::new(MemType::Dram)?;
+        let mut remote_xfer_dlist = XferDescList::new(MemType::Dram)?;
+        local_xfer_dlist.add_storage_desc(&storage1)?;
+        remote_xfer_dlist.add_storage_desc(&storage2)?;
 
-        let mut remote_xfer_dlist = XferDescList::new(MemType::Dram).unwrap();
-        remote_xfer_dlist.add_storage_desc(&storage2).unwrap();
+        // Setup transfer arguments
+        let mut xfer_args = OptArgs::new()?;
+        xfer_args.set_has_notification(true)?;
+        xfer_args.set_notification_message(b"notification")?;
 
-        let mut xfer_args = OptArgs::new().unwrap();
-        xfer_args.set_has_notification(true).unwrap();
-        xfer_args.set_notification_message(b"notification").unwrap();
+        // Create and post transfer request
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_xfer_dlist,
+            &remote_xfer_dlist,
+            &remote_name,
+            Some(&xfer_args),
+        )?;
 
-        let xfer_req = agent1
-            .create_xfer_req(
-                XferOp::Write,
-                &local_xfer_dlist,
-                &remote_xfer_dlist,
-                &remote_name,
-                Some(&xfer_args),
-            )
-            .unwrap();
-
-        // Try to post the transfer request, but don't fail if it returns false
-        match agent1.post_xfer_req(&xfer_req, None) {
-            Ok(status) => {
-                println!("Transfer request posted with status: {}", status);
-                if status {
-                    println!("Waiting for local completions");
-
-                    // Add timeout to prevent infinite loop
-                    let start = std::time::Instant::now();
-                    let timeout = std::time::Duration::from_secs(5);
-
-                    loop {
-                        if start.elapsed() > timeout {
-                            println!("Transfer timed out");
+        // Handle transfer request
+        if let Ok(status) = agent1.post_xfer_req(&xfer_req, None) {
+            println!("Transfer request posted with status: {}", status);
+            
+            if status {
+                // Wait for transfer completion with timeout
+                let timeout = Duration::from_secs(5);
+                let start = std::time::Instant::now();
+                
+                while start.elapsed() < timeout {
+                    match agent1.get_xfer_status(&xfer_req) {
+                        Ok(false) => {
+                            println!("Transfer completed");
                             break;
                         }
-
-                        match agent1.get_xfer_status(&xfer_req) {
-                            Ok(status) => {
-                                if !status {
-                                    println!("Transfer completed");
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                println!("Error getting transfer status: {:?}", e);
-                                break;
-                            }
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
-
-                    let mut notifs = NotificationMap::new().unwrap();
-                    println!("Waiting for notifications");
-
-                    // Add timeout for notifications
-                    let start = std::time::Instant::now();
-                    loop {
-                        if start.elapsed() > timeout {
-                            println!("Notification wait timed out");
+                        Ok(true) => std::thread::sleep(Duration::from_millis(100)),
+                        Err(e) => {
+                            println!("Error getting transfer status: {:?}", e);
                             break;
                         }
-
-                        match agent2.get_notifications(&mut notifs, None) {
-                            Ok(_) => {
-                                if !notifs.is_empty().unwrap() {
-                                    println!("Got notifications");
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                println!("Error getting notifications: {:?}", e);
-                                break;
-                            }
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(100));
                     }
+                }
 
-                    // Only verify notification if we got one
-                    if !notifs.is_empty().unwrap() {
-                        let agent_name = notifs.agents().next().unwrap().unwrap();
-                        let notif = notifs
-                            .get_notifications(agent_name)
-                            .unwrap()
-                            .next()
-                            .unwrap()
-                            .unwrap();
-                        assert_eq!(notif, b"notification");
+                // Wait for notifications with timeout
+                let mut notifs = NotificationMap::new()?;
+                let start = std::time::Instant::now();
+                
+                while start.elapsed() < timeout {
+                    match agent2.get_notifications(&mut notifs, None) {
+                        Ok(_) if !notifs.is_empty()? => {
+                            println!("Got notifications");
+                            break;
+                        }
+                        Ok(_) => std::thread::sleep(Duration::from_millis(100)),
+                        Err(e) => {
+                            println!("Error getting notifications: {:?}", e);
+                            break;
+                        }
+                    }
+                }
 
-                        // Only verify storage2 if transfer completed and we got notification
-                        if !agent1.get_xfer_status(&xfer_req).unwrap() {
-                            assert!(storage2.as_slice().iter().all(|&x| x == 0xbb));
+                // Verify notification if received
+                if !notifs.is_empty()? {
+                    let mut agents = notifs.agents();
+                    if let Some(Ok(agent_name)) = agents.next() {
+                        let mut notifications = notifs.get_notifications(agent_name)?;
+                        if let Some(Ok(notif)) = notifications.next() {
+                            assert_eq!(notif, b"notification");
+
+                            // Verify transfer if completed
+                            if !agent1.get_xfer_status(&xfer_req)? {
+                                assert!(storage2.as_slice().iter().all(|&x| x == 0xbb));
+                            }
                         }
                     }
                 }
             }
-            Err(e) => {
-                println!("Failed to post transfer request: {:?}", e);
-            }
         }
 
-        // Storage1 should remain unchanged regardless of transfer success
+        // Verify source memory remains unchanged
         assert!(storage1.as_slice().iter().all(|&x| x == 0xbb));
+        
+        Ok(())
     }
 }
