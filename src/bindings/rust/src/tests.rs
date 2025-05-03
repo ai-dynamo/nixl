@@ -124,7 +124,7 @@ mod tests {
     fn test_get_backend_params() -> Result<(), NixlError> {
         let agent = create_test_agent("test_agent")?;
         let plugins = agent.get_available_plugins()?;
-        
+
         // Ensure we have at least one plugin
         assert!(!plugins.is_empty()?);
 
@@ -418,12 +418,12 @@ mod tests {
         // Handle transfer request
         if let Ok(status) = agent1.post_xfer_req(&xfer_req, None) {
             println!("Transfer request posted with status: {}", status);
-            
+
             if status {
                 // Wait for transfer completion with timeout
                 let timeout = Duration::from_secs(5);
                 let start = std::time::Instant::now();
-                
+
                 while start.elapsed() < timeout {
                     match agent1.get_xfer_status(&xfer_req) {
                         Ok(false) => {
@@ -441,7 +441,7 @@ mod tests {
                 // Wait for notifications with timeout
                 let mut notifs = NotificationMap::new()?;
                 let start = std::time::Instant::now();
-                
+
                 while start.elapsed() < timeout {
                     match agent2.get_notifications(&mut notifs, None) {
                         Ok(_) if !notifs.is_empty()? => {
@@ -476,7 +476,7 @@ mod tests {
 
         // Verify source memory remains unchanged
         assert!(storage1.as_slice().iter().all(|&x| x == 0xbb));
-        
+
         Ok(())
     }
 }
