@@ -864,6 +864,9 @@ pub struct Backend {
     inner: NonNull<bindings::nixl_capi_backend_s>,
 }
 
+unsafe impl Send for Backend {}
+unsafe impl Sync for Backend {}
+
 /// A safe wrapper around NIXL optional arguments
 pub struct OptArgs {
     inner: NonNull<bindings::nixl_capi_opt_args_s>,
