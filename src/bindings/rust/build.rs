@@ -20,7 +20,7 @@ fn main() {
     let nixl_root_path = env::var("NIXL_PREFIX")
                             .unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
     let nixl_include_path = format!("{}/include", nixl_root_path);
-    let nixl_lib_path = format!("{}/lib64", nixl_root_path);
+    let nixl_lib_path = format!("{}/lib/x86_64-linux-gnu", nixl_root_path);
 
     // Tell cargo to look for shared libraries in the specified directories
     println!("cargo:rustc-link-search={}", nixl_lib_path);
@@ -40,6 +40,8 @@ fn main() {
         .compile("wrapper");
 
     // Link against NIXL libraries in correct order
+    println!("cargo:rustc-link-lib=dylib=stream");
+    println!("cargo:rustc-link-lib=dylib=nixl_common");
     println!("cargo:rustc-link-lib=dylib=nixl");
     println!("cargo:rustc-link-lib=dylib=nixl_build");
     println!("cargo:rustc-link-lib=dylib=serdes");
