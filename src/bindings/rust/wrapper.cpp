@@ -1227,7 +1227,7 @@ nixl_capi_get_notifs(nixl_capi_agent_t agent, nixl_capi_notif_map_t notif_map, n
 }
 
 nixl_capi_status_t
-nixl_capi_gen_notif(nixl_capi_agent_t agent, const char* remote_agent, 
+nixl_capi_gen_notif(nixl_capi_agent_t agent, const char* remote_agent,
                    const void* data, size_t len, nixl_capi_opt_args_t opt_args)
 {
   if (!agent || !remote_agent) {
@@ -1240,7 +1240,7 @@ nixl_capi_gen_notif(nixl_capi_agent_t agent, const char* remote_agent,
     msg.assign((const char*)data, len);
     
     // Call the C++ function with the correct signature
-    nixl_status_t ret = agent->inner->genNotif(std::string(remote_agent), msg, 
+    nixl_status_t ret = agent->inner->genNotif(std::string(remote_agent), msg,
                                               opt_args ? &opt_args->args : nullptr);
     return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
   }

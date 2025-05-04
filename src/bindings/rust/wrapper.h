@@ -157,7 +157,7 @@ nixl_capi_status_t nixl_capi_create_notif_map(nixl_capi_notif_map_t* notif_map);
 nixl_capi_status_t nixl_capi_destroy_notif_map(nixl_capi_notif_map_t notif_map);
 
 // Send a notification to a remote agent
-nixl_capi_status_t nixl_capi_gen_notif(nixl_capi_agent_t agent, const char* remote_agent, 
+nixl_capi_status_t nixl_capi_gen_notif(nixl_capi_agent_t agent, const char* remote_agent,
                                       const void* data, size_t len, nixl_capi_opt_args_t opt_args);
 
 // Transfer request functions
