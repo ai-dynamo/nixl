@@ -32,7 +32,7 @@ fn main() {
 
     // Check if etcd is enabled via environment variable
     let etcd_enabled = env::var("HAVE_ETCD").map(|v| v != "0").unwrap_or(false);
-    
+
     // Tell cargo to look for shared libraries in the specified directories
     println!("cargo:rustc-link-search={}", nixl_lib_path);
     // Add rpath to embed library path in the binary
@@ -56,7 +56,7 @@ fn main() {
     if etcd_enabled {
         cc_builder.define("HAVE_ETCD", "1");
     }
-    
+
     cc_builder.compile("wrapper");
 
     // Link against NIXL libraries in correct order
