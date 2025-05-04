@@ -17,14 +17,14 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    let nixl_root_path = env::var("NIXL_PREFIX")
-                            .unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
+    let nixl_root_path =
+        env::var("NIXL_PREFIX").unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
     let nixl_include_path = format!("{}/include", nixl_root_path);
     let nixl_lib_path = format!("{}/lib/x86_64-linux-gnu", nixl_root_path);
 
     // Check if etcd is enabled via environment variable
     let etcd_enabled = env::var("HAVE_ETCD").map(|v| v != "0").unwrap_or(false);
-    
+
     // Tell cargo to look for shared libraries in the specified directories
     println!("cargo:rustc-link-search={}", nixl_lib_path);
     // Add rpath to embed library path in the binary
@@ -48,7 +48,7 @@ fn main() {
     if etcd_enabled {
         cc_builder.define("HAVE_ETCD", "1");
     }
-    
+
     cc_builder.compile("wrapper");
 
     // Link against NIXL libraries in correct order
