@@ -1,0 +1,16 @@
+[package]
+name = "nixl-examples"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nixl-sys = { path = "../../src/bindings/rust" }
+clap = { version = "4.4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tokio = { version = "1.36", features = ["full"] }
+chrono = "0.4"
+
+[[bin]]
+name = "single_process_example"
+path = "src/single_process_example.rs"

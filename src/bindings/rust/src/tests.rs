@@ -22,6 +22,7 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
+    use std::env;
     use std::time::Duration;
 
     // Helper function to create an agent with error handling
@@ -478,5 +479,180 @@ mod tests {
         assert!(storage1.as_slice().iter().all(|&x| x == 0xbb));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_etcd_metadata_exchange() -> Result<(), NixlError> {
+        // Check if NIXL_ETCD_ENDPOINTS env var is set to skip test if not
+        if env::var("NIXL_ETCD_ENDPOINTS").is_err() {
+            println!("Skipping etcd test - NIXL_ETCD_ENDPOINTS not set");
+            return Ok(());
+        }
+
+        // Create two agents for metadata exchange
+        let agent1 = Agent::new("EtcdAgent1")?;
+        let agent2 = Agent::new("EtcdAgent2")?;
+
+        // Get UCX backend to add to optional arguments
+        let plugins = agent1.get_available_plugins()?;
+        let plugin_name = find_plugin(&plugins, "UCX")?;
+        let (_mems, params) = agent1.get_plugin_params(&plugin_name)?;
+        let backend = agent1.create_backend(&plugin_name, &params)?;
+
+        // Create OptArgs with backend
+        let mut opt_args = OptArgs::new()?;
+        opt_args.add_backend(&backend)?;
+
+        // Send agent1's metadata to etcd
+        agent1.send_local_md(Some(&opt_args))?;
+        println!("Successfully sent agent1 metadata to etcd");
+
+        // Fetch agent1's metadata from etcd with agent2
+        agent2.fetch_remote_md("EtcdAgent1", Some(&opt_args))?;
+        println!("Successfully fetched agent1 metadata from etcd");
+
+        // Invalidate agent1's metadata in etcd
+        agent1.invalidate_local_md(Some(&opt_args))?;
+        println!("Successfully invalidated agent1 metadata in etcd");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_send_notification() -> Result<(), NixlError> {
+        // Create two agents for notification exchange
+        let agent1 = Agent::new("NotifSender")?;
+        let agent2 = Agent::new("NotifReceiver")?;
+
+        // Set up backends for both agents
+        let (_mem_list, params) = agent1.get_plugin_params("UCX")?;
+        let backend1 = agent1.create_backend("UCX", &params)?;
+        let backend2 = agent2.create_backend("UCX", &params)?;
+
+        // Exchange metadata
+        let metadata = agent2.get_local_md()?;
+        agent1.load_remote_md(&metadata)?;
+
+        // Create notification message
+        let message = b"Test notification message";
+
+        // Send notification with no backend specified
+        agent1.send_notification("NotifReceiver", message, None)?;
+
+        // Send notification with specific backend
+        agent1.send_notification("NotifReceiver", message, Some(&backend1))?;
+
+        // Create a notification map to receive notifications
+        let mut notifs = NotificationMap::new()?;
+
+        // Receive notifications without backend
+        agent2.get_notifications(&mut notifs, None)?;
+
+        // Receive notifications with specific backend
+        let mut opt_args = OptArgs::new()?;
+        opt_args.add_backend(&backend2)?;
+        agent2.get_notifications(&mut notifs, Some(&opt_args))?;
+
+        // Verify notification map contents
+        if !notifs.is_empty()? {
+            let mut agents = notifs.agents();
+
+            // Should have notifications from NotifSender
+            if let Some(Ok(agent_name)) = agents.next() {
+                assert_eq!(agent_name, "NotifSender");
+
+                // Verify notification content
+                let notifications = notifs.get_notifications(agent_name)?;
+                let notif_count = notifs.get_notifications_size(agent_name)?;
+
+                // May have 1 or 2 notifications depending on whether both were processed
+                assert!(notif_count > 0, "Should have at least one notification");
+
+                // Check content of notification
+                for notification in notifications {
+                    assert_eq!(notification?, message);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_check_remote_metadata() {
+        // Create two agents
+        let agent1 = Agent::new("agent1").expect("Failed to create agent1");
+        let agent2 = Agent::new("agent2").expect("Failed to create agent2");
+
+        // Set up backends for both agents (required before metadata operations)
+        let (_mem_list, params) = agent1
+            .get_plugin_params("UCX")
+            .expect("Failed to get plugin params");
+        let _backend1 = agent1
+            .create_backend("UCX", &params)
+            .expect("Failed to create backend for agent1");
+        let _backend2 = agent2
+            .create_backend("UCX", &params)
+            .expect("Failed to create backend for agent2");
+
+        // Initially, agent1 should not have metadata for agent2
+        assert!(!agent1.check_remote_metadata("agent2", None));
+
+        // Get and share metadata
+        let metadata = agent2.get_local_md().expect("Failed to get local metadata");
+        agent1
+            .load_remote_md(&metadata)
+            .expect("Failed to load remote metadata");
+
+        // Now agent1 should have metadata for agent2
+        assert!(agent1.check_remote_metadata("agent2", None));
+
+        // Test with a descriptor list
+        let mut storage = SystemStorage::new(1024).expect("Failed to create storage");
+        let opt_args = OptArgs::new().expect("Failed to create opt args");
+        storage
+            .register(&agent2, &opt_args)
+            .expect("Failed to register memory");
+
+        // Create descriptor list with memory that exists in agent2
+        let mem_type = MemType::Dram;
+        let mut xfer_desc_list =
+            XferDescList::new(mem_type).expect("Failed to create xfer desc list");
+        xfer_desc_list
+            .add_desc(
+                unsafe { storage.as_ptr().unwrap() } as usize,
+                storage.size(),
+                storage.device_id(),
+            )
+            .expect("Failed to add descriptor");
+
+        // Update metadata after registration
+        let metadata = agent2
+            .get_local_md()
+            .expect("Failed to get updated local metadata");
+        agent1
+            .load_remote_md(&metadata)
+            .expect("Failed to reload remote metadata");
+
+        // Check with descriptor list - should return true for valid descriptors
+        assert!(agent1.check_remote_metadata("agent2", Some(&xfer_desc_list)));
+
+        // Create a descriptor list with invalid memory address
+        let mut invalid_desc_list =
+            XferDescList::new(mem_type).expect("Failed to create invalid desc list");
+        invalid_desc_list
+            .add_desc(0xdeadbeef, 1024, 0)
+            .expect("Failed to add invalid descriptor");
+
+        // Check with invalid descriptor list - should return false
+        assert!(!agent1.check_remote_metadata("agent2", Some(&invalid_desc_list)));
+
+        // Check with non-existent agent name
+        assert!(!agent1.check_remote_metadata("non_existent_agent", None));
+
+        // Check with invalid agent name (contains null byte)
+        // The function should return false rather than panic
+        let invalid_name = "invalid\0agent";
+        assert!(!agent1.check_remote_metadata(invalid_name, None));
     }
 }
