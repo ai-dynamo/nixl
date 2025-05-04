@@ -26,6 +26,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ip", type=str, required=True)
     parser.add_argument("--port", type=int, default=5555)
+    parser.add_argument("--use_cuda", type=bool, default=False)
     parser.add_argument(
         "--mode",
         type=str,
@@ -47,10 +48,19 @@ if __name__ == "__main__":
 
     # Allocate memory and register with NIXL
     agent = nixl_agent(args.mode, config)
-    if args.mode == "target":
+    if args.mode == "target" and args.use_cuda:
+        tensors = [
+            torch.ones(10, dtype=torch.float32, device="cuda:0") for _ in range(2)
+        ]
+    elif args.use_cuda:
+        tensors = [
+            torch.zeros(10, dtype=torch.float32, device="cuda:0") for _ in range(2)
+        ]
+    elif args.mode == "target" and not args.use_cuda:
         tensors = [torch.ones(10, dtype=torch.float32) for _ in range(2)]
     else:
         tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]
+
     print(f"{args.mode} Tensors: {tensors}")
 
     reg_descs = agent.register_memory(tensors)
