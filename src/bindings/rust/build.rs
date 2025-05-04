@@ -30,13 +30,17 @@ fn main() {
 
     let nixl_lib_path = format!("{}/lib/{}-linux-gnu", nixl_root_path, arch);
 
+    // Check if etcd is enabled via environment variable
+    let etcd_enabled = env::var("HAVE_ETCD").map(|v| v != "0").unwrap_or(false);
+    
     // Tell cargo to look for shared libraries in the specified directories
     println!("cargo:rustc-link-search={}", nixl_lib_path);
     // Add rpath to embed library path in the binary
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", nixl_lib_path);
 
     // Build the C++ wrapper
-    cc::Build::new()
+    let mut cc_builder = cc::Build::new();
+    cc_builder
         .cpp(true)
         .compiler("g++") // Ensure we're using the C++ compiler
         .file("wrapper.cpp")
@@ -46,10 +50,20 @@ fn main() {
         // Change ABI flag if necessary to match your precompiled libraries:
         //    .flag("-D_GLIBCXX_USE_CXX11_ABI=0")
         .flag("-Wno-unused-parameter")
-        .flag("-Wno-unused-variable")
-        .compile("wrapper");
+        .flag("-Wno-unused-variable");
+
+    // Define HAVE_ETCD if etcd is enabled
+    if etcd_enabled {
+        cc_builder.define("HAVE_ETCD", "1");
+    }
+    
+    cc_builder.compile("wrapper");
 
     // Link against NIXL libraries in correct order
+    // Only link against etcd-cpp-api if it's enabled
+    if etcd_enabled {
+        println!("cargo:rustc-link-lib=dylib=etcd-cpp-api");
+    }
     println!("cargo:rustc-link-lib=dylib=stream");
     println!("cargo:rustc-link-lib=dylib=nixl_common");
     println!("cargo:rustc-link-lib=dylib=nixl");
@@ -60,8 +74,10 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=stdc++");
 
     // Tell cargo to invalidate the built crate whenever the wrapper changes
+    println!("cargo:rustc-link-search=native={}", nixl_lib_path);
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=wrapper.cpp");
+    println!("cargo:rerun-if-env-changed=HAVE_ETCD");
 
     // Get the output path for bindings
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
