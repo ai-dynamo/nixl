@@ -1238,7 +1238,7 @@ nixl_capi_gen_notif(nixl_capi_agent_t agent, const char* remote_agent,
     // Create a blob from the data
     nixl_blob_t msg;
     msg.assign((const char*)data, len);
-    
+
     // Call the C++ function with the correct signature
     nixl_status_t ret = agent->inner->genNotif(std::string(remote_agent), msg,
                                               opt_args ? &opt_args->args : nullptr);
