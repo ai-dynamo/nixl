@@ -23,10 +23,10 @@ namespace nixlTime {
 
     using namespace std::chrono;
 
-    typedef uint64_t ns_t;
-    typedef uint64_t us_t;
-    typedef uint64_t ms_t;
-    typedef uint64_t sec_t;
+    using ns_t = uint64_t;
+    using us_t = uint64_t;
+    using ms_t = uint64_t;
+    using sec_t = uint64_t;
 
     static inline ns_t getNs() {
         return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();

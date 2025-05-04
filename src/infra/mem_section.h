@@ -27,9 +27,9 @@
 #include "nixl.h"
 #include "backend/backend_engine.h"
 
-typedef std::pair<nixl_mem_t, nixlBackendEngine*>              section_key_t;
-typedef std::set<nixlBackendEngine*>                           backend_set_t;
-typedef std::unordered_map<nixl_backend_t, nixlBackendEngine*> backend_map_t;
+using section_key_t = std::pair<nixl_mem_t, nixlBackendEngine*>;
+using backend_set_t = std::set<nixlBackendEngine*>;
+using backend_map_t = std::unordered_map<nixl_backend_t, nixlBackendEngine*>;
 
 /**
  * @brief Section descriptor for nixl
@@ -58,8 +58,8 @@ public:
     }
 };
 
-typedef nixlDescList<nixlSectionDesc>               nixl_sec_dlist_t;
-typedef std::map<section_key_t, nixl_sec_dlist_t*>  section_map_t;
+using nixl_sec_dlist_t = nixlDescList<nixlSectionDesc>;
+using section_map_t = std::map<section_key_t, nixl_sec_dlist_t*>;
 
 class nixlMemSection {
     protected:

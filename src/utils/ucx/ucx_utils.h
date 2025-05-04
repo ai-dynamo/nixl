@@ -24,12 +24,13 @@ extern "C"
 
 #include "nixl.h"
 
-typedef enum {
+enum nixl_ucx_mt_t {
     NIXL_UCX_MT_SINGLE,
     NIXL_UCX_MT_CTX,
     NIXL_UCX_MT_WORKER,
     NIXL_UCX_MT_MAX
-} nixl_ucx_mt_t;
+};
+
 class nixlUcxEp {
 private:
     ucp_ep_h  eph;
@@ -56,7 +57,7 @@ public:
     friend class nixlUcxWorker;
 };
 
-typedef void * nixlUcxReq;
+using nixlUcxReq = void*;
 
 class nixlUcxContext {
 private:
@@ -65,7 +66,7 @@ private:
     nixl_ucx_mt_t mt_type;
 public:
 
-    typedef void req_cb_t(void *request);
+    using req_cb_t = void(void *request);
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
                    nixl_ucx_mt_t mt_type);

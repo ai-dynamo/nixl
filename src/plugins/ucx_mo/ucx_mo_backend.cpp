@@ -78,7 +78,7 @@ private:
         }
     };
 
-    typedef std::vector<std::vector<dlMatrixElem>> dl_matrix_t;
+    using dl_matrix_t = std::vector<std::vector<dlMatrixElem>>;
 
     dl_matrix_t dlMatrix;
 
