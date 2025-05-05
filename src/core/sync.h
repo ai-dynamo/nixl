@@ -19,29 +19,66 @@
 #include "common/util.h"
 #include "nixl_params.h"
 #include "absl/synchronization/mutex.h"
+#include <shared_mutex>
 
 class nixlLock {
     public:
-        nixlLock(const nixl_thread_sync_t sync_mode): syncMode(sync_mode)
-        {}
+        nixlLock(const nixl_thread_sync_t sync_mode) {
+            switch (sync_mode) {
+            case nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE:
+                lock_cb = unlock_cb = lock_shared_cb = unlock_shared_cb = []() {};
+                break;
+            case nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT:
+                lock_cb = lock_shared_cb = [this]() {
+                    m.Lock();
+                };
+                unlock_cb = unlock_shared_cb = [this]() {
+                    m.Unlock();
+                };
+                break;
+            case nixl_thread_sync_t::NIXL_THREAD_SYNC_RW:
+                lock_cb = [this]() {
+                    m.Lock();
+                };
+                unlock_cb = [this]() {
+                    m.Unlock();
+                };
+                lock_shared_cb = [this]() {
+                    m.ReaderLock();
+                };
+                unlock_shared_cb = [this]() {
+                    m.ReaderUnlock();
+                };
+                break;
+            }
+        }
 
         void lock() {
-            if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) {
-                m.Lock();
-            }
+            lock_cb();
+        }
+
+        void lock_shared() {
+            lock_shared_cb();
         }
 
         void unlock() {
-            if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) {
-                m.Unlock();
-            }
+            unlock_cb();
+        }
+
+        void unlock_shared() {
+            unlock_shared_cb();
         }
 
     private:
-        nixl_thread_sync_t syncMode;
+        std::function<void()> lock_cb;
+        std::function<void()> unlock_cb;
+        std::function<void()> lock_shared_cb;
+        std::function<void()> unlock_shared_cb;
+
         absl::Mutex m;
 };
 
 #define NIXL_LOCK_GUARD(lock) const std::lock_guard<nixlLock> UNIQUE_NAME(lock_guard) (lock)
+#define NIXL_SHARED_LOCK_GUARD(lock) const std::shared_lock<nixlLock> UNIQUE_NAME(lock_guard) (lock)
 
 #endif /* SYNC_H */
