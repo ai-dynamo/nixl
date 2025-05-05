@@ -30,7 +30,7 @@ protected:
     uint64_t dev_id = 0;
 
     nixlAgent createAgent() {
-        nixlAgentConfig cfg(false, false, 0, 0, 100000, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+        nixlAgentConfig cfg(false, false, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
         return nixlAgent("test_agent", cfg);
     }
 
