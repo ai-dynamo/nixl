@@ -19,6 +19,7 @@
 #include "common/util.h"
 #include "nixl_params.h"
 #include "absl/synchronization/mutex.h"
+#include <shared_mutex>
 
 class nixlLock {
     public:
@@ -26,14 +27,30 @@ class nixlLock {
         {}
 
         void lock() {
-            if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) {
+            if (syncMode != nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE) {
                 m.Lock();
             }
         }
 
+        void lock_shared() {
+            if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) {
+                m.Lock();
+            } else if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_RW) {
+                m.ReaderLock();
+            }
+        }
+
         void unlock() {
+            if (syncMode != nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE) {
+                m.Unlock();
+            }
+        }
+
+        void unlock_shared() {
             if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) {
                 m.Unlock();
+            } else if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_RW) {
+                m.ReaderUnlock();
             }
         }
 
@@ -43,5 +60,6 @@ class nixlLock {
 };
 
 #define NIXL_LOCK_GUARD(lock) const std::lock_guard<nixlLock> UNIQUE_NAME(lock_guard) (lock)
+#define NIXL_SHARED_LOCK_GUARD(lock) const std::shared_lock<nixlLock> UNIQUE_NAME(lock_guard) (lock)
 
 #endif /* SYNC_H */
