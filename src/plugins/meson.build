@@ -18,6 +18,14 @@ ucx_backend_inc_dirs = include_directories('./ucx')
 subdir('ucx')
 subdir('ucx_mo')
 
+liburing_dep = dependency('liburing', required: false)
+
+if liburing_dep.found()
+    subdir('posix')
+else
+    message('liburing dependency not found, will not build POSIX backend')
+endif
+
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and cuda_dep.found()
     subdir('cuda_gds')
