@@ -38,6 +38,7 @@ class xferBenchWorker {
         std::string getName() const;
         bool isInitiator();
         bool isTarget();
+        int synchronize();
         bool signaled() const { return terminate != 0; }
         static void signalHandler(int signal);
 
