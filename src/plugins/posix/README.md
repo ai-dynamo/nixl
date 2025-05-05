@@ -21,3 +21,22 @@ This plugin uses liburing as an I/O backend for NIXL.
 
 # Install
 sudo apt install liburing-dev
+
+# Running with Docker
+Docker by default blocks io_uring syscalls to the host system. These need to be explicitly enabled when running NIXL agents that use the posix plugin in Docker.
+
+## Create a seccomp json file
+
+```bash
+$> wget https://github.com/moby/moby/blob/master/profiles/seccomp/default.json
+
+# Add the following to the section, syscalls:names in default.json
+# "io_uring_setup",
+# "io_uring_enter",
+# "io_uring_register",
+# "io_uring_sync"
+
+# Run docker with the new seccomp json file
+
+$> docker run --security-opt seccomp=default.json -it --runtime=runc ... <imageid>
+```
