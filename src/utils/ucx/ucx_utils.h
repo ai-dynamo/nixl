@@ -71,7 +71,9 @@ public:
                    nixl_ucx_mt_t mt_type);
     ~nixlUcxContext();
 
-    static bool mtLevelIsSupproted(nixl_ucx_mt_t mt_type);
+    /* Query */
+    static bool mtLevelIsSupported(nixl_ucx_mt_t mt_type);
+    static bool multiGpuCtxSupported();
 
     friend class nixlUcxWorker;
 };

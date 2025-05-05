@@ -24,7 +24,7 @@
 using namespace std;
 
 
-bool nixlUcxContext::mtLevelIsSupproted(nixl_ucx_mt_t mt_type)
+bool nixlUcxContext::mtLevelIsSupported(nixl_ucx_mt_t mt_type)
 {
     ucp_lib_attr_t attr;
     attr.field_mask = UCP_LIB_ATTR_FIELD_MAX_THREAD_LEVEL;
@@ -41,6 +41,25 @@ bool nixlUcxContext::mtLevelIsSupproted(nixl_ucx_mt_t mt_type)
         abort();
     }
     return false;
+}
+
+
+bool nixlUcxContext::multiGpuCtxSupported()
+{
+    static unsigned multiGpuVer[] = {1, 19, 0};
+    unsigned ver[3];
+    ucp_get_version(&ver[0], &ver[1], &ver[2]);
+
+    for(int i = 0; i < 3; i++) {
+        if(ver[i] < multiGpuVer[i]) {
+            return false;
+        } else if (ver[i] > multiGpuVer[i]) {
+            return true;
+        }
+    }
+
+    /* Exact match */
+    return true;
 }
 
 nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,

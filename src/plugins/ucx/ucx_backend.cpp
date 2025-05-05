@@ -305,19 +305,21 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     std::vector<std::string> devs; /* Empty vector */
     uint64_t                 n_addr;
     nixl_b_params_t* custom_params = init_params->customParams;
+    nixl_ucx_mt_t mt_type = NIXL_UCX_MT_SINGLE;
 
     if (init_params->enableProgTh) {
-        if (!nixlUcxContext::mtLevelIsSupproted(NIXL_UCX_MT_WORKER)) {
+        if (!nixlUcxContext::mtLevelIsSupported(NIXL_UCX_MT_WORKER)) {
             this->initErr = true;
             return;
         }
+        mt_type = NIXL_UCX_MT_WORKER;
     }
 
     if (custom_params->count("device_list")!=0)
         devs = str_split((*custom_params)["device_list"], ", ");
 
     uc = new nixlUcxContext(devs, sizeof(nixlUcxIntReq),
-                           _internalRequestInit, _internalRequestFini, NIXL_UCX_MT_WORKER);
+                           _internalRequestInit, _internalRequestFini, mt_type);
     uw = new nixlUcxWorker(uc);
     uw->epAddr(n_addr, workerSize);
     workerAddr = (void*) n_addr;
@@ -334,12 +336,29 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     }
 
     // Temp fixup
-    if (getenv("NIXL_DISABLE_CUDA_ADDR_WA")) {
-        std::cout << "WARNING: disabling CUDA address workaround" << std::endl;
-        cudaAddrWA = false;
-    } else {
-        cudaAddrWA = true;
+    bool forcedWA = false;
+    if (getenv("NIXL_CUDA_ADDR_WA")) {
+        std::string force(getenv("NIXL_CUDA_ADDR_WA"));
+        if (force == std::string("on")) {
+            cudaAddrWA = true;
+            forcedWA = true;
+        } else if (force == std::string("off")) {
+            cudaAddrWA = false;
+            forcedWA = true;
+        }
+        std::cout << "WARNING: CUDA address workaround was set to:" << cudaAddrWA << std::endl;
     }
+
+    if (!forcedWA) {
+        /* Default WA selection policy */
+        if (nixlUcxContext::multiGpuCtxSupported()) {
+            // WorkAround is not required
+            cudaAddrWA = false;
+        } else {
+            cudaAddrWA = true;
+        }
+    }
+
     progressThreadStart();
 }
 
