@@ -50,6 +50,7 @@ private:
 
     int my_rank; // Rank information
     int global_size;
+    uint64_t barrier_gen;
     int *terminate;
 
     bool error() const { return terminate != nullptr && *terminate; };
