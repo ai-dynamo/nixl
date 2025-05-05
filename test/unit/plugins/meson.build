@@ -1,4 +1,3 @@
-
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -16,6 +15,7 @@
 
 subdir('ucx')
 subdir('ucx_mo')
+subdir('posix')
 
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend

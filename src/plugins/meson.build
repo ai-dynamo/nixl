@@ -22,6 +22,14 @@ if not get_option('disable_mooncake_backend')
     subdir('mooncake')
 endif
 
+liburing_dep = dependency('liburing', required: false)
+
+if liburing_dep.found()
+    subdir('posix')
+else
+    message('liburing dependency not found, will not build POSIX backend')
+endif
+
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and cuda_dep.found()
     subdir('cuda_gds')
