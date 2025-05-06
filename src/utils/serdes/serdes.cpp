@@ -33,7 +33,7 @@ void nixlSerDes::_stringToBytes(void* fill_buf, const std::string &s, ssize_t si
 }
 
 // Strings serialization
-nixl_status_t nixl
+nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str){
 
     size_t len = str.size();
 
