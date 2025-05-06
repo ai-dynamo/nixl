@@ -116,8 +116,7 @@ nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len)
 
 /* Ser/Des buffer management */
 std::string nixlSerDes::exportStr() const {
-	std::string ret_str = workingStr;
-    return ret_str;
+    return workingStr;
 }
 
 nixl_status_t nixlSerDes::importStr(const std::string &sdbuf) {
