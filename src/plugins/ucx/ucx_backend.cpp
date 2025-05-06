@@ -17,6 +17,8 @@
 #include "ucx_backend.h"
 #include "serdes/serdes.h"
 
+#include <optional>
+
 #ifdef HAVE_CUDA
 
 #include <cuda_runtime.h>
@@ -244,7 +246,21 @@ private:
     nixlUcxIntReq head;
     nixlUcxWorker* uw;
 
+    // Notification to be sent after completion of all requests
+    std::optional<std::pair<std::string,std::string>> notif;
+
 public:
+    void notif_schedule(const std::string& agent,
+                        const std::string& message) {
+        notif = std::make_pair(agent, message);
+    }
+
+    std::pair<const std::string&,const std::string&> notif_args() const {
+        return {notif.value().first, notif.value().second};
+    }
+
+    bool notif_pending() const { return notif.has_value(); }
+    void notif_consume() { notif.reset(); }
 
     nixlUcxBackendH(nixlUcxWorker* _uw){
         uw = _uw;
@@ -861,8 +877,6 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        // TODO: remote_agent and msg should be cached in nixlUCxReq or another way
-
         switch (operation) {
         case NIXL_READ:
             ret = uw->read(rmd->conn.ep, (uint64_t) raddr, rmd->rkey, laddr, lmd->mem, lsize, req);
@@ -879,27 +893,43 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
         }
     }
 
+    /*
+     * Flush keeps intHandle non-empty until the operation is actually
+     * completed, which can happen after local requests completion.
+     */
     rmd = (nixlUcxPublicMetadata*) remote[0].metadataP;
     ret = uw->flushEp(rmd->conn.ep, req);
     if (_retHelper(ret, intHandle, req)) {
         return ret;
     }
 
-    if(opt_args && opt_args->hasNotif) {
-        ret = notifSendPriv(remote_agent, opt_args->notifMsg, req);
-        if (_retHelper(ret, intHandle, req)) {
-            return ret;
+    ret = intHandle->status();
+    if (opt_args && opt_args->hasNotif) {
+        if (ret == NIXL_SUCCESS) {
+            ret = notifSendPriv(remote_agent, opt_args->notifMsg, req);
+            _retHelper(ret, intHandle, req);
+        } else if (ret == NIXL_IN_PROG) {
+            intHandle->notif_schedule(remote_agent, opt_args->notifMsg);
         }
     }
 
-    return intHandle->status();
+    return ret;
 }
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    nixl_status_t status = intHandle->status();
 
-    return intHandle->status();
+    if (status == NIXL_SUCCESS && intHandle->notif_pending()) {
+        nixlUcxReq req;
+        const auto& [remote_agent, msg] = intHandle->notif_args();
+        status = notifSendPriv(remote_agent, msg, req);
+        intHandle->notif_consume();
+        _retHelper(status, intHandle, req);
+    }
+
+    return status;
 }
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle)
