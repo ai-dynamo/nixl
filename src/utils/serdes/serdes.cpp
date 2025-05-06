@@ -32,8 +32,8 @@ void nixlSerDes::_stringToBytes(void* fill_buf, const std::string &s, ssize_t si
     s.copy(reinterpret_cast<char*>(fill_buf), size);
 }
 
-/* Ser/Des for Strings */
-nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str){
+// Strings serialization
+nixl_status_t nixl
 
     size_t len = str.size();
 
@@ -70,7 +70,7 @@ std::string nixlSerDes::getStr(const std::string &tag){
     return ret;
 }
 
-/* Ser/Des for Byte buffers */
+// Byte buffers serialization
 nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_t len){
 
     workingStr.append(tag);
@@ -114,7 +114,7 @@ nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len)
     return NIXL_SUCCESS;
 }
 
-/* Ser/Des buffer management */
+// Buffer management serialization
 std::string nixlSerDes::exportStr() const {
     return workingStr;
 }
