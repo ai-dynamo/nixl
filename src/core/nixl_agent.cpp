@@ -72,6 +72,8 @@ nixlAgentData::nixlAgentData(const std::string &name,
         NIXL_DEBUG << "NIXL ETCD is disabled";
     }
 #endif // HAVE_ETCD
+    if (name.empty())
+        throw std::invalid_argument("Agent needs a name");
 
     memorySection = new nixlLocalSection();
 }
@@ -98,13 +100,9 @@ nixlAgentData::~nixlAgentData() {
 }
 
 /*** nixlAgent implementation ***/
-nixlAgent::nixlAgent(const std::string &name,
-                     const nixlAgentConfig &cfg) {
-    if (name.size() == 0)
-        throw std::invalid_argument("Agent needs a name");
-
-    data = new nixlAgentData(name, cfg);
-
+nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
+    data(std::make_unique<nixlAgentData>(name, cfg))
+{
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
         if(my_port == 0) my_port = default_comm_port;
@@ -114,12 +112,13 @@ nixlAgent::nixlAgent(const std::string &name,
 
     if (data->useEtcd || cfg.useListenThread) {
         data->commThreadStop = false;
-        data->commThread = std::thread(&nixlAgentData::commWorker, data, this);
+        data->commThread =
+            std::thread(&nixlAgentData::commWorker, data.get(), this);
     }
 }
 
 nixlAgent::~nixlAgent() {
-    if (data->useEtcd || data->config.useListenThread) {
+    if (data && (data->useEtcd || data->config.useListenThread)) {
         data->commThreadStop = true;
         if(data->commThread.joinable()) data->commThread.join();
 
@@ -127,9 +126,11 @@ nixlAgent::~nixlAgent() {
             if(data->listener) delete data->listener;
         }
     }
-
-    delete data;
 }
+
+// Define move operations in CPP file to avoid exposing nixlAgentData in header
+nixlAgent::nixlAgent(nixlAgent &&other) noexcept = default;
+nixlAgent& nixlAgent::operator=(nixlAgent &&other) noexcept = default;
 
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {

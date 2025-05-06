@@ -24,6 +24,7 @@
 #include "nixl_types.h"
 #include "nixl_params.h"
 #include "nixl_descriptors.h"
+#include <memory>
 
 /**
  * @class nixlAgent
@@ -32,7 +33,7 @@
 class nixlAgent {
     private:
         /** @var  data  The members in agent class wrapped into single nixlAgentData member. */
-        nixlAgentData* data;
+        std::unique_ptr<nixlAgentData> data;
 
     public:
         /*** Initialization and Registering Methods ***/
@@ -49,6 +50,10 @@ class nixlAgent {
          * @brief Destructor for nixlAgent object
          */
         ~nixlAgent ();
+
+        /* Declare move operations (needed because we declared a destructor) */
+        nixlAgent(nixlAgent&&) noexcept;
+        nixlAgent &operator=(nixlAgent&&) noexcept;
 
         /**
          * @brief  Discover the available supported plugins found in the plugin paths

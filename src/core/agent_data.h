@@ -96,6 +96,7 @@ class nixlAgentData {
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
 
+    public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();
 
