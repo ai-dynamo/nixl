@@ -20,14 +20,14 @@
 
 // Plugin version information
 static const char* PLUGIN_NAME = "UCX";
-static const char* PLUGIN_VERSION = "0.2.0";
+static const char* PLUGIN_VERSION = "0.1.0";
 
 // Function to create a new UCX backend engine instance
-static nixlBackendEngine* create_engine(const nixlBackendInitParams* init_params) {
+static nixlBackendEngine* create_ucx_engine(const nixlBackendInitParams* init_params) {
     return new nixlUcxEngine(init_params);
 }
 
-static void destroy_engine(nixlBackendEngine *engine) {
+static void destroy_ucx_engine(nixlBackendEngine *engine) {
     delete engine;
 }
 
@@ -59,8 +59,8 @@ static nixl_mem_list_t get_backend_mems() {
 // Static plugin structure
 static nixlBackendPlugin plugin = {
     NIXL_PLUGIN_API_VERSION,
-    create_engine,
-    destroy_engine,
+    create_ucx_engine,
+    destroy_ucx_engine,
     get_plugin_name,
     get_plugin_version,
     get_backend_options,
