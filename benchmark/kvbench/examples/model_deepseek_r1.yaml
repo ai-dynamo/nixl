@@ -1,0 +1,8 @@
+model: 'DEEPSEEK_R1'
+num_layers: 61
+num_query_heads: 128
+query_head_dimension: 128
+embedding_dimension: 7168
+rope_mla_dimension: 64
+mla_latent_vector_dimension: 512
+num_model_params: 671000000000
