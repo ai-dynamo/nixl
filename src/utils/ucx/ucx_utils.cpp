@@ -262,6 +262,29 @@ int nixlUcxWorker::disconnect_nb(nixlUcxEp &ep)
     return 0;
 }
 
+int nixlUcxWorker::disconnect_nb_force(nixlUcxEp &ep)
+{
+    ucs_status_ptr_t request = ucp_ep_close_nb(ep.eph, UCP_EP_CLOSE_MODE_FORCE);
+
+    if (UCS_PTR_IS_ERR(request)) {
+        //TODO: proper cleanup
+        //if (UCS_PTR_IS_ERR(request)) {
+        //    MSW_NET_ERROR(priv->net, "ucp_disconnect_nb() failed: %s",
+        //                 ucs_status_string(UCS_PTR_STATUS(request)));
+        //    return -1;
+        //}
+        return -1;
+    }
+
+    if (request) {
+        //don't care
+        ucp_request_free(request);
+    }
+
+    return 0;
+}
+
+
 /* ===========================================
  * Memory management
  * =========================================== */

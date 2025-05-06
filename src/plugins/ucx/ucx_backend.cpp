@@ -466,6 +466,10 @@ nixlUcxEngine::~nixlUcxEngine () {
         return;
     }
 
+    // One-sided, asynchronous disconnect in destructor
+    for (auto& pair : remoteConnMap)
+        uw->disconnect_nb_force(pair.second.ep);
+
     progressThreadStop();
     vramFiniCtx();
     delete uw;

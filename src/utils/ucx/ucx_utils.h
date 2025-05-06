@@ -92,6 +92,7 @@ public:
     int connect(void* addr, size_t size, nixlUcxEp &ep);
     int disconnect(nixlUcxEp &ep);
     int disconnect_nb(nixlUcxEp &ep);
+    int disconnect_nb_force(nixlUcxEp &ep);
 
     /* Memory management */
     int memReg(void *addr, size_t size, nixlUcxMem &mem);
