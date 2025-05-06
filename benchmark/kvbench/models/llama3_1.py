@@ -1,4 +1,5 @@
 from models.models import BaseModelArch
+from config.model_config import ModelConfig
 from typing import Any, Dict
 import yaml
 
@@ -10,7 +11,7 @@ class Llama3_1(BaseModelArch):
     to access its parameters and configuration.
     """
     
-    def __init__(self, model: str, num_layers: int,
+    def __init__(self, model: str, model_config: ModelConfig, num_layers: int,
                 num_query_heads_with_mha: int,
                 query_head_dimension: int,
                 gqa_num_queries_in_group: int,
@@ -27,6 +28,7 @@ class Llama3_1(BaseModelArch):
             num_model_params (int): Total number of model parameters.
         """
         self.model = model
+        self.model_config = model_config
         self.num_layers = num_layers
         self.num_query_heads_with_mha = num_query_heads_with_mha
         self.query_head_dimension = query_head_dimension
@@ -34,12 +36,21 @@ class Llama3_1(BaseModelArch):
         self.num_model_params = num_model_params
         self.model_dimension = self.num_query_heads_with_mha * self.query_head_dimension
 
-    def get_kv_size(self) -> int:
+    def get_kv_size_per_token(self) -> int:
         """
-        Get the key-value cache size for the Llama 3.1 model.
+        Get the key-value cache size for the Llama 3.1 model (per token).
         
         Returns:
             int: The size of the key-value cache, currently hardcoded to 1.
+        """
+        return 1
+
+    def get_io_size(self) -> int:
+        """
+        Get the input/output size for the Llama 3.1 model.
+        
+        Returns:
+            int: The size of the input/output cache, currently hardcoded to 1.
         """
         return 1
 
