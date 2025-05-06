@@ -74,6 +74,9 @@ def test_empty_agent_name():
         nixl_agent("")
 
 
+# This test passses locally, but fails in CI because GDS is confused about CUDA installation.
+# Skipping until we have a CI that is compatible with GDS.
+@pytest.mark.skip
 def test_instantiate_all():
     agent1 = nixl_agent("test", nixl_conf=None, instantiate_all=True)
 
