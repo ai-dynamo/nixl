@@ -22,14 +22,29 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GitHub Release](https://img.shields.io/github/v/release/ai-dynamo/nixl)](https://github.com/ai-dynamo/nixl/releases/latest)
 
-## Prerequisites
+## Pre-build Distributions
+### PyPI Wheel
+
+The nixl python API and libraries, including UCX, are available directly through PyPI:
+
+```
+pip install nixl
+```
+
+## Prerequisites for source build
 ### Ubuntu:
 
 `$ sudo apt install build-essential cmake pkg-config`
 
+If you want to build POSIX plugin:
+`$ sudo apt install liburing-dev`
+
 ### Fedora:
 
 `$ sudo dnf install gcc-c++ cmake pkg-config`
+
+If you want to build POSIX plugin:
+`$ sudo dnf install liburing-devel`
 
 ### Python
 
@@ -195,7 +210,7 @@ NIXL can use ETCD for metadata exchange between distributed nodes. This is espec
 To use ETCD with NIXL, set the following environment variables:
 
 ```bash
-# Set ETCD endpoints (required)
+# Set ETCD endpoints (required) - replace localhost with the hostname of the etcd server
 export NIXL_ETCD_ENDPOINTS="http://localhost:2379"
 
 # Set ETCD namespace (optional, defaults to /nixl/agents)
@@ -209,6 +224,8 @@ NIXL includes an example demonstrating metadata exchange and data transfer using
 # Start an ETCD server if not already running
 # For example:
 # docker run -d -p 2379:2379 quay.io/coreos/etcd:v3.5.1
+
+# Set the ETCD env variables as above
 
 # Run the example. The two agents in the example will exchange metadata through ETCD
 # and perform data transfers

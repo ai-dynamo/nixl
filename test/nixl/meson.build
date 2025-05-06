@@ -13,32 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [nixl_inc_dirs, '../../src/plugins/ucx'])
-
-if cuda_dep.found()
-    cuda_dependencies = [cuda_dep]
-    cpp_args = '-DUSE_VRAM'
-else
-    cuda_dependencies = []
-    cpp_args = '-UUSE_VRAM'
-endif
+ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/plugins/ucx'])
 
 desc_example = executable('desc_example',
            'desc_example.cpp',
-           dependencies: [nixl_dep, cuda_dependencies, nixl_infra],
+           dependencies: [nixl_dep, nixl_infra],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            link_with: [serdes_lib],
            install: true)
 
 agent_example = executable('agent_example',
            'agent_example.cpp',
-           dependencies: [nixl_dep, nixl_infra, ucx_backend_dep, ucx_dep] + cuda_dependencies,
+           dependencies: [nixl_dep, nixl_infra],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            link_with: [serdes_lib],
            install: true)
 
-nixl_ucx_app  = executable('nixl_test', 'nixl_test.cpp',
-                           dependencies: [nixl_dep, nixl_infra, stream_interface] + cuda_dependencies,
+nixl_test_app  = executable('nixl_test', 'nixl_test.cpp',
+                           dependencies: [nixl_dep, nixl_infra, stream_interface],
                            include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/utils/serdes'],
                            link_with: [serdes_lib], install: true)
 

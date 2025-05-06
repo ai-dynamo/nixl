@@ -31,7 +31,7 @@ endif
 
 
 disable_gds_backend = get_option('disable_gds_backend')
-if not disable_gds_backend and cuda_dep.found()
+if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
 endif
 
@@ -40,6 +40,7 @@ nixl_lib = library('nixl',
                    'nixl_plugin_manager.cpp',
                    'nixl_listener.cpp',
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
+                   link_args: ['-lstdc++fs'],
                    dependencies: nixl_lib_deps,
                    install: true)
 
