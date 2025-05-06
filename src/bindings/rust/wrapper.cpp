@@ -66,6 +66,11 @@ struct nixl_capi_xfer_dlist_s {
   nixl_xfer_dlist_t* dlist;
 };
 
+// Internal struct for descriptor list handle
+struct nixl_capi_xfer_dlist_handle_s {
+  nixlDlistH* dlist;
+};
+
 struct nixl_capi_reg_dlist_s {
   nixl_reg_dlist_t* dlist;
 };
@@ -1238,7 +1243,77 @@ nixl_capi_deregister_mem(nixl_capi_agent_t agent, nixl_capi_reg_dlist_t dlist, n
   }
 }
 
+nixl_capi_status_t nixl_capi_agent_make_connection(
+    nixl_capi_agent_t agent, const char* remote_agent, nixl_capi_opt_args_t opt_args)
+{
+  if (!agent || !remote_agent) {
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
+  }
 
+  try { 
+    nixl_status_t ret = agent->inner->makeConnection(std::string(remote_agent), 
+                                                    opt_args ? &opt_args->args : nullptr);
+    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+  }
+  catch (...) {
+    return NIXL_CAPI_ERROR_BACKEND;
+  }
+}
+
+nixl_capi_status_t nixl_capi_agent_prep_xfer_dlist(
+    nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs, 
+    nixl_capi_opt_args_t opt_args, nixl_capi_xfer_dlist_handle_t handle)
+{
+  auto backends = opt_args->args.backends;
+
+  nixl_opt_args_t extra_params;
+
+  if (!agent || !agent_name || !descs) {
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
+  }
+
+  try {
+    for (nixlBackendH* backend : backends) {
+      extra_params.backends.push_back(backend);
+    }
+
+    nixl_status_t ret = agent->inner->prepXferDlist(std::string(agent_name), *descs->dlist, 
+                                                    handle->dlist, &extra_params);
+    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+  }
+  catch (...) {
+    return NIXL_CAPI_ERROR_BACKEND;
+  }
+}
+
+
+nixl_capi_status_t nixl_capi_agent_make_xfer_req(
+    nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation, nixl_capi_xfer_dlist_t local_descs,
+    nixl_capi_xfer_dlist_t remote_descs, const char* remote_agent, nixl_capi_xfer_req_t* req_hndl,
+    nixl_capi_opt_args_t opt_args)
+{
+  if (!agent || !local_descs || !remote_descs || !remote_agent || !req_hndl) {
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
+  }
+
+  try {
+    auto req = new nixl_capi_xfer_req_s;
+    nixl_status_t ret = agent->inner->createXferReq(
+        static_cast<nixl_xfer_op_t>(operation), *local_descs->dlist, *remote_descs->dlist,
+        std::string(remote_agent), req->req, opt_args ? &opt_args->args : nullptr);
+
+    if (ret != NIXL_SUCCESS) {
+      delete req;
+      return NIXL_CAPI_ERROR_BACKEND;
+    }
+
+    *req_hndl = req;
+    return NIXL_CAPI_SUCCESS;
+  }
+  catch (...) {
+    return NIXL_CAPI_ERROR_BACKEND;
+  }
+}
 nixl_capi_status_t
 nixl_capi_create_xfer_req(
     nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation, nixl_capi_xfer_dlist_t local_descs,

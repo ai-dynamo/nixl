@@ -51,6 +51,7 @@ struct nixl_capi_backend_s;
 struct nixl_capi_opt_args_s;
 struct nixl_capi_param_iter_s;
 struct nixl_capi_xfer_dlist_s;
+struct nixl_capi_xfer_dlist_handle_s;
 struct nixl_capi_reg_dlist_s;
 struct nixl_capi_xfer_req_s;
 struct nixl_capi_notif_map_s;
@@ -64,9 +65,16 @@ typedef struct nixl_capi_backend_s* nixl_capi_backend_t;
 typedef struct nixl_capi_opt_args_s* nixl_capi_opt_args_t;
 typedef struct nixl_capi_param_iter_s* nixl_capi_param_iter_t;
 typedef struct nixl_capi_xfer_dlist_s* nixl_capi_xfer_dlist_t;
+typedef struct nixl_capi_xfer_dlist_handle_s* nixl_capi_xfer_dlist_handle_t;
 typedef struct nixl_capi_reg_dlist_s* nixl_capi_reg_dlist_t;
 typedef struct nixl_capi_xfer_req_s* nixl_capi_xfer_req_t;
 typedef struct nixl_capi_notif_map_s* nixl_capi_notif_map_t;
+
+// Transfer request functions
+typedef enum {
+  NIXL_CAPI_XFER_OP_READ = 0,
+  NIXL_CAPI_XFER_OP_WRITE = 1,
+} nixl_capi_xfer_op_t;
 
 // Core API functions
 nixl_capi_status_t nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent);
@@ -136,6 +144,19 @@ nixl_capi_status_t nixl_capi_register_mem(
 nixl_capi_status_t nixl_capi_deregister_mem(
     nixl_capi_agent_t agent, nixl_capi_reg_dlist_t dlist, nixl_capi_opt_args_t opt_args);
 
+nixl_capi_status_t nixl_capi_agent_make_connection(
+    nixl_capi_agent_t agent, const char* remote_agent, nixl_capi_opt_args_t opt_args);
+
+nixl_capi_status_t nixl_capi_agent_prep_xfer_dlist(
+    nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs, 
+    nixl_capi_opt_args_t opt_args, nixl_capi_xfer_dlist_handle_t handle);
+
+nixl_capi_status_t nixl_capi_agent_make_xfer_req(
+    nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation, nixl_capi_xfer_dlist_t local_descs,
+    nixl_capi_xfer_dlist_t remote_descs, const char* remote_agent, nixl_capi_xfer_req_t* req_hndl,
+    nixl_capi_opt_args_t opt_args);
+
+
 // Notification functions
 nixl_capi_status_t nixl_capi_get_notifs(
     nixl_capi_agent_t agent, nixl_capi_notif_map_t notif_map, nixl_capi_opt_args_t opt_args);
@@ -143,12 +164,6 @@ nixl_capi_status_t nixl_capi_get_notifs(
 nixl_capi_status_t nixl_capi_create_notif_map(nixl_capi_notif_map_t* notif_map);
 
 nixl_capi_status_t nixl_capi_destroy_notif_map(nixl_capi_notif_map_t notif_map);
-
-// Transfer request functions
-typedef enum {
-  NIXL_CAPI_XFER_OP_READ = 0,
-  NIXL_CAPI_XFER_OP_WRITE = 1,
-} nixl_capi_xfer_op_t;
 
 nixl_capi_status_t nixl_capi_create_xfer_req(
     nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation, nixl_capi_xfer_dlist_t local_descs,
