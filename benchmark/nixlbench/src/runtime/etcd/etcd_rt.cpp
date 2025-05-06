@@ -28,7 +28,8 @@
 #define ETCD_EP_DEFAULT "http://localhost:2379"
 
 // ETCD Runtime implementation
-xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int size) {
+xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int size,
+                                 int *terminate_input) {
 
     std::string use_etcd_ep = ETCD_EP_DEFAULT;
 
@@ -37,8 +38,9 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
         use_etcd_ep = etcd_endpoints;
     }
 
-    // Namespace for XFER benchmark
-    namespace_prefix = "xferbench/";
+    namespace_prefix = "xferbench/"; // Namespace for XFER benchmark
+    barrier_gen = 0;
+    terminate = terminate_input;
 
     // Connect to ETCD
     try {
@@ -50,7 +52,7 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
     }
 
     // Registration process - get a unique rank
-    std::string lock_key = namespace_prefix + "lock";
+    std::string lock_key = makeKey("lock");
 
     // Try to acquire a lock for registration
     auto lock_response = client->lock(lock_key).get();
@@ -60,7 +62,7 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
     }
 
     // Get the current size - number of processes that have registered
-    auto size_response = client->get(namespace_prefix + "size").get();
+    auto size_response = client->get(makeKey("size")).get();
     if (size_response.error_code() == 0) {
         my_rank = std::stoi(size_response.value().as_string());
     } else {
@@ -71,8 +73,8 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
     global_size = size;
 
     // Update registration information
-    client->put(namespace_prefix + "size", std::to_string(my_rank + 1)).get();
-    client->put(namespace_prefix + "rank/" + std::to_string(my_rank), "active").get();
+    client->put(makeKey("size"), std::to_string(my_rank + 1)).get();
+    client->put(makeKey("rank", my_rank), "active").get();
 
     // Release the lock
     client->unlock(lock_response.lock_key()).get();
@@ -87,19 +89,8 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
 }
 
 xferBenchEtcdRT::~xferBenchEtcdRT() {
-    // Deregister
-    client->rm(namespace_prefix + "rank/" + std::to_string(my_rank)).get();
-
-    // Deregister the size only for rank 0
-    if (my_rank == 0) {
-        client->rm(namespace_prefix + "size").get();
-
-        // Deregister the barrier
-        client->rmdir(namespace_prefix + "barrier", true).get();
-
-        // Deregister namespace prefix
-        client->rmdir(namespace_prefix, true).get();
-    }
+    // All ranks delete, as some could be missing if ETCD state is confused
+    client->rmdir(makeKey(""), true).get();
 }
 
 int xferBenchEtcdRT::getRank() const {
@@ -110,8 +101,8 @@ int xferBenchEtcdRT::getSize() const {
     return global_size;
 }
 
-std::string xferBenchEtcdRT::makeKey(const std::string& operation, int src, int dst,
-                                     xferBenchEtcdMsgType type) {
+std::string xferBenchEtcdRT::makeTypedKey(const std::string& operation, int src,
+                                          int dst, xferBenchEtcdMsgType type) {
     std::stringstream ss;
     ss << namespace_prefix << operation << "+"
        << (type == XFER_BENCH_ETCD_MSG_TYPE_INT ? "int_data" : "char_data") << "/"
@@ -123,7 +114,7 @@ std::string xferBenchEtcdRT::makeKey(const std::string& operation, int src, int 
 int xferBenchEtcdRT::sendInt(int* buffer, int dest_rank) {
     try {
         // Create the message key
-        std::string msg_key = makeKey("msg", my_rank, dest_rank, XFER_BENCH_ETCD_MSG_TYPE_INT);
+        std::string msg_key = makeTypedKey("msg", my_rank, dest_rank, XFER_BENCH_ETCD_MSG_TYPE_INT);
         std::string ack_key = msg_key + "/ack";
 
         // Store the integer value directly as a string
@@ -131,10 +122,9 @@ int xferBenchEtcdRT::sendInt(int* buffer, int dest_rank) {
         client->put(msg_key, value_str).get();
 
         int retries = 0;
-        const int MAX_RETRIES = 60; // 1 minute timeout
         bool ack_received = false;
 
-        while (!ack_received && retries < MAX_RETRIES) {
+        while (!ack_received && should_retry(retries)) {
             auto ack_response = client->get(ack_key).get();
             if (ack_response.error_code() == 0 && ack_response.value().as_string() == "received") {
                 ack_received = true;
@@ -161,15 +151,14 @@ int xferBenchEtcdRT::sendInt(int* buffer, int dest_rank) {
 
 int xferBenchEtcdRT::recvInt(int* buffer, int src_rank) {
     // Create the message key
-    std::string msg_key = makeKey("msg", src_rank, my_rank, XFER_BENCH_ETCD_MSG_TYPE_INT);
+    std::string msg_key = makeTypedKey("msg", src_rank, my_rank, XFER_BENCH_ETCD_MSG_TYPE_INT);
     std::string ack_key = msg_key + "/ack";
 
     // Poll until the data is available (blocking)
     int retries = 0;
-    const int MAX_RETRIES = 60; // 1 minute timeout
     bool data_received = false;
 
-    while (!data_received && retries < MAX_RETRIES) {
+    while (!data_received && should_retry(retries)) {
         auto response = client->get(msg_key).get();
         if (response.error_code() == 0) {
             // Get the value directly as a string
@@ -211,7 +200,7 @@ int xferBenchEtcdRT::recvInt(int* buffer, int src_rank) {
 int xferBenchEtcdRT::sendChar(char* buffer, size_t count, int dest_rank) {
     try {
         // Create the message key and data key
-        std::string msg_key = makeKey("msg", my_rank, dest_rank, XFER_BENCH_ETCD_MSG_TYPE_CHAR);
+        std::string msg_key = makeTypedKey("msg", my_rank, dest_rank, XFER_BENCH_ETCD_MSG_TYPE_CHAR);
         std::string data_key = msg_key + "/data";
         std::string ack_key = msg_key + "/ack";
 
@@ -224,10 +213,9 @@ int xferBenchEtcdRT::sendChar(char* buffer, size_t count, int dest_rank) {
         client->put(msg_key, meta).get();
 
         int retries = 0;
-        const int MAX_RETRIES = 60; // 1 minute timeout
         bool ack_received = false;
 
-        while (!ack_received && retries < MAX_RETRIES) {
+        while (!ack_received && should_retry(retries)) {
             auto ack_response = client->get(ack_key).get();
             if (ack_response.error_code() == 0 && ack_response.value().as_string() == "received") {
                 ack_received = true;
@@ -254,16 +242,15 @@ int xferBenchEtcdRT::sendChar(char* buffer, size_t count, int dest_rank) {
 
 int xferBenchEtcdRT::recvChar(char* buffer, size_t count, int src_rank) {
     // Create the message keys
-    std::string msg_key = makeKey("msg", src_rank, my_rank, XFER_BENCH_ETCD_MSG_TYPE_CHAR);
+    std::string msg_key = makeTypedKey("msg", src_rank, my_rank, XFER_BENCH_ETCD_MSG_TYPE_CHAR);
     std::string data_key = msg_key + "/data";
     std::string ack_key = msg_key + "/ack";
 
     // Poll until the data is available (blocking)
     int retries = 0;
-    const int MAX_RETRIES = 60; // 1 minute timeout
     bool data_received = false;
 
-    while (!data_received && retries < MAX_RETRIES) {
+    while (!data_received && should_retry(retries)) {
         // First check if metadata exists
         auto meta_response = client->get(msg_key).get();
         if (meta_response.error_code() == 0) {
@@ -307,7 +294,7 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
     try {
         // Use a random ID for this reduction operation
         std::string reduce_id = std::to_string(std::time(nullptr)) + "-" + std::to_string(std::rand());
-        std::string reduce_key = namespace_prefix + "reduce/" + reduce_id;
+        std::string reduce_key = makeKey("reduce/" + reduce_id);
         std::string value_key = reduce_key + "/rank-" + std::to_string(my_rank);
 
         // Contribute our value directly as a string
@@ -325,7 +312,7 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
             int expected = global_size - 1; // Excluding ourselves
             int retries = 0;
 
-            while (received < expected && retries < 30) {
+            while (received < expected && should_retry(retries, 30)) {
                 auto response = client->ls(reduce_key).get();
                 if (response.error_code() == 0) {
                     for (const auto& kv : response.keys()) {
@@ -376,105 +363,50 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
 }
 
 int xferBenchEtcdRT::barrier(const std::string& barrier_id) {
+    int count = 0;
+    std::string barrier_suffix = "barrier/" + barrier_id + "/" + std::to_string(barrier_gen);
+    std::string barrier_key = namespace_prefix + barrier_suffix + "/";
+    barrier_gen++; // In case same barrier is reused too quickly
+
     try {
-        // Create a unique key for this barrier
-        std::string barrier_key = namespace_prefix + "barrier/" + barrier_id;
-        std::string count_key = barrier_key + "/count";
-        std::string ready_key = barrier_key + "/ready";
-
-        // Create a unique key for this process
-        std::string process_key = barrier_key + "/proc-" + std::to_string(my_rank);
-
-        // Register this process as having reached the barrier
-        client->put(process_key, "arrived").get();
-
-        // Use etcd atomic operations to increment the count
-        auto resp = client->get(count_key).get();
-        int current_count = 0;
-        if (resp.error_code() == 0) {
-            current_count = std::stoi(resp.value().as_string());
+        auto resp = client->put(barrier_key + std::to_string(my_rank), "1").get();
+        if (!resp.is_ok()) {
+            throw std::runtime_error("put");
         }
 
-        // Increment the count
-        client->put(count_key, std::to_string(current_count + 1)).get();
+        for (auto retries = 0; should_retry(retries); ++retries) {
+            auto resp = client->ls(barrier_key).get();
+            if (resp.error_code()) {
+                break;
+            }
 
-        bool barrier_complete = false;
-        int retries = 0;
-        int expected_count = global_size;
-
-        while (!barrier_complete && retries < 30) { // 5 minutes timeout (300 seconds)
-            resp = client->get(count_key).get();
-            if (resp.error_code() == 0) {
-                current_count = std::stoi(resp.value().as_string());
-
-                if (current_count >= expected_count) {
-                    // All processes have arrived
-                    barrier_complete = true;
-
-                    // If we're the last one, mark the barrier as ready
-                    if (current_count == expected_count) {
-                        client->put(ready_key, "true").get();
-                    }
-                } else {
-                    // Wait for more processes
-                    std::this_thread::sleep_for(std::chrono::seconds(1));
-                    retries++;
+            count = resp.keys().size();
+            if (count == 0 || // rank 0 observed completion and deleted the barrier
+                count == (int)global_size) {
+                if (my_rank == 0) {
+                    // Only one of them needs to cleanup
+                    client->rmdir(barrier_key, true).get();
                 }
-            } else {
-                // Error reading count
-                std::this_thread::sleep_for(std::chrono::seconds(1));
-                retries++;
+                return 0;
             }
+
+            std::this_thread::sleep_for(std::chrono::seconds(1));
         }
 
-        // If we timed out
-        if (!barrier_complete) {
-            std::cerr << "Rank " << my_rank << " timed out waiting for barrier "
-                      << barrier_id << " completion (got " << current_count << "/" << expected_count << " processes)" << std::endl;
-            return -1;
-        }
-
-        // Wait for the ready flag
-        retries = 0;
-        bool ready = false;
-
-        while (!ready && retries < 60) { // 1 minute timeout
-            resp = client->get(ready_key).get();
-            if (resp.error_code() == 0 && resp.value().as_string() == "true") {
-                ready = true;
-            } else {
-                std::this_thread::sleep_for(std::chrono::seconds(1));
-                retries++;
-            }
-        }
-
-        if (!ready) {
-            std::cerr << "Rank " << my_rank << " timed out waiting for barrier "
-                      << barrier_id << " ready signal" << std::endl;
-            return -1;
-        }
-
-        // Clean up our process marker
-        client->rm(process_key).get();
-
-        // Last one leaving cleans up
-        if (my_rank == 0) {
-            // Give everyone time to proceed
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-            client->rmdir(barrier_key, true).get();
-        }
-
-        return 0;
+        throw std::runtime_error("wait");
     } catch (const std::exception& e) {
-        std::cerr << "Error in barrier: " << e.what() << std::endl;
-        return -1;
+        std::cerr << "Error in barrier " << e.what() << " " << barrier_key
+            << " rank " << my_rank << " completed "
+            << count << "/" << global_size << " ranks)" << std::endl;
     }
+
+    return -1;
 }
 
 int xferBenchEtcdRT::broadcastInt(int* buffer, size_t count, int root_rank) {
     try {
         // Create a unique key for this broadcast operation
-        std::string bcast_key = namespace_prefix + "bcast/int/" + std::to_string(root_rank);
+        std::string bcast_key  = makeKey("bcast/int", root_rank);
         std::string barrier_id = "bcast_int_" + std::to_string(root_rank);
 
         // First phase: root process puts the value in etcd
@@ -490,10 +422,9 @@ int xferBenchEtcdRT::broadcastInt(int* buffer, size_t count, int root_rank) {
         // Second phase: non-root processes read the value
         if (my_rank != root_rank) {
             int retries = 0;
-            const int MAX_RETRIES = 10;
             bool data_received = false;
 
-            while (!data_received && retries < MAX_RETRIES) {
+            while (!data_received && should_retry(retries, 10)) {
                 auto response = client->get(bcast_key).get();
                 if (response.error_code() == 0) {
                     std::string value_str = response.value().as_string();

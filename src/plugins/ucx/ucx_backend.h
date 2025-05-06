@@ -32,7 +32,7 @@
 #include "ucx/ucx_utils.h"
 #include "common/list_elem.h"
 
-typedef enum {CONN_CHECK, NOTIF_STR, DISCONNECT} ucx_cb_op_t;
+enum ucx_cb_op_t {CONN_CHECK, NOTIF_STR, DISCONNECT};
 
 struct nixl_ucx_am_hdr {
     ucx_cb_op_t op;
