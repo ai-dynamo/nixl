@@ -362,6 +362,8 @@ void nixlUcxEngine::progressFunc()
             std::this_thread::yield();
         }
     }
+    // Finish any tasks that need to be progressed
+    while(uw->progress());
 }
 
 void nixlUcxEngine::progressThreadStart()
