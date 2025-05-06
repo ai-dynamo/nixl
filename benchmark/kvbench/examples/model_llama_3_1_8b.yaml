@@ -1,0 +1,6 @@
+model: 'LLAMA3.1_8B'
+num_layers: 32
+num_query_heads_with_mha: 32
+query_head_dimension: 128
+gqa_num_queries_in_group: 4
+num_model_params: 8000000000

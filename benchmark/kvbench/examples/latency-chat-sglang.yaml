@@ -1,0 +1,14 @@
+strategy:
+  tp_size: 4
+  pp_size: 1
+  model_quant_mode: "int8"
+  kvcache_quant_mode: "int8"
+
+runtime:
+  batch_size: 8
+  isl: 8192
+  osl: 2048
+
+system:
+  hardware: "H100"
+  backend: "SGLANG" 
