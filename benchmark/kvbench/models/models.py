@@ -25,7 +25,7 @@ class BaseModelArch(ABC):
         raise NotImplementedError("Subclasses must implement this method")
 
     @abstractmethod
-    def get_kv_size(self) -> int:
+    def get_kv_size_per_token(self) -> int:
         """
         Get the key-value cache size for this model architecture.
         
@@ -37,6 +37,10 @@ class BaseModelArch(ABC):
         """
         raise NotImplementedError("Subclasses must implement this method")
    
+    @abstractmethod
+    def get_io_size(self) -> int:
+        raise NotImplementedError("Subclasses must implement this method")
+    
     @abstractmethod
     def to_dict(self) -> Dict[str, Any]:
         """

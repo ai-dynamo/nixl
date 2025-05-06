@@ -40,12 +40,21 @@ class DeepSeekR1(BaseModelArch):
         self.mla_latent_vector_dimension = mla_latent_vector_dimension
         self.num_model_params = num_model_params
 
-    def get_kv_size(self) -> int:
+    def get_kv_size_per_token(self) -> int:
         """
         Get the key-value cache size for the DeepSeek-R1 model.
         
         Returns:
             int: The size of the key-value cache, currently hardcoded to 1.
+        """
+        return 1
+    
+    def get_io_size(self) -> int:
+        """
+        Get the input/output size for the Llama 3.1 model.
+        
+        Returns:
+            int: The size of the input/output cache, currently hardcoded to 1.
         """
         return 1
 
