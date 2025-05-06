@@ -172,7 +172,4 @@ if __name__ == "__main__":
     for addr in malloc_addrs:
         nixl_utils.free_passthru(addr)
 
-    del init_agent
-    del target_agent
-
     print("Test Complete.")
