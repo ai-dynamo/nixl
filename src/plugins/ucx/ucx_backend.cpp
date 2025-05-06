@@ -958,6 +958,10 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
 
     if (ret == NIXL_IN_PROG) {
         nixlUcxIntReq* nReq = (nixlUcxIntReq*)req;
+        if (nReq->amBuffer) {
+            delete nReq->amBuffer;
+        }
+
         nReq->amBuffer = ser_msg;
     } else {
         delete ser_msg;
