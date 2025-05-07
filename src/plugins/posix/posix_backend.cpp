@@ -68,7 +68,7 @@ uringQueue::uringQueue(int num_entries, io_uring_params params)
 
     int uring_init_status = io_uring_queue_init_params(num_entries, &uring, &params);
     if (uring_init_status != 0) {
-        throw UringError(absl::StrFormat("Failed to init io_uring - errno: %d", errno));
+        throw std::runtime_error(absl::StrFormat("Failed to init io_uring - errno: %d", errno));
     }
 }
 
@@ -157,7 +157,7 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &operation,
                          reinterpret_cast<io_uring_prep_func_t>(io_uring_prep_write)),
       is_prepped(false), status(NIXL_IN_PROG) {
     if (operation != NIXL_READ && operation != NIXL_WRITE) {
-        throw OperationError::INVALID_OPERATION;
+        throw std::invalid_argument(absl::StrFormat("Invalid operation type: %d", operation));
     }
 
     fillUringParams();
@@ -248,9 +248,9 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
         NIXL_RETURN_IF_NOT_IN_PROG(status);
 
         handle = posix_handle.release();
-    } catch (nixlPosixBackendReqH::OperationError error) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Invalid operation type");
-    } catch (const uringQueue::UringError& e) {
+    } catch (const std::invalid_argument& e) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, e.what());
+    } catch (const std::runtime_error& e) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, e.what());
     } catch (const std::exception& e) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("Unexpected error: %s", e.what()));

@@ -22,7 +22,6 @@
 #include <string>
 #include <vector>
 #include <liburing.h>
-#include <stdexcept>
 #include "backend/backend_engine.h"
 
 class uringQueue {
@@ -43,11 +42,6 @@ class uringQueue {
         nixl_status_t submit();
         nixl_status_t checkCompleted();
         struct io_uring_sqe *getSqe();
-
-        class UringError : public std::runtime_error {
-            public:
-                using std::runtime_error::runtime_error;
-        };
 };
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
@@ -81,10 +75,6 @@ class nixlPosixBackendReqH : public nixlBackendReqH {
         nixl_status_t postXfer();
         nixl_status_t prepXfer();
         nixl_status_t checkXfer();
-
-        enum class OperationError {
-            INVALID_OPERATION
-        };
 };
 
 class nixlPosixEngine : public nixlBackendEngine {
