@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = [ ucx_dep ]
+ucx_utils_dep = [ ucx_dep, nixl_common_dep ]
 if cuda_dep.found()
     ucx_utils_dep += [ cuda_dep ]
 endif
@@ -21,5 +21,5 @@ endif
 ucx_utils_lib = library('ucx_utils',
            'ucx_utils.cpp', 'ucx_utils.h',
            dependencies: ucx_utils_dep,
-           include_directories: [ nixl_inc_dirs ],
+           include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
            install: true)

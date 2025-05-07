@@ -40,6 +40,7 @@ echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
 ibv_devinfo || true
+uname -a || true
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}

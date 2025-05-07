@@ -17,6 +17,8 @@
 #include "ucx_backend.h"
 #include "serdes/serdes.h"
 
+#include <optional>
+
 #ifdef HAVE_CUDA
 
 #include <cuda_runtime.h>
@@ -236,7 +238,19 @@ private:
     nixlUcxIntReq head;
     nixlUcxWorker* uw;
 
+    // Notification to be sent after completion of all requests
+    struct Notif {
+	    std::string agent;
+	    nixl_blob_t payload;
+	    Notif(const std::string& remote_agent, const nixl_blob_t& msg)
+		    : agent(remote_agent), payload(msg) {}
+    };
+    std::optional<Notif> notif;
+
 public:
+    auto& notification() {
+        return notif;
+    }
 
     nixlUcxBackendH(nixlUcxWorker* _uw){
         uw = _uw;
@@ -486,7 +500,7 @@ nixl_status_t nixlUcxEngine::endConn(const std::string &remote_agent) {
 
     nixlUcxConnection &conn = remoteConnMap[remote_agent];
 
-    if(uw->disconnect_nb(conn.ep) < 0) {
+    if(uw->disconnect_nb(conn.getEp()) < 0) {
         return NIXL_ERR_BACKEND;
     }
 
@@ -584,7 +598,7 @@ nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
     //agent names should never be long enough to need RNDV
     flags |= UCP_AM_SEND_FLAG_EAGER;
 
-    ret = uw->sendAm(conn.ep, CONN_CHECK,
+    ret = uw->sendAm(conn.getEp(), CONN_CHECK,
                      &hdr, sizeof(struct nixl_ucx_am_hdr),
                      (void*) localAgent.data(), localAgent.size(),
                      flags, req);
@@ -617,18 +631,20 @@ nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
 
         nixlUcxConnection &conn = remoteConnMap[remote_agent];
 
-        hdr.op = DISCONNECT;
-        //agent names should never be long enough to need RNDV
-        flags |= UCP_AM_SEND_FLAG_EAGER;
+        if (conn.getEp().checkTxState() == NIXL_SUCCESS) {
+            hdr.op = DISCONNECT;
+            //agent names should never be long enough to need RNDV
+            flags |= UCP_AM_SEND_FLAG_EAGER;
 
-        ret = uw->sendAm(conn.ep, DISCONNECT,
-                        &hdr, sizeof(struct nixl_ucx_am_hdr),
-                        (void*) localAgent.data(), localAgent.size(),
-                        flags, req);
+            ret = uw->sendAm(conn.getEp(), DISCONNECT,
+                             &hdr, sizeof(struct nixl_ucx_am_hdr),
+                             (void*) localAgent.data(), localAgent.size(),
+                             flags, req);
 
-        //don't care
-        if(ret == NIXL_IN_PROG){
-            uw->reqRelease(req);
+            //don't care
+            if (ret == NIXL_IN_PROG) {
+                uw->reqRelease(req);
+            }
         }
     }
 
@@ -651,14 +667,13 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
     }
 
     nixlSerDes::_stringToBytes((void*) addr, remote_conn_info, size);
-    ret = uw->connect(addr, size, conn.ep);
+    ret = uw->connect(addr, size, conn.getEp());
     if (ret) {
         return NIXL_ERR_BACKEND;
     }
 
     conn.remoteAgent = remote_agent;
-    conn.connected = false;
-
+    // TODO: should we use move semantics here?
     remoteConnMap[remote_agent] = conn;
 
     delete[] addr;
@@ -745,7 +760,7 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
     char *addr = new char[size];
     nixlSerDes::_stringToBytes(addr, blob, size);
 
-    int ret = uw->rkeyImport(conn.ep, addr, size, md->rkey);
+    int ret = uw->rkeyImport(conn.getEp(), addr, size, md->rkey);
     if (ret) {
         // TODO: error out. Should we indicate which desc failed or unroll everything prior
         return NIXL_ERR_BACKEND;
@@ -853,14 +868,12 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        // TODO: remote_agent and msg should be cached in nixlUCxReq or another way
-
         switch (operation) {
         case NIXL_READ:
-            ret = uw->read(rmd->conn.ep, (uint64_t) raddr, rmd->rkey, laddr, lmd->mem, lsize, req);
+            ret = uw->read(rmd->conn.getEp(), (uint64_t) raddr, rmd->rkey, laddr, lmd->mem, lsize, req);
             break;
         case NIXL_WRITE:
-            ret = uw->write(rmd->conn.ep, laddr, lmd->mem, (uint64_t) raddr, rmd->rkey, lsize, req);
+            ret = uw->write(rmd->conn.getEp(), laddr, lmd->mem, (uint64_t) raddr, rmd->rkey, lsize, req);
             break;
         default:
             return NIXL_ERR_INVALID_PARAM;
@@ -871,27 +884,51 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
         }
     }
 
+    /*
+     * Flush keeps intHandle non-empty until the operation is actually
+     * completed, which can happen after local requests completion.
+     */
     rmd = (nixlUcxPublicMetadata*) remote[0].metadataP;
-    ret = uw->flushEp(rmd->conn.ep, req);
+    ret = uw->flushEp(rmd->conn.getEp(), req);
     if (_retHelper(ret, intHandle, req)) {
         return ret;
     }
 
-    if(opt_args && opt_args->hasNotif) {
-        ret = notifSendPriv(remote_agent, opt_args->notifMsg, req);
-        if (_retHelper(ret, intHandle, req)) {
-            return ret;
+    ret = intHandle->status();
+    if (opt_args && opt_args->hasNotif) {
+        if (ret == NIXL_SUCCESS) {
+            ret = notifSendPriv(remote_agent, opt_args->notifMsg, req);
+            if (_retHelper(ret, intHandle, req)) {
+                return ret;
+            }
+
+            ret = intHandle->status();
+        } else if (ret == NIXL_IN_PROG) {
+            intHandle->notification().emplace(remote_agent, opt_args->notifMsg);
         }
     }
 
-    return intHandle->status();
+    return ret;
 }
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
 
-    return intHandle->status();
+    nixl_status_t status = intHandle->status();
+    auto& notif = intHandle->notification();
+    if (status == NIXL_SUCCESS && notif.has_value()) {
+        nixlUcxReq req;
+        status = notifSendPriv(notif->agent, notif->payload, req);
+        notif.reset();
+        if (_retHelper(status, intHandle, req)) {
+            return status;
+        }
+
+        status = intHandle->status();
+    }
+
+    return status;
 }
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle)
@@ -942,7 +979,7 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     // TODO: replace with mpool for performance
 
     auto buffer = std::make_unique<std::string>(std::move(ser_des.exportStr()));
-    ret = uw->sendAm(conn.ep, NOTIF_STR,
+    ret = uw->sendAm(conn.getEp(), NOTIF_STR,
                      &hdr, sizeof(struct nixl_ucx_am_hdr),
                      (void*)buffer->data(), buffer->size(),
                      flags, req);
