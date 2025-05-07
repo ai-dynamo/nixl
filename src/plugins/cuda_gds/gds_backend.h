@@ -89,17 +89,17 @@ class nixlGdsEngine : public nixlBackendEngine {
         gdsUtil *gds_utils;
         std::unordered_map<int, gdsFileHandle> gds_file_map;
 
-        std::mutex batch_pool_lock;
-        std::list<nixlGdsIOBatch*> batch_pool;
+        mutable std::mutex batch_pool_lock;
+        mutable std::list<nixlGdsIOBatch*> batch_pool;
         unsigned int batch_pool_size;  // Renamed from pool_size
         unsigned int batch_limit;      // Added for configurable batch limit
         unsigned int max_request_size; // Added for configurable request size
 
-        nixlGdsIOBatch* getBatchFromPool(unsigned int size);
-        void returnBatchToPool(nixlGdsIOBatch* batch);
+        nixlGdsIOBatch* getBatchFromPool(unsigned int size) const;
+        void returnBatchToPool(nixlGdsIOBatch* batch) const;
         nixl_status_t createAndSubmitBatch(const std::vector<GdsTransferRequestH>& requests,
                                            size_t start_idx, size_t batch_size,
-                                           std::vector<nixlGdsIOBatch*>& batch_list);
+                                           std::vector<nixlGdsIOBatch*>& batch_list) const;
         nixl_status_t createBatches(const nixl_xfer_op_t &operation,
                                    const nixl_meta_dlist_t &local,
                                    const nixl_meta_dlist_t &remote,
@@ -160,16 +160,16 @@ class nixlGdsEngine : public nixlBackendEngine {
                               const nixl_meta_dlist_t &remote,
                               const std::string &remote_agent,
                               nixlBackendReqH* &handle,
-                              const nixl_opt_b_args_t* opt_args=nullptr);
+                              const nixl_opt_b_args_t* opt_args=nullptr) const;
 
         nixl_status_t postXfer(const nixl_xfer_op_t &operation,
                               const nixl_meta_dlist_t &local,
                               const nixl_meta_dlist_t &remote,
                               const std::string &remote_agent,
                               nixlBackendReqH* &handle,
-                              const nixl_opt_b_args_t* opt_args=nullptr);
+                              const nixl_opt_b_args_t* opt_args=nullptr) const;
 
-        nixl_status_t checkXfer(nixlBackendReqH* handle);
-        nixl_status_t releaseReqH(nixlBackendReqH* handle);
+        nixl_status_t checkXfer(nixlBackendReqH* handle) const;
+        nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
 };
 #endif
