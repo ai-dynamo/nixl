@@ -131,7 +131,7 @@ public:
     using req_cb_t = void(void *request);
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
-                   nixl_ucx_mt_t mt_type);
+                   nixl_ucx_mt_t mt_type, bool prog_thread);
     ~nixlUcxContext();
 
     static bool mtLevelIsSupproted(nixl_ucx_mt_t mt_type);
@@ -169,6 +169,9 @@ public:
 
     void reqRelease(nixlUcxReq req);
     void reqCancel(nixlUcxReq req);
+
+    /* Worker access */
+    ucp_worker_h getWorker() const { return worker; }
 };
 
 #endif
