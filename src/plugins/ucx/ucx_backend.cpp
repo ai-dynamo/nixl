@@ -149,7 +149,7 @@ int nixlUcxCudaCtx::cudaSetCtx() {
 
 void nixlUcxEngine::vramInitCtx()
 {
-    cudaCtx = new nixlUcxCudaCtx;
+    cudaCtx = std::make_unique<nixlUcxCudaCtx>();
 }
 
 int nixlUcxEngine::vramUpdateCtx(void *address, uint64_t  devId, bool &restart_reqd)
@@ -186,7 +186,7 @@ int nixlUcxEngine::vramApplyCtx()
 
 void nixlUcxEngine::vramFiniCtx()
 {
-    delete cudaCtx;
+    cudaCtx.reset();
 }
 
 /****************************************
@@ -408,7 +408,6 @@ void nixlUcxEngine::progressThreadRestart()
 nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 : nixlBackendEngine (init_params) {
     std::vector<std::string> devs; /* Empty vector */
-    uint64_t                 n_addr;
     nixl_b_params_t* custom_params = init_params->customParams;
 
     if (init_params->enableProgTh) {
@@ -421,11 +420,15 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (custom_params->count("device_list")!=0)
         devs = str_split((*custom_params)["device_list"], ", ");
 
-    uc = new nixlUcxContext(devs, sizeof(nixlUcxIntReq),
+    uc = std::make_unique<nixlUcxContext>(devs, sizeof(nixlUcxIntReq),
                            _internalRequestInit, _internalRequestFini, NIXL_UCX_MT_WORKER);
-    uw = new nixlUcxWorker(uc);
-    uw->epAddr(n_addr, workerSize);
-    workerAddr = (void*) n_addr;
+    uw = std::make_unique<nixlUcxWorker>(uc.get());
+    workerAddr = uw->epAddr(workerSize);
+
+    if (workerAddr == nullptr) {
+        initErr = true;
+        return;
+    }
 
     uw->regAmCallback(CONN_CHECK, connectionCheckAmCb, this);
     uw->regAmCallback(DISCONNECT, connectionTermAmCb, this);
@@ -468,9 +471,6 @@ nixlUcxEngine::~nixlUcxEngine () {
 
     progressThreadStop();
     vramFiniCtx();
-    delete uw;
-    delete uc;
-    free(workerAddr);
 }
 
 /****************************************
@@ -505,7 +505,7 @@ nixl_status_t nixlUcxEngine::endConn(const std::string &remote_agent) {
 }
 
 nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
-    str = nixlSerDes::_bytesToString(workerAddr, workerSize);
+    str = nixlSerDes::_bytesToString(workerAddr.get(), workerSize);
     return NIXL_SUCCESS;
 }
 
@@ -578,7 +578,7 @@ nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
 
     if (remote_agent == localAgent)
         return loadRemoteConnInfo (remote_agent,
-                   nixlSerDes::_bytesToString(workerAddr, workerSize));
+                   nixlSerDes::_bytesToString(workerAddr.get(), workerSize));
 
     auto search = remoteConnMap.find(remote_agent);
 
@@ -651,15 +651,14 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
     size_t size = remote_conn_info.size();
     nixlUcxConnection conn;
     int ret;
-    //TODO: eventually std::byte?
-    char* addr = new char[size];
+    std::vector<char> addr(size);
 
     if(remoteConnMap.find(remote_agent) != remoteConnMap.end()) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlSerDes::_stringToBytes((void*) addr, remote_conn_info, size);
-    ret = uw->connect(addr, size, conn.ep);
+    nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
+    ret = uw->connect(addr.data(), size, conn.ep);
     if (ret) {
         return NIXL_ERR_BACKEND;
     }
@@ -668,8 +667,6 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
     conn.connected = false;
 
     remoteConnMap[remote_agent] = conn;
-
-    delete[] addr;
 
     return NIXL_SUCCESS;
 }
@@ -682,8 +679,7 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
                                           nixlBackendMD* &out)
 {
     int ret;
-    nixlUcxPrivateMetadata *priv = new nixlUcxPrivateMetadata;
-    uint64_t rkey_addr;
+    auto priv = std::make_unique<nixlUcxPrivateMetadata>();
     size_t rkey_size;
 
     if (nixl_mem == VRAM_SEG) {
@@ -702,16 +698,14 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
     if (ret) {
         return NIXL_ERR_BACKEND;
     }
-    ret = uw->packRkey(priv->mem, rkey_addr, rkey_size);
-    if (ret) {
+    std::unique_ptr<char []> rkey = uw->packRkey(priv->mem, rkey_size);
+    if (rkey == nullptr) {
         return NIXL_ERR_BACKEND;
     }
-    priv->rkeyStr = nixlSerDes::_bytesToString((void*) rkey_addr, rkey_size);
+    priv->rkeyStr = nixlSerDes::_bytesToString((void*) rkey.get(), rkey_size);
 
-    out = (nixlBackendMD*) priv; //typecast?
-
-    free((void*)rkey_addr);
-    return NIXL_SUCCESS; // Or errors
+    out = priv.release();
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlUcxEngine::deregisterMem (nixlBackendMD* meta)
@@ -821,9 +815,8 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_opt_b_args_t* opt_args)
 {
     /* TODO: try to get from a pool first */
-    nixlUcxBackendH *intHandle = new nixlUcxBackendH(uw);
-
-    handle = (nixlBackendReqH*)intHandle;
+    auto intHandle = std::make_unique<nixlUcxBackendH>(uw.get());
+    handle = intHandle.release();
     return NIXL_SUCCESS;
 }
 

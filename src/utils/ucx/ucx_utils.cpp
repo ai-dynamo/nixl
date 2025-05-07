@@ -154,11 +154,10 @@ nixlUcxWorker::~nixlUcxWorker()
     ucp_worker_destroy(worker);
 }
 
-int nixlUcxWorker::epAddr(uint64_t &addr, size_t &size)
+std::unique_ptr<char []> nixlUcxWorker::epAddr(size_t &size)
 {
     ucp_worker_attr_t wattr;
     ucs_status_t status;
-    void* new_addr;
 
     wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS |
                        UCP_WORKER_ATTR_FIELD_ADDRESS_FLAGS;
@@ -166,16 +165,18 @@ int nixlUcxWorker::epAddr(uint64_t &addr, size_t &size)
     status = ucp_worker_query(worker, &wattr);
     if (UCS_OK != status) {
         // TODO: printf
-        return -1;
+        return nullptr;
     }
 
-    new_addr = calloc(wattr.address_length, sizeof(char));
-    memcpy(new_addr, wattr.address, wattr.address_length);
+    std::unique_ptr<char []> res = std::make_unique<char []>(wattr.address_length);
+    if (!res) {
+        return nullptr;
+    }
+    memcpy(res.get(), wattr.address, wattr.address_length);
     ucp_worker_release_address(worker, wattr.address);
 
-    addr = (uint64_t) new_addr;
     size = wattr.address_length;
-    return 0;
+    return res;
 }
 
 /* ===========================================
@@ -293,7 +294,7 @@ int nixlUcxWorker::memReg(void *addr, size_t size, nixlUcxMem &mem)
 }
 
 
-size_t nixlUcxWorker::packRkey(nixlUcxMem &mem, uint64_t &addr, size_t &size)
+std::unique_ptr<char []> nixlUcxWorker::packRkey(nixlUcxMem &mem, size_t &size)
 {
     ucs_status_t status;
     void *rkey_buf;
@@ -301,20 +302,18 @@ size_t nixlUcxWorker::packRkey(nixlUcxMem &mem, uint64_t &addr, size_t &size)
     status = ucp_rkey_pack(ctx->ctx, mem.memh, &rkey_buf, &size);
     if (status != UCS_OK) {
         /* TODO: MSW_NET_ERROR(priv->net, "failed to ucp_rkey_pack (%s)\n", ucs_status_string(status)); */
-        return -1;
+        return nullptr;
     }
 
     /* Allocate the buffer */
-    addr = (uint64_t) calloc(size, sizeof(char));
-    if (!addr) {
-        /* TODO: proper cleanup */
-        /* TODO: MSW_NET_ERROR(priv->net, "failed to allocate memory key buffer\n"); */
-        return -1;
+    std::unique_ptr<char []> res = std::make_unique<char []>(size);
+    if (!res) {
+        return nullptr;
     }
-    memcpy((void*) addr, rkey_buf, size);
+    memcpy(res.get(), rkey_buf, size);
     ucp_rkey_buffer_release(rkey_buf);
 
-    return 0;
+    return res;
 }
 
 void nixlUcxWorker::memDereg(nixlUcxMem &mem)

@@ -88,14 +88,14 @@ public:
     ~nixlUcxWorker();
 
     /* Connection */
-    int epAddr(uint64_t &addr, size_t &size);
+    std::unique_ptr<char []> epAddr(size_t &size);
     int connect(void* addr, size_t size, nixlUcxEp &ep);
     int disconnect(nixlUcxEp &ep);
     int disconnect_nb(nixlUcxEp &ep);
 
     /* Memory management */
     int memReg(void *addr, size_t size, nixlUcxMem &mem);
-    size_t packRkey(nixlUcxMem &mem, uint64_t &addr, size_t &size);
+    std::unique_ptr<char []> packRkey(nixlUcxMem &mem, size_t &size);
     void memDereg(nixlUcxMem &mem);
 
     /* Rkey */
