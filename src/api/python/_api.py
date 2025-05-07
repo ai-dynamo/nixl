@@ -81,9 +81,18 @@ class nixl_agent:
         if not nixl_conf:
             nixl_conf = nixl_agent_config()  # Using defaults set in nixl_agent_config
 
+        thread_config = (
+            nixlBind.NIXL_THREAD_SYNC_STRICT
+            if nixl_conf.enable_listen
+            else nixlBind.NIXL_THREAD_SYNC_NONE
+        )
+
         # Set agent config and instantiate an agent
         agent_config = nixlBind.nixlAgentConfig(
-            nixl_conf.enable_pthread, nixl_conf.enable_listen, nixl_conf.port
+            nixl_conf.enable_pthread,
+            nixl_conf.enable_listen,
+            nixl_conf.port,
+            thread_config,
         )
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
@@ -613,6 +622,29 @@ class nixl_agent:
         return self.agent.getLocalPartialMD(descs, inc_conn_info, handle_list)
 
     """
+    @brief Add a remote agent using its metadata. After this call, current agent can
+            initiate transfers towards the remote agent.
+
+    @param metadata Metadata of the remote agent, received out-of-band in bytes.
+    @return Name of the added remote agent.
+    """
+
+    def add_remote_agent(self, metadata: bytes) -> str:
+        agent_name = self.agent.loadRemoteMD(metadata)
+        return agent_name
+
+    """
+    @brief Remove a remote agent. After this call, current agent cannot initiate
+            transfers towards the remote agent specified in the call anymore.
+            This call will also result in a disconnect between the two agents.
+
+    @param agent Name of the remote agent.
+    """
+
+    def remove_remote_agent(self, agent: str):
+        self.agent.invalidateRemoteMD(agent)
+
+    """
     @brief Send all of your metadata to a peer or central metadata server.
 
     @param ip_addr If specified, will only send metadata to one peer by IP address.
@@ -674,27 +706,23 @@ class nixl_agent:
         self.agent.invalidateLocalMD(ip_addr, port)
 
     """
-    @brief Add a remote agent using its metadata. After this call, current agent can
-            initiate transfers towards the remote agent.
-
-    @param metadata Metadata of the remote agent, received out-of-band in bytes.
-    @return Name of the added remote agent.
-    """
-
-    def add_remote_agent(self, metadata: bytes) -> str:
-        agent_name = self.agent.loadRemoteMD(metadata)
-        return agent_name
-
-    """
-    @brief Remove a remote agent. After this call, current agent cannot initiate
-            transfers towards the remote agent specified in the call anymore.
-            This call will also result in a disconnect between the two agents.
+    @brief Check if the remote metadata for a specific agent is available.
+           When partial metadata methods are used, the descriptor list in question can be specified.
 
     @param agent Name of the remote agent.
+
+    @return True if available, False otherwise
     """
 
-    def remove_remote_agent(self, agent: str):
-        self.agent.invalidateRemoteMD(agent)
+    def check_remote_metadata(
+        self, agent: str, descs: nixlBind.nixlXferDList = None
+    ) -> bool:
+        if descs is None:  # Just empty list, mem_type not important
+            descs = nixlBind.nixlXferDList(nixlBind.DRAM_SEG)
+        if self.agent.checkRemoteMD(agent, descs) == nixlBind.NIXL_SUCCESS:
+            return True
+        else:
+            return False
 
     """
     @brief Get nixlXferDList from different input types:
@@ -738,7 +766,7 @@ class nixl_agent:
             gpu_id = descs.get_device()
             if gpu_id == -1:  # DRAM
                 gpu_id = 0
-            new_descs = nixlBind.nixlRegDList(
+            new_descs = nixlBind.nixlXferDList(
                 self.nixl_mems[mem_type],
                 [(base_addr, region_len, gpu_id)],
                 is_sorted,

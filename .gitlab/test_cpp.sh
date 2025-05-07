@@ -36,6 +36,11 @@ export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/x86_64-linux-gnu/plugins
 
+echo "==== Show system info ===="
+env
+nvidia-smi topo -m || true
+ibv_devinfo || true
+
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
 ./bin/desc_example
@@ -43,6 +48,10 @@ cd ${INSTALL_DIR}
 ./bin/nixl_example
 ./bin/ucx_backend_test
 ./bin/ucx_mo_backend_test
+
+# POSIX test disabled until we solve io_uring and Docker compatibility
+#./bin/nixl_posix_test
+
 ./bin/ucx_backend_multi
 ./bin/serdes_test
 ./bin/gtest

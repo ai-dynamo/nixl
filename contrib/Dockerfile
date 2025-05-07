@@ -25,7 +25,21 @@ RUN apt-get update -y && \
     ninja-build \
     pybind11-dev \
     libclang-dev \
-    cmake
+    cmake \
+    libgflags-dev \
+    libgrpc-dev \
+    libgrpc++-dev \
+    libprotobuf-dev \
+    liburing-dev \
+    protobuf-compiler-grpc \
+    libcpprest-dev \
+    etcd-server \
+    etcd-client
+
+WORKDIR /workspace
+RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
+	cd etcd-cpp-apiv3 && mkdir build && cd build && \
+	cmake .. && make -j$(nproc) && make install
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -46,7 +60,7 @@ WORKDIR /workspace/nixl
 
 # LD_LIBRARY_PATH is needed for auditwheel to find libcuda.so.1
 # Set incorrectly to `compat/lib` in cuda-dl-base image
-ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \

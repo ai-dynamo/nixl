@@ -31,6 +31,7 @@ if __name__ == "__main__":
     # Needed for socket exchange
     ip_addr = "127.0.0.1"
     target_port = 5555
+    init_port = 7777
     # Example using nixl_agent_config
     agent_config1 = nixl_agent_config(True, True, target_port)
 
@@ -59,7 +60,7 @@ if __name__ == "__main__":
     assert target_agent.register_memory(target_reg_descs2) is not None
 
     # Default port for initiator
-    agent_config2 = nixl_agent_config(True, True)
+    agent_config2 = nixl_agent_config(True, True, init_port)
     init_agent = nixl_agent("initiator", agent_config2)
 
     init_strs = []
@@ -74,21 +75,19 @@ if __name__ == "__main__":
     assert init_agent.register_memory(init_reg_descs) is not None
 
     # Send first set of descriptors first
-    target_agent.send_partial_agent_metadata(target_reg_descs1, True, ["UCX"], ip_addr)
+    target_agent.send_partial_agent_metadata(
+        target_reg_descs1, True, ["UCX"], ip_addr, init_port
+    )
 
     # Wait for metadata to be loaded
     ready = False
-    xfer_handle_1 = 0
+
     while not ready:
-        try:
-            # initialize transfer mode
-            xfer_handle_1 = init_agent.initialize_xfer(
-                "READ", init_xfer_descs, target_xfer_descs1, "target", b"UUID1"
-            )
-        except nixlNotFoundError:
-            ready = False
-        else:
-            ready = True
+        ready = init_agent.check_remote_metadata("target", target_xfer_descs1)
+
+    xfer_handle_1 = init_agent.initialize_xfer(
+        "READ", init_xfer_descs, target_xfer_descs1, "target", b"UUID1"
+    )
 
     state = init_agent.transfer(xfer_handle_1)
     assert state != "ERR"
@@ -123,7 +122,9 @@ if __name__ == "__main__":
         os.abort()
 
     # Now send rest of descs
-    target_agent.send_partial_agent_metadata(target_reg_descs2, True, ["UCX"], ip_addr)
+    target_agent.send_partial_agent_metadata(
+        target_reg_descs2, True, ["UCX"], ip_addr, init_port
+    )
 
     # Wait for metadata to be loaded
     ready = False
@@ -170,5 +171,8 @@ if __name__ == "__main__":
 
     for addr in malloc_addrs:
         nixl_utils.free_passthru(addr)
+
+    del init_agent
+    del target_agent
 
     print("Test Complete.")

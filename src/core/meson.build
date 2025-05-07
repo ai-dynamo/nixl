@@ -13,7 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-nixl_lib_deps = [nixl_infra, serdes_interface, stream_interface, dl_dep]
+# Add dependency on the common utility library which brings in logging deps
+
+nixl_lib_deps = [nixl_infra, serdes_interface, stream_interface, dl_dep, nixl_common_dep, thread_dep]
+
+if etcd_dep.found()
+    nixl_lib_deps += [ etcd_dep ]
+endif
 
 if 'UCX' in static_plugins
     nixl_lib_deps += [ ucx_backend_interface, cuda_dep ]
@@ -25,7 +31,7 @@ endif
 
 
 disable_gds_backend = get_option('disable_gds_backend')
-if not disable_gds_backend and cuda_dep.found()
+if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
 endif
 
@@ -34,6 +40,7 @@ nixl_lib = library('nixl',
                    'nixl_plugin_manager.cpp',
                    'nixl_listener.cpp',
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
+                   link_args: ['-lstdc++fs'],
                    dependencies: nixl_lib_deps,
                    install: true)
 
