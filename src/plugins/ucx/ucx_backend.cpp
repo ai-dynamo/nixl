@@ -15,178 +15,73 @@
  * limitations under the License.
  */
 #include "ucx_backend.h"
-#include "serdes/serdes.h"
+#include <serdes/serdes.h>
 
-#ifdef HAVE_CUDA
-
-#include <cuda_runtime.h>
-#include <cufile.h>
-
-#endif
-
-
-
-/****************************************
- * CUDA related code
- *****************************************/
-
-class nixlUcxCudaCtx {
-public:
-#ifdef HAVE_CUDA
-    CUcontext pthrCudaCtx;
-    int myDevId;
-
-    nixlUcxCudaCtx() {
-        pthrCudaCtx = NULL;
-        myDevId = -1;
-    }
-#endif
-    void cudaResetCtxPtr();
-    int cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated);
-    int cudaSetCtx();
-};
-
-#ifdef HAVE_CUDA
-
-static int cudaQueryAddr(void *address, bool &is_dev,
-                         CUdevice &dev, CUcontext &ctx)
+nixl_status_t
+nixlUcxEngine::vramUpdateCtx(void *address, uint64_t  devId, bool &restart_reqd)
 {
-    CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
-    uint32_t is_managed = 0;
-#define NUM_ATTRS 4
-    CUpointer_attribute attr_type[NUM_ATTRS];
-    void *attr_data[NUM_ATTRS];
-    CUresult result;
-
-    attr_type[0] = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
-    attr_data[0] = &mem_type;
-    attr_type[1] = CU_POINTER_ATTRIBUTE_IS_MANAGED;
-    attr_data[1] = &is_managed;
-    attr_type[2] = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
-    attr_data[2] = &dev;
-    attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
-    attr_data[3] = &ctx;
-
-    result = cuPointerGetAttributes(4, attr_type, attr_data, (CUdeviceptr)address);
-
-    is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
-
-    return (CUDA_SUCCESS != result);
-}
-
-int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated)
-{
-    bool is_dev;
-    CUdevice dev;
-    CUcontext ctx;
-    int ret;
-
-    was_updated = false;
-
-    /* TODO: proper error codes and log outputs through this method */
-    if (expected_dev == -1)
-        return -1;
-
-    // incorrect dev id from first registration
-    if (myDevId != -1 && expected_dev != myDevId)
-        return -1;
-
-    ret = cudaQueryAddr(address, is_dev, dev, ctx);
-    if (ret) {
-        return ret;
-    }
-
-    if (!is_dev) {
-        return 0;
-    }
-
-    if (dev != expected_dev) {
-        // User provided address that does not match dev_id
-        return -1;
-    }
-
-    if (pthrCudaCtx) {
-        // Context was already set previously, and does not match new context
-        if (pthrCudaCtx != ctx) {
-            return -1;
-        }
-        return 0;
-    }
-
-    pthrCudaCtx = ctx;
-    was_updated = true;
-    myDevId = expected_dev;
-
-    return 0;
-}
-
-int nixlUcxCudaCtx::cudaSetCtx()
-{
-    CUresult result;
-    if (NULL == pthrCudaCtx) {
-        return 0;
-    }
-
-    result = cuCtxSetCurrent(pthrCudaCtx);
-
-    return (CUDA_SUCCESS == result);
-}
-
-#else
-
-int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated)
-{
-    was_updated = false;
-    return 0;
-}
-
-int nixlUcxCudaCtx::cudaSetCtx() {
-    return 0;
-}
-
-#endif
-
-
-void nixlUcxEngine::vramInitCtx()
-{
-    cudaCtx = new nixlUcxCudaCtx;
-}
-
-int nixlUcxEngine::vramUpdateCtx(void *address, uint64_t  devId, bool &restart_reqd)
-{
-    int ret;
-    bool was_updated;
-
     restart_reqd = false;
 
-    if(!cuda_addr_wa) {
+    if (!nixlCudaPtrCtx::vramIsSupported()) {
+        // NIXL doesn't support CUDA but VRAM pointer was given
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // IF the workaround is globally disabled
+    if(!cudaAddrWA) {
         // Nothing to do
-        return 0;
+        return NIXL_SUCCESS;
     }
 
-    ret = cudaCtx->cudaUpdateCtxPtr(address, devId, was_updated);
-    if (ret) {
-        return ret;
+    std::unique_ptr<nixlCudaPtrCtx> ctx =
+            nixlCudaPtrCtx::nixlCudaPtrCtxInit(address);
+
+    switch(ctx->getMemType()) {
+    case nixlCudaPtrCtx::MEM_HOST:
+        // Nothing is required for host
+        return NIXL_SUCCESS;
+    case nixlCudaPtrCtx::MEM_DEV:
+    case nixlCudaPtrCtx::MEM_VMM_DEV:
+        // Continue with setting the context
+        break;
+    case nixlCudaPtrCtx::MEM_VMM_HOST:
+    default:
+        // TODO: figure out how to handle VMM
+        return NIXL_ERR_INVALID_PARAM;
     }
 
-    restart_reqd = was_updated;
+    if (ctx->getDevId() != devId) {
+        // TODO: log error
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
-    return 0;
+    if (nullptr == cudaPtrCtx.get()) {
+        // The context was not previously set
+        // Set it now and indicate that an update
+        // is required
+        cudaPtrCtx.swap(ctx);
+        restart_reqd = true;
+        return NIXL_SUCCESS;
+    }
+
+    // The context was set previously
+    // Check that it is consistent with the new address
+    if (! (*ctx == *cudaPtrCtx)) {
+        // TODO: log out error that for UCX that requires CUDA context to be set
+        // addresses from different contexts are used
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    return NIXL_SUCCESS;
 }
 
-int nixlUcxEngine::vramApplyCtx()
+nixl_status_t nixlUcxEngine::vramApplyCtx()
 {
-    if(!cuda_addr_wa) {
-        // Nothing to do
-        return 0;
+    auto ctx = cudaPtrCtx.get();
+    if (ctx) {
+        return ctx->setMemCtx();
     }
-
-    return cudaCtx->cudaSetCtx();
-}
-
-void nixlUcxEngine::vramFiniCtx()
-{
-    delete cudaCtx;
+    return NIXL_SUCCESS;
 }
 
 /****************************************
@@ -336,9 +231,9 @@ public:
 void nixlUcxEngine::progressFunc()
 {
     using namespace nixlTime;
-    pthrActive = 1;
-
     vramApplyCtx();
+
+    pthrActive = 1;
 
     while (!pthrStop) {
         int i;
@@ -441,11 +336,10 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     // Temp fixup
     if (getenv("NIXL_DISABLE_CUDA_ADDR_WA")) {
         std::cout << "WARNING: disabling CUDA address workaround" << std::endl;
-        cuda_addr_wa = false;
+        cudaAddrWA = false;
     } else {
-        cuda_addr_wa = true;
+        cudaAddrWA = true;
     }
-    vramInitCtx();
     progressThreadStart();
 }
 
@@ -467,7 +361,6 @@ nixlUcxEngine::~nixlUcxEngine () {
     }
 
     progressThreadStop();
-    vramFiniCtx();
     delete uw;
     delete uc;
     free(workerAddr);
@@ -688,9 +581,11 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
 
     if (nixl_mem == VRAM_SEG) {
         bool need_restart;
-        if (vramUpdateCtx((void*)mem.addr, mem.devId, need_restart)) {
-            return NIXL_ERR_NOT_SUPPORTED;
+        nixl_status_t status;
+        status = vramUpdateCtx((void*)mem.addr, mem.devId, need_restart);
+        if (NIXL_SUCCESS != status) {
             //TODO Add to logging
+            return status;
         }
         if (need_restart) {
             progressThreadRestart();
