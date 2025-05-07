@@ -159,20 +159,27 @@ protected:
         }
     }
 
-    void waitForOneNotif(const std::string &agent_name)
+    void
+    waitForOneNotif(const std::string &from_name, const std::string &to_name)
     {
-        nixl_notifs_t notif_map;
-        do {
+        while (true) {
             // Get notifications and progress all agents to avoid deadlocks
-            for (auto &check_agent : agents) {
-                nixl_status_t status = check_agent.getNotifs(notif_map);
+            for (size_t i = 0; i < agents.size(); i++) {
+                nixl_notifs_t notif_map;
+                nixl_status_t status = agents[i].getNotifs(notif_map);
                 ASSERT_EQ(status, NIXL_SUCCESS);
-            }
-        } while (notif_map.empty());
+                if (!notif_map.empty()) {
+                    // Expect the notification to the right agent
+                    EXPECT_EQ(to_name, getAgentName(i));
 
-        auto &notif_list = notif_map[agent_name];
-        EXPECT_EQ(notif_list.size(), 1u);
-        EXPECT_EQ(notif_list.front(), NOTIF_MSG);
+                    // Expect the notification from the right agent
+                    auto &notif_list = notif_map[from_name];
+                    EXPECT_EQ(notif_list.size(), 1u);
+                    EXPECT_EQ(notif_list.front(), NOTIF_MSG);
+                    return;
+                }
+            }
+        }
     }
 
     void doTransfer(nixlAgent &from, const std::string &from_name,
@@ -207,7 +214,7 @@ protected:
             status = from.genNotif(to_name, NOTIF_MSG);
             ASSERT_EQ(status, NIXL_SUCCESS);
 
-            waitForOneNotif(from_name);
+            waitForOneNotif(from_name, to_name);
 
             status = from.getXferStatus(xfer_req);
             EXPECT_EQ(status, NIXL_SUCCESS);
