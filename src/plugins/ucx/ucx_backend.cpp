@@ -200,21 +200,13 @@ class nixlUcxIntReq : public nixlLinkElem<nixlUcxIntReq> {
     private:
         int _completed;
     public:
-        std::string *amBuffer;
+        std::unique_ptr<std::string> amBuffer;
 
         nixlUcxIntReq() : nixlLinkElem() {
             _completed = 0;
-            amBuffer = NULL;
         }
 
-        ~nixlUcxIntReq() {
-            _completed = 0;
-            if (amBuffer) {
-                delete amBuffer;
-            }
-        }
-
-        bool is_complete() { return _completed; }
+        bool is_complete() const { return _completed; }
         void completed() { _completed = 1; }
 };
 
@@ -964,7 +956,6 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                                            const std::string &msg, nixlUcxReq &req)
 {
     nixlSerDes ser_des;
-    std::string *ser_msg;
     nixlUcxConnection conn;
     // TODO - temp fix, need to have an mpool
     static struct nixl_ucx_am_hdr hdr;
@@ -986,18 +977,16 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     ser_des.addStr("name", localAgent);
     ser_des.addStr("msg", msg);
     // TODO: replace with mpool for performance
-    ser_msg = new std::string(ser_des.exportStr());
 
+    auto buffer = std::make_unique<std::string>(std::move(ser_des.exportStr()));
     ret = uw->sendAm(conn.getEp(), NOTIF_STR,
                      &hdr, sizeof(struct nixl_ucx_am_hdr),
-                     (void*) ser_msg->data(), ser_msg->size(),
+                     (void*)buffer->data(), buffer->size(),
                      flags, req);
 
     if (ret == NIXL_IN_PROG) {
         nixlUcxIntReq* nReq = (nixlUcxIntReq*)req;
-        nReq->amBuffer = ser_msg;
-    } else {
-        delete ser_msg;
+        nReq->amBuffer = std::move(buffer);
     }
     return ret;
 }
