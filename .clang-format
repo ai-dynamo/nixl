@@ -1,0 +1,41 @@
+---
+BasedOnStyle: Google
+
+IndentWidth: 4
+ColumnLimit: 100
+ContinuationIndentWidth: 8
+UseTab: Never
+MaxEmptyLinesToKeep: 2
+
+SortIncludes: true
+CompactNamespaces: false
+ReflowComments: true
+
+DerivePointerAlignment: false
+PointerAlignment: Left
+
+AllowShortIfStatementsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: Inline
+
+AccessModifierOffset: -4
+
+AllowShortBlocksOnASingleLine: true
+ReferenceAlignment: Right
+AlignConsecutiveDeclarations: Consecutive
+AlwaysBreakAfterReturnType: None
+AlignOperands: DontAlign
+AlignAfterOpenBracket: DontAlign
+BreakBeforeBraces: Linux
+BraceWrapping:
+  AfterClass: false
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: false
+  AfterUnion: false
+  BeforeCatch: true
+
+ConstructorInitializerAllOnOneLineOrOnePerLine: false
+
+IndentCaseLabels: true
