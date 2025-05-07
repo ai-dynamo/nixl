@@ -36,11 +36,15 @@ if get_option('test_all_plugins')
   cpp_flags+='-DTEST_ALL_PLUGINS'
 endif
 
+# for loading plugins from build directory
+cpp_flags += '-DBUILD_DIR="' + meson.project_build_root() + '"'
+
 test_exe = executable('gtest',
-    sources : ['main.cpp', 'plugin_manager.cpp'],
+    sources : ['main.cpp', 'plugin_manager.cpp', 'ucx_tests.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     cpp_args : cpp_flags,
     dependencies : [nixl_dep, cuda_dep, gtest_dep],
+    link_with: [nixl_build_lib],
     install : true
 )
 

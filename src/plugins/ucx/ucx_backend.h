@@ -41,10 +41,13 @@ struct nixl_ucx_am_hdr {
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
         std::string remoteAgent;
-        nixlUcxEp ep;
-        volatile bool connected;
+        // NOTE: nixlUcxEp object must be alive as long as ucp_ep_h is alive
+        //       since the object is passed to ucp_ep_create_nbx as err_cb
+        //       argument.
+        std::shared_ptr<nixlUcxEp> ep = std::make_shared<nixlUcxEp>();
 
     public:
+        nixlUcxEp& getEp() { return *ep; }
         // Extra information required for UCX connections
 
     friend class nixlUcxEngine;

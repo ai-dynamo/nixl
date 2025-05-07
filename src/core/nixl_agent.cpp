@@ -43,18 +43,19 @@ std::string nixlEnumStrings::xferOpStr (const nixl_xfer_op_t &op) {
 
 std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
     switch (status) {
-        case NIXL_IN_PROG:           return "NIXL_IN_PROG";
-        case NIXL_SUCCESS:           return "NIXL_SUCCESS";
-        case NIXL_ERR_NOT_POSTED:    return "NIXL_ERR_NOT_POSTED";
-        case NIXL_ERR_INVALID_PARAM: return "NIXL_ERR_INVALID_PARAM";
-        case NIXL_ERR_BACKEND:       return "NIXL_ERR_BACKEND";
-        case NIXL_ERR_NOT_FOUND:     return "NIXL_ERR_NOT_FOUND";
-        case NIXL_ERR_MISMATCH:      return "NIXL_ERR_MISMATCH";
-        case NIXL_ERR_NOT_ALLOWED:   return "NIXL_ERR_NOT_ALLOWED";
-        case NIXL_ERR_REPOST_ACTIVE: return "NIXL_ERR_REPOST_ACTIVE";
-        case NIXL_ERR_UNKNOWN:       return "NIXL_ERR_UNKNOWN";
-        case NIXL_ERR_NOT_SUPPORTED: return "NIXL_ERR_NOT_SUPPORTED";
-        default:                     return "BAD_STATUS";
+        case NIXL_IN_PROG:               return "NIXL_IN_PROG";
+        case NIXL_SUCCESS:               return "NIXL_SUCCESS";
+        case NIXL_ERR_NOT_POSTED:        return "NIXL_ERR_NOT_POSTED";
+        case NIXL_ERR_INVALID_PARAM:     return "NIXL_ERR_INVALID_PARAM";
+        case NIXL_ERR_BACKEND:           return "NIXL_ERR_BACKEND";
+        case NIXL_ERR_NOT_FOUND:         return "NIXL_ERR_NOT_FOUND";
+        case NIXL_ERR_MISMATCH:          return "NIXL_ERR_MISMATCH";
+        case NIXL_ERR_NOT_ALLOWED:       return "NIXL_ERR_NOT_ALLOWED";
+        case NIXL_ERR_REPOST_ACTIVE:     return "NIXL_ERR_REPOST_ACTIVE";
+        case NIXL_ERR_UNKNOWN:           return "NIXL_ERR_UNKNOWN";
+        case NIXL_ERR_NOT_SUPPORTED:     return "NIXL_ERR_NOT_SUPPORTED";
+        case NIXL_ERR_REMOTE_DISCONNECT: return "NIXL_ERR_REMOTE_DISCONNECT";
+        default:                         return "BAD_STATUS";
     }
 }
 
@@ -824,7 +825,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) {
 
     NIXL_LOCK_GUARD(data->lock);
     // If the status is done, no need to recheck.
-    if (req_hndl->status != NIXL_SUCCESS) {
+    if (req_hndl->status == NIXL_IN_PROG) {
         // Check if the remote was invalidated before completion
         if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
             delete req_hndl;
