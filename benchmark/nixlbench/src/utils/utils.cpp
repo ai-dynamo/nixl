@@ -389,7 +389,7 @@ void xferBenchUtils::printStatsHeader() {
     std::cout << std::string(80, '-') << std::endl;
 }
 
-void xferBenchUtils::printStats(size_t block_size, size_t batch_size, double total_duration) {
+void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_size, double total_duration) {
     size_t total_data_transferred = 0;
     double avg_latency = 0, throughput = 0, throughput_gib = 0, throughput_gb = 0;
     double totalbw = 0;
@@ -402,7 +402,7 @@ void xferBenchUtils::printStats(size_t block_size, size_t batch_size, double tot
 
     // TODO: We can avoid this by creating a sub-communicator across initiator ranks
     // if (isTarget() && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) { - Fix this isTarget can not be called here
-    if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
+    if (is_target && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         rt->reduceSumDouble(&throughput_gb, &totalbw, 0);
         return;
     }
