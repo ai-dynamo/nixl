@@ -247,7 +247,13 @@ private:
     nixlUcxWorker* uw;
 
     // Notification to be sent after completion of all requests
-    std::optional<std::pair<std::string,std::string>> notif;
+    struct Notif {
+	    std::string agent;
+	    nixl_blob_t payload;
+	    Notif(const std::string& remote_agent, const nixl_blob_t& msg)
+		    : agent(remote_agent), payload(msg) {}
+    };
+    std::optional<Notif> notif;
 
 public:
     auto& notification() {
@@ -903,9 +909,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                 return ret;
             }
 
-            if (ret == NIXL_IN_PROG) {
-                ret = intHandle->status();
-            }
+            ret = intHandle->status();
         } else if (ret == NIXL_IN_PROG) {
             intHandle->notification().emplace(remote_agent, opt_args->notifMsg);
         }
@@ -922,15 +926,13 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
     auto& notif = intHandle->notification();
     if (status == NIXL_SUCCESS && notif.has_value()) {
         nixlUcxReq req;
-        status = notifSendPriv(notif.value().first, notif.value().second, req);
+        status = notifSendPriv(notif->agent, notif->payload, req);
         notif.reset();
         if (_retHelper(status, intHandle, req)) {
             return status;
         }
 
-        if (status == NIXL_IN_PROG) {
-            status = intHandle->status();
-        }
+        status = intHandle->status();
     }
 
     return status;
