@@ -252,7 +252,7 @@ int main(int argc, char *argv[]) {
     /** Argument Parsing */
     if (argc < 4) {
         std::cout <<"Enter the required arguments\n" << std::endl;
-        std::cout <<"<Role> " <<"Target IP> <Target Port>"
+        std::cout <<"<Role> " <<"<Target IP> <Target Port>"
                   << std::endl;
         exit(-1);
     }
