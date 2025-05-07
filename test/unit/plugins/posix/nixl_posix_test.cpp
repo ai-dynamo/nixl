@@ -55,8 +55,6 @@ namespace {
         return std::string((line_width - str.length()) / 2, ' ') + str;
     }
 
-    constexpr int default_max_waits = 20000;
-    constexpr nixlTime::us_t default_wait_time = 1000;
     constexpr char default_test_files_dir_path[] = "tmp/testfiles";
 
     // Custom deleter for posix_memalign allocated memory
@@ -197,13 +195,11 @@ int main(int argc, char *argv[])
     int                 num_transfers = default_num_transfers;
     size_t             transfer_size = default_transfer_size;
     std::string        test_files_dir_path = default_test_files_dir_path;
-    int                wait_time = default_wait_time;
-    int                max_waits = default_max_waits;
     bool               use_direct_io = false;  // New option for O_DIRECT
     bool               use_uring = false;      // New option for io_uring
     long               page_size = sysconf(_SC_PAGESIZE);
 
-    while ((opt = getopt(argc, argv, "n:s:d:w:m:DUh")) != -1) {
+    while ((opt = getopt(argc, argv, "n:s:d:DUh")) != -1) {
         switch (opt) {
             case 'n':
                 num_transfers = std::stoi(optarg);
@@ -214,12 +210,6 @@ int main(int argc, char *argv[])
             case 'd':
                 test_files_dir_path = optarg;
                 break;
-            case 'w':
-                wait_time = std::stoi(optarg);
-                break;
-            case 'm':
-                max_waits = std::stoi(optarg);
-                break;
             case 'D':
                 use_direct_io = true;
                 break;
@@ -228,12 +218,10 @@ int main(int argc, char *argv[])
                 break;
             case 'h':
             default:
-                std::cout << absl::StrFormat("Usage: %s [-n num_transfers] [-s transfer_size] [-d test_files_dir_path] [-w wait_time] [-m max_waits] [-D] [-U]", argv[0]) << std::endl;
+                std::cout << absl::StrFormat("Usage: %s [-n num_transfers] [-s transfer_size] [-d test_files_dir_path] [-D] [-U]", argv[0]) << std::endl;
                 std::cout << absl::StrFormat("  -n num_transfers      Number of transfers (default: %d)", default_num_transfers) << std::endl;
                 std::cout << absl::StrFormat("  -s transfer_size      Size of each transfer in bytes (default: %zu)", default_transfer_size) << std::endl;
                 std::cout << absl::StrFormat("  -d test_files_dir_path Directory for test files, strongly recommended to use nvme device (default: %s)", default_test_files_dir_path) << std::endl;
-                std::cout << absl::StrFormat("  -w wait_time          Wait time in microseconds (default: %d)", default_wait_time) << std::endl;
-                std::cout << absl::StrFormat("  -m max_waits          Maximum number of waits (default: %d)", default_max_waits) << std::endl;
                 std::cout << absl::StrFormat("  -D                    Use O_DIRECT for file I/O") << std::endl;
                 std::cout << absl::StrFormat("  -U                    Use io_uring backend instead of AIO") << std::endl;
                 std::cout << absl::StrFormat("  -h                    Show this help message") << std::endl;
@@ -344,7 +332,6 @@ int main(int argc, char *argv[])
         double gbps;
         double seconds;
         double data_gb;
-        int num_waits = 0;
 
         // Allocate and initialize DRAM buffer
         for (i = 0; i < num_transfers; ++i) {
@@ -424,16 +411,9 @@ int main(int argc, char *argv[])
                 agent.releaseXferReq(treq);
                 return 1;
             }
-            if (num_waits++ >= max_waits) {
-                std::cerr << "Write operation timed out after " << max_waits << " retries" << std::endl ;
-                agent.releaseXferReq(treq);
-                return 1;
-            }
-            usleep(wait_time);
         } while (status == NIXL_IN_PROG);
 
         time_end = nixlTime::getUs();
-        agent.releaseXferReq(treq);
         time_duration = time_end - time_start;
         total_time += time_duration;
 
@@ -491,12 +471,6 @@ int main(int argc, char *argv[])
                 agent.releaseXferReq(treq);
                 return 1;
             }
-            if (num_waits++ >= max_waits) {
-                std::cerr << "Read operation timed out after " << max_waits << " retries" << std::endl;
-                agent.releaseXferReq(treq);
-                return 1;
-            }
-            usleep(wait_time);
         } while (status == NIXL_IN_PROG);
 
         time_end = nixlTime::getUs();

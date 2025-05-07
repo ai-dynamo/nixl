@@ -34,11 +34,12 @@ aioQueue::aioQueue(int num_entries, bool is_read)
 }
 
 aioQueue::~aioQueue() {
-    // Wait for any in-flight I/Os to complete before destroying
-    while (num_submitted > num_completed) {
-        checkCompleted();
+    // There should not be any in-flight I/Os at destruction time
+    if (num_submitted > num_completed) {
+        NIXL_ERROR << "Programming error: Destroying aioQueue with " << (num_submitted - num_completed) << " in-flight I/Os";
     }
 
+    // Cancel any remaining I/Os
     for (auto& aiocb : aiocbs) {
         if (aiocb.aio_fildes != 0) {
             aio_cancel(aiocb.aio_fildes, &aiocb);
@@ -104,6 +105,11 @@ nixl_status_t aioQueue::checkCompleted() {
             num_completed++;
             aiocb.aio_fildes = 0;  // Mark as completed
             aiocb.aio_nbytes = 0;
+
+            // Log progress periodically
+            if (num_completed % (num_entries / 10) == 0) {
+                NIXL_INFO << "Queue progress: " << (num_completed * 100.0 / num_entries) << "% complete";
+            }
         } else if (status == EINPROGRESS) {
             return NIXL_IN_PROG;  // At least one operation still in progress
         } else {

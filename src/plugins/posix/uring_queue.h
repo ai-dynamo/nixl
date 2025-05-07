@@ -32,8 +32,6 @@ private:
     int num_completed;        // Number of completed operations so far
     int num_submitted;        // Number of submitted operations
     bool is_read;            // Whether this is a read operation
-    bool use_fixed_files;    // Whether using registered file descriptors
-    bool use_fixed_buffers;  // Whether using registered buffers
 
     // Initialize the queue with the given parameters
     nixl_status_t init(int num_entries, const struct io_uring_params& params, bool is_read);

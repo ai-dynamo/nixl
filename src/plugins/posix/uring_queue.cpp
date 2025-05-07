@@ -34,8 +34,6 @@ nixl_status_t UringQueue::init(int entries, const io_uring_params& params, bool 
     num_completed = 0;
     num_submitted = 0;
     is_read = read_op;
-    use_fixed_files = false;
-    use_fixed_buffers = false;
     memset(&uring, 0, sizeof(uring));
 
     // Start with basic parameters, no special flags
