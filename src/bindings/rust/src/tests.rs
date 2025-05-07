@@ -135,7 +135,7 @@ mod tests {
         dlist.add_desc(0x2000, 0x200, 1).unwrap();
 
         // Check length
-        assert_eq!(dlist.len().unwrap(), 2);
+        assert_eq!(dlist.desc_count().unwrap(), 2);
 
         // Check overlaps
         assert!(!dlist.has_overlaps().unwrap());
@@ -146,7 +146,7 @@ mod tests {
 
         // Clear list
         dlist.clear().unwrap();
-        assert_eq!(dlist.len().unwrap(), 0);
+        assert_eq!(dlist.desc_count().unwrap(), 0);
 
         // Resize list
         dlist.resize(5).unwrap();
@@ -166,7 +166,7 @@ mod tests {
         dlist.add_desc(0x2000, 0x200, 1).unwrap();
 
         // Check length
-        assert_eq!(dlist.len().unwrap(), 2);
+        assert_eq!(dlist.desc_count().unwrap(), 2);
 
         // Check overlaps
         assert!(!dlist.has_overlaps().unwrap());
@@ -177,7 +177,7 @@ mod tests {
 
         // Clear list
         dlist.clear().unwrap();
-        assert_eq!(dlist.len().unwrap(), 0);
+        assert_eq!(dlist.desc_count().unwrap(), 0);
 
         // Resize list
         dlist.resize(5).unwrap();
@@ -192,7 +192,7 @@ mod tests {
             // Create a descriptor list with shorter lifetime
             let mut dlist = XferDescList::new(MemType::Dram).unwrap();
             dlist.add_storage_desc(&storage).unwrap();
-            assert_eq!(dlist.len().unwrap(), 1);
+            assert_eq!(dlist.desc_count().unwrap(), 1);
             // dlist is dropped here, but storage is still valid
         }
 
@@ -211,14 +211,14 @@ mod tests {
         dlist.add_storage_desc(&storage1).unwrap();
         dlist.add_storage_desc(&storage2).unwrap();
 
-        assert_eq!(dlist.len().unwrap(), 2);
+        assert_eq!(dlist.desc_count().unwrap(), 2);
     }
 
     #[test]
     fn test_memory_registration() {
         let agent = Agent::new("test_agent").unwrap();
         let mut storage = SystemStorage::new(1024).unwrap();
-        let mut opt_args = OptArgs::new().unwrap();
+        let opt_args = OptArgs::new().unwrap();
 
         // Test initial state
         assert!(!storage.is_registered());
@@ -265,7 +265,7 @@ mod tests {
         let agent = Agent::new("test_agent").unwrap();
         let mut storage1 = SystemStorage::new(1024).unwrap();
         let mut storage2 = SystemStorage::new(2048).unwrap();
-        let mut opt_args = OptArgs::new().unwrap();
+        let opt_args = OptArgs::new().unwrap();
 
         // Register both storages
         storage1.register(&agent, &opt_args).unwrap();
@@ -282,6 +282,108 @@ mod tests {
         storage2.memset(0xBB);
         assert!(storage1.as_slice().iter().all(|&x| x == 0xAA));
         assert!(storage2.as_slice().iter().all(|&x| x == 0xBB));
+    }
+
+    
+
+    #[test]
+    fn test_make_connection_success() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        // This should succeed if the agent is valid and the backend is set up
+        let result = agent.make_connection("remote_agent");
+        // Accept either Ok or a backend error if no real remote exists
+        assert!(
+            result.is_ok() || matches!(result, Err(NixlError::BackendError)),
+            "Expected Ok or BackendError, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_make_connection_invalid_param() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        // Null bytes in the name should trigger InvalidParam or StringConversionError
+        let result = agent.make_connection("remote\0agent");
+        assert!(
+            matches!(result, Err(NixlError::StringConversionError(_))) ||
+            matches!(result, Err(NixlError::InvalidParam)),
+            "Expected StringConversionError or InvalidParam, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_prep_xfer_dlist_success() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        let descs = XferDescList::new(MemType::Dram).unwrap();
+        let opt_args = OptArgs::new().unwrap();
+        let mut handle = XferDescList::new(MemType::Dram).unwrap();
+        let result = agent.prep_xfer_dlist("remote_agent", &descs, &opt_args, &mut handle);
+        // Accept Ok or BackendError if no real remote exists
+        assert!(
+            result.is_ok() || matches!(result, Err(NixlError::BackendError)),
+            "Expected Ok or BackendError, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_prep_xfer_dlist_invalid_param() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        let descs = XferDescList::new(MemType::Dram).unwrap();
+        let opt_args = OptArgs::new().unwrap();
+        let mut handle = XferDescList::new(MemType::Dram).unwrap();
+        // Null byte in agent name should trigger error
+        let result = agent.prep_xfer_dlist("remote\0agent", &descs, &opt_args, &mut handle);
+        assert!(
+            matches!(result, Err(NixlError::StringConversionError(_))) ||
+            matches!(result, Err(NixlError::InvalidParam)),
+            "Expected StringConversionError or InvalidParam, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_make_xfer_req_success() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        let local_descs = XferDescList::new(MemType::Dram).unwrap();
+        let remote_descs = XferDescList::new(MemType::Dram).unwrap();
+        let opt_args = OptArgs::new().unwrap();
+        let result = agent.make_xfer_req(
+            XferOp::Read,
+            &local_descs,
+            &remote_descs,
+            "remote_agent",
+            &opt_args,
+        );
+        // Accept Ok or BackendError if no real remote exists
+        assert!(
+            result.is_ok() || matches!(result, Err(NixlError::BackendError)),
+            "Expected Ok or BackendError, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_make_xfer_req_invalid_param() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        let local_descs = XferDescList::new(MemType::Dram).unwrap();
+        let remote_descs = XferDescList::new(MemType::Dram).unwrap();
+        let opt_args = OptArgs::new().unwrap();
+        // Null byte in remote_agent should trigger error
+        let result = agent.make_xfer_req(
+            XferOp::Read,
+            &local_descs,
+            &remote_descs,
+            "remote\0agent",
+            &opt_args,
+        );
+        assert!(
+            matches!(result, Err(NixlError::StringConversionError(_))) ||
+            matches!(result, Err(NixlError::InvalidParam)),
+            "Expected StringConversionError or InvalidParam, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -387,7 +489,7 @@ mod tests {
         assert!(storage1.as_slice().iter().all(|&x| x == 0xbb));
         assert!(storage2.as_slice().iter().all(|&x| x == 0x00));
 
-        let mut opt_args = OptArgs::new().unwrap();
+        let opt_args = OptArgs::new().unwrap();
         // Create registration descriptor lists
         storage1.register(&agent1, &opt_args).unwrap();
         storage2.register(&agent2, &opt_args).unwrap();
