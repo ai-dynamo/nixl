@@ -42,7 +42,10 @@ fn main() {
     // Link against NIXL libraries in correct order
     println!("cargo:rustc-link-lib=dylib=nixl");
     println!("cargo:rustc-link-lib=dylib=nixl_build");
+    println!("cargo:rustc-link-lib=dylib=nixl_common");
     println!("cargo:rustc-link-lib=dylib=serdes");
+    println!("cargo:rustc-link-lib=dylib=stream");
+    println!("cargo:rustc-link-lib=dylib=ucx_utils");
 
     // Link against C++ standard library
     println!("cargo:rustc-link-lib=dylib=stdc++");
