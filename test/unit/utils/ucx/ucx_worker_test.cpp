@@ -145,8 +145,8 @@ int main()
     ret = w[0].write(ep[0], buffer[0], mem[0], (uint64_t) buffer[1], rkey[0], buf_size/2, req);
     completeRequest(w, std::string("WRITE"), false, ret, req);
 
-    // Flush to ensure that all data is in-place
-    ret = w[0].flushEp(ep[0], req);
+    // Fence to ensure that all data is in-place
+    ret = w[0].fenceEp(ep[0]);
     completeRequest(w, std::string("WRITE"), true, ret, req);
 
 #ifdef USE_VRAM
@@ -180,8 +180,8 @@ int main()
     ret = w[0].read(ep[0], (uint64_t) buffer[1], rkey[0], buffer[0], mem[0], buf_size, req);
     completeRequest(w, std::string("READ"), false, ret, req);
 
-    // Flush to ensure that all data is in-place
-    ret = w[0].flushEp(ep[0], req);
+    // Fence to ensure that all data is in-place
+    ret = w[0].fenceEp(ep[0]);
     completeRequest(w, std::string("READ"), true, ret, req);
 
 #ifdef USE_VRAM

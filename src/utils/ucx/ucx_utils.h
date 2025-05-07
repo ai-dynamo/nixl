@@ -114,6 +114,7 @@ public:
     /* Data access */
     int progress();
     nixl_status_t flushEp(nixlUcxEp &ep, nixlUcxReq &req);
+    nixl_status_t fenceEp(nixlUcxEp &ep);
     nixl_status_t read(nixlUcxEp &ep,
                        uint64_t raddr, nixlUcxRkey &rk,
                        void *laddr, nixlUcxMem &mem,

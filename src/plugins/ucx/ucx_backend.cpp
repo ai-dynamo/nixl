@@ -880,7 +880,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     }
 
     rmd = (nixlUcxPublicMetadata*) remote[0].metadataP;
-    ret = uw->flushEp(rmd->conn.ep, req);
+    ret = uw->fenceEp(rmd->conn.ep);
     if (_retHelper(ret, intHandle, req)) {
         return ret;
     }

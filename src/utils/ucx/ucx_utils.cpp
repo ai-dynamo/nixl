@@ -513,6 +513,23 @@ nixl_status_t nixlUcxWorker::flushEp(nixlUcxEp &ep, nixlUcxReq &req)
     return NIXL_IN_PROG;
 }
 
+nixl_status_t nixlUcxWorker::fenceEp(nixlUcxEp &ep)
+{
+    ucs_status_t status;
+
+    status = ucp_ep_fence(ep.eph);
+
+    if (status != UCS_OK) {
+        /* TODO: MSW_NET_ERROR(priv->net, "unable to complete UCX request (%s)\n",
+                         ucs_status_string(UCS_PTR_STATUS(request))); */
+        return NIXL_ERR_BACKEND;
+    }
+
+    return NIXL_SUCCESS;
+}
+
+
+
 void nixlUcxWorker::reqRelease(nixlUcxReq req)
 {
     ucp_request_free((void*)req);
