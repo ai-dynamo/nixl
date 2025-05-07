@@ -75,7 +75,7 @@ namespace {
             return QueueFactory::isUringAvailable();
         }
 
-        static nixl_status_t shouldUseAio(const nixl_b_params_t* custom_params, bool& use_aio) {
+        static std::tuple<nixl_status_t, bool> shouldUseAio(const nixl_b_params_t* custom_params) {
             // Check for explicit backend request
             if (custom_params) {
                 // First check if AIO is explicitly requested
@@ -84,10 +84,9 @@ namespace {
                     if (value == "true" || value == "1") {
                         if (!BackendManager::isAioAvailable()) {
                             NIXL_ERROR << "AIO backend requested but not available";
-                            return NIXL_ERR_NOT_SUPPORTED;
+                            return {NIXL_ERR_NOT_SUPPORTED, false};
                         }
-                        use_aio = true;
-                        return NIXL_SUCCESS;
+                        return {NIXL_SUCCESS, true};
                     }
                 }
 
@@ -97,14 +96,13 @@ namespace {
                     if (value == "true" || value == "1") {
                         #ifndef HAVE_LIBURING
                         NIXL_ERROR << "io_uring backend requested but not available - not built with liburing support";
-                        return NIXL_ERR_NOT_SUPPORTED;
+                        return {NIXL_ERR_NOT_SUPPORTED, false};
                         #endif
                         if (!BackendManager::isUringAvailable()) {
                             NIXL_ERROR << "io_uring backend requested but not available at runtime";
-                            return NIXL_ERR_NOT_SUPPORTED;
+                            return {NIXL_ERR_NOT_SUPPORTED, false};
                         }
-                        use_aio = false;
-                        return NIXL_SUCCESS;
+                        return {NIXL_SUCCESS, false};
                     }
                 }
             }
@@ -112,11 +110,10 @@ namespace {
             // If no explicit choice is made or both are false, default to AIO if available
             if (!BackendManager::isAioAvailable()) {
                 NIXL_ERROR << "No backend available - AIO not available";
-                return NIXL_ERR_NOT_SUPPORTED;
+                return {NIXL_ERR_NOT_SUPPORTED, false};
             }
-            use_aio = true;
             NIXL_INFO << "Using default AIO backend";
-            return NIXL_SUCCESS;
+            return {NIXL_SUCCESS, true};
         }
     };
 }
@@ -126,7 +123,7 @@ namespace {
 // -----------------------------------------------------------------------------
 
 std::unique_ptr<nixlPosixQueue> IOQueueFactory::createQueue(bool use_aio, int num_entries, bool is_read,
-                                                           const void* params) {
+                                                            const void* params) {
     if (use_aio) {
         NIXL_INFO << "Creating AIO queue with " << num_entries << " entries";
         return QueueFactory::createAioQueue(num_entries, is_read);
@@ -139,10 +136,6 @@ std::unique_ptr<nixlPosixQueue> IOQueueFactory::createQueue(bool use_aio, int nu
         return nullptr;
         #endif
     }
-}
-
-bool IOQueueFactory::isBackendAvailable(bool use_aio) {
-    return use_aio ? QueueFactory::isAioAvailable() : QueueFactory::isUringAvailable();
 }
 
 // -----------------------------------------------------------------------------
@@ -163,13 +156,14 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
     , is_prepped(false)
     , status(NIXL_SUCCESS) {
 
-    status = BackendManager::shouldUseAio(params, use_aio_);
-    if (status != NIXL_SUCCESS) {
+    auto [init_status, should_use_aio] = BackendManager::shouldUseAio(params);
+    if (init_status != NIXL_SUCCESS) {
         throw std::runtime_error("Failed to determine backend type");
     }
+    use_aio_ = should_use_aio;
 
     try {
-        status = initQueues();
+        status = initQueues(use_aio_);
         if (status != NIXL_SUCCESS) {
             throw std::runtime_error("Failed to initialize queues: " +
                                    std::to_string(status));
@@ -180,9 +174,9 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
     }
 }
 
-nixl_status_t nixlPosixBackendReqH::initQueues() {
+nixl_status_t nixlPosixBackendReqH::initQueues(bool use_aio) {
     try {
-        if (use_aio_) {
+        if (use_aio) {
             queue = QueueFactory::createAioQueue(queue_depth_, operation == NIXL_READ);
             if (!queue) {
                 throw std::runtime_error("Failed to create AIO queue");
@@ -267,12 +261,13 @@ nixlPosixBackendReqH::~nixlPosixBackendReqH() {
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams* init_params)
     : nixlBackendEngine(init_params), use_aio(true)
 {
-    nixl_status_t status = BackendManager::shouldUseAio(init_params->customParams, use_aio);
-    if (status != NIXL_SUCCESS) {
+    auto [init_status, should_use_aio] = BackendManager::shouldUseAio(init_params->customParams);
+    if (init_status != NIXL_SUCCESS) {
         initErr = true;
         NIXL_ERROR << "Failed to initialize POSIX backend - requested backend not available";
         throw std::runtime_error("Failed to initialize POSIX backend - requested backend not available");
     }
+    use_aio = should_use_aio;
     NIXL_INFO << "POSIX backend initialized using " << (use_aio ? "AIO" : "io_uring") << " backend";
 }
 

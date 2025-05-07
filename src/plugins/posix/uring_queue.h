@@ -21,17 +21,21 @@
 #include <liburing.h>
 #include "async_queue.h"
 #include "common/status.h"
+#include <absl/strings/str_format.h>
 
 // Forward declare Error class
 class nixlPosixBackendReqH;
+
+// Type definition for io_uring prep functions
+typedef void (*io_uring_prep_func_t)(struct io_uring_sqe*, int, const void*, unsigned int, __u64);
 
 class UringQueue : public nixlPosixQueue {
 private:
     struct io_uring uring;    // The io_uring instance for async I/O operations
     int num_entries;          // Total number of entries expected in this ring
     int num_completed;        // Number of completed operations so far
-    int num_submitted;        // Number of submitted operations
     bool is_read;            // Whether this is a read operation
+    io_uring_prep_func_t prep_op;  // Pointer to prep function
 
     // Initialize the queue with the given parameters
     nixl_status_t init(int num_entries, const struct io_uring_params& params, bool is_read);

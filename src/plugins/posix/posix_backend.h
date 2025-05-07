@@ -32,11 +32,8 @@ class QueueFactory;
 // Factory for creating IO queues
 class IOQueueFactory {
 public:
-    static std::unique_ptr<nixlPosixQueue> createQueue(bool use_aio,
-						       int num_entries,
-						       bool is_read = false,
-                                                       const void* params = nullptr);
-    static bool isBackendAvailable(bool use_aio);
+    static std::unique_ptr<nixlPosixQueue> createQueue(bool use_aio, int num_entries, bool is_read = false,
+                                                      const void* params = nullptr);
 };
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
@@ -52,7 +49,7 @@ private:
     nixl_status_t                status;                  // Current status of the transfer operation
     bool                         use_aio_;                // Whether to use AIO instead of io_uring
 
-    nixl_status_t initQueues();                          // Initialize async I/O queue
+    nixl_status_t initQueues(bool use_aio);                          // Initialize async I/O queue
 
 public:
     nixlPosixBackendReqH(const nixl_xfer_op_t &operation,
@@ -136,4 +133,3 @@ public:
 };
 
 #endif // POSIX_BACKEND_H
->>>>>>> add8a93 (posix: Updated implementation to support both AIO and Uring)

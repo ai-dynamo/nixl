@@ -64,12 +64,7 @@ public:
     // Backend availability checks
     static bool isAioAvailable() {
         #ifdef HAVE_LIBAIO
-        try {
-            auto test_queue = createAioQueue(1, true);
-            return test_queue != nullptr;
-        } catch (...) {
-            return false;
-        }
+        return createAioQueue(1, true) != nullptr;
         #else
         return false;
         #endif
@@ -77,13 +72,9 @@ public:
 
     static bool isUringAvailable() {
         #ifdef HAVE_LIBURING
-        try {
-            io_uring_params params = {};
-            auto test_queue = createUringQueue(1, true, &params);
-            return test_queue != nullptr;
-        } catch (...) {
-            return false;
-        }
+        io_uring_params params = {};
+        params.cq_entries = 1;  // Match the sq_entries (1) to avoid 2x overhead
+        return createUringQueue(1, true, &params) != nullptr;
         #else
         return false;
         #endif

@@ -30,17 +30,12 @@ namespace {
 }
 
 nixl_status_t UringQueue::init(int entries, const io_uring_params& params, bool read_op) {
-    num_entries = entries;
-    num_completed = 0;
-    num_submitted = 0;
-    is_read = read_op;
     memset(&uring, 0, sizeof(uring));
 
-    // Start with basic parameters, no special flags
-    io_uring_params local_params = params;
+    // Initialize with basic setup - need a mutable copy since the API modifies the params
+    io_uring_params mutable_params = params;
+    int ret = io_uring_queue_init_params(entries, &uring, &mutable_params);
 
-    // Initialize with basic setup
-    int ret = io_uring_queue_init_params(entries, &uring, &local_params);
     if (ret < 0) {
         NIXL_ERROR << "Failed to initialize io_uring instance: " << strerror(-ret);
         return NIXL_ERR_BACKEND;
@@ -48,13 +43,24 @@ nixl_status_t UringQueue::init(int entries, const io_uring_params& params, bool 
 
     // Log the features supported by this io_uring instance
     NIXL_INFO << "io_uring features:"
-              << " SQPOLL=" << ((local_params.features & IORING_FEAT_SQPOLL_NONFIXED) ? "yes" : "no")
-              << " IOPOLL=" << ((local_params.features & IORING_FEAT_FAST_POLL) ? "yes" : "no");
+              << " SQPOLL=" << ((mutable_params.features & IORING_FEAT_SQPOLL_NONFIXED) ? "yes" : "no")
+              << " IOPOLL=" << ((mutable_params.features & IORING_FEAT_FAST_POLL) ? "yes" : "no");
 
     return NIXL_SUCCESS;
 }
 
-UringQueue::UringQueue(int num_entries, const io_uring_params& params, bool is_read) {
+UringQueue::UringQueue(int num_entries, const io_uring_params& params, bool is_read)
+    : num_entries(num_entries)
+    , num_completed(0)
+    , is_read(is_read)
+    , prep_op(is_read ?
+        reinterpret_cast<io_uring_prep_func_t>(io_uring_prep_read) :
+        reinterpret_cast<io_uring_prep_func_t>(io_uring_prep_write))
+{
+    if (num_entries <= 0) {
+        throw std::invalid_argument("Invalid number of entries for UringQueue");
+    }
+
     nixl_status_t status = init(num_entries, params, is_read);
     if (status != NIXL_SUCCESS) {
         throw std::runtime_error("Failed to initialize UringQueue");
@@ -67,11 +73,10 @@ UringQueue::~UringQueue() {
 
 nixl_status_t UringQueue::submit() {
     int ret = io_uring_submit(&uring);
-    if (ret < 0) {
+    if (ret != num_entries) {
         NIXL_ERROR << "io_uring submit failed: " << strerror(-ret);
         return NIXL_ERR_BACKEND;
     }
-    num_submitted += ret;
     return NIXL_IN_PROG;  // Changed to IN_PROG since we need to wait for completion
 }
 
@@ -115,14 +120,6 @@ nixl_status_t UringQueue::prepareIO(int fd, void* buf, size_t len, off_t offset)
         return NIXL_ERR_BACKEND;
     }
 
-    if (is_read) {
-        io_uring_prep_read(sqe, fd, buf, len, offset);
-    } else {
-        io_uring_prep_write(sqe, fd, buf, len, offset);
-    }
-
-    // Don't use IOSQE_FIXED_FILE since we're not using registered files
-    sqe->flags = 0;
-
+    prep_op(sqe, fd, buf, len, offset);
     return NIXL_SUCCESS;
 }
