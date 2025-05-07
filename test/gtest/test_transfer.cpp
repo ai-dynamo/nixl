@@ -25,6 +25,7 @@
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace gtest {
@@ -77,9 +78,6 @@ private:
 
 class TestTransfer : public testing::TestWithParam<std::string> {
 protected:
-    // TODO make nixlAgent movable
-    using nixl_agent_ptr_t = std::unique_ptr<nixlAgent>;
-
     static nixlAgentConfig getConfig()
     {
         return nixlAgentConfig(false, false, 0,
@@ -91,12 +89,10 @@ protected:
     {
         // Create two agents
         for (size_t i = 0; i < 2; i++) {
-            auto agent_name = absl::StrFormat("agent_%d", i);
-            agents.emplace_back(
-                    std::make_unique<nixlAgent>(agent_name, getConfig()));
+            auto &agent = agents.emplace_back(getAgentName(i), getConfig());
             nixlBackendH *backend_handle = nullptr;
-            nixl_status_t status         = agents.back()->createBackend(
-                    getBackendName(), {}, backend_handle);
+            nixl_status_t status = agent.createBackend(getBackendName(), {},
+                                                       backend_handle);
             ASSERT_EQ(status, NIXL_SUCCESS);
             EXPECT_NE(backend_handle, nullptr);
         }
@@ -123,28 +119,28 @@ protected:
         return desc_list;
     }
 
-    void registerMem(const nixl_agent_ptr_t &agent,
-                     const std::vector<MemBuffer> &buffers, nixl_mem_t mem_type)
+    void registerMem(nixlAgent &agent, const std::vector<MemBuffer> &buffers,
+                     nixl_mem_t mem_type)
     {
         auto reg_list = makeDescList<nixlBlobDesc>(buffers, mem_type);
-        agent->registerMem(reg_list);
+        agent.registerMem(reg_list);
     }
 
     void exchangeMD()
     {
         // Connect the existing agents and exchange metadata
-        for (const auto &agent1 : agents) {
+        for (size_t i = 0; i < agents.size(); i++) {
             nixl_blob_t md;
-            nixl_status_t status = agent1->getLocalMD(md);
+            nixl_status_t status = agents[i].getLocalMD(md);
             ASSERT_EQ(status, NIXL_SUCCESS);
 
-            for (const auto &agent2 : agents) {
-                if (agent1->getName() == agent2->getName())
+            for (size_t j = 0; j < agents.size(); j++) {
+                if (i == j)
                     continue;
                 std::string remote_agent_name;
-                status = agent2->loadRemoteMD(md, remote_agent_name);
+                status = agents[j].loadRemoteMD(md, remote_agent_name);
                 ASSERT_EQ(status, NIXL_SUCCESS);
-                EXPECT_EQ(remote_agent_name, agent1->getName());
+                EXPECT_EQ(remote_agent_name, getAgentName(i));
             }
         }
     }
@@ -152,36 +148,37 @@ protected:
     void invalidateMD()
     {
         // Disconnect the agents and invalidate remote metadata
-        for (auto &agent1 : agents) {
-            for (auto &agent2 : agents) {
-                if (agent1->getName() == agent2->getName())
+        for (size_t i = 0; i < agents.size(); i++) {
+            for (size_t j = 0; j < agents.size(); j++) {
+                if (i == j)
                     continue;
-                nixl_status_t status = agent2->invalidateRemoteMD(
-                        agent1->getName());
+                nixl_status_t status = agents[j].invalidateRemoteMD(
+                        getAgentName(i));
                 ASSERT_EQ(status, NIXL_SUCCESS);
             }
         }
     }
 
-    void waitForOneNotif(const nixl_agent_ptr_t &agent)
+    void waitForOneNotif(const std::string &agent_name)
     {
         nixl_notifs_t notif_map;
         do {
             // Get notifications and progress all agents to avoid deadlocks
-            for (const auto &agent : agents) {
-                nixl_status_t status = agent->getNotifs(notif_map);
+            for (auto &check_agent : agents) {
+                nixl_status_t status = check_agent.getNotifs(notif_map);
                 ASSERT_EQ(status, NIXL_SUCCESS);
             }
         } while (notif_map.empty());
 
-        auto &notif_list = notif_map[agent->getName()];
+        auto &notif_list = notif_map[agent_name];
         EXPECT_EQ(notif_list.size(), 1u);
         EXPECT_EQ(notif_list.front(), NOTIF_MSG);
     }
 
-    void doTransfer(const nixl_agent_ptr_t &from, const nixl_agent_ptr_t &to,
-                    size_t size, size_t count, size_t repeat,
-                    nixl_mem_t src_mem_type, nixl_mem_t dst_mem_type)
+    void doTransfer(nixlAgent &from, const std::string &from_name,
+                    nixlAgent &to, const std::string &to_name, size_t size,
+                    size_t count, size_t repeat, nixl_mem_t src_mem_type,
+                    nixl_mem_t dst_mem_type)
     {
         std::vector<MemBuffer> src_buffers, dst_buffers;
         for (size_t i = 0; i < count; i++) {
@@ -194,25 +191,25 @@ protected:
         exchangeMD();
 
         nixlXferReqH *xfer_req = nullptr;
-        nixl_status_t status   = from->createXferReq(
+        nixl_status_t status   = from.createXferReq(
                 NIXL_WRITE,
                 makeDescList<nixlBasicDesc>(src_buffers, src_mem_type),
-                makeDescList<nixlBasicDesc>(dst_buffers, dst_mem_type),
-                to->getName(), xfer_req);
+                makeDescList<nixlBasicDesc>(dst_buffers, dst_mem_type), to_name,
+                xfer_req);
         ASSERT_EQ(status, NIXL_SUCCESS);
         EXPECT_NE(xfer_req, nullptr);
 
         auto start_time = absl::Now();
         for (size_t i = 0; i < repeat; i++) {
-            status = from->postXferReq(xfer_req);
+            status = from.postXferReq(xfer_req);
             ASSERT_GE(status, NIXL_SUCCESS);
 
-            status = from->genNotif(to->getName(), NOTIF_MSG);
+            status = from.genNotif(to_name, NOTIF_MSG);
             ASSERT_EQ(status, NIXL_SUCCESS);
 
-            waitForOneNotif(from);
+            waitForOneNotif(from_name);
 
-            status = from->getXferStatus(xfer_req);
+            status = from.getXferStatus(xfer_req);
             EXPECT_EQ(status, NIXL_SUCCESS);
         }
         auto total_time = absl::ToDoubleSeconds(absl::Now() - start_time);
@@ -223,22 +220,27 @@ protected:
                  << " bytes in " << total_time << " seconds "
                  << "(" << bandwidth << " GB/s)";
 
-        status = from->releaseXferReq(xfer_req);
+        status = from.releaseXferReq(xfer_req);
         EXPECT_EQ(status, NIXL_SUCCESS);
 
         invalidateMD();
     }
 
-    const nixl_agent_ptr_t &getAgent(size_t idx) const
+    nixlAgent &getAgent(size_t idx)
     {
         return agents[idx];
+    }
+
+    std::string getAgentName(size_t idx)
+    {
+        return absl::StrFormat("agent_%d", idx);
     }
 
 private:
     static constexpr uint64_t DEV_ID = 0;
     static const std::string NOTIF_MSG;
 
-    std::vector<std::unique_ptr<nixlAgent>> agents;
+    std::vector<nixlAgent> agents;
 };
 
 const std::string TestTransfer::NOTIF_MSG = "notification";
@@ -253,8 +255,8 @@ TEST_P(TestTransfer, RandomSizes)
     };
 
     for (const auto &[size, count, repeat] : test_cases) {
-        doTransfer(getAgent(0), getAgent(1), size, count, repeat, DRAM_SEG,
-                   DRAM_SEG);
+        doTransfer(getAgent(0), getAgentName(0), getAgent(1), getAgentName(1),
+                   size, count, repeat, DRAM_SEG, DRAM_SEG);
     }
 }
 
