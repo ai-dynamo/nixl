@@ -250,17 +250,9 @@ private:
     std::optional<std::pair<std::string,std::string>> notif;
 
 public:
-    void notif_schedule(const std::string& agent,
-                        const std::string& message) {
-        notif = std::make_pair(agent, message);
+    auto& notification() {
+        return notif;
     }
-
-    std::pair<const std::string&,const std::string&> notif_args() const {
-        return {notif.value().first, notif.value().second};
-    }
-
-    bool notif_pending() const { return notif.has_value(); }
-    void notif_consume() { notif.reset(); }
 
     nixlUcxBackendH(nixlUcxWorker* _uw){
         uw = _uw;
@@ -907,9 +899,15 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     if (opt_args && opt_args->hasNotif) {
         if (ret == NIXL_SUCCESS) {
             ret = notifSendPriv(remote_agent, opt_args->notifMsg, req);
-            _retHelper(ret, intHandle, req);
+            if (_retHelper(ret, intHandle, req)) {
+                return ret;
+            }
+
+            if (ret == NIXL_IN_PROG) {
+                ret = intHandle->status();
+            }
         } else if (ret == NIXL_IN_PROG) {
-            intHandle->notif_schedule(remote_agent, opt_args->notifMsg);
+            intHandle->notification().emplace(remote_agent, opt_args->notifMsg);
         }
     }
 
@@ -919,14 +917,20 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
-    nixl_status_t status = intHandle->status();
 
-    if (status == NIXL_SUCCESS && intHandle->notif_pending()) {
+    nixl_status_t status = intHandle->status();
+    auto& notif = intHandle->notification();
+    if (status == NIXL_SUCCESS && notif.has_value()) {
         nixlUcxReq req;
-        const auto& [remote_agent, msg] = intHandle->notif_args();
-        status = notifSendPriv(remote_agent, msg, req);
-        intHandle->notif_consume();
-        _retHelper(status, intHandle, req);
+        status = notifSendPriv(notif.value().first, notif.value().second, req);
+        notif.reset();
+        if (_retHelper(status, intHandle, req)) {
+            return status;
+        }
+
+        if (status == NIXL_IN_PROG) {
+            status = intHandle->status();
+        }
     }
 
     return status;
