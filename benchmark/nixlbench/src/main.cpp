@@ -80,10 +80,11 @@ static std::vector<std::vector<xferBenchIOV>> createTransferDescLists(xferBenchW
 
         for (const auto &iov : iov_list) {
             for (size_t i = 0; i < count; i++) {
-                size_t offset = ((i * stride) % iov.len);
+                size_t dev_offset = ((i * stride) % iov.len);
 
                 for (size_t j = 0; j < batch_size; j++) {
-                    xfer_list.push_back(xferBenchIOV((iov.addr + offset) + (j * block_size),
+                    size_t block_offset = ((j * block_size) % iov.len);
+                    xfer_list.push_back(xferBenchIOV((iov.addr + dev_offset) + block_offset,
                                                       block_size,
                                                       iov.devId));
                 }
@@ -119,7 +120,7 @@ static int processBatchSizes(xferBenchWorker &worker,
             if (IS_PAIRWISE_AND_SG()) {
                 // TODO: This is here just to call throughput reduction
                 // Separate reduction and print
-                xferBenchUtils::printStats(block_size, batch_size, 0);
+                xferBenchUtils::printStats(true, block_size, batch_size, 0);
             }
         } else if (worker.isInitiator()) {
             std::vector<std::vector<xferBenchIOV>> remote_trans_lists(worker.exchangeIOV(local_trans_lists));
@@ -135,7 +136,7 @@ static int processBatchSizes(xferBenchWorker &worker,
                 xferBenchUtils::checkConsistency(local_trans_lists);
             }
 
-            xferBenchUtils::printStats(block_size, batch_size,
+            xferBenchUtils::printStats(false, block_size, batch_size,
                                     std::get<double>(result));
         }
     }
@@ -199,7 +200,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    if (worker_ptr->isInitiator()) {
+    if (worker_ptr->isInitiator() && worker_ptr->isMasterRank()) {
         xferBenchConfig::printConfig();
         xferBenchUtils::printStatsHeader();
     }

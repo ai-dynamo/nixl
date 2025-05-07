@@ -36,6 +36,7 @@ class xferBenchWorker {
         virtual ~xferBenchWorker();
 
         std::string getName() const;
+        bool isMasterRank();
         bool isInitiator();
         bool isTarget();
         int synchronize();

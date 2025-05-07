@@ -137,7 +137,11 @@ static int execTransfer(const std::vector<std::vector<xferBenchIOV>> &local_iovs
         for (size_t i = 0; i < local_iov.size(); i++) {
             auto &local = local_iov[i];
             auto &remote = remote_iov[i];
-            nvshmemx_putmem_on_stream((void *)remote.addr, (void *)local.addr, local.len, target_rank, stream);
+            if (XFERBENCH_OP_WRITE == xferBenchConfig::op_type) {
+                nvshmemx_putmem_on_stream((void *)remote.addr, (void *)local.addr, local.len, target_rank, stream);
+            } else if (XFERBENCH_OP_READ == xferBenchConfig::op_type) {
+                nvshmemx_getmem_on_stream((void *)remote.addr, (void *)local.addr, local.len, target_rank, stream);
+            }
         }
         nvshmemx_quiet_on_stream(stream);
     }

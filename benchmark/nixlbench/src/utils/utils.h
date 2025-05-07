@@ -145,7 +145,7 @@ class xferBenchUtils {
 
         static void checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
         static void printStatsHeader();
-        static void printStats(size_t block_size, size_t batch_size,
+        static void printStats(bool is_target, size_t block_size, size_t batch_size,
 			                   double total_duration);
 };
 

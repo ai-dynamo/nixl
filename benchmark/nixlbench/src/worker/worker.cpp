@@ -79,6 +79,10 @@ std::string xferBenchWorker::getName() const {
     return name;
 }
 
+bool xferBenchWorker::isMasterRank() {
+    return (0 == rt->getRank());
+}
+
 bool xferBenchWorker::isInitiator() {
     return ("initiator" == name);
 }
