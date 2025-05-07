@@ -204,7 +204,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 }
 
 static void runTarget(const std::string &ip, int port) {
-    nixlAgentConfig cfg(true, true, port, 0, 100000, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+    nixlAgentConfig cfg(true, true, port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 0, 100000);
 
     std::cout << "Starting Agent for target\n";
     nixlAgent agent(target, cfg);
@@ -225,7 +225,7 @@ static void runTarget(const std::string &ip, int port) {
 }
 
 static void runInitiator(const std::string &target_ip, int target_port) {
-    nixlAgentConfig cfg(true, true, 0, 0, 100000, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+    nixlAgentConfig cfg(true, true, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 0, 100000);
 
     std::cout << "Starting Agent for initiator\n";
     nixlAgent agent(initiator, cfg);
@@ -252,7 +252,7 @@ int main(int argc, char *argv[]) {
     /** Argument Parsing */
     if (argc < 4) {
         std::cout <<"Enter the required arguments\n" << std::endl;
-        std::cout <<"<Role> " <<"Target IP> <Target Port>"
+        std::cout <<"<Role> " <<"<Target IP> <Target Port>"
                   << std::endl;
         exit(-1);
     }
