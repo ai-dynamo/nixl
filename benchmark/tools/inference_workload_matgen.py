@@ -58,7 +58,7 @@ class ModelConfig:
     hidden_size: int        # Model's hidden dimension (H)
     num_layers: int         # Number of layers (L)
     num_heads: int   =1       # Number of attention heads (N_heads)
-    num_kv_heads: int = None  # Number of key/value heads (for MQA/GQA)
+    num_kv_heads: Optional[int] = None  # Number of key/value heads (for MQA/GQA)
     dtype_size: float = 2   # Size in bytes (2 for FP16, 4 for FP32)
 
     @property
@@ -140,7 +140,7 @@ def gen_batches(
     num_user_requests: int,
     batch_size: int,
     model_config: ModelConfig,
-    max_batch_mem: int = 100E9, # 100GB - capacity of a gpu
+    max_batch_mem: float = 100E9, # 100GB - capacity of a gpu
 ):
     """
     For now very naive, aggregate requests into batches until it exceeds max_batch_mem or batch_size
@@ -151,7 +151,7 @@ def gen_batches(
     batches = []
     curr = []
     curr_mem = 0
-    for req in range(num_user_requests):
+    for _ in range(num_user_requests):
         req = UserRequest.rand()
         curr_mem += model_config.kv_cache_size(req.isl)
         curr.append(req)
@@ -216,7 +216,7 @@ def gen_matrix(
 
     num_peers = decode_worker_config.tp / prefill_worker_config.tp / prefill_worker_config.cp
     if num_peers % 1 != 0:
-        raise ValueError(f"Prefill TP*Prefill CP must be a divisor of decode TP")
+        raise ValueError("Prefill TP*Prefill CP must be a divisor of decode TP")
     num_peers = int(num_peers)
     buf_size = kv_slice_size / num_peers
 
@@ -262,7 +262,7 @@ def main(
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
     model_config: ModelConfig,
-    results_dir: PathLike = None,
+    results_dir: Optional[PathLike] = None,
     rail_optimized: bool = False,
 ):
     """
@@ -295,13 +295,11 @@ def main(
     
     # Chunk the ranks into worker groups
     prefill_workers = [
-        prefill_ranks[i:i + prefill_worker_size] 
-        for i in range(0, len(prefill_ranks), prefill_worker_size)
+        prefill_ranks[i:i + prefill_worker_size] for i in range(0, len(prefill_ranks), prefill_worker_size)
     ]
     
     decode_workers = [
-        decode_ranks[i:i + decode_worker_size]
-        for i in range(0, len(decode_ranks), decode_worker_size) 
+        decode_ranks[i:i + decode_worker_size] for i in range(0, len(decode_ranks), decode_worker_size) 
     ]
     if rail_optimized:
         # Reorder the decode workers to match rail-optimized communication
@@ -321,12 +319,12 @@ def main(
     matrices = gen_matrices_and_compute_time(batches, prefill_workers, decode_workers, model_config, prefill_worker_config, decode_worker_config)
 
     # Save matrices and metadata to files
-    results_dir = results_dir or f"matrices_{world_size}ranks"
+    results_dir = results_dir or Path(f"matrices_{world_size}ranks")
     results_dir = Path(results_dir)
     print(f"Saving {len(matrices)} matrices to {results_dir}")
     results_dir.mkdir(parents=True, exist_ok=True)
     
-    metadata = {
+    metadata: dict[str, Any] = {
         "traffic_patterns": [],
     }
     

@@ -18,18 +18,14 @@
 import json
 import logging
 import time
-from typing import Optional, Tuple, List
+from typing import Optional, List, Dict, Any
 
-import numpy as np
 from custom_traffic_perftest import CTPerftest
 from common import TrafficPattern
-from dist_utils import dist_utils, ReduceOp
+from dist_utils import dist_utils
 from tabulate import tabulate
-from common import NixlHandle
 from nixl._api import nixl_agent
-from utils import format_size
 import yaml
-import tqdm
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +58,7 @@ class SequentialCTPerftest(CTPerftest):
 
     def run(
         self, verify_buffers: bool = False, print_recv_buffers: bool = False, json_output_path: Optional[str] = None
-    ) -> float:
+    ):
         """
         Args:
             verify_buffers: Whether to verify buffer contents after transfer
@@ -75,7 +71,7 @@ class SequentialCTPerftest(CTPerftest):
         This method initializes and executes multiple traffic patterns simultaneously,
         measures their performance, and optionally verifies the results.
         """
-        results = {
+        results: Dict[str, Any] = {
             "iterations_results": [],
             "metadata": {"ts": time.time()}
         }
@@ -88,11 +84,6 @@ class SequentialCTPerftest(CTPerftest):
         total_tps = len(self.traffic_patterns)
         s = time.time()
         for i, tp in enumerate(self.traffic_patterns):
-            try:
-                if i > 0 and i % (total_tps // 10) == 0 and self.my_rank == 0:
-                    log.info(f"[Rank {self.my_rank}] Preparing TPs: {(i/total_tps)*100:.1f}% complete")
-            except:
-                pass # DEBUG
             handles, send_bufs, recv_bufs = self._prepare_tp(tp)
             tp_bufs.append((send_bufs, recv_bufs))
             tp_handles.append(handles)
@@ -100,8 +91,8 @@ class SequentialCTPerftest(CTPerftest):
         results["metadata"]["prepare_tp_time"] = time.time() - s
 
         # Measure SOL for every matrix
-        isolated_tp_starts = [None for _ in tp_handles]
-        isolated_tp_ends = [None for _ in tp_handles]
+        isolated_tp_starts: list[float | None] = [None for _ in tp_handles]
+        isolated_tp_ends: list[float | None] = [None for _ in tp_handles]
         n_isolation_iters = 20
         results["metadata"]["sol_calculation_ts"] = time.time()
         for tp_ix, handles in enumerate(tp_handles):
@@ -119,7 +110,7 @@ class SequentialCTPerftest(CTPerftest):
 
         isolated_tp_starts_by_ranks = dist_utils.allgather_obj(isolated_tp_starts)
         isolated_tp_ends_by_ranks = dist_utils.allgather_obj(isolated_tp_ends)
-        isolated_tp_latencies = []
+        isolated_tp_latencies: list[float | None] = []
         for i in range(len(self.traffic_patterns)):
             starts = [isolated_tp_starts_by_ranks[rank][i] for rank in range(len(isolated_tp_starts_by_ranks))]
             ends = [isolated_tp_ends_by_ranks[rank][i] for rank in range(len(isolated_tp_ends_by_ranks))]
@@ -165,7 +156,7 @@ class SequentialCTPerftest(CTPerftest):
             tp_starts_by_ranks = dist_utils.allgather_obj(tp_starts)
             tp_ends_by_ranks = dist_utils.allgather_obj(tp_ends)
 
-            tp_latencies = []
+            tp_latencies: list[float | None] = []
             for i in range(len(self.traffic_patterns)):
                 starts = [tp_starts_by_ranks[rank][i] for rank in range(len(tp_starts_by_ranks))]
                 ends = [tp_ends_by_ranks[rank][i] for rank in range(len(tp_ends_by_ranks))]
@@ -218,7 +209,7 @@ class SequentialCTPerftest(CTPerftest):
             data: Performance data rows
             traffic_patterns: List of traffic patterns tested
         """
-        results = {
+        results: Dict[str, Any] = {
             "performance_results": {
                 "timestamp": time.time(),
                 "world_size": self.world_size,
@@ -226,7 +217,7 @@ class SequentialCTPerftest(CTPerftest):
             }
         }
         
-        for i, tp in enumerate(traffic_patterns):
+        for i in range(len(traffic_patterns)):
             tp_data = {}
             for j, header in enumerate(headers):
                 # Convert header to a valid YAML key

@@ -3,7 +3,7 @@
 ## Overview
 Benchmark tool to measure the performance of customizable traffic patterns, where each rank sends a custom message size to every other rank (can be 0). 
 
-The purpose of such a benchmark is to simulate asymetric traffic flow, like the KV caches transfers flow in a disaggregated inference system.
+The purpose of such a benchmark is to simulate asymmetric traffic flow, like the KV caches transfers flow in a disaggregated inference system.
 
 Such a pattern is defined using a transfer matrix, i.e a matrix where cell [i.j] defines the size of the message sent by rank i to rank j. 
 
@@ -83,9 +83,9 @@ Install requirements
 pip install -r requirements.txt
 ```
 
-Optionally, generate matrices using the `inference_workload_matgen.py` script
+Optionally, generate matrices using the `benchmark/tools/inference_workload_matgen.py` script
 ```bash
-python inference_workload_matgen.py generate \
+python benchmark/tools/inference_workload_matgen.py generate \
     --num-user-requests 10 \
     --num-prefill-nodes 16 \
     --num-decode-nodes 16 \

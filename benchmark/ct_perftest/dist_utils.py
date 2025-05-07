@@ -42,7 +42,7 @@ class _DistUtils(ABC):
     @final
     def __init__(self):
         # Key is tuple of the sorted ranks, value is backend group 
-        self.groups: Dict[Tuple[int], Any] = {}
+        self.groups: Dict[Tuple[int, ...], Any] = {}
 
     @abstractmethod
     def init_dist(self):
@@ -185,7 +185,7 @@ class _TorchDistUtils(_DistUtils):
         key = tuple(sorted(ranks))
         group = self.groups.get(key)
         if group is None:
-            raise ValueError(f"[Rank {self.rank}] Group with ranks {ranks} was not created")
+            raise ValueError(f"[Rank {self.get_rank()}] Group with ranks {ranks} was not created")
 
         dist.barrier(group=group)
 
