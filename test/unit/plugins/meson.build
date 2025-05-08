@@ -21,3 +21,8 @@ disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend
     subdir('cuda_gds')
 endif
+
+disable_hf3fs_backend = get_option('disable_hf3fs_backend')
+if not disable_hf3fs_backend
+    subdir('hf3fs')
+endif
