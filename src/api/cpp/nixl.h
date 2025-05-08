@@ -399,6 +399,8 @@ class nixlAgent {
          *         backends in the list and the backends' connection info are included in the metadata.
          *         If 'extra_params->ip_addr' is set, the metadata will only be sent to a single peer.
          *         If 'extra_params->port' can be set in addition to IP address, or will default to default_comm_port.
+         *         If 'extra_params->metadataLabel' is set, it will be used as the label of the partial metadata
+         *         to be sent. Otherwise, the default label of the partial metadata will be used for sending.
          *
          * @param  descs         [in]  Descriptor list to include in the metadata
          * @param  str           [out] The serialized metadata blob
@@ -417,6 +419,9 @@ class nixlAgent {
          *                       If IP is specified, this will enable peer to peer fetching of metadata.
          *                       If IP is unspecified, this will fetch from the metadata server.
          *                       Port can be specified or defaults to default_comm_port.
+         *                       If metadataLabel is specified, it will be used as the label of the metadata
+         *                       to be fetched, which can be partial metadata. Otherwise, the default label
+         *                       of the full metadata will be used for fetching.
          *
          * @return nixl_status_t    Error code if call was not successful
          */
@@ -429,7 +434,8 @@ class nixlAgent {
          *
          * @param  extra_params  Only to optionally specify IP address and/or port.
          *                       If IP is specified, this will enable peer to peer invalidation of metadata.
-         *                       If IP is unspecified, this will invalidate from the metadata server.
+         *                       If IP is unspecified, this will invalidate all agent's labels
+         *                       from the metadata server.
          *                       Port can be specified or defaults to default_comm_port.
          *
          * @return nixl_status_t    Error code if call was not successful

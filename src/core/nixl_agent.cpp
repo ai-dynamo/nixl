@@ -1231,7 +1231,7 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
 #if HAVE_ETCD
     // If no IP is provided, use etcd (now via thread)
     if (data->useEtcd) {
-        data->enqueueCommWork(std::make_tuple(ETCD_SEND, data->name + "/metadata", 0, std::move(myMD)));
+        data->enqueueCommWork(std::make_tuple(ETCD_SEND, default_metadata_label, 0, std::move(myMD)));
         return NIXL_SUCCESS;
     }
     return NIXL_ERR_INVALID_PARAM;
@@ -1256,7 +1256,10 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 #if HAVE_ETCD
     // If no IP is provided, use etcd (now via thread)
     if (data->useEtcd) {
-        data->enqueueCommWork(std::make_tuple(ETCD_SEND, data->name + "/partial_metadata", 0, std::move(myMD)));
+        std::string metadata_label = extra_params && !extra_params->metadataLabel.empty() ?
+                                     extra_params->metadataLabel :
+                                     default_partial_metadata_label;
+        data->enqueueCommWork(std::make_tuple(ETCD_SEND, std::move(metadata_label), 0, std::move(myMD)));
         return NIXL_SUCCESS;
     }
     return NIXL_ERR_INVALID_PARAM;
@@ -1277,7 +1280,10 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
 #if HAVE_ETCD
     // If no IP is provided, use etcd via thread with watch capability
     if (data->useEtcd) {
-        data->enqueueCommWork(std::make_tuple(ETCD_FETCH, remote_name, 0, ""));
+        std::string metadata_label = extra_params && !extra_params->metadataLabel.empty() ?
+                                     extra_params->metadataLabel :
+                                     default_metadata_label;
+        data->enqueueCommWork(std::make_tuple(ETCD_FETCH, std::move(metadata_label), 0, remote_name));
         return NIXL_SUCCESS;
     }
     return NIXL_ERR_INVALID_PARAM;
@@ -1297,7 +1303,7 @@ nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
 #if HAVE_ETCD
     // If no IP is provided, use etcd via thread
     if (data->useEtcd) {
-        data->enqueueCommWork(std::make_tuple(ETCD_INVAL, data->name, 0, ""));
+        data->enqueueCommWork(std::make_tuple(ETCD_INVAL, "", 0, ""));
         return NIXL_SUCCESS;
     }
     return NIXL_ERR_INVALID_PARAM;
