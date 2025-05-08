@@ -666,7 +666,7 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
     }
 
     nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
-    ret = uw->connect(addr, size, conn.getEp());
+    ret = uw->connect(addr.data(), size, conn.getEp());
     if (ret) {
         return NIXL_ERR_BACKEND;
     }

@@ -18,6 +18,7 @@
 #define __UCX_UTILS_H
 
 #include <nixl_types.h>
+#include <memory>
 
 extern "C"
 {
