@@ -21,19 +21,7 @@
 
 // Function to create a new POSIX backend engine instance
 static nixlBackendEngine* create_posix_engine(const nixlBackendInitParams* init_params) {
-    try {
-        auto engine = new nixlPosixEngine(init_params);
-        nixl_status_t status = engine->init();
-        if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Failed to initialize POSIX engine";
-            delete engine;
-            return nullptr;
-        }
-        return engine;
-    } catch (const std::exception& e) {
-        NIXL_ERROR << "Failed to create POSIX engine: " << e.what();
-        return nullptr;
-    }
+    return new nixlPosixEngine(init_params);
 }
 
 static void destroy_posix_engine(nixlBackendEngine *engine) {
@@ -47,7 +35,7 @@ static const char* get_plugin_name() {
 
 // Function to get the plugin version
 static const char* get_plugin_version() {
-    return "0.2.1";
+    return "0.1.0";
 }
 
 // Function to get backend options

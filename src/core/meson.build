@@ -29,6 +29,9 @@ if 'UCX_MO' in static_plugins
     nixl_lib_deps += [ ucx_mo_backend_interface, cuda_dep ]
 endif
 
+if 'POSIX' in static_plugins
+    nixl_lib_deps += [ posix_backend_interface ]
+endif
 
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and 'GDS' in static_plugins

@@ -44,12 +44,12 @@ private:
     const nixl_opt_b_args_t      *opt_args;               // Optional backend-specific arguments
     const nixl_b_params_t        *custom_params_;         // Custom backend parameters
     int                          queue_depth_;            // Queue depth for async I/O
-    std::unique_ptr<nixlPosixQueue> queue;               // Async I/O queue instance
+    std::unique_ptr<nixlPosixQueue> queue;                // Async I/O queue instance
     bool                         is_prepped;              // Flag indicating if operations are prepared
     nixl_status_t                status;                  // Current status of the transfer operation
     bool                         use_aio_;                // Whether to use AIO instead of io_uring
 
-    nixl_status_t initQueues(bool use_aio);                          // Initialize async I/O queue
+    nixl_status_t initQueues(bool use_aio);               // Initialize async I/O queue
 
 public:
     nixlPosixBackendReqH(const nixl_xfer_op_t &operation,
@@ -66,7 +66,17 @@ public:
 
 class nixlPosixEngine : public nixlBackendEngine {
 private:
-    bool use_aio;  // Whether to use AIO instead of io_uring
+    bool use_aio;                             // Use AIO instead of io_uring
+    const nixl_mem_list_t supported_mems = {  // supported memory types
+        FILE_SEG,
+        DRAM_SEG
+    };
+
+    bool validatePrepXferParams(const nixl_xfer_op_t &operation,
+                                const nixl_meta_dlist_t &local,
+                                const nixl_meta_dlist_t &remote,
+                                const std::string &remote_agent,
+                                const std::string &local_agent);
 
 public:
     nixlPosixEngine(const nixlBackendInitParams* init_params);
@@ -75,7 +85,7 @@ public:
     // Initialize the engine after construction
     nixl_status_t init();
 
-    bool supportsNotif () const {
+    bool supportsNotif   () const {
         return false;
     }
     bool supportsRemote  () const {
@@ -99,7 +109,7 @@ public:
     }
 
     nixl_status_t loadLocalMD(nixlBackendMD* input,
-                             nixlBackendMD* &output) {
+                              nixlBackendMD* &output) {
         output = input;
         return NIXL_SUCCESS;
     }
@@ -109,24 +119,24 @@ public:
     }
 
     nixl_status_t registerMem(const nixlBlobDesc &mem,
-                             const nixl_mem_t &nixl_mem,
-                             nixlBackendMD* &out) override;
+                              const nixl_mem_t &nixl_mem,
+                              nixlBackendMD* &out) override;
 
     nixl_status_t deregisterMem(nixlBackendMD* meta);
 
     nixl_status_t prepXfer(const nixl_xfer_op_t &operation,
-                          const nixl_meta_dlist_t &local,
-                          const nixl_meta_dlist_t &remote,
-                          const std::string &remote_agent,
-                          nixlBackendReqH* &handle,
-                          const nixl_opt_b_args_t* opt_args=nullptr);
+                           const nixl_meta_dlist_t &local,
+                           const nixl_meta_dlist_t &remote,
+                           const std::string &remote_agent,
+                           nixlBackendReqH* &handle,
+                           const nixl_opt_b_args_t* opt_args=nullptr);
 
     nixl_status_t postXfer(const nixl_xfer_op_t &operation,
-                          const nixl_meta_dlist_t &local,
-                          const nixl_meta_dlist_t &remote,
-                          const std::string &remote_agent,
-                          nixlBackendReqH* &handle,
-                          const nixl_opt_b_args_t* opt_args=nullptr);
+                           const nixl_meta_dlist_t &local,
+                           const nixl_meta_dlist_t &remote,
+                           const std::string &remote_agent,
+                           nixlBackendReqH* &handle,
+                           const nixl_opt_b_args_t* opt_args=nullptr);
 
     nixl_status_t checkXfer(nixlBackendReqH* handle);
     nixl_status_t releaseReqH(nixlBackendReqH* handle);

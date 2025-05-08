@@ -30,27 +30,13 @@ message('libaio found, building POSIX plugin')
 # Try to find liburing (optional) - first try pkg-config
 liburing_dep = dependency('liburing', required: false)
 
-# If pkg-config fails, try finding it as a system library
-if not liburing_dep.found()
-    liburing_dep = compiler.find_library('uring', required: false)
-endif
-
 have_liburing = liburing_dep.found()
-
 if have_liburing
     compile_defs += ['-DHAVE_LIBURING']
     message('liburing found, adding io_uring support')
 else
-    # Create a not found dependency to avoid build errors
-    liburing_dep = dependency('', required: false)
     message('liburing not found, building with AIO support only')
 endif
-
-# Get Abseil dependencies
-absl_log_dep = dependency('absl_log', required: true)
-
-# Add pthread dependency
-thread_dep = dependency('threads')
 
 # Define base source files - conditionally include uring_queue.cpp
 posix_sources = [
@@ -66,7 +52,7 @@ if have_liburing
 endif
 
 # Prepare dependencies list - only include liburing if found
-plugin_deps = [nixl_infra, nixl_common_dep, absl_log_dep, thread_dep, libaio_dep]
+plugin_deps = [nixl_infra, nixl_common_dep, libaio_dep]
 plugin_link_args = ['-laio']
 
 if have_liburing

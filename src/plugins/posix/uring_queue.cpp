@@ -106,8 +106,8 @@ nixl_status_t UringQueue::checkCompleted() {
 
     // Log progress periodically
     if (num_completed % (num_entries / 10) == 0) {
-        NIXL_INFO << "Queue progress: "
-                  <<  (num_completed * 100.0 / num_entries) << "% complete";
+        NIXL_DEBUG << "Queue progress: "
+                   <<  (num_completed * 100.0 / num_entries) << "% complete";
     }
 
     return (num_completed == num_entries) ? NIXL_SUCCESS : NIXL_IN_PROG;

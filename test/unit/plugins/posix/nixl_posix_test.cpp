@@ -191,8 +191,8 @@ int main(int argc, char *argv[])
 {
     std::cout << "NIXL POSIX Plugin Test" << std::endl;
 
-    int                 opt;
-    int                 num_transfers = default_num_transfers;
+    int                opt;
+    int                num_transfers = default_num_transfers;
     size_t             transfer_size = default_transfer_size;
     std::string        test_files_dir_path = default_test_files_dir_path;
     bool               use_direct_io = false;  // New option for O_DIRECT

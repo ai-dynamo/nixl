@@ -26,46 +26,9 @@
 #include "common/nixl_log.h"
 #include "queue_factory_impl.h"
 
-namespace {
-    static constexpr unsigned int max_posix_ring_size_log = 10;
-    static constexpr unsigned int max_posix_ring_size = 1 << max_posix_ring_size_log;
-    const nixl_mem_list_t supported_mems = {
-        FILE_SEG,
-        DRAM_SEG
-    };
 
-    bool validatePrepXferParams(const nixl_xfer_op_t &operation,
-                              const nixl_meta_dlist_t &local,
-                              const nixl_meta_dlist_t &remote,
-                              const std::string &remote_agent,
-                              const std::string &local_agent) {
-        if (remote_agent != local_agent) {
-            NIXL_ERROR << absl::StrFormat("Error: Remote agent must match the requesting agent (%s). Got %s",
-                                           local_agent, remote_agent);
-            return false;
-        }
-
-        if (local.getType() != DRAM_SEG) {
-            NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d", local.getType());
-            return false;
-        }
-
-        if (remote.getType() != FILE_SEG) {
-            NIXL_ERROR << absl::StrFormat("Error: Remote memory type must be FILE_SEG, got %d", remote.getType());
-            return false;
-        }
-
-        if (local.descCount() != remote.descCount()) {
-            NIXL_ERROR << absl::StrFormat("Error: Mismatch in descriptor counts - local: %d, remote: %d",
-                    local.descCount(), remote.descCount());
-            return false;
-        }
-
-        return true;
-    }
-
-    // Helper class to manage backend availability and selection
-    class BackendManager {
+// Helper class to manage backend availability and selection
+class BackendManager {
     public:
         static bool isAioAvailable() {
             return QueueFactory::isAioAvailable();
@@ -94,10 +57,10 @@ namespace {
                 if (custom_params->count("use_uring") > 0) {
                     const auto& value = custom_params->at("use_uring");
                     if (value == "true" || value == "1") {
-                        #ifndef HAVE_LIBURING
+#ifndef HAVE_LIBURING
                         NIXL_ERROR << "io_uring backend requested but not available - not built with liburing support";
                         return {NIXL_ERR_NOT_SUPPORTED, false};
-                        #endif
+#endif
                         if (!BackendManager::isUringAvailable()) {
                             NIXL_ERROR << "io_uring backend requested but not available at runtime";
                             return {NIXL_ERR_NOT_SUPPORTED, false};
@@ -112,31 +75,11 @@ namespace {
                 NIXL_ERROR << "No backend available - AIO not available";
                 return {NIXL_ERR_NOT_SUPPORTED, false};
             }
+
             NIXL_INFO << "Using default AIO backend";
             return {NIXL_SUCCESS, true};
         }
-    };
-}
-
-// -----------------------------------------------------------------------------
-// IO Queue Factory Implementation
-// -----------------------------------------------------------------------------
-
-std::unique_ptr<nixlPosixQueue> IOQueueFactory::createQueue(bool use_aio, int num_entries, bool is_read,
-                                                            const void* params) {
-    if (use_aio) {
-        NIXL_INFO << "Creating AIO queue with " << num_entries << " entries";
-        return QueueFactory::createAioQueue(num_entries, is_read);
-    } else {
-        NIXL_INFO << "Creating io_uring queue with " << num_entries << " entries";
-        #ifdef HAVE_LIBURING
-        return QueueFactory::createUringQueue(num_entries, is_read, static_cast<const io_uring_params*>(params));
-        #else
-        (void)params;
-        return nullptr;
-        #endif
-    }
-}
+};
 
 // -----------------------------------------------------------------------------
 // POSIX Backend Request Handle Implementation
@@ -183,7 +126,7 @@ nixl_status_t nixlPosixBackendReqH::initQueues(bool use_aio) {
             }
             NIXL_INFO << "Using AIO backend";
         } else {
-            #ifdef HAVE_LIBURING
+#ifdef HAVE_LIBURING
             // Initialize io_uring parameters with basic configuration
             struct io_uring_params params = {};
             // Start with basic parameters, no special flags
@@ -194,10 +137,10 @@ nixl_status_t nixlPosixBackendReqH::initQueues(bool use_aio) {
                 throw std::runtime_error("Failed to create io_uring queue");
             }
             NIXL_INFO << "Using io_uring backend";
-            #else
+#else
             NIXL_ERROR << "io_uring support not compiled in";
             return NIXL_ERR_NOT_SUPPORTED;
-            #endif
+#endif
         }
         return NIXL_SUCCESS;
     } catch (const std::exception& e) {
@@ -259,13 +202,13 @@ nixlPosixBackendReqH::~nixlPosixBackendReqH() {
 // -----------------------------------------------------------------------------
 
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams* init_params)
-    : nixlBackendEngine(init_params), use_aio(true)
-{
+    : nixlBackendEngine(init_params) {
+    use_aio = true;
     auto [init_status, should_use_aio] = BackendManager::shouldUseAio(init_params->customParams);
     if (init_status != NIXL_SUCCESS) {
         initErr = true;
         NIXL_ERROR << "Failed to initialize POSIX backend - requested backend not available";
-        throw std::runtime_error("Failed to initialize POSIX backend - requested backend not available");
+        return;
     }
     use_aio = should_use_aio;
     NIXL_INFO << "POSIX backend initialized using " << (use_aio ? "AIO" : "io_uring") << " backend";
@@ -276,6 +219,37 @@ nixl_status_t nixlPosixEngine::init() {
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
+}
+
+
+bool nixlPosixEngine::validatePrepXferParams(const nixl_xfer_op_t &operation,
+                                             const nixl_meta_dlist_t &local,
+                                             const nixl_meta_dlist_t &remote,
+                                             const std::string &remote_agent,
+                                             const std::string &local_agent) {
+    if (remote_agent != local_agent) {
+        NIXL_ERROR << absl::StrFormat("Error: Remote agent must match the requesting agent (%s). Got %s",
+                                       local_agent, remote_agent);
+        return false;
+    }
+
+    if (local.getType() != DRAM_SEG) {
+        NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d", local.getType());
+        return false;
+    }
+
+    if (remote.getType() != FILE_SEG) {
+        NIXL_ERROR << absl::StrFormat("Error: Remote memory type must be FILE_SEG, got %d", remote.getType());
+        return false;
+    }
+
+    if (local.descCount() != remote.descCount()) {
+        NIXL_ERROR << absl::StrFormat("Error: Mismatch in descriptor counts - local: %d, remote: %d",
+                local.descCount(), remote.descCount());
+        return false;
+    }
+
+    return true;
 }
 
 nixl_status_t nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
@@ -292,11 +266,11 @@ nixl_status_t nixlPosixEngine::deregisterMem(nixlBackendMD *) {
 }
 
 nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
-                                       const nixl_meta_dlist_t &local,
-                                       const nixl_meta_dlist_t &remote,
-                                       const std::string &remote_agent,
-                                       nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args) {
+                                        const nixl_meta_dlist_t &local,
+                                        const nixl_meta_dlist_t &remote,
+                                        const std::string &remote_agent,
+                                        nixlBackendReqH* &handle,
+                                        const nixl_opt_b_args_t* opt_args) {
     if (!validatePrepXferParams(operation, local, remote, remote_agent, localAgent)) {
         return NIXL_ERR_INVALID_PARAM;
     }
