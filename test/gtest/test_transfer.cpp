@@ -159,27 +159,26 @@ protected:
         }
     }
 
-    void
-    waitForOneNotif(const std::string &from_name, const std::string &to_name)
+    void waitForXfer(nixlAgent &from, const std::string &from_name,
+                     nixlAgent &to, nixlXferReqH *xfer_req)
     {
-        while (true) {
-            // Get notifications and progress all agents to avoid deadlocks
-            for (size_t i = 0; i < agents.size(); i++) {
-                nixl_notifs_t notif_map;
-                nixl_status_t status = agents[i].getNotifs(notif_map);
-                ASSERT_EQ(status, NIXL_SUCCESS);
-                if (!notif_map.empty()) {
-                    // Expect the notification to the right agent
-                    EXPECT_EQ(to_name, getAgentName(i));
+        nixl_notifs_t notif_map;
+        bool xfer_done;
+        do {
+            // progress on "from" agent while waiting for notification
+            nixl_status_t status = from.getXferStatus(xfer_req);
+            EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+            xfer_done = (status == NIXL_SUCCESS);
 
-                    // Expect the notification from the right agent
-                    auto &notif_list = notif_map[from_name];
-                    EXPECT_EQ(notif_list.size(), 1u);
-                    EXPECT_EQ(notif_list.front(), NOTIF_MSG);
-                    return;
-                }
-            }
-        }
+            // Get notifications and progress all agents to avoid deadlocks
+            status = to.getNotifs(notif_map);
+            ASSERT_EQ(status, NIXL_SUCCESS);
+        } while (notif_map.empty() || !xfer_done);
+
+        // Expect the notification from the right agent
+        auto &notif_list = notif_map[from_name];
+        EXPECT_EQ(notif_list.size(), 1u);
+        EXPECT_EQ(notif_list.front(), NOTIF_MSG);
     }
 
     void doTransfer(nixlAgent &from, const std::string &from_name,
@@ -215,7 +214,7 @@ protected:
             status = from.postXferReq(xfer_req);
             ASSERT_GE(status, NIXL_SUCCESS);
 
-            waitForOneNotif(from_name, to_name);
+            waitForXfer(from, from_name, to, xfer_req);
 
             status = from.getXferStatus(xfer_req);
             EXPECT_EQ(status, NIXL_SUCCESS);
