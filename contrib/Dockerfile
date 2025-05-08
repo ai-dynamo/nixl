@@ -77,6 +77,7 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
 COPY . /workspace/nixl
 
 RUN rm -rf /usr/lib/ucx
+RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
