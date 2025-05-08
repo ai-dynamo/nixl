@@ -52,10 +52,7 @@ private:
     nixl_ucx_ep_state_t state{NIXL_UCX_EP_STATE_NULL};
 
     void setState(nixl_ucx_ep_state_t new_state);
-    nixl_status_t closeImpl(ucp_worker_h worker, ucp_ep_close_flags_t flags);
-    nixl_status_t closeNb() {
-        return closeImpl(nullptr, ucp_ep_close_flags_t(0));
-    }
+    nixl_status_t closeImpl(ucp_ep_close_flags_t flags);
 
     /* Connection */
     nixl_status_t disconnect_nb();

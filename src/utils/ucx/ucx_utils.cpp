@@ -34,11 +34,13 @@ static nixl_status_t ucx_status_to_nixl(ucs_status_t status)
     switch(status) {
     case UCS_INPROGRESS:
         return NIXL_IN_PROG;
+    case UCS_ERR_NOT_CONNECTED:
     case UCS_ERR_CONNECTION_RESET:
         return NIXL_ERR_REMOTE_DISCONNECT;
     case UCS_ERR_INVALID_PARAM:
         return NIXL_ERR_INVALID_PARAM;
     default:
+        NIXL_WARN << "Unexpected UCX error: " << ucs_status_string(status);
         return NIXL_ERR_BACKEND;
     }
 }
@@ -86,7 +88,7 @@ void nixlUcxEp::setState(nixl_ucx_ep_state_t new_state)
 }
 
 nixl_status_t
-nixlUcxEp::closeImpl(ucp_worker_h worker, ucp_ep_close_flags_t flags)
+nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
 {
     ucs_status_ptr_t request      = nullptr;
     ucp_request_param_t req_param = {
@@ -117,30 +119,12 @@ nixlUcxEp::closeImpl(ucp_worker_h worker, ucp_ep_close_flags_t flags)
             return ucx_status_to_nixl(UCS_PTR_STATUS(request));
         }
 
-        if (worker == nullptr) {
-            ucp_request_free(request);
-            eph = nullptr;
-            return NIXL_SUCCESS;
-        }
-        break;
+        ucp_request_free(request);
+        eph = nullptr;
+        return NIXL_SUCCESS;
     default:
         NIXL_FATAL << "Invalid endpoint state: " << state;
     }
-
-    NIXL_ASSERT(UCS_PTR_IS_PTR(request));
-    NIXL_ASSERT(worker != nullptr);
-
-    // Blocking close.
-    ucs_status_t status;
-    do {
-        ucp_worker_progress(worker);
-        status = ucp_request_check_status(request);
-    } while (status == UCS_INPROGRESS);
-
-    ucp_request_free(request);
-    eph = nullptr;
-
-    return ucx_status_to_nixl(status);
 }
 
 nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr)
@@ -176,7 +160,10 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr)
 
 nixl_status_t nixlUcxEp::disconnect_nb()
 {
-    return closeNb();
+    nixl_status_t status = closeImpl(ucp_ep_close_flags_t(0));
+
+    // At step of disconnect we can ignore the remote disconnect error.
+    return (status == NIXL_ERR_REMOTE_DISCONNECT) ? NIXL_SUCCESS : status;
 }
 
 /* ===========================================
