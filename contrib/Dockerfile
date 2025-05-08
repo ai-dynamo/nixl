@@ -40,10 +40,8 @@ RUN apt-get update -y && \
     automake \
     libtool \
     libz-dev \
-    libiberty-dev \
     flex \
-    build-essential \
-    libibverbs-dev
+    build-essential
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
