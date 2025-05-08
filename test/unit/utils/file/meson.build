@@ -13,8 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
-subdir('stream')
-subdir('ucx')
-subdir('file')
+gtest = dependency('gtest', version : '>=1.11.0', required : true)
+
+file_utils_test = executable(
+    'file_utils_test',
+    'file_utils_test.cpp',
+    dependencies: [gtest, thread_dep, file_utils_dep],
+    include_directories: [nixl_inc_dirs]
+)

@@ -13,8 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
-subdir('stream')
-subdir('ucx')
-subdir('file')
+file_utils_lib = library('file_utils',
+           'file_utils.cpp', 'file_utils.h',
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
+           install: true)
+
+file_utils_dep = declare_dependency(
+    link_with: file_utils_lib,
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, include_directories('.')]
+) 
