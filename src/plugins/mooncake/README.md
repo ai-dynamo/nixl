@@ -1,29 +1,35 @@
-Mooncake transfer engine is a high-performance, zero-copy data transfer library. To achieve better performance in NIXL, we have designed an new backend based on Mooncake transfer engine.
+# Mooncake Backend Plugin [Preview]
 
-# Usage
-1. Build the install [Mooncake](https://github.com/kvcache-ai/Mooncake) manually:
-```
-git clone https://github.com/kvcache-ai/Mooncake.git
-cd Mooncake
-bash dependencies.sh
-mkdir build
-cd build
-cmake .. -DBUILD_SHARED_LIBS=ON
-make -j
-sudo make install # compulsory
-```
-2. Build NIXL with option `disable_mooncake_backend` set as `false`.
-3. When Mooncake Backend is built, you can use it in you data transfer task by specifying the backend name as "Mooncake":
-```cpp
-nixl_status_t ret1;
-std::string ret_s1;
-nixlAgentConfig cfg(true);
-nixl_b_params_t init1;
-nixl_mem_list_t mems1;
-nixlAgent A1(agent1, cfg);
-ret1 = A1.getPluginParams("Mooncake", mems1, init1);
-assert (ret1 == NIXL_SUCCESS);
-nixlBackendH* ucx1, *ucx2;
-ret1 = A1.createBackend("Mooncake", init1, ucx1);
-...
-```
+[Mooncake](https://github.com/kvcache-ai/Mooncake) is a KVCache-centric disaggregated architecture for LLM serving.
+The core of Mooncake is the Transfer Engine (TE), which provides a unified interface for batched data transfer across various storage devices and network links. Supporting multiple protocols including TCP, RDMA, CXL/shared-memory, and NVMe over Fabric (NVMe-of), TE is designed to enable fast and reliable data transfer for AI workloads. Compared to Gloo (used by Distributed PyTorch) and traditional TCP, TE achieves significantly lower I/O latency, making it a superior solution for efficient data transmission.
+
+Mooncake transfer engine is a high-performance, zero-copy data transfer library. To achieve better performance in NIXL, we have designed an new backend based on Mooncake Transfer Engine.
+
+## Usage Guide
+1. Build the install Mooncake manually. You can refer to the [installation guide here](https://github.com/kvcache-ai/Mooncake?tab=readme-ov-file#build-and-use-binaries).
+
+    ```cpp
+    git clone https://github.com/kvcache-ai/Mooncake.git
+    cd Mooncake
+    bash dependencies.sh
+    mkdir build
+    cd build
+    cmake .. -DBUILD_SHARED_LIBS=ON
+    make -j
+    sudo make install
+    ```
+
+    > [!IMPORTANT]
+    > You must build and install the shared library (`-DBUILD_SHARED_LIBS=ON`) before building NIXL with the Mooncake backend.
+
+2. Build NIXL, ensuring that the option `disable_mooncake_backend` is set as `false`.
+
+3. To test the Mooncake backend, you can run the unit test in `test/unit/plugins/mooncake/mooncake_backend_test`.
+
+## Known Issues
+1. The `Notif[ication]` and `ProgTh[read]` features are not supported.
+2. The current version of Mooncake Transfer Engine manages metadata exchange by itself, which is different from NIXL.
+3. The sum of the number of release requests for each handle allocated by `prepXfer()` should be less than `kMaxRequestCount(1024)`.
+
+> [!IMPORTANT]
+> We are working for refactoring Mooncake Transfer Engine to make it more adaptful and useful.

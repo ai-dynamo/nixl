@@ -18,7 +18,9 @@ ucx_backend_inc_dirs = include_directories('./ucx')
 subdir('ucx')
 subdir('ucx_mo')
 
-if not get_option('disable_mooncake_backend')
+cc = meson.get_compiler('cpp')
+libtransfer_engine = cc.find_library('transfer_engine', required: false)
+if libtransfer_engine.found() and not get_option('disable_mooncake_backend')
     subdir('mooncake')
 endif
 

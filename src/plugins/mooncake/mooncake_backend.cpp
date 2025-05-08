@@ -79,22 +79,30 @@ nixlMooncakeEngine::~nixlMooncakeEngine () {
     destroyTransferEngine(engine_);
 }
 
+// TODO We purposely set this function as empty.
+// Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
+//
+// Mooncake Transfer Engine exchanges metadata by itself without any explicit interface,
+// and it does not need to connect remote agent before transferring data.
+// Instead, getConnInfo() obtains the mapping between agent name and connect info 
+// (segment name in the context of Mooncake Transfer Engine).
+// loadRemoteConnInfo() opens the segment, which implicitly retrieves metadata 
+// (such as QP numbers) of the remote agent. 
+nixl_status_t nixlMooncakeEngine::connect(const std::string &remote_agent) {
+    return NIXL_SUCCESS;
+}
+
+// TODO We purposely set this function as empty.
+// Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
+nixl_status_t nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t nixlMooncakeEngine::getConnInfo(std::string &str) const {
     const static size_t kBufLen = 64;
     char buf_out[kBufLen];
     getLocalIpAndPort(engine_, buf_out, kBufLen);
     str = buf_out;
-    return NIXL_SUCCESS;
-}
-
-// It's enough for Transfer Engine to obtain connection information by loadRemoteConnInfo
-// so this function has no action
-nixl_status_t nixlMooncakeEngine::connect(const std::string &remote_agent) {
-    return NIXL_SUCCESS;
-}
-
-// Since connect() has no action, this function has no action as well
-nixl_status_t nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
     return NIXL_SUCCESS;
 }
 
@@ -150,15 +158,20 @@ nixl_status_t nixlMooncakeEngine::deregisterMem (nixlBackendMD* meta)
     return err == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
 }
 
-// Transfer Engine handles metadata exchange by itself,
-// so this function has no action
+// TODO We purposely set this function as empty.
+// Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
+//
+// Mooncake Transfer Engine exchanges metadata by itself without any explicit interface,
+// which is different from NIXL's paradigm. 
+// Therefore no metadata needs to be exposed to the outside. 
 nixl_status_t nixlMooncakeEngine::getPublicData (const nixlBackendMD* meta,
-                                                 std::string &str) const {
+                                                 std::string &str) const 
+{
     return NIXL_SUCCESS;
 }
 
-// Transfer Engine handles metadata exchange by itself,
-// so this function has no action
+// TODO We purposely set this function as empty.
+// Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
 nixl_status_t
 nixlMooncakeEngine::loadLocalMD (nixlBackendMD* input,
                                  nixlBackendMD* &output)
@@ -167,8 +180,8 @@ nixlMooncakeEngine::loadLocalMD (nixlBackendMD* input,
     return NIXL_SUCCESS;
 }
 
-// Transfer Engine handles metadata exchange by itself,
-// so this function has no action
+// TODO We purposely set this function as empty.
+// Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
 nixl_status_t nixlMooncakeEngine::loadRemoteMD (const nixlBlobDesc &input,
                                                 const nixl_mem_t &nixl_mem,
                                                 const std::string &remote_agent,
@@ -178,9 +191,10 @@ nixl_status_t nixlMooncakeEngine::loadRemoteMD (const nixlBlobDesc &input,
     return NIXL_SUCCESS;
 }
 
-// Transfer Engine handles metadata exchange by itself,
-// so this function has no action
-nixl_status_t nixlMooncakeEngine::unloadMD (nixlBackendMD* input) {
+// TODO We purposely set this function as empty.
+// Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
+nixl_status_t nixlMooncakeEngine::unloadMD (nixlBackendMD* input) 
+{
     return NIXL_SUCCESS;
 }
 
@@ -198,6 +212,13 @@ nixl_status_t nixlMooncakeEngine::prepXfer (const nixl_xfer_op_t &operation,
                                             nixlBackendReqH* &handle,
                                             const nixl_opt_b_args_t* opt_args)
 {
+    const static size_t kMaxRequestCount = 1024;
+    uint64_t batch_id = allocateBatchID(engine_, kMaxRequestCount);
+    if (batch_id == INVALID_BATCH) return NIXL_ERR_BACKEND;
+    auto priv = new nixlMooncakeBackendReqH();
+    priv->batch_id = batch_id;
+    priv->request_count = 0;
+    handle = priv;
     return NIXL_SUCCESS;
 }
 
@@ -208,6 +229,7 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
                                             nixlBackendReqH* &handle,
                                             const nixl_opt_b_args_t* opt_args)
 {
+    auto priv = (nixlMooncakeBackendReqH *) handle;
     int segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -217,8 +239,6 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
     }
     if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
     size_t request_count = local.descCount();
-    uint64_t batch_id = allocateBatchID(engine_, request_count);
-    if (batch_id == INVALID_BATCH) return NIXL_ERR_BACKEND;
     transfer_request_t *request = new transfer_request_t[request_count];
     for (size_t index = 0; index < request_count; ++index) {
         if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
@@ -228,12 +248,10 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
         request[index].length = local[index].len;
         request[index].target_id = segment_id;
     }
-    int rc = submitTransfer(engine_, batch_id, request, request_count);
+    int rc = submitTransfer(engine_, priv->batch_id, request, request_count);
+    delete []request;
     if (rc) return NIXL_ERR_BACKEND;
-    auto priv = new nixlMooncakeBackendReqH();
-    priv->batch_id = batch_id;
-    priv->request_count = request_count;
-    handle = priv;
+    priv->request_count += request_count;
     return NIXL_IN_PROG;
 }
 
