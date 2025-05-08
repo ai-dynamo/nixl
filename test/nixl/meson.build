@@ -14,7 +14,6 @@
 # limitations under the License.
 
 ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/plugins/ucx'])
-ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [nixl_inc_dirs, '../../src/plugins/ucx'])
 
 if cuda_dep.found()
     cuda_dependencies = [cuda_dep]

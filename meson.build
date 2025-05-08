@@ -74,6 +74,8 @@ if etcd_dep.found()
     add_project_arguments('-DHAVE_ETCD', language: 'cpp')
 else
     message('ETCD CPP API library not found, will disable etcd support')
+endif
+
 if cuda_dep.found()
     add_languages('CUDA')
     cuda = import('unstable-cuda')

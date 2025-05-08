@@ -169,6 +169,8 @@ class nixlAgentOptionalArgs {
          *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
          */
         int port = default_comm_port;
+
+        /**
          * @var Backend custom parameter
          */
         nixl_blob_t customParam;
