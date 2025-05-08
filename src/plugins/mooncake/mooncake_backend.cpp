@@ -87,7 +87,7 @@ nixlMooncakeEngine::~nixlMooncakeEngine () {
 // Instead, getConnInfo() obtains the mapping between agent name and connect info
 // (segment name in the context of Mooncake Transfer Engine).
 // loadRemoteConnInfo() opens the segment, which implicitly retrieves metadata
-// (such as QP numbers) of the remote agent. 
+// (such as QP numbers) of the remote agent.
 nixl_status_t nixlMooncakeEngine::connect(const std::string &remote_agent) {
     return NIXL_SUCCESS;
 }
