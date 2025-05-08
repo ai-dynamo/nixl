@@ -84,9 +84,9 @@ nixlMooncakeEngine::~nixlMooncakeEngine () {
 //
 // Mooncake Transfer Engine exchanges metadata by itself without any explicit interface,
 // and it does not need to connect remote agent before transferring data.
-// Instead, getConnInfo() obtains the mapping between agent name and connect info 
+// Instead, getConnInfo() obtains the mapping between agent name and connect info
 // (segment name in the context of Mooncake Transfer Engine).
-// loadRemoteConnInfo() opens the segment, which implicitly retrieves metadata 
+// loadRemoteConnInfo() opens the segment, which implicitly retrieves metadata
 // (such as QP numbers) of the remote agent. 
 nixl_status_t nixlMooncakeEngine::connect(const std::string &remote_agent) {
     return NIXL_SUCCESS;
@@ -162,10 +162,10 @@ nixl_status_t nixlMooncakeEngine::deregisterMem (nixlBackendMD* meta)
 // Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
 //
 // Mooncake Transfer Engine exchanges metadata by itself without any explicit interface,
-// which is different from NIXL's paradigm. 
-// Therefore no metadata needs to be exposed to the outside. 
+// which is different from NIXL's paradigm.
+// Therefore no metadata needs to be exposed to the outside.
 nixl_status_t nixlMooncakeEngine::getPublicData (const nixlBackendMD* meta,
-                                                 std::string &str) const 
+                                                 std::string &str) const
 {
     return NIXL_SUCCESS;
 }
@@ -193,7 +193,7 @@ nixl_status_t nixlMooncakeEngine::loadRemoteMD (const nixlBlobDesc &input,
 
 // TODO We purposely set this function as empty.
 // Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
-nixl_status_t nixlMooncakeEngine::unloadMD (nixlBackendMD* input) 
+nixl_status_t nixlMooncakeEngine::unloadMD (nixlBackendMD* input)
 {
     return NIXL_SUCCESS;
 }
