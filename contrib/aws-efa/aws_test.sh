@@ -25,7 +25,7 @@ usage() {
     echo "Example: $0 .gitlab/test_cpp.sh \$NIXL_INSTALL_DIR && .test_script123.sh param123"
     echo ""
     echo "Required environment variables:"
-    echo "  GITHUB_REF        - Git reference to checkout (e.g., main)"
+    echo "  GITHUB_REF        - Git reference to checkout (e.g., main, branch-xyz, commit SHA)"
     echo "  GITHUB_SERVER_URL - GitHub server URL (e.g., \"https://github.com\")"
     echo "  GITHUB_REPOSITORY - GitHub repository (e.g., \"ai-dynamo/nixl\")"
     echo ""
@@ -49,12 +49,13 @@ test_cmd="$1"
 export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/pytorch:25.02-py3"}
 
 # Set Git checkout command based on GITHUB_REF
-case "$GITHUB_REF" in refs/heads/*)
-    export GIT_CHECKOUT_CMD="git checkout -t origin/${GITHUB_REF#refs/heads/}"
-    ;;
-*)
-    export GIT_CHECKOUT_CMD="git checkout -t origin/$GITHUB_REF"
-    ;;
+case "$GITHUB_REF" in
+    refs/heads/*)
+        export GIT_CHECKOUT_CMD="git checkout ${GITHUB_REF#refs/heads/}"
+        ;;
+    *)
+        export GIT_CHECKOUT_CMD="git checkout $GITHUB_REF"
+        ;;
 esac
 
 # Construct command sequence to run within the AWS container

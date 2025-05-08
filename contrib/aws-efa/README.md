@@ -22,7 +22,7 @@ The AWS test infrastructure allows NIXL to be automatically tested on AWS Elasti
 ## GitHub Actions Integration
 
 The script is designed to run in GitHub Actions when branches are updated.
-It uses the `GITHUB_REF` environment variable to determine which branch to test.
+It relies on the `GITHUB_REF` environment variable to determine which branch or commit to test. The value can be a branch name (e.g., `main`, `feature-xyz`) or a commit SHA.
 
 ### Required GitHub Secrets
 
@@ -39,7 +39,7 @@ To run the tests manually:
 2. Substitute GH variables:
 
 ```bash
-# Set which branch to test
+# Branch or commit SHA to test
 export GITHUB_REF="main"
 
 # Other required variables
