@@ -51,7 +51,7 @@ class BaseModelArch(ABC):
         raise NotImplementedError("Subclasses must implement this method")
    
     @abstractmethod
-    def get_io_size(self) -> int:
+    def get_io_size(self, sequence_length: int) -> int:
         raise NotImplementedError("Subclasses must implement this method")
     
     @abstractmethod
