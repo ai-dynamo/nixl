@@ -1,4 +1,6 @@
 from models.models import BaseModelArch
+from models.utils import get_precision_size
+from models.model_config import ModelConfig
 from typing import Any, Dict
 import yaml
 
@@ -16,7 +18,8 @@ class DeepSeekR1(BaseModelArch):
                 embedding_dimension: int,
                 rope_mla_dimension: int,
                 mla_latent_vector_dimension: int,
-                num_model_params: int):
+                num_model_params: int,
+                model_config: ModelConfig = None):
         """
         Initialize a DeepSeek-R1 model architecture.
         
@@ -32,6 +35,7 @@ class DeepSeekR1(BaseModelArch):
         """
         
         self.model = model
+        self.model_config = model_config
         self.num_layers = num_layers
         self.num_query_heads = num_query_heads
         self.query_head_dimension = query_head_dimension
@@ -40,23 +44,28 @@ class DeepSeekR1(BaseModelArch):
         self.mla_latent_vector_dimension = mla_latent_vector_dimension
         self.num_model_params = num_model_params
 
-    def get_kv_size_per_token(self) -> int:
+    def get_kv_size_per_token(self, token_count: int = 1) -> int:
         """
         Get the key-value cache size for the DeepSeek-R1 model.
         
         Returns:
             int: The size of the key-value cache, currently hardcoded to 1.
         """
-        return 1
+
+        #         ( rope_mla_dimension + mla mla_latent_vector_dimension )
+        # * quantization * num_layers
+        return int((self.rope_mla_dimension + self.mla_latent_vector_dimension) * 
+                get_precision_size(self.model_config.model.kvcache_quant_mode) * 
+                self.num_layers)*token_count
     
-    def get_io_size(self) -> int:
+    def get_io_size(self, sequence_length: int) -> int:
         """
         Get the input/output size for the Llama 3.1 model.
         
         Returns:
             int: The size of the input/output cache, currently hardcoded to 1.
         """
-        return 1
+        return int((sequence_length/self.model_config.runtime.batch_size))
 
     def to_dict(self) -> Dict[str, Any]:
         """

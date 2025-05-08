@@ -5,8 +5,8 @@ strategy:
   kvcache_quant_mode: "int8"
 
 runtime:
-  batch_size: 8
-  isl: 8192
+  batch_size: 1
+  isl: 1
   osl: 2048
 
 system:

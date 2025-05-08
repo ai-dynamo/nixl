@@ -1,6 +1,7 @@
 from models.models import BaseModelArch
-from config.model_config import ModelConfig
+from models.model_config import ModelConfig
 from typing import Any, Dict
+from models.utils import get_precision_size
 import yaml
 
 class Llama3_1(BaseModelArch):
@@ -11,11 +12,11 @@ class Llama3_1(BaseModelArch):
     to access its parameters and configuration.
     """
     
-    def __init__(self, model: str, model_config: ModelConfig, num_layers: int,
+    def __init__(self, model: str, num_layers: int,
                 num_query_heads_with_mha: int,
                 query_head_dimension: int,
                 gqa_num_queries_in_group: int,
-                num_model_params: int):
+                num_model_params: int, model_config: ModelConfig = None):
         """
         Initialize a Llama 3.1 model architecture.
         
@@ -36,23 +37,26 @@ class Llama3_1(BaseModelArch):
         self.num_model_params = num_model_params
         self.model_dimension = self.num_query_heads_with_mha * self.query_head_dimension
 
-    def get_kv_size_per_token(self) -> int:
+    def get_kv_size_per_token(self, token_count: int=1) -> int:
         """
         Get the key-value cache size for the Llama 3.1 model (per token).
         
         Returns:
             int: The size of the key-value cache, currently hardcoded to 1.
         """
-        return 1
+        return int(
+            self.num_layers * (self.num_query_heads_with_mha/self.gqa_num_queries_in_group) * 
+            self.query_head_dimension*2*get_precision_size(self.model_config.model.model_quant_mode)*token_count
+        )
 
-    def get_io_size(self) -> int:
+    def get_io_size(self, sequence_length: int) -> int:
         """
         Get the input/output size for the Llama 3.1 model.
         
         Returns:
             int: The size of the input/output cache, currently hardcoded to 1.
         """
-        return 1
+        return int((sequence_length/self.model_config.runtime.batch_size))
 
     def to_dict(self) -> Dict[str, Any]:
         """

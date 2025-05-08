@@ -1,5 +1,5 @@
 from models.models import BaseModelArch
-from config.model_config import ModelConfig
+from models.model_config import ModelConfig
 
 class NIXLBench:
     """
@@ -78,8 +78,8 @@ class NIXLBench:
         self.gds_enable_direct = gds_enable_direct
         self.gds_filepath = gds_filepath
         self.initiator_seg_type = initiator_seg_type
-        self.max_batch_size = self.model_config.runtime.batch_size
-        self.max_block_size = self.model_config.model.tp_size * self.model_config.runtime.isl
+        self.max_batch_size = max_batch_size
+        self.max_block_size = max_block_size
         self.mode = mode
         self.num_initiator_dev = num_initiator_dev
         self.num_iter = num_iter
@@ -96,6 +96,24 @@ class NIXLBench:
         self.worker_type = worker_type
         self._override_defaults()
 
+
+    def set_io_size(self, io_size: int):
+        self.start_batch_size = io_size
+        self.max_batch_size   = io_size
+
+    def configure_scheme(self, scheme: str = "pairwise", direction: str = "isl"):
+        """
+        Configure the scheme based on the model configuration.
+        For ISL (input)
+        """
+        if scheme == "tp":
+            if direction == "isl":
+                self.num_initiator_dev = 1
+                self.num_target_dev = self.model_config.model.tp_size
+            elif direction == "osl":
+                self.num_initiator_dev = self.model_config.model.tp_size
+                self.num_target_dev = 1
+
     def _override_defaults(self):
         """
         Set default values for parameters that were not explicitly provided.
@@ -103,14 +121,16 @@ class NIXLBench:
         This method is called during initialization to ensure all required
         parameters have valid values before running benchmarks.
         """
-        if self.max_batch_size is None:
-            self.max_batch_size = 1
+        start_block_size = self.model.get_kv_size_per_token(self.model.model_config.runtime.batch_size)
+        max_block_size   = self.model.get_kv_size_per_token(self.model.model_config.runtime.batch_size)
+        
+        # start_batch_size = self.model.get_io_size()
+        # max_batch_size   = self.model.get_io_size()
+
         if self.max_block_size is None:
-            self.max_block_size = self.model_config.model.tp_size * self.model_config.runtime.isl
-        if self.start_batch_size is None:
-            self.start_batch_size = 1
+            self.max_block_size = max_block_size
         if self.start_block_size is None:
-            self.start_block_size = 4096
+            self.start_block_size = start_block_size
         if self.total_buffer_size is None:
             self.total_buffer_size = 8589934592
 
@@ -168,8 +188,8 @@ class NIXLBench:
             "gds_enable_direct": False,
             "gds_filepath": "",
             "initiator_seg_type": "DRAM",
-            "max_batch_size": 1,
-            "max_block_size": 67108864,
+            "max_batch_size": 1, # ios per gpu 
+            "max_block_size": 67108864, # io size 
             "mode": "SG",
             "num_initiator_dev": 1,
             "num_iter": 1000,
@@ -186,7 +206,7 @@ class NIXLBench:
             "worker_type": "nixl"
         }
 
-    def plan(self):
+    def plan(self, show_isl=True, show_osl=True):
         """
         Generate the nixlbench command with appropriate parameters.
         
@@ -203,6 +223,7 @@ class NIXLBench:
                 return False
             return True
 
+        
         params = self._params()
         for name, value in params.items():
             if should_include(name, value):
