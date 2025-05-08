@@ -16,11 +16,6 @@
 ucx_mo_dep_list = [nixl_infra, ucx_backend_interface, serdes_interface]
 
 compile_flags = []
-if cuda_dep.found()
-    compile_flags = [ '-DHAVE_CUDA' ]
-else
-    compile_flags = [ '-UHAVE_CUDA' ]
-endif
 
 if 'UCX_MO' in static_plugins
     ucx_mo_backend_lib = static_library('UCX_MO',

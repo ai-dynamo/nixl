@@ -13,12 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cuda_utils_depends_from = []
+cuda_utils_depends_from = [ nixl_common_dep ]
 
 compile_flags = [ ]
 if cuda_dep.found()
     compile_flags += '-DHAVE_CUDA'
-    cuda_utils_depends_from = [ cuda_dep ]
+    cuda_utils_depends_from += [ cuda_dep ]
 
     func ='cuMemRetainAllocationHandle'
     if cpp.has_function(func, dependencies: cuda_dep)

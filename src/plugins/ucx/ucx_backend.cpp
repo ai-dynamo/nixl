@@ -16,73 +16,8 @@
  */
 #include "ucx_backend.h"
 #include <serdes/serdes.h>
+#include <nixl_log.h>
 
-nixl_status_t
-nixlUcxEngine::vramUpdateCtx(void *address, uint64_t  devId, bool &restart_reqd)
-{
-    restart_reqd = false;
-
-    if (!nixlCudaPtrCtx::vramIsSupported()) {
-        // NIXL doesn't support CUDA but VRAM pointer was given
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    // IF the workaround is globally disabled
-    if(!cudaAddrWA) {
-        // Nothing to do
-        return NIXL_SUCCESS;
-    }
-
-    std::unique_ptr<nixlCudaPtrCtx> ctx =
-            nixlCudaPtrCtx::nixlCudaPtrCtxInit(address);
-
-    switch(ctx->getMemType()) {
-    case nixlCudaPtrCtx::MEM_HOST:
-        // Nothing is required for host
-        return NIXL_SUCCESS;
-    case nixlCudaPtrCtx::MEM_DEV:
-    case nixlCudaPtrCtx::MEM_VMM_DEV:
-        // Continue with setting the context
-        break;
-    case nixlCudaPtrCtx::MEM_VMM_HOST:
-    default:
-        // TODO: figure out how to handle VMM
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if (ctx->getDevId() != devId) {
-        // TODO: log error
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if (nullptr == cudaPtrCtx.get()) {
-        // The context was not previously set
-        // Set it now and indicate that an update
-        // is required
-        cudaPtrCtx.swap(ctx);
-        restart_reqd = true;
-        return NIXL_SUCCESS;
-    }
-
-    // The context was set previously
-    // Check that it is consistent with the new address
-    if (! (*ctx == *cudaPtrCtx)) {
-        // TODO: log out error that for UCX that requires CUDA context to be set
-        // addresses from different contexts are used
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t nixlUcxEngine::vramApplyCtx()
-{
-    auto ctx = cudaPtrCtx.get();
-    if (ctx) {
-        return ctx->setMemCtx();
-    }
-    return NIXL_SUCCESS;
-}
 
 /****************************************
  * UCX request management
@@ -231,7 +166,7 @@ public:
 void nixlUcxEngine::progressFunc()
 {
     using namespace nixlTime;
-    vramApplyCtx();
+    cudaMemCtx->set();
 
     pthrActive = 1;
 
@@ -333,13 +268,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         pthrOn = false;
     }
 
-    // Temp fixup
-    if (getenv("NIXL_DISABLE_CUDA_ADDR_WA")) {
-        std::cout << "WARNING: disabling CUDA address workaround" << std::endl;
-        cudaAddrWA = false;
-    } else {
-        cudaAddrWA = true;
-    }
+    cudaMemCtx = nixlCudaMemCtx::nixlCudaMemCtxInit();
+
     progressThreadStart();
 }
 
@@ -580,15 +510,19 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
     size_t rkey_size;
 
     if (nixl_mem == VRAM_SEG) {
-        bool need_restart;
-        nixl_status_t status;
-        status = vramUpdateCtx((void*)mem.addr, mem.devId, need_restart);
-        if (NIXL_SUCCESS != status) {
-            //TODO Add to logging
-            return status;
-        }
-        if (need_restart) {
+        nixl_status_t status = cudaMemCtx->enableAddr((void*)mem.addr, mem.devId);
+        if (NIXL_IN_PROG == status) {
+            // The context was updated and must be set in the progress thread
+            // This procedure ensures that access to cudaMemCtx is serialized
             progressThreadRestart();
+        } else if (NIXL_SUCCESS != status) {
+            NIXL_ERROR << "Address " << std::hex << mem.addr << std::dec
+                       << " is not supported by the UCX backend";
+            NIXL_ERROR << "Returned status is " << status;
+            // TODO use nixlEnumStrings::statusStr(status); once circ dep between libnixl & utils is resolved
+            NIXL_ERROR << "The likely reason is that your UCX supports only one CUDA device per UCP context";
+            NIXL_ERROR << "Consider upgrading to UCX 1.19 or using UCX_MO backend";
+            return status;
         }
     }
 

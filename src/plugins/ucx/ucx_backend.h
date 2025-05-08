@@ -107,9 +107,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         nixlTime::us_t pthrDelay;
 
         /* CUDA data*/
-        std::unique_ptr<nixlCudaPtrCtx> cudaPtrCtx;
-        //nixlUcxCudaCtx *cudaCtx;
-        bool cudaAddrWA;
+        std::unique_ptr<nixlCudaMemCtx> cudaMemCtx;
 
         /* Notifications */
         notif_list_t notifMainList;
@@ -119,10 +117,6 @@ class nixlUcxEngine : public nixlBackendEngine {
         // Map of agent name to saved nixlUcxConnection info
         std::unordered_map<std::string, nixlUcxConnection,
                            std::hash<std::string>, strEqual> remoteConnMap;
-
-
-        nixl_status_t vramUpdateCtx(void *address, uint64_t devId, bool &restart_reqd);
-        nixl_status_t vramApplyCtx();
 
         // Threading infrastructure
         //   TODO: move the thread management one outside of NIXL common infra

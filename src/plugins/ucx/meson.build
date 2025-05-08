@@ -16,7 +16,8 @@
 
 compile_flags = []
 
-ucx_backend_dep_list = [nixl_infra, ucx_utils_interface, cuda_utils_interface, serdes_interface, thread_dep]
+ucx_backend_dep_list = [nixl_infra, nixl_common_dep, ucx_utils_interface,
+                        cuda_utils_interface, serdes_interface, thread_dep]
 
 if 'UCX' in static_plugins
     ucx_backend_lib = static_library('UCX',
