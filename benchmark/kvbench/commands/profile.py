@@ -1,5 +1,5 @@
 import argparse
-from config.model_config import ModelConfig
+from models.model_config import ModelConfig
 from models.models import BaseModelArch
 from commands.args import add_common_args, add_nixl_bench_args
 from commands.nixlbench import NIXLBench
