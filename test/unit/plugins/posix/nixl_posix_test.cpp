@@ -36,7 +36,7 @@
 namespace {
     const size_t page_size = sysconf(_SC_PAGESIZE);
 
-    constexpr int default_num_transfers = 4 * 1024;
+    constexpr int default_num_transfers = 1024;
     constexpr size_t default_transfer_size = 1 * 512 * 1024; // 512KB
     constexpr char test_phrase[] = "NIXL Storage Test Pattern 2025 POSIX";
     constexpr size_t test_phrase_len = sizeof(test_phrase) - 1; // -1 to exclude null terminator

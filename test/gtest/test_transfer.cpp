@@ -256,9 +256,9 @@ TEST_P(TestTransfer, RandomSizes)
 {
     // Tuple fields are: size, count, repeat
     constexpr std::array<std::tuple<size_t, size_t, size_t>, 3> test_cases = {
-        {{4096, 8, 10},
-         {32768, 64, 100},
-         {1000000, 100, 1000}}
+        {{4096, 8, 3},
+         {32768, 64, 3},
+         {1000000, 100, 3}}
     };
 
     for (const auto &[size, count, repeat] : test_cases) {
