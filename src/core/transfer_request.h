@@ -17,6 +17,8 @@
 #ifndef __TRANSFER_REQUEST_H_
 #define __TRANSFER_REQUEST_H_
 
+#include <memory>
+
 // Contains pointers to corresponding backend engine and its handler, and populated
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
 class nixlXferReqH {
@@ -24,8 +26,8 @@ class nixlXferReqH {
         nixlBackendEngine* engine         = nullptr;
         nixlBackendReqH*   backendHandle  = nullptr;
 
-        nixl_meta_dlist_t* initiatorDescs = nullptr;
-        nixl_meta_dlist_t* targetDescs    = nullptr;
+        std::unique_ptr<nixl_meta_dlist_t> initiatorDescs;
+        std::unique_ptr<nixl_meta_dlist_t> targetDescs;
 
         std::string        remoteAgent;
         nixl_blob_t        notifMsg;
@@ -38,9 +40,6 @@ class nixlXferReqH {
         inline nixlXferReqH() { }
 
         inline ~nixlXferReqH() {
-            // delete checks for nullptr itself
-            delete initiatorDescs;
-            delete targetDescs;
             if (backendHandle != nullptr)
                 engine->releaseReqH(backendHandle);
         }
@@ -50,19 +49,13 @@ class nixlXferReqH {
 
 class nixlDlistH {
     private:
-        std::unordered_map<nixlBackendEngine*, nixl_meta_dlist_t*> descs;
+        std::unordered_map<nixlBackendEngine*, std::unique_ptr<nixl_meta_dlist_t>> descs;
 
         std::string        remoteAgent;
         bool               isLocal;
 
     public:
         inline nixlDlistH() { }
-
-        inline ~nixlDlistH() {
-            for (auto & elm : descs)
-                delete elm.second;
-        }
-
     friend class nixlAgent;
 };
 
