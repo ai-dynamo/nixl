@@ -39,3 +39,12 @@ plugin_test = executable('test_plugin',
                         dependencies: [nixl_dep, cuda_dep],
                         include_directories: [nixl_inc_dirs, utils_inc_dirs],
                         install: true)
+
+critical_failure_tests = executable('critical_failure_tests',
+    'critical_failure_tests.cpp',
+    dependencies: [nixl_dep, nixl_infra, thread_dep],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs],
+    link_with: [serdes_lib],
+    install: true)
+
+test('critical_failure_tests', critical_failure_tests)
