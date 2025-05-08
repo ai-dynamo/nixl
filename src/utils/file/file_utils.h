@@ -92,4 +92,4 @@ private:
     static int getModeFlags(nixlFileMode mode);
 };
 
-#endif // __FILE_UTILS_H 
+#endif // __FILE_UTILS_H

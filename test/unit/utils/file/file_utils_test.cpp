@@ -27,7 +27,7 @@ int main() {
     // Test file creation
     status = nixlFileUtils::openFile(test_file, nixlFileMode::CREATE, fd);
     assert(status == NIXL_SUCCESS);
-    
+
     // Test file close
     status = nixlFileUtils::closeFile(fd);
     assert(status == NIXL_SUCCESS);
@@ -46,4 +46,4 @@ int main() {
 
     std::cout << "All file utils tests passed!" << std::endl;
     return 0;
-} 
+}

@@ -41,7 +41,7 @@ nixl_status_t nixlFileUtils::openFile(const std::string& path, nixlFileMode mode
 
     // For create mode, set permissions to 0644 (rw-r--r--)
     mode_t permissions = (mode == nixlFileMode::CREATE) ? 0644 : 0;
-    
+
     fd = open(path.c_str(), flags, permissions);
     if (fd == -1) {
         switch (errno) {
@@ -100,4 +100,4 @@ nixl_status_t nixlFileUtils::fileExists(const std::string& path) {
         }
     }
     return NIXL_SUCCESS;
-} 
+}
