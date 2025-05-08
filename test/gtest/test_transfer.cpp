@@ -197,12 +197,16 @@ protected:
         registerMem(to, dst_buffers, dst_mem_type);
         exchangeMD();
 
+        nixl_opt_args_t extra_params;
+        extra_params.hasNotif = true;
+        extra_params.notifMsg = NOTIF_MSG;
+
         nixlXferReqH *xfer_req = nullptr;
         nixl_status_t status   = from.createXferReq(
                 NIXL_WRITE,
                 makeDescList<nixlBasicDesc>(src_buffers, src_mem_type),
                 makeDescList<nixlBasicDesc>(dst_buffers, dst_mem_type), to_name,
-                xfer_req);
+                xfer_req, &extra_params);
         ASSERT_EQ(status, NIXL_SUCCESS);
         EXPECT_NE(xfer_req, nullptr);
 
@@ -210,9 +214,6 @@ protected:
         for (size_t i = 0; i < repeat; i++) {
             status = from.postXferReq(xfer_req);
             ASSERT_GE(status, NIXL_SUCCESS);
-
-            status = from.genNotif(to_name, NOTIF_MSG);
-            ASSERT_EQ(status, NIXL_SUCCESS);
 
             waitForOneNotif(from_name, to_name);
 
