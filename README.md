@@ -36,15 +36,9 @@ pip install nixl
 
 `$ sudo apt install build-essential cmake pkg-config`
 
-If you want to build POSIX plugin:
-`$ sudo apt install liburing-dev`
-
 ### Fedora:
 
 `$ sudo dnf install gcc-c++ cmake pkg-config`
-
-If you want to build POSIX plugin:
-`$ sudo dnf install liburing-devel`
 
 ### Python
 
@@ -99,6 +93,12 @@ $ mkdir build && cd build
 $ cmake ..
 $ make -j$(nproc) && make install
 ```
+
+### Additional plugins
+
+Some plugins may have additional build requirements, see them here:
+[Mooncake](src/plugins/mooncake/README.md)
+[POSIX](src/plugins/posix/README.md)
 
 ## Getting started
 ### Build & install
