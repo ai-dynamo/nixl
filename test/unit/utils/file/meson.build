@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
-subdir('stream')
-subdir('ucx')
-subdir('file')
+file_utils_test = executable(
+    'file_utils_test',
+    'file_utils_test.cpp',
+    dependencies: [nixl_deps, file_utils_dep],
+    include_directories: [nixl_include_directories]
+) 
