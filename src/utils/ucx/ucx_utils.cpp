@@ -307,8 +307,6 @@ std::unique_ptr<char []> nixlUcxWorker::packRkey(nixlUcxMem &mem, size_t &size)
 
     /* Allocate the buffer */
     std::unique_ptr<char []> res = std::make_unique<char []>(size);
-    if (!res) {
-        return nullptr;
     }
     memcpy(res.get(), rkey_buf, size);
     ucp_rkey_buffer_release(rkey_buf);
