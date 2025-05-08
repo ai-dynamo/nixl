@@ -74,20 +74,31 @@ if have_liburing
     plugin_link_args += ['-luring']
 endif
 
-# Build the plugin using project-wide include directories
-posix_backend_lib = shared_library('POSIX',
-              posix_sources,
-              dependencies: plugin_deps,
-              link_args: plugin_link_args,
-              cpp_args: compile_defs,
-              name_prefix: 'libplugin_',
-              include_directories: [nixl_inc_dirs, utils_inc_dirs],
-              install: true,
-              install_dir: plugin_install_dir)
-
-if get_option('buildtype') == 'debug'
+if 'POSIX' in static_plugins
+    posix_backend_lib = static_library('POSIX',
+        posix_sources,
+        dependencies: plugin_deps,
+        link_args: plugin_link_args,
+        cpp_args: compile_defs + compile_flags,
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        install: false,
+        name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
+else
+    posix_backend_lib = shared_library('POSIX',
+        posix_sources,
+        dependencies: plugin_deps,
+        link_args: plugin_link_args,
+        cpp_args: compile_defs + ['-fPIC'],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        install: true,
+        name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
+        install_dir: plugin_install_dir)
+    if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
             'echo "POSIX=' + posix_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
             check: true
         )
+    endif
 endif
+
+posix_backend_interface = declare_dependency(link_with: posix_backend_lib)
