@@ -17,12 +17,12 @@
 #ifndef __UCX_UTILS_H
 #define __UCX_UTILS_H
 
+#include <nixl_types.h>
+
 extern "C"
 {
 #include <ucp/api/ucp.h>
 }
-
-#include "nixl.h"
 
 enum nixl_ucx_mt_t {
     NIXL_UCX_MT_SINGLE,
@@ -32,11 +32,48 @@ enum nixl_ucx_mt_t {
 };
 
 class nixlUcxEp {
+    enum nixl_ucx_ep_state_t {
+        NIXL_UCX_EP_STATE_NULL,
+        NIXL_UCX_EP_STATE_CONNECTED,
+        NIXL_UCX_EP_STATE_FAILED,
+        NIXL_UCX_EP_STATE_DISCONNECTED
+    };
 private:
-    ucp_ep_h  eph;
+    ucp_ep_h            eph{nullptr};
+    nixl_ucx_ep_state_t state{NIXL_UCX_EP_STATE_NULL};
+
+    static void err_cb(void *arg, ucp_ep_h ucp_ep, ucs_status_t status);
+    void setState(nixl_ucx_ep_state_t new_state);
+    nixl_status_t closeImpl(ucp_worker_h worker, ucp_ep_close_flags_t flags);
 
 public:
-    friend class nixlUcxWorker;
+    // TODO: Add read/write methods to avoid using raw handle outside.
+    ucp_ep_h getHandle() const { return eph; }
+
+    nixl_status_t checkTxState() const {
+        switch (state) {
+        case NIXL_UCX_EP_STATE_CONNECTED:
+            return NIXL_SUCCESS;
+        case NIXL_UCX_EP_STATE_FAILED:
+            return NIXL_ERR_REMOTE_DISCONNECT;
+        case NIXL_UCX_EP_STATE_NULL:
+        case NIXL_UCX_EP_STATE_DISCONNECTED:
+        default:
+            return NIXL_ERR_BACKEND;
+        }
+    }
+
+    nixl_status_t connect(ucp_worker_h worker, void* addr);
+
+    nixl_status_t close(ucp_worker_h worker) {
+        return closeImpl(worker, ucp_ep_close_flags_t(0));
+    }
+    nixl_status_t closeForce() {
+        return closeImpl(nullptr, UCP_EP_CLOSE_FLAG_FORCE);
+    }
+    nixl_status_t closeNb() {
+        return closeImpl(nullptr, ucp_ep_close_flags_t(0));
+    }
 };
 
 class nixlUcxMem {

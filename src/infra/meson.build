@@ -17,7 +17,7 @@ nixl_build_lib = library('nixl_build',
                         'nixl_descriptors.cpp',
                         'nixl_memory_section.cpp',
                         include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-                        dependencies: [serdes_interface],
+                        dependencies: [serdes_interface, nixl_common_dep],
                         install: true)
 
 nixl_infra = declare_dependency(link_with: nixl_build_lib)

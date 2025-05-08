@@ -19,6 +19,10 @@ set -x
 TEXT_YELLOW="\033[1;33m"
 TEXT_CLEAR="\033[0m"
 
+apt-get update
+apt-get -qq install -y libaio-dev
+
+
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
 
@@ -40,6 +44,7 @@ echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
 ibv_devinfo || true
+uname -a || true
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
@@ -50,7 +55,8 @@ cd ${INSTALL_DIR}
 ./bin/ucx_mo_backend_test
 
 # POSIX test disabled until we solve io_uring and Docker compatibility
-#./bin/nixl_posix_test
+
+./bin/nixl_posix_test -n 128 -s 1048576
 
 ./bin/ucx_backend_multi
 ./bin/serdes_test
