@@ -18,46 +18,48 @@
 #ifndef __WORKER_H
 #define __WORKER_H
 
+#include <memory>
+#include <string>
+#include <variant>
+#include <vector>
+
 #include "runtime/runtime.h"
 #include "utils/utils.h"
-#include <string>
-#include <vector>
-#include <variant>
-#include <memory>
 
-class xferBenchWorker {
-    protected:
-        std::string name;
-        xferBenchRT *rt;
-        static int terminate;
+class xferBenchWorker
+{
+protected:
+    std::string  name;
+    xferBenchRT* rt;
+    static int   terminate;
 
-    public:
-        xferBenchWorker(int *argc, char ***argv);
-        virtual ~xferBenchWorker();
+public:
+    xferBenchWorker(int* argc, char*** argv);
+    virtual ~xferBenchWorker();
 
-        std::string getName() const;
-        bool isMasterRank();
-        bool isInitiator();
-        bool isTarget();
-        int synchronize();
-        bool signaled() const { return terminate != 0; }
-        static void signalHandler(int signal);
+    std::string getName() const;
+    bool        isMasterRank();
+    bool        isInitiator();
+    bool        isTarget();
+    int         synchronize();
+    bool        signaled() const { return terminate != 0; }
+    static void signalHandler(int signal);
 
-        // Memory management
-        virtual std::vector<std::vector<xferBenchIOV>> allocateMemory(int num_threads) = 0;
-        virtual void deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) = 0;
+    // Memory management
+    virtual std::vector<std::vector<xferBenchIOV>> allocateMemory(int num_threads) = 0;
+    virtual void deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) = 0;
 
-        // Communication and synchronization
-        virtual int exchangeMetadata() = 0;
-        virtual std::vector<std::vector<xferBenchIOV>> exchangeIOV(const std::vector<std::vector<xferBenchIOV>>
-                                                                   &local_iov_lists) = 0;
-        virtual void poll(size_t block_size) = 0;
-	virtual int synchronizeStart() = 0;
+    // Communication and synchronization
+    virtual int                                    exchangeMetadata() = 0;
+    virtual std::vector<std::vector<xferBenchIOV>> exchangeIOV(
+            const std::vector<std::vector<xferBenchIOV>> &local_iov_lists) = 0;
+    virtual void poll(size_t block_size) = 0;
+    virtual int  synchronizeStart() = 0;
 
-        // Data operations
-        virtual std::variant<double, int> transfer(size_t block_size,
-                                                   const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
-                                                   const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) = 0;
+    // Data operations
+    virtual std::variant<double, int> transfer(size_t     block_size,
+            const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+            const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) = 0;
 };
 
-#endif // __WORKER_H
+#endif  // __WORKER_H

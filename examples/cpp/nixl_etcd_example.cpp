@@ -14,11 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <iostream>
 #include <cassert>
-#include <thread>
 #include <chrono>
 #include <cstring>
+#include <iostream>
+#include <thread>
 
 #include "nixl.h"
 
@@ -27,7 +27,8 @@ const std::string ETCD_ENDPOINT = "http://localhost:2379";
 const std::string AGENT1_NAME = "EtcdAgent1";
 const std::string AGENT2_NAME = "EtcdAgent2";
 
-void printStatus(const std::string& operation, nixl_status_t status) {
+void printStatus(const std::string &operation, nixl_status_t status)
+{
     std::cout << operation << ": " << nixlEnumStrings::statusStr(status) << std::endl;
     if (status != NIXL_SUCCESS) {
         std::cerr << "Error: " << nixlEnumStrings::statusStr(status) << std::endl;
@@ -35,7 +36,8 @@ void printStatus(const std::string& operation, nixl_status_t status) {
 }
 
 // Initialize an agent with etcd enabled
-nixlAgent* createAgent(const std::string& name) {
+nixlAgent* createAgent(const std::string &name)
+{
     // Create agent configuration with etcd enabled
 
     if (getenv("NIXL_ETCD_ENDPOINTS")) {
@@ -53,14 +55,15 @@ nixlAgent* createAgent(const std::string& name) {
     return agent;
 }
 
-void printParams(const nixl_b_params_t& params, const nixl_mem_list_t& mems) {
+void printParams(const nixl_b_params_t &params, const nixl_mem_list_t &mems)
+{
     if (params.empty()) {
         std::cout << "Parameters: (empty)" << std::endl;
         return;
     }
 
     std::cout << "Parameters:" << std::endl;
-    for (const auto& pair : params) {
+    for (const auto &pair : params) {
         std::cout << "  " << pair.first << " = " << pair.second << std::endl;
     }
 
@@ -70,13 +73,15 @@ void printParams(const nixl_b_params_t& params, const nixl_mem_list_t& mems) {
     }
 
     std::cout << "Mems:" << std::endl;
-    for (const auto& elm : mems) {
+    for (const auto &elm : mems) {
         std::cout << "  " << nixlEnumStrings::memTypeStr(elm) << std::endl;
     }
 }
 
 // Register a memory buffer with the agent
-nixl_status_t registerMemory(void** addr, nixlAgent* agent, nixl_reg_dlist_t* dlist, nixl_opt_args_t* extra_params, nixlBackendH* backend, uint8_t pattern) {
+nixl_status_t registerMemory(void** addr, nixlAgent* agent, nixl_reg_dlist_t* dlist,
+        nixl_opt_args_t* extra_params, nixlBackendH* backend, uint8_t pattern)
+{
     // Create an optional parameters structure
     extra_params->backends.push_back(backend);
 
@@ -98,22 +103,22 @@ nixl_status_t registerMemory(void** addr, nixlAgent* agent, nixl_reg_dlist_t* dl
     // Register the memory with the agent
     nixl_status_t status = agent->registerMem(*dlist, extra_params);
 
-    std::cout << "Registered memory " << *addr << " with agent "
-              << agent << std::endl;
+    std::cout << "Registered memory " << *addr << " with agent " << agent << std::endl;
 
     return status;
 }
 
-int main() {
-    void* addr1 = nullptr;
-    void* addr2 = nullptr;
+int main()
+{
+    void*         addr1 = nullptr;
+    void*         addr2 = nullptr;
     nixl_status_t ret1, ret2;
     nixl_status_t status;
 
     // Create two agents (normally these would be in separate processes or machines)
-    nixlAgentConfig cfg(true);
-    nixl_b_params_t init1, init2;
-    nixl_mem_list_t mems1, mems2;
+    nixlAgentConfig  cfg(true);
+    nixl_b_params_t  init1, init2;
+    nixl_mem_list_t  mems1, mems2;
     nixl_reg_dlist_t dlist1(DRAM_SEG), dlist2(DRAM_SEG);
 
     nixl_opt_args_t extra_params1, extra_params2;
@@ -128,36 +133,35 @@ int main() {
     std::vector<nixl_backend_t> plugins;
 
     ret1 = A1.getAvailPlugins(plugins);
-    assert (ret1 == NIXL_SUCCESS);
+    assert(ret1 == NIXL_SUCCESS);
 
     std::cout << "Available plugins:\n";
 
-    for (nixl_backend_t b: plugins)
-        std::cout << b << "\n";
+    for (nixl_backend_t b : plugins) std::cout << b << "\n";
 
     ret1 = A1.getPluginParams("UCX", mems1, init1);
     ret2 = A2.getPluginParams("UCX", mems2, init2);
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
 
     std::cout << "Params before init:\n";
     printParams(init1, mems1);
     printParams(init2, mems2);
 
     // Create backends
-    nixlBackendH* ucx1, *ucx2;
+    nixlBackendH *ucx1, *ucx2;
     ret1 = A1.createBackend("UCX", init1, ucx1);
     ret2 = A2.createBackend("UCX", init2, ucx2);
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
 
     ret1 = A1.getBackendParams(ucx1, mems1, init1);
     ret2 = A2.getBackendParams(ucx2, mems2, init2);
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
 
     std::cout << "Params after init:\n";
     printParams(init1, mems1);
@@ -203,29 +207,30 @@ int main() {
     std::cout << "Agent1's address: " << addr1 << std::endl;
     std::cout << "Agent2's address: " << addr2 << std::endl;
 
-    nixl_xfer_dlist_t req_src_descs (DRAM_SEG);
-    nixlBasicDesc req_src;
-    req_src.addr     = (uintptr_t) (((char*) addr1) + 16); //random offset
-    req_src.len      = req_size;
-    req_src.devId    = 0;
+    nixl_xfer_dlist_t req_src_descs(DRAM_SEG);
+    nixlBasicDesc     req_src;
+    req_src.addr = (uintptr_t)(((char*)addr1) + 16);  // random offset
+    req_src.len = req_size;
+    req_src.devId = 0;
     req_src_descs.addDesc(req_src);
 
-    nixl_xfer_dlist_t req_dst_descs (DRAM_SEG);
-    nixlBasicDesc req_dst;
-    req_dst.addr   = (uintptr_t) ((char*) addr2) + dst_offset; //random offset
-    req_dst.len    = req_size;
-    req_dst.devId  = 0;
+    nixl_xfer_dlist_t req_dst_descs(DRAM_SEG);
+    nixlBasicDesc     req_dst;
+    req_dst.addr = (uintptr_t)((char*)addr2) + dst_offset;  // random offset
+    req_dst.len = req_size;
+    req_dst.devId = 0;
     req_dst_descs.addDesc(req_dst);
 
-    std::cout << "Transfer request from " << std::hex << (void*)req_src.addr
-              << " to " << std::hex << (void*)req_dst.addr << std::endl;
-    nixlXferReqH *req_handle;
+    std::cout << "Transfer request from " << std::hex << (void*)req_src.addr << " to " << std::hex
+              << (void*)req_dst.addr << std::endl;
+    nixlXferReqH* req_handle;
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
     extra_params1.notifMsg = "notification";
     extra_params1.hasNotif = true;
-    ret1 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_dst_descs, AGENT2_NAME, req_handle, &extra_params1);
+    ret1 = A1.createXferReq(
+            NIXL_WRITE, req_src_descs, req_dst_descs, AGENT2_NAME, req_handle, &extra_params1);
     std::cout << "Xfer request created, status: " << nixlEnumStrings::statusStr(ret1) << std::endl;
 
     status = A1.postXferReq(req_handle);
@@ -233,25 +238,25 @@ int main() {
     std::cout << "Transfer was posted\n";
 
     nixl_notifs_t notif_map;
-    int n_notifs = 0;
+    int           n_notifs = 0;
 
     while (status != NIXL_SUCCESS || n_notifs == 0) {
         if (status != NIXL_SUCCESS) status = A1.getXferStatus(req_handle);
         if (n_notifs == 0) ret2 = A2.getNotifs(notif_map);
-        assert (status >= 0);
-        assert (ret2 == NIXL_SUCCESS);
+        assert(status >= 0);
+        assert(ret2 == NIXL_SUCCESS);
         n_notifs = notif_map.size();
     }
 
     std::cout << "Transfer verified\n";
 
     ret1 = A1.releaseXferReq(req_handle);
-    assert (ret1 == NIXL_SUCCESS);
+    assert(ret1 == NIXL_SUCCESS);
 
     ret1 = A1.deregisterMem(dlist1, &extra_params1);
     ret2 = A2.deregisterMem(dlist2, &extra_params2);
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    assert(ret1 == NIXL_SUCCESS);
+    assert(ret2 == NIXL_SUCCESS);
 
     // 3. Partial Metadata Exchange
     std::cout << "\n3. Sending partial metadata to etcd...\n";

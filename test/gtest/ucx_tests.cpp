@@ -15,98 +15,102 @@
  * limitations under the License.
  */
 
-#include <algorithm>
 #include <gtest/gtest.h>
 #include <nixl_types.h>
+
+#include <algorithm>
+
 #include "nixl.h"
 
-namespace gtest {
-namespace ucx {
+namespace gtest
+{
+namespace ucx
+{
 
-namespace nixl {
-    static std::unique_ptr<nixlAgent> createAgent(const std::string& name)
-    {
-        return std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
+namespace nixl
+{
+static std::unique_ptr<nixlAgent> createAgent(const std::string &name)
+{
+    return std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
+}
+
+static nixlBackendH* createUcxBackend(nixlAgent &agent)
+{
+    std::vector<nixl_backend_t> plugins;
+    nixl_status_t               status = agent.getAvailPlugins(plugins);
+    EXPECT_EQ(status, NIXL_SUCCESS);
+    auto it = std::find(plugins.begin(), plugins.end(), "UCX");
+    EXPECT_NE(it, plugins.end()) << "UCX plugin not found";
+
+    nixl_b_params_t params;
+    nixl_mem_list_t mems;
+    status = agent.getPluginParams("UCX", mems, params);
+    EXPECT_EQ(NIXL_SUCCESS, status);
+
+    nixlBackendH* backend_handle = nullptr;
+    status = agent.createBackend("UCX", params, backend_handle);
+    EXPECT_EQ(NIXL_SUCCESS, status);
+    EXPECT_NE(nullptr, backend_handle);
+    return backend_handle;
+}
+
+static nixl_opt_args_t createExtraParams(nixlBackendH* backend)
+{
+    nixl_opt_args_t extra_params;
+    extra_params.backends = {backend};
+    return extra_params;
+}
+
+template <typename DListT, typename DescT>
+void fillRegList(DListT &dlist, DescT &desc, std::vector<std::byte> &data)
+{
+    desc.addr = reinterpret_cast<uintptr_t>(data.data());
+    desc.len = data.size();
+    desc.devId = 0;
+    dlist.addDesc(desc);
+}
+
+static nixl_status_t wait_for_completion(nixlAgent &agent, nixlXferReqH* req_handle)
+{
+    nixl_status_t status;
+
+    do {
+        status = agent.getXferStatus(req_handle);
+    } while (status == NIXL_IN_PROG);
+
+    agent.releaseXferReq(req_handle);
+
+    if (status == NIXL_ERR_REMOTE_DISCONNECT) {
+        std::cout << "Handled error: " << nixlEnumStrings::statusStr(status) << std::endl;
+    } else if (status != NIXL_SUCCESS) {
+        std::cout << "Unexpected error: " << nixlEnumStrings::statusStr(status) << std::endl;
     }
 
-    static nixlBackendH* createUcxBackend(nixlAgent& agent)
-    {
-        std::vector<nixl_backend_t> plugins;
-        nixl_status_t status = agent.getAvailPlugins(plugins);
-        EXPECT_EQ(status, NIXL_SUCCESS);
-        auto it = std::find(plugins.begin(), plugins.end(), "UCX");
-        EXPECT_NE(it, plugins.end()) << "UCX plugin not found";
+    return status;
+}
 
-        nixl_b_params_t params;
-        nixl_mem_list_t mems;
-        status = agent.getPluginParams("UCX", mems, params);
-        EXPECT_EQ(NIXL_SUCCESS, status);
+static nixl_status_t wait_for_notif(
+        nixlAgent &agent, const std::string &remoteAgentName, const std::string &expectedNotif)
+{
+    nixl_notifs_t notif_map;
 
-        nixlBackendH* backend_handle = nullptr;
-        status = agent.createBackend("UCX", params, backend_handle);
-        EXPECT_EQ(NIXL_SUCCESS, status);
-        EXPECT_NE(nullptr, backend_handle);
-        return backend_handle;
-    }
+    do {
+        EXPECT_EQ(NIXL_SUCCESS, agent.getNotifs(notif_map));
+    } while (notif_map.empty());
 
-    static nixl_opt_args_t createExtraParams(nixlBackendH* backend)
-    {
-        nixl_opt_args_t extra_params;
-        extra_params.backends = {backend};
-        return extra_params;
-    }
+    std::vector<std::string> notifs = notif_map[remoteAgentName];
+    EXPECT_EQ(1, notifs.size());
+    EXPECT_EQ(expectedNotif, notifs.front());
 
-    template <typename DListT, typename DescT> void
-    fillRegList(DListT &dlist, DescT &desc, std::vector<std::byte>& data)
-    {
-        desc.addr  = reinterpret_cast<uintptr_t>(data.data());
-        desc.len   = data.size();
-        desc.devId = 0;
-        dlist.addDesc(desc);
-    }
+    return NIXL_SUCCESS;
+}
+}  // namespace nixl
 
-    static nixl_status_t
-    wait_for_completion(nixlAgent& agent, nixlXferReqH* req_handle)
-    {
-        nixl_status_t status;
-
-        do {
-            status = agent.getXferStatus(req_handle);
-        } while (status == NIXL_IN_PROG);
-
-        agent.releaseXferReq(req_handle);
-
-        if (status == NIXL_ERR_REMOTE_DISCONNECT) {
-            std::cout << "Handled error: "
-                      << nixlEnumStrings::statusStr(status) << std::endl;
-        } else if (status != NIXL_SUCCESS) {
-            std::cout << "Unexpected error: "
-                      << nixlEnumStrings::statusStr(status) << std::endl;
-        }
-
-        return status;
-    }
-
-    static nixl_status_t
-    wait_for_notif(nixlAgent& agent, const std::string& remoteAgentName,
-                   const std::string& expectedNotif) {
-        nixl_notifs_t notif_map;
-
-        do {
-            EXPECT_EQ(NIXL_SUCCESS, agent.getNotifs(notif_map));
-        } while (notif_map.empty());
-
-        std::vector<std::string> notifs = notif_map[remoteAgentName];
-        EXPECT_EQ(1,             notifs.size());
-        EXPECT_EQ(expectedNotif, notifs.front());
-
-        return NIXL_SUCCESS;
-    }
-} // namespace nixl
-
-class UcxTestFixture : public testing::Test {
+class UcxTestFixture : public testing::Test
+{
 protected:
-    UcxTestFixture() {
+    UcxTestFixture()
+    {
         // Set up test environment
         m_plugin_dir_backup = getenv("NIXL_PLUGIN_DIR");
 
@@ -114,19 +118,18 @@ protected:
         std::string plugin_dir = std::string(BUILD_DIR) + "/src/plugins/ucx";
         setenv("NIXL_PLUGIN_DIR", plugin_dir.c_str(), 1);
 
-        std::cout << "set NIXL_PLUGIN_DIR: " << getenv("NIXL_PLUGIN_DIR")
-                  << std::endl;
+        std::cout << "set NIXL_PLUGIN_DIR: " << getenv("NIXL_PLUGIN_DIR") << std::endl;
     }
 
-    ~UcxTestFixture() {
+    ~UcxTestFixture()
+    {
         setenv("NIXL_PLUGIN_DIR", m_plugin_dir_backup.c_str(), 1);
-        std::cout << "restore NIXL_PLUGIN_DIR: " << getenv("NIXL_PLUGIN_DIR")
-                  << std::endl;
+        std::cout << "restore NIXL_PLUGIN_DIR: " << getenv("NIXL_PLUGIN_DIR") << std::endl;
     }
 
     static void test_xfer(bool receiver_failure = false)
     {
-        const size_t len                  = 256;
+        const size_t               len = 256;
         std::unique_ptr<nixlAgent> sAgent = nixl::createAgent("sender");
         std::unique_ptr<nixlAgent> rAgent = nixl::createAgent("receiver");
 
@@ -136,14 +139,14 @@ protected:
         nixl_opt_args_t sExtraParams = nixl::createExtraParams(sBackend);
         nixl_opt_args_t rExtraParams = nixl::createExtraParams(rBackend);
 
-        nixl_reg_dlist_t sDlist(DRAM_SEG);
-        nixlBlobDesc sBuff;
+        nixl_reg_dlist_t       sDlist(DRAM_SEG);
+        nixlBlobDesc           sBuff;
         std::vector<std::byte> sData(len, std::byte{0xbb});
         nixl::fillRegList(sDlist, sBuff, sData);
         EXPECT_EQ(NIXL_SUCCESS, sAgent->registerMem(sDlist, &sExtraParams));
 
-        nixl_reg_dlist_t rDlist(DRAM_SEG);
-        nixlBlobDesc rBuff;
+        nixl_reg_dlist_t       rDlist(DRAM_SEG);
+        nixlBlobDesc           rBuff;
         std::vector<std::byte> rData(len, std::byte{0});
         nixl::fillRegList(rDlist, rBuff, rData);
 
@@ -159,7 +162,7 @@ protected:
         std::string rMeta_remote;
         EXPECT_EQ(NIXL_SUCCESS, rAgent->loadRemoteMD(sMeta, rMeta_remote));
 
-        nixlBasicDesc sReq_src;
+        nixlBasicDesc     sReq_src;
         nixl_xfer_dlist_t sReq_descs(DRAM_SEG);
         nixl::fillRegList(sReq_descs, sReq_src, sData);
 
@@ -168,7 +171,7 @@ protected:
             rAgent.reset();
         }
 
-        nixlBasicDesc rReq_dst;
+        nixlBasicDesc     rReq_dst;
         nixl_xfer_dlist_t rReq_descs(DRAM_SEG);
         nixl::fillRegList(rReq_descs, rReq_dst, rData);
 
@@ -176,20 +179,18 @@ protected:
         sExtraParams.hasNotif = true;
         nixlXferReqH* req_handle;
         EXPECT_EQ(NIXL_SUCCESS,
-                  sAgent->createXferReq(NIXL_WRITE, sReq_descs, rReq_descs,
-                                        "receiver", req_handle, &sExtraParams));
+                sAgent->createXferReq(
+                        NIXL_WRITE, sReq_descs, rReq_descs, "receiver", req_handle, &sExtraParams));
         if (receiver_failure) {
             // the error may be returned immediately or later
             nixl_status_t status = sAgent->postXferReq(req_handle);
-            EXPECT_TRUE((status == NIXL_ERR_REMOTE_DISCONNECT) ||
-                        (status == NIXL_IN_PROG));
+            EXPECT_TRUE((status == NIXL_ERR_REMOTE_DISCONNECT) || (status == NIXL_IN_PROG));
         } else {
             EXPECT_LE(0, sAgent->postXferReq(req_handle));
         }
 
         if (receiver_failure) {
-            EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT,
-                      nixl::wait_for_completion(*sAgent, req_handle));
+            EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, nixl::wait_for_completion(*sAgent, req_handle));
         } else {
             EXPECT_EQ(NIXL_SUCCESS, nixl::wait_for_completion(*sAgent, req_handle));
             EXPECT_EQ(NIXL_SUCCESS, nixl::wait_for_notif(*rAgent, "sender", "notification"));
@@ -201,17 +202,20 @@ protected:
             EXPECT_EQ(NIXL_SUCCESS, rAgent->deregisterMem(rDlist, &rExtraParams));
         }
     }
+
 private:
     std::string m_plugin_dir_backup;
 };
 
-TEST_F(UcxTestFixture, basic_xfer) {
+TEST_F(UcxTestFixture, basic_xfer)
+{
     test_xfer();
 }
 
-TEST_F(UcxTestFixture, receiver_failure) {
+TEST_F(UcxTestFixture, receiver_failure)
+{
     test_xfer(true);
 }
 
-} // namespace ucx
-} // namespace gtest
+}  // namespace ucx
+}  // namespace gtest

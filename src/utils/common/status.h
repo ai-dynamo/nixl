@@ -18,25 +18,27 @@
 #ifndef STATUS_H
 #define STATUS_H
 
-#include <iostream>
 #include <absl/log/log.h>
 #include <absl/strings/str_format.h>
+
+#include <iostream>
+
 #include "nixl_log.h"
 
-#define NIXL_LOG_AND_RETURN_IF_ERROR(status, message) \
-    do { \
-        if ((status) != NIXL_SUCCESS && (status) != NIXL_IN_PROG) { \
+#define NIXL_LOG_AND_RETURN_IF_ERROR(status, message)                             \
+    do {                                                                          \
+        if ((status) != NIXL_SUCCESS && (status) != NIXL_IN_PROG) {               \
             NIXL_ERROR << absl::StrFormat("Error: %d - %s", (status), (message)); \
-            return (status); \
-        } \
+            return (status);                                                      \
+        }                                                                         \
     } while (0)
 
-#define NIXL_RETURN_IF_NOT_IN_PROG(status) \
-    do { \
-        if ((status) != NIXL_IN_PROG) { \
+#define NIXL_RETURN_IF_NOT_IN_PROG(status)                                                    \
+    do {                                                                                      \
+        if ((status) != NIXL_IN_PROG) {                                                       \
             NIXL_LOG_AND_RETURN_IF_ERROR(status, " Received handle with pre-existing error"); \
-            return (status); \
-        } \
+            return (status);                                                                  \
+        }                                                                                     \
     } while (0)
 
 #endif /* STATUS_H */

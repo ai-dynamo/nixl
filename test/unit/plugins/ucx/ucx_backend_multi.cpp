@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <iostream>
 #include <cassert>
+#include <iostream>
 #include <thread>
 
 #include "ucx_backend.h"
@@ -23,10 +23,10 @@
 // Temporarily while fixing CI/CD pipeline
 #define USE_PTHREAD false
 
-volatile bool ready[2]  = {false, false};
-volatile bool done[2]  = {false, false};
-volatile bool disconnect[2]  = {false, false};
-std::string conn_info[2];
+volatile bool ready[2] = {false, false};
+volatile bool done[2] = {false, false};
+volatile bool disconnect[2] = {false, false};
+std::string   conn_info[2];
 
 void test_thread(int id)
 {
@@ -38,52 +38,50 @@ void test_thread(int id)
     std::string my_name("Agent1");
     std::string other("Agent2");
 
-    if(id){
+    if (id) {
         my_name = "Agent2";
         other = "Agent1";
     }
 
-    init_params.localAgent   = my_name;
+    init_params.localAgent = my_name;
     init_params.enableProgTh = USE_PTHREAD;
     init_params.customParams = &custom_params;
-    init_params.type         = "UCX";
+    init_params.type = "UCX";
 
     std::cout << my_name << " Started\n";
 
-    ucx = (nixlBackendEngine*) new nixlUcxEngine (&init_params);
+    ucx = (nixlBackendEngine*)new nixlUcxEngine(&init_params);
 
-    if(!USE_PTHREAD) ucx->progress();
+    if (!USE_PTHREAD) ucx->progress();
 
     ucx->getConnInfo(conn_info[id]);
 
     ready[id] = true;
-    //wait for other
-    while(!ready[!id]);
+    // wait for other
+    while (!ready[!id]);
 
     ret = ucx->loadRemoteConnInfo(other, conn_info[!id]);
     assert(ret == NIXL_SUCCESS);
 
-    //one-sided connect
-    if(!id)
-        ret = ucx->connect(other);
+    // one-sided connect
+    if (!id) ret = ucx->connect(other);
 
     assert(ret == NIXL_SUCCESS);
 
     done[id] = true;
-    while(!done[!id])
-        if(!USE_PTHREAD && id) ucx->progress();
+    while (!done[!id])
+        if (!USE_PTHREAD && id) ucx->progress();
 
     std::cout << "Thread passed with id " << id << "\n";
 
-    //test one-sided disconnect
-    if(!id)
-        ucx->disconnect(other);
+    // test one-sided disconnect
+    if (!id) ucx->disconnect(other);
 
     disconnect[id] = true;
-    //wait for other
-    while(!disconnect[!id]);
+    // wait for other
+    while (!disconnect[!id]);
 
-    if(!USE_PTHREAD) ucx->progress();
+    if (!USE_PTHREAD) ucx->progress();
 
     std::cout << "Thread disconnected with id " << id << "\n";
 

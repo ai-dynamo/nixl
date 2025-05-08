@@ -16,20 +16,23 @@
  */
 
 #include "nixl_log.h"
-#include "absl/log/initialize.h"
-#include "absl/log/globals.h"
-#include "absl/strings/ascii.h"
-#include "absl/container/flat_hash_map.h"
+
 #include <cstdlib>
 #include <string>
 #include <string_view>
 
-namespace {
+#include "absl/container/flat_hash_map.h"
+#include "absl/log/globals.h"
+#include "absl/log/initialize.h"
+#include "absl/strings/ascii.h"
+
+namespace
+{
 
 // Structure to hold logging settings
 struct LogLevelSettings {
     absl::LogSeverityAtLeast min_severity;
-    int vlog_level;
+    int                      vlog_level;
 };
 
 // Default log level if nothing else is specified
@@ -42,17 +45,17 @@ void InitializeNixlLogging()
 {
     // Map from log level string to settings
     const absl::flat_hash_map<std::string_view, LogLevelSettings> kLogLevelMap = {
-        {"TRACE", {absl::LogSeverityAtLeast::kInfo, 2}},
-        {"DEBUG", {absl::LogSeverityAtLeast::kInfo, 1}},
-        {"INFO",  {absl::LogSeverityAtLeast::kInfo, 0}},
-        {"WARN",  {absl::LogSeverityAtLeast::kWarning, 0}},
-        {"ERROR", {absl::LogSeverityAtLeast::kError, 0}},
-        {"FATAL", {absl::LogSeverityAtLeast::kFatal, 0}},
+            {"TRACE", {absl::LogSeverityAtLeast::kInfo, 2}},
+            {"DEBUG", {absl::LogSeverityAtLeast::kInfo, 1}},
+            {"INFO", {absl::LogSeverityAtLeast::kInfo, 0}},
+            {"WARN", {absl::LogSeverityAtLeast::kWarning, 0}},
+            {"ERROR", {absl::LogSeverityAtLeast::kError, 0}},
+            {"FATAL", {absl::LogSeverityAtLeast::kFatal, 0}},
     };
 
     // This is the fallback log level, an option of last resort if nothing else is specified.
     std::string_view level_to_use = kDefaultLogLevel;
-    bool invalid_env_var = false;
+    bool             invalid_env_var = false;
 
     // Check environment variable, it has priority over compile-time default.
     const char* env_log_level = std::getenv("NIXL_LOG_LEVEL");
@@ -68,16 +71,18 @@ void InitializeNixlLogging()
     }
 
     // Apply the settings
-    auto it = kLogLevelMap.find(level_to_use);
-    const LogLevelSettings& settings = (it != kLogLevelMap.end()) ? it->second : kLogLevelMap.at(kDefaultLogLevel);
+    auto                    it = kLogLevelMap.find(level_to_use);
+    const LogLevelSettings &settings =
+            (it != kLogLevelMap.end()) ? it->second : kLogLevelMap.at(kDefaultLogLevel);
     absl::SetMinLogLevel(settings.min_severity);
     absl::SetVLogLevel("*", settings.vlog_level);
     absl::SetStderrThreshold(settings.min_severity);
     absl::InitializeLog();
 
     if (invalid_env_var) {
-        NIXL_WARN << "Invalid NIXL_LOG_LEVEL environment variable, using default log level: " << kDefaultLogLevel;
+        NIXL_WARN << "Invalid NIXL_LOG_LEVEL environment variable, using default log level: "
+                  << kDefaultLogLevel;
     }
 }
 
-} // anonymous namespace
+}  // anonymous namespace

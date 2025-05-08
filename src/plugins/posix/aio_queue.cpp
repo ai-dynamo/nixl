@@ -16,40 +16,42 @@
  */
 
 #include "aio_queue.h"
-#include "posix_backend.h"
+
 #include <errno.h>
-#include "common/nixl_log.h"
 #include <string.h>
 #include <time.h>
+
 #include <stdexcept>
 
+#include "common/nixl_log.h"
+#include "posix_backend.h"
+
 aioQueue::aioQueue(int num_entries, bool is_read)
-    : aiocbs(num_entries), num_entries(num_entries), num_completed(0), num_submitted(0), is_read(is_read) {
-    if (num_entries <= 0) {
-        throw std::runtime_error("Invalid number of entries for AIO queue");
-    }
-    for (auto& aiocb : aiocbs) {
-        memset(&aiocb, 0, sizeof(struct aiocb));
-    }
+    : aiocbs(num_entries), num_entries(num_entries), num_completed(0), num_submitted(0),
+      is_read(is_read)
+{
+    if (num_entries <= 0) { throw std::runtime_error("Invalid number of entries for AIO queue"); }
+    for (auto &aiocb : aiocbs) { memset(&aiocb, 0, sizeof(struct aiocb)); }
 }
 
-aioQueue::~aioQueue() {
+aioQueue::~aioQueue()
+{
     // There should not be any in-flight I/Os at destruction time
     if (num_submitted > num_completed) {
-        NIXL_ERROR << "Programming error: Destroying aioQueue with " << (num_submitted - num_completed) << " in-flight I/Os";
+        NIXL_ERROR << "Programming error: Destroying aioQueue with "
+                   << (num_submitted - num_completed) << " in-flight I/Os";
     }
 
     // Cancel any remaining I/Os
-    for (auto& aiocb : aiocbs) {
-        if (aiocb.aio_fildes != 0) {
-            aio_cancel(aiocb.aio_fildes, &aiocb);
-        }
+    for (auto &aiocb : aiocbs) {
+        if (aiocb.aio_fildes != 0) { aio_cancel(aiocb.aio_fildes, &aiocb); }
     }
 }
 
-nixl_status_t aioQueue::submit() {
+nixl_status_t aioQueue::submit()
+{
     // Submit all I/Os at once
-    for (auto& aiocb : aiocbs) {
+    for (auto &aiocb : aiocbs) {
         if (aiocb.aio_fildes == 0 || aiocb.aio_nbytes == 0) continue;
 
         // Check if file descriptor is valid
@@ -69,10 +71,8 @@ nixl_status_t aioQueue::submit() {
             if (errno == EAGAIN) {
                 // If we hit the kernel limit, cancel all submitted I/Os and return error
                 NIXL_ERROR << "AIO submit failed: kernel queue full";
-                for (auto& cb : aiocbs) {
-                    if (cb.aio_fildes != 0) {
-                        aio_cancel(cb.aio_fildes, &cb);
-                    }
+                for (auto &cb : aiocbs) {
+                    if (cb.aio_fildes != 0) { aio_cancel(cb.aio_fildes, &cb); }
                 }
                 return NIXL_ERR_BACKEND;
             }
@@ -86,14 +86,13 @@ nixl_status_t aioQueue::submit() {
     return NIXL_IN_PROG;
 }
 
-nixl_status_t aioQueue::checkCompleted() {
-    if (num_completed == num_entries)
-        return NIXL_SUCCESS;
+nixl_status_t aioQueue::checkCompleted()
+{
+    if (num_completed == num_entries) return NIXL_SUCCESS;
 
     // Check all submitted I/Os
-    for (auto& aiocb : aiocbs) {
-        if (aiocb.aio_fildes == 0 || aiocb.aio_nbytes == 0)
-            continue;  // Skip unused control blocks
+    for (auto &aiocb : aiocbs) {
+        if (aiocb.aio_fildes == 0 || aiocb.aio_nbytes == 0) continue;  // Skip unused control blocks
 
         int status = aio_error(&aiocb);
         if (status == 0) {  // Operation completed
@@ -108,7 +107,8 @@ nixl_status_t aioQueue::checkCompleted() {
 
             // Log progress periodically
             if (num_completed % (num_entries / 10) == 0) {
-                NIXL_INFO << "Queue progress: " << (num_completed * 100.0 / num_entries) << "% complete";
+                NIXL_INFO << "Queue progress: " << (num_completed * 100.0 / num_entries)
+                          << "% complete";
             }
         } else if (status == EINPROGRESS) {
             return NIXL_IN_PROG;  // At least one operation still in progress
@@ -121,9 +121,10 @@ nixl_status_t aioQueue::checkCompleted() {
     return (num_completed == num_entries) ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
-nixl_status_t aioQueue::prepareIO(int fd, void* buf, size_t len, off_t offset) {
+nixl_status_t aioQueue::prepareIO(int fd, void* buf, size_t len, off_t offset)
+{
     // Find an unused control block
-    for (auto& aiocb : aiocbs) {
+    for (auto &aiocb : aiocbs) {
         if (aiocb.aio_fildes == 0) {
             // Check if file descriptor is valid
             if (fd < 0) {

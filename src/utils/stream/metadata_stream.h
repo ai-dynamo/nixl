@@ -17,92 +17,98 @@
 #ifndef __METADATA_STREAM_H
 #define __METADATA_STREAM_H
 
-#include <cstring>
-#include <unistd.h>
 #include <arpa/inet.h>
-#include <sys/un.h>
-#include <thread>
-#include <mutex>
-#include <string>
-#include <queue>
-#include <vector>
 #include <netinet/in.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <cstring>
+#include <mutex>
+#include <queue>
+#include <string>
+#include <thread>
+#include <vector>
+
 #include "nixl_types.h"
 
 #define RECV_BUFFER_SIZE 16384
 
-class nixlMetadataStream {
-    protected:
-        int                 port;
-        int                 socketFd;
-        std::string         listenerAddress;
-        struct sockaddr_in  listenerAddr;
+class nixlMetadataStream
+{
+protected:
+    int                port;
+    int                socketFd;
+    std::string        listenerAddress;
+    struct sockaddr_in listenerAddr;
 
-        bool setupStream();
-        void closeStream();
+    bool setupStream();
+    void closeStream();
 
-    public:
-        nixlMetadataStream(int port);
-        ~nixlMetadataStream();
+public:
+    nixlMetadataStream(int port);
+    ~nixlMetadataStream();
 };
 
 
-class nixlMDStreamListener: public nixlMetadataStream {
-    private:
-        std::thread listenerThread;
-        int         csock;
+class nixlMDStreamListener : public nixlMetadataStream
+{
+private:
+    std::thread listenerThread;
+    int         csock;
 
-        void            acceptClientsAsync();
-        void            recvFromClients(int clientSocket);
+    void acceptClientsAsync();
+    void recvFromClients(int clientSocket);
 
-    public:
-        nixlMDStreamListener(int port);
-        ~nixlMDStreamListener();
+public:
+    nixlMDStreamListener(int port);
+    ~nixlMDStreamListener();
 
-        int         acceptClient();
-        void        setupListener();
-        void        startListenerForClients();
-        void        startListenerForClient();
-        std::string recvFromClient();
+    int         acceptClient();
+    void        setupListener();
+    void        startListenerForClients();
+    void        startListenerForClient();
+    std::string recvFromClient();
 };
 
-class nixlMDStreamClient: public nixlMetadataStream {
-    private:
-        int         csock;
-        std::string listenerAddress;
-        bool setupClient();
+class nixlMDStreamClient : public nixlMetadataStream
+{
+private:
+    int         csock;
+    std::string listenerAddress;
+    bool        setupClient();
 
-    public:
-        nixlMDStreamClient(const std::string& listenerAddress, int port);
-        ~nixlMDStreamClient();
+public:
+    nixlMDStreamClient(const std::string &listenerAddress, int port);
+    ~nixlMDStreamClient();
 
-        bool connectListener();
-        void sendData(const std::string& data);
-        std::string recvData();
+    bool        connectListener();
+    void        sendData(const std::string &data);
+    std::string recvData();
 };
 
 // This class talks to the metadata server.
-class nixlMetadataH {
-    private:
-        // Maybe the connection information should go to Agent,
-        // to add p2p support
-        std::string   ipAddress;
-        uint16_t      port;
+class nixlMetadataH
+{
+private:
+    // Maybe the connection information should go to Agent,
+    // to add p2p support
+    std::string ipAddress;
+    uint16_t    port;
 
-    public:
-        // Creates the connection to the metadata server
-        nixlMetadataH() {}
-        nixlMetadataH(const std::string &ip_address, uint16_t port);
-        ~nixlMetadataH();
+public:
+    // Creates the connection to the metadata server
+    nixlMetadataH() {}
+    nixlMetadataH(const std::string &ip_address, uint16_t port);
+    ~nixlMetadataH();
 
-        /** Sync the local section with the metadata server */
-        nixl_status_t sendLocalMetadata(const std::string &local_md);
+    /** Sync the local section with the metadata server */
+    nixl_status_t sendLocalMetadata(const std::string &local_md);
 
-        // Get a remote section from the metadata server
-        std::string getRemoteMd(const std::string &remote_agent);
+    // Get a remote section from the metadata server
+    std::string getRemoteMd(const std::string &remote_agent);
 
-        // Invalidating the information in the metadata server
-        nixl_status_t removeLocalMetadata(const std::string &local_agent);
+    // Invalidating the information in the metadata server
+    nixl_status_t removeLocalMetadata(const std::string &local_agent);
 };
 
 #endif

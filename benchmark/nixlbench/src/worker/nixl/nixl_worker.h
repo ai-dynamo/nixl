@@ -18,51 +18,55 @@
 #ifndef __NIXL_WORKER_H
 #define __NIXL_WORKER_H
 
-#include "config.h"
+#include <nixl.h>
+
 #include <iostream>
+#include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
-#include <optional>
-#include <memory>
-#include <nixl.h>
+
+#include "config.h"
 #include "utils/utils.h"
 #include "worker/worker.h"
 
-class xferBenchNixlWorker: public xferBenchWorker {
-    private:
-        nixlAgent* agent;
-        nixlBackendH* backend_engine;
-        nixl_mem_t seg_type;
-    public:
-        xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices);
-        ~xferBenchNixlWorker();  // Custom destructor to clean up resources
+class xferBenchNixlWorker : public xferBenchWorker
+{
+private:
+    nixlAgent*    agent;
+    nixlBackendH* backend_engine;
+    nixl_mem_t    seg_type;
 
-        // Memory management
-        std::vector<std::vector<xferBenchIOV>> allocateMemory(int num_threads) override;
-        void deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) override;
+public:
+    xferBenchNixlWorker(int* argc, char*** argv, std::vector<std::string> devices);
+    ~xferBenchNixlWorker();  // Custom destructor to clean up resources
 
-        // Communication and synchronization
-        int exchangeMetadata() override;
-        std::vector<std::vector<xferBenchIOV>> exchangeIOV(const std::vector<std::vector<xferBenchIOV>>
-                                                           &local_iov_lists) override;
-        void poll(size_t block_size) override;
-        int synchronizeStart();
+    // Memory management
+    std::vector<std::vector<xferBenchIOV>> allocateMemory(int num_threads) override;
+    void deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) override;
 
-        // Data operations
-        std::variant<double, int> transfer(size_t block_size,
-                                           const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
-                                           const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+    // Communication and synchronization
+    int                                    exchangeMetadata() override;
+    std::vector<std::vector<xferBenchIOV>> exchangeIOV(
+            const std::vector<std::vector<xferBenchIOV>> &local_iov_lists) override;
+    void poll(size_t block_size) override;
+    int  synchronizeStart();
 
-    private:
-        std::optional<xferBenchIOV> initBasicDescDram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescDram(xferBenchIOV &basic_desc);
+    // Data operations
+    std::variant<double, int> transfer(size_t             block_size,
+            const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+            const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+
+private:
+    std::optional<xferBenchIOV> initBasicDescDram(size_t buffer_size, int mem_dev_id);
+    void                        cleanupBasicDescDram(xferBenchIOV &basic_desc);
 #if HAVE_CUDA
-        std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescVram(xferBenchIOV &basic_desc);
+    std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
+    void                        cleanupBasicDescVram(xferBenchIOV &basic_desc);
 #endif
-        std::optional<xferBenchIOV> initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id);
-        void cleanupBasicDescFile(xferBenchIOV &basic_desc);
+    std::optional<xferBenchIOV> initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id);
+    void                        cleanupBasicDescFile(xferBenchIOV &basic_desc);
 };
 
-#endif // __NIXL_WORKER_H
+#endif  // __NIXL_WORKER_H

@@ -18,28 +18,33 @@
 
 namespace py = pybind11;
 
-//JUST FOR TESTING
-uintptr_t malloc_passthru(int size) {
-    return (uintptr_t) malloc(size);
+// JUST FOR TESTING
+uintptr_t malloc_passthru(int size)
+{
+    return (uintptr_t)malloc(size);
 }
 
-//JUST FOR TESTING
-void free_passthru(uintptr_t buf) {
-    free((void*) buf);
+// JUST FOR TESTING
+void free_passthru(uintptr_t buf)
+{
+    free((void*)buf);
 }
 
-//JUST FOR TESTING
-void ba_buf(uintptr_t addr, int size) {
-    uint8_t* buf = (uint8_t*) addr;
-    for(int i = 0; i<size; i++) buf[i] = 0xba;
+// JUST FOR TESTING
+void ba_buf(uintptr_t addr, int size)
+{
+    uint8_t* buf = (uint8_t*)addr;
+    for (int i = 0; i < size; i++) buf[i] = 0xba;
 }
 
-//JUST FOR TESTING
-void verify_transfer(uintptr_t addr1, uintptr_t addr2, int size) {
-    for(int i = 0; i<size; i++) assert(((uint8_t*) addr1)[i] == ((uint8_t*) addr2)[i]);
+// JUST FOR TESTING
+void verify_transfer(uintptr_t addr1, uintptr_t addr2, int size)
+{
+    for (int i = 0; i < size; i++) assert(((uint8_t*)addr1)[i] == ((uint8_t*)addr2)[i]);
 }
 
-PYBIND11_MODULE(_utils, m) {
+PYBIND11_MODULE(_utils, m)
+{
     m.def("malloc_passthru", &malloc_passthru);
     m.def("free_passthru", &free_passthru);
     m.def("ba_buf", &ba_buf);

@@ -18,28 +18,31 @@
 #include <iostream>
 #include <set>
 #include <string>
+
 #include "nixl.h"
 #include "plugin_manager.h"
 
-void print_usage(const char* program_name) {
+void print_usage(const char* program_name)
+{
     std::cout << "Usage: " << program_name << " [plugin_directory]" << std::endl;
     std::cout << "Environment variables:" << std::endl;
     std::cout << "  NIXL_PLUGIN_DIR   - Single directory containing plugins" << std::endl;
 }
 
-void printParams(const nixl_b_params_t& params) {
+void printParams(const nixl_b_params_t &params)
+{
     if (params.empty()) {
         std::cout << "Parameters: (empty)" << std::endl;
         return;
     }
 
     std::cout << "Parameters:" << std::endl;
-    for (const auto& pair : params) {
+    for (const auto &pair : params) {
         std::cout << "  " << pair.first << " = " << pair.second << std::endl;
     }
 }
 
-int verify_plugin(std::string name, nixlPluginManager& plugin_manager)
+int verify_plugin(std::string name, nixlPluginManager &plugin_manager)
 {
     // Discover available plugins
     std::cout << "\nLoading " << name << " plugin..." << std::endl;
@@ -61,8 +64,9 @@ int verify_plugin(std::string name, nixlPluginManager& plugin_manager)
     return 0;
 }
 
-int main(int argc, char** argv) {
-    char *plugindir = NULL;
+int main(int argc, char** argv)
+{
+    char*                    plugindir = NULL;
     std::set<nixl_backend_t> staticPlugs;
 
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
@@ -71,7 +75,7 @@ int main(int argc, char** argv) {
     }
 
     // Initialize the plugin manager (will read env vars)
-    auto& plugin_manager = nixlPluginManager::getInstance();
+    auto &plugin_manager = nixlPluginManager::getInstance();
 
     // If a directory is provided as command line argument, set it as NIXL_PLUGIN_DIR
     if (argc > 1) {
@@ -84,7 +88,7 @@ int main(int argc, char** argv) {
 
     // Print list of static plugins available
     std::cout << "Available static plugins:" << std::endl;
-    for (const auto& plugin : plugin_manager.getStaticPlugins()) {
+    for (const auto &plugin : plugin_manager.getStaticPlugins()) {
         std::cout << " - " << plugin.name << std::endl;
         staticPlugs.insert(plugin.name);
     }
@@ -98,7 +102,7 @@ int main(int argc, char** argv) {
 
     // List all loaded plugins
     std::cout << "\nLoaded plugins:" << std::endl;
-    for (const auto& name : plugin_manager.getLoadedPluginNames()) {
+    for (const auto &name : plugin_manager.getLoadedPluginNames()) {
         std::cout << " - " << name << std::endl;
     }
 
@@ -111,13 +115,12 @@ int main(int argc, char** argv) {
 
     // List all loaded plugins and make sure static plugins are present
     std::cout << "Loaded plugins after unload:" << std::endl;
-    for (const auto& name : plugin_manager.getLoadedPluginNames()) {
+    for (const auto &name : plugin_manager.getLoadedPluginNames()) {
         std::cout << " - " << name << std::endl;
     }
 
     // Plugins loaded should only be the static plugins
-    if (plugin_manager.getLoadedPluginNames().size() !=
-        staticPlugs.size()) {
+    if (plugin_manager.getLoadedPluginNames().size() != staticPlugs.size()) {
         std::cerr << "TEST FAILED: Dynamic Plugins are still loaded." << std::endl;
         return -1;
     }

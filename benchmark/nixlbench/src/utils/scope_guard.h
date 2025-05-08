@@ -21,17 +21,16 @@
 #include <utility>
 
 template <typename F>
-class ScopeGuard {
+class ScopeGuard
+{
 public:
     explicit ScopeGuard(F func) : func_(std::move(func)) {}
 
-    ScopeGuard(const ScopeGuard&) = delete;
-    ScopeGuard(ScopeGuard&& other) = delete;
-    ScopeGuard& operator=(const ScopeGuard&) = delete;
+    ScopeGuard(const ScopeGuard &) = delete;
+    ScopeGuard(ScopeGuard &&other) = delete;
+    ScopeGuard &operator=(const ScopeGuard &) = delete;
 
-    ~ScopeGuard() {
-        func_();
-    }
+    ~ScopeGuard() { func_(); }
 
 private:
     F func_;
@@ -39,8 +38,9 @@ private:
 
 // Factory function to simplify creation
 template <typename F>
-ScopeGuard<F> make_scope_guard(F func) {
+ScopeGuard<F> make_scope_guard(F func)
+{
     return ScopeGuard<F>(std::move(func));
 }
 
-#endif // __SCOPE_GUARD_H
+#endif  // __SCOPE_GUARD_H

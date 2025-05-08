@@ -16,35 +16,45 @@
  */
 #include "mock_dram_engine.h"
 
-namespace mocks {
-namespace dram_plugin {
+namespace mocks
+{
+namespace dram_plugin
+{
 
-static nixlBackendEngine *create_engine(const nixlBackendInitParams *params) {
-  return new MockDramBackendEngine(params);
+static nixlBackendEngine* create_engine(const nixlBackendInitParams* params)
+{
+    return new MockDramBackendEngine(params);
 }
 
-static void destroy_engine(nixlBackendEngine *engine) { delete engine; }
+static void destroy_engine(nixlBackendEngine* engine)
+{
+    delete engine;
+}
 
-static const char *get_plugin_name() { return "MOCK_DRAM"; }
+static const char* get_plugin_name()
+{
+    return "MOCK_DRAM";
+}
 
-static const char *get_plugin_version() { return "0.0.1"; }
+static const char* get_plugin_version()
+{
+    return "0.0.1";
+}
 
-static nixl_b_params_t get_backend_options() { return nixl_b_params_t(); }
+static nixl_b_params_t get_backend_options()
+{
+    return nixl_b_params_t();
+}
 
-static nixlBackendPlugin plugin = {
-  NIXL_PLUGIN_API_VERSION,
-  create_engine,
-  destroy_engine,
-  get_plugin_name,
-  get_plugin_version,
-  get_backend_options
-};
-} // namespace dram_plugin
+static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION, create_engine, destroy_engine,
+        get_plugin_name, get_plugin_version, get_backend_options};
+}  // namespace dram_plugin
 
-} // namespace mocks
+}  // namespace mocks
 
-extern "C" nixlBackendPlugin *nixl_plugin_init() {
-  return &mocks::dram_plugin::plugin;
+extern "C" nixlBackendPlugin* nixl_plugin_init()
+{
+    return &mocks::dram_plugin::plugin;
 }
 
 extern "C" void nixl_plugin_fini() {}

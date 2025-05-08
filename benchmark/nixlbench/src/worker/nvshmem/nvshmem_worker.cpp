@@ -16,46 +16,53 @@
  */
 
 #include "worker/nvshmem/nvshmem_worker.h"
+
+#include <cstring>
+#include <iostream>
+
 #include "runtime/runtime.h"
 #include "utils/utils.h"
-#include <iostream>
-#include <cstring>
 
 #if HAVE_NVSHMEM && HAVE_CUDA
-#define CHECK_NVSHMEM_ERROR(result, message)                                    \
-    do {                                                                        \
-        if (0 != result) {                                                      \
-            std::cerr << "NVSHMEM: " << message << " (Error code: " << result   \
-                      << ")" << std::endl;                                      \
-            exit(EXIT_FAILURE);                                                 \
-        }                                                                       \
-    } while(0)
+#define CHECK_NVSHMEM_ERROR(result, message)                                                       \
+    do {                                                                                           \
+        if (0 != result) {                                                                         \
+            std::cerr << "NVSHMEM: " << message << " (Error code: " << result << ")" << std::endl; \
+            exit(EXIT_FAILURE);                                                                    \
+        }                                                                                          \
+    } while (0)
 
-xferBenchNvshmemWorker::xferBenchNvshmemWorker(int *argc, char ***argv): xferBenchWorker(argc, argv) {
+xferBenchNvshmemWorker::xferBenchNvshmemWorker(int* argc, char*** argv)
+    : xferBenchWorker(argc, argv)
+{
     // Initialize NVSHMEM
     if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
-	    rank = rt->getRank();
-	    size = rt->getSize();
+        rank = rt->getRank();
+        size = rt->getSize();
 
-        return;        //NVSHMEM not yet initialized
+        return;  // NVSHMEM not yet initialized
     }
 
-    std::cout << "Runtime " << xferBenchConfig::runtime_type
-		      << " not supported for NVSHMEM worker" << std::endl;
+    std::cout << "Runtime " << xferBenchConfig::runtime_type << " not supported for NVSHMEM worker"
+              << std::endl;
     exit(EXIT_FAILURE);
 }
 
-xferBenchNvshmemWorker::~xferBenchNvshmemWorker() {
+xferBenchNvshmemWorker::~xferBenchNvshmemWorker()
+{
     // Finalize NVSHMEM
     nvshmem_finalize();
 }
 
-std::optional<xferBenchIOV> xferBenchNvshmemWorker::initBasicDescNvshmem(size_t buffer_size, int mem_dev_id) {
-    void *addr;
+std::optional<xferBenchIOV> xferBenchNvshmemWorker::initBasicDescNvshmem(
+        size_t buffer_size, int mem_dev_id)
+{
+    void* addr;
 
     addr = nvshmem_malloc(buffer_size);
     if (!addr) {
-        std::cerr << "Failed to allocate " << buffer_size << " bytes of NVSHMEM memory" << std::endl;
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of NVSHMEM memory"
+                  << std::endl;
         return std::nullopt;
     }
 
@@ -68,13 +75,15 @@ std::optional<xferBenchIOV> xferBenchNvshmemWorker::initBasicDescNvshmem(size_t 
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, mem_dev_id);
 }
 
-void xferBenchNvshmemWorker::cleanupBasicDescNvshmem(xferBenchIOV &iov) {
-    nvshmem_free((void *)iov.addr);
+void xferBenchNvshmemWorker::cleanupBasicDescNvshmem(xferBenchIOV &iov)
+{
+    nvshmem_free((void*)iov.addr);
 }
 
-std::vector<std::vector<xferBenchIOV>> xferBenchNvshmemWorker::allocateMemory(int num_threads) {
+std::vector<std::vector<xferBenchIOV>> xferBenchNvshmemWorker::allocateMemory(int num_threads)
+{
     std::vector<std::vector<xferBenchIOV>> iov_lists;
-    size_t i, buffer_size, num_devices = 0;
+    size_t                                 i, buffer_size, num_devices = 0;
 
     if (1 != num_threads) {
         std::cerr << "NVSHMEM: Only 1 thread is supported for now" << std::endl;
@@ -93,30 +102,30 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNvshmemWorker::allocateMemory(in
         for (i = 0; i < num_devices; i++) {
             std::optional<xferBenchIOV> basic_desc;
             basic_desc = initBasicDescNvshmem(buffer_size, i);
-            if (basic_desc) {
-                iov_list.push_back(basic_desc.value());
-            }
+            if (basic_desc) { iov_list.push_back(basic_desc.value()); }
         }
         iov_lists.push_back(iov_list);
     }
     return iov_lists;
 }
 
-void xferBenchNvshmemWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
+void xferBenchNvshmemWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists)
+{
     nvshmem_barrier_all();
-    for (auto &iov_list: iov_lists) {
-        for (auto &iov: iov_list) {
-            cleanupBasicDescNvshmem(iov);
-        }
+    for (auto &iov_list : iov_lists) {
+        for (auto &iov : iov_list) { cleanupBasicDescNvshmem(iov); }
     }
 }
 
-int xferBenchNvshmemWorker::exchangeMetadata() {
+int xferBenchNvshmemWorker::exchangeMetadata()
+{
     // No metadata exchange needed for NVSHMEM
     return 0;
 }
 
-std::vector<std::vector<xferBenchIOV>> xferBenchNvshmemWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &iov_lists) {
+std::vector<std::vector<xferBenchIOV>> xferBenchNvshmemWorker::exchangeIOV(
+        const std::vector<std::vector<xferBenchIOV>> &iov_lists)
+{
     // For NVSHMEM, we don't need to exchange IOV lists
     // This will just return local IOV list
     return iov_lists;
@@ -124,8 +133,9 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNvshmemWorker::exchangeIOV(const
 
 // No thread support for NVSHMEM yet
 static int execTransfer(const std::vector<std::vector<xferBenchIOV>> &local_iovs,
-                        const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
-                        const int num_iter, cudaStream_t stream) {
+        const std::vector<std::vector<xferBenchIOV>> &remote_iovs, const int num_iter,
+        cudaStream_t stream)
+{
     int ret = 0, tid = 0, target_rank;
 
     target_rank = 1;
@@ -138,9 +148,11 @@ static int execTransfer(const std::vector<std::vector<xferBenchIOV>> &local_iovs
             auto &local = local_iov[i];
             auto &remote = remote_iov[i];
             if (XFERBENCH_OP_WRITE == xferBenchConfig::op_type) {
-                nvshmemx_putmem_on_stream((void *)remote.addr, (void *)local.addr, local.len, target_rank, stream);
+                nvshmemx_putmem_on_stream(
+                        (void*)remote.addr, (void*)local.addr, local.len, target_rank, stream);
             } else if (XFERBENCH_OP_READ == xferBenchConfig::op_type) {
-                nvshmemx_getmem_on_stream((void *)remote.addr, (void *)local.addr, local.len, target_rank, stream);
+                nvshmemx_getmem_on_stream(
+                        (void*)remote.addr, (void*)local.addr, local.len, target_rank, stream);
             }
         }
         nvshmemx_quiet_on_stream(stream);
@@ -150,13 +162,14 @@ static int execTransfer(const std::vector<std::vector<xferBenchIOV>> &local_iovs
 }
 
 std::variant<double, int> xferBenchNvshmemWorker::transfer(size_t block_size,
-                                                  const std::vector<std::vector<xferBenchIOV>> &local_trans_lists,
-                                                  const std::vector<std::vector<xferBenchIOV>> &remote_trans_lists) {
+        const std::vector<std::vector<xferBenchIOV>>             &local_trans_lists,
+        const std::vector<std::vector<xferBenchIOV>>             &remote_trans_lists)
+{
     cudaEvent_t start_event, stop_event;
-    float total_duration = 0.0;
-    int num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
-    int skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
-    int ret = 0;
+    float       total_duration = 0.0;
+    int         num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
+    int         skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
+    int         ret = 0;
 
     // Create events to time the transfer
     CHECK_CUDA_ERROR(cudaEventCreate(&start_event), "Failed to create CUDA event");
@@ -170,9 +183,7 @@ std::variant<double, int> xferBenchNvshmemWorker::transfer(size_t block_size,
     }
 
     ret = execTransfer(local_trans_lists, remote_trans_lists, skip, stream);
-    if (ret < 0) {
-        return std::variant<double, int>(ret);
-    }
+    if (ret < 0) { return std::variant<double, int>(ret); }
     nvshmemx_barrier_all_on_stream(stream);
     CHECK_CUDA_ERROR(cudaStreamSynchronize(stream), "Failed to synchronize CUDA stream");
 
@@ -187,12 +198,15 @@ std::variant<double, int> xferBenchNvshmemWorker::transfer(size_t block_size,
     CHECK_CUDA_ERROR(cudaStreamSynchronize(stream), "Failed to synchronize CUDA stream");
 
     // Time in ms
-    CHECK_CUDA_ERROR(cudaEventElapsedTime(&total_duration, start_event, stop_event), "Failed to get elapsed time");
+    CHECK_CUDA_ERROR(cudaEventElapsedTime(&total_duration, start_event, stop_event),
+            "Failed to get elapsed time");
 
-    return ret < 0 ? std::variant<double, int>(ret) : std::variant<double, int>((double)total_duration * 1e+3);
+    return ret < 0 ? std::variant<double, int>(ret)
+                   : std::variant<double, int>((double)total_duration * 1e+3);
 }
 
-void xferBenchNvshmemWorker::poll(size_t block_size) {
+void xferBenchNvshmemWorker::poll(size_t block_size)
+{
     // For NVSHMEM, we don't need to poll
     // The transfer is already complete when we reach this point
     nvshmemx_barrier_all_on_stream(stream);
@@ -202,16 +216,15 @@ void xferBenchNvshmemWorker::poll(size_t block_size) {
     CHECK_CUDA_ERROR(cudaStreamSynchronize(stream), "Failed to synchronize CUDA stream");
 }
 
-int xferBenchNvshmemWorker::synchronizeStart() {
+int xferBenchNvshmemWorker::synchronizeStart()
+{
     nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
     group_id = NVSHMEMX_UNIQUEID_INITIALIZER;
 
     if (xferBenchConfig::runtime_type == XFERBENCH_RT_ETCD) {
-        if (rank == 0 && group_id_initialized == 0) {
-            nvshmemx_get_uniqueid(&group_id);
-        }
+        if (rank == 0 && group_id_initialized == 0) { nvshmemx_get_uniqueid(&group_id); }
 
-        rt->broadcastInt((int *)&group_id, sizeof(nvshmemx_uniqueid_t), 0);
+        rt->broadcastInt((int*)&group_id, sizeof(nvshmemx_uniqueid_t), 0);
         group_id_initialized = 1;
 
         nvshmemx_set_attr_uniqueid_args(rank, size, &group_id, &attr);

@@ -19,40 +19,37 @@
 
 
 template <typename T>
-class nixlLinkElem {
+class nixlLinkElem
+{
 private:
-    T *_next;
+    T* _next;
+
 public:
-    nixlLinkElem()
+    nixlLinkElem() { _next = NULL; }
+
+    ~nixlLinkElem()
     {
         _next = NULL;
-    }
-
-    ~nixlLinkElem() {
-        _next = NULL;;
+        ;
     }
 
     /* Link this element into the chain after "elem" */
-    void link(T *elem)
+    void link(T* elem)
     {
         elem->_next = _next;
         _next = elem;
     }
 
     /* Exclude this element from the chain, return the new head */
-    T *unlink()
+    T* unlink()
     {
-        T *ret = _next;
+        T* ret = _next;
         /* Forget my place */
         _next = NULL;
         return ret;
     }
 
-    T *next()
-    {
-        return _next;
-    }
-
-} ;
+    T* next() { return _next; }
+};
 
 #endif

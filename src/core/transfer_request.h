@@ -19,49 +19,51 @@
 
 // Contains pointers to corresponding backend engine and its handler, and populated
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
-class nixlXferReqH {
-    private:
-        nixlBackendEngine* engine         = nullptr;
-        nixlBackendReqH*   backendHandle  = nullptr;
+class nixlXferReqH
+{
+private:
+    nixlBackendEngine* engine = nullptr;
+    nixlBackendReqH*   backendHandle = nullptr;
 
-        nixl_meta_dlist_t* initiatorDescs = nullptr;
-        nixl_meta_dlist_t* targetDescs    = nullptr;
+    nixl_meta_dlist_t* initiatorDescs = nullptr;
+    nixl_meta_dlist_t* targetDescs = nullptr;
 
-        std::string        remoteAgent;
-        nixl_blob_t        notifMsg;
-        bool               hasNotif       = false;
+    std::string remoteAgent;
+    nixl_blob_t notifMsg;
+    bool        hasNotif = false;
 
-        nixl_xfer_op_t     backendOp;
-        nixl_status_t      status;
+    nixl_xfer_op_t backendOp;
+    nixl_status_t  status;
 
-    public:
-        inline nixlXferReqH() { }
+public:
+    inline nixlXferReqH() {}
 
-        inline ~nixlXferReqH() {
-            // delete checks for nullptr itself
-            delete initiatorDescs;
-            delete targetDescs;
-            if (backendHandle != nullptr)
-                engine->releaseReqH(backendHandle);
-        }
+    inline ~nixlXferReqH()
+    {
+        // delete checks for nullptr itself
+        delete initiatorDescs;
+        delete targetDescs;
+        if (backendHandle != nullptr) engine->releaseReqH(backendHandle);
+    }
 
     friend class nixlAgent;
 };
 
-class nixlDlistH {
-    private:
-        std::unordered_map<nixlBackendEngine*, nixl_meta_dlist_t*> descs;
+class nixlDlistH
+{
+private:
+    std::unordered_map<nixlBackendEngine*, nixl_meta_dlist_t*> descs;
 
-        std::string        remoteAgent;
-        bool               isLocal;
+    std::string remoteAgent;
+    bool        isLocal;
 
-    public:
-        inline nixlDlistH() { }
+public:
+    inline nixlDlistH() {}
 
-        inline ~nixlDlistH() {
-            for (auto & elm : descs)
-                delete elm.second;
-        }
+    inline ~nixlDlistH()
+    {
+        for (auto &elm : descs) delete elm.second;
+    }
 
     friend class nixlAgent;
 };

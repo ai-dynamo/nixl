@@ -17,38 +17,45 @@
 #include "backend/backend_engine.h"
 #include "backend/backend_plugin.h"
 
-namespace mocks {
-namespace basic_plugin {
+namespace mocks
+{
+namespace basic_plugin
+{
 
-static constexpr const char *plugin_name = "MOCK_BASIC";
-static constexpr const char *plugin_version = "0.0.1";
+static constexpr const char* plugin_name = "MOCK_BASIC";
+static constexpr const char* plugin_version = "0.0.1";
 
-static nixlBackendEngine *create_engine(const nixlBackendInitParams *) {
-  return nullptr;
+static nixlBackendEngine* create_engine(const nixlBackendInitParams*)
+{
+    return nullptr;
 }
 
-static void destroy_engine(nixlBackendEngine *) {}
+static void destroy_engine(nixlBackendEngine*) {}
 
-static const char *get_plugin_name() { return plugin_name; }
+static const char* get_plugin_name()
+{
+    return plugin_name;
+}
 
-static const char *get_plugin_version() { return plugin_version; }
+static const char* get_plugin_version()
+{
+    return plugin_version;
+}
 
-static nixl_b_params_t get_backend_options() { return nixl_b_params_t(); }
+static nixl_b_params_t get_backend_options()
+{
+    return nixl_b_params_t();
+}
 
-static nixlBackendPlugin plugin = {
-  NIXL_PLUGIN_API_VERSION,
-  create_engine,
-  destroy_engine,
-  get_plugin_name,
-  get_plugin_version,
-  get_backend_options
-};
-} // namespace basic_plugin
+static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION, create_engine, destroy_engine,
+        get_plugin_name, get_plugin_version, get_backend_options};
+}  // namespace basic_plugin
 
-} // namespace mocks
+}  // namespace mocks
 
-extern "C" nixlBackendPlugin *nixl_plugin_init() {
-  return &mocks::basic_plugin::plugin;
+extern "C" nixlBackendPlugin* nixl_plugin_init()
+{
+    return &mocks::basic_plugin::plugin;
 }
 
 extern "C" void nixl_plugin_fini() {}

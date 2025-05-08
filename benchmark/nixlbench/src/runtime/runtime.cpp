@@ -17,39 +17,48 @@
 
 #include "runtime/runtime.h"
 
-int xferBenchRT::getSize() const {
+int xferBenchRT::getSize() const
+{
     return size;
 }
 
-int xferBenchRT::getRank() const {
+int xferBenchRT::getRank() const
+{
     return rank;
 }
 
 
-int xferBenchRT::sendInt(int *buffer, int dest_rank) {
+int xferBenchRT::sendInt(int* buffer, int dest_rank)
+{
     return 0;
 }
 
-int xferBenchRT::recvInt(int *buffer, int src_rank) {
+int xferBenchRT::recvInt(int* buffer, int src_rank)
+{
     return 0;
 }
 
-int xferBenchRT::broadcastInt(int *buffer, size_t count, int root_rank) {
+int xferBenchRT::broadcastInt(int* buffer, size_t count, int root_rank)
+{
     return 0;
 }
 
-int xferBenchRT::sendChar(char *buffer, size_t count, int dest_rank) {
+int xferBenchRT::sendChar(char* buffer, size_t count, int dest_rank)
+{
     return 0;
 }
 
-int xferBenchRT::recvChar(char *buffer, size_t count, int src_rank) {
+int xferBenchRT::recvChar(char* buffer, size_t count, int src_rank)
+{
     return 0;
 }
 
-int xferBenchRT::reduceSumDouble(double *local_buffer, double *global_buffer, int dest_rank) {
+int xferBenchRT::reduceSumDouble(double* local_buffer, double* global_buffer, int dest_rank)
+{
     return 0;
 }
 
-int xferBenchRT::barrier(const std::string& barrier_id) {
+int xferBenchRT::barrier(const std::string &barrier_id)
+{
     return 0;
 }

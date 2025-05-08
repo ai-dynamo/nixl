@@ -14,10 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "gds_backend.h"
+
+#include <cufile.h>
+
 #include <cassert>
 #include <iostream>
-#include <cufile.h>
-#include "gds_backend.h"
+
 #include "common/str_tools.h"
 
 /** Setting the default values to check the batch limit */
@@ -44,7 +47,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
         if (custom_params->count("batch_pool_size") > 0) {
             try {
                 batch_pool_size = std::stoi((*custom_params)["batch_pool_size"]);
-            } catch (const std::exception& e) {
+            } catch (const std::exception &e) {
                 std::cerr << "Invalid batch_pool_size parameter: " << e.what() << std::endl;
                 this->initErr = true;
                 return;
@@ -55,7 +58,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
         if (custom_params->count("batch_limit") > 0) {
             try {
                 batch_limit = std::stoi((*custom_params)["batch_limit"]);
-            } catch (const std::exception& e) {
+            } catch (const std::exception &e) {
                 std::cerr << "Invalid batch_limit parameter: " << e.what() << std::endl;
                 this->initErr = true;
                 return;
@@ -66,7 +69,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
         if (custom_params->count("max_request_size") > 0) {
             try {
                 max_request_size = std::stoul((*custom_params)["max_request_size"]);
-            } catch (const std::exception& e) {
+            } catch (const std::exception &e) {
                 std::cerr << "Invalid max_request_size parameter: " << e.what() << std::endl;
                 this->initErr = true;
                 return;
@@ -84,15 +87,13 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
     for (unsigned int i = 0; i < batch_pool_size; i++) {
         batch_pool.push_back(new nixlGdsIOBatch(batch_limit));
     }
-
 }
 
-nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
-                                         const nixl_mem_t &nixl_mem,
-                                         nixlBackendMD* &out)
+nixl_status_t nixlGdsEngine::registerMem(
+        const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD*&out)
 {
-    nixl_status_t status = NIXL_SUCCESS;
-    nixlGdsMetadata *md = new nixlGdsMetadata();
+    nixl_status_t    status = NIXL_SUCCESS;
+    nixlGdsMetadata* md = new nixlGdsMetadata();
     md->type = nixl_mem;
     cudaError_t error_id;
 
@@ -107,11 +108,8 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
                 break;
             }
 
-            status = gds_utils->registerFileHandle(mem.devId, mem.len,
-                                                   mem.metaInfo, md->handle);
-            if (status == NIXL_SUCCESS) {
-                gds_file_map[mem.devId] = md->handle;
-            }
+            status = gds_utils->registerFileHandle(mem.devId, mem.len, mem.metaInfo, md->handle);
+            if (status == NIXL_SUCCESS) { gds_file_map[mem.devId] = md->handle; }
             break;
         }
 
@@ -123,18 +121,18 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
                 delete md;
                 return NIXL_ERR_BACKEND;
             }
-            status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
+            status = gds_utils->registerBufHandle((void*)mem.addr, mem.len, 0);
             if (status == NIXL_SUCCESS) {
-                md->buf.base = (void *)mem.addr;
+                md->buf.base = (void*)mem.addr;
                 md->buf.size = mem.len;
             }
             break;
         }
 
         case DRAM_SEG: {
-            status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
+            status = gds_utils->registerBufHandle((void*)mem.addr, mem.len, 0);
             if (status == NIXL_SUCCESS) {
-                md->buf.base = (void *)mem.addr;
+                md->buf.base = (void*)mem.addr;
                 md->buf.size = mem.len;
             }
             break;
@@ -154,12 +152,12 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
     return status;
 }
 
-nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
+nixl_status_t nixlGdsEngine::deregisterMem(nixlBackendMD* meta)
 {
-    nixlGdsMetadata *md = (nixlGdsMetadata *)meta;
+    nixlGdsMetadata* md = (nixlGdsMetadata*)meta;
     if (md->type == FILE_SEG) {
         gds_utils->deregisterFileHandle(md->handle);
-	gds_file_map.erase(md->handle.fd);
+        gds_file_map.erase(md->handle.fd);
     } else {
         gds_utils->deregisterBufHandle(md->buf.base);
     }
@@ -167,20 +165,16 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
-                                       const nixl_meta_dlist_t &local,
-                                       const nixl_meta_dlist_t &remote,
-                                       const std::string &remote_agent,
-                                       nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args)
+nixl_status_t nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
+        const nixl_meta_dlist_t &local, const nixl_meta_dlist_t &remote,
+        const std::string &remote_agent, nixlBackendReqH*&handle, const nixl_opt_b_args_t* opt_args)
 {
     nixlGdsBackendReqH* gds_handle = new nixlGdsBackendReqH();
-    size_t buf_cnt = local.descCount();
-    size_t file_cnt = remote.descCount();
+    size_t              buf_cnt = local.descCount();
+    size_t              file_cnt = remote.descCount();
 
     // Basic validation
-    if ((buf_cnt != file_cnt) ||
-        ((operation != NIXL_READ) && (operation != NIXL_WRITE))) {
+    if ((buf_cnt != file_cnt) || ((operation != NIXL_READ) && (operation != NIXL_WRITE))) {
         std::cerr << "Error in count or operation selection\n";
         delete gds_handle;
         return NIXL_ERR_INVALID_PARAM;
@@ -200,9 +194,9 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
 
     // Create list of all transfer requests
     for (size_t i = 0; i < buf_cnt; i++) {
-        void* base_addr;
-        size_t total_size;
-        size_t base_offset;
+        void*         base_addr;
+        size_t        total_size;
+        size_t        base_offset;
         gdsFileHandle fh;
 
         // Get transfer parameters based on whether local is file or memory
@@ -245,8 +239,7 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
         size_t current_offset = 0;
 
         while (remaining_size > 0) {
-            size_t request_size = std::min(remaining_size,
-                                       (size_t)max_request_size);
+            size_t request_size = std::min(remaining_size, (size_t)max_request_size);
 
             GdsTransferRequestH req;
             req.addr = (char*)base_addr + current_offset;
@@ -273,7 +266,8 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
-nixlGdsIOBatch* nixlGdsEngine::getBatchFromPool(unsigned int size) {
+nixlGdsIOBatch* nixlGdsEngine::getBatchFromPool(unsigned int size)
+{
     // Use a pre-allocated batch if available
     if (!batch_pool.empty()) {
         nixlGdsIOBatch* batch = batch_pool.back();
@@ -285,17 +279,15 @@ nixlGdsIOBatch* nixlGdsEngine::getBatchFromPool(unsigned int size) {
     return nullptr;
 }
 
-void nixlGdsEngine::returnBatchToPool(nixlGdsIOBatch* batch) {
+void nixlGdsEngine::returnBatchToPool(nixlGdsIOBatch* batch)
+{
     // Only keep up to batch_pool_size batches
-        batch_pool.push_back(batch);
+    batch_pool.push_back(batch);
 }
 
 nixl_status_t nixlGdsEngine::postXfer(const nixl_xfer_op_t &operation,
-                                      const nixl_meta_dlist_t &local,
-                                      const nixl_meta_dlist_t &remote,
-                                      const std::string &remote_agent,
-                                      nixlBackendReqH* &handle,
-                                      const nixl_opt_b_args_t* opt_args)
+        const nixl_meta_dlist_t &local, const nixl_meta_dlist_t &remote,
+        const std::string &remote_agent, nixlBackendReqH*&handle, const nixl_opt_b_args_t* opt_args)
 {
     nixlGdsBackendReqH* gds_handle = (nixlGdsBackendReqH*)handle;
 
@@ -306,14 +298,13 @@ nixl_status_t nixlGdsEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     // Process requests in batches
-    const auto& request_list = gds_handle->request_list;
-    size_t current_req = 0;
+    const auto &request_list = gds_handle->request_list;
+    size_t      current_req = 0;
 
     while (current_req < request_list.size()) {
-        size_t batch_size = std::min(request_list.size() - current_req,
-                                     (size_t)batch_limit);
-        nixl_status_t status = createAndSubmitBatch(request_list, current_req,
-                                                    batch_size, gds_handle->batch_io_list);
+        size_t        batch_size = std::min(request_list.size() - current_req, (size_t)batch_limit);
+        nixl_status_t status = createAndSubmitBatch(
+                request_list, current_req, batch_size, gds_handle->batch_io_list);
 
         if (status != NIXL_SUCCESS) {
             // Clean up on error
@@ -330,9 +321,8 @@ nixl_status_t nixlGdsEngine::postXfer(const nixl_xfer_op_t &operation,
     return NIXL_IN_PROG;
 }
 
-nixl_status_t nixlGdsEngine::createAndSubmitBatch(const std::vector<GdsTransferRequestH>& requests,
-                                                  size_t start_idx, size_t batch_size,
-                                                  std::vector<nixlGdsIOBatch*>& batch_list)
+nixl_status_t nixlGdsEngine::createAndSubmitBatch(const std::vector<GdsTransferRequestH> &requests,
+        size_t start_idx, size_t batch_size, std::vector<nixlGdsIOBatch*> &batch_list)
 {
     nixlGdsIOBatch* batch = getBatchFromPool(batch_size);
     if (!batch) {
@@ -342,14 +332,14 @@ nixl_status_t nixlGdsEngine::createAndSubmitBatch(const std::vector<GdsTransferR
 
     // Add all requests to batch
     for (size_t i = 0; i < batch_size; i++) {
-        const auto& req = requests[start_idx + i];
+        const auto &req = requests[start_idx + i];
         if (!req.addr || !req.fh) {
             returnBatchToPool(batch);
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        nixl_status_t status = batch->addToBatch(req.fh, req.addr, req.size,
-                                               req.file_offset, 0, req.op);
+        nixl_status_t status =
+                batch->addToBatch(req.fh, req.addr, req.size, req.file_offset, 0, req.op);
         if (status != NIXL_SUCCESS) {
             returnBatchToPool(batch);
             return NIXL_ERR_INVALID_PARAM;
@@ -368,7 +358,7 @@ nixl_status_t nixlGdsEngine::createAndSubmitBatch(const std::vector<GdsTransferR
 
 nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle)
 {
-    nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *)handle;
+    nixlGdsBackendReqH* gds_handle = (nixlGdsBackendReqH*)handle;
 
     if (gds_handle->batch_io_list.empty()) {
         gds_handle->needs_prep = true;
@@ -379,13 +369,9 @@ nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle)
     for (auto* batch : gds_handle->batch_io_list) {
         status = batch->checkStatus();
 
-        if (status == NIXL_IN_PROG) {
-            return status;
-        }
+        if (status == NIXL_IN_PROG) { return status; }
 
-        if (status < 0) {
-            batch->cancelBatch();
-        }
+        if (status < 0) { batch->cancelBatch(); }
         returnBatchToPool(batch);
     }
 
@@ -396,8 +382,7 @@ nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle)
 
 nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle)
 {
-
-    nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *) handle;
+    nixlGdsBackendReqH* gds_handle = (nixlGdsBackendReqH*)handle;
 
     delete gds_handle;
     gds_handle = nullptr;
@@ -405,7 +390,8 @@ nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle)
     return NIXL_SUCCESS;
 }
 
-nixlGdsEngine::~nixlGdsEngine() {
+nixlGdsEngine::~nixlGdsEngine()
+{
     // Clean up the batch pool
     for (auto* batch : batch_pool) {
         if (batch) {

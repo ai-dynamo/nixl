@@ -14,14 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <algorithm>
-#include <iostream>
-#include <functional>
-#include <stdexcept>
-#include "nixl.h"
 #include "nixl_descriptors.h"
-#include "mem_section.h"
+
+#include <algorithm>
+#include <functional>
+#include <iostream>
+#include <stdexcept>
+
 #include "backend/backend_aux.h"
+#include "mem_section.h"
+#include "nixl.h"
 #include "serdes/serdes.h"
 
 /*** Class nixlBasicDesc implementation ***/
@@ -29,25 +31,26 @@
 // No Virtual function in nixlBasicDesc class or its children, as we want
 // each object to just have the members during serialization.
 
-nixlBasicDesc::nixlBasicDesc(const uintptr_t &addr,
-                             const size_t &len,
-                             const uint64_t &dev_id) {
-    this->addr  = addr;
-    this->len   = len;
+nixlBasicDesc::nixlBasicDesc(const uintptr_t &addr, const size_t &len, const uint64_t &dev_id)
+{
+    this->addr = addr;
+    this->len = len;
     this->devId = dev_id;
 }
 
-nixlBasicDesc::nixlBasicDesc(const nixl_blob_t &blob) {
-    if (blob.size()==sizeof(nixlBasicDesc)) {
+nixlBasicDesc::nixlBasicDesc(const nixl_blob_t &blob)
+{
+    if (blob.size() == sizeof(nixlBasicDesc)) {
         blob.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
-    } else { // Error indicator, not possible by descList deserializer call
-        addr  = 0;
-        len   = 0;
+    } else {  // Error indicator, not possible by descList deserializer call
+        addr = 0;
+        len = 0;
         devId = 0;
     }
 }
 
-bool nixlBasicDesc::operator<(const nixlBasicDesc &desc) const {
+bool nixlBasicDesc::operator<(const nixlBasicDesc &desc) const
+{
     if (devId != desc.devId)
         return (devId < desc.devId);
     else if (addr != desc.addr)
@@ -56,87 +59,86 @@ bool nixlBasicDesc::operator<(const nixlBasicDesc &desc) const {
         return (len < desc.len);
 }
 
-bool operator==(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) {
-    return ((lhs.addr  == rhs.addr ) &&
-            (lhs.len   == rhs.len  ) &&
-            (lhs.devId == rhs.devId));
+bool operator==(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs)
+{
+    return ((lhs.addr == rhs.addr) && (lhs.len == rhs.len) && (lhs.devId == rhs.devId));
 }
 
-bool operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) {
-    return !(lhs==rhs);
+bool operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs)
+{
+    return !(lhs == rhs);
 }
 
-bool nixlBasicDesc::covers (const nixlBasicDesc &query) const {
+bool nixlBasicDesc::covers(const nixlBasicDesc &query) const
+{
     if (devId == query.devId) {
-        if ((addr <=  query.addr) &&
-            (addr + len >= query.addr + query.len))
-            return true;
+        if ((addr <= query.addr) && (addr + len >= query.addr + query.len)) return true;
     }
     return false;
 }
 
-bool nixlBasicDesc::overlaps (const nixlBasicDesc &query) const {
-    if (devId != query.devId)
-        return false;
-    if ((addr + len <= query.addr) || (query.addr + query.len <= addr))
-        return false;
+bool nixlBasicDesc::overlaps(const nixlBasicDesc &query) const
+{
+    if (devId != query.devId) return false;
+    if ((addr + len <= query.addr) || (query.addr + query.len <= addr)) return false;
     return true;
 }
 
-nixl_blob_t nixlBasicDesc::serialize() const {
-    return std::string(reinterpret_cast<const char*>(this),
-                       sizeof(nixlBasicDesc));
+nixl_blob_t nixlBasicDesc::serialize() const
+{
+    return std::string(reinterpret_cast<const char*>(this), sizeof(nixlBasicDesc));
 }
 
-void nixlBasicDesc::print(const std::string &suffix) const {
-    std::cout << "LOG: Desc (" << addr << ", " << len
-              << ") from devID " << devId << suffix << "\n";
+void nixlBasicDesc::print(const std::string &suffix) const
+{
+    std::cout << "LOG: Desc (" << addr << ", " << len << ") from devID " << devId << suffix << "\n";
 }
 
 
 /*** Class nixlBlobDesc implementation ***/
 
-nixlBlobDesc::nixlBlobDesc(const uintptr_t &addr,
-                           const size_t &len,
-                           const uint64_t &dev_id,
-                           const nixl_blob_t &meta_info) :
-                           nixlBasicDesc(addr, len, dev_id) {
+nixlBlobDesc::nixlBlobDesc(const uintptr_t &addr, const size_t &len, const uint64_t &dev_id,
+        const nixl_blob_t &meta_info)
+    : nixlBasicDesc(addr, len, dev_id)
+{
     this->metaInfo = meta_info;
 }
 
-nixlBlobDesc::nixlBlobDesc(const nixlBasicDesc &desc,
-                           const nixl_blob_t &meta_info) :
-                           nixlBasicDesc(desc) {
+nixlBlobDesc::nixlBlobDesc(const nixlBasicDesc &desc, const nixl_blob_t &meta_info)
+    : nixlBasicDesc(desc)
+{
     this->metaInfo = meta_info;
 }
 
-nixlBlobDesc::nixlBlobDesc(const nixl_blob_t &blob) {
+nixlBlobDesc::nixlBlobDesc(const nixl_blob_t &blob)
+{
     size_t meta_size = blob.size() - sizeof(nixlBasicDesc);
     if (meta_size > 0) {
         metaInfo.resize(meta_size);
         blob.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
-        blob.copy(reinterpret_cast<char*>(&metaInfo[0]),
-                 meta_size, sizeof(nixlBasicDesc));
+        blob.copy(reinterpret_cast<char*>(&metaInfo[0]), meta_size, sizeof(nixlBasicDesc));
     } else if (meta_size == 0) {
         blob.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
-    } else { // Error
-        addr  = 0;
-        len   = 0;
+    } else {  // Error
+        addr = 0;
+        len = 0;
         devId = 0;
         metaInfo.resize(0);
     }
 }
 
-bool operator==(const nixlBlobDesc &lhs, const nixlBlobDesc &rhs) {
-    return (((nixlBasicDesc)lhs == (nixlBasicDesc)rhs) &&
-                  (lhs.metaInfo == rhs.metaInfo));
+bool operator==(const nixlBlobDesc &lhs, const nixlBlobDesc &rhs)
+{
+    return (((nixlBasicDesc)lhs == (nixlBasicDesc)rhs) && (lhs.metaInfo == rhs.metaInfo));
 }
 
-nixl_blob_t nixlBlobDesc::serialize() const {
+nixl_blob_t nixlBlobDesc::serialize() const
+{
     return nixlBasicDesc::serialize() + metaInfo;
 }
 
-void nixlBlobDesc::print(const std::string &suffix) const {
+void nixlBlobDesc::print(const std::string &suffix) const
+{
     nixlBasicDesc::print(", Metadata: " + metaInfo + suffix);
 }
 
@@ -146,52 +148,44 @@ void nixlBlobDesc::print(const std::string &suffix) const {
 // There are no virtual functions, so the object is all data, no pointers.
 
 template <class T>
-nixlDescList<T>::nixlDescList (const nixl_mem_t &type,
-                               const bool &sorted,
-                               const int &init_size) {
-    static_assert (std::is_base_of<nixlBasicDesc, T>::value);
-    this->type        = type;
-    this->sorted      = sorted;
+nixlDescList<T>::nixlDescList(const nixl_mem_t &type, const bool &sorted, const int &init_size)
+{
+    static_assert(std::is_base_of<nixlBasicDesc, T>::value);
+    this->type = type;
+    this->sorted = sorted;
     this->descs.resize(init_size);
 }
 
 template <class T>
-nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
-    size_t n_desc;
+nixlDescList<T>::nixlDescList(nixlSerDes* deserializer)
+{
+    size_t      n_desc;
     std::string str;
 
     descs.clear();
 
-    str = deserializer->getStr("nixlDList"); // Object type
-    if (str.size()==0)
-        return;
+    str = deserializer->getStr("nixlDList");  // Object type
+    if (str.size() == 0) return;
 
     // nixlMetaDesc and nixlSectionDesc should be internal and not be serialized
-    if (std::is_same<nixlMetaDesc, T>::value || std::is_same<nixlSectionDesc, T>::value)
-        return;
+    if (std::is_same<nixlMetaDesc, T>::value || std::is_same<nixlSectionDesc, T>::value) return;
 
-    if (deserializer->getBuf("t", &type, sizeof(type)))
-        return;
-    if (deserializer->getBuf("s", &sorted, sizeof(sorted)))
-        return;
-    if (deserializer->getBuf("n", &n_desc, sizeof(n_desc)))
-        return;
+    if (deserializer->getBuf("t", &type, sizeof(type))) return;
+    if (deserializer->getBuf("s", &sorted, sizeof(sorted))) return;
+    if (deserializer->getBuf("n", &n_desc, sizeof(n_desc))) return;
 
     if (std::is_same<nixlBasicDesc, T>::value) {
         // Contiguous in memory, so no need for per elm deserialization
-        if (str!="nixlBDList")
-            return;
+        if (str != "nixlBDList") return;
         str = deserializer->getStr("");
-        if (str.size()!= n_desc * sizeof(nixlBasicDesc))
-            return;
+        if (str.size() != n_desc * sizeof(nixlBasicDesc)) return;
         // If size is proper, deserializer cannot fail
         descs.resize(n_desc);
         str.copy(reinterpret_cast<char*>(descs.data()), str.size());
 
     } else if (std::is_same<nixlBlobDesc, T>::value) {
-        if (str!="nixlSDList")
-            return;
-        for (size_t i=0; i<n_desc; ++i) {
+        if (str != "nixlSDList") return;
+        for (size_t i = 0; i < n_desc; ++i) {
             str = deserializer->getStr("");
             // If size is proper, deserializer cannot fail
             // Allowing empty strings, might change later
@@ -203,13 +197,14 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
             descs.push_back(elm);
         }
     } else {
-        return; // Unknown type, error
+        return;  // Unknown type, error
     }
 }
 
 // Getter
 template <class T>
-inline const T& nixlDescList<T>::operator[](unsigned int index) const {
+inline const T &nixlDescList<T>::operator[](unsigned int index) const
+{
     // To be added only in debug mode
     // if (index >= descs.size())
     //     throw std::out_of_range("Index is out of range");
@@ -218,7 +213,8 @@ inline const T& nixlDescList<T>::operator[](unsigned int index) const {
 
 // Setter
 template <class T>
-inline T& nixlDescList<T>::operator[](unsigned int index) {
+inline T &nixlDescList<T>::operator[](unsigned int index)
+{
     // To be added only in debug mode
     // if (index >= descs.size())
     //     throw std::out_of_range("Index is out of range");
@@ -227,7 +223,8 @@ inline T& nixlDescList<T>::operator[](unsigned int index) {
 }
 
 template <class T>
-void nixlDescList<T>::addDesc (const T &desc) {
+void nixlDescList<T>::addDesc(const T &desc)
+{
     if (!sorted) {
         descs.push_back(desc);
     } else {
@@ -241,9 +238,10 @@ void nixlDescList<T>::addDesc (const T &desc) {
 }
 
 template <class T>
-bool nixlDescList<T>::overlaps (const T &desc, int &index) const {
+bool nixlDescList<T>::overlaps(const T &desc, int &index) const
+{
     if (!sorted) {
-        for (size_t i=0; i<descs.size(); ++i) {
+        for (size_t i = 0; i < descs.size(); ++i) {
             if (descs[i].overlaps(desc)) {
                 index = i;
                 return true;
@@ -266,33 +264,33 @@ bool nixlDescList<T>::overlaps (const T &desc, int &index) const {
 }
 
 template <class T>
-bool nixlDescList<T>::hasOverlaps () const {
-    if ((descs.size()==0) || (descs.size()==1))
-        return false;
+bool nixlDescList<T>::hasOverlaps() const
+{
+    if ((descs.size() == 0) || (descs.size() == 1)) return false;
 
     if (!sorted) {
-        for (size_t i=0; i<descs.size()-1; ++i)
-            for (size_t j=i+1; j<descs.size(); ++j)
-                if (descs[i].overlaps(descs[j]))
-                    return true;
+        for (size_t i = 0; i < descs.size() - 1; ++i)
+            for (size_t j = i + 1; j < descs.size(); ++j)
+                if (descs[i].overlaps(descs[j])) return true;
     } else {
-        for (size_t i=0; i<descs.size()-1; ++i)
-            if (descs[i].overlaps(descs[i+1]))
-                return true;
+        for (size_t i = 0; i < descs.size() - 1; ++i)
+            if (descs[i].overlaps(descs[i + 1])) return true;
     }
 
     return false;
 }
 
 template <class T>
-void nixlDescList<T>::remDesc (const int &index){
-    if (((size_t) index >= descs.size()) || (index < 0))
+void nixlDescList<T>::remDesc(const int &index)
+{
+    if (((size_t)index >= descs.size()) || (index < 0))
         throw std::out_of_range("Index is out of range");
     descs.erase(descs.begin() + index);
 }
 
 template <class T>
-void nixlDescList<T>::resize (const size_t &count) {
+void nixlDescList<T>::resize(const size_t &count)
+{
     // To be added only in debug mode
     // if (count > descs.size())
     //     sorted = false;
@@ -300,17 +298,18 @@ void nixlDescList<T>::resize (const size_t &count) {
 }
 
 template <class T>
-bool nixlDescList<T>::verifySorted() {
-    int size = (int) descs.size();
-    if (size==0) {
+bool nixlDescList<T>::verifySorted()
+{
+    int size = (int)descs.size();
+    if (size == 0) {
         return false;
     } else if (size == 1) {
         sorted = true;
         return true;
     }
 
-    for (int i=0; i<size-1; ++i) {
-        if (descs[i+1] < descs[i]) {
+    for (int i = 0; i < size - 1; ++i) {
+        if (descs[i + 1] < descs[i]) {
             sorted = false;
             return false;
         }
@@ -320,16 +319,16 @@ bool nixlDescList<T>::verifySorted() {
 }
 
 template <class T>
-nixlDescList<nixlBasicDesc> nixlDescList<T>::trim() const {
-
+nixlDescList<nixlBasicDesc> nixlDescList<T>::trim() const
+{
     if constexpr (std::is_same<nixlBasicDesc, T>::value) {
         return *this;
     } else {
         nixlDescList<nixlBasicDesc> trimmed(type, sorted);
-        nixlBasicDesc* p;
+        nixlBasicDesc*              p;
 
-        for (auto & elm: descs) {
-            p = (nixlBasicDesc*) (&elm);
+        for (auto &elm : descs) {
+            p = (nixlBasicDesc*)(&elm);
             trimmed.addDesc(*p);
         }
 
@@ -339,38 +338,35 @@ nixlDescList<nixlBasicDesc> nixlDescList<T>::trim() const {
 }
 
 template <class T>
-int nixlDescList<T>::getIndex(const nixlBasicDesc &query) const {
+int nixlDescList<T>::getIndex(const nixlBasicDesc &query) const
+{
     if (!sorted) {
         auto itr = std::find(descs.begin(), descs.end(), query);
-        if (itr == descs.end())
-            return NIXL_ERR_NOT_FOUND; // not found
+        if (itr == descs.end()) return NIXL_ERR_NOT_FOUND;  // not found
         return itr - descs.begin();
     } else {
         auto itr = std::lower_bound(descs.begin(), descs.end(), query);
-        if (itr == descs.end())
-            return NIXL_ERR_NOT_FOUND; // not found
+        if (itr == descs.end()) return NIXL_ERR_NOT_FOUND;  // not found
         // As desired, becomes nixlBasicDesc on both sides
-        if (*itr == query)
-            return itr - descs.begin();
+        if (*itr == query) return itr - descs.begin();
     }
     return NIXL_ERR_NOT_FOUND;
 }
 
 template <class T>
-nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
-
+nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const
+{
     nixl_status_t ret;
-    size_t n_desc = descs.size();
+    size_t        n_desc = descs.size();
 
     // nixlMetaDesc should be internal and not be serialized
-    if (std::is_same<nixlMetaDesc, T>::value)
-        return NIXL_ERR_INVALID_PARAM;
+    if (std::is_same<nixlMetaDesc, T>::value) return NIXL_ERR_INVALID_PARAM;
 
     // For now very few descriptor types, if needed can add a name method to each
     // descriptor. std::string_view(typeid(T).name()) is compiler dependent
-    if (std::is_same<nixlBasicDesc, T>::value)
-        ret = serializer->addStr("nixlDList", "nixlBDList");
-    // We serialize SectionDesc the same as BlobDesc so it will be deserialized as BlobDesc on the other side
+    if (std::is_same<nixlBasicDesc, T>::value) ret = serializer->addStr("nixlDList", "nixlBDList");
+    // We serialize SectionDesc the same as BlobDesc so it will be deserialized as BlobDesc on the
+    // other side
     else if (std::is_same<nixlBlobDesc, T>::value || std::is_same<nixlSectionDesc, T>::value)
         ret = serializer->addStr("nixlDList", "nixlSDList");
     else
@@ -387,18 +383,17 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     ret = serializer->addBuf("n", &(n_desc), sizeof(n_desc));
     if (ret) return ret;
 
-    if (n_desc==0)
-        return NIXL_SUCCESS; // Unusual, but supporting it
+    if (n_desc == 0) return NIXL_SUCCESS;  // Unusual, but supporting it
 
     // Optimization for nixlBasicDesc,
     // contiguous in memory, so no need for per elm serialization
     if (std::is_same<nixlBasicDesc, T>::value) {
-        ret = serializer->addStr("", std::string(
-                                 reinterpret_cast<const char*>(descs.data()),
-                                 n_desc * sizeof(nixlBasicDesc)));
+        ret = serializer->addStr("",
+                std::string(reinterpret_cast<const char*>(descs.data()),
+                        n_desc * sizeof(nixlBasicDesc)));
         if (ret) return ret;
-    } else { // already checked it can be only nixlBlobDesc or nixlSectionDesc
-        for (auto & elm : descs) {
+    } else {  // already checked it can be only nixlBlobDesc or nixlSectionDesc
+        for (auto &elm : descs) {
             ret = serializer->addStr("", elm.serialize());
             if (ret) return ret;
         }
@@ -408,25 +403,24 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
 }
 
 template <class T>
-void nixlDescList<T>::print() const {
-    std::cout << "LOG: DescList of mem type " << type
-              << (sorted ? "sorted" : "unsorted") << "\n";
-    for (auto & elm : descs) {
+void nixlDescList<T>::print() const
+{
+    std::cout << "LOG: DescList of mem type " << type << (sorted ? "sorted" : "unsorted") << "\n";
+    for (auto &elm : descs) {
         std::cout << "    ";
         elm.print("");
     }
 }
 
 template <class T>
-bool operator==(const nixlDescList<T> &lhs, const nixlDescList<T> &rhs) {
-    if ((lhs.getType()       != rhs.getType())       ||
-        (lhs.descCount()     != rhs.descCount())     ||
-        (lhs.isSorted()      != rhs.isSorted()))
+bool operator==(const nixlDescList<T> &lhs, const nixlDescList<T> &rhs)
+{
+    if ((lhs.getType() != rhs.getType()) || (lhs.descCount() != rhs.descCount()) ||
+            (lhs.isSorted() != rhs.isSorted()))
         return false;
 
-    for (size_t i=0; i<lhs.descs.size(); ++i)
-        if (lhs.descs[i] != rhs.descs[i])
-            return false;
+    for (size_t i = 0; i < lhs.descs.size(); ++i)
+        if (lhs.descs[i] != rhs.descs[i]) return false;
     return true;
 }
 
@@ -436,11 +430,11 @@ template class nixlDescList<nixlMetaDesc>;
 template class nixlDescList<nixlBlobDesc>;
 template class nixlDescList<nixlSectionDesc>;
 
-template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
-                                         const nixlDescList<nixlBasicDesc> &rhs);
-template bool operator==<nixlMetaDesc>  (const nixlDescList<nixlMetaDesc> &lhs,
-                                         const nixlDescList<nixlMetaDesc> &rhs);
-template bool operator==<nixlBlobDesc>(const nixlDescList<nixlBlobDesc> &lhs,
-                                       const nixlDescList<nixlBlobDesc> &rhs);
-template bool operator==<nixlSectionDesc>(const nixlDescList<nixlSectionDesc> &lhs,
-                                          const nixlDescList<nixlSectionDesc> &rhs);
+template bool operator== <nixlBasicDesc>(
+        const nixlDescList<nixlBasicDesc> &lhs, const nixlDescList<nixlBasicDesc> &rhs);
+template bool operator== <nixlMetaDesc>(
+        const nixlDescList<nixlMetaDesc> &lhs, const nixlDescList<nixlMetaDesc> &rhs);
+template bool operator== <nixlBlobDesc>(
+        const nixlDescList<nixlBlobDesc> &lhs, const nixlDescList<nixlBlobDesc> &rhs);
+template bool operator== <nixlSectionDesc>(
+        const nixlDescList<nixlSectionDesc> &lhs, const nixlDescList<nixlSectionDesc> &rhs);

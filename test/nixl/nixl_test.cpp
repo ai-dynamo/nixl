@@ -14,19 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <iostream>
-#include <string>
-#include <algorithm>
-#include <thread>
-#include <chrono>
+#include <nixl.h>
 #include <nixl_descriptors.h>
 #include <nixl_params.h>
-#include <nixl.h>
+
+#include <algorithm>
 #include <cassert>
-#include "stream/metadata_stream.h"
-#include "serdes/serdes.h"
+#include <chrono>
+#include <iostream>
 #include <mutex>
+#include <string>
+#include <thread>
 #include <vector>
+
+#include "serdes/serdes.h"
+#include "stream/metadata_stream.h"
 
 #define NUM_TRANSFERS 2
 #define NUM_THREADS 4
@@ -41,25 +43,24 @@
  */
 
 struct SharedNotificationState {
-    std::mutex mtx;
+    std::mutex              mtx;
     std::vector<nixlSerDes> remote_serdes;
 };
 
 static const std::string target("target");
 static const std::string initiator("initiator");
 
-static std::vector<std::unique_ptr<uint8_t[]>> initMem(nixlAgent &agent,
-                                                       nixl_reg_dlist_t &dram,
-                                                       nixl_opt_args_t *extra_params,
-                                                       uint8_t val) {
+static std::vector<std::unique_ptr<uint8_t[]>> initMem(
+        nixlAgent &agent, nixl_reg_dlist_t &dram, nixl_opt_args_t* extra_params, uint8_t val)
+{
     std::vector<std::unique_ptr<uint8_t[]>> addrs;
 
     for (int i = 0; i < NUM_TRANSFERS; i++) {
         auto addr = std::make_unique<uint8_t[]>(SIZE);
 
         std::fill_n(addr.get(), SIZE, val);
-        std::cout << "Allocating : " << (void *)addr.get() << ", "
-                  << "Setting to 0x" << std::hex << (unsigned)val << std::dec << std::endl;
+        std::cout << "Allocating : " << (void*)addr.get() << ", " << "Setting to 0x" << std::hex
+                  << (unsigned)val << std::dec << std::endl;
         dram.addDesc(nixlBlobDesc((uintptr_t)(addr.get()), SIZE, 0, ""));
 
         addrs.push_back(std::move(addr));
@@ -69,9 +70,10 @@ static std::vector<std::unique_ptr<uint8_t[]>> initMem(nixlAgent &agent,
     return addrs;
 }
 
-static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int thread_id) {
+static void targetThread(nixlAgent &agent, nixl_opt_args_t* extra_params, int thread_id)
+{
     nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
-    auto addrs = initMem(agent, dram_for_ucx, extra_params, 0);
+    auto             addrs = initMem(agent, dram_for_ucx, extra_params, 0);
 
     nixl_blob_t tgt_metadata;
     agent.getLocalMD(tgt_metadata);
@@ -95,31 +97,30 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
 
     bool rc = false;
     for (int n_tries = 0; !rc && n_tries < 100; n_tries++) {
-        //Only works with progress thread now, as backend is protected
+        // Only works with progress thread now, as backend is protected
         /** Sanity Check */
         rc = std::all_of(addrs.begin(), addrs.end(), [](auto &addr) {
-            return std::all_of(addr.get(), addr.get() + SIZE, [](int x) {
-                return x == MEM_VAL;
-            });
+            return std::all_of(addr.get(), addr.get() + SIZE, [](int x) { return x == MEM_VAL; });
         });
-        if (!rc)
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (!rc) std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if (!rc)
         std::cerr << "Thread " << thread_id << " UCX Transfer failed, buffers are different\n";
     else
-        std::cout << "Thread " << thread_id << " Transfer completed and Buffers match with Initiator\n"
+        std::cout << "Thread " << thread_id
+                  << " Transfer completed and Buffers match with Initiator\n"
                   << "Thread " << thread_id << " UCX Transfer Success!!!\n";
 
     std::cout << "Thread " << thread_id << " Cleanup..\n";
     agent.deregisterMem(dram_for_ucx, extra_params);
 }
 
-static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
-                          const std::string &target_ip, int target_port, int thread_id,
-                          SharedNotificationState &shared_state) {
+static void initiatorThread(nixlAgent &agent, nixl_opt_args_t* extra_params,
+        const std::string &target_ip, int target_port, int thread_id,
+        SharedNotificationState &shared_state)
+{
     nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
-    auto addrs = initMem(agent, dram_for_ucx, extra_params, MEM_VAL);
+    auto             addrs = initMem(agent, dram_for_ucx, extra_params, MEM_VAL);
 
     std::cout << "Thread " << thread_id << " Start Control Path metadata exchanges\n";
     std::cout << "Thread " << thread_id << " Exchange metadata with Target\n";
@@ -136,9 +137,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
     while (true) {
         {
             std::lock_guard<std::mutex> lock(shared_state.mtx);
-            if (shared_state.remote_serdes.size() >= NUM_THREADS) {
-                break;
-            }
+            if (shared_state.remote_serdes.size() >= NUM_THREADS) { break; }
         }
 
         nixl_notifs_t notifs;
@@ -174,11 +173,11 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
     // Need to do this in a loop with NIXL_ERR_NOT_FOUND
     // UCX AM with desc list is faster than listener thread can recv/load MD with sockets
     // Will be deprecated with ETCD or callbacks
-    nixlXferReqH *treq;
+    nixlXferReqH* treq;
     nixl_status_t ret = NIXL_SUCCESS;
     do {
-        ret = agent.createXferReq(NIXL_WRITE, dram_initiator_ucx, dram_target_ucx,
-                                  target, treq, extra_params);
+        ret = agent.createXferReq(
+                NIXL_WRITE, dram_initiator_ucx, dram_target_ucx, target, treq, extra_params);
     } while (ret == NIXL_ERR_NOT_FOUND);
 
     if (ret != NIXL_SUCCESS) {
@@ -203,14 +202,15 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
     agent.deregisterMem(dram_for_ucx, extra_params);
 }
 
-static void runTarget(const std::string &ip, int port) {
+static void runTarget(const std::string &ip, int port)
+{
     nixlAgentConfig cfg(true, true, port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 0, 100000);
 
     std::cout << "Starting Agent for target\n";
     nixlAgent agent(target, cfg);
 
     nixl_b_params_t params;
-    nixlBackendH *ucx;
+    nixlBackendH*   ucx;
     agent.createBackend("UCX", params, ucx);
 
     nixl_opt_args_t extra_params;
@@ -220,18 +220,18 @@ static void runTarget(const std::string &ip, int port) {
     for (int i = 0; i < NUM_THREADS; i++)
         threads.emplace_back(targetThread, std::ref(agent), &extra_params, i);
 
-    for (auto &thread : threads)
-        thread.join();
+    for (auto &thread : threads) thread.join();
 }
 
-static void runInitiator(const std::string &target_ip, int target_port) {
+static void runInitiator(const std::string &target_ip, int target_port)
+{
     nixlAgentConfig cfg(true, true, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 0, 100000);
 
     std::cout << "Starting Agent for initiator\n";
     nixlAgent agent(initiator, cfg);
 
     nixl_b_params_t params;
-    nixlBackendH *ucx;
+    nixlBackendH*   ucx;
     agent.createBackend("UCX", params, ucx);
 
     nixl_opt_args_t extra_params;
@@ -241,32 +241,31 @@ static void runInitiator(const std::string &target_ip, int target_port) {
 
     std::vector<std::thread> threads;
     for (int i = 0; i < NUM_THREADS; i++)
-        threads.emplace_back(initiatorThread, std::ref(agent), &extra_params,
-                             target_ip, target_port, i, std::ref(shared_state));
+        threads.emplace_back(initiatorThread, std::ref(agent), &extra_params, target_ip,
+                target_port, i, std::ref(shared_state));
 
-    for (auto &thread : threads)
-        thread.join();
+    for (auto &thread : threads) thread.join();
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[])
+{
     /** Argument Parsing */
     if (argc < 4) {
-        std::cout <<"Enter the required arguments\n" << std::endl;
-        std::cout <<"<Role> " <<"<Target IP> <Target Port>"
-                  << std::endl;
+        std::cout << "Enter the required arguments\n" << std::endl;
+        std::cout << "<Role> " << "<Target IP> <Target Port>" << std::endl;
         exit(-1);
     }
 
     std::string role = std::string(argv[1]);
-    const char  *target_ip   = argv[2];
+    const char* target_ip = argv[2];
     int         target_port = std::stoi(argv[3]);
 
     std::transform(role.begin(), role.end(), role.begin(), ::tolower);
 
     if (!role.compare(initiator) && !role.compare(target)) {
-            std::cerr << "Invalid role. Use 'initiator' or 'target'."
-                      << "Currently "<< role <<std::endl;
-            return 1;
+        std::cerr << "Invalid role. Use 'initiator' or 'target'." << "Currently " << role
+                  << std::endl;
+        return 1;
     }
 
     /*** End - Argument Parsing */

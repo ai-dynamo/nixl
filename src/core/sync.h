@@ -16,32 +16,31 @@
  */
 #ifndef SYNC_H
 #define SYNC_H
-#include "common/util.h"
-#include "nixl_params.h"
 #include <mutex>
 
-class nixlLock {
-    public:
-        nixlLock(const nixl_thread_sync_t sync_mode): syncMode(sync_mode)
-        {}
+#include "common/util.h"
+#include "nixl_params.h"
 
-        void lock() {
-            if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) {
-                m.lock();
-            }
-        }
+class nixlLock
+{
+public:
+    nixlLock(const nixl_thread_sync_t sync_mode) : syncMode(sync_mode) {}
 
-        void unlock() {
-            if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) {
-                m.unlock();
-            }
-        }
+    void lock()
+    {
+        if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) { m.lock(); }
+    }
 
-    private:
-        nixl_thread_sync_t syncMode;
-        std::mutex m;
+    void unlock()
+    {
+        if (syncMode == nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT) { m.unlock(); }
+    }
+
+private:
+    nixl_thread_sync_t syncMode;
+    std::mutex         m;
 };
 
-#define NIXL_LOCK_GUARD(lock) const std::lock_guard<nixlLock> UNIQUE_NAME(lock_guard) (lock)
+#define NIXL_LOCK_GUARD(lock) const std::lock_guard<nixlLock> UNIQUE_NAME(lock_guard)(lock)
 
 #endif /* SYNC_H */

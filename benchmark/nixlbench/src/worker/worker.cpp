@@ -16,21 +16,20 @@
  */
 
 #include "worker.h"
-#include "runtime/etcd/etcd_rt.h"
-#include "utils/utils.h"
 
 #include <unistd.h>
 
-static xferBenchRT *createRT(int *terminate) {
+#include "runtime/etcd/etcd_rt.h"
+#include "utils/utils.h"
+
+static xferBenchRT* createRT(int* terminate)
+{
     if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
         int total = 2;
         if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
-            total = xferBenchConfig::num_initiator_dev +
-                xferBenchConfig::num_target_dev;
+            total = xferBenchConfig::num_initiator_dev + xferBenchConfig::num_target_dev;
         }
-        if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) {
-            total = 1;
-        }
+        if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) { total = 1; }
         return new xferBenchEtcdRT(xferBenchConfig::etcd_endpoints, total, terminate);
     }
 
@@ -38,11 +37,13 @@ static xferBenchRT *createRT(int *terminate) {
     exit(EXIT_FAILURE);
 }
 
-int xferBenchWorker::synchronize() {
+int xferBenchWorker::synchronize()
+{
     return rt->barrier("sync");
 }
 
-xferBenchWorker::xferBenchWorker(int *argc, char ***argv) {
+xferBenchWorker::xferBenchWorker(int* argc, char*** argv)
+{
     terminate = 0;
 
     rt = createRT(&terminate);
@@ -71,36 +72,40 @@ xferBenchWorker::xferBenchWorker(int *argc, char ***argv) {
     xferBenchUtils::setRT(rt);
 }
 
-xferBenchWorker::~xferBenchWorker() {
+xferBenchWorker::~xferBenchWorker()
+{
     delete rt;
 }
 
-std::string xferBenchWorker::getName() const {
+std::string xferBenchWorker::getName() const
+{
     return name;
 }
 
-bool xferBenchWorker::isMasterRank() {
+bool xferBenchWorker::isMasterRank()
+{
     return (0 == rt->getRank());
 }
 
-bool xferBenchWorker::isInitiator() {
+bool xferBenchWorker::isInitiator()
+{
     return ("initiator" == name);
 }
 
-bool xferBenchWorker::isTarget() {
+bool xferBenchWorker::isTarget()
+{
     return ("target" == name);
 }
 
 int xferBenchWorker::terminate = 0;
 
-void xferBenchWorker::signalHandler(int signal) {
+void xferBenchWorker::signalHandler(int signal)
+{
     static const char msg[] = "Ctrl-C received, exiting...\n";
-    constexpr int stdout_fd = 1;
-    constexpr int max_count = 1;
-    auto size = write(stdout_fd, msg, sizeof(msg) - 1);
+    constexpr int     stdout_fd = 1;
+    constexpr int     max_count = 1;
+    auto              size = write(stdout_fd, msg, sizeof(msg) - 1);
     (void)size;
 
-    if (++terminate > max_count) {
-        std::_Exit(EXIT_FAILURE);
-    }
+    if (++terminate > max_count) { std::_Exit(EXIT_FAILURE); }
 }

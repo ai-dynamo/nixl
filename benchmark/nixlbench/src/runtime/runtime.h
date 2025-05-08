@@ -21,32 +21,36 @@
 #include <iostream>
 #include <string>
 
-class xferBenchRTReq {
-    public:
-        friend class xferBenchRT;
+class xferBenchRTReq
+{
+public:
+    friend class xferBenchRT;
 };
 
-class xferBenchRT {
-    private:
-        int size;
-        int rank;
-    protected:
-        void setSize(int s) { size = s; };
-        void setRank(int r) { rank = r; };
-    public:
-    	virtual ~xferBenchRT() {};
+class xferBenchRT
+{
+private:
+    int size;
+    int rank;
 
-        int getSize() const;
-        int getRank() const;
-        virtual int sendInt(int *buffer, int dest_rank) = 0;
-        virtual int recvInt(int *buffer, int src_rank) = 0;
-        virtual int broadcastInt(int *buffer, size_t count, int root_rank) = 0;
-        virtual int sendChar(char *buffer, size_t count, int dest_rank) = 0;
-        virtual int recvChar(char *buffer, size_t count, int src_rank) = 0;
-        virtual int reduceSumDouble(double *local_value, double *global_value, int dest_rank) = 0;
+protected:
+    void setSize(int s) { size = s; };
+    void setRank(int r) { rank = r; };
 
-        // Add a barrier function to synchronize all processes
-        virtual int barrier(const std::string& barrier_id) = 0;
+public:
+    virtual ~xferBenchRT(){};
+
+    int         getSize() const;
+    int         getRank() const;
+    virtual int sendInt(int* buffer, int dest_rank) = 0;
+    virtual int recvInt(int* buffer, int src_rank) = 0;
+    virtual int broadcastInt(int* buffer, size_t count, int root_rank) = 0;
+    virtual int sendChar(char* buffer, size_t count, int dest_rank) = 0;
+    virtual int recvChar(char* buffer, size_t count, int src_rank) = 0;
+    virtual int reduceSumDouble(double* local_value, double* global_value, int dest_rank) = 0;
+
+    // Add a barrier function to synchronize all processes
+    virtual int barrier(const std::string &barrier_id) = 0;
 };
 
-#endif // __RUNTIME_H
+#endif  // __RUNTIME_H

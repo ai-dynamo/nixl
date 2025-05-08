@@ -16,9 +16,9 @@
  */
 #ifndef _NIXL_TYPES_H
 #define _NIXL_TYPES_H
-#include <vector>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 
 /*** Forward declarations ***/
@@ -36,13 +36,13 @@ class nixlAgentData;
  * @brief  An enumeration of segment types for NIXL
  *         FILE_SEG must be last
  */
-enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
+enum nixl_mem_t { DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG };
 
 /**
  * @enum   nixl_xfer_op_t
  * @brief  An enumeration of different transfer types for NIXL
  */
-enum nixl_xfer_op_t {NIXL_READ, NIXL_WRITE};
+enum nixl_xfer_op_t { NIXL_READ, NIXL_WRITE };
 
 /**
  * @enum   nixl_status_t
@@ -78,11 +78,12 @@ enum class nixl_thread_sync_t {
  * @brief     This namespace to get string representation
  *            of different enums
  */
-namespace nixlEnumStrings {
-    std::string memTypeStr(const nixl_mem_t &mem);
-    std::string xferOpStr (const nixl_xfer_op_t &op);
-    std::string statusStr (const nixl_status_t &status);
-}
+namespace nixlEnumStrings
+{
+std::string memTypeStr(const nixl_mem_t &mem);
+std::string xferOpStr(const nixl_xfer_op_t &op);
+std::string statusStr(const nixl_status_t &status);
+}  // namespace nixlEnumStrings
 
 
 /*** NIXL typedefs and defines used in the API ***/
@@ -126,47 +127,50 @@ constexpr int default_comm_port = 8888;
  * @class nixlAgentOptionalArgs
  * @brief A class for optional argument that can be provided to relevant agent methods.
  */
-class nixlAgentOptionalArgs {
-    public:
-        /**
-         * @var backends vector to specify a list of backend handles, to limit the list
-         *      of backends to be considered. Used in registerMem / deregisterMem
-         *      makeConnection / prepXferDlist / makeXferReq / createXferReq / GetNotifs / GenNotif
-         */
-        std::vector<nixlBackendH*> backends;
+class nixlAgentOptionalArgs
+{
+public:
+    /**
+     * @var backends vector to specify a list of backend handles, to limit the list
+     *      of backends to be considered. Used in registerMem / deregisterMem
+     *      makeConnection / prepXferDlist / makeXferReq / createXferReq / GetNotifs / GenNotif
+     */
+    std::vector<nixlBackendH*> backends;
 
-        /**
-         * @var notifMsg A message to be used in createXferReq / makeXferReq / postXferReq,
-         *               if a notification message is desired
-         */
-        nixl_blob_t notifMsg;
-        /**
-         * @var hasNotif boolean value to indicate that a notification is provided, or to
-         *      remove notification during a repost. If set to false, notifMsg is not checked.
-         */
-        bool hasNotif = false;
+    /**
+     * @var notifMsg A message to be used in createXferReq / makeXferReq / postXferReq,
+     *               if a notification message is desired
+     */
+    nixl_blob_t notifMsg;
+    /**
+     * @var hasNotif boolean value to indicate that a notification is provided, or to
+     *      remove notification during a repost. If set to false, notifMsg is not checked.
+     */
+    bool hasNotif = false;
 
-        /**
-         * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
-         */
-        bool skipDescMerge = false;
+    /**
+     * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
+     */
+    bool skipDescMerge = false;
 
-        /**
-         * @var includeConnInfo boolean to include connection information in the metadata,
-         *                      used in getLocalPartialMD.
-         */
-        bool includeConnInfo = false;
+    /**
+     * @var includeConnInfo boolean to include connection information in the metadata,
+     *                      used in getLocalPartialMD.
+     */
+    bool includeConnInfo = false;
 
-        /**
-         * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
-         *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
-         */
-        std::string ipAddr;
-        /**
-         * @var port Used to specify the port of a remote peer, ipAddr must also be set
-         *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
-         */
-        int port = default_comm_port;
+    /**
+     * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
+     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD,
+     * sendLocalPartialMD.
+     */
+    std::string ipAddr;
+    /**
+     * @var port Used to specify the port of a remote peer, ipAddr must also be set
+     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD,
+     * sendLocalPartialMD.
+     */
+    int port = default_comm_port;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

@@ -17,9 +17,9 @@
 #ifndef __NIXL_LOG_H
 #define __NIXL_LOG_H
 
-#include "absl/log/log.h"
 #include "absl/log/check.h"
 #include "absl/log/initialize.h"
+#include "absl/log/log.h"
 
 /*-----------------------------------------------------------------------------*
  * Logging Macros (Abseil Stream-style)
