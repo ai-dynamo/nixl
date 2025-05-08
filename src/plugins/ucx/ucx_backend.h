@@ -44,17 +44,17 @@ struct nixl_ucx_am_hdr {
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
         std::string remoteAgent;
-        // NOTE: nixlUcxEp object must be alive as long as ucp_ep_h is alive
-        //       since the object is passed to ucp_ep_create_nbx as err_cb
-        //       argument.
-        std::shared_ptr<nixlUcxEp> ep = std::make_shared<nixlUcxEp>();
+        std::unique_ptr<nixlUcxEp> ep;
 
     public:
-        nixlUcxEp& getEp() { return *ep; }
-        // Extra information required for UCX connections
+        const std::unique_ptr<nixlUcxEp> &getEp() const {
+            return ep;
+        }
 
     friend class nixlUcxEngine;
 };
+
+using ucx_connection_ptr_t = std::shared_ptr<nixlUcxConnection>;
 
 // A private metadata has to implement get, and has all the metadata
 class nixlUcxPrivateMetadata : public nixlBackendMD {
@@ -81,7 +81,7 @@ class nixlUcxPublicMetadata : public nixlBackendMD {
 
     public:
         nixlUcxRkey rkey;
-        nixlUcxConnection conn;
+        ucx_connection_ptr_t conn;
 
         nixlUcxPublicMetadata() : nixlBackendMD(false) {}
 
@@ -99,7 +99,7 @@ class nixlUcxCudaCtx;
 class nixlUcxEngine : public nixlBackendEngine {
     private:
         /* UCX data */
-        std::unique_ptr<nixlUcxContext> uc;
+        std::shared_ptr<nixlUcxContext> uc;
         std::unique_ptr<nixlUcxWorker> uw;
         std::unique_ptr<char []> workerAddr;
         size_t workerSize;
@@ -123,7 +123,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         notif_list_t notifPthrPriv, notifPthr;
 
         // Map of agent name to saved nixlUcxConnection info
-        std::unordered_map<std::string, nixlUcxConnection,
+        std::unordered_map<std::string, ucx_connection_ptr_t,
                            std::hash<std::string>, strEqual> remoteConnMap;
 
 
@@ -232,6 +232,8 @@ class nixlUcxEngine : public nixlBackendEngine {
         //public function for UCX worker to mark connections as connected
         nixl_status_t checkConn(const std::string &remote_agent);
         nixl_status_t endConn(const std::string &remote_agent);
+
+        const std::unique_ptr<nixlUcxWorker> &getWorker() const;
 };
 
 #endif
