@@ -1,7 +1,7 @@
 # Mooncake Backend Plugin [Preview]
 
 [Mooncake](https://github.com/kvcache-ai/Mooncake) is a KVCache-centric disaggregated architecture for LLM serving.
-The core of Mooncake is the Transfer Engine (TE), which provides a unified interface for batched data transfer across various storage devices and network links. Supporting multiple protocols including TCP, RDMA, CXL/shared-memory, and NVMe over Fabric (NVMe-of), TE is designed to enable fast and reliable data transfer for AI workloads. Compared to Gloo (used by Distributed PyTorch) and traditional TCP, TE achieves significantly lower I/O latency, making it a superior solution for efficient data transmission.
+The core of Mooncake is the Transfer Engine, which provides a unified interface for batched data transfer across various storage devices and network links. Supporting multiple protocols including TCP, RDMA, CXL/shared-memory, and NVMe over Fabric (NVMe-of), Transfer Engine is designed to enable fast and reliable data transfer for AI workloads. Compared to Gloo (used by Distributed PyTorch) and traditional TCP, Transfer Engine achieves significantly lower I/O latency, making it a superior solution for efficient data transmission.
 
 Mooncake transfer engine is a high-performance, zero-copy data transfer library. To achieve better performance in NIXL, we have designed an new backend based on Mooncake Transfer Engine.
 
