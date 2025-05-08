@@ -58,6 +58,7 @@ RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
 WORKDIR /workspace/nixl
+COPY . /workspace/nixl
 
 # LD_LIBRARY_PATH is needed for auditwheel to find libcuda.so.1
 # Set incorrectly to `compat/lib` in cuda-dl-base image
@@ -67,8 +68,6 @@ ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
     uv pip install --upgrade meson pybind11 patchelf
-
-COPY . /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
