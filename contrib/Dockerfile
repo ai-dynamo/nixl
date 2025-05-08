@@ -81,7 +81,8 @@ RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
-     cd ucx && \
+     cd ucx && 			     \
+     git checkout v1.19.x &&	     \
      ./autogen.sh && ./configure     \
          --enable-shared             \
          --disable-static            \
@@ -93,6 +94,7 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --with-gdrcopy=/usr/local   \
+         --with-efa                  \
          --enable-mt &&              \
      make -j &&                      \
      make -j install-strip &&        \
