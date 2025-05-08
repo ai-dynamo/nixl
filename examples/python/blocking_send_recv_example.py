@@ -44,19 +44,14 @@ if __name__ == "__main__":
     if args.mode != "target":
         listen_port = 0
 
+    if args.use_cuda:
+        torch.set_default_device("cuda:0")
+
     config = nixl_agent_config(True, True, listen_port)
 
     # Allocate memory and register with NIXL
     agent = nixl_agent(args.mode, config)
-    if args.mode == "target" and args.use_cuda:
-        tensors = [
-            torch.ones(10, dtype=torch.float32, device="cuda:0") for _ in range(2)
-        ]
-    elif args.use_cuda:
-        tensors = [
-            torch.zeros(10, dtype=torch.float32, device="cuda:0") for _ in range(2)
-        ]
-    elif args.mode == "target" and not args.use_cuda:
+    if args.mode == "target":
         tensors = [torch.ones(10, dtype=torch.float32) for _ in range(2)]
     else:
         tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]

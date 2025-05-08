@@ -575,6 +575,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             }
         }
     }
+    // Ensure all processes have completed the exchange with a barrier/sync
+    synchronize();
     return res;
 }
 
@@ -671,6 +673,9 @@ std::variant<double, int> xferBenchNixlWorker::transfer(size_t block_size,
         return std::variant<double, int>(ret);
     }
 
+    // Synchronize to ensure all processes have completed the warmup (iter and polling)
+    synchronize();
+
     gettimeofday(&t_start, nullptr);
 
     ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads);
@@ -695,6 +700,13 @@ void xferBenchNixlWorker::poll(size_t block_size) {
     }
     total_iter = skip + num_iter;
 
+    /* Ensure warmup is done*/
+    while (skip != int(notifs["initiator"].size())) {
+        agent->getNotifs(notifs);
+    }
+    synchronize();
+
+    /* Polling for actual iterations*/
     while (total_iter != int(notifs["initiator"].size())) {
         agent->getNotifs(notifs);
     }
