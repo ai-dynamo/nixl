@@ -14,6 +14,8 @@
 # limitations under the License.
 
 gtest_dep = dependency('gtest', version : '>=1.11.0', required : false)
+absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
+absl_time_dep = abseil_proj.get_variable('absl_time_dep')
 
 if not gtest_dep.found()
     message('GTest not found, skipping gtest build')
@@ -40,10 +42,10 @@ endif
 cpp_flags += '-DBUILD_DIR="' + meson.project_build_root() + '"'
 
 test_exe = executable('gtest',
-    sources : ['main.cpp', 'plugin_manager.cpp', 'ucx_tests.cpp'],
+    sources : ['main.cpp', 'plugin_manager.cpp', 'ucx_tests.cpp', 'test_transfer.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, cuda_dep, gtest_dep],
+    dependencies : [nixl_dep, cuda_dep, gtest_dep, absl_strings_dep, absl_time_dep],
     link_with: [nixl_build_lib],
     install : true
 )
