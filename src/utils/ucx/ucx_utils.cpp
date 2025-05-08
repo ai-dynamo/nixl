@@ -168,7 +168,7 @@ std::unique_ptr<char []> nixlUcxWorker::epAddr(size_t &size)
         return nullptr;
     }
 
-    std::unique_ptr<char []> res = std::make_unique<char []>(wattr.address_length);
+    auto res = std::make_unique<char []>(wattr.address_length);
     if (!res) {
         return nullptr;
     }
