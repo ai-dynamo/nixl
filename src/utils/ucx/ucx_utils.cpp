@@ -294,9 +294,7 @@ int nixlUcxWorker::epAddr(uint64_t &addr, size_t &size)
     ucs_status_t status;
     void* new_addr;
 
-    wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS |
-                       UCP_WORKER_ATTR_FIELD_ADDRESS_FLAGS;
-    wattr.address_flags = UCP_WORKER_ADDRESS_FLAG_NET_ONLY;
+    wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS;
     status = ucp_worker_query(worker, &wattr);
     if (UCS_OK != status) {
         // TODO: printf
