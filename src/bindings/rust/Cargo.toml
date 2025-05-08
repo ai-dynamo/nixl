@@ -23,6 +23,7 @@ build = "build.rs"
 [dependencies]
 thiserror = { version = "*" }
 tracing = { version = "0.1" }
+serde = { version = "1", features = ["derive"] }
 
 libc = "0.2"
 
