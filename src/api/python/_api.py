@@ -371,26 +371,22 @@ class nixl_agent:
         skip_desc_merge: bool = False,
     ) -> nixl_xfer_handle:
         op = self.nixl_ops[operation]
-        if op:
-            handle_list = []
-            for backend_string in backends:
-                handle_list.append(self.backends[backend_string])
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
 
-            handle = self.agent.makeXferReq(
-                op,
-                local_xfer_side,
-                local_indices,
-                remote_xfer_side,
-                remote_indices,
-                notif_msg,
-                handle_list,
-                skip_desc_merge,
-            )
+        handle = self.agent.makeXferReq(
+            op,
+            local_xfer_side,
+            local_indices,
+            remote_xfer_side,
+            remote_indices,
+            notif_msg,
+            handle_list,
+            skip_desc_merge,
+        )
 
-            return handle
-        else:
-            raise nixlBind.nixlInvalidParamError("Invalid op code")
-            return nixlBind.nixlInvalidParamError
+        return handle
 
     """
     @brief  Initialize a transfer operation. This is a combined API, to create a transfer request
@@ -419,19 +415,15 @@ class nixl_agent:
         backends: list[str] = [],
     ) -> nixl_xfer_handle:
         op = self.nixl_ops[operation]
-        if op:
-            handle_list = []
-            for backend_string in backends:
-                handle_list.append(self.backends[backend_string])
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
 
-            handle = self.agent.createXferReq(
-                op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
-            )
+        handle = self.agent.createXferReq(
+            op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
+        )
 
-            return handle
-        else:
-            raise nixlBind.nixlInvalidParamError("Invalid op code")
-            return nixlBind.nixlInvalidParamError
+        return handle
 
     """
     @brief  Initiate a data transfer operation.
@@ -748,6 +740,9 @@ class nixl_agent:
 
         if isinstance(descs, nixlBind.nixlXferDList):
             return descs
+        elif isinstance(descs, nixlBind.nixlRegDList):
+            print("RegList type detected for transfer, please use XferList")
+            new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
                 new_descs = nixlBind.nixlXferDList(
@@ -788,9 +783,6 @@ class nixl_agent:
             new_descs = nixlBind.nixlXferDList(
                 self.nixl_mems[mem_type], dlist, is_sorted
             )
-        elif isinstance(descs, nixlBind.nixlRegDList):
-            print("RegList type detected for transfer, please use XferList")
-            new_descs = None
         else:
             new_descs = None
 
@@ -820,6 +812,9 @@ class nixl_agent:
 
         if isinstance(descs, nixlBind.nixlRegDList):
             return descs
+        elif isinstance(descs, nixlBind.nixlXferDList):
+            print("XferList type detected for registration, please use RegList")
+            new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 4:
                 new_descs = nixlBind.nixlRegDList(
@@ -860,9 +855,6 @@ class nixl_agent:
             new_descs = nixlBind.nixlRegDList(
                 self.nixl_mems[mem_type], dlist, is_sorted
             )
-        elif isinstance(descs, nixlBind.nixlXferDList):
-            print("XferList type detected for registration, please use RegList")
-            new_descs = None
         else:
             new_descs = None
 
