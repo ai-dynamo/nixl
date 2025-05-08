@@ -4,3 +4,5 @@
 # Abseil-CPP
 subprojects/abseil-cpp-*
 subprojects/packagecache/
+
+.vscode

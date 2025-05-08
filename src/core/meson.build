@@ -38,6 +38,13 @@ if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
 endif
 
+cc = meson.get_compiler('cpp')
+libtransfer_engine = cc.find_library('transfer_engine', required: false)
+disable_mooncake_backend = get_option('disable_mooncake_backend')
+if libtransfer_engine.found() and not disable_mooncake_backend and 'Mooncake' in static_plugins
+    nixl_lib_deps += [ mooncake_backend_interface, cuda_dep ]
+endif
+
 nixl_lib = library('nixl',
                    'nixl_agent.cpp',
                    'nixl_plugin_manager.cpp',
