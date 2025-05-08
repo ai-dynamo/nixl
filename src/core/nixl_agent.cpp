@@ -43,18 +43,19 @@ std::string nixlEnumStrings::xferOpStr (const nixl_xfer_op_t &op) {
 
 std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
     switch (status) {
-        case NIXL_IN_PROG:           return "NIXL_IN_PROG";
-        case NIXL_SUCCESS:           return "NIXL_SUCCESS";
-        case NIXL_ERR_NOT_POSTED:    return "NIXL_ERR_NOT_POSTED";
-        case NIXL_ERR_INVALID_PARAM: return "NIXL_ERR_INVALID_PARAM";
-        case NIXL_ERR_BACKEND:       return "NIXL_ERR_BACKEND";
-        case NIXL_ERR_NOT_FOUND:     return "NIXL_ERR_NOT_FOUND";
-        case NIXL_ERR_MISMATCH:      return "NIXL_ERR_MISMATCH";
-        case NIXL_ERR_NOT_ALLOWED:   return "NIXL_ERR_NOT_ALLOWED";
-        case NIXL_ERR_REPOST_ACTIVE: return "NIXL_ERR_REPOST_ACTIVE";
-        case NIXL_ERR_UNKNOWN:       return "NIXL_ERR_UNKNOWN";
-        case NIXL_ERR_NOT_SUPPORTED: return "NIXL_ERR_NOT_SUPPORTED";
-        default:                     return "BAD_STATUS";
+        case NIXL_IN_PROG:               return "NIXL_IN_PROG";
+        case NIXL_SUCCESS:               return "NIXL_SUCCESS";
+        case NIXL_ERR_NOT_POSTED:        return "NIXL_ERR_NOT_POSTED";
+        case NIXL_ERR_INVALID_PARAM:     return "NIXL_ERR_INVALID_PARAM";
+        case NIXL_ERR_BACKEND:           return "NIXL_ERR_BACKEND";
+        case NIXL_ERR_NOT_FOUND:         return "NIXL_ERR_NOT_FOUND";
+        case NIXL_ERR_MISMATCH:          return "NIXL_ERR_MISMATCH";
+        case NIXL_ERR_NOT_ALLOWED:       return "NIXL_ERR_NOT_ALLOWED";
+        case NIXL_ERR_REPOST_ACTIVE:     return "NIXL_ERR_REPOST_ACTIVE";
+        case NIXL_ERR_UNKNOWN:           return "NIXL_ERR_UNKNOWN";
+        case NIXL_ERR_NOT_SUPPORTED:     return "NIXL_ERR_NOT_SUPPORTED";
+        case NIXL_ERR_REMOTE_DISCONNECT: return "NIXL_ERR_REMOTE_DISCONNECT";
+        default:                         return "BAD_STATUS";
     }
 }
 
@@ -72,6 +73,8 @@ nixlAgentData::nixlAgentData(const std::string &name,
         NIXL_DEBUG << "NIXL ETCD is disabled";
     }
 #endif // HAVE_ETCD
+    if (name.empty())
+        throw std::invalid_argument("Agent needs a name");
 
     memorySection = new nixlLocalSection();
 }
@@ -98,13 +101,9 @@ nixlAgentData::~nixlAgentData() {
 }
 
 /*** nixlAgent implementation ***/
-nixlAgent::nixlAgent(const std::string &name,
-                     const nixlAgentConfig &cfg) {
-    if (name.size() == 0)
-        throw std::invalid_argument("Agent needs a name");
-
-    data = new nixlAgentData(name, cfg);
-
+nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
+    data(std::make_unique<nixlAgentData>(name, cfg))
+{
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
         if(my_port == 0) my_port = default_comm_port;
@@ -114,12 +113,13 @@ nixlAgent::nixlAgent(const std::string &name,
 
     if (data->useEtcd || cfg.useListenThread) {
         data->commThreadStop = false;
-        data->commThread = std::thread(&nixlAgentData::commWorker, data, this);
+        data->commThread =
+            std::thread(&nixlAgentData::commWorker, data.get(), this);
     }
 }
 
 nixlAgent::~nixlAgent() {
-    if (data->useEtcd || data->config.useListenThread) {
+    if (data && (data->useEtcd || data->config.useListenThread)) {
         data->commThreadStop = true;
         if(data->commThread.joinable()) data->commThread.join();
 
@@ -127,9 +127,11 @@ nixlAgent::~nixlAgent() {
             if(data->listener) delete data->listener;
         }
     }
-
-    delete data;
 }
+
+// Define move operations in CPP file to avoid exposing nixlAgentData in header
+nixlAgent::nixlAgent(nixlAgent &&other) noexcept = default;
+nixlAgent& nixlAgent::operator=(nixlAgent &&other) noexcept = default;
 
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
@@ -823,7 +825,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) {
 
     NIXL_LOCK_GUARD(data->lock);
     // If the status is done, no need to recheck.
-    if (req_hndl->status != NIXL_SUCCESS) {
+    if (req_hndl->status == NIXL_IN_PROG) {
         // Check if the remote was invalidated before completion
         if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
             delete req_hndl;

@@ -19,7 +19,9 @@
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
 
-static xferBenchRT *createRT(int *argc, char ***argv) {
+#include <unistd.h>
+
+static xferBenchRT *createRT(int *terminate) {
     if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
         int total = 2;
         if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
@@ -29,25 +31,27 @@ static xferBenchRT *createRT(int *argc, char ***argv) {
         if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) {
             total = 1;
         }
-        return new xferBenchEtcdRT(xferBenchConfig::etcd_endpoints, total);
+        return new xferBenchEtcdRT(xferBenchConfig::etcd_endpoints, total, terminate);
     }
+
     std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << std::endl;
     exit(EXIT_FAILURE);
-    return nullptr;
+}
+
+int xferBenchWorker::synchronize() {
+    return rt->barrier("sync");
 }
 
 xferBenchWorker::xferBenchWorker(int *argc, char ***argv) {
-    int rank;
+    terminate = 0;
 
-    // Create the RT
-    rt = createRT(argc, argv);
-
+    rt = createRT(&terminate);
     if (!rt) {
-	std::cerr << "Failed to create runtime object" << std::endl;
-	exit(EXIT_FAILURE);
+        std::cerr << "Failed to create runtime object" << std::endl;
+        exit(EXIT_FAILURE);
     }
 
-    rank = rt->getRank();
+    int rank = rt->getRank();
 
     if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
         if (rank >= 0 && rank < xferBenchConfig::num_initiator_dev) {
@@ -75,10 +79,28 @@ std::string xferBenchWorker::getName() const {
     return name;
 }
 
+bool xferBenchWorker::isMasterRank() {
+    return (0 == rt->getRank());
+}
+
 bool xferBenchWorker::isInitiator() {
     return ("initiator" == name);
 }
 
 bool xferBenchWorker::isTarget() {
     return ("target" == name);
+}
+
+int xferBenchWorker::terminate = 0;
+
+void xferBenchWorker::signalHandler(int signal) {
+    static const char msg[] = "Ctrl-C received, exiting...\n";
+    constexpr int stdout_fd = 1;
+    constexpr int max_count = 1;
+    auto size = write(stdout_fd, msg, sizeof(msg) - 1);
+    (void)size;
+
+    if (++terminate > max_count) {
+        std::_Exit(EXIT_FAILURE);
+    }
 }

@@ -48,15 +48,32 @@ private:
     std::string namespace_prefix;
     std::unique_ptr<etcd::Client> client;
 
-    // Rank information
-    int my_rank;
+    int my_rank; // Rank information
     int global_size;
+    uint64_t barrier_gen;
+    int *terminate;
 
-    std::string makeKey(const std::string& operation, int src,
-		    	int dst, xferBenchEtcdMsgType type = XFER_BENCH_ETCD_MSG_TYPE_INT);
+    bool error() const { return terminate != nullptr && *terminate; };
+    bool should_retry(int value, int max = 60) const {
+	    return !error() && value < max;
+    }
+
+    std::string makeTypedKey(const std::string& operation, int src, int dst,
+                             xferBenchEtcdMsgType type = XFER_BENCH_ETCD_MSG_TYPE_INT);
+
+    std::string makeKey(std::string name, int rank = -1) const {
+        std::string suffix;
+
+        if (rank > -1) {
+            suffix = "/" + std::to_string(rank);
+        }
+
+        return namespace_prefix + name + suffix;
+    }
 
 public:
-    xferBenchEtcdRT(const std::string& etcd_endpoints, const int size);
+    xferBenchEtcdRT(const std::string& etcd_endpoints, const int size,
+                    int *terminate = nullptr);
     ~xferBenchEtcdRT();
 
     int getRank() const;

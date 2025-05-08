@@ -185,7 +185,7 @@ if nvshmem_available
                  ]
 
     if etcd_available
-        nvcc_args += ['-letcd-cpp-api']
+        nvcc_args += ['-letcd-cpp-api', '-lcpprest']
         etcd_rt = meson.current_build_dir() + '/src/runtime/etcd/libetcd_rt.a.p/etcd_rt.cpp.o'
         nvcc_cmd_files += etcd_rt
     endif

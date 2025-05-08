@@ -42,10 +42,6 @@ class uringQueue {
         nixl_status_t submit();
         nixl_status_t checkCompleted();
         struct io_uring_sqe *getSqe();
-
-        enum class UringError {
-            INIT,
-        };
 };
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
@@ -79,10 +75,6 @@ class nixlPosixBackendReqH : public nixlBackendReqH {
         nixl_status_t postXfer();
         nixl_status_t prepXfer();
         nixl_status_t checkXfer();
-
-        enum class OperationError {
-            INVALID_OPERATION
-        };
 };
 
 class nixlPosixEngine : public nixlBackendEngine {
