@@ -97,8 +97,10 @@ $ make -j$(nproc) && make install
 ### Additional plugins
 
 Some plugins may have additional build requirements, see them here:
-[Mooncake](src/plugins/mooncake/README.md)
-[POSIX](src/plugins/posix/README.md)
+
+-[Mooncake](src/plugins/mooncake/README.md)
+-[POSIX](src/plugins/posix/README.md)
+-[GDS](src/plugins/cuda_gds/README.md)
 
 ## Getting started
 ### Build & install
