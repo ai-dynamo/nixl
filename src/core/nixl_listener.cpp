@@ -26,7 +26,12 @@
 #include <etcd/Client.hpp>
 #endif // HAVE_ETCD
 
+const std::string default_metadata_label = "metadata";
+const std::string default_partial_metadata_label = "partial_metadata";
+
 namespace {
+
+static const std::string invalid_label = "invalid";
 
 int connectToIP(std::string ip_addr, int port) {
 
@@ -135,11 +140,10 @@ static nixl_status_t storeMetadataInEtcd(const std::string& agent_name,
     }
 }
 
-// Remove metadata from etcd
+// Remove all agent's metadata from etcd
 static nixl_status_t removeMetadataFromEtcd(const std::string& agent_name,
-                                      const std::string& namespace_prefix,
-                                      std::unique_ptr<etcd::Client>& client,
-                                      const std::string& metadata_type) {
+                                            const std::string& namespace_prefix,
+                                            std::unique_ptr<etcd::Client>& client) {
     // Check if etcd client is available
     if (!client) {
         NIXL_ERROR << "ETCD client not available";
@@ -147,21 +151,23 @@ static nixl_status_t removeMetadataFromEtcd(const std::string& agent_name,
     }
 
     try {
-        // Create key for metadata
-        std::string metadata_key = makeEtcdKey(agent_name, namespace_prefix, metadata_type);
+        // Create key for metadata with agent's prefix
+        std::string agent_prefix = makeEtcdKey(agent_name, namespace_prefix, "");
 
-        // Remove metadata from etcd
-        etcd::Response response = client->rm(metadata_key).get();
+        // Remove all keys for the agent from etcd
+        etcd::Response response = client->rmdir(agent_prefix, true).get();
 
         if (response.is_ok()) {
-            NIXL_DEBUG << "Successfully removed " << metadata_type << " from etcd for agent: " << agent_name;
+            NIXL_DEBUG << "Successfully removed " << response.values().size()
+                       << " etcd keys for agent: " << agent_name;
             return NIXL_SUCCESS;
         } else {
-            NIXL_ERROR << "Warning: Failed to remove " << metadata_type << " from etcd: " << response.error_message();
+            NIXL_ERROR << "Warning: Failed to remove etcd keys for agent: "
+                       << agent_name << " : " << response.error_message();
             return NIXL_ERR_BACKEND;
         }
     } catch (const std::exception& e) {
-        NIXL_ERROR << "Error removing " << metadata_type << " from etcd: " << e.what();
+        NIXL_ERROR << "Exception removing etcd keys for agent: " << agent_name << " : " << e.what();
         return NIXL_ERR_BACKEND;
     }
 }
@@ -178,19 +184,17 @@ static nixl_status_t fetchMetadataFromEtcd(const std::string& agent_name,
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
+    // Create key for agent's metadata
+    std::string metadata_key = makeEtcdKey(agent_name, namespace_prefix, metadata_type);
     try {
-        // Create key for agent's metadata
-        std::string metadata_key = makeEtcdKey(agent_name, namespace_prefix, metadata_type);
-
         // First check if the key is marked as invalid
-        std::string invalid_key = metadata_key + ".invalid";
+        std::string invalid_key = makeEtcdKey(agent_name, namespace_prefix, invalid_label);
         etcd::Response invalid_check = client->get(invalid_key).get();
 
         if (invalid_check.is_ok()) {
             // Key is marked as invalid, delete both keys
-            NIXL_INFO << "Key " << metadata_key << " is marked as invalid, removing";
-            removeMetadataFromEtcd(agent_name, namespace_prefix, client, "metadata.invalid");
-            removeMetadataFromEtcd(agent_name, namespace_prefix, client, metadata_type);
+            NIXL_INFO << "Agent " << agent_name << " is marked as invalid, removing all keys";
+            removeMetadataFromEtcd(agent_name, namespace_prefix, client);
             return NIXL_ERR_INVALID_PARAM;
         }
 
@@ -199,14 +203,14 @@ static nixl_status_t fetchMetadataFromEtcd(const std::string& agent_name,
 
         if (response.is_ok()) {
             metadata = response.value().as_string();
-            NIXL_DEBUG << "Successfully fetched " << metadata_type << " for agent: " << agent_name << " (rev " << response.value().modified_index() << ")";
+            NIXL_DEBUG << "Successfully fetched key: " << metadata_key << " (rev " << response.value().modified_index() << ")";
             return NIXL_SUCCESS;
         } else {
-            NIXL_ERROR << "Failed to fetch " << metadata_type << " from etcd: " << response.error_message();
+            NIXL_ERROR << "Failed to fetch key: " << metadata_key << " from etcd: " << response.error_message();
             return NIXL_ERR_NOT_FOUND;
         }
     } catch (const std::exception& e) {
-        NIXL_ERROR << "Error fetching " << metadata_type << " from etcd: " << e.what();
+        NIXL_ERROR << "Error fetching key: " << metadata_key << " from etcd: " << e.what();
         return NIXL_ERR_UNKNOWN;
     }
 }
@@ -354,14 +358,10 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     }
 
                     // Parse request parameters
-                    std::string metadata_type = "metadata";
-
-                    if (req_ip.find("/partial_metadata") != std::string::npos) {
-                        metadata_type = "partial_metadata";
-                    }
+                    const std::string &metadata_label = req_ip;
 
                     // Use local storeMetadataInEtcd function
-                    nixl_status_t ret = storeMetadataInEtcd(name, namespace_prefix, etcdclient, metadata_type, my_MD);
+                    nixl_status_t ret = storeMetadataInEtcd(name, namespace_prefix, etcdclient, metadata_label, my_MD);
                     if (ret != NIXL_SUCCESS) {
                         NIXL_ERROR << "Failed to store metadata in etcd: " << ret;
                     }
@@ -373,29 +373,35 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                         throw std::runtime_error("ETCD is not enabled");
                     }
 
+                    const std::string &metadata_label = req_ip;
+                    const std::string &remote_agent = my_MD;
+
                     // First try a direct get
                     nixl_blob_t remote_metadata;
-                    nixl_status_t ret = fetchMetadataFromEtcd(req_ip, namespace_prefix, etcdclient, "metadata", remote_metadata);
+                    nixl_status_t ret = fetchMetadataFromEtcd(remote_agent, namespace_prefix, etcdclient, metadata_label, remote_metadata);
 
                     if (ret == NIXL_SUCCESS) {
                         // Load the metadata
-                        std::string remote_agent;
-                        ret = myAgent->loadRemoteMD(remote_metadata, remote_agent);
+                        std::string remote_agent_from_md;
+                        ret = myAgent->loadRemoteMD(remote_metadata, remote_agent_from_md);
                         if (ret == NIXL_SUCCESS) {
-                            NIXL_DEBUG << "Successfully loaded metadata "
-                                       << " for agent: " << req_ip;
+                            if (remote_agent_from_md != remote_agent) {
+                                NIXL_ERROR << "Metadata mismatch for agent: " << remote_agent << " from md: " << remote_agent_from_md;
+                                break;
+                            }
+                            NIXL_DEBUG << "Successfully loaded metadata for agent: " << remote_agent;
                         } else {
                             NIXL_ERROR << "Failed to load remote metadata: " << ret;
                         }
                     } else if (ret == NIXL_ERR_INVALID_PARAM) {
-                        NIXL_DEBUG << "Metadata was invalidated for agent: " << req_ip;
+                        NIXL_DEBUG << "Metadata was invalidated for agent: " << remote_agent;
                     } else {
                         // Key not found, set up a watch
-                        NIXL_DEBUG << "Metadata not found, setting up watch for agent: " << req_ip;
+                        NIXL_DEBUG << "Metadata not found, setting up watch for agent: " << remote_agent;
 
                         try {
                             // Create key for agent's metadata
-                            std::string metadata_key = makeEtcdKey(req_ip, namespace_prefix, "metadata");
+                            std::string metadata_key = makeEtcdKey(remote_agent, namespace_prefix, "metadata");
 
                             // Get current index to watch from
                             etcd::Response response = etcdclient->get(metadata_key).get();
@@ -405,12 +411,16 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
 
                             if (watch_response.is_ok()) {
                                 std::string remote_md = watch_response.value().as_string();
-                                std::string remote_agent;
-                                ret = myAgent->loadRemoteMD(remote_md, remote_agent);
+                                std::string remote_agent_from_md;
+                                ret = myAgent->loadRemoteMD(remote_md, remote_agent_from_md);
                                 if (ret != NIXL_SUCCESS) {
                                     NIXL_ERROR << "Failed to load remote metadata from watch: " << ret;
+                                    if (remote_agent_from_md != remote_agent) {
+                                        NIXL_ERROR << "Metadata mismatch for agent: " << remote_agent << " from md: " << remote_agent_from_md;
+                                        break;
+                                    }
                                 } else {
-                                    NIXL_DEBUG << "Successfully loaded metadata from watch for agent: " << req_ip;
+                                    NIXL_DEBUG << "Successfully loaded metadata from watch for agent: " << remote_agent;
                                 }
                             } else {
                                 NIXL_ERROR << "Watch failed: " << watch_response.error_message();
@@ -427,43 +437,28 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                         throw std::runtime_error("ETCD is not enabled");
                     }
 
-                    // The agent name comes in req_ip
                     try {
-                        const auto &agent = req_ip;
+                        // Mark agent's metadata as invalid instead of removing it
+                        std::string agent_prefix = makeEtcdKey(name, namespace_prefix, "");
+                        std::string invalid_key = makeEtcdKey(name, namespace_prefix, invalid_label);
 
-                        // Mark main metadata as invalid instead of removing it
-                        std::string metadata_key = makeEtcdKey(agent, namespace_prefix, "metadata");
-                        std::string invalid_key = metadata_key + ".invalid";
-
-                        // Check if the metadata key exists first
-                        etcd::Response check_response = etcdclient->get(metadata_key).get();
-                        if (check_response.is_ok()) {
-                            // Mark the key as invalid by creating an invalid marker
+                        // Check if the agent has any keys in etcd first. 1 key is enough to confirm.
+                        etcd::Response check_response = etcdclient->keys(agent_prefix, 1).get();
+                        if (check_response.is_ok() && check_response.keys().size() > 0) {
+                            // Mark the agent's metadata as invalid by creating an invalid marker
                             etcd::Response response1 = etcdclient->put(invalid_key, "invalid").get();
                             if (response1.is_ok()) {
-                                NIXL_DEBUG << "Successfully marked metadata as invalid for agent: " << agent;
+                                NIXL_DEBUG << "Successfully marked metadata as invalid for agent: " << name;
                             } else {
-                                NIXL_ERROR << "Warning: Failed to mark metadata as invalid: " << response1.error_message();
+                                NIXL_ERROR << "Warning: Failed to mark metadata as invalid for agent: "
+                                           << name << " : " << response1.error_message();
                             }
-                        }
-
-                        // Mark partial metadata as invalid
-                        std::string partial_key = makeEtcdKey(agent, namespace_prefix, "partial_metadata");
-                        std::string partial_invalid_key = partial_key + ".invalid";
-
-                        // Check if the partial metadata key exists first
-                        etcd::Response check_partial = etcdclient->get(partial_key).get();
-                        if (check_partial.is_ok()) {
-                            // Mark the key as invalid
-                            etcd::Response response2 = etcdclient->put(partial_invalid_key, "invalid").get();
-                            if (response2.is_ok()) {
-                                NIXL_DEBUG << "Successfully marked partial metadata as invalid for agent: " << agent;
-                            } else {
-                                NIXL_ERROR << "Warning: Failed to mark partial metadata as invalid: " << response2.error_message() << std::endl;
-                            }
+                        } else {
+                            NIXL_DEBUG << "Agent " << name << " has no keys in etcd, skipping invalidation";
                         }
                     } catch (const std::exception& e) {
-                        NIXL_ERROR << "Error marking metadata as invalid: " << e.what();
+                        NIXL_ERROR << "Error marking metadata as invalid for agent: "
+                                   << name << " : " << e.what();
                     }
                     break;
                 }
