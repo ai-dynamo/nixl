@@ -169,9 +169,6 @@ std::unique_ptr<char []> nixlUcxWorker::epAddr(size_t &size)
     }
 
     auto res = std::make_unique<char []>(wattr.address_length);
-    if (!res) {
-        return nullptr;
-    }
     memcpy(res.get(), wattr.address, wattr.address_length);
     ucp_worker_release_address(worker, wattr.address);
 
