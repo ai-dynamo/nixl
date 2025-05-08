@@ -271,9 +271,11 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         //       when threading is in agent
 
         NIXL_DEBUG << "Created backend: " << type;
+
+        return NIXL_SUCCESS;
     }
 
-    return NIXL_SUCCESS;
+    return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t

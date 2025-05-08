@@ -118,6 +118,8 @@ plugin_build_dir = meson.current_build_dir()
 # Add to global args so plugin managers can find it
 if get_option('buildtype') == 'debug'
     add_project_arguments('-DNIXL_USE_PLUGIN_FILE="' + plugin_build_dir + '/pluginlist"',  language: 'cpp')
+    plugfile = join_paths(plugin_build_dir, 'pluginlist')
+    run_command('truncate', '-s 0', plugfile, check: true)
 endif
 
 nixl_inc_dirs = include_directories('src/api/cpp', 'src/infra', 'src/core')
