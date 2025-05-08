@@ -22,6 +22,7 @@
 #include <iostream>
 #include <thread>
 #include <mutex>
+#include <memory>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -95,11 +96,10 @@ class nixlUcxPublicMetadata : public nixlBackendMD {
 class nixlUcxCudaCtx;
 class nixlUcxEngine : public nixlBackendEngine {
     private:
-
         /* UCX data */
-        nixlUcxContext* uc;
-        nixlUcxWorker* uw;
-        void* workerAddr;
+        std::unique_ptr<nixlUcxContext> uc;
+        std::unique_ptr<nixlUcxWorker> uw;
+        std::unique_ptr<char []> workerAddr;
         size_t workerSize;
 
         /* Progress thread data */
@@ -109,7 +109,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         nixlTime::us_t pthrDelay;
 
         /* CUDA data*/
-        nixlUcxCudaCtx *cudaCtx;
+        std::unique_ptr<nixlUcxCudaCtx> cudaCtx;
         bool cuda_addr_wa;
 
         /* Notifications */

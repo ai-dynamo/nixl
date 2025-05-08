@@ -23,6 +23,7 @@
 #include <thread>
 #include <mutex>
 #include <cassert>
+#include <memory>
 
 #include "nixl.h"
 #include "ucx_backend.h"
@@ -95,7 +96,7 @@ private:
     bool pthrOn;
 
     // UCX backends data
-    std::vector<nixlBackendEngine*> engines;
+    std::vector<std::unique_ptr<nixlBackendEngine>> engines;
     // Map of agent name to saved nixlUcxConnection info
     using remote_conn_map_t = std::map<std::string, nixlUcxMoConnection>;
     using remote_comm_it_t = remote_conn_map_t::iterator;
@@ -109,7 +110,7 @@ private:
 
 public:
     nixlUcxMoEngine(const nixlBackendInitParams* init_params);
-    ~nixlUcxMoEngine();
+    ~nixlUcxMoEngine() = default;
 
     bool supportsRemote () const { return true; }
     bool supportsLocal  () const { return false; }
