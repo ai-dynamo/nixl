@@ -19,7 +19,7 @@ import os
 import sys
 
 import nixl._utils as nixl_utils
-from nixl._api import nixl_agent
+from nixl._api import nixl_agent, nixl_agent_config
 
 if __name__ == "__main__":
     buf_size = 16 * 4096
@@ -32,7 +32,8 @@ if __name__ == "__main__":
     print("Using NIXL Plugins from:")
     print(os.environ["NIXL_PLUGIN_DIR"])
 
-    nixl_agent1 = nixl_agent("GDSTester")
+    agent_config = nixl_agent_config(backends=[])
+    nixl_agent1 = nixl_agent("GDSTester", agent_config)
 
     plugin_list = nixl_agent1.get_plugin_list()
     assert "GDS" in plugin_list

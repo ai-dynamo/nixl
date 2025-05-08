@@ -27,6 +27,7 @@ requires-python = '>=3.9'
 authors = [
   {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
 ]
+dependencies = ["torch", "numpy"]
 
 [tool.meson-python.args]
 setup = ['-Dinstall_headers=false']
