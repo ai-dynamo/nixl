@@ -293,9 +293,7 @@ std::unique_ptr<char []> nixlUcxWorker::epAddr(size_t &size)
     ucp_worker_attr_t wattr;
     ucs_status_t status;
 
-    wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS |
-                       UCP_WORKER_ATTR_FIELD_ADDRESS_FLAGS;
-    wattr.address_flags = UCP_WORKER_ADDRESS_FLAG_NET_ONLY;
+    wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS;
     status = ucp_worker_query(worker, &wattr);
     if (UCS_OK != status) {
         // TODO: printf
