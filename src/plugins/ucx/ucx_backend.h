@@ -48,7 +48,7 @@ class nixlUcxConnection : public nixlBackendConnMD {
         std::shared_ptr<nixlUcxEp> ep = std::make_shared<nixlUcxEp>();
 
     public:
-        nixlUcxEp& getEp() { return *ep; }
+        nixlUcxEp& getEp() const noexcept { return *ep; }
         // Extra information required for UCX connections
 
     friend class nixlUcxEngine;
@@ -64,10 +64,7 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
         nixlUcxPrivateMetadata() : nixlBackendMD(true) {
         }
 
-        ~nixlUcxPrivateMetadata(){
-        }
-
-        std::string get() const {
+        const std::string& get() const noexcept {
             return rkeyStr;
         }
 
@@ -82,9 +79,6 @@ class nixlUcxPublicMetadata : public nixlBackendMD {
         nixlUcxConnection conn;
 
         nixlUcxPublicMetadata() : nixlBackendMD(false) {}
-
-        ~nixlUcxPublicMetadata(){
-        }
 };
 
 // Forward declaration of CUDA context
@@ -133,8 +127,8 @@ class nixlUcxEngine : public nixlBackendEngine {
         void progressThreadStart();
         void progressThreadStop();
         void progressThreadRestart();
-        bool isProgressThread(){
-            return (std::this_thread::get_id() == pthr.get_id());
+        bool isProgressThread() const noexcept {
+            return std::this_thread::get_id() == pthr.get_id();
         }
 
         // Connection helper
@@ -170,36 +164,36 @@ class nixlUcxEngine : public nixlBackendEngine {
         nixlUcxEngine(const nixlBackendInitParams* init_params);
         ~nixlUcxEngine();
 
-        bool supportsRemote () const { return true; }
-        bool supportsLocal () const { return true; }
-        bool supportsNotif () const { return true; }
-        bool supportsProgTh () const { return pthrOn; }
+        bool supportsRemote() const override { return true; }
+        bool supportsLocal() const override { return true; }
+        bool supportsNotif() const override { return true; }
+        bool supportsProgTh() const override { return pthrOn; }
 
-        nixl_mem_list_t getSupportedMems () const;
+        nixl_mem_list_t getSupportedMems() const override;
 
         /* Object management */
         nixl_status_t getPublicData (const nixlBackendMD* meta,
-                                     std::string &str) const;
-        nixl_status_t getConnInfo(std::string &str) const;
+                                     std::string &str) const override;
+        nixl_status_t getConnInfo(std::string &str) const override;
         nixl_status_t loadRemoteConnInfo (const std::string &remote_agent,
-                                          const std::string &remote_conn_info);
+                                          const std::string &remote_conn_info) override;
 
-        nixl_status_t connect(const std::string &remote_agent);
-        nixl_status_t disconnect(const std::string &remote_agent);
+        nixl_status_t connect(const std::string &remote_agent) override;
+        nixl_status_t disconnect(const std::string &remote_agent) override;
 
         nixl_status_t registerMem (const nixlBlobDesc &mem,
                                    const nixl_mem_t &nixl_mem,
-                                   nixlBackendMD* &out);
-        nixl_status_t deregisterMem (nixlBackendMD* meta);
+                                   nixlBackendMD* &out) override;
+        nixl_status_t deregisterMem (nixlBackendMD* meta) override;
 
         nixl_status_t loadLocalMD (nixlBackendMD* input,
-                                   nixlBackendMD* &output);
+                                   nixlBackendMD* &output) override;
 
         nixl_status_t loadRemoteMD (const nixlBlobDesc &input,
                                     const nixl_mem_t &nixl_mem,
                                     const std::string &remote_agent,
-                                    nixlBackendMD* &output);
-        nixl_status_t unloadMD (nixlBackendMD* input);
+                                    nixlBackendMD* &output) override;
+        nixl_status_t unloadMD (nixlBackendMD* input) override;
 
         // Data transfer
         nixl_status_t prepXfer (const nixl_xfer_op_t &operation,
@@ -207,22 +201,22 @@ class nixlUcxEngine : public nixlBackendEngine {
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr);
+                                const nixl_opt_b_args_t* opt_args=nullptr) override;
 
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr);
+                                const nixl_opt_b_args_t* opt_args=nullptr) override;
 
-        nixl_status_t checkXfer (nixlBackendReqH* handle);
-        nixl_status_t releaseReqH(nixlBackendReqH* handle);
+        nixl_status_t checkXfer (nixlBackendReqH* handle) override;
+        nixl_status_t releaseReqH(nixlBackendReqH* handle) override;
 
-        int progress();
+        int progress() override;
 
-        nixl_status_t getNotifs(notif_list_t &notif_list);
-        nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg);
+        nixl_status_t getNotifs(notif_list_t &notif_list) override;
+        nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) override;
 
         //public function for UCX worker to mark connections as connected
         nixl_status_t checkConn(const std::string &remote_agent);
