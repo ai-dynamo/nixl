@@ -166,6 +166,13 @@ PYBIND11_MODULE(_bindings, m) {
     py::register_exception<nixlUnknownError>(m, "nixlUnknownError");
     py::register_exception<nixlNotSupportedError>(m, "nixlNotSupportedError");
 
+    py::class_<nixlCostEstimate>(m, "CostEstimate")
+        .def(py::init<>())
+        .def_readwrite("duration", &nixlCostEstimate::duration)
+        .def("__repr__", [](const nixlCostEstimate &est) {
+            return "<CostEstimate(duration=" + std::to_string(est.duration) + ")>";
+        });
+
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
         .def(py::init<nixl_mem_t, bool, int>(), py::arg("type"), py::arg("sorted")=false, py::arg("init_size")=0)
         .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool sorted) {
@@ -426,6 +433,12 @@ PYBIND11_MODULE(_bindings, m) {
                    py::arg("remote_descs"), py::arg("remote_agent"),
                    py::arg("notif_msg") = std::string(""),
                    py::arg("backend") = std::vector<uintptr_t>({}))
+        .def("estimateXferCost", [](nixlAgent &agent, uintptr_t reqh) -> nixlCostEstimate {
+                nixlCostEstimate estimate;
+                nixl_status_t status = agent.estimateXferCost(reinterpret_cast<nixlXferReqH*>(reqh), &estimate);
+                throw_nixl_exception(status);
+                return estimate;
+            }, py::arg("req_handle"))
         .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh, std::string notif_msg) -> nixl_status_t {
                     nixl_opt_args_t extra_params;
                     nixl_status_t ret;

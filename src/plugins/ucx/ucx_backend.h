@@ -209,6 +209,23 @@ class nixlUcxEngine : public nixlBackendEngine {
                                 nixlBackendReqH* &handle,
                                 const nixl_opt_b_args_t* opt_args=nullptr);
 
+        /**
+         * @brief Estimate the cost (duration) of a transfer operation.
+         *
+         * @param operation      NIXL operation type (NIXL_READ or NIXL_WRITE).
+         * @param local          Local metadata descriptor list.
+         * @param remote         Remote metadata descriptor list.
+         * @param remote_agent   Remote agent name.
+         * @param estimate       Pointer to nixlCostEstimate structure to store the result.
+         * @return nixl_status_t NIXL_SUCCESS if cost estimation is successful,
+         *                       error code on other errors.
+         */
+        nixl_status_t estimateXferCost(const nixl_xfer_op_t &operation,
+                                       const nixl_meta_dlist_t &local,
+                                       const nixl_meta_dlist_t &remote,
+                                       const std::string &remote_agent,
+                                       nixlCostEstimate* estimate) override;
+
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,
                                 const nixl_meta_dlist_t &remote,

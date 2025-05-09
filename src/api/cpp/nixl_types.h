@@ -118,6 +118,18 @@ using nixl_b_params_t = std::unordered_map<std::string, std::string>;
 using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
 
 /**
+ * @class nixlCostEstimate
+ * @brief Cost estimation for a transfer request.
+ */
+class nixlCostEstimate {
+    public:
+        /**
+         * @var duration Estimated transfer duration in seconds.
+         */
+        double duration;
+};
+
+/**
  * @brief A constant to define the default communication port.
  */
 constexpr int default_comm_port = 8888;

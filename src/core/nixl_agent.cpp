@@ -766,6 +766,36 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
+nixlAgent::estimateXferCost(nixlXferReqH* req_hndl,
+                            nixlCostEstimate* estimate) const
+{
+    NIXL_LOCK_GUARD(data->lock);
+
+    if (!req_hndl || !estimate) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // Check if the remote agent connection info is still valid
+    // (assuming cost estimation requires connection info like transfers)
+    if (!req_hndl->remoteAgent.empty() &&
+        (data->remoteSections.count(req_hndl->remoteAgent) == 0)) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    if (!req_hndl->engine) {
+        // Should not happen if req_hndl is valid
+        return NIXL_ERR_UNKNOWN;
+    }
+
+    // Call the backend engine's implementation
+    return req_hndl->engine->estimateXferCost(req_hndl->backendOp,
+                                              *req_hndl->initiatorDescs,
+                                              *req_hndl->targetDescs,
+                                              req_hndl->remoteAgent,
+                                              estimate);
+}
+
+nixl_status_t
 nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                        const nixl_opt_args_t* extra_params) const {
     nixl_status_t ret;

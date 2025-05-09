@@ -232,6 +232,17 @@ class nixlAgent {
         /*** Operations on prepared Transfer Request ***/
 
         /**
+         * @brief Estimate the cost (e.g., duration) of executing a transfer request.
+         *
+         * @param req_hndl       Transfer request handle
+         * @param estimate [out] Pointer to the cost estimation structure to be populated
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        estimateXferCost(nixlXferReqH* req_hndl,
+                         nixlCostEstimate* estimate) const;
+
+        /**
          * @brief  Submit a transfer request `req_hndl` which initiates a transfer.
          *         After this, the transfer state can be checked asynchronously till completion.
          *         In case of small transfers that are completed within the call, return value

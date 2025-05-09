@@ -524,6 +524,154 @@ nixl_status_t nixlUcxWorker::write(nixlUcxEp &ep,
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
+/////////////////////////////// COST ESTIMATION API /////////////////////////////////////////////
+// TODO: these definitions need to appear in UCX not NIXL. Provided for code review purposes.
+
+/**
+ * @enum ucp_op_type_t
+ * @brief UCP operation types.
+ *
+ * This enum defines the types of operations that can be performed using UCP.
+ * It covers all the routines available in the UCP API for transferring data.
+ */
+typedef enum {
+    UCP_OP_PUT_NBX = 0,
+    UCP_OP_GET_NBX = 1,
+} ucp_op_type_t;
+
+/**
+ * @brief UCP cost estimation parameters field mask.
+ *
+ * The enumeration allows specifying which fields in @ref ucp_ep_cost_params_t are
+ * present. It is used to enable backward compatibility support.
+ */
+enum ucp_ep_cost_params_field {
+    UCP_EP_COST_PARAM_FIELD_BUFFER       = UCS_BIT(0), /**< buffer */
+    UCP_EP_COST_PARAM_FIELD_MESSAGE_SIZE = UCS_BIT(1), /**< message_size */
+    UCP_EP_COST_PARAM_FIELD_OP_EP        = UCS_BIT(2), /**< ep */
+    UCP_EP_COST_PARAM_FIELD_OP_TYPE      = UCS_BIT(3), /**< op_type */
+};
+
+/**
+ * @struct ucp_ep_cost_params_t
+ * @brief Parameters for the cost estimation query.
+ */
+typedef struct ucp_ep_cost_params {
+    /** Mask of fields set. */
+    uint64_t field_mask;
+
+    /** Pointer to the local memory region. */
+    void *buffer;
+
+    /** Size of the message to be transferred. */
+    size_t message_size;
+
+    /** Remote UCP endpoint. */
+    ucp_ep_h ep;
+
+    /** UCP operation type (e.g., put, get). */
+    ucp_op_type_t op_type;
+} ucp_ep_cost_params_t;
+
+/**
+ * @brief UCP cost estimation result field mask.
+ *
+ * The enumeration allows specifying which fields in @ref ucp_ep_cost_t are
+ * present. It is used to enable backward compatibility support.
+ */
+enum ucp_ep_cost_field {
+    UCP_EP_COST_FIELD_DURATION = UCS_BIT(0) /**< transfer_duration */
+};
+
+/**
+ * @struct ucp_ep_cost_t
+ * @brief Cost estimation for the transfer request.
+ */
+typedef struct ucp_ep_cost {
+    /** Mask of fields set. */
+    uint64_t field_mask;
+
+    /** Estimated transfer duration in seconds. */
+    double transfer_duration;
+} ucp_ep_cost_t;
+
+/**
+ * @brief Query the cost estimation for a transfer request.
+ *
+ * This function queries the cost estimation for a transfer request based on the provided parameters.
+ *
+ * @param [in] ep             Endpoint handle for the transfer request.
+ * @param [in] cost_params    Parameters for the cost estimation query.
+ * @param [out] cost_estimate Pointer to the cost estimation structure to be populated.
+ *
+ * @return UCS_OK on success or an error code on failure.
+ */
+ucs_status_t ucp_ep_query_cost(const ucp_ep_cost_params_t *cost_params, ucp_ep_cost_t *cost_estimate)
+{
+    return UCS_OK;
+}
+/////////////////////////////// COST ESTIMATION API END //////////////////////////////////////////
+
+nixl_status_t nixlUcxWorker::estimateCost(nixlUcxEp ep,
+                                          void* local_addr,
+                                          size_t length,
+                                          nixl_xfer_op_t nixl_op,
+                                          double& duration_sec)
+{
+    ucp_ep_cost_params_t params;
+    ucp_ep_cost_t cost_result;
+    ucs_status_t status;
+    ucp_op_type_t ucx_op_type;
+
+    // Map NIXL operation to UCX operation type
+    switch (nixl_op) {
+        case NIXL_WRITE:
+            ucx_op_type = UCP_OP_PUT_NBX;
+            break;
+        case NIXL_READ:
+            ucx_op_type = UCP_OP_GET_NBX;
+            break;
+        default:
+            NIXL_ERROR << "Unsupported NIXL operation type: " << nixl_op;
+            return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // Populate parameters for ucp_ep_query_cost
+    params.field_mask = UCP_EP_COST_PARAM_FIELD_BUFFER       |
+                        UCP_EP_COST_PARAM_FIELD_MESSAGE_SIZE |
+                        UCP_EP_COST_PARAM_FIELD_OP_TYPE      |
+                        UCP_EP_COST_PARAM_FIELD_OP_EP;
+
+    params.buffer       = local_addr;
+    params.message_size = length;
+    params.op_type      = ucx_op_type;
+    params.ep           = ep.eph;
+
+    // Specify desired output field
+    cost_result.field_mask = UCP_EP_COST_FIELD_DURATION;
+
+    // Call the UCX cost estimation function
+    status = ucp_ep_query_cost(&params, &cost_result);
+
+    // Handle status
+    if (status != UCS_OK) {
+        // Some other UCX error occurred
+        NIXL_ERROR << "ucp_ep_query_cost failed: " << ucs_status_string(status);
+        return NIXL_ERR_BACKEND;
+    }
+
+    // Check if the duration field was actually returned
+    if (!(cost_result.field_mask & UCP_EP_COST_FIELD_DURATION)) {
+        // UCX succeeded but didn't provide the requested duration
+        NIXL_ERROR << "ucp_ep_query_cost failed: no duration returned";
+        return NIXL_ERR_BACKEND;
+    }
+
+    // Success, set the output duration
+    duration_sec = cost_result.transfer_duration;
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t nixlUcxWorker::test(nixlUcxReq req)
 {
     if(req == NULL) {
