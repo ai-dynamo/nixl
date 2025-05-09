@@ -13,11 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-gtest = dependency('gtest', version : '>=1.11.0', required : true)
-
 file_utils_test = executable(
     'file_utils_test',
     'file_utils_test.cpp',
-    dependencies: [gtest, thread_dep, file_utils_dep],
+    dependencies: [thread_dep, file_utils_dep],
     include_directories: [nixl_inc_dirs]
 )
