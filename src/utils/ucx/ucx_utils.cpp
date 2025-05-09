@@ -33,11 +33,13 @@ static nixl_status_t ucx_status_to_nixl(ucs_status_t status)
     switch(status) {
     case UCS_INPROGRESS:
         return NIXL_IN_PROG;
+    case UCS_ERR_NOT_CONNECTED:
     case UCS_ERR_CONNECTION_RESET:
         return NIXL_ERR_REMOTE_DISCONNECT;
     case UCS_ERR_INVALID_PARAM:
         return NIXL_ERR_INVALID_PARAM;
     default:
+        NIXL_DEBUG << "Not converted UCX status: " << ucs_status_string(status);
         return NIXL_ERR_BACKEND;
     }
 }
