@@ -47,6 +47,7 @@ void test_thread(int id)
     init_params.enableProgTh = USE_PTHREAD;
     init_params.customParams = &custom_params;
     init_params.type         = "UCX";
+    init_params.numWorkers   = 1;
 
     std::cout << my_name << " Started\n";
 

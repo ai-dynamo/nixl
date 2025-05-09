@@ -37,6 +37,8 @@ class nixlAgentConfig {
         int      listenPort;
         /** @var synchronization mode for multi-threaded environment execution */
         nixl_thread_sync_t syncMode;
+        /** @var number of workers in the engine instance*/
+        unsigned int numWorkers;
 
     public:
 
@@ -69,12 +71,14 @@ class nixlAgentConfig {
                          const bool use_listen_thread=false,
                          const int port=0,
                          nixl_thread_sync_t sync_mode=nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT,
+                         unsigned int num_workers = 1,
                          const uint64_t pthr_delay_us=0,
                          const uint64_t lthr_delay_us = 100000) :
                          useProgThread(use_prog_thread),
                          useListenThread(use_listen_thread),
                          listenPort(port),
                          syncMode(sync_mode),
+                         numWorkers(num_workers),
                          pthrDelay(pthr_delay_us),
                          lthrDelay(lthr_delay_us) { }
 

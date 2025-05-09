@@ -83,6 +83,7 @@ nixlBackendEngine *createEngine(std::string name, uint32_t ndev, bool p_thread)
     init.localAgent   = name;
     init.customParams = &custom_params;
     init.type         = "UCX_MO";
+    init.numWorkers   = 1;
 
     ucx_mo = (nixlBackendEngine*) new nixlUcxMoEngine (&init);
     assert(!ucx_mo->getInitErr());

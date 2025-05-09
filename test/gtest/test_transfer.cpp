@@ -81,8 +81,7 @@ protected:
     static nixlAgentConfig getConfig()
     {
         return nixlAgentConfig(false, false, 0,
-                               nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 0,
-                               100000);
+                               nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
     }
 
     void SetUp() override

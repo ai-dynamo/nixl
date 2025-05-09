@@ -51,6 +51,8 @@ class nixlBackendInitParams {
 
         bool              enableProgTh;
         nixlTime::us_t    pthrDelay;
+
+        unsigned int      numWorkers;
 };
 
 // Pure virtual class to have a common pointer type
