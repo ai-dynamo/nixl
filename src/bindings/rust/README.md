@@ -10,7 +10,7 @@ Rust bindings for the NVIDIA Inference Xfer Library (NIXL). These bindings provi
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### Install the NIXL library on your system 
+### Install the NIXL library on your system
 
 Refer to the [NIXL README](https://github.com/ai-dynamo/nixl/blob/main/README.md) for instructions on how to install the NIXL library on your system.
 
