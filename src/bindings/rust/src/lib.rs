@@ -20,6 +20,7 @@
 //! `nixl` crate.
 
 use libc::uintptr_t;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::fmt;
@@ -101,14 +102,14 @@ pub enum NixlError {
 }
 
 /// Memory types supported by NIXL
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemType {
     Dram,
     Vram,
     Block,
     Object,
     File,
-    Unknown
+    Unknown,
 }
 
 impl From<nixl_capi_mem_type_t> for MemType {
@@ -135,7 +136,7 @@ impl fmt::Display for MemType {
                 MemType::Block => 2,
                 MemType::Object => 3,
                 MemType::File => 4,
-                MemType::Unknown => 5
+                MemType::Unknown => 5,
             };
             nixl_capi_mem_type_to_string(mem_type, &mut str_ptr);
             let c_str = CStr::from_ptr(str_ptr);
@@ -480,7 +481,7 @@ impl<'a> XferDescList<'a> {
         }
 
         // Get descriptor details
-        let addr = unsafe { desc.as_ptr() }.ok_or(NixlError::InvalidParam)? as usize;
+        let addr = unsafe { desc.as_ptr() } as usize;
         let len = desc.size();
         let dev_id = desc.device_id();
 
@@ -744,7 +745,7 @@ impl<'a> RegDescList<'a> {
         }
 
         // Get descriptor details
-        let addr = unsafe { desc.as_ptr() }.ok_or(NixlError::InvalidParam)? as usize;
+        let addr = unsafe { desc.as_ptr() } as usize;
         let len = desc.size();
         let dev_id = desc.device_id();
 
@@ -766,6 +767,7 @@ impl<'a> Drop for RegDescList<'a> {
 /// Inner state for an agent that manages the raw pointer
 #[derive(Debug)]
 struct AgentInner {
+    name: String,
     handle: NonNull<bindings::nixl_capi_agent_s>,
     backends: HashMap<String, NonNull<bindings::nixl_capi_backend_s>>,
     remotes: HashSet<String>,
@@ -775,8 +777,9 @@ unsafe impl Send for AgentInner {}
 unsafe impl Sync for AgentInner {}
 
 impl AgentInner {
-    fn new(handle: NonNull<bindings::nixl_capi_agent_s>) -> Self {
+    fn new(handle: NonNull<bindings::nixl_capi_agent_s>, name: String) -> Self {
         Self {
+            name,
             handle,
             backends: HashMap::new(),
             remotes: HashSet::new(),
@@ -850,7 +853,7 @@ impl Agent {
                 let handle = unsafe { NonNull::new_unchecked(agent) };
                 tracing::trace!(agent.name = %name, "Successfully created NIXL agent");
                 Ok(Self {
-                    inner: Arc::new(RwLock::new(AgentInner::new(handle))),
+                    inner: Arc::new(RwLock::new(AgentInner::new(handle, name.to_string()))),
                 })
             }
             NIXL_CAPI_ERROR_INVALID_PARAM => {
@@ -862,6 +865,11 @@ impl Agent {
                 Err(NixlError::BackendError)
             }
         }
+    }
+
+    /// Gets the name of the agent
+    pub fn name(&self) -> String {
+        self.inner.read().unwrap().name.clone()
     }
 
     /// Gets the list of available plugins
@@ -1019,22 +1027,22 @@ impl Agent {
 
     pub fn register_memory(
         &self,
-        descriptor: &dyn NixlDescriptor,
-        opt_args: &OptArgs,
+        descriptor: &impl NixlDescriptor,
+        opt_args: Option<&OptArgs>,
     ) -> Result<RegistrationHandle, NixlError> {
         let mut reg_dlist = RegDescList::new(descriptor.mem_type())?;
         unsafe {
             reg_dlist.add_storage_desc(descriptor)?;
-            let _opt_args = OptArgs::new()?;
+
             nixl_capi_register_mem(
                 self.inner.write().unwrap().handle.as_ptr(),
                 reg_dlist.inner.as_ptr(),
-                _opt_args.inner.as_ptr(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             );
         }
         Ok(RegistrationHandle {
-            agent: self.inner.clone(),
-            ptr: unsafe { descriptor.as_ptr() }.ok_or(NixlError::InvalidParam)? as usize,
+            agent: Some(self.inner.clone()),
+            ptr: unsafe { descriptor.as_ptr() } as usize,
             size: descriptor.size(),
             dev_id: descriptor.device_id(),
             mem_type: descriptor.mem_type(),
@@ -1374,7 +1382,7 @@ impl Drop for NotificationMap {
 
 #[derive(Debug)]
 pub struct RegistrationHandle {
-    agent: Arc<RwLock<AgentInner>>,
+    agent: Option<Arc<RwLock<AgentInner>>>,
     ptr: usize,
     size: usize,
     dev_id: u64,
@@ -1382,25 +1390,33 @@ pub struct RegistrationHandle {
 }
 
 impl RegistrationHandle {
+    pub fn agent_name(&self) -> Option<String> {
+        self.agent
+            .as_ref()
+            .map(|agent| agent.read().unwrap().name.clone())
+    }
+
     pub fn deregister(&mut self) -> Result<(), NixlError> {
-        tracing::trace!(
-            ptr = self.ptr,
-            size = self.size,
-            dev_id = self.dev_id,
-            mem_type = ?self.mem_type,
-            "Deregistering memory"
-        );
-        let mut reg_dlist = RegDescList::new(self.mem_type)?;
-        unsafe {
-            reg_dlist.add_desc(self.ptr, self.size, self.dev_id)?;
-            let _opt_args = OptArgs::new().unwrap();
-            nixl_capi_deregister_mem(
-                self.agent.write().unwrap().handle.as_ptr(),
-                reg_dlist.inner.as_ptr(),
-                _opt_args.inner.as_ptr(),
+        if let Some(agent) = self.agent.take() {
+            tracing::trace!(
+                ptr = self.ptr,
+                size = self.size,
+                dev_id = self.dev_id,
+                mem_type = ?self.mem_type,
+                "Deregistering memory"
             );
+            let mut reg_dlist = RegDescList::new(self.mem_type)?;
+            unsafe {
+                reg_dlist.add_desc(self.ptr, self.size, self.dev_id)?;
+                let _opt_args = OptArgs::new().unwrap();
+                nixl_capi_deregister_mem(
+                    agent.write().unwrap().handle.as_ptr(),
+                    reg_dlist.inner.as_ptr(),
+                    _opt_args.inner.as_ptr(),
+                );
+            }
+            tracing::trace!("Memory deregistered successfully");
         }
-        tracing::trace!("Memory deregistered successfully");
         Ok(())
     }
 }
@@ -1425,6 +1441,9 @@ impl Drop for RegistrationHandle {
 pub struct Backend {
     inner: NonNull<bindings::nixl_capi_backend_s>,
 }
+
+unsafe impl Send for Backend {}
+unsafe impl Sync for Backend {}
 
 /// A safe wrapper around NIXL optional arguments
 pub struct OptArgs {
@@ -1734,14 +1753,14 @@ impl<'a> Iterator for MemListIterator<'a> {
 }
 
 /// A trait for storage types that can be used with NIXL
-pub trait MemoryRegion: std::fmt::Debug + Send + Sync + 'static {
+pub trait MemoryRegion: std::fmt::Debug + Send + Sync {
     /// Get a raw pointer to the storage
     ///
     /// # Safety
     /// The caller must ensure:
     /// - The pointer is not used after the storage is dropped
     /// - Access patterns respect the storage's thread safety model
-    unsafe fn as_ptr(&self) -> Option<*const u8>;
+    unsafe fn as_ptr(&self) -> *const u8;
 
     /// Returns the total size of the storage in bytes
     fn size(&self) -> usize;
@@ -1754,17 +1773,11 @@ pub trait NixlDescriptor: MemoryRegion {
 
     /// Get the device ID for this memory region
     fn device_id(&self) -> u64;
-
-    /// Is registered
-    fn is_registered(&self) -> bool;
-
-    /// Registration Handle
-    fn handle(&self) -> Option<&RegistrationHandle>;
 }
 
 /// A trait for types that can be registered with NIXL
 pub trait NixlRegistration: NixlDescriptor {
-    fn register(&mut self, agent: &Agent, opt_args: &OptArgs) -> Result<(), NixlError>;
+    fn register(&mut self, agent: &Agent, opt_args: Option<&OptArgs>) -> Result<(), NixlError>;
 }
 
 /// System memory storage implementation using a Vec<u8>
@@ -1799,8 +1812,8 @@ impl MemoryRegion for SystemStorage {
         self.data.len()
     }
 
-    unsafe fn as_ptr(&self) -> Option<*const u8> {
-        Some(self.data.as_ptr())
+    unsafe fn as_ptr(&self) -> *const u8 {
+        self.data.as_ptr()
     }
 }
 
@@ -1812,18 +1825,10 @@ impl NixlDescriptor for SystemStorage {
     fn device_id(&self) -> u64 {
         0
     }
-
-    fn is_registered(&self) -> bool {
-        self.handle.is_some()
-    }
-
-    fn handle(&self) -> Option<&RegistrationHandle> {
-        self.handle.as_ref()
-    }
 }
 
 impl NixlRegistration for SystemStorage {
-    fn register(&mut self, agent: &Agent, opt_args: &OptArgs) -> Result<(), NixlError> {
+    fn register(&mut self, agent: &Agent, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
         let handle = agent.register_memory(self, opt_args)?;
         self.handle = Some(handle);
         Ok(())

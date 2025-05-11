@@ -19,7 +19,7 @@ build-backend = "mesonpy"
 
 [project]
 name = 'nixl'
-version = '0.1.1'
+version = '0.2.1'
 description = 'NIXL Python API'
 readme = 'README.md'
 license = {file = 'LICENSE'}
@@ -27,6 +27,7 @@ requires-python = '>=3.9'
 authors = [
   {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
 ]
+dependencies = ["torch", "numpy"]
 
 [tool.meson-python.args]
 setup = ['-Dinstall_headers=false']

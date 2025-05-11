@@ -1,6 +1,6 @@
 # CI/CD
-/.github/ @ai-dynamo/Devops
-CODEOWNERS @ai-dynamo/Devops
+/.github/ @ai-dynamo/Devops @ai-dynamo/nixl-devops
+CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 
 # Legal
 /ATTRIBUTIONS.md @ai-dynamo/Devops

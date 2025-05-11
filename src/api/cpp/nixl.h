@@ -24,6 +24,7 @@
 #include "nixl_types.h"
 #include "nixl_params.h"
 #include "nixl_descriptors.h"
+#include <memory>
 
 /**
  * @class nixlAgent
@@ -32,7 +33,7 @@
 class nixlAgent {
     private:
         /** @var  data  The members in agent class wrapped into single nixlAgentData member. */
-        nixlAgentData* data;
+        std::unique_ptr<nixlAgentData> data;
 
     public:
         /*** Initialization and Registering Methods ***/
@@ -49,6 +50,10 @@ class nixlAgent {
          * @brief Destructor for nixlAgent object
          */
         ~nixlAgent ();
+
+        /* Declare move operations (needed because we declared a destructor) */
+        nixlAgent(nixlAgent&&) noexcept;
+        nixlAgent &operator=(nixlAgent&&) noexcept;
 
         /**
          * @brief  Discover the available supported plugins found in the plugin paths
@@ -316,69 +321,6 @@ class nixlAgent {
                   const nixl_blob_t &msg,
                   const nixl_opt_args_t* extra_params = nullptr);
 
-        /*** Metadata handling through direct channels (p2p socket and ETCD) ***/
-        /**
-         * @brief  Send your own agent metadata to a remote location.
-         *
-         * @param  extra_params  Only to optionally specify IP address and/or port.
-         *                       If IP is specified, this will enable peer to peer sending of your metadata.
-         *                       If IP unspecified, this will send your data to the metadata server.
-         *                       Port can be specified or defaults to default_comm_port.
-         *
-         * @return nixl_status_t Error code if call was not successful
-         */
-        nixl_status_t
-        sendLocalMD (const nixl_opt_args_t* extra_params = nullptr) const;
-
-        /**
-         * @brief  Send partial metadata blob for this agent to peer or central metadata server
-         *         If `descs` is empty, only backends' connection info is included in the metadata,
-         *         regardless of the value of `extra_params->includeConnInfo` and `descs` memory type.
-         *         If `descs` is non-empty, the metadata of the descriptors in the list are included,
-         *         and if `extra_params->includeConnInfo` is true, the connection info of the
-         *         backends supporting the memory type is also included.
-         *         If `extra_params->backends` is non-empty, only the descriptors supported by the
-         *         backends in the list and the backends' connection info are included in the metadata.
-         *         If 'extra_params->ip_addr' is set, the metadata will only be sent to a single peer.
-         *         If 'extra_params->port' can be set in addition to IP address, or will default to default_comm_port.
-         *
-         * @param  descs         [in]  Descriptor list to include in the metadata
-         * @param  str           [out] The serialized metadata blob
-         * @param  extra_params  [in]  Optional extra parameters used in getting partial metadata
-         * @return nixl_status_t       Error code if call was not successful
-         */
-        nixl_status_t
-        sendLocalPartialMD(nixl_reg_dlist_t  &descs,
-                           const nixl_opt_args_t* extra_params = nullptr) const;
-
-        /**
-         * @brief  Fetch other agent's metadata and unpack it internally.
-         *
-         * @param  remote_name   Name of remote agent to fetch from ETCD or socket.
-         * @param  extra_params  Only to optionally specify IP address and/or port.
-         *                       If IP is specified, this will enable peer to peer fetching of metadata.
-         *                       If IP is unspecified, this will fetch from the metadata server.
-         *                       Port can be specified or defaults to default_comm_port.
-         *
-         * @return nixl_status_t    Error code if call was not successful
-         */
-        nixl_status_t
-        fetchRemoteMD (const std::string remote_name,
-                       const nixl_opt_args_t* extra_params = nullptr);
-
-        /**
-         * @brief  Invalidate your own memory in one/all remote agent(s).
-         *
-         * @param  extra_params  Only to optionally specify IP address and/or port.
-         *                       If IP is specified, this will enable peer to peer invalidation of metadata.
-         *                       If IP is unspecified, this will invalidate from the metadata server.
-         *                       Port can be specified or defaults to default_comm_port.
-         *
-         * @return nixl_status_t    Error code if call was not successful
-         */
-        nixl_status_t
-        invalidateLocalMD (const nixl_opt_args_t* extra_params = nullptr) const;
-
         /*** Metadata handling through side channel ***/
         /**
          * @brief  Get metadata blob for this agent, to be given to other agents.
@@ -405,7 +347,7 @@ class nixlAgent {
          * @return nixl_status_t       Error code if call was not successful
          */
         nixl_status_t
-        getLocalPartialMD(nixl_reg_dlist_t  &descs,
+        getLocalPartialMD(const nixl_reg_dlist_t &descs,
                           nixl_blob_t &str,
                           const nixl_opt_args_t* extra_params = nullptr) const;
 
@@ -431,6 +373,88 @@ class nixlAgent {
          */
         nixl_status_t
         invalidateRemoteMD (const std::string &remote_agent);
+
+        /*** Metadata handling through direct channels (p2p socket and ETCD) ***/
+        /**
+         * @brief  Send your own agent metadata to a remote location.
+         *
+         * @param  extra_params  Only to optionally specify IP address and/or port.
+         *                       If IP is specified, this will enable peer to peer sending of your metadata.
+         *                       If IP unspecified, this will send your data to the metadata server.
+         *                       Port can be specified or defaults to default_comm_port.
+         *
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        sendLocalMD (const nixl_opt_args_t* extra_params = nullptr) const;
+
+        /**
+         * @brief  Send partial metadata blob for this agent to peer or central metadata server
+         *         If `descs` is empty, only backends' connection info is included in the metadata,
+         *         regardless of the value of `extra_params->includeConnInfo` and `descs` memory type.
+         *         If `descs` is non-empty, the metadata of the descriptors in the list are included,
+         *         and if `extra_params->includeConnInfo` is true, the connection info of the
+         *         backends supporting the memory type is also included.
+         *         If `extra_params->backends` is non-empty, only the descriptors supported by the
+         *         backends in the list and the backends' connection info are included in the metadata.
+         *         If 'extra_params->ip_addr' is set, the metadata will only be sent to a single peer.
+         *         If 'extra_params->port' can be set in addition to IP address, or will default to default_comm_port.
+         *         If 'extra_params->metadataLabel' is set, it will be used as the label of the partial metadata
+         *         to be sent. Otherwise, the default label of the partial metadata will be used for sending.
+         *
+         * @param  descs         [in]  Descriptor list to include in the metadata
+         * @param  str           [out] The serialized metadata blob
+         * @param  extra_params  [in]  Optional extra parameters used in getting partial metadata
+         * @return nixl_status_t       Error code if call was not successful
+         */
+        nixl_status_t
+        sendLocalPartialMD(const nixl_reg_dlist_t &descs,
+                           const nixl_opt_args_t* extra_params = nullptr) const;
+
+        /**
+         * @brief  Fetch other agent's metadata and unpack it internally.
+         *
+         * @param  remote_name   Name of remote agent to fetch from ETCD or socket.
+         * @param  extra_params  Only to optionally specify IP address and/or port.
+         *                       If IP is specified, this will enable peer to peer fetching of metadata.
+         *                       If IP is unspecified, this will fetch from the metadata server.
+         *                       Port can be specified or defaults to default_comm_port.
+         *                       If metadataLabel is specified, it will be used as the label of the metadata
+         *                       to be fetched, which can be partial metadata. Otherwise, the default label
+         *                       of the full metadata will be used for fetching.
+         *
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        fetchRemoteMD (const std::string remote_name,
+                       const nixl_opt_args_t* extra_params = nullptr);
+
+        /**
+         * @brief  Invalidate your own memory in one/all remote agent(s).
+         *
+         * @param  extra_params  Only to optionally specify IP address and/or port.
+         *                       If IP is specified, this will enable peer to peer invalidation of metadata.
+         *                       If IP is unspecified, this will invalidate all agent's labels
+         *                       from the metadata server.
+         *                       Port can be specified or defaults to default_comm_port.
+         *
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        invalidateLocalMD (const nixl_opt_args_t* extra_params = nullptr) const;
+
+        /**
+         * @brief  Check if metadata is available for a remote agent.
+         *         For partial metadata methods are used, the descriptor list in question
+         *         can be specified; otherwise, empty `descs` can be passed.
+         *
+         * @param  str           Remote agent to check for
+         * @return nixl_status_t Error code, NOT_FOUND if metadata not found
+         */
+        nixl_status_t
+        checkRemoteMD (const std::string remote_name,
+                       const nixl_xfer_dlist_t &descs) const;
+
 };
 
 #endif

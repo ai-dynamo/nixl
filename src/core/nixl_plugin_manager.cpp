@@ -277,7 +277,8 @@ void nixlPluginManager::discoverPluginsFromDir(const std::string& dirpath) {
     std::error_code ec;
     std::filesystem::directory_iterator dir_iter(dir_path, ec);
     if (ec) {
-        std::cerr << "Error accessing directory: " << ec.message() << std::endl;
+        std::cerr << "Error accessing directory(" << dir_path << "):"
+                  << ec.message() << std::endl;
         return;
     }
 
@@ -360,6 +361,7 @@ void nixlPluginManager::registerStaticPlugin(const char* name, nixlStaticPluginC
 
     //Static Plugins are considered pre-loaded
     nixlBackendPlugin* plugin = info.createFunc();
+    NIXL_DEBUG << "Loading static plugin: " << name << std::endl;
     if (plugin) {
         // Register the loaded plugin
         auto plugin_handle = std::make_shared<const nixlPluginHandle>(nullptr, plugin);
@@ -372,20 +374,25 @@ const std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
 }
 
 void nixlPluginManager::registerBuiltinPlugins() {
-    #ifdef STATIC_PLUGIN_UCX
+#ifdef STATIC_PLUGIN_UCX
         extern nixlBackendPlugin* createStaticUcxPlugin();
         registerStaticPlugin("UCX", createStaticUcxPlugin);
-    #endif
+#endif //STATIC_PLUGIN_UCX
 
-    #ifdef STATIC_PLUGIN_UCX_MO
+#ifdef STATIC_PLUGIN_UCX_MO
         extern nixlBackendPlugin* createStaticUcxMoPlugin();
         registerStaticPlugin("UCX_MO", createStaticUcxMoPlugin);
-    #endif
+#endif // STATIC_PLUGIN_UCX_MO
 
-    #ifdef STATIC_PLUGIN_GDS
-    #ifndef DISABLE_GDS_BACKEND
+#ifdef STATIC_PLUGIN_GDS
+#ifndef DISABLE_GDS_BACKEND
         extern nixlBackendPlugin* createStaticGdsPlugin();
         registerStaticPlugin("GDS", createStaticGdsPlugin);
-    #endif
-    #endif
+#endif // DISABLE_GDS_BACKEND
+#endif // STATIC_PLUGIN_GDS
+
+#ifdef STATIC_PLUGIN_POSIX
+        extern nixlBackendPlugin* createStaticPosixPlugin();
+        registerStaticPlugin("POSIX", createStaticPosixPlugin);
+#endif // STATIC_PLUGIN_POSIX
 }

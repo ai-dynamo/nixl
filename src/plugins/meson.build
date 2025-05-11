@@ -18,8 +18,15 @@ ucx_backend_inc_dirs = include_directories('./ucx')
 subdir('ucx')
 subdir('ucx_mo')
 
+subdir('posix')  # Always try to build POSIX backend, it will handle its own dependencies
+
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and cuda_dep.found()
     subdir('cuda_gds')
 endif
 
+cc = meson.get_compiler('cpp')
+libtransfer_engine = cc.find_library('transfer_engine', required: false)
+if libtransfer_engine.found() and not get_option('disable_mooncake_backend')
+    subdir('mooncake')
+endif

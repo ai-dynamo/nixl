@@ -36,19 +36,19 @@ class nixlAgentData;
  * @brief  An enumeration of segment types for NIXL
  *         FILE_SEG must be last
  */
-typedef enum {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG} nixl_mem_t;
+enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
 
 /**
  * @enum   nixl_xfer_op_t
  * @brief  An enumeration of different transfer types for NIXL
  */
-typedef enum {NIXL_READ, NIXL_WRITE} nixl_xfer_op_t;
+enum nixl_xfer_op_t {NIXL_READ, NIXL_WRITE};
 
 /**
  * @enum   nixl_status_t
  * @brief  An enumeration of status values and error codes for NIXL
  */
-typedef enum {
+enum nixl_status_t {
     NIXL_IN_PROG = 1,
     NIXL_SUCCESS = 0,
     NIXL_ERR_NOT_POSTED = -1,
@@ -59,8 +59,9 @@ typedef enum {
     NIXL_ERR_NOT_ALLOWED = -6,
     NIXL_ERR_REPOST_ACTIVE = -7,
     NIXL_ERR_UNKNOWN = -8,
-    NIXL_ERR_NOT_SUPPORTED = -9
-} nixl_status_t;
+    NIXL_ERR_NOT_SUPPORTED = -9,
+    NIXL_ERR_REMOTE_DISCONNECT = -10
+};
 
 /**
  * @enum nixl_thread_sync_t
@@ -89,7 +90,7 @@ namespace nixlEnumStrings {
 /**
  * @brief A typedef for a std::string to identify nixl backends
  */
-typedef std::string nixl_backend_t;
+using nixl_backend_t = std::string;
 
 /**
  * @brief A typedef for a std::string as nixl blob
@@ -97,29 +98,41 @@ typedef std::string nixl_backend_t;
  *        with specified length. Giving it a new name to be clear in the API and
  *        preventing users to think it's a string and call c_str().
  */
-typedef std::string nixl_blob_t;
+using nixl_blob_t = std::string;
 
 /**
  * @brief A typedef for a std::vector<nixl_mem_t> to create nixl_mem_list_t objects.
  */
-typedef std::vector<nixl_mem_t> nixl_mem_list_t;
+using nixl_mem_list_t = std::vector<nixl_mem_t>;
 
 /**
  * @brief A typedef for a  std::unordered_map<std::string, std::string>
  *        to hold nixl_b_params_t .
  */
-typedef std::unordered_map<std::string, std::string> nixl_b_params_t;
+using nixl_b_params_t = std::unordered_map<std::string, std::string>;
 
 /**
  * @brief A typedef for a  std::unordered_map<std::string, std::vector<nixl_blob_t>>
  *        to hold nixl_notifs_t (nixl notifications)
  */
-typedef std::unordered_map<std::string, std::vector<nixl_blob_t>> nixl_notifs_t;
+using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
 
 /**
  * @brief A constant to define the default communication port.
  */
 constexpr int default_comm_port = 8888;
+
+/**
+ * @brief A constant to define the default metadata label for ETCD server key.
+ *        Appended to the agent's key prefix to form the full key for metadata.
+ */
+extern const std::string default_metadata_label;
+
+/**
+ * @brief A constant to define the default partial metadata label for ETCD server key.
+ *        Appended to the agent's key prefix to form the full key for partial metadata.
+ */
+extern const std::string default_partial_metadata_label;
 
 /**
  * @class nixlAgentOptionalArgs
@@ -166,6 +179,17 @@ class nixlAgentOptionalArgs {
          *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
          */
         int port = default_comm_port;
+
+        /**
+         * @var metadataLabel Used to specify the label of the metadata to be sent/fetched
+         *                    when working with ETCD metadata server. The label will be appended to the
+         *                    agent's key prefix, and the full key will be used to store/fetch
+         *                    the metadata key-value pair from the server.
+         *                    Used in fetchRemoteMD, sendLocalPartialMD.
+         *                    Note that sendLocalMD always uses default_metadata_label and ignores this parameter.
+         *                    Note that invalidateLocalMD invalidates all labels and ignores this parameter.
+         */
+        std::string metadataLabel;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

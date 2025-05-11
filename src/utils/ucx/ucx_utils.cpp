@@ -14,15 +14,149 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <nixl_types.h>
 #include <vector>
 #include <string>
 #include <cstring>
-#include <cassert>
 
 #include "ucx_utils.h"
+#include "common/nixl_log.h"
 
 using namespace std;
 
+static nixl_status_t ucx_status_to_nixl(ucs_status_t status)
+{
+    if (status == UCS_OK) [[likely]] {
+        return NIXL_SUCCESS;
+    }
+
+    switch(status) {
+    case UCS_INPROGRESS:
+        return NIXL_IN_PROG;
+    case UCS_ERR_CONNECTION_RESET:
+        return NIXL_ERR_REMOTE_DISCONNECT;
+    case UCS_ERR_INVALID_PARAM:
+        return NIXL_ERR_INVALID_PARAM;
+    default:
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+void nixlUcxEp::err_cb(void *arg, ucp_ep_h ucp_ep, ucs_status_t status)
+{
+    nixlUcxEp *ep = reinterpret_cast<nixlUcxEp*>(arg);
+    ucs_status_ptr_t request;
+
+    NIXL_DEBUG << "ep " << ep->getHandle() << ": state " << ep->state
+               << ", UCX error handling callback was invoked with status "
+               << status << " (" << ucs_status_string(status) << ")";
+
+    NIXL_ASSERT(ep->getHandle() == ucp_ep);
+
+    switch(ep->state) {
+    case NIXL_UCX_EP_STATE_NULL:
+    case NIXL_UCX_EP_STATE_FAILED:
+        // The error was already handled, nothing to do
+    case NIXL_UCX_EP_STATE_DISCONNECTED:
+        // The EP has been disconnected, nothing to do
+        return;
+    case NIXL_UCX_EP_STATE_CONNECTED:
+        ep->setState(NIXL_UCX_EP_STATE_FAILED);
+        request = ucp_ep_close_nb(ucp_ep, UCP_EP_CLOSE_MODE_FORCE);
+        if (UCS_PTR_IS_PTR(request)) {
+            ucp_request_free(request);
+        }
+        return;
+    default:
+        NIXL_FATAL << "Invalid endpoint state: " << ep->state;
+    }
+}
+
+void nixlUcxEp::setState(nixl_ucx_ep_state_t new_state)
+{
+    NIXL_ASSERT(new_state != state);
+    NIXL_DEBUG << "ep " << eph << ": state " << state << " -> " << new_state;
+    state = new_state;
+}
+
+nixl_status_t nixlUcxEp::connect(ucp_worker_h worker, void* addr)
+{
+    ucp_ep_params_t ep_params;
+    nixl_status_t status;
+
+    ep_params.field_mask      = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
+                                UCP_EP_PARAM_FIELD_ERR_HANDLER |
+                                UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
+    ep_params.err_mode        = UCP_ERR_HANDLING_MODE_PEER;
+    ep_params.err_handler.cb  = err_cb;
+    ep_params.err_handler.arg = reinterpret_cast<void*>(this);
+    ep_params.address         = reinterpret_cast<ucp_address_t*>(addr);
+
+    status = ucx_status_to_nixl(ucp_ep_create(worker, &ep_params, &eph));
+    if (status == NIXL_SUCCESS) {
+        setState(NIXL_UCX_EP_STATE_CONNECTED);
+    }
+
+    return status;
+}
+
+nixl_status_t
+nixlUcxEp::closeImpl(ucp_worker_h worker, ucp_ep_close_flags_t flags)
+{
+    ucs_status_ptr_t request      = nullptr;
+    ucp_request_param_t req_param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+        .flags        = flags
+    };
+
+    switch(state) {
+    case NIXL_UCX_EP_STATE_NULL:
+    case NIXL_UCX_EP_STATE_DISCONNECTED:
+        // The EP has not been connected, or already disconnected.
+        // Nothing to do.
+        NIXL_ASSERT(eph == nullptr);
+        return NIXL_SUCCESS;
+    case NIXL_UCX_EP_STATE_FAILED:
+        // The EP was closed in error callback, just return error.
+        eph = nullptr;
+        return NIXL_ERR_REMOTE_DISCONNECT;
+    case NIXL_UCX_EP_STATE_CONNECTED:
+        request = ucp_ep_close_nbx(eph, &req_param);
+        if (request == nullptr) {
+            eph = nullptr;
+            return NIXL_SUCCESS;
+        }
+
+        if (UCS_PTR_IS_ERR(request)) {
+            eph = nullptr;
+            return ucx_status_to_nixl(UCS_PTR_STATUS(request));
+        }
+
+        if (worker == nullptr) {
+            ucp_request_free(request);
+            eph = nullptr;
+            return NIXL_SUCCESS;
+        }
+        break;
+    default:
+        NIXL_FATAL << "Invalid endpoint state: " << state;
+    }
+
+    NIXL_ASSERT(UCS_PTR_IS_PTR(request));
+    NIXL_ASSERT(worker != nullptr);
+
+    // Blocking close.
+    ucs_status_t status;
+    do {
+        ucp_worker_progress(worker);
+        status = ucp_request_check_status(request);
+    } while (status == UCS_INPROGRESS);
+
+    ucp_request_free(request);
+    eph = nullptr;
+
+    return ucx_status_to_nixl(status);
+}
 
 bool nixlUcxContext::mtLevelIsSupproted(nixl_ucx_mt_t mt_type)
 {
@@ -154,112 +288,40 @@ nixlUcxWorker::~nixlUcxWorker()
     ucp_worker_destroy(worker);
 }
 
-int nixlUcxWorker::epAddr(uint64_t &addr, size_t &size)
+std::unique_ptr<char []> nixlUcxWorker::epAddr(size_t &size)
 {
     ucp_worker_attr_t wattr;
     ucs_status_t status;
-    void* new_addr;
 
-    wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS |
-                       UCP_WORKER_ATTR_FIELD_ADDRESS_FLAGS;
-    wattr.address_flags = UCP_WORKER_ADDRESS_FLAG_NET_ONLY;
+    wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS;
     status = ucp_worker_query(worker, &wattr);
     if (UCS_OK != status) {
         // TODO: printf
-        return -1;
+        return nullptr;
     }
 
-    new_addr = calloc(wattr.address_length, sizeof(char));
-    memcpy(new_addr, wattr.address, wattr.address_length);
+    auto res = std::make_unique<char []>(wattr.address_length);
+    memcpy(res.get(), wattr.address, wattr.address_length);
     ucp_worker_release_address(worker, wattr.address);
 
-    addr = (uint64_t) new_addr;
     size = wattr.address_length;
-    return 0;
+    return res;
 }
-
-/* ===========================================
- * EP management
- * =========================================== */
-
-static void err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
-{
-    printf("error handling callback was invoked with status %d (%s)\n",
-           status, ucs_status_string(status));
-}
-
 
 int nixlUcxWorker::connect(void* addr, size_t size, nixlUcxEp &ep)
 {
-    ucp_ep_params_t ep_params;
-    ucs_status_t status;
-
-    //ep.uw = this;
-
-    ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
-                           UCP_EP_PARAM_FIELD_ERR_HANDLER |
-                           UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-    // TODO: Need to be UCP_ERR_HANDLING_MODE_PEER to properly handle disconnect
-    ep_params.err_mode = UCP_ERR_HANDLING_MODE_NONE;
-
-    ep_params.err_handler.cb = err_cb;
-    ep_params.address = (ucp_address_t*) addr;
-
-    status = ucp_ep_create(worker, &ep_params, &ep.eph);
-    if (status != UCS_OK) {
-        /* TODO: proper cleanup */
-        /* TODO:  MSW_NET_ERROR(priv->net, "!!! failed to create endpoint to remote %d (%s)\n",
-                      status, ucs_status_string(status)); */
-        return -1;
-    }
-
-    return 0;
+    nixl_status_t status = ep.connect(worker, addr);
+    return (status == NIXL_SUCCESS) ? 0 : -1;
 }
 
 int nixlUcxWorker::disconnect(nixlUcxEp &ep)
 {
-    ucs_status_ptr_t request = ucp_ep_close_nb(ep.eph, UCP_EP_CLOSE_MODE_FLUSH);
-
-    if (UCS_PTR_IS_ERR(request)) {
-        //TODO: proper cleanup
-        //if (UCS_PTR_IS_ERR(request)) {
-        //    MSW_NET_ERROR(priv->net, "ucp_disconnect_nb() failed: %s",
-        //                 ucs_status_string(UCS_PTR_STATUS(request)));
-        //    return -1;
-        //}
-        return -1;
-    }
-
-    if (request) {
-        while(ucp_request_check_status(request) == UCS_INPROGRESS) {
-            ucp_worker_progress(worker);
-        }
-        ucp_request_free(request);
-    }
-
-    return 0;
+    return ep.close(worker);
 }
 
 int nixlUcxWorker::disconnect_nb(nixlUcxEp &ep)
 {
-    ucs_status_ptr_t request = ucp_ep_close_nb(ep.eph, UCP_EP_CLOSE_MODE_FLUSH);
-
-    if (UCS_PTR_IS_ERR(request)) {
-        //TODO: proper cleanup
-        //if (UCS_PTR_IS_ERR(request)) {
-        //    MSW_NET_ERROR(priv->net, "ucp_disconnect_nb() failed: %s",
-        //                 ucs_status_string(UCS_PTR_STATUS(request)));
-        //    return -1;
-        //}
-        return -1;
-    }
-
-    if (request) {
-        //don't care
-        ucp_request_free(request);
-    }
-
-    return 0;
+    return ep.closeNb();
 }
 
 /* ===========================================
@@ -293,7 +355,7 @@ int nixlUcxWorker::memReg(void *addr, size_t size, nixlUcxMem &mem)
 }
 
 
-size_t nixlUcxWorker::packRkey(nixlUcxMem &mem, uint64_t &addr, size_t &size)
+std::unique_ptr<char []> nixlUcxWorker::packRkey(nixlUcxMem &mem, size_t &size)
 {
     ucs_status_t status;
     void *rkey_buf;
@@ -301,20 +363,15 @@ size_t nixlUcxWorker::packRkey(nixlUcxMem &mem, uint64_t &addr, size_t &size)
     status = ucp_rkey_pack(ctx->ctx, mem.memh, &rkey_buf, &size);
     if (status != UCS_OK) {
         /* TODO: MSW_NET_ERROR(priv->net, "failed to ucp_rkey_pack (%s)\n", ucs_status_string(status)); */
-        return -1;
+        return nullptr;
     }
 
     /* Allocate the buffer */
-    addr = (uint64_t) calloc(size, sizeof(char));
-    if (!addr) {
-        /* TODO: proper cleanup */
-        /* TODO: MSW_NET_ERROR(priv->net, "failed to allocate memory key buffer\n"); */
-        return -1;
-    }
-    memcpy((void*) addr, rkey_buf, size);
+    std::unique_ptr<char []> res = std::make_unique<char []>(size);
+    memcpy(res.get(), rkey_buf, size);
     ucp_rkey_buffer_release(rkey_buf);
 
-    return 0;
+    return res;
 }
 
 void nixlUcxWorker::memDereg(nixlUcxMem &mem)
@@ -330,7 +387,7 @@ int nixlUcxWorker::rkeyImport(nixlUcxEp &ep, void* addr, size_t size, nixlUcxRke
 {
     ucs_status_t status;
 
-    status = ucp_ep_rkey_unpack(ep.eph, addr, &rkey.rkeyh);
+    status = ucp_ep_rkey_unpack(ep.getHandle(), addr, &rkey.rkeyh);
     if (status != UCS_OK)
     {
         /* TODO: MSW_NET_ERROR(priv->net, "unable to unpack key!\n"); */
@@ -383,18 +440,14 @@ nixl_status_t nixlUcxWorker::sendAm(nixlUcxEp &ep, unsigned msg_id,
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
     param.flags         = flags;
 
-    request = ucp_am_send_nbx(ep.eph, msg_id, hdr, hdr_len, buffer, len, &param);
+    request = ucp_am_send_nbx(ep.getHandle(), msg_id, hdr, hdr_len, buffer, len, &param);
 
-    if (request == NULL ) {
-        return NIXL_SUCCESS;
-    } else if (UCS_PTR_IS_ERR(request)) {
-        /* TODO: MSW_NET_ERROR(priv->net, "unable to complete UCX request (%s)\n",
-                         ucs_status_string(UCS_PTR_STATUS(request))); */
-        return NIXL_ERR_BACKEND;
+    if (UCS_PTR_IS_PTR(request)) {
+        req = (void*)request;
+        return NIXL_IN_PROG;
     }
 
-    req = (void*)request;
-    return NIXL_IN_PROG;
+    return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
 int nixlUcxWorker::getRndvData(void* data_desc, void* buffer, size_t len, const ucp_request_param_t *param, nixlUcxReq &req)
@@ -426,24 +479,24 @@ nixl_status_t nixlUcxWorker::read(nixlUcxEp &ep,
                                   void *laddr, nixlUcxMem &mem,
                                   size_t size, nixlUcxReq &req)
 {
-    ucs_status_ptr_t request;
-
-    ucp_request_param_t param = {
-        .op_attr_mask               = UCP_OP_ATTR_FIELD_MEMH,
-        .memh                       = mem.memh,
-    };
-
-    request = ucp_get_nbx(ep.eph, laddr, size, raddr, rk.rkeyh, &param);
-    if (request == NULL ) {
-        return NIXL_SUCCESS;
-    } else if (UCS_PTR_IS_ERR(request)) {
-        /* TODO: MSW_NET_ERROR(priv->net, "unable to complete UCX request (%s)\n",
-                         ucs_status_string(UCS_PTR_STATUS(request))); */
-        return NIXL_ERR_BACKEND;
+    nixl_status_t status = ep.checkTxState();
+    if (status != NIXL_SUCCESS) {
+        return status;
     }
 
-    req = (void*)request;
-    return NIXL_IN_PROG;
+    ucp_request_param_t param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
+        .memh         = mem.memh,
+    };
+
+    ucs_status_ptr_t request = ucp_get_nbx(ep.getHandle(), laddr, size, raddr,
+                                           rk.rkeyh, &param);
+    if (UCS_PTR_IS_PTR(request)) {
+        req = (void*)request;
+        return NIXL_IN_PROG;
+    }
+
+    return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
 nixl_status_t nixlUcxWorker::write(nixlUcxEp &ep,
@@ -451,46 +504,34 @@ nixl_status_t nixlUcxWorker::write(nixlUcxEp &ep,
                                    uint64_t raddr, nixlUcxRkey &rk,
                                    size_t size, nixlUcxReq &req)
 {
-    ucs_status_ptr_t request;
-
-    ucp_request_param_t param = {
-        .op_attr_mask               = UCP_OP_ATTR_FIELD_MEMH,
-        .memh                       = mem.memh,
-    };
-
-    request = ucp_put_nbx(ep.eph, laddr, size, raddr, rk.rkeyh, &param);
-    if (request == NULL ) {
-        return NIXL_SUCCESS;
-    } else if (UCS_PTR_IS_ERR(request)) {
-        /* TODO: MSW_NET_ERROR(priv->net, "unable to complete UCX request (%s)\n",
-                         ucs_status_string(UCS_PTR_STATUS(request))); */
-        return NIXL_ERR_BACKEND;
+    nixl_status_t status = ep.checkTxState();
+    if (status != NIXL_SUCCESS) {
+        return status;
     }
 
-    req = (void*)request;
-    return NIXL_IN_PROG;
+    ucp_request_param_t param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
+        .memh         = mem.memh,
+    };
+
+    ucs_status_ptr_t request = ucp_put_nbx(ep.getHandle(), laddr, size, raddr,
+                                           rk.rkeyh, &param);
+    if (UCS_PTR_IS_PTR(request)) {
+        req = (void*)request;
+        return NIXL_IN_PROG;
+    }
+
+    return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
 nixl_status_t nixlUcxWorker::test(nixlUcxReq req)
 {
-    ucs_status_t status;
-
     if(req == NULL) {
         return NIXL_SUCCESS;
     }
 
     ucp_worker_progress(worker);
-    status = ucp_request_check_status(req);
-    if (status == UCS_INPROGRESS) {
-        return NIXL_IN_PROG;
-    }
-
-    if (status == UCS_OK ) {
-        return NIXL_SUCCESS;
-    } else {
-        //TODO: error
-        return NIXL_ERR_BACKEND;
-    }
+    return ucx_status_to_nixl(ucp_request_check_status(req));
 }
 
 nixl_status_t nixlUcxWorker::flushEp(nixlUcxEp &ep, nixlUcxReq &req)
@@ -499,18 +540,14 @@ nixl_status_t nixlUcxWorker::flushEp(nixlUcxEp &ep, nixlUcxReq &req)
     ucs_status_ptr_t request;
 
     param.op_attr_mask = 0;
-    request = ucp_ep_flush_nbx(ep.eph, &param);
+    request = ucp_ep_flush_nbx(ep.getHandle(), &param);
 
-    if (request == NULL ) {
-        return NIXL_SUCCESS;
-    } else if (UCS_PTR_IS_ERR(request)) {
-        /* TODO: MSW_NET_ERROR(priv->net, "unable to complete UCX request (%s)\n",
-                         ucs_status_string(UCS_PTR_STATUS(request))); */
-        return NIXL_ERR_BACKEND;
+    if (UCS_PTR_IS_PTR(request)) {
+        req = (void*)request;
+        return NIXL_IN_PROG;
     }
 
-    req = (void*)request;
-    return NIXL_IN_PROG;
+    return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
 void nixlUcxWorker::reqRelease(nixlUcxReq req)

@@ -20,13 +20,13 @@ import argparse
 import torch
 
 from nixl._api import nixl_agent, nixl_agent_config
-from nixl._bindings import nixlNotFoundError
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ip", type=str, required=True)
     parser.add_argument("--port", type=int, default=5555)
+    parser.add_argument("--use_cuda", type=bool, default=False)
     parser.add_argument(
         "--mode",
         type=str,
@@ -44,6 +44,9 @@ if __name__ == "__main__":
     if args.mode != "target":
         listen_port = 0
 
+    if args.use_cuda:
+        torch.set_default_device("cuda:0")
+
     config = nixl_agent_config(True, True, listen_port)
 
     # Allocate memory and register with NIXL
@@ -52,6 +55,7 @@ if __name__ == "__main__":
         tensors = [torch.ones(10, dtype=torch.float32) for _ in range(2)]
     else:
         tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]
+
     print(f"{args.mode} Tensors: {tensors}")
 
     reg_descs = agent.register_memory(tensors)
@@ -68,12 +72,11 @@ if __name__ == "__main__":
 
         # Send desc list to initiator when metadata is ready
         while not ready:
-            try:
-                agent.send_notif("initiator", target_desc_str)
-            except nixlNotFoundError:
-                ready = False
-            else:
-                ready = True
+            ready = agent.check_remote_metadata("initiator")
+
+        agent.send_notif("initiator", target_desc_str)
+
+        print("Waiting for transfer")
 
         # Waiting for transfer
         # For now the notification is just UUID, could be any python bytes.
@@ -98,14 +101,13 @@ if __name__ == "__main__":
         # Ensure remote metadata has arrived from fetch
         ready = False
         while not ready:
-            try:
-                xfer_handle = agent.initialize_xfer(
-                    "READ", initiator_descs, target_descs, "target", "UUID"
-                )
-            except nixlNotFoundError:
-                ready = False
-            else:
-                ready = True
+            ready = agent.check_remote_metadata("target")
+
+        print("Ready for transfer")
+
+        xfer_handle = agent.initialize_xfer(
+            "READ", initiator_descs, target_descs, "target", "UUID"
+        )
 
         if not xfer_handle:
             print("Creating transfer failed.")

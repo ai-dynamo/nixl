@@ -17,25 +17,64 @@
 #ifndef __UCX_UTILS_H
 #define __UCX_UTILS_H
 
+#include <nixl_types.h>
+#include <memory>
+
 extern "C"
 {
 #include <ucp/api/ucp.h>
 }
 
-#include "nixl.h"
-
-typedef enum {
+enum nixl_ucx_mt_t {
     NIXL_UCX_MT_SINGLE,
     NIXL_UCX_MT_CTX,
     NIXL_UCX_MT_WORKER,
     NIXL_UCX_MT_MAX
-} nixl_ucx_mt_t;
+};
+
 class nixlUcxEp {
+    enum nixl_ucx_ep_state_t {
+        NIXL_UCX_EP_STATE_NULL,
+        NIXL_UCX_EP_STATE_CONNECTED,
+        NIXL_UCX_EP_STATE_FAILED,
+        NIXL_UCX_EP_STATE_DISCONNECTED
+    };
 private:
-    ucp_ep_h  eph;
+    ucp_ep_h            eph{nullptr};
+    nixl_ucx_ep_state_t state{NIXL_UCX_EP_STATE_NULL};
+
+    static void err_cb(void *arg, ucp_ep_h ucp_ep, ucs_status_t status);
+    void setState(nixl_ucx_ep_state_t new_state);
+    nixl_status_t closeImpl(ucp_worker_h worker, ucp_ep_close_flags_t flags);
 
 public:
-    friend class nixlUcxWorker;
+    // TODO: Add read/write methods to avoid using raw handle outside.
+    ucp_ep_h getHandle() const { return eph; }
+
+    nixl_status_t checkTxState() const {
+        switch (state) {
+        case NIXL_UCX_EP_STATE_CONNECTED:
+            return NIXL_SUCCESS;
+        case NIXL_UCX_EP_STATE_FAILED:
+            return NIXL_ERR_REMOTE_DISCONNECT;
+        case NIXL_UCX_EP_STATE_NULL:
+        case NIXL_UCX_EP_STATE_DISCONNECTED:
+        default:
+            return NIXL_ERR_BACKEND;
+        }
+    }
+
+    nixl_status_t connect(ucp_worker_h worker, void* addr);
+
+    nixl_status_t close(ucp_worker_h worker) {
+        return closeImpl(worker, ucp_ep_close_flags_t(0));
+    }
+    nixl_status_t closeForce() {
+        return closeImpl(nullptr, UCP_EP_CLOSE_FLAG_FORCE);
+    }
+    nixl_status_t closeNb() {
+        return closeImpl(nullptr, ucp_ep_close_flags_t(0));
+    }
 };
 
 class nixlUcxMem {
@@ -56,7 +95,7 @@ public:
     friend class nixlUcxWorker;
 };
 
-typedef void * nixlUcxReq;
+using nixlUcxReq = void*;
 
 class nixlUcxContext {
 private:
@@ -65,7 +104,7 @@ private:
     nixl_ucx_mt_t mt_type;
 public:
 
-    typedef void req_cb_t(void *request);
+    using req_cb_t = void(void *request);
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
                    nixl_ucx_mt_t mt_type);
@@ -87,14 +126,14 @@ public:
     ~nixlUcxWorker();
 
     /* Connection */
-    int epAddr(uint64_t &addr, size_t &size);
+    std::unique_ptr<char []> epAddr(size_t &size);
     int connect(void* addr, size_t size, nixlUcxEp &ep);
     int disconnect(nixlUcxEp &ep);
     int disconnect_nb(nixlUcxEp &ep);
 
     /* Memory management */
     int memReg(void *addr, size_t size, nixlUcxMem &mem);
-    size_t packRkey(nixlUcxMem &mem, uint64_t &addr, size_t &size);
+    std::unique_ptr<char []> packRkey(nixlUcxMem &mem, size_t &size);
     void memDereg(nixlUcxMem &mem);
 
     /* Rkey */
