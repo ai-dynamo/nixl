@@ -1,0 +1,36 @@
+{
+    "podProperties": {
+        "containers": [
+            {
+                "command": [
+                    "/bin/bash",
+                    "-c",
+                    "${AWS_CMD}"
+                ],
+                "image": "${CONTAINER_IMAGE}",
+                "env": [
+                    {
+                        "name": "UCX_INSTALL_DIR",
+                        "value": "/usr/local"
+                    },
+                    {
+                        "name": "NIXL_INSTALL_DIR",
+                        "value": "/opt/nixl"
+                    },
+                    {
+                        "name": "LDFLAGS",
+                        "value": "-lpthread -ldl"
+                    },
+                    {
+                        "name": "LD_LIBRARY_PATH",
+                        "value": "/opt/nixl/lib:/opt/nixl/lib/x86_64-linux-gnu:/opt/nixl/lib/x86_64-linux-gnu/plugins:/usr/local/lib"
+                    },
+                    {
+                        "name": "NIXL_PLUGIN_DIR",
+                        "value": "/opt/nixl/lib/x86_64-linux-gnu/plugins"
+                    }
+                ]
+            }
+        ]
+    }
+}
