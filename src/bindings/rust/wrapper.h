@@ -149,7 +149,7 @@ nixl_capi_status_t nixl_capi_agent_make_connection(
 
 nixl_capi_status_t nixl_capi_agent_prep_xfer_dlist(
     nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs, 
-    nixl_capi_opt_args_t opt_args, nixl_capi_xfer_dlist_handle_t handle);
+    nixl_capi_xfer_dlist_handle_t handle, nixl_capi_opt_args_t opt_args);
 
 nixl_capi_status_t nixl_capi_agent_make_xfer_req(
     nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation, nixl_capi_xfer_dlist_t local_descs,
@@ -196,6 +196,10 @@ nixl_capi_status_t nixl_capi_xfer_dlist_verify_sorted(nixl_capi_xfer_dlist_t dli
 nixl_capi_status_t nixl_capi_xfer_dlist_clear(nixl_capi_xfer_dlist_t dlist);
 nixl_capi_status_t nixl_capi_xfer_dlist_resize(nixl_capi_xfer_dlist_t dlist, size_t new_size);
 nixl_capi_status_t nixl_capi_xfer_dlist_print(nixl_capi_xfer_dlist_t dlist);
+
+// Descriptor list handle functions
+nixl_capi_status_t nixl_capi_create_xfer_dlist_handle(nixl_capi_xfer_dlist_handle_t* handle);
+nixl_capi_status_t nixl_capi_destroy_xfer_dlist_handle(nixl_capi_xfer_dlist_handle_t handle);
 
 nixl_capi_status_t nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist, bool sorted);
 nixl_capi_status_t nixl_capi_destroy_reg_dlist(nixl_capi_reg_dlist_t dlist);

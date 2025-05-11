@@ -67,7 +67,8 @@ use bindings::{
     nixl_capi_xfer_dlist_trim, nixl_capi_reg_dlist_trim, nixl_capi_xfer_dlist_rem_desc,
     nixl_capi_reg_dlist_rem_desc, nixl_capi_xfer_dlist_print, nixl_capi_reg_dlist_print,
     nixl_capi_agent_make_connection, nixl_capi_agent_prep_xfer_dlist,
-    nixl_capi_agent_make_xfer_req,
+    nixl_capi_agent_make_xfer_req, nixl_capi_create_xfer_dlist_handle,
+    nixl_capi_destroy_xfer_dlist_handle,
 };
 
 // Re-export status codes
@@ -496,6 +497,29 @@ impl<'a> Drop for XferDescList<'a> {
         }
     }
 }
+
+/// A safe wrapper around a NIXL transfer descriptor list handle
+pub struct XferDescListHandle {
+    inner: NonNull<bindings::nixl_capi_xfer_dlist_handle_s>,
+}
+
+impl XferDescListHandle {
+    pub fn new() -> Result<Self, NixlError> {
+        let mut handle = ptr::null_mut();
+        let status = unsafe { nixl_capi_create_xfer_dlist_handle(&mut handle) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(Self { inner: unsafe { NonNull::new_unchecked(handle) } }),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+}
+
+impl Drop for XferDescListHandle {
+    fn drop(&mut self) {
+        unsafe { nixl_capi_destroy_xfer_dlist_handle(self.inner.as_ptr()) };
+    }
+}
+
 
 /// A safe wrapper around a NIXL registration descriptor list
 pub struct RegDescList<'a> {
@@ -1034,16 +1058,16 @@ impl Agent {
         }
     }
 
-    pub fn prep_xfer_dlist(&self, agent_name: &str, descs: &XferDescList, opt_args: &OptArgs, 
-                            handle: &mut XferDescList) -> Result<(), NixlError> {
+    pub fn prep_xfer_dlist(&self, agent_name: &str, descs: &XferDescList, handle: &mut XferDescListHandle, 
+                           opt_args: &OptArgs) -> Result<(), NixlError> {
         let agent_name = CString::new(agent_name)?;
         let status = unsafe {
             nixl_capi_agent_prep_xfer_dlist(
                 self.inner.write().unwrap().handle.as_ptr(),
                 agent_name.as_ptr(),
                 descs.inner.as_ptr(),
+                handle.inner.as_ptr(),
                 opt_args.inner.as_ptr(),
-                std::ptr::null_mut(),
             )
         };
 
