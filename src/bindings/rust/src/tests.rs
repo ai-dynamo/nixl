@@ -259,8 +259,6 @@ mod tests {
         assert!(storage2.as_slice().iter().all(|&x| x == 0xBB));
     }
 
-    
-
     #[test]
     fn test_make_connection_success() {
         let agent = Agent::new("test_agent").expect("Failed to create agent");

@@ -1281,7 +1281,7 @@ nixl_capi_status_t nixl_capi_agent_make_connection(
   }
 
   try { 
-    nixl_status_t ret = agent->inner->makeConnection(std::string(remote_agent), 
+    nixl_status_t ret = agent->inner->makeConnection(std::string(remote_agent),
                                                     opt_args ? &opt_args->args : nullptr);
     return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
   }
@@ -1291,7 +1291,7 @@ nixl_capi_status_t nixl_capi_agent_make_connection(
 }
 
 nixl_capi_status_t nixl_capi_agent_prep_xfer_dlist(
-    nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs, 
+    nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs,
     nixl_capi_xfer_dlist_handle_t handle, nixl_capi_opt_args_t opt_args)
 {
   auto backends = opt_args->args.backends;
@@ -1307,7 +1307,7 @@ nixl_capi_status_t nixl_capi_agent_prep_xfer_dlist(
       extra_params.backends.push_back(backend);
     }
 
-    nixl_status_t ret = agent->inner->prepXferDlist(std::string(agent_name), *descs->dlist, 
+    nixl_status_t ret = agent->inner->prepXferDlist(std::string(agent_name), *descs->dlist,
                                                     handle->dlist, &extra_params);
     return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
   }

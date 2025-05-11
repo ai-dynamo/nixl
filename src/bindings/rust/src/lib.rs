@@ -1066,7 +1066,7 @@ impl Agent {
         }
     }
 
-    pub fn prep_xfer_dlist(&self, agent_name: &str, descs: &XferDescList, handle: &mut XferDescListHandle, 
+    pub fn prep_xfer_dlist(&self, agent_name: &str, descs: &XferDescList, handle: &mut XferDescListHandle,
                            opt_args: &OptArgs) -> Result<(), NixlError> {
         let agent_name = CString::new(agent_name)?;
         let status = unsafe {
