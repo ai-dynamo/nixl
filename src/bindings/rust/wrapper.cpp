@@ -1280,7 +1280,7 @@ nixl_capi_status_t nixl_capi_agent_make_connection(
     return NIXL_CAPI_ERROR_INVALID_PARAM;
   }
 
-  try { 
+  try {
     nixl_status_t ret = agent->inner->makeConnection(std::string(remote_agent),
                                                     opt_args ? &opt_args->args : nullptr);
     return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;

@@ -148,7 +148,7 @@ nixl_capi_status_t nixl_capi_agent_make_connection(
     nixl_capi_agent_t agent, const char* remote_agent, nixl_capi_opt_args_t opt_args);
 
 nixl_capi_status_t nixl_capi_agent_prep_xfer_dlist(
-    nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs, 
+    nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs,
     nixl_capi_xfer_dlist_handle_t handle, nixl_capi_opt_args_t opt_args);
 
 nixl_capi_status_t nixl_capi_agent_make_xfer_req(
