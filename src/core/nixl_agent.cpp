@@ -123,6 +123,12 @@ nixlAgent::~nixlAgent() {
         data->commThreadStop = true;
         if(data->commThread.joinable()) data->commThread.join();
 
+        // Close remaining connections from comm thread
+        for (auto &[remote, fd] : data->remoteSockets) {
+            shutdown(fd, SHUT_RDWR);
+            close(fd);
+        }
+
         if(data->config.useListenThread) {
             if(data->listener) delete data->listener;
         }
@@ -271,9 +277,11 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         //       when threading is in agent
 
         NIXL_DEBUG << "Created backend: " << type;
+
+        return NIXL_SUCCESS;
     }
 
-    return NIXL_SUCCESS;
+    return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
@@ -1216,14 +1224,14 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
 
     // If IP is provided, use socket-based communication
     if (extra_params && !extra_params->ipAddr.empty()) {
-        data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, myMD));
+        data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, std::move(myMD)));
         return NIXL_SUCCESS;
     }
 
 #if HAVE_ETCD
     // If no IP is provided, use etcd (now via thread)
     if (data->useEtcd) {
-        data->enqueueCommWork(std::make_tuple(ETCD_SEND, data->name + "/metadata", 0, myMD));
+        data->enqueueCommWork(std::make_tuple(ETCD_SEND, default_metadata_label, 0, std::move(myMD)));
         return NIXL_SUCCESS;
     }
     return NIXL_ERR_INVALID_PARAM;
@@ -1241,14 +1249,17 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 
     // If IP is provided, use socket-based communication
     if (extra_params && !extra_params->ipAddr.empty()) {
-        data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, myMD));
+        data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, std::move(myMD)));
         return NIXL_SUCCESS;
     }
 
 #if HAVE_ETCD
     // If no IP is provided, use etcd (now via thread)
     if (data->useEtcd) {
-        data->enqueueCommWork(std::make_tuple(ETCD_SEND, data->name + "/partial_metadata", 0, myMD));
+        std::string metadata_label = extra_params && !extra_params->metadataLabel.empty() ?
+                                     extra_params->metadataLabel :
+                                     default_partial_metadata_label;
+        data->enqueueCommWork(std::make_tuple(ETCD_SEND, std::move(metadata_label), 0, std::move(myMD)));
         return NIXL_SUCCESS;
     }
     return NIXL_ERR_INVALID_PARAM;
@@ -1269,7 +1280,10 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
 #if HAVE_ETCD
     // If no IP is provided, use etcd via thread with watch capability
     if (data->useEtcd) {
-        data->enqueueCommWork(std::make_tuple(ETCD_FETCH, remote_name, 0, ""));
+        std::string metadata_label = extra_params && !extra_params->metadataLabel.empty() ?
+                                     extra_params->metadataLabel :
+                                     default_metadata_label;
+        data->enqueueCommWork(std::make_tuple(ETCD_FETCH, std::move(metadata_label), 0, remote_name));
         return NIXL_SUCCESS;
     }
     return NIXL_ERR_INVALID_PARAM;
@@ -1289,7 +1303,7 @@ nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
 #if HAVE_ETCD
     // If no IP is provided, use etcd via thread
     if (data->useEtcd) {
-        data->enqueueCommWork(std::make_tuple(ETCD_INVAL, data->name, 0, ""));
+        data->enqueueCommWork(std::make_tuple(ETCD_INVAL, "", 0, ""));
         return NIXL_SUCCESS;
     }
     return NIXL_ERR_INVALID_PARAM;
