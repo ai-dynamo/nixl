@@ -15,10 +15,11 @@
  * limitations under the License.
  */
 
-#ifndef ASYNC_QUEUE_H
-#define ASYNC_QUEUE_H
+#ifndef POSIX_QUEUE_H
+#define POSIX_QUEUE_H
 
 #include "nixl_types.h"
+#include "backend/backend_aux.h"
 #include <sys/types.h>
 
 // Abstract base class for async I/O operations
@@ -27,7 +28,13 @@ class nixlPosixQueue {
         virtual ~nixlPosixQueue() = default;
         virtual nixl_status_t submit() = 0;
         virtual nixl_status_t checkCompleted() = 0;
-        virtual nixl_status_t prepareIO(int fd, void* buf, size_t len, off_t offset) = 0;
+        virtual nixl_status_t prepIO(int fd, void* buf, size_t len, off_t offset) = 0;
+
+    enum class queue_t {
+        AIO,
+        URING,
+        UNSUPPORTED,
+    };
 };
 
-#endif // ASYNC_QUEUE_H
+#endif // POSIX_QUEUE_H
