@@ -44,11 +44,11 @@ struct nixl_ucx_am_hdr {
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
         std::string remoteAgent;
-        std::unique_ptr<nixlUcxEp> ep;
+        std::vector<std::unique_ptr<nixlUcxEp>> eps;
 
     public:
-        const std::unique_ptr<nixlUcxEp> &getEp() const {
-            return ep;
+        const std::unique_ptr<nixlUcxEp> &getEp(size_t ep_id) const {
+            return eps[ep_id];
         }
 
     friend class nixlUcxEngine;
@@ -78,15 +78,21 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
 
 // A public metadata has to implement put, and only has the remote metadata
 class nixlUcxPublicMetadata : public nixlBackendMD {
-
+    private:
+        std::vector<nixlUcxRkey> rkeys;
     public:
-        nixlUcxRkey rkey;
         ucx_connection_ptr_t conn;
 
         nixlUcxPublicMetadata() : nixlBackendMD(false) {}
 
         ~nixlUcxPublicMetadata(){
         }
+
+        nixlUcxRkey &getRkey(size_t id) {
+            return rkeys[id];
+        }
+
+    friend class nixlUcxEngine;
 };
 
 // Forward declaration of CUDA context
@@ -100,7 +106,7 @@ class nixlUcxEngine : public nixlBackendEngine {
     private:
         /* UCX data */
         std::shared_ptr<nixlUcxContext> uc;
-        std::unique_ptr<nixlUcxWorker> uw;
+        std::vector<std::unique_ptr<nixlUcxWorker>> uws;
         std::unique_ptr<char []> workerAddr;
         size_t workerSize;
 
@@ -166,7 +172,9 @@ class nixlUcxEngine : public nixlBackendEngine {
                                       size_t length,
                                       const ucp_am_recv_param_t *param);
         nixl_status_t notifSendPriv(const std::string &remote_agent,
-                                    const std::string &msg, nixlUcxReq &req);
+                                    const std::string &msg,
+                                    nixlUcxReq &req,
+                                    size_t worker_id);
         void notifProgress();
         void notifCombineHelper(notif_list_t &src, notif_list_t &tgt);
         void notifProgressCombineHelper(notif_list_t &src, notif_list_t &tgt);
@@ -233,7 +241,12 @@ class nixlUcxEngine : public nixlBackendEngine {
         nixl_status_t checkConn(const std::string &remote_agent);
         nixl_status_t endConn(const std::string &remote_agent);
 
-        const std::unique_ptr<nixlUcxWorker> &getWorker() const;
+        const std::unique_ptr<nixlUcxWorker> &getWorker(size_t worker_id) const {
+            return uws[worker_id];
+        }
+        size_t getWorkerId() const {
+            return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
+        }
 };
 
 #endif

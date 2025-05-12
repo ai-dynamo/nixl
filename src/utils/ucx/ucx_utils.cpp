@@ -331,9 +331,9 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 | UCP_FEATURE_AM;
     switch(mt_type) {
     case NIXL_UCX_MT_SINGLE:
-    case NIXL_UCX_MT_WORKER:
         ucp_params.mt_workers_shared = 0;
         break;
+    case NIXL_UCX_MT_WORKER:
     case NIXL_UCX_MT_CTX:
         ucp_params.mt_workers_shared = 1;
         break;
