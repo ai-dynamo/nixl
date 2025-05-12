@@ -36,21 +36,19 @@ class nixlBackendEngine {
         const std::string localAgent;
 
         [[nodiscard]] nixl_status_t setInitParam(const std::string &key, const std::string &value) {
-            if (customParams.count(key)==0) {
-	        customParams[key] = value;
+	    if (customParams.try_emplace(key,value).second) {
                 return NIXL_SUCCESS;
-            } else {
-                return NIXL_ERR_NOT_ALLOWED;
             }
+	    return NIXL_ERR_NOT_ALLOWED;
         }
 
-        [[nodiscard]] nixl_status_t getInitParam(const std::string &key, std::string &value) {
-            if (customParams.count(key)==0) {
-                return NIXL_ERR_INVALID_PARAM;
-            } else {
-	        value = customParams.at(key);
+        [[nodiscard]] nixl_status_t getInitParam(const std::string &key, std::string &value) const {
+	    const auto iter = customParams.find(key);
+            if (iter != customParams.end()) {
+                value = iter->second;
                 return NIXL_SUCCESS;
-            }
+	    }
+	    return NIXL_ERR_INVALID_PARAM;
         }
 
     public:
