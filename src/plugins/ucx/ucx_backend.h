@@ -48,7 +48,7 @@ class nixlUcxConnection : public nixlBackendConnMD {
         std::shared_ptr<nixlUcxEp> ep = std::make_shared<nixlUcxEp>();
 
     public:
-        nixlUcxEp& getEp() const noexcept { return *ep; }
+        [[nodiscard]] nixlUcxEp& getEp() const noexcept { return *ep; }
         // Extra information required for UCX connections
 
     friend class nixlUcxEngine;
@@ -64,7 +64,7 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
         nixlUcxPrivateMetadata() : nixlBackendMD(true) {
         }
 
-        const std::string& get() const noexcept {
+        [[nodiscard]] const std::string& get() const noexcept {
             return rkeyStr;
         }
 
