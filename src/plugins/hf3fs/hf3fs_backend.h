@@ -39,8 +39,11 @@ class nixlHf3fsIO {
     public:
         hf3fs_iov iov;
         int fd;
+        void* orig_addr;  // Original memory address for copying after read
+        size_t size;      // Size of the buffer
+        bool is_read;     // Whether this is a read operation
 
-        nixlHf3fsIO() : fd(-1) {}
+        nixlHf3fsIO() : fd(-1), orig_addr(nullptr), size(0), is_read(false) {}
         ~nixlHf3fsIO() {}
 };
 

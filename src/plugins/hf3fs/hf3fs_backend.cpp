@@ -18,6 +18,7 @@
 #include <iostream>
 #include <cctype>
 #include <atomic>
+#include <errno.h>
 #include "hf3fs_backend.h"
 #include "common/str_tools.h"
 #include "common/status.h"
@@ -142,8 +143,6 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
     // Determine which lists contain file/memory descriptors
     const nixl_meta_dlist_t* file_list = nullptr;
     const nixl_meta_dlist_t* mem_list = nullptr;
-    
-    //TODO: check based on the operation
     if (local.getType() == FILE_SEG) {
         file_list = &local;
         mem_list = &remote;
@@ -159,7 +158,7 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: Count mismatch or invalid operation selection");
     }
 
-    bool is_read = operation == NIXL_READ;
+    bool is_read = (operation == NIXL_READ);
 
     auto status = hf3fs_utils->createIOR(&hf3fs_handle->ior, file_cnt, is_read);
     if (status != NIXL_SUCCESS) {
@@ -169,8 +168,6 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
     for (int i = 0; i < file_cnt; i++) {
         // Get file descriptor from the proper list
         int file_descriptor = (*file_list)[i].devId;
-        
-        // Get memory address and other parameters
         addr = (void*) (*mem_list)[i].addr;
         size = (*mem_list)[i].len;
         offset = (size_t) (*file_list)[i].addr;  // Offset in file       
@@ -180,12 +177,29 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
             NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error: Failed to create IO");
         }
 
-        status = hf3fs_utils->wrapIOV(&io->iov, addr, size, size);
+        // Store original memory address for later use during READ operations
+        io->orig_addr = addr;
+        io->size = size;
+        io->is_read = is_read;
+
+        status = hf3fs_utils->createIOV(&io->iov, addr, size, size);
         if (status != NIXL_SUCCESS) {
+            delete io;
             NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to wrap memory as IOV");
         }
 
-        status = hf3fs_utils->prepIO(&hf3fs_handle->ior, &io->iov, addr, offset, size, file_descriptor, is_read);
+        // For WRITE operations, copy data from source buffer to IOV buffer
+        // For READ operations, we don't need to copy data now - we'll copy after read completes
+        if (!is_read) {
+            auto mem_copy = memcpy(io->iov.base, addr, size);
+            if (mem_copy == nullptr) {
+                delete io;
+                NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error: Failed to copy memory");
+            }
+        }
+
+        // Call prepIO with extended error handling
+        status = hf3fs_utils->prepIO(&hf3fs_handle->ior, &io->iov, io->iov.base, offset, size, file_descriptor, is_read, io);
         if (status != NIXL_SUCCESS) {
             delete io;
             NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to prepare IO");
@@ -226,21 +240,37 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle)
         ts.tv_nsec -= 1000000000;
     }
     
-    hf3fs_cqe cqes[2];
-    int ret = hf3fs_wait_for_ios(&hf3fs_handle->ior, cqes, 1, 1, &ts);
+    int num_ios = hf3fs_handle->io_list.size();
+    int num_cqes = num_ios > 1024 ? 1024 : num_ios;
+    hf3fs_cqe cqes[num_cqes];
+    int ret = hf3fs_wait_for_ios(&hf3fs_handle->ior, cqes, num_cqes, 1, &ts);
     // TODO: handle ret == 0 as timeout
-    if (ret < 0) {
+    if (ret <= 0) {
         // Check specifically for timeout (-ETIMEDOUT or -EAGAIN)
-        if (ret == -ETIMEDOUT || ret == -EAGAIN) {
+        if (ret == 0 || ret == -ETIMEDOUT || ret == -EAGAIN) {
             return NIXL_IN_PROG;  // Return in-progress to retry later
         }
 
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("Error: Failed to wait for IOs: %d (errno: %d - %s)", ret, ret, strerror(ret)));
     }
 
+    std::cout << "wait IOS ret: " << ret << std::endl;
+
     // Check if we have any errors in the completed I/O operations
-    if (ret > 0 && cqes[0].result < 0) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("Error: I/O operation completed with error: %d", cqes[0].result));
+    // Process the return values and copy the data for read operations
+    auto io_iter = hf3fs_handle->io_list.begin();
+    for (int i = 0; i < ret && io_iter != hf3fs_handle->io_list.end(); i++, ++io_iter) {
+        if (cqes[i].result < 0) {
+            NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("Error: I/O operation completed with error: %d", cqes[i].result));
+        }
+
+        nixlHf3fsIO* io = *io_iter;
+        if (io->is_read) {
+            auto mem_copy = memcpy(io->orig_addr, io->iov.base, io->size);
+            if (mem_copy == nullptr) {
+                NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error: Failed to copy memory after read");
+            }
+        }
     }
 
     return NIXL_SUCCESS;

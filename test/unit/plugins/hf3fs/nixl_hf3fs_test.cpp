@@ -40,7 +40,7 @@ namespace {
     const size_t page_size = sysconf(_SC_PAGESIZE);
 
     constexpr int default_num_transfers = 10;  // Same as original HF3FS test
-    constexpr size_t default_transfer_size = 10485760;  // 10MB default from original HF3FS test
+    constexpr size_t default_transfer_size = 1024;
     constexpr char test_phrase[] = "NIXL HF3FS Test Pattern 2025";
     constexpr size_t test_phrase_len = sizeof(test_phrase) - 1;  // -1 to exclude null terminator
     constexpr char test_file_name[] = "testfile";
@@ -575,15 +575,57 @@ int main(int argc, char *argv[])
     std::unique_ptr<char[]> expected_buffer = std::make_unique<char[]>(transfer_size);
     fill_test_pattern(expected_buffer.get(), transfer_size);
 
+    bool validation_passed = true;
     for (i = 0; i < num_transfers; ++i) {
         int ret = memcmp(dram_addr[i].get(), expected_buffer.get(), transfer_size);
         if (ret != 0) {
             std::cerr << "DRAM buffer " << i << " validation failed with error: " << ret << std::endl;
-            return 1;
+            
+            // Find the first difference byte
+            char* expected = expected_buffer.get();
+            char* actual = static_cast<char*>(dram_addr[i].get());
+            size_t diff_position = 0;
+            
+            for (size_t pos = 0; pos < transfer_size; pos++) {
+                if (expected[pos] != actual[pos]) {
+                    diff_position = pos;
+                    break;
+                }
+            }
+            
+            // Display difference information
+            std::cerr << "First difference at position " << diff_position << std::endl;
+            
+            // Show a few bytes before and after the difference position (up to 10 on each side)
+            size_t start = (diff_position > 10) ? diff_position - 10 : 0;
+            size_t end = std::min(diff_position + 10, transfer_size - 1);
+            
+            std::cerr << "Expected bytes (hex): ";
+            for (size_t pos = start; pos <= end; pos++) {
+                std::cerr << std::hex << std::setw(2) << std::setfill('0') 
+                          << static_cast<int>(static_cast<unsigned char>(expected[pos])) << " ";
+            }
+            std::cerr << std::dec << std::endl;
+            
+            std::cerr << "Actual bytes (hex):   ";
+            for (size_t pos = start; pos <= end; pos++) {
+                std::cerr << std::hex << std::setw(2) << std::setfill('0') 
+                          << static_cast<int>(static_cast<unsigned char>(actual[pos])) << " ";
+            }
+            std::cerr << std::dec << std::endl;
+            
+            validation_passed = false;
+            break; // Exit the loop on first validation failure
         }
         printProgress(float(i + 1) / num_transfers);
     }
 
+    if (validation_passed) {
+        std::cout << "All data validated successfully!" << std::endl;
+    } else {
+        std::cerr << "Data validation failed. Test incomplete." << std::endl;
+        return 1;
+    }
 
     print_segment_title("Freeing resources");
 

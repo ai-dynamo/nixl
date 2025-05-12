@@ -43,9 +43,10 @@ public:
     nixl_status_t openHf3fsDriver();
     void closeHf3fsDriver();
     nixl_status_t createIOR(struct hf3fs_ior *ior, int num_ios, bool is_read);
+    nixl_status_t createIOV(struct hf3fs_iov *iov, void *addr, size_t size, size_t block_size);
     nixl_status_t wrapIOV(struct hf3fs_iov *iov, void *addr, size_t size, size_t block_size);
     nixl_status_t destroyIOR(struct hf3fs_ior *ior);
-    nixl_status_t prepIO(struct hf3fs_ior *ior, struct hf3fs_iov *iov, void *addr, size_t fd_offset, size_t size, int fd, bool is_read);
+    nixl_status_t prepIO(struct hf3fs_ior *ior, struct hf3fs_iov *iov, void *addr, size_t fd_offset, size_t size, int fd, bool is_read, void *user_data);
     nixl_status_t postIOR(struct hf3fs_ior *ior);
     nixl_status_t checkXfer(struct hf3fs_ior *ior);
     std::string mount_point;
