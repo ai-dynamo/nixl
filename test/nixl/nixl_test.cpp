@@ -204,12 +204,14 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 }
 
 static void runTarget(const std::string &ip, int port) {
-    nixlAgentConfig cfg(true, true, port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 0, 100000);
+    nixlAgentConfig cfg(true, true, port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
 
     std::cout << "Starting Agent for target\n";
     nixlAgent agent(target, cfg);
 
-    nixl_b_params_t params;
+    nixl_b_params_t params = {
+        { "num_workers", "4" },
+    };
     nixlBackendH *ucx;
     agent.createBackend("UCX", params, ucx);
 
@@ -225,12 +227,14 @@ static void runTarget(const std::string &ip, int port) {
 }
 
 static void runInitiator(const std::string &target_ip, int target_port) {
-    nixlAgentConfig cfg(true, true, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 0, 100000);
+    nixlAgentConfig cfg(true, true, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
 
     std::cout << "Starting Agent for initiator\n";
     nixlAgent agent(initiator, cfg);
 
-    nixl_b_params_t params;
+    nixl_b_params_t params = {
+        { "num_workers", "4" },
+    };
     nixlBackendH *ucx;
     agent.createBackend("UCX", params, ucx);
 

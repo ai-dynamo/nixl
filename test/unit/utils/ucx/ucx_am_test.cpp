@@ -87,16 +87,16 @@ int main()
     vector<string> devs;
     devs.push_back("mlx5_0");
 
-    nixlUcxContext c[2] = {
-        nixlUcxContext(devs, 0, NULL, NULL, NIXL_UCX_MT_SINGLE),
-        nixlUcxContext(devs, 0, NULL, NULL, NIXL_UCX_MT_SINGLE)
+    std::shared_ptr<nixlUcxContext> c[2] = {
+        std::make_shared<nixlUcxContext>(devs, 0, nullptr, nullptr, NIXL_UCX_MT_SINGLE),
+        std::make_shared<nixlUcxContext>(devs, 0, nullptr, nullptr, NIXL_UCX_MT_SINGLE)
     };
 
     nixlUcxWorker w[2] = {
-        nixlUcxWorker(&c[0]),
-        nixlUcxWorker(&c[1])
+        nixlUcxWorker(c[0]),
+        nixlUcxWorker(c[1])
     };
-    nixlUcxEp ep[2];
+    std::unique_ptr<nixlUcxEp> ep[2];
     nixlUcxReq req;
     uint64_t buffer;
     int ret, i;
@@ -115,7 +115,9 @@ int main()
         size_t size;
         std::unique_ptr<char []> addr = w[i].epAddr(size);
         assert (addr != nullptr);
-        assert (0 == w[!i].connect((void*) addr.get(), size, ep[!i]));
+        auto result = w[!i].connect((void*) addr.get(), size);
+        assert(result.ok());
+        ep[!i] = std::move(*result);
 
 	//no need for mem_reg with active messages
 	//assert (0 == w[i].mem_reg(buffer[i], 128, mem[i]));
@@ -136,7 +138,7 @@ int main()
     w[0].progress();
 
     /* Test first callback */
-    ret = w[1].sendAm(ep[1], check_cb_id, &hdr, sizeof(struct sample_header), (void*) &buffer, sizeof(buffer), 0, req);
+    ret = ep[1]->sendAm(check_cb_id, &hdr, sizeof(struct sample_header), (void*) &buffer, sizeof(buffer), 0, req);
     assert (ret == 0);
 
     while (ret == 0){
@@ -150,7 +152,7 @@ int main()
     uint32_t flags = 0;
     flags |= UCP_AM_SEND_FLAG_RNDV;
 
-    ret = w[1].sendAm(ep[1], rndv_cb_id, &hdr, sizeof(struct sample_header), big_buffer, 8192, flags, req);
+    ret =  ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(struct sample_header), big_buffer, 8192, flags, req);
     assert (ret == 0);
 
     while (ret == 0){
@@ -162,11 +164,6 @@ int main()
 
     //make sure callbacks are complete
     w[0].progress();
-
-    /* Test shutdown */
-    for (i = 0; i < 2; i++) {
-        assert (0 == w[i].disconnect(ep[i]));
-    }
 
     free (big_buffer);
 }
