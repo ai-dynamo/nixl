@@ -19,6 +19,7 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
+
 def format_size(nbytes: float, precision=2) -> str:
     units = ["B", "K", "M", "G"]
     units_ix = 0

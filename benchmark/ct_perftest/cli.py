@@ -19,10 +19,12 @@ from utils import load_matrix
 import click
 import yaml
 from common import TrafficPattern
+from custom_traffic_perftest import CTPerftest
 from sequential_custom_traffic_perftest import SequentialCTPerftest
 from dist_utils import dist_utils
 
 log = logging.getLogger(__name__)
+
 
 @click.group()
 @click.option("--debug/--no-debug", default=False, help="Enable debug logging")
@@ -59,7 +61,9 @@ def cli(debug):
     help="Path to save JSON output",
     default=None,
 )
-def sequential_ct_perftest(config_file, verify_buffers, print_recv_buffers, json_output_path):
+def sequential_ct_perftest(
+    config_file, verify_buffers, print_recv_buffers, json_output_path
+):
     """Run custom traffic performance test using patterns defined in YAML config"""
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
@@ -86,11 +90,51 @@ def sequential_ct_perftest(config_file, verify_buffers, print_recv_buffers, json
             sleep_after_launch_sec=tp_config.get("sleep_after_launch_sec", 0),
         )
         patterns.append(pattern)
-    
+
     output_path = json_output_path
 
     perftest = SequentialCTPerftest(patterns)
-    perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers, json_output_path=output_path)
+    perftest.run(
+        verify_buffers=verify_buffers,
+        print_recv_buffers=print_recv_buffers,
+        json_output_path=output_path,
+    )
+    dist_utils.destroy_dist()
+
+
+@cli.command()
+@click.argument("config_file", type=click.Path(exists=True))
+@click.option(
+    "--verify-buffers/--no-verify-buffers",
+    default=False,
+    help="Verify buffer contents after transfer",
+)
+@click.option(
+    "--print-recv-buffers/--no-print-recv-buffers",
+    default=False,
+    help="Print received buffer contents",
+)
+def ct_perftest(config_file, verify_buffers, print_recv_buffers):
+    """Run custom traffic performance test using patterns defined in YAML config"""
+    with open(config_file, "r") as f:
+        config = yaml.safe_load(f)
+
+    tp_config = config.get("traffic_pattern")
+    if tp_config is None:
+        raise ValueError("Config file must contain 'traffic_pattern' key")
+
+    iters = config.get("iters", 1)
+    warmup_iters = config.get("warmup_iters", 0)
+
+    pattern = TrafficPattern(
+        matrix=load_matrix(Path(tp_config["matrix_file"])),
+        shards=tp_config.get("shards", 1),
+        mem_type=tp_config.get("mem_type", "dram").lower(),
+        xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
+    )
+
+    perftest = CTPerftest(pattern, iters=iters, warmup_iters=warmup_iters)
+    perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers)
     dist_utils.destroy_dist()
 
 

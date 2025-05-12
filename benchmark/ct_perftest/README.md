@@ -9,9 +9,11 @@ Such a pattern is defined using a transfer matrix, i.e a matrix where cell [i.j]
 
 The following benchmarks are available:
 - Sequential CT Perftest: Benchmark the performance of a continuum of traffic patterns one after the other, before running each pattern, all the ranks involved in the pattern do a barrier, then optionally sleep a given amount of time, and then run the pattern and measure the execution time.
+- CT Perftest: Benchmark the performance of one traffic pattern, the pattern is ran in multiple iterations and then metrics are reported. It is useful to optimize specific patterns
 
 
 ## Implementation Details
+- `custom_traffic_perftest.py` implements CT Perftest and the TrafficPattern dataclass
 - `sequential_custom_traffic_perftest.py` implements Sequential CT Perftest
 - Utilizes common utilities from `utils.py` and `dist_utils.py` for distributed testing support
 - Command-line interface extensions in `cli.py` for test configuration
@@ -111,3 +113,31 @@ srun <params> python cli.py sequential-ct-perftest ./matrices/metadata.yaml --ve
 
 ### Known Issues
 - The nixl xfer preparation currently takes a lot of time (the `_prepare_tp()` method).
+
+
+# Sequential CT Perftest
+
+### Reports
+CT Perftest reports total latency (the time elapsed between the first rank started until the last rank finished), the average time per iteration, the total size sent over the network and the average bandwidth by rank.
+
+
+### Usage
+Tests can be defined using YAML configuration files. 
+
+
+The configuration define a single traffic pattern, as well as number of iterations and warmup iterations:
+```yaml
+iters: 50
+warmup_iters: 10
+traffic_pattern:
+  matrix_file: "/path/to/matrix.txt"
+  shards: 1
+  mem_type: "cuda"
+  xfer_op: "WRITE"
+```
+
+Then run it with
+
+```bash
+python tools/perf/cli.py  ct-perftest path/to/config.yaml
+```

@@ -32,7 +32,7 @@ class NixlHandle:
         self.remote_rank = remote_rank
         self.handle = handle
         self.tp = traffic_pattern
-    
+
     def __str__(self):
         return f"to:{self.remote_rank}"
 
@@ -58,21 +58,20 @@ class NixlBuffer:
         else:
             raise ValueError(f"Unsupported memory type: {mem_type}")
 
+        if size % shards != 0:
+            raise ValueError(f"Size {size} must be divisible by shards {shards}")
+
         log.debug(
             f"[Rank {dist_utils.get_rank()}] Initializing NixlBuffer with size {size}, device {device}, shards {shards}, fill_value {fill_value}"
         )
-        self.bufs = []
         chunk_size = size // shards
-        self.bufs = [
-            torch.full((chunk_size,), fill_value, dtype=dtype, device=device)
-            for _ in range(shards)
-        ]
-        if size % chunk_size != 0:
-            self.bufs.append(
-                torch.full(
-                    (size % chunk_size,), fill_value, dtype=dtype, device=device
-                )
+        if shards == 1:
+            self.bufs = [torch.full((size,), fill_value, dtype=dtype, device=device)]
+        else:
+            self.bufs = torch.full(
+                (chunk_size, shards), fill_value, dtype=dtype, device=device
             )
+            self.bufs = torch.transpose(self.bufs, 0, 1)
 
         self.reg_descs = nixl_agent.get_reg_descs(self.bufs, mem_type=mem_type)
         self.xfer_descs = nixl_agent.get_xfer_descs(self.bufs, mem_type=mem_type)

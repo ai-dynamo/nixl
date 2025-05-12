@@ -236,7 +236,11 @@ def estimate_compute_time(
     model_config: ModelConfig,
     flops = 36*1E12, # 36 TFlops (h100)
 ):
-    """Estimate the compute time of a batch, in seconds"""
+    """Estimate the compute time of a batch, in seconds
+    Very approximative and assumes 36 TFlops (h100)
+    The formula comes from:
+    https://medium.com/@plienhar/llm-inference-series-3-kv-caching-unveiled-048152e461c8
+    """
     flop = 2 * batch.size * model_config.num_layers * model_config.hidden_size * batch.total_isl**2
     return flop / flops
 
@@ -382,10 +386,11 @@ if __name__ == "__main__":
     @click.option('--dtype-size', type=int, help='Size of model dtype in bytes (for custom model)')
     @click.option('--results-dir', type=str, help='Directory to save results')
     @click.option('--rail-optimized/--no-rail-optimized', default=False, help='Whether to use rail optimization')
+    @click.option('--ppn', default=8, type=int, help='Number of GPUs per node')
     def generate(num_user_requests, batch_size, num_prefill_nodes, num_decode_nodes,
                 prefill_tp, prefill_pp, prefill_cp, decode_tp, decode_pp, decode_cp,
                 model, hidden_size, num_layers, num_heads, num_kv_heads, dtype_size,
-                results_dir, rail_optimized):
+                results_dir, rail_optimized, ppn):
         """Generate communication matrices for given configuration"""
         
         if model:
@@ -410,8 +415,8 @@ if __name__ == "__main__":
         main(
             num_user_requests=num_user_requests,
             batch_size=batch_size,
-            num_prefill_gpus=num_prefill_nodes * 8,
-            num_decode_gpus=num_decode_nodes * 8,
+            num_prefill_gpus=num_prefill_nodes * ppn,
+            num_decode_gpus=num_decode_nodes * ppn,
             prefill_worker_config=WorkerConfig(tp=prefill_tp, pp=prefill_pp, cp=prefill_cp),
             decode_worker_config=WorkerConfig(tp=decode_tp, pp=decode_pp, cp=decode_cp),
             model_config=model_config,

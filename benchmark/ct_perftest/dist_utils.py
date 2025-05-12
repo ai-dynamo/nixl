@@ -30,18 +30,20 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
+
 class ReduceOp(Enum):
     SUM = "sum"
     AVG = "avg"
     MIN = "min"
     MAX = "max"
 
+
 class _DistUtils(ABC):
     """Allow for different distributed backends"""
 
     @final
     def __init__(self):
-        # Key is tuple of the sorted ranks, value is backend group 
+        # Key is tuple of the sorted ranks, value is backend group
         self.groups: Dict[Tuple[int, ...], Any] = {}
 
     @abstractmethod
@@ -87,7 +89,7 @@ class _DistUtils(ABC):
                 continue
             nixl_agent.add_remote_agent(metadata)
             log.debug(f"[Rank {my_rank}] Added remote agent {other_rank}'s metadata")
-    
+
     def init_groups(self, groups_ranks: List[List[int]]):
         """Initialize groups of ranks
 
@@ -168,7 +170,7 @@ class _TorchDistUtils(_DistUtils):
         log.debug(f"[Rank {rank}] Using CUDA device {device}")
 
         return rank, world_size
-    
+
     def barrier(self, ranks: Optional[List[int]] = None):
         """Barrier for a group of ranks
 
@@ -178,14 +180,16 @@ class _TorchDistUtils(_DistUtils):
         if ranks is None:
             dist.barrier()
             return
-        
+
         if self.get_rank() not in ranks:
             return
 
         key = tuple(sorted(ranks))
         group = self.groups.get(key)
         if group is None:
-            raise ValueError(f"[Rank {self.get_rank()}] Group with ranks {ranks} was not created")
+            raise ValueError(
+                f"[Rank {self.get_rank()}] Group with ranks {ranks} was not created"
+            )
 
         dist.barrier(group=group)
 
@@ -193,7 +197,7 @@ class _TorchDistUtils(_DistUtils):
         """Cleanup distributed process group"""
         if dist.is_initialized():
             dist.destroy_process_group()
-    
+
     def all_reduce(self, vals: List[float | int], op: ReduceOp) -> List[float | int]:
         val_tensor = torch.tensor(vals, device=torch.device("cuda"))
         if op == ReduceOp.SUM:
