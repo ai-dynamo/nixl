@@ -27,8 +27,8 @@
 class nixlBackendEngine {
     private:
         // Members that cannot be modified by a child backend and parent bookkeep
-        nixl_backend_t                           backendType;
-        const std::unique_ptr< nixl_b_params_t > customParams;  // TODO: Why is this even a pointer?
+        nixl_backend_t  backendType;
+        nixl_b_params_t customParams;
 
     protected:
         // Members that can be accessed by the child (localAgent cannot be modified)
@@ -36,8 +36,8 @@ class nixlBackendEngine {
         const std::string localAgent;
 
         [[nodiscard]] nixl_status_t setInitParam(const std::string &key, const std::string &value) {
-            if (customParams->count(key)==0) {
-                (*customParams)[key] = value;
+            if (customParams.count(key)==0) {
+	        customParams[key] = value;
                 return NIXL_SUCCESS;
             } else {
                 return NIXL_ERR_NOT_ALLOWED;
@@ -45,10 +45,10 @@ class nixlBackendEngine {
         }
 
         [[nodiscard]] nixl_status_t getInitParam(const std::string &key, std::string &value) {
-            if (customParams->count(key)==0) {
+            if (customParams.count(key)==0) {
                 return NIXL_ERR_INVALID_PARAM;
             } else {
-                value = (*customParams)[key];
+	        value = customParams.at(key);
                 return NIXL_SUCCESS;
             }
         }
@@ -56,7 +56,7 @@ class nixlBackendEngine {
     public:
         explicit nixlBackendEngine (const nixlBackendInitParams* init_params)
             : backendType( init_params->type ),
-              customParams( std::make_unique< nixl_b_params_t >( *init_params->customParams ) ),
+              customParams( *init_params->customParams ),
               localAgent(init_params->localAgent) {
         }
 
@@ -70,7 +70,7 @@ class nixlBackendEngine {
 
         [[nodiscard]] bool getInitErr() const noexcept { return initErr; }
         [[nodiscard]] const nixl_backend_t& getType() const noexcept { return backendType; }
-        [[nodiscard]] const nixl_b_params_t& getCustomParams() const noexcept { return *customParams; }
+        [[nodiscard]] const nixl_b_params_t& getCustomParams() const noexcept { return customParams; }
 
         // The support function determine which methods are necessary by the child backend, and
         // if they're called by mistake, they will return error if not implemented by backend.
