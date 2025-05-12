@@ -30,7 +30,7 @@ agent_example = executable('agent_example',
            install: true)
 
 nixl_test_app  = executable('nixl_test', 'nixl_test.cpp',
-                           dependencies: [nixl_dep, nixl_infra, stream_interface],
+                           dependencies: [nixl_dep, nixl_infra, stream_interface, thread_dep],
                            include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/utils/serdes'],
                            link_with: [serdes_lib], install: true)
 

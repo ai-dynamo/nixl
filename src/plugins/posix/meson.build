@@ -52,7 +52,7 @@ if have_liburing
 endif
 
 # Prepare dependencies list - only include liburing if found
-plugin_deps = [nixl_infra, nixl_common_dep, libaio_dep]
+plugin_deps = [nixl_infra, nixl_common_dep, libaio_dep, rt_dep]
 plugin_link_args = ['-laio']
 
 if have_liburing
