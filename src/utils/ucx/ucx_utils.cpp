@@ -390,7 +390,7 @@ nixlUcxContext::~nixlUcxContext()
 nixlUcxWorker::nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx): ctx(_ctx)
 {
     ucp_worker_params_t worker_params;
-    ucs_status_t status = UCS_OK;
+    ucs_status_t status;
 
     memset(&worker_params, 0, sizeof(worker_params));
     worker_params.field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
@@ -406,15 +406,15 @@ nixlUcxWorker::nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx): ctx(_ctx)
         worker_params.thread_mode = UCS_THREAD_MODE_MULTI;
         break;
     default:
-        assert(ctx->mt_type < NIXL_UCX_MT_MAX);
-        abort();
+        NIXL_FATAL << "Invalid UCX worker type: " << ctx->mt_type;
     }
 
     status = ucp_worker_create(ctx->ctx, &worker_params, &worker);
-    if (status != UCS_OK)
-    {
-       // TODO: MSW_NET_ERROR(priv->net, "failed to create ucp_worker (%s)\n", ucs_status_string(status));
-        return;
+    if (status != UCS_OK) {
+        auto err_str = std::string("Failed to create UCX worker: ") +
+                       ucs_status_string(status);
+        NIXL_ERROR << err_str;
+        throw std::runtime_error(err_str);
     }
 }
 
