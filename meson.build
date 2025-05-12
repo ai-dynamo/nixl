@@ -123,7 +123,8 @@ if get_option('buildtype') == 'debug'
     run_command('truncate', '-s 0', plugfile, check: true)
 endif
 
-nixl_inc_dirs = include_directories('src/api/cpp', 'src/infra', 'src/core')
+nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core')
+ucx_inc_dirs = include_directories('src/plugins/ucx')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')
