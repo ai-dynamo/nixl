@@ -16,8 +16,8 @@
 import argparse
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
-from commands.args import add_common_args
-from models.utils import get_batch_size
+from commands.args import add_common_args, add_cli_args
+from models.utils import get_batch_size, override_yaml_args
 
 class Command:
     """
@@ -48,6 +48,7 @@ class Command:
             argparse.ArgumentParser: The updated argument parser with added arguments.
         """
         add_common_args(subparser)
+        add_cli_args(subparser)
         return subparser
     
     def execute(self, args: argparse.Namespace):
@@ -73,7 +74,7 @@ class Command:
         
         # Load model configuration
         model_config = ModelConfig.from_yaml(args.model_config)
-        
+        override_yaml_args(model_config, args)
         # Set model_config on the model instance using the new method
         model.set_model_config(model_config)
 

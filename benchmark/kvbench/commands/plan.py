@@ -22,9 +22,9 @@ import csv
 import io
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
-from commands.args import add_common_args, add_nixl_bench_args, add_plan_args
+from commands.args import add_common_args, add_nixl_bench_args, add_plan_args, add_cli_args
 from commands.nixlbench import NIXLBench
-from models.utils import get_batch_size
+from models.utils import get_batch_size, override_yaml_args
 class Command:
     """
     Command handler for the 'plan' subcommand.
@@ -56,6 +56,7 @@ class Command:
         add_common_args(subparser)
         add_plan_args(subparser)
         add_nixl_bench_args(subparser)
+        add_cli_args(subparser)
         return subparser
     
     def execute(self, args: argparse.Namespace):
@@ -116,6 +117,9 @@ class Command:
             try:
                 # Load model configuration
                 model_config = ModelConfig.from_yaml(config_file)
+                # override yaml args with cli args if supplied 
+                # i.e. if --pp is supplied, use it to override the pp size in the yaml file
+                override_yaml_args(model_config, args)
                 model.set_model_config(model_config)
                 
                 separator = "=" * 80
