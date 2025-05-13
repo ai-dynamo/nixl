@@ -35,5 +35,5 @@ libc = "0.2"
 
 [build-dependencies]
 bindgen = "0.71"
-cc = { version = "1.2.21", features = ["parallel"] }
+cc = { version = "1.2.22", features = ["parallel"] }
 pkg-config = "0.3"
