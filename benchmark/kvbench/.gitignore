@@ -18,7 +18,7 @@ target-alpine/
 
 # Python tmp files
 __pycache__
-
+test/__pycache__
 # Maturin builds, and other native editable builds
 *.so
 *.pyd
