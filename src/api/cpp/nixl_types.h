@@ -123,6 +123,18 @@ using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
 constexpr int default_comm_port = 8888;
 
 /**
+ * @brief A constant to define the default metadata label for ETCD server key.
+ *        Appended to the agent's key prefix to form the full key for metadata.
+ */
+extern const std::string default_metadata_label;
+
+/**
+ * @brief A constant to define the default partial metadata label for ETCD server key.
+ *        Appended to the agent's key prefix to form the full key for partial metadata.
+ */
+extern const std::string default_partial_metadata_label;
+
+/**
  * @class nixlAgentOptionalArgs
  * @brief A class for optional argument that can be provided to relevant agent methods.
  */
@@ -167,6 +179,17 @@ class nixlAgentOptionalArgs {
          *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
          */
         int port = default_comm_port;
+
+        /**
+         * @var metadataLabel Used to specify the label of the metadata to be sent/fetched
+         *                    when working with ETCD metadata server. The label will be appended to the
+         *                    agent's key prefix, and the full key will be used to store/fetch
+         *                    the metadata key-value pair from the server.
+         *                    Used in fetchRemoteMD, sendLocalPartialMD.
+         *                    Note that sendLocalMD always uses default_metadata_label and ignores this parameter.
+         *                    Note that invalidateLocalMD invalidates all labels and ignores this parameter.
+         */
+        std::string metadataLabel;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

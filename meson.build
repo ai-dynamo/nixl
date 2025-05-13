@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.2.0',
+project('nixl', 'CPP', version: '0.2.1',
     default_options: ['buildtype=debug',
                 'werror=true',
                 'cpp_std=c++17',
@@ -25,6 +25,7 @@ project('nixl', 'CPP', version: '0.2.0',
 cpp = meson.get_compiler('cpp')
 
 dl_dep = cpp.find_library('dl', required: true)
+rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
 # Forced to ignore this error due to:
