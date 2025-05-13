@@ -48,5 +48,7 @@ def add_nixl_bench_args(subparser: argparse.ArgumentParser):
     subparser.add_argument("--device_list", type=str, help="Comma-separated device names (default: all)")
     subparser.add_argument("--runtime_type", type=str, help="Type of runtime to use [ETCD] (default: ETCD)")
     subparser.add_argument("--etcd-endpoints", type=str, help="ETCD server URL for coordination (default: http://localhost:2379)")
+    subparser.add_argument("--gds_enable_direct", type=bool, help="Enable direct I/O for GDS operations", default=False)
+    subparser.add_argument("--gds_filepath", type=str, help="(File path for GDS operations")
     
 
