@@ -31,75 +31,8 @@ if [ -z "$UCX_INSTALL_DIR" ]; then
     UCX_INSTALL_DIR=$INSTALL_DIR
 fi
 
-apt-get -qq update
-apt-get -qq install -y curl \
-                             libnuma-dev \
-                             numactl \
-                             autotools-dev \
-                             automake \
-                             libtool \
-                             libz-dev \
-                             libiberty-dev \
-                             flex \
-                             build-essential \
-                             cmake \
-                             libibverbs-dev \
-                             libgoogle-glog-dev \
-                             libgtest-dev \
-                             libjsoncpp-dev \
-                             libpython3-dev \
-                             libboost-all-dev \
-                             libssl-dev \
-                             libgrpc-dev \
-                             libgrpc++-dev \
-                             libprotobuf-dev \
-                             libaio-dev \
-                             meson \
-                             ninja-build \
-                             pkg-config \
-                             protobuf-compiler-grpc \
-                             pybind11-dev \
-                             etcd-server \
-                             net-tools \
-                             pciutils \
-                             libpci-dev \
-                             uuid-dev \
-                             ibverbs-utils \
-                             libibmad-dev \
-                             doxygen
-
-curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
-( \
-  cd openucx-ucx* && \
-  ./autogen.sh && \
-  ./configure \
-          --prefix=${UCX_INSTALL_DIR} \
-          --enable-shared \
-          --disable-static \
-          --disable-doxygen-doc \
-          --enable-optimizations \
-          --enable-cma \
-          --enable-devel-headers \
-          --with-verbs \
-          --with-dm \
-          --enable-mt && \
-        make -j && \
-        make -j install-strip && \
-        ldconfig \
-)
-
-export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib
-export CPATH=${INSTALL_DIR}/include:$CPATH
-export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
-
-# Disabling CUDA IPC not to use NVLINK, as it slows down local
-# UCX transfers and can cause contention with local collectives.
-export UCX_TLS=^cuda_ipc
-
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true
-cd nixl_build && ninja && ninja install
-
-# TODO(kapila): Copy the nixl.pc file to the install directory if needed.
-# cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../contrib/build.env"
+nixl_install_build_dependencies
+nixl_build_ucx
+nixl_build --doxygen

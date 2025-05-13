@@ -55,17 +55,24 @@ steps:
         # distro's meson version is too old project requires >= 0.64.0
         pip3 install meson
       fi
-      .gitlab/build.sh ${NIXL_INSTALL_DIR}
+      . "$WORKSPACE/contrib/build.env"
+      nixl_install_build_dependencies
+      nixl_build_ucx --install-dir ${NIXL_INSTALL_DIR}
+      nixl_build --install-dir ${NIXL_INSTALL_DIR} --ucx-install-dir ${NIXL_INSTALL_DIR}
 
   - name: Test CPP
     parallel: false
     run: |
-      .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
+      . "$WORKSPACE/contrib/build.env"
+      nixl_install_test_dependencies
+      nixl_cpp_tests --install-dir ${NIXL_INSTALL_DIR}
 
   - name: Test Python
     parallel: false
     run: |
-      .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
+      . "$WORKSPACE/contrib/build.env"
+      nixl_install_test_dependencies
+      nixl_python_tests --install-dir ${NIXL_INSTALL_DIR}
 
   - name: Build Docker Image
     parallel: false

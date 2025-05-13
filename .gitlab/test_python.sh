@@ -25,31 +25,7 @@ if [ -z "$INSTALL_DIR" ]; then
     exit 1
 fi
 
-apt-get -qq install liburing-dev
-
-ARCH=$(uname -m)
-[ "$ARCH" = "arm64" ] && ARCH="aarch64"
-
-export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
-export CPATH=${INSTALL_DIR}/include:$CPATH
-export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
-export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
-
-pip3 install --break-system-packages .
-pip3 install --break-system-packages pytest
-pip3 install --break-system-packages pytest-timeout
-pip3 install --break-system-packages zmq
-
-echo "==== Running python tests ===="
-python3 examples/python/nixl_api_example.py
-pytest test/python
-
-echo "==== Running python example ===="
-cd examples/python
-python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port=1234&
-sleep 5
-python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port=1234
-python3 partial_md_example.py
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../contrib/build.env"
+nixl_install_test_dependencies
+nixl_python_tests
