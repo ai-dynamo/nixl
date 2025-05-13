@@ -180,7 +180,7 @@ public:
 void nixlUcxEngine::progressFunc()
 {
     using namespace nixlTime;
-    
+
     cudaMemCtx->set();
 
     pthrActive = 1;
