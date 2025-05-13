@@ -16,7 +16,7 @@
 import math
 from models.models import BaseModelArch
 from models.model_config import ModelConfig
-
+import argparse
 def get_precision_size(precision: str) -> int:
     if precision == "fp8":
         return 1
@@ -34,3 +34,18 @@ def get_batch_size(model: BaseModelArch, model_config: ModelConfig, io_size: int
         (model.get_kv_size_per_token(model_config.runtime.isl)/io_size)
         * model_config.runtime.num_requests
     )
+def override_yaml_args(model_config: ModelConfig, args: argparse.Namespace):
+    if args.pp:
+        model_config.model.pp_size = args.pp
+    if args.tp:
+        model_config.model.tp_size = args.tp
+    if args.isl:
+        model_config.runtime.isl = args.isl
+    if args.osl:
+        model_config.runtime.osl = args.osl
+    if args.num_requests:
+        model_config.runtime.num_requests = args.num_requests
+    if args.page_size:
+        model_config.system.page_size = args.page_size
+    if args.access_pattern:
+        model_config.system.access_pattern = args.access_pattern

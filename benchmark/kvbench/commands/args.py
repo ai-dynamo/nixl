@@ -20,6 +20,16 @@ def add_common_args(subparser: argparse.ArgumentParser):
     subparser.add_argument("--model_config", type=str, help="Path to a single model config YAML file")
     subparser.add_argument("--model_configs", type=str, help="Path to multiple model config YAML files (supports glob patterns like 'configs/*.yaml')")
 
+def add_cli_args(subparser: argparse.ArgumentParser):
+    subparser.add_argument("--pp", type=int, help="Pipeline parallelism size")
+    subparser.add_argument("--tp", type=int, help="Tensor parallelism size")
+    subparser.add_argument("--isl", type=int, help="Input sequence length")
+    subparser.add_argument("--osl", type=int, help="Output sequence length")
+    subparser.add_argument("--num_requests", type=int, help="Number of requests")
+    subparser.add_argument("--page_size", type=int, help="Page size")
+    subparser.add_argument("--access_pattern", type=str, help="Access pattern")
+    
+
 def add_plan_args(subparser: argparse.ArgumentParser):
     subparser.add_argument("--source", default="file", type=str, help="Source of the nixl descriptors [file, memory, gpu] (default: file)")
     subparser.add_argument("--destination", default="memory", type=str, help="Destination of the nixl descriptors [file, memory, gpu] (default: memory)")
