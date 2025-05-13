@@ -20,7 +20,7 @@
 //! `nixl` crate.
 
 #[cfg(test)]
-mod tests {
+mod unit_tests {
     use crate::*;
     use std::env;
     use std::time::Duration;
@@ -32,16 +32,13 @@ mod tests {
 
     // Helper function to find a plugin by name
     fn find_plugin(plugins: &StringList, name: &str) -> Result<String, NixlError> {
-        let mut found_plugin = None;
-        for i in 0..plugins.len()? {
-            if let Ok(plugin_name) = plugins.get(i) {
-                if plugin_name == name {
-                    found_plugin = Some(plugin_name.to_string());
-                    break;
-                }
-            }
-        }
-        Ok(found_plugin.unwrap_or_else(|| plugins.get(0).unwrap().to_string()))
+        plugins
+            .iter()
+            .filter_map(Result::ok)
+            .find(|&plugin| plugin == name)
+            .map(ToString::to_string)
+            .or_else(|| plugins.get(0).ok().map(ToString::to_string))
+            .ok_or(NixlError::InvalidParam)
     }
 
     #[test]
@@ -64,8 +61,8 @@ mod tests {
             .expect("Failed to get plugins");
 
         // Print available plugins
-        for plugin in plugins.iter() {
-            println!("Found plugin: {}", plugin.unwrap());
+        for plugin in plugins.iter().flatten() {
+            println!("Found plugin: {}", plugin);
         }
     }
 
@@ -139,17 +136,13 @@ mod tests {
 
         // Print parameters using iterator
         let param_iter = backend_params.iter()?;
-        for param_result in param_iter {
-            if let Ok(param) = param_result {
-                println!("Backend param: {} = {}", param.key, param.value);
-            }
+        for param in param_iter.flatten() {
+            println!("Backend param: {} = {}", param.key, param.value);
         }
 
         // Print memory types
-        for mem_type in backend_mems.iter() {
-            if let Ok(mem_type) = mem_type {
-                println!("Backend memory type: {:?}", mem_type);
-            }
+        for mem_type in backend_mems.iter().flatten() {
+            println!("Backend memory type: {:?}", mem_type);
         }
 
         Ok(())
@@ -295,8 +288,8 @@ mod tests {
 
         // Get available plugins and print their names
         let plugins = agent.get_available_plugins().unwrap();
-        for plugin in plugins.iter() {
-            println!("Found plugin: {}", plugin.unwrap());
+        for plugin in plugins.iter().flatten() {
+            println!("Found plugin: {}", plugin);
         }
 
         // Get plugin parameters for both agents
@@ -362,10 +355,8 @@ mod tests {
 
         // Print available plugins
         let plugins = agent1.get_available_plugins()?;
-        for plugin_result in plugins.iter() {
-            if let Ok(plugin) = plugin_result {
-                println!("Found plugin: {}", plugin);
-            }
+        for plugin in plugins.iter().flatten() {
+            println!("Found plugin: {}", plugin);
         }
 
         // Setup UCX backends
@@ -611,7 +602,7 @@ mod tests {
         let mut storage = SystemStorage::new(1024).expect("Failed to create storage");
         let opt_args = OptArgs::new().expect("Failed to create opt args");
         storage
-            .register(&agent2, &opt_args)
+            .register(&agent2, Some(&opt_args))
             .expect("Failed to register memory");
 
         // Create descriptor list with memory that exists in agent2
@@ -620,7 +611,7 @@ mod tests {
             XferDescList::new(mem_type).expect("Failed to create xfer desc list");
         xfer_desc_list
             .add_desc(
-                unsafe { storage.as_ptr().unwrap() } as usize,
+                unsafe { storage.as_ptr() } as usize,
                 storage.size(),
                 storage.device_id(),
             )
