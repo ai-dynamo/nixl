@@ -75,10 +75,10 @@ class DeepSeekR1(BaseModelArch):
     
     def get_io_size(self, page_size: int = 1) -> int:
         """
-        Calculates the number of IOPs for one token per GPU
+        Calculates the size (bytes) of an IO request for the DeepSeek-R1 model.
         
         Returns:
-            int: The number of IOPs.
+            int: The number of bytes in an IO request.
         """
         kv_size = self.get_kv_size_per_token()
         if kv_size <= 0:

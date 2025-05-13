@@ -24,7 +24,7 @@ from models.model_config import ModelConfig
 from models.models import BaseModelArch
 from commands.args import add_common_args, add_nixl_bench_args, add_plan_args
 from commands.nixlbench import NIXLBench
-
+from models.utils import get_batch_size
 class Command:
     """
     Command handler for the 'plan' subcommand.
@@ -122,10 +122,7 @@ class Command:
                 isl_nixl_bench = NIXLBench(model, model_config, **filtered_args)
 
                 io_size = model.get_io_size(model_config.system.page_size)
-                batch_size = math.ceil(
-                    (model.get_kv_size_per_token(model_config.runtime.isl)/io_size)
-                    * model_config.runtime.num_requests
-                )
+                batch_size = get_batch_size(model, model_config, io_size)
                 isl_nixl_bench.set_io_size(io_size)
                 isl_nixl_bench.set_batch_size(batch_size)
 

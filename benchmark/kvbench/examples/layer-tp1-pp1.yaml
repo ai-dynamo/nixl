@@ -3,7 +3,6 @@ strategy:
   pp_size: 1
   model_quant_mode: "fp8"
   kvcache_quant_mode: "fp8"
-
 runtime:
   isl: 8192
   osl: 2048
