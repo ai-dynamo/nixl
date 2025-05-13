@@ -17,6 +17,7 @@ import argparse
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
 from commands.args import add_common_args
+from models.utils import get_batch_size
 
 class Command:
     """
@@ -81,49 +82,17 @@ class Command:
         def format_bytes(size):
             power = 0 if size <= 0 else floor(log(size, 1024))
             return f"{round(size / 1024 ** power, 2)} {['B', 'KB', 'MB', 'GB', 'TB'][int(power)]}"
-
-        # Get basic parameters
-        kv_size_per_token = model.get_kv_size_per_token()
-        batch_size = model.model_config.runtime.batch_size
-        isl = model.model_config.runtime.isl
-        osl = model.model_config.runtime.osl
-        
-        # Calculate metrics for ISL (Input Sequence)
-        kv_size_per_page_isl = batch_size * kv_size_per_token
-        kv_size_total_isl = kv_size_per_token * isl
-        
-        # Calculate metrics for OSL (Output Sequence) 
-        kv_size_total_osl = kv_size_per_token * osl
-        
-        # Calculate combined size (ISL + OSL)
-        kv_size_total_combined = kv_size_per_token * (isl + osl)
-        
-        # Determine labels and max width for formatting
         labels = [
             "KV Cache Size Per Token", 
-            "Page Size (batch)",
-            "Input Sequence Length (ISL)",
-            "KV Cache Size For ISL",
-            "Output Sequence Length (OSL)",
-            "KV Cache Size For OSL",
-            "Total Sequence Length (ISL+OSL)",
-            "Total KV Cache Size (ISL+OSL)",
-            "Batch Size"
+            "IO Size",
+            "Batch Size",
+            "Model",
+            "Input Sequence Length"
         ]
         max_width = max(len(label) for label in labels)
-        
-        # Display metrics
-        print("KV Cache Information:")
-        print("-" * (max_width + 20))
-        print(f"{'KV Cache Size Per Token':{max_width}}: {format_bytes(kv_size_per_token)}")
+        io_size = model.get_io_size(model_config.system.page_size)
+        batch_size = get_batch_size(model, model_config, io_size)
+        print(f"{'Model':{max_width}}: {model.model}")
+        print(f"{'Input Sequence Length':{max_width}}: {model_config.runtime.isl}")
         print(f"{'Batch Size':{max_width}}: {batch_size}")
-        print(f"{'Page Size (batch)':{max_width}}: {format_bytes(kv_size_per_page_isl)}")
-        print("-" * (max_width + 20))
-        print(f"{'Input Sequence Length (ISL)':{max_width}}: {isl}")
-        print(f"{'KV Cache Size For ISL':{max_width}}: {format_bytes(kv_size_total_isl)}")
-        print("-" * (max_width + 20))
-        print(f"{'Output Sequence Length (OSL)':{max_width}}: {osl}")
-        print(f"{'KV Cache Size For OSL':{max_width}}: {format_bytes(kv_size_total_osl)}")
-        print("-" * (max_width + 20))
-        print(f"{'Total Sequence Length (ISL+OSL)':{max_width}}: {isl + osl}")
-        print(f"{'Total KV Cache Size (ISL+OSL)':{max_width}}: {format_bytes(kv_size_total_combined)}")
+        print(f"{'IO Size':{max_width}}: {format_bytes(io_size)}")

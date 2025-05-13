@@ -13,6 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+from models.models import BaseModelArch
+from models.model_config import ModelConfig
+
 def get_precision_size(precision: str) -> int:
     if precision == "fp8":
         return 1
@@ -24,3 +28,9 @@ def get_precision_size(precision: str) -> int:
         return 2
     else:
         raise ValueError(f"Unsupported precision: {precision}")
+    
+def get_batch_size(model: BaseModelArch, model_config: ModelConfig, io_size: int):
+    return math.ceil(
+        (model.get_kv_size_per_token(model_config.runtime.isl)/io_size)
+        * model_config.runtime.num_requests
+    )
