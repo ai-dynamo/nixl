@@ -11,5 +11,5 @@ runtime:
 system:
   hardware: "H100"
   backend: "SGLANG"
-  access_pattern: "layer"
+  access_pattern: "block"
   page_size: 256
