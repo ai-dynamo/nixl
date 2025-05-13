@@ -49,8 +49,8 @@ options:
 python main.py kvcache --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml" 
 Model                  : DEEPSEEK_R1
 Input Sequence Length  : 10000
-Batch Size             : 2383
-IO Size                : 144.0 KB
+Batch Size             : 298
+IO Size                : 1.12 MB
 ```
 
 ### Display NIXL Bench Commands
@@ -64,8 +64,8 @@ nixlbench \
     --backend GDS \
     --etcd_endpoints http://10.185.99.120:3379 \
     --initiator_seg_type VRAM \
-    --max_batch_size 2383 \
-    --max_block_size 147456 \
-    --start_batch_size 2383 \
-    --start_block_size 147456
+    --max_batch_size 298 \
+    --max_block_size 1179648 \
+    --start_batch_size 298 \
+    --start_block_size 1179648
 ```
