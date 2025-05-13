@@ -409,7 +409,6 @@ nixlGdsEngine::~nixlGdsEngine() {
     // Clean up the batch pool
     for (auto* batch : batch_pool) {
         if (batch) {
-            batch->destroyBatch();  // Explicitly destroy the batch before deleting
             delete batch;
         }
     }
