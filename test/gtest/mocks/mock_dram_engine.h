@@ -74,6 +74,7 @@ public:
   }
   nixl_status_t getConnInfo(std::string &str) const override {
     assert(sharedState > 0);
+    str = "MockDramBackendEngineConnInfo";
     return NIXL_SUCCESS;
   }
   nixl_status_t loadRemoteConnInfo(const std::string &remote_agent,
