@@ -8,11 +8,22 @@ A tool that helps generate NIXL Benchmark commands for common LLM architectures 
 
 ## Building
 
+### Docker
 ```bash
-# cd nixl/benchmark/kvbench
-uv sync
+# cd nixl/benchmark/nixlbench
+export NIXL_SRC=/path/to/nixl/
+cd nixlbench/contrib
+./build.sh --nixl $NIXL_SRC
 ```
 
+### Python
+```bash
+cd kvbench
+python3 -m venv venv
+source venv/bin/activate
+pip install uv
+uv sync --active
+```
 ## Usage 
 
 ### Basic Usage
@@ -35,45 +46,26 @@ options:
 
 ### Display KVCache Information
 ```bash
-python main.py kvcache --model ./examples/model_deepseek_r1.yaml --model_config ./examples/latency-chat-sglang.yaml
-KV Cache Information:
----------------------------------------------------
-KV Cache Size Per Token        : 34.31 KB
-Batch Size                     : 16
-Page Size (batch)              : 549.0 KB
----------------------------------------------------
-Input Sequence Length (ISL)    : 8192
-KV Cache Size For ISL          : 274.5 MB
----------------------------------------------------
-Output Sequence Length (OSL)   : 2048
-KV Cache Size For OSL          : 68.62 MB
----------------------------------------------------
-Total Sequence Length (ISL+OSL): 10240
-Total KV Cache Size (ISL+OSL)  : 343.12 MB
+python main.py kvcache --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml" 
+Model                  : DEEPSEEK_R1
+Input Sequence Length  : 10000
+Batch Size             : 2383
+IO Size                : 144.0 KB
 ```
 
 ### Display NIXL Bench Commands
 ```bash
-python main.py plan  --model ./examples/model_deepseek_r1.yaml --model_config ./examples/latency-chat-sglang.yaml 
+python main.py plan --model ./examples/model_deepseek_r1.yaml --model_configs "./examples/block-tp1-pp8.yaml" --backend GDS --source gpu --etcd-endpoint "http://10.185.99.120:3379"
 ================================================================================
-NIXL BENCHMARK COMMAND FOR ISL (INPUT SEQUENCE)
-ISL: 8192 tokens
-================================================================================
-nixlbench \
-    --max_batch_size 512 \
-    --max_block_size 562176 \
-    --start_batch_size 512 \
-    --start_block_size 562176
-================================================================================
-NIXL BENCHMARK COMMAND FOR OSL (OUTPUT SEQUENCE)
-OSL: 2048 tokens
+Model Config: ./examples/block-tp1-pp8.yaml
+ISL: 10000 tokens
 ================================================================================
 nixlbench \
-    --max_batch_size 128 \
-    --max_block_size 562176 \
-    --start_batch_size 128 \
-    --start_block_size 562176
-
-NOTE: Use the appropriate command based on whether you're benchmarking
-      input sequence (prefill) or output sequence (generation) performance.
+    --backend GDS \
+    --etcd_endpoints http://10.185.99.120:3379 \
+    --initiator_seg_type VRAM \
+    --max_batch_size 2383 \
+    --max_block_size 147456 \
+    --start_batch_size 2383 \
+    --start_block_size 147456
 ```
