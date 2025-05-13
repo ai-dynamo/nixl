@@ -141,11 +141,6 @@ nixl_status_t nixlGdsIOBatch::addToBatch(CUfileHandle_t fh, void *buffer,
     return NIXL_SUCCESS;
 }
 
-void nixlGdsIOBatch::destroyBatch()
-{
-    cuFileBatchIODestroy(batch_handle);
-}
-
 nixl_status_t nixlGdsIOBatch::cancelBatch()
 {
     CUfileError_t   err;
