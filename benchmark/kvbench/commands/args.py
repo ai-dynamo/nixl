@@ -1,8 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import argparse
 
 def add_common_args(subparser: argparse.ArgumentParser):
     subparser.add_argument("--model", type=str, help="Model name (e.g., 'llama3.1-8b')")
-    subparser.add_argument("--model_config", type=str, help="Path to the model config YAML file")
+    subparser.add_argument("--model_config", type=str, help="Path to a single model config YAML file")
+    subparser.add_argument("--model_configs", type=str, help="Path to multiple model config YAML files (supports glob patterns like 'configs/*.yaml')")
+
+def add_plan_args(subparser: argparse.ArgumentParser):
+    subparser.add_argument("--source", default="file", type=str, help="Source of the nixl descriptors [file, memory, gpu] (default: file)")
+    subparser.add_argument("--destination", default="memory", type=str, help="Destination of the nixl descriptors [file, memory, gpu] (default: memory)")
+    subparser.add_argument("--format", default="text", type=str, help="Output of the nixl command [text, json, csv] (default: text)")
 
 def add_nixl_bench_args(subparser: argparse.ArgumentParser):
     subparser.add_argument("--backend", type=str, help="Communication backend [UCX, UCX_MO] (default: UCX)")

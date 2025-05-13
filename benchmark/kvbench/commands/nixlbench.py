@@ -1,6 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from models.models import BaseModelArch
 from models.model_config import ModelConfig
-
+import json
 class NIXLBench:
     """
     NIXL Benchmarking utility for KV cache performance testing.
@@ -98,8 +113,31 @@ class NIXLBench:
 
 
     def set_io_size(self, io_size: int):
-        self.start_batch_size = io_size
-        self.max_batch_size   = io_size
+        self.start_block_size = io_size
+        self.max_block_size   = io_size
+
+    def configure_segment_type(self, source: str, destination: str):
+        if source == "file":
+            self.initiator_seg_type = "FILE"
+        elif source == "object":
+            self.initiator_seg_type = "OBJ"
+        elif source == "block":
+            self.initiator_seg_type = "BLK"
+        elif source == "memory":
+            self.initiator_seg_type = "DRAM"
+        elif source == "gpu":
+            self.initiator_seg_type = "VRAM"
+
+        if destination == "file":
+            self.target_seg_type = "FILE"
+        elif destination == "object":
+            self.target_seg_type = "OBJ"
+        elif destination == "block":
+            self.target_seg_type = "BLK"
+        elif destination == "memory":
+            self.target_seg_type = "DRAM"
+        elif destination == "gpu":
+            self.target_seg_type = "VRAM"
 
     def configure_scheme(self, scheme: str = "pairwise", direction: str = "isl"):
         """
@@ -114,6 +152,10 @@ class NIXLBench:
                 self.num_initiator_dev = self.model_config.model.tp_size
                 self.num_target_dev = 1
 
+    def set_batch_size(self, batch_size: int):
+        self.start_batch_size = batch_size
+        self.max_batch_size   = batch_size
+
     def _override_defaults(self):
         """
         Set default values for parameters that were not explicitly provided.
@@ -121,16 +163,6 @@ class NIXLBench:
         This method is called during initialization to ensure all required
         parameters have valid values before running benchmarks.
         """
-        start_block_size = self.model.get_kv_size_per_token(self.model.model_config.runtime.batch_size)
-        max_block_size   = self.model.get_kv_size_per_token(self.model.model_config.runtime.batch_size)
-        
-        # start_batch_size = self.model.get_io_size()
-        # max_batch_size   = self.model.get_io_size()
-
-        if self.max_block_size is None:
-            self.max_block_size = max_block_size
-        if self.start_block_size is None:
-            self.start_block_size = start_block_size
         if self.total_buffer_size is None:
             self.total_buffer_size = 8589934592
 
@@ -206,39 +238,54 @@ class NIXLBench:
             "worker_type": "nixl"
         }
 
-    def plan(self, show_isl=True, show_osl=True):
+    def plan(self, format: str = "text"):
         """
         Generate the nixlbench command with appropriate parameters.
         
         This method builds a command string for the nixlbench tool,
         including only non-default parameters to keep the command concise.
         The generated command is printed to the console.
+        
+        For JSON output, all parameters including defaults are included,
+        with configured non-null values overriding defaults.
         """
         defaults = NIXLBench.defaults()
         command_parts = ["nixlbench"]
-        def should_include(name, value):
+        def should_include(name, value, include_defaults=False):
             if value is None:
                 return False
-            if name in defaults and value == defaults[name]:
+            if not include_defaults and name in defaults and value == defaults[name]:
                 return False
             return True
 
         
         params = self._params()
-        for name, value in params.items():
-            if should_include(name, value):
-                command_parts.append(f"--{name} {value}")
         
-        command = " \\\n    ".join(command_parts)
-        print(command)
+        # For JSON output, include all parameters (including defaults)
+        if format == "json" or format == "csv":
+            # Start with defaults, then update with actual non-null params to override defaults
+            merged_params = defaults.copy()
+            # Only update with non-null values from params
+            for key, value in params.items():
+                if value is not None:
+                    merged_params[key] = value
+            # print(json.dumps(merged_params))
+            return merged_params
+        else:  # for text format, exclude defaults to keep command concise
+            for name, value in params.items():
+                if should_include(name, value): 
+                    command_parts.append(f"--{name} {value}")
+            
+            command = " \\\n    ".join(command_parts)
+            return command
 
     def profile(self):
         """
-        Generate the nixlbench command with appropriate parameters.
+        Run the nixlbench command with appropriate parameters.
         
-        This method builds a command string for the nixlbench tool,
-        including only non-default parameters to keep the command concise.
-        The generated command is printed to the console.
+        This method builds a command for the nixlbench tool,
+        including only non-default parameters to keep the command concise,
+        and executes it as a subprocess.
         """
         import subprocess
         import os
@@ -263,4 +310,4 @@ class NIXLBench:
             if should_include(name, value):
                 command_parts.append(f"--{name}")
                 command_parts.append(f"{value}")
-        subprocess.run(command_parts, capture_output=True)
+        return subprocess.run(command_parts, capture_output=True)

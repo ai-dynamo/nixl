@@ -1,7 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from models.models import BaseModelArch
 from models.utils import get_precision_size
 from models.model_config import ModelConfig
 from typing import Any, Dict
+import math
 import yaml
 
 class DeepSeekR1(BaseModelArch):
@@ -58,14 +73,22 @@ class DeepSeekR1(BaseModelArch):
                 get_precision_size(self.model_config.model.kvcache_quant_mode) * 
                 self.num_layers)*token_count
     
-    def get_io_size(self, sequence_length: int) -> int:
+    def get_io_size(self, page_size: int = 1) -> int:
         """
-        Get the input/output size for the Llama 3.1 model.
+        Calculates the number of IOPs for one token per GPU
         
         Returns:
-            int: The size of the input/output cache, currently hardcoded to 1.
+            int: The number of IOPs.
         """
-        return int((sequence_length/self.model_config.runtime.batch_size))
+        kv_size = self.get_kv_size_per_token()
+        if kv_size <= 0:
+            raise ValueError("Invalid KV Size: 0")
+        # we need the size of kv per token per attention layer 
+        kv_size = (kv_size / self.num_layers)
+        io_size = kv_size / self.model_config.model.tp_size
+        if self.model_config.system.access_pattern == 'block':
+            io_size = io_size * math.ceil(self.num_layers/self.model_config.model.pp_size)
+        return int(io_size * page_size)
 
     def to_dict(self) -> Dict[str, Any]:
         """
