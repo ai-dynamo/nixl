@@ -8,3 +8,7 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /CONTRIBUTING.md @ai-dynamo/Devops
 /LICENSE @ai-dynamo/Devops
 /SECURITY.md @ai-dynamo/Devops
+
+# UCX Plugins
+/src/plugins/ucx* @brminich @yosefe @gleon99
+/src/utils/ucx @brminich @yosefe @gleon99
