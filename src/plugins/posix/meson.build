@@ -15,17 +15,20 @@
 
 # Check for libaio dependency (required)
 compiler = meson.get_compiler('cpp')
+librt_dep = compiler.find_library('rt', required: false)
 libaio_dep = compiler.find_library('aio', required: false)
 
 # If libaio is not found, skip building the POSIX plugin entirely
-if not libaio_dep.found()
-    message('libaio not found, POSIX plugin will not be built')
+if not libaio_dep.found() and not librt_dep.found()
+    message('libaio or rt not found, POSIX plugin will not be built')
     subdir_done()
 endif
 
-# Configure compile flags and set AIO as default
-compile_defs = ['-DHAVE_LIBAIO']
-message('libaio found, building POSIX plugin')
+if librt_dep.found() or libaio_dep.found()
+    # Configure compile flags and set AIO as default
+    compile_defs = ['-DHAVE_LIBAIO']
+    message('libaio found, building POSIX plugin')
+endif
 
 # Try to find liburing (optional) - first try pkg-config
 liburing_dep = dependency('liburing', required: false)
@@ -52,8 +55,14 @@ if have_liburing
 endif
 
 # Prepare dependencies list - only include liburing if found
-plugin_deps = [nixl_infra, nixl_common_dep, libaio_dep, rt_dep]
-plugin_link_args = ['-laio']
+plugin_deps = [nixl_infra, nixl_common_dep]
+if libaio_dep.found()
+    plugin_link_args = ['-laio']
+    plugin_deps += [ libaio_dep ]
+else
+    plugin_link_args = ['-lrt']
+    plugin_deps += [ librt_dep ]
+endif
 
 if have_liburing
     plugin_deps += [liburing_dep]
