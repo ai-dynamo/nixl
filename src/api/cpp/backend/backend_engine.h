@@ -60,7 +60,7 @@ class nixlBackendEngine {
 
         nixlBackendEngine( nixlBackendEngine&& ) = delete;
         nixlBackendEngine( const nixlBackendEngine& ) = delete;
-  
+
         void operator=( nixlBackendEngine&& ) = delete;
         void operator=( const nixlBackendEngine& ) = delete;
 
