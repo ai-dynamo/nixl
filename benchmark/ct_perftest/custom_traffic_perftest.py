@@ -130,8 +130,9 @@ class CTPerftest:
         dist_utils.init_group(senders_ranks)
 
         send_bufs, recv_bufs = self._init_buffers(tp)
+        log.debug(f"[Rank {self.my_rank}] Initialized {len(send_bufs)} send buffers and {len(recv_bufs)} recv buffers, sharing recv buffer descriptors")
         dst_bufs_descs = self._share_recv_buf_descs(recv_bufs)
-
+        log.debug(f"[Rank {self.my_rank}] Initializing xfers")
         handles: list[NixlHandle] = []
         for other, buf in enumerate(send_bufs):
             if buf is None:

@@ -38,7 +38,7 @@ class SequentialCTPerftest(CTPerftest):
     """
 
     def __init__(
-        self, traffic_patterns: list[TrafficPattern], n_iters: int = 3
+        self, traffic_patterns: list[TrafficPattern], n_iters: int = 3, n_isolation_iters=30, warmup_iters=30
     ) -> None:
         """Initialize multi-pattern performance test.
 
@@ -49,6 +49,8 @@ class SequentialCTPerftest(CTPerftest):
         self.world_size = dist_utils.get_world_size()
         self.traffic_patterns = traffic_patterns
         self.n_iters = n_iters
+        self.n_isolation_iters = n_isolation_iters
+        self.warmup_iters = warmup_iters
 
         log.debug(f"[Rank {self.my_rank}] Initializing Nixl agent")
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
@@ -94,48 +96,39 @@ class SequentialCTPerftest(CTPerftest):
 
         results["metadata"]["prepare_tp_time"] = time.time() - s
 
-        # Measure SOL for every matrix
-        isolated_tp_starts: list[float | None] = [None for _ in tp_handles]
-        isolated_tp_ends: list[float | None] = [None for _ in tp_handles]
-        n_isolation_iters = 20
+        # Isolated mode - Measure SOL for every matrix
+        isolated_tp_latencies: list[float] = [0 for _ in tp_handles]
+
         results["metadata"]["sol_calculation_ts"] = time.time()
         for tp_ix, handles in enumerate(tp_handles):
             tp = self.traffic_patterns[tp_ix]
-            for _ in range(10):  # Warmup
+            for _ in range(self.warmup_iters):  
                 self._run_tp(handles, blocking=True)
+                self._barrier_tp(tp)
 
             dist_utils.barrier()
 
-            isolated_tp_starts[tp_ix] = time.time()
-            for _ in range(n_isolation_iters):
+            for _ in range(self.n_isolation_iters):
+                t = time.time()
                 self._run_tp(handles, blocking=True)
-                self._barrier_tp(tp)
-            isolated_tp_ends[tp_ix] = time.time()
+                e = time.time()
+                isolated_tp_latencies[tp_ix] += e - t
+                self._barrier_tp(tp) 
+        
+            isolated_tp_latencies[tp_ix] /= self.n_isolation_iters
 
-        isolated_tp_starts_by_ranks = dist_utils.allgather_obj(isolated_tp_starts)
-        isolated_tp_ends_by_ranks = dist_utils.allgather_obj(isolated_tp_ends)
+        isolated_tp_latencies_by_ranks = dist_utils.allgather_obj(isolated_tp_latencies)
         isolated_tp_latencies: list[float | None] = []
         for i in range(len(self.traffic_patterns)):
-            starts = [
-                isolated_tp_starts_by_ranks[rank][i]
-                for rank in range(len(isolated_tp_starts_by_ranks))
-            ]
-            ends = [
-                isolated_tp_ends_by_ranks[rank][i]
-                for rank in range(len(isolated_tp_ends_by_ranks))
-            ]
-            starts = [x for x in starts if x is not None]
-            ends = [x for x in ends if x is not None]
-            if not ends or not starts:
+            tp_lats = [rank_lats[i] for rank_lats in isolated_tp_latencies_by_ranks if rank_lats[i] > 0 ]
+            if not tp_lats:
                 isolated_tp_latencies.append(None)
             else:
-                isolated_tp_latencies.append(
-                    (max(ends) - min(starts)) / n_isolation_iters
-                )
+                isolated_tp_latencies.append(max(tp_lats))
 
+        # Workload mode - Measure perf of the matrices while running the full workload
         for iter_ix in range(self.n_iters):
-            # WARMUP
-            for _ in range(10):
+            for _ in range(self.warmup_iters): # Warmup
                 for tp_ix, handles in enumerate(tp_handles):
                     self._run_tp(handles, blocking=True)
 
@@ -157,9 +150,6 @@ class SequentialCTPerftest(CTPerftest):
                 # Run TP
                 tp_starts[tp_ix] = time.time()
                 self._run_tp(handles, blocking=True)
-
-                # Check that all ranks have finished TP
-                self._barrier_tp(tp)
                 tp_ends[tp_ix] = time.time()
 
                 if tp.sleep_after_launch_sec is not None:
