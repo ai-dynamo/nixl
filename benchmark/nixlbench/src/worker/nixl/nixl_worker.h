@@ -34,6 +34,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
         nixlAgent* agent;
         nixlBackendH* backend_engine;
         nixl_mem_t seg_type;
+        std::vector<int> gds_remote_fds;
+        std::vector<std::vector<xferBenchIOV>> gds_remote_iovs;
+        std::vector<int> posix_remote_fds;
+        std::vector<std::vector<xferBenchIOV>> posix_remote_iovs;
     public:
         xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices);
         ~xferBenchNixlWorker();  // Custom destructor to clean up resources

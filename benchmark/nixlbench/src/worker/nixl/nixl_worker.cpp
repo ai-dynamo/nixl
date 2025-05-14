@@ -36,8 +36,8 @@
 #define ROUND_UP(value, granularity) ((((value) + (granularity) - 1) / (granularity)) * (granularity))
 
 static uintptr_t gds_running_ptr = 0x0;
-static int gds_remote_fd = -1;
 static std::vector<std::vector<xferBenchIOV>> gds_remote_iovs;
+static std::vector<std::vector<xferBenchIOV>> storage_remote_iovs;
 
 #if HAVE_CUDA
 static size_t __attribute__((unused)) padded_size = 0;
@@ -101,7 +101,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)){
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)){
         backend_name = xferBenchConfig::backend;
     } else {
         std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
@@ -139,6 +140,16 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)) {
         // Using default param values for GDS backend
         std::cout << "GDS backend" << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
+        // Set API type parameter for POSIX backend
+        if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
+            backend_params["use_aio"] = true;
+            backend_params["use_uring"] = false;
+        } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
+            backend_params["use_aio"] = false;
+            backend_params["use_uring"] = true;
+        }
+        std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type << std::endl;
     } else {
         std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -292,26 +303,42 @@ std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescVram(size_t buffer
 }
 #endif /* HAVE_CUDA */
 
-static int createGdsFile(std::string name) {
-    int fd;
+static std::vector<int> createFileFds(std::string name, bool is_gds) {
+    std::vector<int> fds;
     int flags = O_RDWR | O_CREAT;
+    int num_files = xferBenchConfig::num_files;
+    std::string file_path, file_name_prefix;
 
-    if (xferBenchConfig::gds_enable_direct) {
+    if (xferBenchConfig::storage_enable_direct) {
         flags |= O_DIRECT;
     }
-
-    std::string file_path = xferBenchConfig::gds_filepath != "" ?
-                            xferBenchConfig::gds_filepath :
-                            std::filesystem::current_path().string();
-    std::string file_name = file_path + "/nixlbench_gds_test_file_" + name;
-    std::cout << "Creating GDS file: " << file_name << std::endl;
-    fd = open(file_name.c_str(), flags, 0744);
-    if (fd < 0) {
-        std::cerr << "Failed to open file: " << file_name << " with error: "
-                  << strerror(errno) << std::endl;
-        return -1;
+    if (is_gds) {
+        file_path = xferBenchConfig::gds_filepath != "" ?
+                    xferBenchConfig::gds_filepath :
+                    std::filesystem::current_path().string();
+        file_name_prefix = "/nixlbench_gds_test_file_";
+    } else {  // POSIX
+        file_path = xferBenchConfig::posix_filepath != "" ?
+                    xferBenchConfig::posix_filepath :
+                    std::filesystem::current_path().string();
+        file_name_prefix = "/nixlbench_posix_test_file_";
     }
-    return fd;
+
+    for (int i = 0; i < num_files; i++) {
+        std::string file_name = file_path + file_name_prefix + name + "_" + std::to_string(i);
+        std::cout << "Creating " << (is_gds ? "GDS" : "POSIX") << " file: " << file_name << std::endl;
+        int fd = open(file_name.c_str(), flags, 0744);
+        if (fd < 0) {
+            std::cerr << "Failed to open file: " << file_name << " with error: "
+                      << strerror(errno) << std::endl;
+            for (int j = 0; j < i; j++) {
+                close(fds[j]);
+            }
+            return {};
+        }
+        fds.push_back(fd);
+    }
+    return fds;
 }
 
 std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id) {
@@ -359,8 +386,8 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
     opt_args.backends.push_back(backend_engine);
 
     if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) {
-        gds_remote_fd = createGdsFile(getName());
-        if (gds_remote_fd < 0) {
+        gds_remote_fds = createFileFds(getName(), true);
+        if (gds_remote_fds.empty()) {
             std::cerr << "Failed to create GDS file" << std::endl;
             exit(EXIT_FAILURE);
         }
@@ -368,7 +395,7 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(buffer_size, gds_remote_fd, i);
+                basic_desc = initBasicDescFile(buffer_size, gds_remote_fds[0], i);
                 if (basic_desc) {
                     iov_list.push_back(basic_desc.value());
                 }
@@ -378,6 +405,29 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args),
                         "registerMem failed");
             gds_remote_iovs.push_back(iov_list);
+        }
+        // Reset the running pointer to 0
+        gds_running_ptr = 0x0;
+    } else if (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+        posix_remote_fds = createFileFds(getName(), false);
+        if (posix_remote_fds.empty()) {
+            std::cerr << "Failed to create POSIX file" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        for (int list_idx = 0; list_idx < num_lists; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                std::optional<xferBenchIOV> basic_desc;
+                basic_desc = initBasicDescFile(buffer_size, posix_remote_fds[0], i);
+                if (basic_desc) {
+                    iov_list.push_back(basic_desc.value());
+                }
+            }
+            nixl_reg_dlist_t desc_list(FILE_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args),
+                        "registerMem failed");
+            posix_remote_iovs.push_back(iov_list);
         }
         // Reset the running pointer to 0
         gds_running_ptr = 0x0;
@@ -454,13 +504,24 @@ void xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args),
                              "deregisterMem failed");
         }
+    } else if (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+        for (auto &iov_list: posix_remote_iovs) {
+            for (auto &iov: iov_list) {
+                cleanupBasicDescFile(iov);
+            }
+            nixl_reg_dlist_t desc_list(FILE_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args),
+                             "deregisterMem failed");
+        }
     }
 }
 
 int xferBenchNixlWorker::exchangeMetadata() {
     int meta_sz, ret = 0;
 
-    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) {
+    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
+        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
         return 0;
     }
 
@@ -520,14 +581,29 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov: iov_list) {
                 std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(iov.len, gds_remote_fd, iov.devId);
+                basic_desc = initBasicDescFile(iov.len, gds_remote_fds[0], iov.devId);
                 if (basic_desc) {
                     remote_iov_list.push_back(basic_desc.value());
                 }
             }
             res.push_back(remote_iov_list);
         }
-    } else {
+    }
+    // Special case for POSIX
+    else if (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+        for (auto &iov_list: local_iovs) {
+            std::vector<xferBenchIOV> remote_iov_list;
+            for (auto &iov: iov_list) {
+                std::optional<xferBenchIOV> basic_desc;
+                basic_desc = initBasicDescFile(iov.len, posix_remote_fds[0], iov.devId);
+                if (basic_desc) {
+                    remote_iov_list.push_back(basic_desc.value());
+                }
+            }
+            res.push_back(remote_iov_list);
+        }
+    }
+    else {
         for (const auto &local_iov: local_iovs) {
             nixlSerDes ser_des;
             nixl_xfer_dlist_t local_desc(seg_type);
@@ -607,12 +683,15 @@ static int execTransfer(nixlAgent *agent,
         iovListToNixlXferDlist(remote_iov, remote_desc);
 
         nixl_opt_args_t params;
+        nixl_b_params_t b_params;
         bool error = false;
         nixlXferReqH *req;
         nixl_status_t rc;
         std::string target;
 
         if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) {
+            target = "initiator";
+        } else if (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
             target = "initiator";
         } else {
             params.notifMsg = "0xBEEF";
