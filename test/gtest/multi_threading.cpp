@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 #include "nixl.h"
 #include "plugin_manager.h"
+#include "mocks/gmock_engine.h"
 #include "common.h"
 #include <thread>
 #include <filesystem>
@@ -26,6 +27,7 @@ namespace multi_threading {
 
 class MultiThreadingTestFixture : public testing::Test {
 protected:
+    NiceMock<GMockBackendEngine> gmock_engine;
     uintptr_t addr = 0;
     size_t len = 1024;
     uint64_t dev_id = 0;
@@ -44,6 +46,7 @@ protected:
     nixlBackendH* verifyMockDramBackendCreation(nixlAgent& agent) {
         nixlBackendH* backend_handle = nullptr;
         nixl_b_params_t params;
+        params[gmock_engine_key] = std::to_string(reinterpret_cast<uintptr_t>(&gmock_engine));
         nixl_status_t status = agent.createBackend(mock_dram_plugin_name, params, backend_handle);
         EXPECT_EQ(status, NIXL_SUCCESS);
         EXPECT_NE(backend_handle, nullptr);

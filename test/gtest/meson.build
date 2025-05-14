@@ -22,6 +22,13 @@ if not gtest_dep.found()
     subdir_done()
 endif
 
+gmock_dep = dependency('gmock', required : false)
+
+if not gmock_dep.found()
+    message('GMock not found, skipping gtest build')
+    subdir_done()
+endif
+
 if cuda_dep.found()
     cuda_dependencies = [cuda_dep]
 else
@@ -45,7 +52,7 @@ test_exe = executable('gtest',
     sources : ['main.cpp', 'plugin_manager.cpp', 'ucx_tests.cpp', 'test_transfer.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, cuda_dep, gtest_dep, absl_strings_dep, absl_time_dep],
+    dependencies : [nixl_dep, cuda_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep],
     link_with: [nixl_build_lib],
     install : true
 )
@@ -61,7 +68,7 @@ if get_option('b_sanitize').split(',').contains('thread')
         sources : ['main.cpp', 'multi_threading.cpp'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         cpp_args : cpp_flags,
-        dependencies : [nixl_dep, nixl_infra, cuda_dep, gtest_dep],
+        dependencies : [nixl_dep, nixl_infra, cuda_dep, gtest_dep, gmock_dep],
         link_with: [nixl_build_lib],
     )
 
