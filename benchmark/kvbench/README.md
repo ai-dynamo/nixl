@@ -55,6 +55,49 @@ IO Size                : 1.12 MB
 ```
 
 ### Display NIXL Bench Commands
+
+The following table lists all available command-line arguments for the plan command:
+
+| Argument | Description |
+| -------- | ----------- |
+| `--model` | Path to a model definition YAML file |
+| `--model_config` | Path to a single model config YAML file |
+| `--model_configs` | Path to multiple model config YAML files (supports glob patterns like 'configs/*.yaml') |
+| `--source` | Source of the nixl descriptors [file, memory, gpu] (default: file) |
+| `--destination` | Destination of the nixl descriptors [file, memory, gpu] (default: memory) |
+| `--format` | Output of the nixl command [text, json, csv] (default: text) |
+| `--backend` | Communication backend [UCX, UCX_MO, GDS] (default: UCX) |
+| `--worker_type` | Worker to use to transfer data [nixl, nvshmem] (default: nixl) |
+| `--initiator_seg_type` | Memory segment type for initiator [DRAM, VRAM] (default: DRAM) |
+| `--target_seg_type` | Memory segment type for target [DRAM, VRAM] (default: DRAM) |
+| `--scheme` | Communication scheme [pairwise, manytoone, onetomany, tp] (default: pairwise) |
+| `--mode` | Process mode [SG (Single GPU per proc), MG (Multi GPU per proc)] (default: SG) |
+| `--op_type` | Operation type [READ, WRITE] (default: WRITE) |
+| `--check_consistency` | Enable consistency checking |
+| `--total_buffer_size` | Total buffer size in bytes (default: 8GiB) |
+| `--start_block_size` | Starting block size in bytes (default: 4KiB) |
+| `--max_block_size` | Maximum block size in bytes (default: 64MiB) |
+| `--start_batch_size` | Starting batch size (default: 1) |
+| `--max_batch_size` | Maximum batch size (default: 1) |
+| `--num_iter` | Number of iterations (default: 1000) |
+| `--warmup_iter` | Number of warmup iterations (default: 100) |
+| `--num_threads` | Number of threads used by benchmark (default: 1) |
+| `--num_initiator_dev` | Number of devices in initiator processes (default: 1) |
+| `--num_target_dev` | Number of devices in target processes (default: 1) |
+| `--enable_pt` | Enable progress thread |
+| `--device_list` | Comma-separated device names (default: all) |
+| `--runtime_type` | Type of runtime to use [ETCD] (default: ETCD) |
+| `--etcd-endpoints` | ETCD server URL for coordination (default: http://localhost:2379) |
+| `--gds_enable_direct` | Enable direct I/O for GDS operations |
+| `--gds_filepath` | File path for GDS operations |
+| `--pp` | Pipeline parallelism size |
+| `--tp` | Tensor parallelism size |
+| `--isl` | Input sequence length |
+| `--osl` | Output sequence length |
+| `--num_requests` | Number of requests |
+| `--page_size` | Page size |
+| `--access_pattern` | Access pattern [block, layer] |
+
 ```bash
 python main.py plan --model ./examples/model_deepseek_r1.yaml --model_configs "./examples/block-tp1-pp16.yaml" --backend GDS --source gpu --etcd-endpoint "http://10.185.99.120:3379"
 ================================================================================
