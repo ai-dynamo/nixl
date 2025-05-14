@@ -131,7 +131,8 @@ public:
     using req_cb_t = void(void *request);
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
-                   nixl_ucx_mt_t mt_type, bool prog_thread);
+                   bool prog_thread, unsigned long num_workers,
+                   nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     static bool mtLevelIsSupproted(nixl_ucx_mt_t mt_type);

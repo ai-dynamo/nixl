@@ -475,8 +475,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         numWorkers = 1;
 
     uc = std::make_shared<nixlUcxContext>(devs, sizeof(nixlUcxIntReq),
-                                          _internalRequestInit, _internalRequestFini, NIXL_UCX_MT_WORKER,
-                                          pthrOn);
+                                          _internalRequestInit, _internalRequestFini,
+                                          pthrOn, numWorkers, init_params->syncMode);
     for (unsigned int i = 0; i < numWorkers; i++)
         uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
 
