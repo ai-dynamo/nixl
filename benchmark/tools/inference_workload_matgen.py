@@ -33,6 +33,11 @@ python inference_workload_matgen.py generate \
     --decode-pp 1 \
     --decode-cp 1 \
     --results-dir /tmp/matrices \
+    --isl-mean 16000 \
+    --isl-scale 10000 \
+    --min-isl 1000 \
+    --max-isl 128000 \
+    --max-batch-mem 100000000000 \
     --hidden-size 16384 \
     --num-layers 126 \
     --num-heads 128 \
@@ -79,13 +84,12 @@ class ModelConfig:
 @dataclass
 class TaskConfig:
     """Configuration for an inference task."""
-    base_size: float = 0.0      # Base size in GB (deprecated when using model_config)
-    context_size: int = 0       # Context/sequence length (S)
+    isl_mean: int = 0       # Context/sequence length (S)
+    isl_scale: int = 10000  # Context/sequence length scale
+    min_isl: int = 1000     # Minimum context/sequence length
+    max_isl: int = 128000   # Maximum context/sequence length
     batch_size: int = 1         # Batch size (B)
-    model_config: Optional[ModelConfig] = None  # Model configuration
-    computation_overhead: float = 1.0  # Computation overhead factor (1.0 = standard)
-    fixed_duration: Optional[float] = None  # Optional fixed duration (overrides calculation)
-    probability_distribution: str = "uniform"  # Distribution type for task arrival
+    max_batch_mem: float = 100E9 # Maximum batch memory (100GB)
 
 
 @dataclass
@@ -138,7 +142,7 @@ class TransferMatrix:
 
 def gen_batches(
     num_user_requests: int,
-    batch_size: int,
+    task_config: TaskConfig,
     model_config: ModelConfig,
     max_batch_mem: float = 100E9, # 100GB - capacity of a gpu
 ):
@@ -146,16 +150,16 @@ def gen_batches(
     For now very naive, aggregate requests into batches until it exceeds max_batch_mem or batch_size
     Args:
         - num_user_requests: Number of user requests
-        - batch_size: Batch size
+        - task_config: Task configuration
     """
     batches = []
     curr = []
     curr_mem = 0
     for _ in range(num_user_requests):
-        req = UserRequest.rand()
+        req = UserRequest.rand(task_config.isl_mean, task_config.isl_scale, task_config.min_isl, task_config.max_isl)
         curr_mem += model_config.kv_cache_size(req.isl)
         curr.append(req)
-        if curr_mem > max_batch_mem or len(curr) >= batch_size:
+        if curr_mem > task_config.max_batch_mem or len(curr) >= task_config.batch_size:
             batches.append(Batch(user_requests=curr))
             curr = []
             curr_mem = 0
@@ -260,7 +264,7 @@ def format_size(nbytes: float, precision=2) -> str:
 
 def main(
     num_user_requests: int,
-    batch_size: int,
+    task_config: TaskConfig,
     num_prefill_gpus: int,
     num_decode_gpus: int,
     prefill_worker_config: WorkerConfig,
@@ -318,7 +322,7 @@ def main(
     print(f"Prefill workers: {prefill_workers}")
     print(f"Decode workers: {decode_workers}")
 
-    batches = gen_batches(num_user_requests, batch_size, model_config)
+    batches = gen_batches(num_user_requests, task_config, model_config)
     print(f"Generated {len(batches)} batches")
     matrices = gen_matrices_and_compute_time(batches, prefill_workers, decode_workers, model_config, prefill_worker_config, decode_worker_config)
 
@@ -360,6 +364,7 @@ if __name__ == "__main__":
 
     PREDEFINED_MODELS = {
         "llama-405b": ModelConfig(hidden_size=16384, num_layers=126, num_heads=128, num_kv_heads=8, dtype_size=2),
+        "qwen3-30B": ModelConfig(hidden_size=32768, num_layers=48, num_heads=32, num_kv_heads=4, dtype_size=2),
     }
 
     @click.group()
@@ -385,12 +390,17 @@ if __name__ == "__main__":
     @click.option('--num-kv-heads', type=int, help='Number of KV attention heads (for custom model)')
     @click.option('--dtype-size', type=int, help='Size of model dtype in bytes (for custom model)')
     @click.option('--results-dir', type=str, help='Directory to save results')
+    @click.option('--isl-mean', default=16000, type=int, help='Mean context/sequence length')
+    @click.option('--isl-scale', default=10000, type=int, help='Scale context/sequence length')
+    @click.option('--min-isl', default=1000, type=int, help='Minimum context/sequence length')
+    @click.option('--max-isl', default=128000, type=int, help='Maximum context/sequence length')
+    @click.option('--max-batch-mem', default=100E9, type=float, help='Maximum batch memory')
     @click.option('--rail-optimized/--no-rail-optimized', default=False, help='Whether to use rail optimization')
     @click.option('--ppn', default=8, type=int, help='Number of GPUs per node')
     def generate(num_user_requests, batch_size, num_prefill_nodes, num_decode_nodes,
                 prefill_tp, prefill_pp, prefill_cp, decode_tp, decode_pp, decode_cp,
                 model, hidden_size, num_layers, num_heads, num_kv_heads, dtype_size,
-                results_dir, rail_optimized, ppn):
+                results_dir, isl_mean, isl_scale, min_isl, max_isl, max_batch_mem, rail_optimized, ppn ):
         """Generate communication matrices for given configuration"""
         
         if model:
@@ -407,6 +417,15 @@ if __name__ == "__main__":
                 num_kv_heads=num_kv_heads,
                 dtype_size=dtype_size
             )
+        
+        task_config = TaskConfig(
+            isl_mean=isl_mean,
+            isl_scale=isl_scale,
+            min_isl=min_isl,
+            max_isl=max_isl,
+            batch_size=batch_size,
+            max_batch_mem=max_batch_mem,
+        )
 
         world_size = num_prefill_nodes * prefill_tp + num_decode_nodes * decode_tp
         # print(f"World size: {world_size}")
@@ -414,7 +433,7 @@ if __name__ == "__main__":
 
         main(
             num_user_requests=num_user_requests,
-            batch_size=batch_size,
+            task_config=task_config,
             num_prefill_gpus=num_prefill_nodes * ppn,
             num_decode_gpus=num_decode_nodes * ppn,
             prefill_worker_config=WorkerConfig(tp=prefill_tp, pp=prefill_pp, cp=prefill_cp),
