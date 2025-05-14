@@ -14,7 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include "ucx_backend.h"
+#include "common/nixl_log.h"
 #include "serdes/serdes.h"
 
 #include <optional>
@@ -430,6 +432,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 
     if (init_params->enableProgTh) {
         if (!nixlUcxContext::mtLevelIsSupproted(NIXL_UCX_MT_WORKER)) {
+            NIXL_ERROR << "UCX library does not support multi-threading";
             this->initErr = true;
             return;
         }
@@ -451,6 +454,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     workerAddr = uw->epAddr(workerSize);
 
     if (workerAddr == nullptr) {
+        NIXL_ERROR << "Failed to get UCX worker address";
         initErr = true;
         return;
     }
@@ -468,7 +472,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 
     // Temp fixup
     if (getenv("NIXL_DISABLE_CUDA_ADDR_WA")) {
-        std::cout << "WARNING: disabling CUDA address workaround" << std::endl;
+        NIXL_INFO << "disabling CUDA address workaround";
         cuda_addr_wa = false;
     } else {
         cuda_addr_wa = true;

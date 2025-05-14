@@ -326,8 +326,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
 
     mt_type = __mt_type;
 
-    ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED |
-                            UCP_PARAM_FIELD_ESTIMATED_NUM_EPS;
+    ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
     ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 | UCP_FEATURE_AM;
     switch(mt_type) {
     case NIXL_UCX_MT_SINGLE:
@@ -341,7 +340,6 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         assert(mt_type < NIXL_UCX_MT_MAX);
         abort();
     }
-    ucp_params.estimated_num_eps = 3;
 
     if (req_size) {
         ucp_params.request_size = req_size;
