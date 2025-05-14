@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "mock_dram_engine.h"
+#include "common.h"
 
 namespace mocks {
 namespace dram_plugin {
@@ -25,7 +26,7 @@ static nixlBackendEngine *create_engine(const nixlBackendInitParams *params) {
 
 static void destroy_engine(nixlBackendEngine *engine) { delete engine; }
 
-static const char *get_plugin_name() { return "MOCK_DRAM"; }
+static const char *get_plugin_name() { return gtest::mock_dram_plugin_name; }
 
 static const char *get_plugin_version() { return "0.0.1"; }
 

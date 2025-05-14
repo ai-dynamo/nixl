@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include "common.h"
 #include "nixl.h"
 #include "plugin_manager.h"
 
@@ -32,9 +33,6 @@ struct PluginDesc {
 void PrintTo(const PluginDesc &plugin_desc, ::std::ostream *os) {
   *os << plugin_desc.name;
 }
-
-static constexpr const char *mock_basic_plugin_name = "MOCK_BASIC";
-static constexpr const char *mock_dram_plugin_name = "MOCK_DRAM";
 
 const PluginDesc ucx_plugin_desc{.name = "UCX",
                                  .type = PluginDesc::PluginType::Real};

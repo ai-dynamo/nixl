@@ -13,9 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+gtest_inc_dirs = include_directories('../')
+
 mock_basic_plugin = shared_library('MOCK_BASIC', 'mock_basic_plugin.cpp',
                dependencies: [nixl_infra],
-               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
                link_with : [ucx_backend_lib],
                name_prefix: 'libplugin_',
                install: true,
@@ -24,7 +26,7 @@ mock_basic_plugin = shared_library('MOCK_BASIC', 'mock_basic_plugin.cpp',
 mock_dram_sources = ['mock_dram_plugin.cpp', 'mock_dram_engine.cpp']
 mock_dram_plugin = shared_library('MOCK_DRAM', mock_dram_sources,
                dependencies: [nixl_infra],
-               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
                link_with : [ucx_backend_lib],
                name_prefix: 'libplugin_',
                install: true,
