@@ -18,7 +18,6 @@
 #ifndef ASYNC_QUEUE_H
 #define ASYNC_QUEUE_H
 
-#include "common/status.h"
 #include "nixl_types.h"
 #include <sys/types.h>
 

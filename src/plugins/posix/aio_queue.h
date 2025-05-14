@@ -21,7 +21,6 @@
 #include <vector>
 #include <aio.h>
 #include "async_queue.h"
-#include "common/status.h"
 
 // Forward declare Error class
 class nixlPosixBackendReqH;

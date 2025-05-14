@@ -21,7 +21,6 @@
 #include <vector>
 #include <cstring>
 #include <stdexcept>
-#include "common/status.h"
 #include "common/nixl_log.h"
 
 namespace {

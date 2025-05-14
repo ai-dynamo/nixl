@@ -20,7 +20,6 @@
 
 #include <liburing.h>
 #include "async_queue.h"
-#include "common/status.h"
 #include <absl/strings/str_format.h>
 
 // Forward declare Error class

@@ -22,7 +22,6 @@
 #include "posix_backend.h"
 #include <absl/log/log.h>
 #include <absl/strings/str_format.h>
-#include "common/status.h"
 #include "common/nixl_log.h"
 #include "queue_factory_impl.h"
 
@@ -304,7 +303,9 @@ nixl_status_t nixlPosixEngine::postXfer(const nixl_xfer_op_t &operation,
     nixl_status_t status = NIXL_SUCCESS;
 
     status = static_cast<nixlPosixBackendReqH*>(handle)->postXfer();
-    NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error in submitting queue");
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Error in submitting queue";
+    }
 
     return status;
 }
