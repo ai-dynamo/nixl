@@ -91,3 +91,25 @@ nixlbench \
     --start_batch_size 5958 \
     --start_block_size 589824
 ```
+
+## Example: DeepSeek R1 with Layer Access (TP=1, PP=16)
+```bash
+python main.py plan \
+  --model ./examples/model_deepseek_r1.yaml \
+  --model_config ./examples/layer-tp1-pp16.yaml \
+  --backend GDS \
+  --source gpu \
+  --etcd-endpoint "http://localhost:2379"
+
+================================================================================
+Model Config: ./examples/layer-tp1-pp16.yaml
+ISL: 10000 tokens
+================================================================================
+nixlbench \
+    --backend GDS \
+    --initiator_seg_type VRAM \
+    --max_batch_size 23829 \
+    --max_block_size 147456 \
+    --start_batch_size 23829 \
+    --start_block_size 147456
+```
