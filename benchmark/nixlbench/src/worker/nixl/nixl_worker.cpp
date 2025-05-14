@@ -675,7 +675,8 @@ static int execTransfer(nixlAgent *agent,
         nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
         nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
 
-        if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) {
+        if ((XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) ||
+            (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend)) {
             remote_desc = nixl_xfer_dlist_t(FILE_SEG);
         }
 
