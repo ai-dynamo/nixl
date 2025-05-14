@@ -274,6 +274,7 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
 }
 
 nixlGdsIOBatch* nixlGdsEngine::getBatchFromPool(unsigned int size) {
+    const std::lock_guard<std::mutex> lock(batch_pool_lock);
     // Use a pre-allocated batch if available
     if (!batch_pool.empty()) {
         nixlGdsIOBatch* batch = batch_pool.back();
@@ -286,6 +287,7 @@ nixlGdsIOBatch* nixlGdsEngine::getBatchFromPool(unsigned int size) {
 }
 
 void nixlGdsEngine::returnBatchToPool(nixlGdsIOBatch* batch) {
+    const std::lock_guard<std::mutex> lock(batch_pool_lock);
     // Only keep up to batch_pool_size batches
         batch_pool.push_back(batch);
 }

@@ -25,6 +25,7 @@
 #include <fcntl.h>
 #include <list>
 #include <vector>
+#include <mutex>
 #include "gds_utils.h"
 #include "backend/backend_engine.h"
 
@@ -87,6 +88,8 @@ class nixlGdsEngine : public nixlBackendEngine {
     private:
         gdsUtil *gds_utils;
         std::unordered_map<int, gdsFileHandle> gds_file_map;
+
+        std::mutex batch_pool_lock;
         std::list<nixlGdsIOBatch*> batch_pool;
         unsigned int batch_pool_size;  // Renamed from pool_size
         unsigned int batch_limit;      // Added for configurable batch limit
