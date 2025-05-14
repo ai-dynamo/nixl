@@ -113,3 +113,26 @@ nixlbench \
     --start_batch_size 23829 \
     --start_block_size 147456
 ```
+## Example: Overriding model_config with cli args
+```bash
+python main.py plan \
+  --model ./examples/model_deepseek_r1.yaml \
+  --model_config ./examples/block-tp1-pp8.yaml \
+  --backend GDS \
+  --source gpu \
+  --etcd-endpoint "http://localhost:2379" \
+  --pp 32 \
+  --num_requests 100
+
+================================================================================
+Model Config: ./examples/block-tp1-pp8.yaml
+ISL: 10000 tokens
+================================================================================
+nixlbench \
+    --backend GDS \
+    --initiator_seg_type VRAM \
+    --max_batch_size 119141 \
+    --max_block_size 294912 \
+    --start_batch_size 119141 \
+    --start_block_size 294912
+```
