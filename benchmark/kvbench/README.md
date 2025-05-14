@@ -1,5 +1,5 @@
 # NIXL KVBench
-A tool that helps generate NIXL Benchmark commands for common LLM architectures and access patterns for KVCache transfer. 
+A utility for generating NIXL Bench commands that test KVCache transfer across various LLM architectures and access patterns (including block and layer approaches).
 
 ## Supported LLM Architectures
 - DeepSeek R1
@@ -55,17 +55,39 @@ IO Size                : 1.12 MB
 
 ### Display NIXL Bench Commands
 ```bash
-python main.py plan --model ./examples/model_deepseek_r1.yaml --model_configs "./examples/block-tp1-pp8.yaml" --backend GDS --source gpu --etcd-endpoint "http://10.185.99.120:3379"
+python main.py plan --model ./examples/model_deepseek_r1.yaml --model_configs "./examples/block-tp1-pp16.yaml" --backend GDS --source gpu --etcd-endpoint "http://10.185.99.120:3379"
 ================================================================================
-Model Config: ./examples/block-tp1-pp8.yaml
+Model Config: ./examples/block-tp1-pp16.yaml
 ISL: 10000 tokens
 ================================================================================
 nixlbench \
     --backend GDS \
     --etcd_endpoints http://10.185.99.120:3379 \
     --initiator_seg_type VRAM \
-    --max_batch_size 298 \
-    --max_block_size 1179648 \
-    --start_batch_size 298 \
-    --start_block_size 1179648
+    --max_batch_size 149 \
+    --max_block_size 589824 \
+    --start_batch_size 149 \
+    --start_block_size 589824
+```
+
+## Example: DeepSeek R1 with Block Access (TP=1, PP=16)
+```bash
+python main.py plan \
+  --model ./examples/model_deepseek_r1.yaml \
+  --model_config ./examples/block-tp1-pp16.yaml \
+  --backend GDS \
+  --source gpu \
+  --etcd-endpoint "http://localhost:2379"
+
+================================================================================
+Model Config: ./examples/block-tp1-pp16.yaml
+ISL: 10000 tokens
+================================================================================
+nixlbench \
+    --backend GDS \
+    --initiator_seg_type VRAM \
+    --max_batch_size 5958 \
+    --max_block_size 589824 \
+    --start_batch_size 5958 \
+    --start_block_size 589824
 ```
