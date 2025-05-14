@@ -1,6 +1,6 @@
 strategy:
   tp_size: 1
-  pp_size: 8
+  pp_size: 16
   model_quant_mode: "fp8"
   kvcache_quant_mode: "fp8"
 runtime:
