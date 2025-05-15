@@ -116,28 +116,24 @@ class NIXLBench:
         self.start_block_size = io_size
         self.max_block_size   = io_size
 
-    def configure_segment_type(self, source: str, destination: str):
-        if source == "file":
-            self.initiator_seg_type = "FILE"
-        elif source == "object":
-            self.initiator_seg_type = "OBJ"
-        elif source == "block":
-            self.initiator_seg_type = "BLK"
-        elif source == "memory":
-            self.initiator_seg_type = "DRAM"
-        elif source == "gpu":
-            self.initiator_seg_type = "VRAM"
+    def configure_segment_type(self, backend: str, source: str, destination: str):
+        if backend == "GDS":
+            if source == "file":
+                # this is a READ from GDS to GPU
+                self.op_type = "READ"
+                self.target_seg_type = "VRAM"
+            elif source == "gpu":
+                # this is a WRITE from GPU to GDS
+                self.op_type = "WRITE"
+                self.target_seg_type = "VRAM"
 
-        if destination == "file":
-            self.target_seg_type = "FILE"
-        elif destination == "object":
-            self.target_seg_type = "OBJ"
-        elif destination == "block":
-            self.target_seg_type = "BLK"
-        elif destination == "memory":
-            self.target_seg_type = "DRAM"
-        elif destination == "gpu":
-            self.target_seg_type = "VRAM"
+            elif source == "memory":
+                # this is a WRITE from memory to GDS
+                self.op_type = "WRITE"
+                self.initiator_seg_type = "DRAM"
+                self.target_seg_type = "DRAM"
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
 
     def configure_scheme(self, scheme: str = "pairwise", direction: str = "isl"):
         """
@@ -155,6 +151,9 @@ class NIXLBench:
     def set_batch_size(self, batch_size: int):
         self.start_batch_size = batch_size
         self.max_batch_size   = batch_size
+
+    def configure_buffer_size(self):
+        self.total_buffer_size = self.max_batch_size * self.max_block_size
 
     def _override_defaults(self):
         """
@@ -260,7 +259,6 @@ class NIXLBench:
 
         
         params = self._params()
-        
         # For JSON output, include all parameters (including defaults)
         if format == "json" or format == "csv":
             # Start with defaults, then update with actual non-null params to override defaults
@@ -289,13 +287,7 @@ class NIXLBench:
         """
         import subprocess
         import os
-        def nixl_bench_exists():
-            return os.path.exists("nixlbench") and os.access("nixlbench", os.X_OK)
-
-        if not nixl_bench_exists():
-            print("nixlbench not found")
-            return -1
-
+        env = os.environ.copy()
         defaults = NIXLBench.defaults()
         command_parts = ["nixlbench"]
         def should_include(name, value):
@@ -310,4 +302,4 @@ class NIXLBench:
             if should_include(name, value):
                 command_parts.append(f"--{name}")
                 command_parts.append(f"{value}")
-        return subprocess.run(command_parts, capture_output=True)
+        return subprocess.run(command_parts, capture_output=False, env=env)

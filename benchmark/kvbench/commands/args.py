@@ -31,11 +31,11 @@ def add_cli_args(subparser: argparse.ArgumentParser):
     
 
 def add_plan_args(subparser: argparse.ArgumentParser):
-    subparser.add_argument("--source", default="file", type=str, help="Source of the nixl descriptors [file, memory, gpu] (default: file)")
-    subparser.add_argument("--destination", default="memory", type=str, help="Destination of the nixl descriptors [file, memory, gpu] (default: memory)")
     subparser.add_argument("--format", default="text", type=str, help="Output of the nixl command [text, json, csv] (default: text)")
 
 def add_nixl_bench_args(subparser: argparse.ArgumentParser):
+    subparser.add_argument("--source", default="file", type=str, help="Source of the nixl descriptors [file, memory, gpu] (default: file)")
+    subparser.add_argument("--destination", default="memory", type=str, help="Destination of the nixl descriptors [file, memory, gpu] (default: memory)")
     subparser.add_argument("--backend", type=str, help="Communication backend [UCX, UCX_MO] (default: UCX)")
     subparser.add_argument("--worker_type", type=str, help="Worker to use to transfer data [nixl, nvshmem] (default: nixl)")
     subparser.add_argument("--initiator_seg_type", type=str, help="Memory segment type for initiator [DRAM, VRAM] (default: DRAM)")
