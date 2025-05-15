@@ -187,18 +187,21 @@ python main.py plan \
   --backend GDS \
   --source gpu \
   --etcd-endpoint "http://localhost:2379"
-
 ================================================================================
 Model Config: ./examples/block-tp1-pp16.yaml
 ISL: 10000 tokens
+Page Size: 256
+Requests: 10
+TP: 1
+PP: 16
 ================================================================================
 nixlbench \
     --backend GDS \
-    --initiator_seg_type VRAM \
     --max_batch_size 5958 \
     --max_block_size 589824 \
     --start_batch_size 5958 \
-    --start_block_size 589824
+    --start_block_size 589824 \
+    --target_seg_type VRAM
 ```
 
 ## Example: DeepSeek R1 with Layer Access (TP=1, PP=16)
@@ -209,18 +212,21 @@ python main.py plan \
   --backend GDS \
   --source gpu \
   --etcd-endpoint "http://localhost:2379"
-
 ================================================================================
 Model Config: ./examples/layer-tp1-pp16.yaml
 ISL: 10000 tokens
+Page Size: 256
+Requests: 10
+TP: 1
+PP: 16
 ================================================================================
 nixlbench \
     --backend GDS \
-    --initiator_seg_type VRAM \
     --max_batch_size 23829 \
     --max_block_size 147456 \
     --start_batch_size 23829 \
-    --start_block_size 147456
+    --start_block_size 147456 \
+    --target_seg_type VRAM
 ```
 
 ## Example: Overriding model configuration with cli args
@@ -233,18 +239,21 @@ python main.py plan \
   --etcd-endpoint "http://localhost:2379" \
   --pp 32 \
   --num_requests 100
-
 ================================================================================
 Model Config: ./examples/block-tp1-pp8.yaml
 ISL: 10000 tokens
+Page Size: 256
+Requests: 100
+TP: 1
+PP: 32
 ================================================================================
 nixlbench \
     --backend GDS \
-    --initiator_seg_type VRAM \
     --max_batch_size 119141 \
     --max_block_size 294912 \
     --start_batch_size 119141 \
-    --start_block_size 294912
+    --start_block_size 294912 \
+    --target_seg_type VRAM
 ```
 
 ## Developer Guides
