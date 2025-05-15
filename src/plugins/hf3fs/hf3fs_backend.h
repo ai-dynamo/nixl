@@ -48,17 +48,10 @@ class nixlHf3fsIO {
         ~nixlHf3fsIO() {}
 };
 
-enum nixlHf3fsStatus {
-    NIXL_HF3FS_STATUS_PENDING,
-    NIXL_HF3FS_STATUS_PREPARED,
-    NIXL_HF3FS_STATUS_POSTED
-};
-
 class nixlHf3fsBackendReqH : public nixlBackendReqH {
     public:
        std::list<nixlHf3fsIO *> io_list;
        hf3fs_ior ior;
-       nixlHf3fsStatus status;
 
        nixlHf3fsBackendReqH() {}
        ~nixlHf3fsBackendReqH() {}

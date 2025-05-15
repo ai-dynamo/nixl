@@ -107,6 +107,7 @@ void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle)
     for (auto prev_io : handle->io_list) {
         delete prev_io;
     }
+
     handle->io_list.clear();
 }
 
@@ -118,7 +119,6 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_opt_b_args_t* opt_args)
 {
     nixlHf3fsBackendReqH *hf3fs_handle;
-    bool handle_created = false;
     void                *addr = NULL;
     size_t              size = 0;
     size_t              offset = 0;
@@ -145,23 +145,13 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: Count mismatch or invalid operation selection");
     }
 
-    // Create a new backend request handle if one doesn't exist
-    if (handle == nullptr) {
-        hf3fs_handle = new nixlHf3fsBackendReqH();
-        handle_created = true;
-    } else {
-        // TODO: could this ever be a valid case?
-        hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
-        cleanupIOList(hf3fs_handle);
-    }
+    hf3fs_handle = new nixlHf3fsBackendReqH();
 
     bool is_read = (operation == NIXL_READ);
 
     auto status = hf3fs_utils->createIOR(&hf3fs_handle->ior, file_cnt, is_read);
     if (status != NIXL_SUCCESS) {
-        if (handle_created) {
-            delete hf3fs_handle;
-        }
+        delete hf3fs_handle;
         NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to create IOR");
     }
 
@@ -209,16 +199,13 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         hf3fs_handle->io_list.push_back(io);
     }
 
-    hf3fs_handle->status = NIXL_HF3FS_STATUS_PREPARED;
     handle = (nixlBackendReqH*) hf3fs_handle;
     return NIXL_SUCCESS;
 
 cleanup_handle:
     // Clean up previously created IOs in the list
     cleanupIOList(hf3fs_handle);
-    if (handle_created) {
-        delete hf3fs_handle;
-    }
+    delete hf3fs_handle;
     NIXL_LOG_AND_RETURN_IF_ERROR(nixl_err, nixl_mesg);
     return nixl_err;
 }
@@ -251,7 +238,6 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to post IOR");
     }
 
-    hf3fs_handle->status = NIXL_HF3FS_STATUS_POSTED;
     return NIXL_IN_PROG;
 }
 
