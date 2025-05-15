@@ -170,7 +170,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         nixl_status_t notifSendPriv(const std::string &remote_agent,
                                     const std::string &msg,
                                     nixlUcxReq &req,
-                                    size_t worker_id);
+                                    size_t worker_id) const;
         void notifProgress();
         void notifCombineHelper(notif_list_t &src, notif_list_t &tgt);
         void notifProgressCombineHelper(notif_list_t &src, notif_list_t &tgt);
@@ -216,22 +216,22 @@ class nixlUcxEngine : public nixlBackendEngine {
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr) override;
+                                const nixl_opt_b_args_t* opt_args=nullptr) const override;
 
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr) override;
+                                const nixl_opt_b_args_t* opt_args=nullptr) const override;
 
-        nixl_status_t checkXfer (nixlBackendReqH* handle) override;
-        nixl_status_t releaseReqH(nixlBackendReqH* handle) override;
+        nixl_status_t checkXfer (nixlBackendReqH* handle) const override;
+        nixl_status_t releaseReqH(nixlBackendReqH* handle) const override;
 
         int progress() override;
 
-        nixl_status_t getNotifs(notif_list_t &notif_list) override;
-        nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) override;
+        nixl_status_t getNotifs(notif_list_t &notif_list) const override;
+        nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
         //public function for UCX worker to mark connections as connected
         nixl_status_t checkConn(const std::string &remote_agent);
@@ -240,6 +240,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         const std::unique_ptr<nixlUcxWorker> &getWorker(size_t worker_id) const {
             return uws[worker_id];
         }
+
         size_t getWorkerId() const {
             return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
         }
