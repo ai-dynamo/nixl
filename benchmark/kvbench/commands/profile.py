@@ -16,9 +16,9 @@
 import argparse
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
-from commands.args import add_common_args, add_nixl_bench_args
+from commands.args import add_common_args, add_nixl_bench_args, add_cli_args
 from commands.nixlbench import NIXLBench
-
+from models.utils import override_yaml_args, get_batch_size
 class Command:
     """
     Command handler for the 'plan' subcommand.
@@ -48,6 +48,7 @@ class Command:
         """
         add_common_args(subparser)
         add_nixl_bench_args(subparser)
+        add_cli_args(subparser)
         return subparser
     
     def execute(self, args: argparse.Namespace):
@@ -72,7 +73,26 @@ class Command:
             model = BaseModelArch.from_yaml(args.model)
         if args.model_config:
             model_config = ModelConfig.from_yaml(args.model_config)
+            override_yaml_args(model_config, args)
+            model.set_model_config(model_config)
 
         filtered_args = {k: v for k, v in args.__dict__.items() if k in NIXLBench.defaults()}
         nixl_bench = NIXLBench(model, model_config, **filtered_args)
+        io_size = model.get_io_size(model_config.system.page_size)
+        batch_size = get_batch_size(model, model_config, io_size)
+        nixl_bench.set_io_size(io_size)
+        nixl_bench.set_batch_size(batch_size)
+        nixl_bench.configure_buffer_size()
+
+        nixl_bench.configure_scheme(direction="isl")
+        nixl_bench.configure_segment_type(args.backend, args.source, args.destination)
+        separator = "=" * 80
+        
+        print(f"Model Config: {args.model_config}")
+        print(f"ISL: {model_config.runtime.isl} tokens")
+        print(f"Page Size: {model_config.system.page_size}")
+        print(f"Requests: {model_config.runtime.num_requests}")
+        print(f"TP: {model_config.model.tp_size}")
+        print(f"PP: {model_config.model.pp_size}")
+        print(separator)
         nixl_bench.profile()

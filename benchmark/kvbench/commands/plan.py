@@ -131,7 +131,7 @@ class Command:
                 isl_nixl_bench.set_batch_size(batch_size)
 
                 isl_nixl_bench.configure_scheme(direction="isl")
-                isl_nixl_bench.configure_segment_type(args.source, args.destination)
+                isl_nixl_bench.configure_segment_type(args.backend, args.source, args.destination)
             
                 # Generate plan
                 plan = isl_nixl_bench.plan(format=args.format)
@@ -167,6 +167,10 @@ class Command:
                     print(separator)
                     print(f"Model Config: {config_file}")
                     print(f"ISL: {model_config.runtime.isl} tokens")
+                    print(f"Page Size: {model_config.system.page_size}")
+                    print(f"Requests: {model_config.runtime.num_requests}")
+                    print(f"TP: {model_config.model.tp_size}")
+                    print(f"PP: {model_config.model.pp_size}")
                     print(separator)
                     print(plan)
                     print()
