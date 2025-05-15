@@ -20,7 +20,15 @@ fn main() {
     let nixl_root_path =
         env::var("NIXL_PREFIX").unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
     let nixl_include_path = format!("{}/include", nixl_root_path);
-    let nixl_lib_path = format!("{}/lib/x86_64-linux-gnu", nixl_root_path);
+
+    // Determine architecture based on target
+    let arch = match env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_else(|_| "x86_64".to_string()).as_str() {
+        "x86_64" => "x86_64",
+        "aarch64" => "aarch64",
+        other => panic!("Unsupported architecture: {}", other),
+    };
+
+    let nixl_lib_path = format!("{}/lib/{}-linux-gnu", nixl_root_path, arch);
 
     // Check if etcd is enabled via environment variable
     let etcd_enabled = env::var("HAVE_ETCD").map(|v| v != "0").unwrap_or(false);
