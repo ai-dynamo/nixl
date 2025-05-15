@@ -35,22 +35,6 @@ static constexpr int const noSyncIters = 32;
  * CUDA related code
  *****************************************/
 
-class nixlUcxCudaCtx {
-public:
-#ifdef HAVE_CUDA
-    CUcontext pthrCudaCtx;
-    int myDevId;
-
-    nixlUcxCudaCtx() {
-        pthrCudaCtx = NULL;
-        myDevId = -1;
-    }
-#endif
-    void cudaResetCtxPtr();
-    int cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated);
-    int cudaSetCtx();
-};
-
 #ifdef HAVE_CUDA
 
 static int cudaQueryAddr(void *address, bool &is_dev,
@@ -79,7 +63,7 @@ static int cudaQueryAddr(void *address, bool &is_dev,
     return (CUDA_SUCCESS != result);
 }
 
-int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated)
+int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated, int global_dev_id, int node_nums)
 {
     bool is_dev;
     CUdevice dev;
@@ -96,6 +80,14 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
     if (myDevId != -1 && expected_dev != myDevId)
         return -1;
 
+
+    if (globalDevId != -1 && global_dev_id != globalDevId)
+        return -1;
+    if (nodeNums != -1 && node_nums != nodeNums)
+        return -1;
+    if (globalDevId == -1) globalDevId = global_dev_id;
+    if (nodeNums == -1) nodeNums = node_nums;
+
     ret = cudaQueryAddr(address, is_dev, dev, ctx);
     if (ret) {
         return ret;
@@ -104,10 +96,17 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
     if (!is_dev) {
         return 0;
     }
-
-    if (dev != expected_dev) {
-        // User provided address that does not match dev_id
-        return -1;
+    
+    if (node_nums > 1 && global_dev_id >= 0) {
+        int local_dev = global_dev_id % node_nums;
+        if (dev != local_dev) {
+            return -1;
+        }
+    } else {
+        if (dev != expected_dev) {
+            // User provided address that does not match dev_id
+            return -1;
+        }
     }
 
     if (pthrCudaCtx) {
@@ -139,7 +138,7 @@ int nixlUcxCudaCtx::cudaSetCtx()
 
 #else
 
-int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated)
+int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated, int global_dev_id, int node_nums)
 {
     was_updated = false;
     return 0;
@@ -169,7 +168,7 @@ int nixlUcxEngine::vramUpdateCtx(void *address, uint64_t  devId, bool &restart_r
         return 0;
     }
 
-    ret = cudaCtx->cudaUpdateCtxPtr(address, devId, was_updated);
+    ret = cudaCtx->cudaUpdateCtxPtr(address, devId, was_updated, -1, -1);
     if (ret) {
         return ret;
     }

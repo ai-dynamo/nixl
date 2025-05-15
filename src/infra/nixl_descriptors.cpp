@@ -31,19 +31,20 @@
 
 nixlBasicDesc::nixlBasicDesc(const uintptr_t &addr,
                              const size_t &len,
-                             const uint64_t &dev_id) {
-    this->addr  = addr;
-    this->len   = len;
-    this->devId = dev_id;
-}
+                             const uint64_t &dev_id,
+                             const uint64_t &global_dev_id,
+                             const uint32_t &node_nums)
+    : addr(addr), len(len), devId(dev_id), globalDevId(global_dev_id), nodeNums(node_nums) {}
 
 nixlBasicDesc::nixlBasicDesc(const nixl_blob_t &blob) {
     if (blob.size()==sizeof(nixlBasicDesc)) {
         blob.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
     } else { // Error indicator, not possible by descList deserializer call
-        addr  = 0;
-        len   = 0;
+        addr = 0;
+        len = 0;
         devId = 0;
+        globalDevId = 0;
+        nodeNums = 1;
     }
 }
 
@@ -57,8 +58,8 @@ bool nixlBasicDesc::operator<(const nixlBasicDesc &desc) const {
 }
 
 bool operator==(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) {
-    return ((lhs.addr  == rhs.addr ) &&
-            (lhs.len   == rhs.len  ) &&
+    return ((lhs.addr == rhs.addr) &&
+            (lhs.len == rhs.len) &&
             (lhs.devId == rhs.devId));
 }
 
@@ -90,7 +91,12 @@ nixl_blob_t nixlBasicDesc::serialize() const {
 
 void nixlBasicDesc::print(const std::string &suffix) const {
     std::cout << "LOG: Desc (" << addr << ", " << len
-              << ") from devID " << devId << suffix << "\n";
+              << ") from devID " << devId;
+    if (globalDevId != 0 || nodeNums != 1) {
+        std::cout << ", globalDevID " << globalDevId
+                 << ", nodeNums " << nodeNums;
+    }
+    std::cout << suffix << "\n";
 }
 
 
@@ -99,8 +105,10 @@ void nixlBasicDesc::print(const std::string &suffix) const {
 nixlBlobDesc::nixlBlobDesc(const uintptr_t &addr,
                            const size_t &len,
                            const uint64_t &dev_id,
-                           const nixl_blob_t &meta_info) :
-                           nixlBasicDesc(addr, len, dev_id) {
+                           const nixl_blob_t &meta_info,
+                           const uint64_t &global_dev_id,
+                           const uint32_t &node_nums)
+    : nixlBasicDesc(addr, len, dev_id, global_dev_id, node_nums) {
     this->metaInfo = meta_info;
 }
 

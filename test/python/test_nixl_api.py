@@ -76,7 +76,7 @@ def test_empty_agent_name():
 
 # This test passses locally, but fails in CI because GDS is confused about CUDA installation.
 # Skipping until we have a CI that is compatible with GDS.
-@pytest.mark.skip
+# @pytest.mark.skip
 def test_instantiate_all():
     agent1 = nixl_agent("test", nixl_conf=None, instantiate_all=True)
 
@@ -116,7 +116,7 @@ def test_metadata_pass(two_ucx_agents):
 
     addr = utils.malloc_passthru(1024)
 
-    agent1_reg_descs = agent1.get_reg_descs([(addr, 1024, 0, "test")], "DRAM")
+    agent1_reg_descs = agent1.get_reg_descs([(addr, 1024, 0, "test", 0,1)], "DRAM")
 
     assert agent1.register_memory(agent1_reg_descs) is not None
 
@@ -158,9 +158,9 @@ def test_improper_get_xfer_descs(one_empty_agent, one_reg_list):
 
 
 def test_improper_get_reg_descs(one_empty_agent, one_xfer_list):
-    # reg list should be 4-tuple, not 3-tuple
+    # reg list should be 6-tuple, not 3-tuple
     bad_list = [(1, 2, 3)]
-    ok_list = [(1, 2, 3, 4)]
+    ok_list = [(1, 2, 3, 4, 0, 1)]
 
     ret = one_empty_agent.get_reg_descs(bad_list)
     assert ret is None

@@ -15,11 +15,11 @@
 
 import pickle
 
+
 import nixl._bindings as nixl
 import nixl._utils as nixl_utils
 
 # These should automatically be run by pytest because of function names
-
 
 def test_list():
     descs = [(1000, 105, 0), (2000, 30, 0), (1010, 20, 0)]
@@ -52,7 +52,6 @@ def test_list():
     assert test_list.isEmpty()
 
     test_list.addDesc((2000, 100, 0))
-
 
 def test_agent():
     name1 = "Agent1"

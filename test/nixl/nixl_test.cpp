@@ -60,7 +60,7 @@ static std::vector<std::unique_ptr<uint8_t[]>> initMem(nixlAgent &agent,
         std::fill_n(addr.get(), SIZE, val);
         std::cout << "Allocating : " << (void *)addr.get() << ", "
                   << "Setting to 0x" << std::hex << (unsigned)val << std::dec << std::endl;
-        dram.addDesc(nixlBlobDesc((uintptr_t)(addr.get()), SIZE, 0, ""));
+        dram.addDesc(nixlBlobDesc((uintptr_t)(addr.get()), SIZE, 0, "", NIXL_DEFAULT_GLOBAL_DEVID, NIXL_DEFAULT_NODE_NUMS));
 
         addrs.push_back(std::move(addr));
     }
