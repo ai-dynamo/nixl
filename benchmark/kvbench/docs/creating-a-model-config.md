@@ -86,36 +86,6 @@ system:
   page_size: 16
 ```
 
-## Using Configurations in Code
-
-You can load a model configuration using the `ModelConfig` class:
-
-```python
-from models.model_config import ModelConfig
-
-# Load from a single YAML file
-config = ModelConfig.from_yaml("path/to/config.yaml")
-
-# Load and merge multiple YAML files (later files override earlier ones)
-config = ModelConfig.from_yaml_files(["base_config.yaml", "override_config.yaml"])
-
-# Create from a dictionary
-config_dict = {
-    'strategy': {'tp_size': 2, 'pp_size': 2},
-    'runtime': {'isl': 4096},
-    'system': {'hardware': 'A100'}
-}
-config = ModelConfig.from_dict(config_dict)
-
-# Update an existing configuration
-updated_config = config.update({
-    'strategy': {'tp_size': 4}
-})
-
-# Save configuration to a YAML file
-config.to_yaml("new_config.yaml")
-```
-
 ## Parameter Descriptions
 
 ### Strategy Configuration
