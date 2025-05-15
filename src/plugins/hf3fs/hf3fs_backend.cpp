@@ -108,37 +108,16 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args)
-{  
-    // Create a new backend request handle if one doesn't exist
-    if (handle == nullptr) {
-        nixlHf3fsBackendReqH *hf3fs_handle = new nixlHf3fsBackendReqH();
-        //hf3fs_handle->status = NIXL_HF3FS_STATUS_PREPARED;
-        handle = (nixlBackendReqH*) hf3fs_handle;
-    }     
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
-                                       const nixl_meta_dlist_t &local,
-                                       const nixl_meta_dlist_t &remote,
-                                       const std::string &remote_agent,
-                                       nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args)
-{   
-    // Handle null pointer case - should have been initialized in prepXfer
-    if (handle == nullptr) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error - handle is null in postXfer");
-    }
-
-    // check if prepered
+{
+    nixlHf3fsBackendReqH *hf3fs_handle;
+    bool handle_created = false;
     void                *addr = NULL;
     size_t              size = 0;
     size_t              offset = 0;
-    size_t              total_size = 0;
     int                 buf_cnt  = local.descCount();
     int                 file_cnt = remote.descCount();
-    hf3fsFileHandle     fh;
-    nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
+    nixl_status_t       nixl_err = NIXL_ERR_UNKNOWN;
+    const char          *nixl_mesg = nullptr;
 
     // Determine which lists contain file/memory descriptors
     const nixl_meta_dlist_t* file_list = nullptr;
@@ -155,13 +134,27 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
 
     if ((buf_cnt != file_cnt) ||
             ((operation != NIXL_READ) && (operation != NIXL_WRITE)))  {
+        nixl_err = NIXL_ERR_INVALID_PARAM;
+        nixl_mesg =  "Error: No file descriptors";
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: Count mismatch or invalid operation selection");
+    }
+
+    // Create a new backend request handle if one doesn't exist
+    if (handle == nullptr) {
+        hf3fs_handle = new nixlHf3fsBackendReqH();
+        handle_created = true;
+    } else {
+        // TODO: could this ever be a valid case?
+        hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
     }
 
     bool is_read = (operation == NIXL_READ);
 
     auto status = hf3fs_utils->createIOR(&hf3fs_handle->ior, file_cnt, is_read);
     if (status != NIXL_SUCCESS) {
+        if (handle_created) {
+            delete hf3fs_handle;
+        }
         NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to create IOR");
     }
 
@@ -174,18 +167,23 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
 
         nixlHf3fsIO *io = new nixlHf3fsIO();
         if (io == nullptr) {
-            NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error: Failed to create IO");
+            nixl_err = NIXL_ERR_BACKEND;
+            nixl_mesg = "Error: Failed to create IO";
+            goto cleanup_handle;
         }
 
         // Store original memory address for later use during READ operations
         io->orig_addr = addr;
         io->size = size;
         io->is_read = is_read;
+        io->offset = offset;
 
         status = hf3fs_utils->createIOV(&io->iov, addr, size, size);
         if (status != NIXL_SUCCESS) {
             delete io;
-            NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to wrap memory as IOV");
+            nixl_err = status;
+            nixl_mesg = "Error: Failed to wrap memory as IOV";
+            goto cleanup_handle;
         }
 
         // For WRITE operations, copy data from source buffer to IOV buffer
@@ -194,20 +192,55 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
             auto mem_copy = memcpy(io->iov.base, addr, size);
             if (mem_copy == nullptr) {
                 delete io;
-                NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error: Failed to copy memory");
+                nixl_err = NIXL_ERR_BACKEND;
+                nixl_mesg = "Error: Failed to copy memory";
+                goto cleanup_handle;
             }
         }
 
-        // Call prepIO with extended error handling
-        status = hf3fs_utils->prepIO(&hf3fs_handle->ior, &io->iov, io->iov.base, offset, size, file_descriptor, is_read, io);
-        if (status != NIXL_SUCCESS) {
-            delete io;
-            NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to prepare IO");
-        }
-
-        total_size += size;
         io->fd = file_descriptor;
         hf3fs_handle->io_list.push_back(io);
+    }
+
+    hf3fs_handle->status = NIXL_HF3FS_STATUS_PREPARED;
+    handle = (nixlBackendReqH*) hf3fs_handle;
+    return NIXL_SUCCESS;
+
+cleanup_handle:
+    // Clean up previously created IOs in the list
+    for (auto prev_io : hf3fs_handle->io_list) {
+        delete prev_io;
+    }
+    hf3fs_handle->io_list.clear();
+    if (handle_created) {
+        delete hf3fs_handle;
+    }
+    NIXL_LOG_AND_RETURN_IF_ERROR(nixl_err, nixl_mesg);
+    return nixl_err;
+}
+
+nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
+                                       const nixl_meta_dlist_t &local,
+                                       const nixl_meta_dlist_t &remote,
+                                       const std::string &remote_agent,
+                                       nixlBackendReqH* &handle,
+                                       const nixl_opt_b_args_t* opt_args)
+{
+    // Handle null pointer case - should have been initialized in prepXfer
+    if (handle == nullptr) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error - handle is null in postXfer");
+    }
+
+    nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
+    nixl_status_t        status;
+
+    for (auto it = hf3fs_handle->io_list.begin(); it != hf3fs_handle->io_list.end(); ++it) {
+        nixlHf3fsIO* io = *it;
+        status = hf3fs_utils->prepIO(&hf3fs_handle->ior, &io->iov, io->iov.base,
+                                     io->offset, io->size, io->fd, io->is_read, io);
+        if (status != NIXL_SUCCESS) {
+            NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to prepare IO");
+        }
     }
 
     status = hf3fs_utils->postIOR(&hf3fs_handle->ior);
@@ -215,6 +248,7 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to post IOR");
     }
 
+    hf3fs_handle->status = NIXL_HF3FS_STATUS_POSTED;
     return NIXL_IN_PROG;
 }
 

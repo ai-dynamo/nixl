@@ -42,6 +42,7 @@ class nixlHf3fsIO {
         void* orig_addr;  // Original memory address for copying after read
         size_t size;      // Size of the buffer
         bool is_read;     // Whether this is a read operation
+        size_t offset;    // Offset in the file
 
         nixlHf3fsIO() : fd(-1), orig_addr(nullptr), size(0), is_read(false) {}
         ~nixlHf3fsIO() {}
