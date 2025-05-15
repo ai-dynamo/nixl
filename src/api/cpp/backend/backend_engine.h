@@ -112,7 +112,7 @@ class nixlBackendEngine {
                                         const std::string &remote_agent,
                                         nixlBackendReqH* &handle,
                                         const nixl_opt_b_args_t* opt_args=nullptr
-                                       ) = 0;
+                                       ) const = 0;
 
         // Posting a request, which completes the async handle creation and posts it
         virtual nixl_status_t postXfer (const nixl_xfer_op_t &operation,
@@ -121,13 +121,13 @@ class nixlBackendEngine {
                                         const std::string &remote_agent,
                                         nixlBackendReqH* &handle,
                                         const nixl_opt_b_args_t* opt_args=nullptr
-                                       ) = 0;
+                                       ) const = 0;
 
         // Use a handle to progress backend engine and see if a transfer is completed or not
-        virtual nixl_status_t checkXfer(nixlBackendReqH* handle) = 0;
+        virtual nixl_status_t checkXfer(nixlBackendReqH* handle) const = 0;
 
         //Backend aborts the transfer if necessary, and destructs the relevant objects
-        virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) = 0;
+        virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
 
         // *** Needs to be implemented if supportsRemote() is true *** //
@@ -174,7 +174,7 @@ class nixlBackendEngine {
         virtual nixl_status_t getNotifs(notif_list_t &notif_list) { return NIXL_ERR_BACKEND; }
 
         // Generates a standalone notification, not bound to a transfer.
-        virtual nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) {
+        virtual nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const {
             return NIXL_ERR_BACKEND;
         }
 

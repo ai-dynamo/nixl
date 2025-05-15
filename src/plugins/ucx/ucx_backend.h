@@ -174,7 +174,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         nixl_status_t notifSendPriv(const std::string &remote_agent,
                                     const std::string &msg,
                                     nixlUcxReq &req,
-                                    size_t worker_id);
+                                    size_t worker_id) const;
         void notifProgress();
         void notifCombineHelper(notif_list_t &src, notif_list_t &tgt);
         void notifProgressCombineHelper(notif_list_t &src, notif_list_t &tgt);
@@ -220,22 +220,22 @@ class nixlUcxEngine : public nixlBackendEngine {
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr);
+                                const nixl_opt_b_args_t* opt_args=nullptr) const;
 
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr);
+                                const nixl_opt_b_args_t* opt_args=nullptr) const;
 
-        nixl_status_t checkXfer (nixlBackendReqH* handle);
-        nixl_status_t releaseReqH(nixlBackendReqH* handle);
+        nixl_status_t checkXfer (nixlBackendReqH* handle) const;
+        nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
 
         int progress();
 
         nixl_status_t getNotifs(notif_list_t &notif_list);
-        nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg);
+        nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const;
 
         //public function for UCX worker to mark connections as connected
         nixl_status_t checkConn(const std::string &remote_agent);

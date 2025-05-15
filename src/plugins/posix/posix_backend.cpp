@@ -226,7 +226,7 @@ bool nixlPosixEngine::validatePrepXferParams(const nixl_xfer_op_t &operation,
                                              const nixl_meta_dlist_t &local,
                                              const nixl_meta_dlist_t &remote,
                                              const std::string &remote_agent,
-                                             const std::string &local_agent) {
+                                             const std::string &local_agent) const {
     if (remote_agent != local_agent) {
         NIXL_ERROR << absl::StrFormat("Error: Remote agent must match the requesting agent (%s). Got %s",
                                        local_agent, remote_agent);
@@ -270,7 +270,7 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
                                         const nixl_meta_dlist_t &remote,
                                         const std::string &remote_agent,
                                         nixlBackendReqH* &handle,
-                                        const nixl_opt_b_args_t* opt_args) {
+                                        const nixl_opt_b_args_t* opt_args) const {
     if (!validatePrepXferParams(operation, local, remote, remote_agent, localAgent)) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -300,7 +300,7 @@ nixl_status_t nixlPosixEngine::postXfer(const nixl_xfer_op_t &operation,
                                         const nixl_meta_dlist_t &remote,
                                         const std::string &remote_agent,
                                         nixlBackendReqH* &handle,
-                                        const nixl_opt_b_args_t* opt_args) {
+                                        const nixl_opt_b_args_t* opt_args) const {
     nixl_status_t status = NIXL_SUCCESS;
 
     status = static_cast<nixlPosixBackendReqH*>(handle)->postXfer();
@@ -309,11 +309,11 @@ nixl_status_t nixlPosixEngine::postXfer(const nixl_xfer_op_t &operation,
     return status;
 }
 
-nixl_status_t nixlPosixEngine::checkXfer(nixlBackendReqH* handle) {
+nixl_status_t nixlPosixEngine::checkXfer(nixlBackendReqH* handle) const {
     return static_cast<nixlPosixBackendReqH*>(handle)->checkXfer();
 }
 
-nixl_status_t nixlPosixEngine::releaseReqH(nixlBackendReqH* handle) {
+nixl_status_t nixlPosixEngine::releaseReqH(nixlBackendReqH* handle) const {
     delete static_cast<nixlPosixBackendReqH*>(handle);
     return NIXL_SUCCESS;
 }
