@@ -32,6 +32,11 @@ if [ -z "$UCX_INSTALL_DIR" ]; then
 fi
 
 apt-get -qq update
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.86.0
+#source $HOME/.cargo/env
+export PATH=$HOME/.cargo/bin:$PATH
+
 apt-get -qq install -y curl \
                              libnuma-dev \
                              numactl \
@@ -98,7 +103,7 @@ export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Denable_rust_bindings=true
 cd nixl_build && ninja && ninja install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
