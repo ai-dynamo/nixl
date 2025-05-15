@@ -46,7 +46,7 @@ nixlHf3fsEngine::nixlHf3fsEngine (const nixlBackendInitParams* init_params)
     auto ret = hf3fs_extract_mount_point(mount_point_cstr, 256, mount_point.c_str());
     if (ret < 0) {
         this->initErr = true;
-    }     
+    }
 
     hf3fs_utils->mount_point = mount_point_cstr;
 }
@@ -66,7 +66,7 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             status = NIXL_SUCCESS;
             break;
         case FILE_SEG:
-            fd = mem.devId; 
+            fd = mem.devId;
             ret = 0;
             status = hf3fs_utils->registerFileHandle(fd, &ret);
             if (status != NIXL_SUCCESS) {
@@ -78,13 +78,12 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             md->handle.metadata = mem.metaInfo;
             md->type = nixl_mem;
             md->handle.hf3fs_fd = ret;
-            hf3fs_file_map[fd] = md->handle;
             break;
         case VRAM_SEG:
         default:
             NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error - type not supported");
     }
-  
+
     out = (nixlBackendMD*) md;
     return status;
 }
@@ -102,7 +101,7 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     return NIXL_SUCCESS;
 }
 
-void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle)
+void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle) const
 {
     for (auto prev_io : handle->io_list) {
         delete prev_io;
@@ -116,7 +115,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args)
+                                       const nixl_opt_b_args_t* opt_args) const
 {
     nixlHf3fsBackendReqH *hf3fs_handle;
     void                *addr = NULL;
@@ -160,7 +159,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         int file_descriptor = (*file_list)[i].devId;
         addr = (void*) (*mem_list)[i].addr;
         size = (*mem_list)[i].len;
-        offset = (size_t) (*file_list)[i].addr;  // Offset in file       
+        offset = (size_t) (*file_list)[i].addr;  // Offset in file
 
         nixlHf3fsIO *io = new nixlHf3fsIO();
         if (io == nullptr) {
@@ -215,7 +214,7 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args)
+                                       const nixl_opt_b_args_t* opt_args) const
 {
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
     nixl_status_t        status;
@@ -241,14 +240,14 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
     return NIXL_IN_PROG;
 }
 
-nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle)
+nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
 {
     if (handle == nullptr) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: handle is null in checkXfer");
     }
 
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
-    
+
     // Check if IOR is initialized
     if (&hf3fs_handle->ior == nullptr) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: IOR is not initialized in checkXfer");
@@ -262,7 +261,7 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle)
         ts.tv_sec += 1;
         ts.tv_nsec -= 1000000000;
     }
-    
+
     int num_ios = hf3fs_handle->io_list.size();
     int num_cqes = num_ios > 1024 ? 1024 : num_ios;
     hf3fs_cqe cqes[num_cqes];
@@ -297,8 +296,8 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle)
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlHf3fsEngine::releaseReqH(nixlBackendReqH* handle)
-{   
+nixl_status_t nixlHf3fsEngine::releaseReqH(nixlBackendReqH* handle) const
+{
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
     for (auto io : hf3fs_handle->io_list) {
         delete io;

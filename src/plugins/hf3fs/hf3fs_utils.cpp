@@ -49,16 +49,16 @@ void hf3fsUtil::deregisterFileHandle(int fd)
 }
 
 nixl_status_t hf3fsUtil::wrapIOV(struct hf3fs_iov *iov, void *addr, size_t size, size_t block_size)
-{   
+{
     // Create a dummy ID - you might want a more sophisticated approach
     uint8_t dummy_id[16] = {0};
-    
+
     auto ret = hf3fs_iovwrap(iov, addr, dummy_id, this->mount_point.c_str(), size, 0, -1);
-    
+
     if (ret < 0) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("Error wrapping memory into IOV, error: %d (errno: %d - %s)", ret, errno, strerror(errno)));
     }
-    
+
     return NIXL_SUCCESS;
 }
 
@@ -75,12 +75,7 @@ nixl_status_t hf3fsUtil::createIOR(struct hf3fs_ior *ior, int num_ios, bool is_r
 
 nixl_status_t hf3fsUtil::createIOV(struct hf3fs_iov *iov, void *addr, size_t size, size_t block_size)
 {
-    /* // 0 for success, -errno for error
-// iov ptr itself should be allocated by caller, it could be on either stack or heap
-// the pointer hf3fs_mount_point will be copied into the corresponding field in hf3fs_iov
-// it should not be too long
-int hf3fs_iovcreate(struct hf3fs_iov *iov, const char *hf3fs_mount_point, size_t size, size_t block_size, int numa);
-*/
+
     auto ret = hf3fs_iovcreate(iov, this->mount_point.c_str(), size, block_size, -1);
     if (ret < 0) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("Error creating IOV, error: %d (errno: %d - %s)", ret, errno, strerror(errno)));
@@ -90,7 +85,7 @@ int hf3fs_iovcreate(struct hf3fs_iov *iov, const char *hf3fs_mount_point, size_t
 }
 
 nixl_status_t validateIO(struct hf3fs_ior *ior, struct hf3fs_iov *iov, void *addr, size_t fd_offset, size_t size, int fd, bool is_read)
-{      
+{
     if (ior == nullptr) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: IOR is nullptr");
     }
@@ -100,16 +95,16 @@ nixl_status_t validateIO(struct hf3fs_ior *ior, struct hf3fs_iov *iov, void *add
     if (addr == nullptr) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: Address is nullptr");
     }
-    
+
     // Check for valid size
     if (size == 0) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: Size cannot be zero");
     }
-    
+
     // Get the memory range of the IOV
     uint8_t *iov_base = iov->base;
     size_t iov_size = iov->size;
-    
+
     // Check if [addr, addr + size) is within [iov_base, iov_base + iov_size)
     if ((uint8_t*)addr < iov_base || (uint8_t*)addr + size > iov_base + iov_size) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, absl::StrFormat("Error: Memory range [%p, %p) is not within IOV range [%p, %p)", addr, (void*)((uint8_t*)addr + size), iov_base, (void*)(iov_base + iov_size)));
@@ -130,7 +125,7 @@ nixl_status_t hf3fsUtil::prepIO(struct hf3fs_ior *ior, struct hf3fs_iov *iov, vo
     if (ret < 0) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("Error: hf3fs prep io error: %d (errno: %d - %s)", ret, errno, strerror(errno)));
     }
-    
+
     return NIXL_SUCCESS;
 }
 
@@ -140,7 +135,7 @@ nixl_status_t hf3fsUtil::postIOR(struct hf3fs_ior *ior)
     auto ret = hf3fs_submit_ios(ior);
     if (ret < 0) {
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("hf3fs submit ios error: %d (errno: %d - %s)", ret, errno, strerror(errno)));
-    }  
+    }
 
     return NIXL_SUCCESS;
 }
@@ -148,7 +143,7 @@ nixl_status_t hf3fsUtil::postIOR(struct hf3fs_ior *ior)
 // TODO: probably need to chabge
 nixl_status_t hf3fsUtil::checkXfer(struct hf3fs_ior *ior)
 {
-    
+
     return NIXL_SUCCESS;
 }
 

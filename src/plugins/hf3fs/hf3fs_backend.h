@@ -63,7 +63,7 @@ class nixlHf3fsEngine : public nixlBackendEngine {
         hf3fsUtil                      *hf3fs_utils;
         std::unordered_map<int, hf3fsFileHandle> hf3fs_file_map;
 
-        void cleanupIOList(nixlHf3fsBackendReqH *handle);
+        void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
     public:
         nixlHf3fsEngine(const nixlBackendInitParams* init_params);
         ~nixlHf3fsEngine();
@@ -121,16 +121,16 @@ class nixlHf3fsEngine : public nixlBackendEngine {
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr);
+                                const nixl_opt_b_args_t* opt_args=nullptr) const;
 
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr);
+                                const nixl_opt_b_args_t* opt_args=nullptr) const;
 
-        nixl_status_t checkXfer (nixlBackendReqH* handle);
-        nixl_status_t releaseReqH(nixlBackendReqH* handle);
+        nixl_status_t checkXfer (nixlBackendReqH* handle) const;
+        nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
 };
 #endif

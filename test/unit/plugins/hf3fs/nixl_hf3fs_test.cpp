@@ -271,18 +271,18 @@ int main(int argc, char *argv[])
         std::filesystem::create_directories(path_obj);
         std::string abs_path = std::filesystem::absolute(path_obj).string();
         std::cout << "Using absolute path: " << abs_path << std::endl;
-        
+
         // Verify the directory is accessible
         if (!std::filesystem::exists(path_obj)) {
             std::cerr << "ERROR: Directory doesn't exist after creation: " << path_obj.string() << std::endl;
             return 1;
         }
-        
+
         // Verify the directory is writable
         std::string test_file = (path_obj / "write_test").string();
         int test_fd = open(test_file.c_str(), O_RDWR|O_CREAT, 0644);
         if (test_fd == -1) {
-            std::cerr << "ERROR: Directory is not writable: " << path_obj.string() 
+            std::cerr << "ERROR: Directory is not writable: " << path_obj.string()
                       << " - " << strerror(errno) << " (errno: " << errno << ")" << std::endl;
             return 1;
         }
@@ -303,7 +303,7 @@ int main(int argc, char *argv[])
     nixlXferReqH      *treq;
     nixl_xfer_dlist_t file_for_hf3fs_list(FILE_SEG);
     nixl_xfer_dlist_t dram_for_hf3fs_list(DRAM_SEG);
-    
+
     // Print test configuration information
     print_segment_title("NIXL STORAGE TEST STARTING (HF3FS PLUGIN)");
     std::cout << "Configuration:" << std::endl;
@@ -318,7 +318,7 @@ int main(int argc, char *argv[])
     nixlAgent agent("HF3FSTester", cfg);
 
     print_segment_title(phase_title("Creating HF3FS backend"));
-    
+
     // Create HF3FS backend
     nixl_status_t ret = agent.createBackend("HF3FS", params, hf3fs);
     if (ret != NIXL_SUCCESS) {
@@ -375,7 +375,7 @@ int main(int argc, char *argv[])
                 std::cout << "Attempting to create parent directory..." << std::endl;
                 std::filesystem::create_directories(parent_dir);
             }
-            
+
             // Create file with more explicit flags and mode
             fd.emplace_back(name, O_RDWR|O_CREAT|O_TRUNC, std_file_permissions);
             int fd_val = fd.back();
@@ -384,7 +384,7 @@ int main(int argc, char *argv[])
                 std::cerr << "ERROR: File descriptor is invalid after successful open: " << fd_val << std::endl;
                 return 1;
             }
-            
+
             // Verify file was created
             if (!std::filesystem::exists(file_path)) {
                 std::cerr << "ERROR: File doesn't exist after creation: " << name << std::endl;
@@ -441,10 +441,10 @@ int main(int argc, char *argv[])
     std::cout << "- Source list count: " << dram_for_hf3fs_list.descCount() << std::endl;
     std::cout << "- Destination list count: " << file_for_hf3fs_list.descCount() << std::endl;
     std::cout << "- Remote agent: " << "HF3FSTester" << std::endl;
-    
+
     ret = agent.createXferReq(NIXL_WRITE, dram_for_hf3fs_list, file_for_hf3fs_list,
                               "HF3FSTester", treq);
-    
+
     if (ret != NIXL_SUCCESS) {
         std::cerr << "Error creating transfer request: " << ret << std::endl;
         return 1;
@@ -474,12 +474,12 @@ int main(int argc, char *argv[])
             return 1;
         }
         usleep(wait_time);
-        
+
         // Update progress based on waits
         float progress = static_cast<float>(num_waits) / max_waits;
         progress = progress > 1.0f ? 1.0f : progress;
         printProgress(progress);
-        
+
     } while (status == NIXL_IN_PROG);
 
     time_end = nixlTime::getUs();
@@ -548,12 +548,12 @@ int main(int argc, char *argv[])
             return 1;
         }
         usleep(wait_time);
-        
+
         // Update progress based on waits
         float progress = static_cast<float>(num_waits) / max_waits;
         progress = progress > 1.0f ? 1.0f : progress;
         printProgress(progress);
-        
+
     } while (status == NIXL_IN_PROG);
 
     time_end = nixlTime::getUs();
@@ -580,40 +580,40 @@ int main(int argc, char *argv[])
         int ret = memcmp(dram_addr[i].get(), expected_buffer.get(), transfer_size);
         if (ret != 0) {
             std::cerr << "DRAM buffer " << i << " validation failed with error: " << ret << std::endl;
-            
+
             // Find the first difference byte
             char* expected = expected_buffer.get();
             char* actual = static_cast<char*>(dram_addr[i].get());
             size_t diff_position = 0;
-            
+
             for (size_t pos = 0; pos < transfer_size; pos++) {
                 if (expected[pos] != actual[pos]) {
                     diff_position = pos;
                     break;
                 }
             }
-            
+
             // Display difference information
             std::cerr << "First difference at position " << diff_position << std::endl;
-            
+
             // Show a few bytes before and after the difference position (up to 10 on each side)
             size_t start = (diff_position > 10) ? diff_position - 10 : 0;
             size_t end = std::min(diff_position + 10, transfer_size - 1);
-            
+
             std::cerr << "Expected bytes (hex): ";
             for (size_t pos = start; pos <= end; pos++) {
-                std::cerr << std::hex << std::setw(2) << std::setfill('0') 
+                std::cerr << std::hex << std::setw(2) << std::setfill('0')
                           << static_cast<int>(static_cast<unsigned char>(expected[pos])) << " ";
             }
             std::cerr << std::dec << std::endl;
-            
+
             std::cerr << "Actual bytes (hex):   ";
             for (size_t pos = start; pos <= end; pos++) {
-                std::cerr << std::hex << std::setw(2) << std::setfill('0') 
+                std::cerr << std::hex << std::setw(2) << std::setfill('0')
                           << static_cast<int>(static_cast<unsigned char>(actual[pos])) << " ";
             }
             std::cerr << std::dec << std::endl;
-            
+
             validation_passed = false;
             break; // Exit the loop on first validation failure
         }
