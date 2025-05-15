@@ -17,7 +17,7 @@ from commands import plan, profile, kvcache, io_size
 
 available_commands = [
     plan.Command(),
-    kvcache.Command(),
     profile.Command(),
+    kvcache.Command(),
     io_size.Command()
 ]

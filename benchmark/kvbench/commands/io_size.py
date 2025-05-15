@@ -31,8 +31,8 @@ class Command:
         
         Sets the command name and help text for the command-line interface.
         """
-        self.name = "io_size"
-        self.help = "Display IOPs information"
+        self.name = "iosize"
+        self.help = "Display io size information"
 
     def add_arguments(self, subparser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         """

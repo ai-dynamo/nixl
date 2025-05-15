@@ -1,6 +1,29 @@
 # NIXL KVBench
 A utility for generating NIXL Bench commands that test KVCache transfer across various LLM architectures and access patterns (including block and layer approaches).
 
+## Table of Contents
+- [Supported LLM Architectures](#supported-llm-architectures)
+- [Building](#building)
+  - [Docker](#docker)
+  - [Python](#python)
+- [Usage](#usage)
+  - [Basic Usage](#basic-usage)
+- [Command Line Arguments](#command-line-arguments)
+  - [Common Arguments](#common-arguments)
+  - [CLI Override Arguments](#cli-override-arguments)
+  - [Plan Command Arguments](#plan-command-arguments)
+  - [Shared Benchmark Arguments](#shared-benchmark-arguments)
+- [Command Descriptions](#command-descriptions)
+  - [Plan Command](#plan-command)
+  - [Profile Command](#profile-command)
+  - [KVCache Command](#kvcache-command)
+  - [IOSize Command](#iosize-command)
+- [Examples](#example-deepseek-r1-with-block-access-tp1-pp16)
+  - [DeepSeek R1 with Block Access](#example-deepseek-r1-with-block-access-tp1-pp16)
+  - [DeepSeek R1 with Layer Access](#example-deepseek-r1-with-layer-access-tp1-pp16)
+  - [Overriding Model Configuration](#example-overriding-model-configuration-with-cli-args)
+- [Developer Guides](#developer-guides)
+
 ## Supported LLM Architectures
 - DeepSeek R1
 - LLama 3.1 
@@ -30,42 +53,66 @@ uv sync --active
 ### Basic Usage
 ```bash
 python main.py --help
-usage: main.py [-h] {plan,kvcache,profile} ...
+usage: main.py [-h] {plan,profile,kvcache,iosize} ...
 
 KVBench
 
 positional arguments:
-  {plan,kvcache,profile}
+  {plan,profile,kvcache,iosize}
                         Available commands
     plan                Display the recommended configuration for nixlbench
-    kvcache             Display kvcache information
     profile             Run nixlbench
+    kvcache             Display kvcache information
+    iosize              Display io size information
 
 options:
   -h, --help            show this help message and exit
 ```
 
-### Display KVCache Information
-```bash
-python main.py kvcache --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml" 
-Model                  : DEEPSEEK_R1
-Input Sequence Length  : 10000
-Batch Size             : 298
-IO Size                : 1.12 MB
-```
+## Command Line Arguments
 
-### Display NIXL Bench Commands
+KVBench supports various argument groups that apply to different commands:
 
-The following table lists all available command-line arguments for the plan command:
+### Common Arguments
+
+These arguments are shared across all KVBench commands (plan, kvcache, profile):
 
 | Argument | Description |
 | -------- | ----------- |
-| `--model` | Path to a model definition YAML file |
-| `--model_config` | Path to a single model config YAML file |
-| `--model_configs` | Path to multiple model config YAML files (supports glob patterns like 'configs/*.yaml') |
+| `--model` | Path to a model architecture config YAML file |
+| `--model_config` | Path to a model config YAML file |
+| `--model_configs` | Path to multiple model config YAML files (supports glob patterns) |
+
+### CLI Override Arguments
+
+These arguments can be used to override values in model config files:
+
+| Argument | Description |
+| -------- | ----------- |
+| `--pp` | Pipeline parallelism size |
+| `--tp` | Tensor parallelism size |
+| `--isl` | Input sequence length |
+| `--osl` | Output sequence length |
+| `--num_requests` | Number of requests |
+| `--page_size` | Page size |
+| `--access_pattern` | Access pattern [block, layer] |
+
+### Plan Command Arguments
+
+Specific to the `plan` command:
+
+| Argument | Description |
+| -------- | ----------- |
+| `--format` | Output format of the nixl command [text, json, csv] (default: text) |
+
+### Shared Benchmark Arguments
+
+These arguments are used by both `plan` and `profile` commands:
+
+| Argument | Description |
+| -------- | ----------- |
 | `--source` | Source of the nixl descriptors [file, memory, gpu] (default: file) |
 | `--destination` | Destination of the nixl descriptors [file, memory, gpu] (default: memory) |
-| `--format` | Output of the nixl command [text, json, csv] (default: text) |
 | `--backend` | Communication backend [UCX, UCX_MO, GDS] (default: UCX) |
 | `--worker_type` | Worker to use to transfer data [nixl, nvshmem] (default: nixl) |
 | `--initiator_seg_type` | Memory segment type for initiator [DRAM, VRAM] (default: DRAM) |
@@ -90,28 +137,46 @@ The following table lists all available command-line arguments for the plan comm
 | `--etcd-endpoints` | ETCD server URL for coordination (default: http://localhost:2379) |
 | `--gds_enable_direct` | Enable direct I/O for GDS operations |
 | `--gds_filepath` | File path for GDS operations |
-| `--pp` | Pipeline parallelism size |
-| `--tp` | Tensor parallelism size |
-| `--isl` | Input sequence length |
-| `--osl` | Output sequence length |
-| `--num_requests` | Number of requests |
-| `--page_size` | Page size |
-| `--access_pattern` | Access pattern [block, layer] |
+
+## Command Descriptions
+
+KVBench provides four main commands:
+
+### Plan Command
+
+The `plan` command generates and displays recommended `nixlbench` command configurations based on your model architecture and parameters. It helps you prepare optimal benchmark settings without running the benchmark itself.
 
 ```bash
-python main.py plan --model ./examples/model_deepseek_r1.yaml --model_configs "./examples/block-tp1-pp16.yaml" --backend GDS --source gpu --etcd-endpoint "http://10.185.99.120:3379"
-================================================================================
-Model Config: ./examples/block-tp1-pp16.yaml
-ISL: 10000 tokens
-================================================================================
-nixlbench \
-    --backend GDS \
-    --etcd_endpoints http://10.185.99.120:3379 \
-    --initiator_seg_type VRAM \
-    --max_batch_size 149 \
-    --max_block_size 589824 \
-    --start_batch_size 149 \
-    --start_block_size 589824
+python main.py plan --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
+```
+
+### Profile Command
+
+The `profile` command actually runs the benchmark with the specified configuration using `nixlbench`, collecting performance data across various KV cache operations and access patterns.
+
+```bash
+python main.py profile --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
+```
+
+### KVCache Command
+
+The `kvcache` command analyzes and displays detailed information about the KV cache for a specified model configuration, including model type, sequence lengths, batch sizes, and I/O sizes.
+
+```bash
+python main.py kvcache --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
+Model                  : DEEPSEEK_R1
+Input Sequence Length  : 10000
+Batch Size             : 298
+IO Size                : 1.12 MB
+```
+
+### IOSize Command
+
+The `iosize` command displays information about the I/O size requirements for a specified model configuration, helping you understand memory usage and data transfer needs.
+
+```bash
+python main.py iosize --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
+IO Size per GPU: 4608
 ```
 
 ## Example: DeepSeek R1 with Block Access (TP=1, PP=16)
@@ -157,7 +222,8 @@ nixlbench \
     --start_batch_size 23829 \
     --start_block_size 147456
 ```
-## Example: Overriding model_config with cli args
+
+## Example: Overriding model configuration with cli args
 ```bash
 python main.py plan \
   --model ./examples/model_deepseek_r1.yaml \
@@ -180,3 +246,8 @@ nixlbench \
     --start_batch_size 119141 \
     --start_block_size 294912
 ```
+
+## Developer Guides
+For more detailed information, please refer to the following documentation:
+- [Creating a Model Configuration](docs/creating-a-model-config.md) - Guide for creating model configuration files
+- [Adding a New Model Architecture](docs/adding-a-new-model-architecture.md) - Instructions for extending KVBench with new model architectures
