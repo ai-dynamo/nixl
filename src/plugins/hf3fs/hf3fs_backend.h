@@ -70,6 +70,7 @@ class nixlHf3fsEngine : public nixlBackendEngine {
         hf3fsUtil                      *hf3fs_utils;
         std::unordered_map<int, hf3fsFileHandle> hf3fs_file_map;
 
+        void cleanupIOList(nixlHf3fsBackendReqH *handle);
     public:
         nixlHf3fsEngine(const nixlBackendInitParams* init_params);
         ~nixlHf3fsEngine();

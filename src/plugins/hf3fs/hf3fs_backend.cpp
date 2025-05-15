@@ -102,6 +102,14 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     return NIXL_SUCCESS;
 }
 
+void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle)
+{
+    for (auto prev_io : handle->io_list) {
+        delete prev_io;
+    }
+    handle->io_list.clear();
+}
+
 nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
@@ -134,8 +142,6 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
 
     if ((buf_cnt != file_cnt) ||
             ((operation != NIXL_READ) && (operation != NIXL_WRITE)))  {
-        nixl_err = NIXL_ERR_INVALID_PARAM;
-        nixl_mesg =  "Error: No file descriptors";
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: Count mismatch or invalid operation selection");
     }
 
@@ -146,6 +152,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
     } else {
         // TODO: could this ever be a valid case?
         hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
+        cleanupIOList(hf3fs_handle);
     }
 
     bool is_read = (operation == NIXL_READ);
@@ -208,10 +215,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
 
 cleanup_handle:
     // Clean up previously created IOs in the list
-    for (auto prev_io : hf3fs_handle->io_list) {
-        delete prev_io;
-    }
-    hf3fs_handle->io_list.clear();
+    cleanupIOList(hf3fs_handle);
     if (handle_created) {
         delete hf3fs_handle;
     }
@@ -226,13 +230,12 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args)
 {
-    // Handle null pointer case - should have been initialized in prepXfer
-    if (handle == nullptr) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error - handle is null in postXfer");
-    }
-
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
     nixl_status_t        status;
+
+    if (hf3fs_handle->io_list.empty()) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: empty io list");
+    }
 
     for (auto it = hf3fs_handle->io_list.begin(); it != hf3fs_handle->io_list.end(); ++it) {
         nixlHf3fsIO* io = *it;
@@ -290,15 +293,12 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle)
 
     std::cout << "wait IOS ret: " << ret << std::endl;
 
-    // Check if we have any errors in the completed I/O operations
-    // Process the return values and copy the data for read operations
-    auto io_iter = hf3fs_handle->io_list.begin();
-    for (int i = 0; i < ret && io_iter != hf3fs_handle->io_list.end(); i++, ++io_iter) {
+    for (int i = 0; i < ret; i++) {
         if (cqes[i].result < 0) {
             NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("Error: I/O operation completed with error: %d", cqes[i].result));
         }
 
-        nixlHf3fsIO* io = *io_iter;
+        nixlHf3fsIO* io = (nixlHf3fsIO*)cqes[i].userdata;
         if (io->is_read) {
             auto mem_copy = memcpy(io->orig_addr, io->iov.base, io->size);
             if (mem_copy == nullptr) {
@@ -307,6 +307,7 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle)
         }
     }
 
+    // TODO: need to check for NIXL_IN_PROG
     return NIXL_SUCCESS;
 }
 
@@ -314,7 +315,6 @@ nixl_status_t nixlHf3fsEngine::releaseReqH(nixlBackendReqH* handle)
 {   
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
     for (auto io : hf3fs_handle->io_list) {
-        hf3fs_dereg_fd(io->fd);
         delete io;
     }
 
