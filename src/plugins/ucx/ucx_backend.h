@@ -103,6 +103,7 @@ class nixlUcxPublicMetadata : public nixlBackendMD {
 // will be part of NIXL installation - we can have
 // HAVE_CUDA in h-files
 class nixlUcxCudaCtx;
+class nixlUcxCudaCtxRetained;
 class nixlUcxEngine : public nixlBackendEngine {
     private:
         /* UCX data */
@@ -121,8 +122,11 @@ class nixlUcxEngine : public nixlBackendEngine {
         std::vector<pollfd> pollFds;
 
         /* CUDA data*/
-        std::unique_ptr<nixlUcxCudaCtx> cudaCtx;
+        std::unique_ptr<nixlUcxCudaCtx> cudaCtx; // Context matching specific device
         bool cuda_addr_wa;
+
+        // Context to use when current context is missing
+        std::unique_ptr<nixlUcxCudaCtxRetained> m_cudaCtxRetained;
 
         /* Notifications */
         notif_list_t notifMainList;
