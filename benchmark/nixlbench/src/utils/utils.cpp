@@ -371,29 +371,60 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             size_t len;
             uint8_t check_val = 0x00;
             bool rc = false;
+            bool is_allocated = false;
 
             len = iov.len;
 
-            // This will be called on target process in case of write and
-            // on initiator process in case of read
-            if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
+            if ((xferBenchConfig::backend == XFERBENCH_BACKEND_GDS) ||
+                (xferBenchConfig::backend == XFERBENCH_BACKEND_POSIX)) {
+                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+                    if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
+#if HAVE_CUDA
+                        addr = calloc(1, len);
+                        is_allocated = true;
+                        CHECK_CUDA_ERROR(cudaMemcpy(addr, (void *)iov.addr, len,
+                                                    cudaMemcpyDeviceToHost), "cudaMemcpy failed");
+#else
+                        std::cerr << "Failure in consistency check: VRAM segment type not supported without CUDA"
+                                  << std::endl;
+                        exit(EXIT_FAILURE);
+#endif
+                    } else {
+                        addr = (void *)iov.addr;
+                    }
+                } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
+                    addr = calloc(1, len);
+                    is_allocated = true;
+                    ssize_t rc = pread(iov.devId, addr, len, iov.addr);
+                    if (rc < 0) {
+                        std::cerr << "Failed to read from device: " << iov.devId
+                                  << " with error: " << strerror(errno) << std::endl;
+                        exit(EXIT_FAILURE);
+                    }
+                }
+            } else {
+                // This will be called on target process in case of write and
+                // on initiator process in case of read
+                if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
                  xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_VRAM) ||
                 (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
                  xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM)) {
 #if HAVE_CUDA
-                addr = calloc(1, len);
-                CHECK_CUDA_ERROR(cudaMemcpy(addr, (void *)iov.addr, len,
-                                          cudaMemcpyDeviceToHost), "cudaMemcpy failed");
+                    addr = calloc(1, len);
+                    is_allocated = true;
+                    CHECK_CUDA_ERROR(cudaMemcpy(addr, (void *)iov.addr, len,
+                                                cudaMemcpyDeviceToHost), "cudaMemcpy failed");
 #else
-                std::cerr << "Failure in consistency check: VRAM segment type not supported without CUDA"
-                          << std::endl;
-                exit(EXIT_FAILURE);
+                    std::cerr << "Failure in consistency check: VRAM segment type not supported without CUDA"
+                              << std::endl;
+                    exit(EXIT_FAILURE);
 #endif
-            } else if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
-                        xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_DRAM) ||
-                       (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
-                        xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_DRAM)) {
-                addr = (void *)iov.addr;
+                } else if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
+                            xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_DRAM) ||
+                           (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
+                            xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_DRAM)) {
+                    addr = (void *)iov.addr;
+                }
             }
 
             if("WRITE" == xferBenchConfig::op_type) {
@@ -406,7 +437,10 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             if (true != rc) {
                 std::cerr << "Consistency check failed\n" << std::flush;
             }
-            free(addr);
+            // Free the addr only if is allocated here
+            if (is_allocated) {
+                free(addr);
+            }
         }
     }
 }

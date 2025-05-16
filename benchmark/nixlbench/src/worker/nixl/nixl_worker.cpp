@@ -343,6 +343,23 @@ static std::vector<int> createFileFds(std::string name, bool is_gds) {
 
 std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id) {
     auto ret = std::optional<xferBenchIOV>(std::in_place, (uintptr_t)gds_running_ptr, buffer_size, fd);
+    // Fill up with data
+    void *buf = (void *)malloc(buffer_size);
+    if (!buf) {
+        std::cerr << "Failed to allocate " << buffer_size
+                  << " bytes of memory" << std::endl;
+        return std::nullopt;
+    }
+    // File is always initialized with XFERBENCH_TARGET_BUFFER_ELEMENT
+    memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+    int rc = pwrite(fd, buf, buffer_size, gds_running_ptr);
+    if (rc < 0) {
+        std::cerr << "Failed to write to file: " << fd
+                  << " with error: " << strerror(errno) << std::endl;
+        return std::nullopt;
+    }
+    free(buf);
+
     gds_running_ptr += (buffer_size * mem_dev_id);
 
     return ret;

@@ -83,6 +83,13 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
     setRank(my_rank);
     setSize(global_size);
 
+    if (my_rank >= global_size) {
+        std::cerr << "Rank " << my_rank
+                  << " is greater than or equal to global size"
+                  << global_size << std::endl;
+        client->rmdir(makeKey(""), true).get();
+        exit(EXIT_FAILURE);
+    }
     std::cout << "ETCD Runtime: Registered as rank " << my_rank
 	      << " item " << my_rank + 1 << " of "
 	      << global_size << std::endl;
