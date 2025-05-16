@@ -92,6 +92,11 @@ nixl_status_t hf3fsUtil::createIOV(struct hf3fs_iov *iov, void *addr, size_t siz
     return NIXL_SUCCESS;
 }
 
+void hf3fsUtil::destroyIOV(struct hf3fs_iov *iov)
+{
+    hf3fs_iovdestroy(iov);
+}
+
 nixl_status_t validateIO(struct hf3fs_ior *ior, struct hf3fs_iov *iov, void *addr, size_t fd_offset,
                          size_t size, int fd, bool is_read)
 {

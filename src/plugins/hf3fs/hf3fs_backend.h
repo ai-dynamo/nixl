@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <list>
+#include <thread>
 #include "hf3fs_utils.h"
 #include "backend/backend_engine.h"
 
@@ -48,12 +49,26 @@ class nixlHf3fsIO {
         ~nixlHf3fsIO() {}
 };
 
+class nixlH3fsThreadStatus {
+    public:
+        std::thread *thread;
+        nixl_status_t error_status;
+        std::string error_message;
+        bool stop_thread;
+
+        nixlH3fsThreadStatus() : thread(nullptr), error_status(NIXL_SUCCESS), error_message(""), stop_thread(false) {}
+        ~nixlH3fsThreadStatus() {}
+};
+
 class nixlHf3fsBackendReqH : public nixlBackendReqH {
     public:
        std::list<nixlHf3fsIO *> io_list;
        hf3fs_ior ior;
+       uint32_t completed_ios;  // Number of completed IOs
+       uint32_t num_ios;        // Number of submitted IOs
+       nixlH3fsThreadStatus io_status;
 
-       nixlHf3fsBackendReqH() {}
+       nixlHf3fsBackendReqH() : completed_ios(0), num_ios(0) {}
        ~nixlHf3fsBackendReqH() {}
 };
 
@@ -63,6 +78,8 @@ class nixlHf3fsEngine : public nixlBackendEngine {
         hf3fsUtil                      *hf3fs_utils;
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
+        void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;
+        static void waitForIOsThread(void* arg);
     public:
         nixlHf3fsEngine(const nixlBackendInitParams* init_params);
         ~nixlHf3fsEngine();

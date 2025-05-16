@@ -24,6 +24,7 @@
 #include "common/status.h"
 #include "common/nixl_log.h"
 
+#define NUM_CQES 1024
 
 nixlHf3fsEngine::nixlHf3fsEngine (const nixlBackendInitParams* init_params)
     : nixlBackendEngine (init_params)
@@ -107,10 +108,25 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
 void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle) const
 {
     for (auto prev_io : handle->io_list) {
+        hf3fs_utils->destroyIOV(&prev_io->iov);
         delete prev_io;
     }
 
     handle->io_list.clear();
+}
+
+void nixlHf3fsEngine::cleanupIOThread(nixlHf3fsBackendReqH *handle) const
+{
+    if (handle->io_status.thread != nullptr) {
+        handle->io_status.stop_thread = true;
+        handle->io_status.thread->join();
+
+        delete handle->io_status.thread;
+        handle->io_status.thread = nullptr;
+        handle->io_status.error_status = NIXL_SUCCESS;
+        handle->io_status.error_message = "";
+        handle->io_status.stop_thread = false;
+    }
 }
 
 nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
@@ -227,6 +243,10 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: empty io list");
     }
 
+    if (UINT_MAX - hf3fs_handle->num_ios < hf3fs_handle->io_list.size()) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_NOT_ALLOWED, "Error: more than UINT_MAX ios");
+    }
+
     for (auto it = hf3fs_handle->io_list.begin(); it != hf3fs_handle->io_list.end(); ++it) {
         nixlHf3fsIO* io = *it;
         status = hf3fs_utils->prepIO(&hf3fs_handle->ior, &io->iov, io->iov.base,
@@ -241,7 +261,75 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to post IOR");
     }
 
+    // postXfer may be called multiple times, so we need to check if the thread is already running
+    if (hf3fs_handle->io_status.thread == nullptr) {
+        hf3fs_handle->io_status.thread = new std::thread(waitForIOsThread, hf3fs_handle);
+        if (hf3fs_handle->io_status.thread == nullptr) {
+            NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error: Failed to create io thread");
+        }
+    }
+
+    hf3fs_handle->num_ios += hf3fs_handle->io_list.size();
+
     return NIXL_IN_PROG;
+}
+
+void nixlHf3fsEngine::waitForIOsThread(void* arg)
+{
+    nixlHf3fsBackendReqH* hf3fs_handle = (nixlHf3fsBackendReqH*)arg;
+    nixlH3fsThreadStatus* io_status = &hf3fs_handle->io_status;
+    hf3fs_cqe* cqes = new hf3fs_cqe[NUM_CQES];
+
+    while (!io_status->stop_thread && io_status->error_status == NIXL_SUCCESS) {
+        // Check if we've processed all IOs
+        if (hf3fs_handle->completed_ios >= hf3fs_handle->num_ios) {
+            // User may call postXfer multiple times, so we could not exit yet,
+            // so we must wait for stop condition
+            sched_yield();
+            continue;
+        }
+
+        // Use a short timeout to allow thread to check stop condition
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        ts.tv_nsec += 10 * 1000 * 1000; // 10 milliseconds
+        if (ts.tv_nsec >= 1000000000) {
+            ts.tv_sec += 1;
+            ts.tv_nsec -= 1000000000;
+        }
+
+        int ret = hf3fs_wait_for_ios(&hf3fs_handle->ior, cqes, NUM_CQES, 1, &ts);
+        if (ret > 0) {
+            for (int i = 0; i < ret; i++) {
+                if (cqes[i].result < 0) {
+                    io_status->error_status = NIXL_ERR_BACKEND;
+                    io_status->error_message = absl::StrFormat(
+                        "Error: I/O operation completed with error: %d", cqes[i].result);
+                    break;
+                }
+
+                nixlHf3fsIO* io = (nixlHf3fsIO*)cqes[i].userdata;
+                if (io->is_read) {
+                    auto mem_copy = memcpy(io->orig_addr, io->iov.base, io->size);
+                    if (mem_copy == nullptr) {
+                        io_status->error_status = NIXL_ERR_BACKEND;
+                        io_status->error_message = "Error: Failed to copy memory after read";
+                        break;
+                    }
+                }
+                hf3fs_handle->completed_ios++;
+            }
+
+        } else if (ret < 0 && ret != -ETIMEDOUT && ret != -EAGAIN) {
+            io_status->error_status = NIXL_ERR_BACKEND;
+            io_status->error_message = absl::StrFormat(
+                "Error: Failed to wait for IOs: %d (errno: %d - %s)",
+                ret, ret, strerror(ret));
+            break;
+        }
+    }
+
+    delete[] cqes;
 }
 
 nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
@@ -258,58 +346,32 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
             "Error: IOR is not initialized in checkXfer");
     }
 
-    // Use a timeout to avoid hanging indefinitely (e.g., 100ms)
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    ts.tv_nsec += 100 * 1000 * 1000; // 100 milliseconds
-    if (ts.tv_nsec >= 1000000000) {
-        ts.tv_sec += 1;
-        ts.tv_nsec -= 1000000000;
+    if (hf3fs_handle->io_status.thread == nullptr) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM,
+            "Error: io thread is not initialized in checkXfer");
     }
 
-    int num_ios = hf3fs_handle->io_list.size();
-    int num_cqes = num_ios > 1024 ? 1024 : num_ios;
-    hf3fs_cqe cqes[num_cqes];
-    int ret = hf3fs_wait_for_ios(&hf3fs_handle->ior, cqes, num_cqes, 1, &ts);
-    // TODO: handle ret == 0 as timeout
-    if (ret <= 0) {
-        // Check specifically for timeout (-ETIMEDOUT or -EAGAIN)
-        if (ret == 0 || ret == -ETIMEDOUT || ret == -EAGAIN) {
-            return NIXL_IN_PROG;  // Return in-progress to retry later
-        }
-
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND,
-            absl::StrFormat("Error: Failed to wait for IOs: %d (errno: %d - %s)",
-                           ret, ret, strerror(ret)));
+    if (hf3fs_handle->io_status.error_status != NIXL_SUCCESS) {
+        nixl_status_t error_status = hf3fs_handle->io_status.error_status;
+        std::string error_message = hf3fs_handle->io_status.error_message;
+        cleanupIOThread(hf3fs_handle);
+        NIXL_LOG_AND_RETURN_IF_ERROR(error_status, error_message);
     }
 
-    for (int i = 0; i < ret; i++) {
-        if (cqes[i].result < 0) {
-            NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND,
-                absl::StrFormat("Error: I/O operation completed with error: %d", cqes[i].result));
-        }
-
-        nixlHf3fsIO* io = (nixlHf3fsIO*)cqes[i].userdata;
-        if (io->is_read) {
-            auto mem_copy = memcpy(io->orig_addr, io->iov.base, io->size);
-            if (mem_copy == nullptr) {
-                NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND,
-                "Error: Failed to copy memory after read");
-            }
-        }
+    if (hf3fs_handle->completed_ios < hf3fs_handle->num_ios) {
+        return NIXL_IN_PROG;
     }
 
-    // TODO: need to check for NIXL_IN_PROG
+    cleanupIOThread(hf3fs_handle);
     return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlHf3fsEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
-    for (auto io : hf3fs_handle->io_list) {
-        delete io;
-    }
 
+    cleanupIOThread(hf3fs_handle);
+    cleanupIOList(hf3fs_handle);
     hf3fs_utils->destroyIOR(&hf3fs_handle->ior);
     delete hf3fs_handle;
     return NIXL_SUCCESS;
