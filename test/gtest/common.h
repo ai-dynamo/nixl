@@ -39,4 +39,6 @@ public:
     }
 };
 
+bool isFast();
+
 } // namespace gtest
