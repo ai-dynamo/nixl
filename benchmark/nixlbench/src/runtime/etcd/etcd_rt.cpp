@@ -85,7 +85,7 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
 
     if (my_rank >= global_size) {
         std::cerr << "Rank " << my_rank
-                  << " is greater than or equal to global size"
+                  << " is greater than or equal to global size "
                   << global_size << std::endl;
         client->rmdir(makeKey(""), true).get();
         exit(EXIT_FAILURE);

@@ -402,9 +402,10 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
 
     opt_args.backends.push_back(backend_engine);
 
-    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) {
-        gds_remote_fds = createFileFds(getName(), true);
-        if (gds_remote_fds.empty()) {
+    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
+        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+        remote_fds = createFileFds(getName(), true);
+        if (remote_fds.empty()) {
             std::cerr << "Failed to create GDS file" << std::endl;
             exit(EXIT_FAILURE);
         }
@@ -412,7 +413,7 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(buffer_size, gds_remote_fds[0], i);
+                basic_desc = initBasicDescFile(buffer_size, remote_fds[0], i);
                 if (basic_desc) {
                     iov_list.push_back(basic_desc.value());
                 }
@@ -421,30 +422,7 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args),
                         "registerMem failed");
-            gds_remote_iovs.push_back(iov_list);
-        }
-        // Reset the running pointer to 0
-        gds_running_ptr = 0x0;
-    } else if (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
-        posix_remote_fds = createFileFds(getName(), false);
-        if (posix_remote_fds.empty()) {
-            std::cerr << "Failed to create POSIX file" << std::endl;
-            exit(EXIT_FAILURE);
-        }
-        for (int list_idx = 0; list_idx < num_lists; list_idx++) {
-            std::vector<xferBenchIOV> iov_list;
-            for (i = 0; i < num_devices; i++) {
-                std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(buffer_size, posix_remote_fds[0], i);
-                if (basic_desc) {
-                    iov_list.push_back(basic_desc.value());
-                }
-            }
-            nixl_reg_dlist_t desc_list(FILE_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args),
-                        "registerMem failed");
-            posix_remote_iovs.push_back(iov_list);
+            remote_iovs.push_back(iov_list);
         }
         // Reset the running pointer to 0
         gds_running_ptr = 0x0;
@@ -511,18 +489,9 @@ void xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>
                          "deregisterMem failed");
     }
 
-    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) {
-        for (auto &iov_list: gds_remote_iovs) {
-            for (auto &iov: iov_list) {
-                cleanupBasicDescFile(iov);
-            }
-            nixl_reg_dlist_t desc_list(FILE_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args),
-                             "deregisterMem failed");
-        }
-    } else if (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
-        for (auto &iov_list: posix_remote_iovs) {
+    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
+        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+        for (auto &iov_list: remote_iovs) {
             for (auto &iov: iov_list) {
                 cleanupBasicDescFile(iov);
             }
@@ -593,34 +562,20 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     int desc_str_sz;
 
     // Special case for GDS
-    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) {
+    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
+        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
         for (auto &iov_list: local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov: iov_list) {
                 std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(iov.len, gds_remote_fds[0], iov.devId);
+                basic_desc = initBasicDescFile(iov.len, remote_fds[0], iov.devId);
                 if (basic_desc) {
                     remote_iov_list.push_back(basic_desc.value());
                 }
             }
             res.push_back(remote_iov_list);
         }
-    }
-    // Special case for POSIX
-    else if (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
-        for (auto &iov_list: local_iovs) {
-            std::vector<xferBenchIOV> remote_iov_list;
-            for (auto &iov: iov_list) {
-                std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(iov.len, posix_remote_fds[0], iov.devId);
-                if (basic_desc) {
-                    remote_iov_list.push_back(basic_desc.value());
-                }
-            }
-            res.push_back(remote_iov_list);
-        }
-    }
-    else {
+    } else {
         for (const auto &local_iov: local_iovs) {
             nixlSerDes ser_des;
             nixl_xfer_dlist_t local_desc(seg_type);
