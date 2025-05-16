@@ -1,0 +1,15 @@
+strategy:
+  tp_size: 8
+  pp_size: 32
+  model_quant_mode: "fp8"
+  kvcache_quant_mode: "fp8"
+
+runtime:
+  isl: 8192
+  osl: 2048
+  num_requests: 10
+system:
+  hardware: "H100"
+  backend: "SGLANG"
+  access_pattern: "block"
+  page_size: 16

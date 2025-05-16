@@ -12,21 +12,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-[build-system]
-requires = ["meson-python", "pybind11", "patchelf"]
-build-backend = "mesonpy"
-
-[project]
-name = 'nixl'
-version = '0.2.0'
-description = 'NIXL Python API'
-readme = 'README.md'
-license = {file = 'LICENSE'}
-requires-python = '>=3.9'
-authors = [
-  {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
-]
-
-[tool.meson-python.args]
-setup = ['-Dinstall_headers=false']
