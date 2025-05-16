@@ -135,10 +135,6 @@ nixlAgent::~nixlAgent() {
     }
 }
 
-// Define move operations in CPP file to avoid exposing nixlAgentData in header
-nixlAgent::nixlAgent(nixlAgent &&other) noexcept = default;
-nixlAgent& nixlAgent::operator=(nixlAgent &&other) noexcept = default;
-
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
     auto& plugin_manager = nixlPluginManager::getInstance();
