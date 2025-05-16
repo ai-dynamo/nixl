@@ -16,12 +16,10 @@
 ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [nixl_inc_dirs, '../../../../src/plugins/ucx'])
 ucx_mo_backend_dep = declare_dependency(link_with: ucx_mo_backend_lib, include_directories: [nixl_inc_dirs, '../../../../src/plugins/ucx_mo'])
 
+cuda_dependencies = []
 if cuda_dep.found()
     cuda_dependencies = [cuda_dep]
     cpp_args = '-DHAVE_CUDA'
-else
-    cuda_dependencies = []
-    cpp_args = '-UHAVE_CUDA'
 endif
 
 ucx_backend_test = executable('ucx_mo_backend_test',
