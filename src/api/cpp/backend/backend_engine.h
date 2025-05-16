@@ -114,6 +114,17 @@ class nixlBackendEngine {
                                         const nixl_opt_b_args_t* opt_args=nullptr
                                        ) const = 0;
 
+        // Estimate the cost (duration) of a transfer operation.
+        virtual nixl_status_t estimateXferCost(const nixl_xfer_op_t &operation,
+                                               const nixl_meta_dlist_t &local,
+                                               const nixl_meta_dlist_t &remote,
+                                               const std::string &remote_agent,
+                                               nixlBackendReqH* const &handle,
+                                               std::chrono::duration<double> &duration) const
+        {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
         // Posting a request, which completes the async handle creation and posts it
         virtual nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                         const nixl_meta_dlist_t &local,

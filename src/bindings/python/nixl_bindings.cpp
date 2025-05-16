@@ -426,6 +426,12 @@ PYBIND11_MODULE(_bindings, m) {
                    py::arg("remote_descs"), py::arg("remote_agent"),
                    py::arg("notif_msg") = std::string(""),
                    py::arg("backend") = std::vector<uintptr_t>({}))
+        .def("estimateXferCost", [](nixlAgent &agent, uintptr_t reqh) -> std::chrono::duration<double> {
+                std::chrono::duration<double> duration;
+                nixl_status_t ret = agent.estimateXferCost(reinterpret_cast<nixlXferReqH&>(reqh), duration);
+                throw_nixl_exception(ret);
+                return duration;
+            }, py::arg("req_handle"))
         .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh, std::string notif_msg) -> nixl_status_t {
                     nixl_opt_args_t extra_params;
                     nixl_status_t ret;
