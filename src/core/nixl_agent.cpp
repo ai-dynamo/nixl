@@ -657,6 +657,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     NIXL_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
     {
+        delete backend_set;
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1317,10 +1318,13 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
             return NIXL_SUCCESS;
         } else {
             nixl_meta_dlist_t dummy(descs.getType(), descs.isSorted());
-            for (const auto& [backend, conn_info] : data->remoteBackends[remote_name])
-                if (data->remoteSections[remote_name]->populate(
-                          descs, data->backendEngines[backend], dummy) == NIXL_SUCCESS)
-                    return NIXL_SUCCESS;
+            if (auto it = data->remoteBackends.find(remote_name); it != data->remoteBackends.end()) {
+                for (const auto& [backend, conn_info] : it->second)
+                    if (data->backendEngines.count(backend) != 0)
+                        if (data->remoteSections[remote_name]->populate(
+                              descs, data->backendEngines[backend], dummy) == NIXL_SUCCESS)
+                        return NIXL_SUCCESS;
+            }
             dummy.clear();
         }
     }
