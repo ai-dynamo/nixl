@@ -67,6 +67,11 @@
 #define XFERBENCH_BACKEND_UCX "UCX"
 #define XFERBENCH_BACKEND_UCX_MO "UCX_MO"
 #define XFERBENCH_BACKEND_GDS "GDS"
+#define XFERBENCH_BACKEND_POSIX "POSIX"
+
+// POSIX API types
+#define XFERBENCH_POSIX_API_AIO "AIO"
+#define XFERBENCH_POSIX_API_URING "URING"
 
 // Scheme types for transfer patterns
 #define XFERBENCH_SCHEME_PAIRWISE     "pairwise"
@@ -117,7 +122,10 @@ class xferBenchConfig {
         static std::string device_list;
         static std::string etcd_endpoints;
         static std::string gds_filepath;
-        static bool gds_enable_direct;
+        static int num_files;
+        static std::string posix_api_type;
+        static std::string posix_filepath;
+        static bool storage_enable_direct;
 
         static int loadFromFlags();
         static void printConfig();
