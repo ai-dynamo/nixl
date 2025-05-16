@@ -28,3 +28,8 @@ disable_mooncake_backend = get_option('disable_mooncake_backend')
 if libtransfer_engine.found() and not disable_mooncake_backend
     subdir('mooncake')
 endif
+
+disable_hf3fs_backend = get_option('disable_hf3fs_backend')
+if not disable_hf3fs_backend
+    subdir('hf3fs')
+endif

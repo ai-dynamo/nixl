@@ -13,25 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_backend_inc_dirs = include_directories('./ucx')
-
-subdir('ucx')
-subdir('ucx_mo')
-
-subdir('posix')  # Always try to build POSIX backend, it will handle its own dependencies
-
-disable_gds_backend = get_option('disable_gds_backend')
-#if not disable_gds_backend and cuda_dep.found()
-  #    subdir('cuda_gds')
-#endif
-
-cc = meson.get_compiler('cpp')
-libtransfer_engine = cc.find_library('transfer_engine', required: false)
-if libtransfer_engine.found() and not get_option('disable_mooncake_backend')
-    subdir('mooncake')
+if cuda_dep.found()
+    cuda_dependencies = [cuda_dep]
+    cpp_args = '-DUSE_VRAM'
+else
+    cuda_dependencies = []
+    cpp_args = '-UUSE_VRAM'
 endif
 
-disable_hf3fs_backend = get_option('disable_hf3fs_backend')
-if not disable_hf3fs_backend
-    subdir('hf3fs')
-endif
+nixl_hf3fs_app = executable('nixl_hf3fs_test', 'nixl_hf3fs_test.cpp',
+                          dependencies: [nixl_dep, nixl_infra] + cuda_dependencies,
+                          include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                          install: true)
