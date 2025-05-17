@@ -408,13 +408,6 @@ nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle) const
 }
 
 nixlGdsEngine::~nixlGdsEngine() {
-    // Clean up the batch pool
-    for (auto* batch : batch_pool) {
-        if (batch) {
-            batch->destroyBatch();  // Explicitly destroy the batch before deleting
-            delete batch;
-        }
-    }
     batch_pool.clear();
 
     if (gds_utils) {
