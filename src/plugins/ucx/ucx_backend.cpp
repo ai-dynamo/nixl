@@ -720,6 +720,9 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
         if (need_restart) {
             progressThreadRestart();
         }
+#if HAVE_CUDA
+        cudaSetDevice(mem.devId);
+#endif
     }
 
     // TODO: Add nixl_mem check?
