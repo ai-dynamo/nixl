@@ -97,6 +97,8 @@
 
 #define IS_PAIRWISE_AND_SG() (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
                               XFERBENCH_MODE_SG == xferBenchConfig::mode)
+#define IS_PAIRWISE_AND_MG() (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
+                              XFERBENCH_MODE_MG == xferBenchConfig::mode)
 class xferBenchConfig {
     public:
         static std::string runtime_type;
