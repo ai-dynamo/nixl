@@ -772,6 +772,8 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
         }
         if (need_restart) {
             progressThreadRestart();
+            // set the ctx for main thread
+            vramApplyCtx();
         }
     }
 
