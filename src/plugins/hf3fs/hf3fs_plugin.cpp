@@ -24,7 +24,6 @@ static const char* PLUGIN_VERSION = "0.1.0";
 
 // Function to create a new HF3FS backend engine instance
 static nixlBackendEngine* create_hf3fs_engine(const nixlBackendInitParams* init_params) {
-    std::cerr << "DEBUG: Creating HF3FS engine" << std::endl;
     return new nixlHf3fsEngine(init_params);
 }
 

@@ -14,11 +14,10 @@
 # limitations under the License.
 
 
-# Update to use 3FS library paths
-threefs_lib_path = '/usr/lib/'
+# Use the hf3fs_lib_path from parent meson.build
 threefs_inc_path = '/usr/include/hf3fs'
 threefs_dep = declare_dependency(
-  link_args : ['-L' + threefs_lib_path, '-lhf3fs_api_shared'],
+  link_args : ['-L' + hf3fs_lib_path, '-l' + hf3fs_lib_file],
   include_directories : include_directories(threefs_inc_path))
 
 # Get Abseil dependencies

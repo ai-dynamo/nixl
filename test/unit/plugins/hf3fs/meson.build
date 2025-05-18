@@ -13,15 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if cuda_dep.found()
-    cuda_dependencies = [cuda_dep]
-    cpp_args = '-DUSE_VRAM'
-else
-    cuda_dependencies = []
-    cpp_args = '-UUSE_VRAM'
-endif
-
 nixl_hf3fs_app = executable('nixl_hf3fs_test', 'nixl_hf3fs_test.cpp',
-                          dependencies: [nixl_dep, nixl_infra] + cuda_dependencies,
+                          dependencies: [nixl_dep, nixl_infra],
                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
                           install: true)

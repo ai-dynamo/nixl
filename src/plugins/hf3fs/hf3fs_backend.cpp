@@ -38,7 +38,9 @@ nixlHf3fsEngine::nixlHf3fsEngine (const nixlBackendInitParams* init_params)
 
     // Get mount point from parameters if available
     std::string mount_point = "/mnt/3fs/"; // default
-    if (init_params && init_params->customParams && init_params->customParams->count("mount_point") > 0) {
+    if (init_params &&
+        init_params->customParams &&
+        init_params->customParams->count("mount_point") > 0) {
         mount_point = init_params->customParams->at("mount_point");
     }
 
@@ -53,13 +55,14 @@ nixlHf3fsEngine::nixlHf3fsEngine (const nixlBackendInitParams* init_params)
 
 
 nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
-                                          const nixl_mem_t &nixl_mem,
-                                          nixlBackendMD* &out)
+                                            const nixl_mem_t &nixl_mem,
+                                            nixlBackendMD* &out)
 {
     nixl_status_t status;
     int fd;
     int ret;
     nixlHf3fsMetadata *md = new nixlHf3fsMetadata();
+
     switch (nixl_mem) {
         case DRAM_SEG:
             md->type = DRAM_SEG;
@@ -71,13 +74,13 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             status = hf3fs_utils->registerFileHandle(fd, &ret);
             if (status != NIXL_SUCCESS) {
                 delete md;
-                NIXL_LOG_AND_RETURN_IF_ERROR(status, absl::StrFormat("Error - failed to register file handle %d", fd));
+                NIXL_LOG_AND_RETURN_IF_ERROR(status,
+                    absl::StrFormat("Error - failed to register file handle %d", fd));
             }
             md->handle.fd = fd;
             md->handle.size = mem.len;
             md->handle.metadata = mem.metaInfo;
             md->type = nixl_mem;
-            md->handle.hf3fs_fd = ret;
             break;
         case VRAM_SEG:
         default:
@@ -111,11 +114,11 @@ void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle) const
 }
 
 nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
-                                       const nixl_meta_dlist_t &local,
-                                       const nixl_meta_dlist_t &remote,
-                                       const std::string &remote_agent,
-                                       nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args) const
+                                         const nixl_meta_dlist_t &local,
+                                         const nixl_meta_dlist_t &remote,
+                                         const std::string &remote_agent,
+                                         nixlBackendReqH* &handle,
+                                         const nixl_opt_b_args_t* opt_args) const
 {
     nixlHf3fsBackendReqH *hf3fs_handle;
     void                *addr = NULL;
@@ -140,8 +143,9 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
     if ((buf_cnt != file_cnt) ||
-            ((operation != NIXL_READ) && (operation != NIXL_WRITE)))  {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: Count mismatch or invalid operation selection");
+        ((operation != NIXL_READ) && (operation != NIXL_WRITE)))  {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM,
+            "Error: Count mismatch or invalid operation selection");
     }
 
     hf3fs_handle = new nixlHf3fsBackendReqH();
@@ -210,11 +214,11 @@ cleanup_handle:
 }
 
 nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
-                                       const nixl_meta_dlist_t &local,
-                                       const nixl_meta_dlist_t &remote,
-                                       const std::string &remote_agent,
-                                       nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args) const
+                                         const nixl_meta_dlist_t &local,
+                                         const nixl_meta_dlist_t &remote,
+                                         const std::string &remote_agent,
+                                         nixlBackendReqH* &handle,
+                                         const nixl_opt_b_args_t* opt_args) const
 {
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
     nixl_status_t        status;
@@ -250,7 +254,8 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
 
     // Check if IOR is initialized
     if (&hf3fs_handle->ior == nullptr) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: IOR is not initialized in checkXfer");
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM,
+            "Error: IOR is not initialized in checkXfer");
     }
 
     // Use a timeout to avoid hanging indefinitely (e.g., 100ms)
@@ -273,21 +278,23 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
             return NIXL_IN_PROG;  // Return in-progress to retry later
         }
 
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("Error: Failed to wait for IOs: %d (errno: %d - %s)", ret, ret, strerror(ret)));
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND,
+            absl::StrFormat("Error: Failed to wait for IOs: %d (errno: %d - %s)",
+                           ret, ret, strerror(ret)));
     }
-
-    std::cout << "wait IOS ret: " << ret << std::endl;
 
     for (int i = 0; i < ret; i++) {
         if (cqes[i].result < 0) {
-            NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, absl::StrFormat("Error: I/O operation completed with error: %d", cqes[i].result));
+            NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND,
+                absl::StrFormat("Error: I/O operation completed with error: %d", cqes[i].result));
         }
 
         nixlHf3fsIO* io = (nixlHf3fsIO*)cqes[i].userdata;
         if (io->is_read) {
             auto mem_copy = memcpy(io->orig_addr, io->iov.base, io->size);
             if (mem_copy == nullptr) {
-                NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error: Failed to copy memory after read");
+                NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND,
+                "Error: Failed to copy memory after read");
             }
         }
     }

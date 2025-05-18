@@ -95,7 +95,6 @@ int main(int argc, char** argv) {
     verify_plugin("UCX_MO", plugin_manager);
     verify_plugin("MOCK_BASIC", plugin_manager);
     verify_plugin("MOCK_DRAM", plugin_manager);
-    verify_plugin("HF3FS", plugin_manager);
 
     // List all loaded plugins
     std::cout << "\nLoaded plugins:" << std::endl;
