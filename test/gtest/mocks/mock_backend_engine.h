@@ -23,13 +23,13 @@
 
 namespace mocks {
 
-class MockDramBackendEngine : public nixlBackendEngine {
+class MockBackendEngine : public nixlBackendEngine {
 private:
     nixlBackendEngine* gmock_backend_engine;
 
 public:
-  MockDramBackendEngine(const nixlBackendInitParams *init_params);
-  ~MockDramBackendEngine();
+  MockBackendEngine(const nixlBackendInitParams *init_params);
+  ~MockBackendEngine();
 
   bool supportsRemote() const override {
     assert(sharedState > 0);

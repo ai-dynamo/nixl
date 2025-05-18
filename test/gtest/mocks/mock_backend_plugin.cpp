@@ -14,20 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "backend/backend_engine.h"
-#include "backend/backend_plugin.h"
+#include "mock_backend_engine.h"
 #include "common.h"
 
 namespace mocks {
-namespace basic_plugin {
+namespace backend_plugin {
 
-static nixlBackendEngine *create_engine(const nixlBackendInitParams *) {
-  return nullptr;
+static nixlBackendEngine *create_engine(const nixlBackendInitParams *params) {
+  return new MockBackendEngine(params);
 }
 
-static void destroy_engine(nixlBackendEngine *) {}
+static void destroy_engine(nixlBackendEngine *engine) { delete engine; }
 
-static const char *get_plugin_name() { return gtest::mock_basic_plugin_name; }
+static const char *get_plugin_name() { return gtest::mock_backend_plugin_name; }
 
 static const char *get_plugin_version() { return "0.0.1"; }
 
@@ -41,12 +40,12 @@ static nixlBackendPlugin plugin = {
   get_plugin_version,
   get_backend_options
 };
-} // namespace basic_plugin
+} // namespace backend_plugin
 
 } // namespace mocks
 
 extern "C" nixlBackendPlugin *nixl_plugin_init() {
-  return &mocks::basic_plugin::plugin;
+  return &mocks::backend_plugin::plugin;
 }
 
 extern "C" void nixl_plugin_fini() {}

@@ -170,33 +170,13 @@ TEST_F(LoadedPluginTestFixture, NoLoadedPluginsTest) {
 }
 
 TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {
-  EXPECT_TRUE(LoadPlugin(mock_basic_plugin_name));
-  EXPECT_TRUE(HasOnlyLoadedPlugins());
-}
-
-TEST_F(LoadedPluginTestFixture, LoadMultiplePluginsTest) {
-  EXPECT_TRUE(LoadPlugin(mock_basic_plugin_name));
-  EXPECT_TRUE(LoadPlugin(mock_dram_plugin_name));
+  EXPECT_TRUE(LoadPlugin(mock_backend_plugin_name));
   EXPECT_TRUE(HasOnlyLoadedPlugins());
 }
 
 TEST_F(LoadedPluginTestFixture, LoadUnloadSimplePluginTest) {
-  EXPECT_TRUE(LoadPlugin(mock_basic_plugin_name));
-  UnloadPlugin(mock_basic_plugin_name);
-  EXPECT_TRUE(HasOnlyLoadedPlugins());
-}
-
-TEST_F(LoadedPluginTestFixture, LoadUnloadComplexPluginTest) {
-  EXPECT_TRUE(LoadPlugin(mock_basic_plugin_name));
-  EXPECT_TRUE(LoadPlugin(mock_dram_plugin_name));
-  UnloadPlugin(mock_basic_plugin_name);
-  EXPECT_TRUE(HasOnlyLoadedPlugins());
-
-  EXPECT_TRUE(LoadPlugin(mock_basic_plugin_name));
-  EXPECT_TRUE(HasOnlyLoadedPlugins());
-
-  UnloadPlugin(mock_basic_plugin_name);
-  UnloadPlugin(mock_dram_plugin_name);
+  EXPECT_TRUE(LoadPlugin(mock_backend_plugin_name));
+  UnloadPlugin(mock_backend_plugin_name);
   EXPECT_TRUE(HasOnlyLoadedPlugins());
 }
 
@@ -204,7 +184,7 @@ TEST_F(LoadedPluginTestFixture, LoadUnloadComplexPluginTest) {
 INSTANTIATE_TEST_SUITE_P(MockLoadPluginInstantiation,
                          LoadSinglePluginTestFixture,
                          testing::Values(PluginDesc{
-                             .name = mock_basic_plugin_name,
+                             .name = mock_backend_plugin_name,
                              .type = PluginDesc::PluginType::Mock}));
 INSTANTIATE_TEST_SUITE_P(UcxLoadPluginInstantiation,
                          LoadSinglePluginTestFixture,

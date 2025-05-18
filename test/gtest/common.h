@@ -21,8 +21,7 @@
 #include <iomanip>
 
 namespace gtest {
-static constexpr const char *mock_basic_plugin_name = "MOCK_BASIC";
-static constexpr const char *mock_dram_plugin_name = "MOCK_DRAM";
+static constexpr const char *mock_backend_plugin_name = "MOCK_BACKEND";
 
 class Logger {
 public:

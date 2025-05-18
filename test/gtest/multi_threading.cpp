@@ -47,7 +47,7 @@ protected:
         nixlBackendH* backend_handle = nullptr;
         nixl_b_params_t params;
         params[gmock_engine_key] = std::to_string(reinterpret_cast<uintptr_t>(&gmock_engine));
-        nixl_status_t status = agent.createBackend(mock_dram_plugin_name, params, backend_handle);
+        nixl_status_t status = agent.createBackend(mock_backend_plugin_name, params, backend_handle);
         EXPECT_EQ(status, NIXL_SUCCESS);
         EXPECT_NE(backend_handle, nullptr);
         return backend_handle;
