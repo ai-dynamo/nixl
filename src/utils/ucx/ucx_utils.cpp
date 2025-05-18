@@ -286,7 +286,7 @@ nixl_status_t nixlUcxEp::estimateCost(nixlUcxMem &mem,
                                       std::chrono::duration<double> &duration)
 {
 #if UCP_API_VERSION >= UCP_VERSION(1, 20)
-    ucp_ep_cost_op_type_t ucx_op_type;
+    ucp_op_type_t ucx_op_type;
     switch (nixl_op) {
         case NIXL_WRITE:
             ucx_op_type = UCP_OP_PUT;
