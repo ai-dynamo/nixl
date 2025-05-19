@@ -173,4 +173,11 @@ public:
     ucp_worker_h getWorker() const { return worker; }
 };
 
+[[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {
+    return {
+        { "ucx_devices", "" },
+        { "ucx_error_handling_mode", "none" } // or "peer"
+    };
+}
+
 #endif
