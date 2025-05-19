@@ -45,6 +45,7 @@ static const char* get_plugin_version() {
 static nixl_b_params_t get_backend_options() {
     nixl_b_params_t params;
     params["ucx_devices"] = "";
+    params["ucx_error_handling_mode"] = "none"; // or "peer"
     return params;
 }
 

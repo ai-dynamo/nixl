@@ -445,8 +445,19 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (num_workers_iter == custom_params->end() || !absl::SimpleAtoi(num_workers_iter->second, &numWorkers))
         numWorkers = 1;
 
+    const auto err_handling_mode_it =
+            custom_params->find("ucx_error_handling_mode");
+    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
+    if (err_handling_mode_it != custom_params->end() &&
+        (err_handling_mode_it->second == "peer")) {
+        err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+    }
+
     uc = std::make_shared<nixlUcxContext>(devs, sizeof(nixlUcxIntReq),
-                                          _internalRequestInit, _internalRequestFini, NIXL_UCX_MT_WORKER);
+                                          _internalRequestInit,
+                                          _internalRequestFini,
+                                          NIXL_UCX_MT_WORKER,
+                                          err_handling_mode);
     for (unsigned int i = 0; i < numWorkers; i++)
         uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
 

@@ -127,7 +127,8 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
     }
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr)
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
+                     ucp_err_handling_mode_t err_handling_mode)
 {
     ucp_ep_params_t ep_params;
     nixl_status_t status;
@@ -135,7 +136,7 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr)
     ep_params.field_mask      = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
                                 UCP_EP_PARAM_FIELD_ERR_HANDLER |
                                 UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-    ep_params.err_mode        = UCP_ERR_HANDLING_MODE_PEER;
+    ep_params.err_mode        = err_handling_mode;
     ep_params.err_handler.cb  = err_cb_wrapper;
     ep_params.err_handler.arg = reinterpret_cast<void*>(this);
     ep_params.address         = reinterpret_cast<ucp_address_t*>(addr);
@@ -305,13 +306,15 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                size_t req_size,
                                nixlUcxContext::req_cb_t init_cb,
                                nixlUcxContext::req_cb_t fini_cb,
-                               nixl_ucx_mt_t __mt_type)
+                               nixl_ucx_mt_t __mt_type,
+                               ucp_err_handling_mode_t __err_handling_mode)
 {
     ucp_params_t ucp_params;
     ucp_config_t *ucp_config;
     ucs_status_t status = UCS_OK;
 
-    mt_type = __mt_type;
+    mt_type           = __mt_type;
+    err_handling_mode = __err_handling_mode;
 
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
     ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 | UCP_FEATURE_AM;
@@ -431,7 +434,7 @@ std::unique_ptr<char []> nixlUcxWorker::epAddr(size_t &size)
 absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, size_t size)
 {
     try {
-        return std::make_unique<nixlUcxEp>(worker, addr);
+        return std::make_unique<nixlUcxEp>(worker, addr, ctx->err_handling_mode);
     } catch (const std::exception &e) {
         return absl::UnavailableError(e.what());
     }

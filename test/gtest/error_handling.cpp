@@ -22,6 +22,10 @@
 
 namespace gtest {
 namespace nixl {
+    constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
+    constexpr const char* ucx_err_handling_mode_none = "none";
+    constexpr const char* ucx_err_handling_mode_peer = "peer";
+
     static nixlBackendH* createUcxBackend(nixlAgent& agent)
     {
         std::vector<nixl_backend_t> plugins;
@@ -32,11 +36,14 @@ namespace nixl {
 
         nixl_b_params_t params;
         nixl_mem_list_t mems;
-        status = agent.getPluginParams("UCX", mems, params);
+        status = agent.getPluginParams(*it, mems, params);
         EXPECT_EQ(NIXL_SUCCESS, status);
 
         nixlBackendH* backend_handle = nullptr;
-        status = agent.createBackend("UCX", params, backend_handle);
+        EXPECT_EQ(ucx_err_handling_mode_none,
+                  params[ucx_err_handling_mode_key]);
+        params[ucx_err_handling_mode_key] = ucx_err_handling_mode_peer;
+        status = agent.createBackend(*it, params, backend_handle);
         EXPECT_EQ(NIXL_SUCCESS, status);
         EXPECT_NE(nullptr, backend_handle);
         return backend_handle;
