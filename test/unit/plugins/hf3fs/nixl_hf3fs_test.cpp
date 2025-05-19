@@ -22,7 +22,6 @@
 #include <vector>
 #include <nixl_descriptors.h>
 #include <nixl_params.h>
-#include <cuda_runtime.h>
 #include <nixl.h>
 #include <cassert>
 #include <fcntl.h>
@@ -35,6 +34,7 @@
 #include <cstdlib>
 #include <getopt.h>
 #include "common/nixl_time.h"
+#include "temp_file.h"
 
 namespace {
     const size_t page_size = sysconf(_SC_PAGESIZE);
@@ -138,63 +138,6 @@ namespace {
         }
     };
 
-    class tempFile {
-    public:
-        int fd;
-        std::string path;
-
-        // Constructor: opens the file and stores the fd and path
-        tempFile(const std::string& filename, int flags, mode_t mode = 0600)
-            : path(filename)
-        {
-            std::cout << "Opening file: " << filename << " (flags: " << flags << ", mode: " << std::oct << mode << std::dec << ")" << std::endl;
-            fd = open(filename.c_str(), flags, mode);
-            if (fd == -1) {
-                std::cerr << "ERROR: Failed to open file: " << filename << " - " << strerror(errno) << " (errno: " << errno << ")" << std::endl;
-                throw std::runtime_error("Failed to open file: " + filename + " - " + strerror(errno));
-            }
-            std::cout << "Successfully opened file: " << filename << " (fd: " << fd << ")" << std::endl;
-        }
-
-        // Deleted copy constructor and assignment to avoid double-close/unlink
-        tempFile(const tempFile&) = delete;
-        tempFile& operator=(const tempFile&) = delete;
-
-        // Move constructor and assignment
-        tempFile(tempFile&& other) noexcept
-            : fd(other.fd), path(std::move(other.path))
-        {
-            other.fd = -1;
-        }
-        tempFile& operator=(tempFile&& other) noexcept {
-            if (this != &other) {
-                close_fd();
-                path = std::move(other.path);
-                fd = other.fd;
-                other.fd = -1;
-            }
-            return *this;
-        }
-
-        // Conversion operator to int (file descriptor)
-        operator int() const { return fd; }
-
-        // Destructor: closes the fd and deletes the file
-        ~tempFile() {
-            close_fd();
-            if (!path.empty()) {
-                unlink(path.c_str());
-            }
-        }
-
-    private:
-        void close_fd() {
-            if (fd != -1) {
-                close(fd);
-                fd = -1;
-            }
-        }
-    };
 }
 
 int main(int argc, char *argv[])

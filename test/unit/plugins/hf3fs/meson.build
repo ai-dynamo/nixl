@@ -17,3 +17,8 @@ nixl_hf3fs_app = executable('nixl_hf3fs_test', 'nixl_hf3fs_test.cpp',
                           dependencies: [nixl_dep, nixl_infra],
                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
                           install: true)
+
+nixl_hf3fs_mt_app = executable('nixl_hf3fs_mt_test', 'nixl_hf3fs_mt_test.cpp',
+                          dependencies: [nixl_dep, nixl_infra],
+                          include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                          install: true)
