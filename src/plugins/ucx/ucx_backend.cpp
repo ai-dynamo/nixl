@@ -239,7 +239,7 @@ static void _internalRequestReset(nixlUcxIntReq *req) {
 class nixlUcxBackendH : public nixlBackendReqH {
 private:
     nixlUcxIntReq head;
-    nixlUcxEngine &eng;
+    const nixlUcxEngine &eng;
     size_t worker_id;
 
     // Notification to be sent after completion of all requests
@@ -256,7 +256,7 @@ public:
         return notif;
     }
 
-    nixlUcxBackendH(nixlUcxEngine &eng_, size_t worker_id_): eng(eng_), worker_id(worker_id_) {}
+    nixlUcxBackendH(const nixlUcxEngine &eng_, size_t worker_id_): eng(eng_), worker_id(worker_id_) {}
 
     void append(nixlUcxIntReq *req) {
         head.link(req);
@@ -857,7 +857,7 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args)
+                                       const nixl_opt_b_args_t* opt_args) const
 {
     /* TODO: try to get from a pool first */
     nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, getWorkerId());
@@ -871,7 +871,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args)
+                                       const nixl_opt_b_args_t* opt_args) const
 {
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
@@ -943,7 +943,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     return ret;
 }
 
-nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
+nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
     size_t workerId = intHandle->getWorkerId();
@@ -964,7 +964,7 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
     return status;
 }
 
-nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle)
+nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
     nixl_status_t status = intHandle->release();
@@ -991,7 +991,7 @@ int nixlUcxEngine::progress() {
 nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                                            const std::string &msg,
                                            nixlUcxReq &req,
-                                           size_t worker_id)
+                                           size_t worker_id) const
 {
     nixlSerDes ser_des;
     // TODO - temp fix, need to have an mpool
@@ -1106,7 +1106,7 @@ nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
+nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg) const
 {
     nixl_status_t ret;
     nixlUcxReq req;
