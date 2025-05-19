@@ -88,11 +88,12 @@ int main()
     devs.push_back("mlx5_0");
 
     std::shared_ptr<nixlUcxContext> c[2] = {
+
         std::make_shared<nixlUcxContext>(devs, 0, nullptr, nullptr,
-                                         NIXL_UCX_MT_SINGLE,
+                                         NIXL_UCX_MT_SINGLE, false,
                                          UCP_ERR_HANDLING_MODE_NONE),
         std::make_shared<nixlUcxContext>(devs, 0, nullptr, nullptr,
-                                         NIXL_UCX_MT_SINGLE,
+                                         NIXL_UCX_MT_SINGLE, false,
                                          UCP_ERR_HANDLING_MODE_NONE)
     };
 
