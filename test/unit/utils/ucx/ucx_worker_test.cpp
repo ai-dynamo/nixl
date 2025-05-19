@@ -86,8 +86,8 @@ int main()
     // in CI it would be goot to test both SHM and IB
     //devs.push_back("mlx5_0");
     std::shared_ptr<nixlUcxContext> c[2] = {
-        std::make_shared<nixlUcxContext>(devs, sizeof(requestData), nixlUcxRequestInit, nullptr, NIXL_UCX_MT_SINGLE),
-        std::make_shared<nixlUcxContext>(devs, sizeof(requestData), nixlUcxRequestInit, nullptr, NIXL_UCX_MT_SINGLE)
+        std::make_shared<nixlUcxContext>(devs, sizeof(requestData), nixlUcxRequestInit, nullptr, NIXL_UCX_MT_SINGLE, false),
+        std::make_shared<nixlUcxContext>(devs, sizeof(requestData), nixlUcxRequestInit, nullptr, NIXL_UCX_MT_SINGLE, false)
     };
 
     nixlUcxWorker w[2] = {
