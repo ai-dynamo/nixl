@@ -263,7 +263,8 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
 
     // postXfer may be called multiple times, so we need to check if the thread is already running
     if (hf3fs_handle->io_status.thread == nullptr) {
-        hf3fs_handle->io_status.thread = new std::thread(waitForIOsThread, hf3fs_handle, hf3fs_utils);
+        hf3fs_handle->io_status.thread = new std::thread(waitForIOsThread, hf3fs_handle,
+                                                         hf3fs_utils);
         if (hf3fs_handle->io_status.thread == nullptr) {
             NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error: Failed to create io thread");
         }
@@ -300,7 +301,8 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
         }
 
         int num_completed = 0;
-        nixl_status_t status = hf3fs_utils->waitForIOs(&hf3fs_handle->ior, cqes, NUM_CQES, 1, &ts, &num_completed);
+        nixl_status_t status = hf3fs_utils->waitForIOs(&hf3fs_handle->ior, cqes, NUM_CQES, 1, &ts,
+                                                       &num_completed);
         if (status != NIXL_SUCCESS) {
             io_status->error_status = status;
             io_status->error_message = "Error: Failed to wait for IOs";

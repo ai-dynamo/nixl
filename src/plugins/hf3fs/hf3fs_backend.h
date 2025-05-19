@@ -56,7 +56,8 @@ class nixlH3fsThreadStatus {
         std::string error_message;
         bool stop_thread;
 
-        nixlH3fsThreadStatus() : thread(nullptr), error_status(NIXL_SUCCESS), error_message(""), stop_thread(false) {}
+        nixlH3fsThreadStatus() : thread(nullptr), error_status(NIXL_SUCCESS), error_message(""),
+                                 stop_thread(false) {}
         ~nixlH3fsThreadStatus() {}
 };
 
