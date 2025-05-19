@@ -89,10 +89,10 @@ protected:
     {
         // Create two agents
         for (size_t i = 0; i < 2; i++) {
-            auto &agent = agents.emplace_back(getAgentName(i), getConfig());
+            agents.emplace_back(std::make_unique<nixlAgent>(getAgentName(i), getConfig()));
             nixlBackendH *backend_handle = nullptr;
-            nixl_status_t status = agent.createBackend(getBackendName(), {},
-                                                       backend_handle);
+            nixl_status_t status = agents.back()->createBackend(getBackendName(), {},
+                                                                backend_handle);
             ASSERT_EQ(status, NIXL_SUCCESS);
             EXPECT_NE(backend_handle, nullptr);
         }
@@ -131,14 +131,14 @@ protected:
         // Connect the existing agents and exchange metadata
         for (size_t i = 0; i < agents.size(); i++) {
             nixl_blob_t md;
-            nixl_status_t status = agents[i].getLocalMD(md);
+            nixl_status_t status = agents[i]->getLocalMD(md);
             ASSERT_EQ(status, NIXL_SUCCESS);
 
             for (size_t j = 0; j < agents.size(); j++) {
                 if (i == j)
                     continue;
                 std::string remote_agent_name;
-                status = agents[j].loadRemoteMD(md, remote_agent_name);
+                status = agents[j]->loadRemoteMD(md, remote_agent_name);
                 ASSERT_EQ(status, NIXL_SUCCESS);
                 EXPECT_EQ(remote_agent_name, getAgentName(i));
             }
@@ -152,7 +152,7 @@ protected:
             for (size_t j = 0; j < agents.size(); j++) {
                 if (i == j)
                     continue;
-                nixl_status_t status = agents[j].invalidateRemoteMD(
+                nixl_status_t status = agents[j]->invalidateRemoteMD(
                         getAgentName(i));
                 ASSERT_EQ(status, NIXL_SUCCESS);
             }
@@ -235,7 +235,7 @@ protected:
 
     nixlAgent &getAgent(size_t idx)
     {
-        return agents[idx];
+        return *agents[idx];
     }
 
     std::string getAgentName(size_t idx)
@@ -247,7 +247,7 @@ private:
     static constexpr uint64_t DEV_ID = 0;
     static const std::string NOTIF_MSG;
 
-    std::vector<nixlAgent> agents;
+    std::vector<std::unique_ptr<nixlAgent>> agents;
 };
 
 const std::string TestTransfer::NOTIF_MSG = "notification";

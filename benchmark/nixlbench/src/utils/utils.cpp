@@ -36,7 +36,7 @@
  **********/
 DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
-DEFINE_string(backend, XFERBENCH_BACKEND_UCX, "Name of communication backend [UCX, UCX_MO, GDS] \
+DEFINE_string(backend, XFERBENCH_BACKEND_UCX, "Name of communication backend [UCX, UCX_MO, GDS, POSIX] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]");
@@ -60,18 +60,24 @@ DEFINE_int32(num_threads, 1,
              "Number of threads used by benchmark."
              " Num_iter must be greater or equal than num_threads and equally divisible by num_threads."
              " (Default: 1)");
+DEFINE_int32(num_files, 1, "Number of files used by benchmark");
 DEFINE_int32(num_initiator_dev, 1, "Number of device in initiator process");
 DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 // GDS options - only used when backend is GDS
 DEFINE_string(gds_filepath, "", "File path for GDS operations (only used with GDS backend)");
-DEFINE_bool(gds_enable_direct, false, "Enable direct I/O for GDS operations (only used with GDS backend)");
+
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
 // For example- 0:mlx5_0,mlx5_1,mlx5_2,1:mlx5_3,mlx5_4, ...
 DEFINE_string(device_list, "all", "Comma-separated device name to use for \
 		      communication (only used with nixl worker)");
 DEFINE_string(etcd_endpoints, "http://localhost:2379", "ETCD server endpoints for communication");
+
+// POSIX options - only used when backend is POSIX
+DEFINE_string(posix_api_type, XFERBENCH_POSIX_API_AIO, "API type for POSIX operations [AIO, URING] (only used with POSIX backend)");
+DEFINE_string(posix_filepath, "", "File path for POSIX operations (only used with POSIX backend)");
+DEFINE_bool(storage_enable_direct, false, "Enable direct I/O for storage operations (only used with POSIX backend)");
 
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
@@ -96,8 +102,12 @@ bool xferBenchConfig::enable_pt = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::gds_filepath = "";
-bool xferBenchConfig::gds_enable_direct = false;
+
 std::vector<std::string> devices = { };
+int xferBenchConfig::num_files = 0;
+std::string xferBenchConfig::posix_api_type = "";
+std::string xferBenchConfig::posix_filepath = "";
+bool xferBenchConfig::storage_enable_direct = false;
 
 int xferBenchConfig::loadFromFlags() {
     runtime_type = FLAGS_runtime_type;
@@ -112,7 +122,24 @@ int xferBenchConfig::loadFromFlags() {
         // Load GDS-specific configurations if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
             gds_filepath = FLAGS_gds_filepath;
-            gds_enable_direct = FLAGS_gds_enable_direct;
+            num_files = FLAGS_num_files;
+            storage_enable_direct = FLAGS_storage_enable_direct;
+        }
+
+        // Load POSIX-specific configurations if backend is POSIX
+        if (backend == XFERBENCH_BACKEND_POSIX) {
+            posix_api_type = FLAGS_posix_api_type;
+            posix_filepath = FLAGS_posix_filepath;
+            storage_enable_direct = FLAGS_storage_enable_direct;
+            num_files = FLAGS_num_files;
+
+            // Validate POSIX API type
+            if (posix_api_type != XFERBENCH_POSIX_API_AIO &&
+                posix_api_type != XFERBENCH_POSIX_API_URING) {
+                std::cerr << "Invalid POSIX API type: " << posix_api_type
+                          << ". Must be one of [AIO, URING]" << std::endl;
+                return -1;
+            }
         }
     }
 
@@ -133,6 +160,10 @@ int xferBenchConfig::loadFromFlags() {
     warmup_iter = FLAGS_warmup_iter;
     num_threads = FLAGS_num_threads;
     etcd_endpoints = FLAGS_etcd_endpoints;
+    num_files = FLAGS_num_files;
+    posix_api_type = FLAGS_posix_api_type;
+    posix_filepath = FLAGS_posix_filepath;
+    storage_enable_direct = FLAGS_storage_enable_direct;
 
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
@@ -212,7 +243,7 @@ void xferBenchConfig::printConfig() {
     std::cout << std::left << std::setw(60) << "Worker type (--worker_type=[nixl,nvshmem])" << ": "
               << worker_type << std::endl;
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        std::cout << std::left << std::setw(60) << "Backend (--backend=[UCX,UCX_MO,GDS])" << ": "
+        std::cout << std::left << std::setw(60) << "Backend (--backend=[UCX,UCX_MO,GDS,POSIX])" << ": "
                   << backend << std::endl;
         std::cout << std::left << std::setw(60) << "Enable pt (--enable_pt=[0,1])" << ": "
                   << enable_pt << std::endl;
@@ -224,7 +255,21 @@ void xferBenchConfig::printConfig() {
             std::cout << std::left << std::setw(60) << "GDS filepath (--gds_filepath=path)" << ": "
                       << gds_filepath << std::endl;
             std::cout << std::left << std::setw(60) << "GDS enable direct (--gds_enable_direct=[0,1])" << ": "
-                      << gds_enable_direct << std::endl;
+                      << storage_enable_direct << std::endl;
+            std::cout << std::left << std::setw(60) << "Number of files (--num_files=N)" << ": "
+                      << num_files << std::endl;
+        }
+
+        // Print POSIX options if backend is POSIX
+        if (backend == XFERBENCH_BACKEND_POSIX) {
+            std::cout << std::left << std::setw(60) << "POSIX API type (--posix_api_type=[AIO,URING])" << ": "
+                      << posix_api_type << std::endl;
+            std::cout << std::left << std::setw(60) << "POSIX filepath (--posix_filepath=path)" << ": "
+                      << posix_filepath << std::endl;
+            std::cout << std::left << std::setw(60) << "POSIX enable direct (--storage_enable_direct=[0,1])" << ": "
+                      << storage_enable_direct << std::endl;
+            std::cout << std::left << std::setw(60) << "Number of files (--num_files=N)" << ": "
+                      << num_files << std::endl;
         }
     }
     std::cout << std::left << std::setw(60) << "Initiator seg type (--initiator_seg_type=[DRAM,VRAM])" << ": "
@@ -326,29 +371,60 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             size_t len;
             uint8_t check_val = 0x00;
             bool rc = false;
+            bool is_allocated = false;
 
             len = iov.len;
 
-            // This will be called on target process in case of write and
-            // on initiator process in case of read
-            if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
+            if ((xferBenchConfig::backend == XFERBENCH_BACKEND_GDS) ||
+                (xferBenchConfig::backend == XFERBENCH_BACKEND_POSIX)) {
+                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+                    if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
+#if HAVE_CUDA
+                        addr = calloc(1, len);
+                        is_allocated = true;
+                        CHECK_CUDA_ERROR(cudaMemcpy(addr, (void *)iov.addr, len,
+                                                    cudaMemcpyDeviceToHost), "cudaMemcpy failed");
+#else
+                        std::cerr << "Failure in consistency check: VRAM segment type not supported without CUDA"
+                                  << std::endl;
+                        exit(EXIT_FAILURE);
+#endif
+                    } else {
+                        addr = (void *)iov.addr;
+                    }
+                } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
+                    addr = calloc(1, len);
+                    is_allocated = true;
+                    ssize_t rc = pread(iov.devId, addr, len, iov.addr);
+                    if (rc < 0) {
+                        std::cerr << "Failed to read from device: " << iov.devId
+                                  << " with error: " << strerror(errno) << std::endl;
+                        exit(EXIT_FAILURE);
+                    }
+                }
+            } else {
+                // This will be called on target process in case of write and
+                // on initiator process in case of read
+                if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
                  xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_VRAM) ||
                 (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
                  xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM)) {
 #if HAVE_CUDA
-                addr = calloc(1, len);
-                CHECK_CUDA_ERROR(cudaMemcpy(addr, (void *)iov.addr, len,
-                                          cudaMemcpyDeviceToHost), "cudaMemcpy failed");
+                    addr = calloc(1, len);
+                    is_allocated = true;
+                    CHECK_CUDA_ERROR(cudaMemcpy(addr, (void *)iov.addr, len,
+                                                cudaMemcpyDeviceToHost), "cudaMemcpy failed");
 #else
-                std::cerr << "Failure in consistency check: VRAM segment type not supported without CUDA"
-                          << std::endl;
-                exit(EXIT_FAILURE);
+                    std::cerr << "Failure in consistency check: VRAM segment type not supported without CUDA"
+                              << std::endl;
+                    exit(EXIT_FAILURE);
 #endif
-            } else if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
-                        xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_DRAM) ||
-                       (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
-                        xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_DRAM)) {
-                addr = (void *)iov.addr;
+                } else if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
+                            xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_DRAM) ||
+                           (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
+                            xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_DRAM)) {
+                    addr = (void *)iov.addr;
+                }
             }
 
             if("WRITE" == xferBenchConfig::op_type) {
@@ -361,7 +437,10 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             if (true != rc) {
                 std::cerr << "Consistency check failed\n" << std::flush;
             }
-            free(addr);
+            // Free the addr only if is allocated here
+            if (is_allocated) {
+                free(addr);
+            }
         }
     }
 }
