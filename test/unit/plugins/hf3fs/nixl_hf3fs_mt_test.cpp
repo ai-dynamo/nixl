@@ -138,7 +138,8 @@ namespace {
             auto status = agent.postXferReq(write_req);
             if (status < 0) {
                 agent.releaseXferReq(write_req);
-                throw std::runtime_error("Failed to post write request, err: " + std::to_string(status));
+                throw std::runtime_error("Failed to post write request, err: " +
+                                         std::to_string(status));
             }
 
             // Wait for write completion
@@ -150,7 +151,8 @@ namespace {
 
             if (status < 0) {
                 agent.releaseXferReq(write_req);
-                throw std::runtime_error("Failed to wait for write completion, err: " + std::to_string(status));
+                throw std::runtime_error("Failed to wait for write completion, err: " +
+                                         std::to_string(status));
             }
 
             auto write_end = nixlTime::getUs();
@@ -181,7 +183,8 @@ namespace {
             status = agent.postXferReq(read_req);
             if (status < 0) {
                 agent.releaseXferReq(read_req);
-                throw std::runtime_error("Failed to post read request, err: " + std::to_string(status));
+                throw std::runtime_error("Failed to post read request, err: " +
+                                         std::to_string(status));
             }
 
             // Wait for read completion
@@ -193,7 +196,8 @@ namespace {
 
             if (status < 0) {
                 agent.releaseXferReq(read_req);
-                throw std::runtime_error("Failed to wait for read completion, err: " + std::to_string(status));
+                throw std::runtime_error("Failed to wait for read completion, err: " +
+                                         std::to_string(status));
             }
             auto read_end = nixlTime::getUs();
             stats.add_transfer(transfer_size * num_transfers, read_end - read_start);
@@ -378,7 +382,8 @@ int main(int argc, char *argv[]) {
         total_thoughput += thread_stats[i].get_throughput_gbps();
     }
 
-    std::cout << "Total throughput: " << std::setprecision(2) << total_thoughput << " GB/s" << std::endl;
+    std::cout << "Total throughput: " << std::setprecision(2) << total_thoughput << " GB/s"
+        << std::endl;
 
     if (total_failed_transfers > 0) {
         std::cout << "Test failed" << std::endl;
