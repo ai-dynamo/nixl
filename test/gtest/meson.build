@@ -16,6 +16,7 @@
 gtest_dep = dependency('gtest', version : '>=1.11.0', required : false)
 absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
 absl_time_dep = abseil_proj.get_variable('absl_time_dep')
+absl_flags_dep = abseil_proj.get_variable('absl_flags_dep')
 
 if not gtest_dep.found()
     message('GTest not found, skipping gtest build')
@@ -42,15 +43,15 @@ endif
 cpp_flags += '-DBUILD_DIR="' + meson.project_build_root() + '"'
 
 test_exe = executable('gtest',
-    sources : ['main.cpp', 'plugin_manager.cpp', 'ucx_tests.cpp', 'test_transfer.cpp'],
+    sources : ['gtest_main.cpp', 'plugin_manager.cpp', 'ucx_tests.cpp', 'test_transfer.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, cuda_dep, gtest_dep, absl_strings_dep, absl_time_dep],
+    dependencies : [nixl_dep, cuda_dep, gtest_dep, absl_strings_dep, absl_time_dep, absl_flags_dep],
     link_with: [nixl_build_lib],
     install : true
 )
 
-test('gtest', test_exe, args: [plugin_dirs_arg])
+test('gtest', test_exe, args: [plugin_dirs_arg, '--fast'])
 
 if get_option('b_sanitize').split(',').contains('thread')
     test_env = environment()
@@ -58,7 +59,7 @@ if get_option('b_sanitize').split(',').contains('thread')
     test_env.set('NIXL_PLUGIN_DIR', mocks_dep.get_variable('path'))
 
     mt_test_exe = executable('mt_test',
-        sources : ['main.cpp', 'multi_threading.cpp'],
+        sources : ['gtest_main.cpp', 'multi_threading.cpp'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         cpp_args : cpp_flags,
         dependencies : [nixl_dep, nixl_infra, cuda_dep, gtest_dep],

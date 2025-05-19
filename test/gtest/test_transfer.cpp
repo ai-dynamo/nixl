@@ -51,12 +51,46 @@ public:
         return size;
     }
 
+    void fill(uint64_t seed)
+    {
+        for (auto &value : *this) {
+            value = seed;
+            seed  = pseudoRandomStep(seed);
+        }
+    }
+
+    void check(uint64_t seed)
+    {
+        for (auto &value : *this) {
+            if (seed != value) {
+                GTEST_FAIL() << "data mismatch at offset " << getOffset(&value);
+                return;
+            }
+
+            seed = pseudoRandomStep(seed);
+        }
+    }
+
 private:
+    static size_t alignedSize(size_t size)
+    {
+        // Align to 64-byte boundary to support pattern generation
+        return (size + sizeof(uint64_t) - 1) & ~(sizeof(uint64_t) - 1);
+    }
+
+    static uint64_t pseudoRandomStep(uint64_t value)
+    {
+        static constexpr uint64_t MULTIPLIER = 1103515245ul;
+        static constexpr uint64_t ADDEND     = 12345ul;
+
+        return (value * MULTIPLIER) + ADDEND;
+    }
+
     static void *allocate(size_t size, nixl_mem_t mem_type)
     {
         switch (mem_type) {
         case DRAM_SEG:
-            return malloc(size);
+            return malloc(alignedSize(size));
         default:
             return nullptr; // TODO
         }
@@ -71,6 +105,21 @@ private:
         default:
             return; // TODO
         }
+    }
+
+    uint64_t *begin()
+    {
+        return static_cast<uint64_t*>(get());
+    }
+
+    uint64_t *end()
+    {
+        return begin() + alignedSize(size) / sizeof(uint64_t);
+    }
+
+    size_t getOffset(uint64_t *ptr)
+    {
+        return (ptr - begin()) * sizeof(uint64_t);
     }
 
     const size_t size;
@@ -211,10 +260,12 @@ protected:
 
         auto start_time = absl::Now();
         for (size_t i = 0; i < repeat; i++) {
+            fillBuffers(src_buffers, i);
             status = from.postXferReq(xfer_req);
             ASSERT_GE(status, NIXL_SUCCESS);
 
             waitForXfer(from, from_name, to, xfer_req);
+            checkBuffers(dst_buffers, i);
 
             status = from.getXferStatus(xfer_req);
             EXPECT_EQ(status, NIXL_SUCCESS);
@@ -243,25 +294,50 @@ protected:
         return absl::StrFormat("agent_%d", idx);
     }
 
+    void fillBuffers(std::vector<MemBuffer> &buffers, uint64_t seed);
+    void checkBuffers(std::vector<MemBuffer> &buffers, uint64_t seed);
+
 private:
     static constexpr uint64_t DEV_ID = 0;
     static const std::string NOTIF_MSG;
+    static constexpr size_t MAX_SIZE = 1000000;
 
     std::vector<std::unique_ptr<nixlAgent>> agents;
 };
 
 const std::string TestTransfer::NOTIF_MSG = "notification";
 
+void TestTransfer::fillBuffers(std::vector<MemBuffer> &buffers, uint64_t seed)
+{
+    for (auto &buffer : buffers) {
+        buffer.fill(seed);
+        ++seed;
+    }
+}
+
+void TestTransfer::checkBuffers(std::vector<MemBuffer> &buffers, uint64_t seed)
+{
+    for (auto &buffer : buffers) {
+        buffer.check(seed);
+        if (HasFailure()) {
+            return;
+        }
+        ++seed;
+    }
+}
+
 TEST_P(TestTransfer, RandomSizes)
 {
     // Tuple fields are: size, count, repeat
-    constexpr std::array<std::tuple<size_t, size_t, size_t>, 3> test_cases = {
-        {{4096, 8, 3},
-         {32768, 64, 3},
-         {1000000, 100, 3}}
+    const std::vector<std::tuple<size_t, size_t, size_t>> test_cases      = {
+        {{4096, 8, 10000}, {32768, 64, 1000}, {1000000, 32, 100}}
+    };
+    const std::vector<std::tuple<size_t, size_t, size_t>> fast_test_cases = {
+        {{65536, 8, 1}}
     };
 
-    for (const auto &[size, count, repeat] : test_cases) {
+    for (const auto &[size, count, repeat] :
+         (isFast() ? fast_test_cases : test_cases)) {
         doTransfer(getAgent(0), getAgentName(0), getAgent(1), getAgentName(1),
                    size, count, repeat, DRAM_SEG, DRAM_SEG);
     }
