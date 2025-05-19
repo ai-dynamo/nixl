@@ -172,3 +172,32 @@ nixl_status_t hf3fsUtil::destroyIOR(struct hf3fs_ior *ior)
     hf3fs_iordestroy(ior);
     return NIXL_SUCCESS;
 }
+
+nixl_status_t hf3fsUtil::waitForIOs(struct hf3fs_ior *ior, struct hf3fs_cqe *cqes, int num_cqes, int min_cqes, struct timespec *ts, int *num_completed)
+{
+    if (ior == nullptr) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: IOR is nullptr");
+    }
+    if (cqes == nullptr) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: CQEs array is nullptr");
+    }
+    if (num_cqes <= 0) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: Invalid number of CQEs");
+    }
+    if (min_cqes < 0 || min_cqes > num_cqes) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: Invalid minimum CQEs");
+    }
+    if (num_completed == nullptr) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: num_completed is nullptr");
+    }
+
+    auto ret = hf3fs_wait_for_ios(ior, cqes, num_cqes, min_cqes, ts);
+    if (ret < 0 && ret != -ETIMEDOUT && ret != -EAGAIN) {
+        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND,
+            absl::StrFormat("Error waiting for IOs: %d (errno: %d - %s)",
+                           ret, errno, strerror(errno)));
+    }
+
+    *num_completed = ret;
+    return NIXL_SUCCESS;
+}

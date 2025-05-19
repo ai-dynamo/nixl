@@ -79,7 +79,7 @@ class nixlHf3fsEngine : public nixlBackendEngine {
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
         void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;
-        static void waitForIOsThread(void* arg);
+        static void waitForIOsThread(void* handle, void *utils);
     public:
         nixlHf3fsEngine(const nixlBackendInitParams* init_params);
         ~nixlHf3fsEngine();

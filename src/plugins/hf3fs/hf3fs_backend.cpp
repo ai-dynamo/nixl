@@ -263,7 +263,7 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
 
     // postXfer may be called multiple times, so we need to check if the thread is already running
     if (hf3fs_handle->io_status.thread == nullptr) {
-        hf3fs_handle->io_status.thread = new std::thread(waitForIOsThread, hf3fs_handle);
+        hf3fs_handle->io_status.thread = new std::thread(waitForIOsThread, hf3fs_handle, hf3fs_utils);
         if (hf3fs_handle->io_status.thread == nullptr) {
             NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error: Failed to create io thread");
         }
@@ -274,9 +274,10 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
     return NIXL_IN_PROG;
 }
 
-void nixlHf3fsEngine::waitForIOsThread(void* arg)
+void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
 {
-    nixlHf3fsBackendReqH* hf3fs_handle = (nixlHf3fsBackendReqH*)arg;
+    nixlHf3fsBackendReqH* hf3fs_handle = (nixlHf3fsBackendReqH*)handle;
+    hf3fsUtil* hf3fs_utils = (hf3fsUtil*)utils;
     nixlH3fsThreadStatus* io_status = &hf3fs_handle->io_status;
     hf3fs_cqe* cqes = new hf3fs_cqe[NUM_CQES];
 
@@ -298,9 +299,16 @@ void nixlHf3fsEngine::waitForIOsThread(void* arg)
             ts.tv_nsec -= 1000000000;
         }
 
-        int ret = hf3fs_wait_for_ios(&hf3fs_handle->ior, cqes, NUM_CQES, 1, &ts);
-        if (ret > 0) {
-            for (int i = 0; i < ret; i++) {
+        int num_completed = 0;
+        nixl_status_t status = hf3fs_utils->waitForIOs(&hf3fs_handle->ior, cqes, NUM_CQES, 1, &ts, &num_completed);
+        if (status != NIXL_SUCCESS) {
+            io_status->error_status = status;
+            io_status->error_message = "Error: Failed to wait for IOs";
+            break;
+        }
+
+        if (num_completed > 0) {
+            for (int i = 0; i < num_completed; i++) {
                 if (cqes[i].result < 0) {
                     io_status->error_status = NIXL_ERR_BACKEND;
                     io_status->error_message = absl::StrFormat(
@@ -319,13 +327,6 @@ void nixlHf3fsEngine::waitForIOsThread(void* arg)
                 }
                 hf3fs_handle->completed_ios++;
             }
-
-        } else if (ret < 0 && ret != -ETIMEDOUT && ret != -EAGAIN) {
-            io_status->error_status = NIXL_ERR_BACKEND;
-            io_status->error_message = absl::StrFormat(
-                "Error: Failed to wait for IOs: %d (errno: %d - %s)",
-                ret, ret, strerror(ret));
-            break;
         }
     }
 
