@@ -105,7 +105,7 @@ namespace {
         }
     };
 
-    void worker_thread(int thread_id, 
+    void worker_thread(int thread_id,
                       nixlAgent& agent,
                       const std::string& test_dir,
                       size_t transfer_size,

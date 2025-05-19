@@ -85,5 +85,4 @@ private:
         std::cout << message << std::endl;
     }
 };
-
-#endif // __TEMP_FILE_H 
+#endif // __TEMP_FILE_H
