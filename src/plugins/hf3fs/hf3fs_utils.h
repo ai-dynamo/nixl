@@ -49,7 +49,6 @@ public:
     nixl_status_t prepIO(struct hf3fs_ior *ior, struct hf3fs_iov *iov, void *addr,
                          size_t fd_offset, size_t size, int fd, bool is_read, void *user_data);
     nixl_status_t postIOR(struct hf3fs_ior *ior);
-    nixl_status_t checkXfer(struct hf3fs_ior *ior);
     nixl_status_t waitForIOs(struct hf3fs_ior *ior, struct hf3fs_cqe *cqes, int num_cqes,
                              int min_cqes, struct timespec *ts, int *num_completed);
     std::string mount_point;

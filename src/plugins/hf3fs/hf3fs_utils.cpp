@@ -162,13 +162,6 @@ nixl_status_t hf3fsUtil::postIOR(struct hf3fs_ior *ior)
     return NIXL_SUCCESS;
 }
 
-// TODO: probably need to chabge
-nixl_status_t hf3fsUtil::checkXfer(struct hf3fs_ior *ior)
-{
-
-    return NIXL_SUCCESS;
-}
-
 nixl_status_t hf3fsUtil::destroyIOR(struct hf3fs_ior *ior)
 {
     hf3fs_iordestroy(ior);
