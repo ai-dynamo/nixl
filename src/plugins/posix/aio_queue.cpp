@@ -105,11 +105,6 @@ nixl_status_t aioQueue::checkCompleted() {
             num_completed++;
             aiocb.aio_fildes = 0;  // Mark as completed
             aiocb.aio_nbytes = 0;
-
-            // Log progress periodically
-            if (num_completed % (num_entries / 10) == 0) {
-                NIXL_INFO << "Queue progress: " << (num_completed * 100.0 / num_entries) << "% complete";
-            }
         } else if (status == EINPROGRESS) {
             return NIXL_IN_PROG;  // At least one operation still in progress
         } else {

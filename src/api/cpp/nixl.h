@@ -53,9 +53,9 @@ class nixlAgent {
          */
         ~nixlAgent ();
 
-        /* Declare move operations (needed because we declared a destructor) */
-        nixlAgent(nixlAgent&&) noexcept;
-        nixlAgent &operator=(nixlAgent&&) noexcept;
+        /* It is unsafe to move nixlAgent object */
+        nixlAgent(nixlAgent&&) noexcept = delete;
+        nixlAgent &operator=(nixlAgent&&) noexcept = delete;
 
         /**
          * @brief  Discover the available supported plugins found in the plugin paths
