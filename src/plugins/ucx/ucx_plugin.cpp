@@ -41,7 +41,8 @@ namespace
 
    [[nodiscard]] nixl_b_params_t get_backend_options() {
        return {
-	 { "ucx_devices", "" }
+        { "ucx_devices", "" },
+        { "ucx_error_handling_mode", "none" } // or "peer"
        };
    }
 

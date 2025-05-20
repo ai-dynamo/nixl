@@ -25,6 +25,7 @@
 #include <memory>
 #include <condition_variable>
 #include <atomic>
+#include <poll.h>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -110,10 +111,10 @@ class nixlUcxEngine : public nixlBackendEngine {
         std::mutex pthrActiveLock;
         std::condition_variable pthrActiveCV;
         bool pthrActive;
-        std::atomic_bool pthrStop;
         bool pthrOn;
         std::thread pthr;
-        nixlTime::us_t pthrDelay;
+        int pthrControlPipe[2];
+        std::vector<pollfd> pollFds;
 
         /* CUDA data*/
         std::unique_ptr<nixlUcxCudaCtx> cudaCtx;
