@@ -70,6 +70,7 @@
 #define XFERBENCH_BACKEND_POSIX "POSIX"
 #define XFERBENCH_BACKEND_GPUNETIO "GPUNETIO"
 #define XFERBENCH_BACKEND_MOONCAKE "Mooncake"
+#define XFERBENCH_BACKEND_HF3FS "HF3FS"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -134,6 +135,8 @@ class xferBenchConfig {
         static int gds_batch_pool_size;
         static int gds_batch_limit;
         static std::string gpunetio_device_list;
+        static std::string hf3fs_filepath;
+
         static int loadFromFlags();
         static void printConfig();
         static std::vector<std::string> parseDeviceList();

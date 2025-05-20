@@ -337,10 +337,6 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
 
 nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
 {
-    if (handle == nullptr) {
-        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM, "Error: handle is null in checkXfer");
-    }
-
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
 
     // Check if IOR is initialized
