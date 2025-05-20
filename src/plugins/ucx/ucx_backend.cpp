@@ -916,8 +916,8 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                                                const std::string &remote_agent,
                                                nixlBackendReqH* const &handle,
                                                std::chrono::microseconds &duration,
-                                               std::chrono::microseconds &error_margin,
-                                               nixl_xfer_cost_err_margin_t &error_margin_type,
+                                               std::chrono::microseconds &err_margin,
+                                               nixl_err_margin_t &err_margin_type,
                                                const nixl_opt_args_t* extra_params) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
@@ -930,8 +930,8 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
     }
 
     // Currently we do not support error margin estimation
-    error_margin_type = NIXL_XFER_COST_ERR_MARGIN_NONE;
-    error_margin = std::chrono::microseconds(0);
+    err_margin_type = NIXL_ERR_MARGIN_NONE;
+    err_margin = std::chrono::microseconds(0);
 
     if (local.descCount() == 0) {
         // Nothing to do
