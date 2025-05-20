@@ -16,19 +16,61 @@
 use std::env;
 use std::path::PathBuf;
 
+fn get_lib_path(nixl_root_path: &str, arch: &str) -> String {
+    let os_info = os_info::get();
+    match os_info.os_type() {
+        os_info::Type::Redhat
+        | os_info::Type::RedHatEnterprise
+        | os_info::Type::CentOS
+        | os_info::Type::Fedora => {
+            format!("{}/lib64", nixl_root_path)
+        }
+        os_info::Type::Ubuntu | os_info::Type::Debian => {
+            format!("{}/lib/{}-linux-gnu", nixl_root_path, arch)
+        }
+        os_info::Type::Arch => {
+            format!("{}/lib", nixl_root_path)
+        }
+        _ => {
+            // For unknown distributions, try to detect the path dynamically
+            let possible_paths = [
+                format!("{}/lib64", nixl_root_path),
+                format!("{}/lib/{}-linux-gnu", nixl_root_path, arch),
+                format!("{}/lib", nixl_root_path),
+            ];
+            // Print a warning about unknown distribution
+            println!(
+                "cargo:warning=Unknown Linux distribution: {}. Trying common library paths.",
+                os_info
+            );
+            // Return the first path that exists
+            for path in possible_paths.iter() {
+                if std::path::Path::new(path).exists() {
+                    return path.clone();
+                }
+            }
+            // If no path exists, default to lib64 as it's most common
+            format!("{}/lib64", nixl_root_path)
+        }
+    }
+}
+
+fn get_arch() -> String {
+    let os_info = os_info::get();
+    match os_info.architecture().unwrap_or("x86_64").to_string() {
+        arch if arch == "x86_64" => "x86_64".to_string(),
+        arch if arch == "aarch64" || arch == "arm64" => "aarch64".to_string(),
+        other => panic!("Unsupported architecture: {}", other),
+    }
+}
+
 fn main() {
     let nixl_root_path =
         env::var("NIXL_PREFIX").unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
     let nixl_include_path = format!("{}/include", nixl_root_path);
 
-    // Determine architecture based on target
-    let arch = match env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_else(|_| "x86_64".to_string()).as_str() {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        other => panic!("Unsupported architecture: {}", other),
-    };
-
-    let nixl_lib_path = format!("{}/lib/{}-linux-gnu", nixl_root_path, arch);
+    let arch = get_arch();
+    let nixl_lib_path = get_lib_path(&nixl_root_path, &arch);
 
     // Check if etcd is enabled via environment variable
     let etcd_enabled = env::var("HAVE_ETCD").map(|v| v != "0").unwrap_or(false);
