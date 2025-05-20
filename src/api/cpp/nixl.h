@@ -242,7 +242,7 @@ class nixlAgent {
          */
         nixl_status_t
         estimateXferCost(const nixlXferReqH &req_hndl,
-                         std::chrono::duration<double> &duration) const;
+                         std::chrono::microseconds &duration) const;
 
         /**
          * @brief  Submit a transfer request `req_hndl` which initiates a transfer.

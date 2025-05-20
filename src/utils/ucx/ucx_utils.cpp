@@ -280,7 +280,7 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
 }
 
 nixl_status_t nixlUcxEp::estimateCost(size_t size,
-                                      std::chrono::duration<double> &duration)
+                                      std::chrono::microseconds &duration)
 {
     ucp_ep_evaluate_perf_param_t params = {
         .field_mask   = UCP_EP_PERF_PARAM_FIELD_MESSAGE_SIZE,
@@ -297,7 +297,8 @@ nixl_status_t nixlUcxEp::estimateCost(size_t size,
         return NIXL_ERR_BACKEND;
     }
 
-    duration = std::chrono::duration<double>(cost_result.estimated_time);
+    auto seconds = std::chrono::duration<double>(cost_result.estimated_time);
+    duration = std::chrono::duration_cast<std::chrono::microseconds>(seconds);
     return NIXL_SUCCESS;
 }
 

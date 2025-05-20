@@ -226,7 +226,7 @@ class nixlUcxEngine : public nixlBackendEngine {
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* const &handle,
-                                       std::chrono::duration<double> &duration) const override;
+                                       std::chrono::microseconds &duration) const override;
 
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,

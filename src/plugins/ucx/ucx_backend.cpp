@@ -860,7 +860,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                                                const nixl_meta_dlist_t &remote,
                                                const std::string &remote_agent,
                                                nixlBackendReqH* const &handle,
-                                               std::chrono::duration<double> &duration) const
+                                               std::chrono::microseconds &duration) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
     size_t workerId = intHandle->getWorkerId();
@@ -873,7 +873,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
 
     if (local.descCount() == 0) {
         // Nothing to do
-        duration = std::chrono::duration<double>(0);
+        duration = std::chrono::microseconds(0);
         return NIXL_SUCCESS;
     }
 
@@ -888,7 +888,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
         NIXL_ASSERT(lsize == rsize) << "Local size (" << lsize << ") != Remote size (" << rsize
                                     << ") at index " << i << " during cost estimation";
 
-        std::chrono::duration<double> msg_duration;
+        std::chrono::microseconds msg_duration;
         nixl_status_t ret = rmd->conn->getEp(workerId)->estimateCost(lsize, msg_duration);
         if (ret != NIXL_SUCCESS) {
             NIXL_ERROR << "Worker failed to estimate cost for segment " << i << " status: " << ret;
