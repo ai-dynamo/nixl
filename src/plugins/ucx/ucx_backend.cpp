@@ -860,7 +860,8 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                                                const nixl_meta_dlist_t &remote,
                                                const std::string &remote_agent,
                                                nixlBackendReqH* const &handle,
-                                               std::chrono::microseconds &duration) const
+                                               std::chrono::microseconds &duration,
+                                               const nixl_opt_args_t* extra_params) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
     size_t workerId = intHandle->getWorkerId();

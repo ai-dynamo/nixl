@@ -120,7 +120,8 @@ class nixlBackendEngine {
                                                const nixl_meta_dlist_t &remote,
                                                const std::string &remote_agent,
                                                nixlBackendReqH* const &handle,
-                                               std::chrono::microseconds &duration) const
+                                               std::chrono::microseconds &duration,
+                                               const nixl_opt_args_t* extra_params = nullptr) const
         {
             return NIXL_ERR_NOT_SUPPORTED;
         }
