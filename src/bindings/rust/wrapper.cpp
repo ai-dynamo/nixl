@@ -1040,20 +1040,20 @@ nixl_capi_create_xfer_req(
 nixl_capi_status_t
 nixl_capi_estimate_xfer_cost(
     nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl, nixl_capi_opt_args_t opt_args,
-    int64_t *duration_us, int64_t *err_margin_us, nixl_capi_err_margin_t *err_margin_type)
+    int64_t *duration_us, int64_t *err_margin_us, nixl_capi_cost_estimate_t *source)
 {
-  if (!agent || !req_hndl || !duration_us || !err_margin_us || !err_margin_type) {
+  if (!agent || !req_hndl || !duration_us || !err_margin_us || !source) {
     return NIXL_CAPI_ERROR_INVALID_PARAM;
   }
 
   try {
-    std::chrono::microseconds duration;
-    std::chrono::microseconds err_margin;
-    nixl_err_margin_t cpp_err_margin_type;
-    nixl_status_t ret = agent->inner->estimateXferCost(req_hndl->req, duration, err_margin, cpp_err_margin_type, opt_args ? &opt_args->args : nullptr);
-    *duration_us = duration.count();
-    *err_margin_us = err_margin.count();
-    *err_margin_type = static_cast<nixl_capi_err_margin_t>(cpp_err_margin_type);
+    int64_t duration_us_ref;
+    int64_t err_margin_us_ref;
+    nixl_cost_estimate_t source_ref;
+    nixl_status_t ret = agent->inner->estimateXferCost(req_hndl->req, duration_us_ref, err_margin_us_ref, source_ref, opt_args ? &opt_args->args : nullptr);
+    *duration_us = duration_us_ref;
+    *err_margin_us = err_margin_us_ref;
+    *source = static_cast<nixl_capi_cost_estimate_t>(source_ref);
     return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
   }
   catch (...) {

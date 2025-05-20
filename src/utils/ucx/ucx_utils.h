@@ -95,7 +95,9 @@ public:
                         uint64_t raddr, nixlUcxRkey &rk,
                         size_t size, nixlUcxReq &req);
     nixl_status_t estimateCost(size_t size,
-                               std::chrono::microseconds &duration);
+                               int64_t &duration_us,
+                               int64_t &err_margin_us,
+                               nixl_cost_estimate_t &source);
     nixl_status_t flushEp(nixlUcxReq &req);
 };
 

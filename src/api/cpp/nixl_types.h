@@ -137,11 +137,11 @@ extern const std::string default_partial_metadata_label;
 
 
 /**
- * @enum nixl_err_margin_t
- * @brief An enumeration of error margin types for transfer cost estimation.
+ * @enum nixl_cost_estimate_t
+ * @brief An enumeration of cost estimation types for transfer cost estimation.
  */
-enum nixl_err_margin_t {
-    NIXL_ERR_MARGIN_NONE,
+enum nixl_cost_estimate_t {
+    NIXL_COST_ESTIMATE_UCX_EP = 0, // UCX endpoint-based cost estimate
 };
 
 /**

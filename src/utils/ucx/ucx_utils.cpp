@@ -268,7 +268,9 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
 }
 
 nixl_status_t nixlUcxEp::estimateCost(size_t size,
-                                      std::chrono::microseconds &duration)
+                                      int64_t &duration_us,
+                                      int64_t &err_margin_us,
+                                      nixl_cost_estimate_t &source)
 {
     ucp_ep_evaluate_perf_param_t params = {
         .field_mask   = UCP_EP_PERF_PARAM_FIELD_MESSAGE_SIZE,
@@ -285,8 +287,10 @@ nixl_status_t nixlUcxEp::estimateCost(size_t size,
         return NIXL_ERR_BACKEND;
     }
 
-    auto seconds = std::chrono::duration<double>(cost_result.estimated_time);
-    duration = std::chrono::duration_cast<std::chrono::microseconds>(seconds);
+    duration_us = cost_result.estimated_time * 1e6;
+    source = NIXL_COST_ESTIMATE_UCX_EP;
+    // Currently, we do not have a way to estimate the error margin
+    err_margin_us = 0;
     return NIXL_SUCCESS;
 }
 

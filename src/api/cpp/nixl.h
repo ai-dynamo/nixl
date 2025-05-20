@@ -21,8 +21,6 @@
 #ifndef _NIXL_H
 #define _NIXL_H
 
-#include <chrono>
-
 #include "nixl_types.h"
 #include "nixl_params.h"
 #include "nixl_descriptors.h"
@@ -236,18 +234,18 @@ class nixlAgent {
         /**
          * @brief Estimate the cost (e.g., duration) of executing a transfer request.
          *
-         * @param req_hndl        Transfer request handle
-         * @param duration        [out] Estimated duration of the transfer
-         * @param err_margin      [out] Estimated error margin of the transfer
-         * @param err_margin_type [out] Type of error margin of the transfer
-         * @param extra_params    Optional extra parameters
+         * @param req_hndl     Transfer request handle
+         * @param duration     [out] Estimated duration of the transfer (in microseconds)
+         * @param err_margin   [out] Estimated error margin of the transfer (in microseconds)
+         * @param source       [out] Source of the cost estimate
+         * @param extra_params Optional extra parameters
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
         estimateXferCost(const nixlXferReqH* req_hndl,
-                         std::chrono::microseconds &duration,
-                         std::chrono::microseconds &err_margin,
-                         nixl_err_margin_t &err_margin_type,
+                         int64_t &duration_us,
+                         int64_t &err_margin_us,
+                         nixl_cost_estimate_t &source,
                          const nixl_opt_args_t* extra_params = nullptr) const;
 
         /**

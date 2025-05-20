@@ -915,9 +915,9 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                                                const nixl_meta_dlist_t &remote,
                                                const std::string &remote_agent,
                                                nixlBackendReqH* const &handle,
-                                               std::chrono::microseconds &duration,
-                                               std::chrono::microseconds &err_margin,
-                                               nixl_err_margin_t &err_margin_type,
+                                               int64_t &duration_us,
+                                               int64_t &err_margin_us,
+                                               nixl_cost_estimate_t &source,
                                                const nixl_opt_args_t* extra_params) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
@@ -929,13 +929,12 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
         return NIXL_ERR_MISMATCH;
     }
 
-    // Currently we do not support error margin estimation
-    err_margin_type = NIXL_ERR_MARGIN_NONE;
-    err_margin = std::chrono::microseconds(0);
+    duration_us = 0;
+    err_margin_us = 0;
 
     if (local.descCount() == 0) {
-        // Nothing to do
-        duration = std::chrono::microseconds(0);
+        // Nothing to do, use a default value
+        source = NIXL_COST_ESTIMATE_UCX_EP;
         return NIXL_SUCCESS;
     }
 
@@ -950,14 +949,18 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
         NIXL_ASSERT(lsize == rsize) << "Local size (" << lsize << ") != Remote size (" << rsize
                                     << ") at index " << i << " during cost estimation";
 
-        std::chrono::microseconds msg_duration;
-        nixl_status_t ret = rmd->conn->getEp(workerId)->estimateCost(lsize, msg_duration);
+        int64_t msg_duration_us;
+        int64_t msg_err_margin_us;
+        nixl_cost_estimate_t msg_source;
+        nixl_status_t ret = rmd->conn->getEp(workerId)->estimateCost(lsize, msg_duration_us, msg_err_margin_us, msg_source);
         if (ret != NIXL_SUCCESS) {
             NIXL_ERROR << "Worker failed to estimate cost for segment " << i << " status: " << ret;
             return ret;
         }
 
-        duration += msg_duration;
+        duration_us += msg_duration_us;
+        err_margin_us += msg_err_margin_us;
+        source = msg_source;
     }
 
     return NIXL_SUCCESS;

@@ -763,9 +763,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
 nixl_status_t
 nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
-                            std::chrono::microseconds &duration,
-                            std::chrono::microseconds &err_margin,
-                            nixl_err_margin_t &err_margin_type,
+                            int64_t &duration_us,
+                            int64_t &err_margin_us,
+                            nixl_cost_estimate_t &source,
                             const nixl_opt_args_t* extra_params) const
 {
     NIXL_LOCK_GUARD(data->lock);
@@ -788,9 +788,9 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
                                               *req_hndl->targetDescs,
                                               req_hndl->remoteAgent,
                                               req_hndl->backendHandle,
-                                              duration,
-                                              err_margin,
-                                              err_margin_type,
+                                              duration_us,
+                                              err_margin_us,
+                                              source,
                                               extra_params);
 }
 
