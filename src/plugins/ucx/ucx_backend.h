@@ -103,7 +103,9 @@ class nixlUcxPublicMetadata : public nixlBackendMD {
 // will be part of NIXL installation - we can have
 // HAVE_CUDA in h-files
 class nixlUcxCudaCtx;
-class nixlUcxCudaCtxRetained;
+class nixlUcxCudaDevicePrimaryCtx;
+using nixlUcxCudaDevicePrimaryCtxPtr = std::shared_ptr<nixlUcxCudaDevicePrimaryCtx>;
+
 class nixlUcxEngine : public nixlBackendEngine {
     private:
         /* UCX data */
@@ -126,7 +128,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         bool cuda_addr_wa;
 
         // Context to use when current context is missing
-        std::unique_ptr<nixlUcxCudaCtxRetained> m_cudaCtxRetained;
+        nixlUcxCudaDevicePrimaryCtxPtr m_cudaPrimaryCtx;
 
         /* Notifications */
         notif_list_t notifMainList;

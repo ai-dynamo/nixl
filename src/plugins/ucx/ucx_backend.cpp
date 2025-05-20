@@ -52,78 +52,70 @@ public:
     int cudaSetCtx();
 };
 
-class nixlUcxCudaCtxRetained {
-#ifdef HAVE_CUDA
+class nixlUcxCudaDevicePrimaryCtx {
+#ifndef HAVE_CUDA
+public:
+    nixlUcxCudaDevicePrimaryCtx(int ordinal) {}
+    bool push() { return false; }
+    void pop() {};
+#else
+    int m_ordinal;
     CUdevice m_device;
     CUcontext m_context;
 public:
-    nixlUcxCudaCtxRetained(CUdevice device) : m_device(device) {
-        CUresult res = cuDevicePrimaryCtxRetain(&m_context, m_device);
-        if (res != CUDA_SUCCESS) {
-            m_device = -1;
-            m_context = nullptr;
+    nixlUcxCudaDevicePrimaryCtx(int ordinal)
+        : m_ordinal(ordinal), m_context(nullptr) {}
+
+    bool push() {
+        CUcontext context;
+
+        CUresult res = cuCtxGetCurrent(&context);
+        if (res != CUDA_SUCCESS || context != nullptr) {
+            return false;
         }
+
+        if (m_context == nullptr) {
+            CUresult res = cuDeviceGet(&m_device, m_ordinal);
+            if (res != CUDA_SUCCESS) {
+                return false;
+            }
+
+            res = cuDevicePrimaryCtxRetain(&m_context, m_device);
+            if (res != CUDA_SUCCESS) {
+                m_context = nullptr;
+                return false;
+            }
+        }
+
+        return cuCtxPushCurrent(m_context) == CUDA_SUCCESS;
     }
-    ~nixlUcxCudaCtxRetained() {
-        if (m_device > -1) {
+
+    void pop() {
+        cuCtxPopCurrent(nullptr);
+    }
+
+    ~nixlUcxCudaDevicePrimaryCtx() {
+        if (m_context != nullptr) {
             cuDevicePrimaryCtxRelease(m_device);
         }
-    }
-    CUcontext get() const {
-        return m_context;
     }
 #endif
 };
 
 class nixlUcxCudaCtxGuard {
-#ifndef HAVE_CUDA
+    nixlUcxCudaDevicePrimaryCtxPtr m_primary;
 public:
     nixlUcxCudaCtxGuard(nixl_mem_t nixl_mem,
-                        std::unique_ptr<nixlUcxCudaCtxRetained>& retain) {
+                        nixlUcxCudaDevicePrimaryCtxPtr primary) {
+        if (nixl_mem == VRAM_SEG && primary && primary->push()) {
+            m_primary = primary;
+        }
     }
-#else
-    bool m_ctx_pop;
-
-public:
-    nixlUcxCudaCtxGuard(nixl_mem_t nixl_mem,
-                        std::unique_ptr<nixlUcxCudaCtxRetained>& retain)
-        : m_ctx_pop(false) {
-
-        CUresult res;
-        CUcontext context;
-        CUdevice device;
-
-        if (nixl_mem != VRAM_SEG) {
-            return;
-        }
-
-        res = cuCtxGetCurrent(&context);
-        if (res != CUDA_SUCCESS || context != nullptr) {
-            return; // There is already a context set
-        }
-
-        if (retain == nullptr || retain->get() == nullptr) {
-            res = cuDeviceGet(&device, 0);
-            if (res != CUDA_SUCCESS) {
-                return;
-            }
-
-            retain = std::make_unique<nixlUcxCudaCtxRetained>(device);
-            if (retain->get() == nullptr) {
-                return;
-            }
-        }
-
-        m_ctx_pop = (cuCtxPushCurrent(retain->get()) == CUDA_SUCCESS);
-    }
-
     ~nixlUcxCudaCtxGuard() {
-        // Do not destroy if created, to keep associated resources active
-        if (m_ctx_pop) {
-            cuCtxPopCurrent(nullptr);
+        if (m_primary) {
+            m_primary->pop();
         }
     }
-#endif
 };
 
 #ifdef HAVE_CUDA
@@ -600,6 +592,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     } else {
         cuda_addr_wa = true;
     }
+
+    m_cudaPrimaryCtx = std::make_shared<nixlUcxCudaDevicePrimaryCtx>(0);
     vramInitCtx();
     progressThreadStart();
 }
@@ -934,7 +928,7 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
                                            nixlBackendMD* &output)
 {
     // Set CUDA context of first device, UCX will anyways detect proper device when sending
-    nixlUcxCudaCtxGuard guard(nixl_mem, m_cudaCtxRetained);
+    nixlUcxCudaCtxGuard guard(nixl_mem, m_cudaPrimaryCtx);
     return internalMDHelper(input.metaInfo, remote_agent, output);
 }
 
