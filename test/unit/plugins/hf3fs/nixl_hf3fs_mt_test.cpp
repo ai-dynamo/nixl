@@ -35,7 +35,7 @@ namespace {
     constexpr size_t test_phrase_len = sizeof(test_phrase) - 1;
     constexpr char test_file_name[] = "mt_testfile";
     constexpr mode_t std_file_permissions = 0744;
-    constexpr char default_test_files_dir_path[] = "/mnt/3fs/";
+    constexpr char default_test_files_dir_path[] = "/mnt/3fs";
 
     constexpr size_t kb_size = 1024;
     constexpr size_t mb_size = 1024 * 1024;
@@ -96,12 +96,12 @@ namespace {
             failed_transfers++;
         }
 
-        double get_throughput_gbps() const {
+        double get_throughput_mbps() const {
             if (total_time == 0) {
                 return 0.0;
             }
             double seconds = total_time / 1000000.0;
-            return ((double)total_data / gb_size) / seconds;
+            return ((double)total_data / mb_size) / seconds;
         }
     };
 
@@ -110,7 +110,8 @@ namespace {
                       const std::string& test_dir,
                       size_t transfer_size,
                       int num_transfers,
-                      ThreadStats& stats,
+                      ThreadStats& write_stats,
+                      ThreadStats& read_stats,
                       const nixl_reg_dlist_t& dram_list,
                       const nixl_reg_dlist_t& file_list,
                       size_t start_idx) {
@@ -156,7 +157,7 @@ namespace {
             }
 
             auto write_end = nixlTime::getUs();
-            stats.add_transfer(transfer_size * num_transfers, write_end - write_start);
+            write_stats.add_transfer(transfer_size * num_transfers, write_end - write_start);
             print_protected("thread_id: " + std::to_string(thread_id) +
                             " write data_size: " + std::to_string(transfer_size * num_transfers) +
                             " duration: " + std::to_string(write_end - write_start));
@@ -200,7 +201,7 @@ namespace {
                                          std::to_string(status));
             }
             auto read_end = nixlTime::getUs();
-            stats.add_transfer(transfer_size * num_transfers, read_end - read_start);
+            read_stats.add_transfer(transfer_size * num_transfers, read_end - read_start);
             print_protected("thread_id: " + std::to_string(thread_id) +
                             " read data_size: " + std::to_string(transfer_size * num_transfers) +
                             " duration: " + std::to_string(read_end - read_start));
@@ -209,7 +210,7 @@ namespace {
             for (int i = 0; i < num_transfers; i++) {
                 void* ptr = (void*)dram_list[start_idx + i].addr;
                 if (!validate_buffer(ptr, transfer_size, thread_id)) {
-                    stats.add_failure();
+                    read_stats.add_failure();
                     total_failed_transfers++;
                 }
             }
@@ -222,7 +223,7 @@ namespace {
         } catch (const std::exception& e) {
             print_protected("Thread " + std::to_string(thread_id) + " failed: " + e.what());
             total_failed_transfers += num_transfers;
-            stats.failed_transfers += num_transfers;
+            read_stats.failed_transfers += num_transfers;
         }
     }
 }
@@ -342,14 +343,16 @@ int main(int argc, char *argv[]) {
 
     // Create threads
     std::vector<std::thread> threads;
-    std::vector<ThreadStats> thread_stats(num_threads);
+    std::vector<ThreadStats> thread_write_stats(num_threads);
+    std::vector<ThreadStats> thread_read_stats(num_threads);
     auto start_time = nixlTime::getUs();
 
     for (int i = 0; i < num_threads; i++) {
         size_t start_idx = i * transfers_per_thread;
-        threads.emplace_back(worker_thread, i, std::ref(agent), test_dir,
-                           transfer_size, transfers_per_thread, std::ref(thread_stats[i]),
-                           std::ref(dram_list), std::ref(file_list), start_idx);
+        threads.emplace_back(worker_thread, i, std::ref(agent), test_dir, transfer_size,
+                             transfers_per_thread, std::ref(thread_write_stats[i]),
+                             std::ref(thread_read_stats[i]), std::ref(dram_list),
+                             std::ref(file_list), start_idx);
     }
 
     // Wait for all threads to complete
@@ -373,17 +376,20 @@ int main(int argc, char *argv[]) {
     std::cout << "Total transfers failed: " << total_failed_transfers << std::endl;
     std::cout << "Total duration: " << (total_duration / 1000000.0) << " seconds" << std::endl;
 
-    double total_thoughput = 0.0;
+    double total_write_thoughput = 0.0;
+    double total_read_thoughput = 0.0;
 
     std::cout << "Per-thread throughput:" << std::endl;
-    for (size_t i = 0; i < thread_stats.size(); i++) {
-        std::cout << "  Thread " << i << ": " << std::setprecision(2) <<
-            thread_stats[i].get_throughput_gbps() << " GB/s" << std::endl;
-        total_thoughput += thread_stats[i].get_throughput_gbps();
+    for (size_t i = 0; i < thread_write_stats.size(); i++) {
+        std::cout << "  Thread " << i << ": read " << std::fixed << std::setprecision(2) <<
+            thread_read_stats[i].get_throughput_mbps() << " MB/s write " <<
+            thread_write_stats[i].get_throughput_mbps() << " MB/s" << std::endl;
+        total_write_thoughput += thread_write_stats[i].get_throughput_mbps();
+        total_read_thoughput += thread_read_stats[i].get_throughput_mbps();
     }
 
-    std::cout << "Total throughput: " << std::setprecision(2) << total_thoughput << " GB/s"
-        << std::endl;
+    std::cout << "Total throughput: read " << std::fixed << std::setprecision(2) <<
+        total_read_thoughput << " MB/s write " << total_write_thoughput << " MB/s" << std::endl;
 
     if (total_failed_transfers > 0) {
         std::cout << "Test failed" << std::endl;
