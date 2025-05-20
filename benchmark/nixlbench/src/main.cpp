@@ -75,10 +75,12 @@ static std::vector<std::vector<xferBenchIOV>> createTransferDescLists(xferBenchW
     auto [count, stride] = getStrideScheme(worker, num_threads);
     std::vector<std::vector<xferBenchIOV>> xfer_lists;
 
+    //std::cout << "count:" << count << " stride:" << stride << std::endl;
     for (const auto &iov_list: iov_lists) {
         std::vector<xferBenchIOV> xfer_list;
 
         for (const auto &iov : iov_list) {
+            //std::cout << "   iov.addr:" << iov.addr << " iov.len:" << iov.len << std::endl;
             for (size_t i = 0; i < count; i++) {
                 size_t dev_offset = ((i * stride) % iov.len);
 
@@ -138,6 +140,7 @@ static int processBatchSizes(xferBenchWorker &worker,
                 } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
                     // Only storage backends support consistency check for write on initiator
                     if ((xferBenchConfig::backend == XFERBENCH_BACKEND_GDS) ||
+                        (xferBenchConfig::backend == XFERBENCH_BACKEND_HF3FS) ||
                         (xferBenchConfig::backend == XFERBENCH_BACKEND_POSIX)) {
                         xferBenchUtils::checkConsistency(remote_trans_lists);
                     }
