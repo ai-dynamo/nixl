@@ -97,10 +97,7 @@ public:
     nixl_status_t write(void *laddr, nixlUcxMem &mem,
                         uint64_t raddr, nixlUcxRkey &rk,
                         size_t size, nixlUcxReq &req);
-    nixl_status_t estimateCost(nixlUcxMem &mem,
-                               nixlUcxRkey &rk,
-                               size_t size,
-                               nixl_xfer_op_t nixl_op,
+    nixl_status_t estimateCost(size_t size,
                                std::chrono::duration<double> &duration);
     nixl_status_t flushEp(nixlUcxReq &req);
 };
