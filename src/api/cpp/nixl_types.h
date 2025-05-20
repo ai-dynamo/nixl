@@ -135,6 +135,15 @@ extern const std::string default_metadata_label;
  */
 extern const std::string default_partial_metadata_label;
 
+
+/**
+ * @enum nixl_xfer_cost_err_margin_t
+ * @brief An enumeration of error margin types for transfer cost estimation.
+ */
+enum nixl_xfer_cost_err_margin_t {
+    NIXL_XFER_COST_ERR_MARGIN_NONE,
+};
+
 /**
  * @class nixlAgentOptionalArgs
  * @brief A class for optional argument that can be provided to relevant agent methods.

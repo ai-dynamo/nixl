@@ -228,6 +228,8 @@ class nixlUcxEngine : public nixlBackendEngine {
                                        const std::string &remote_agent,
                                        nixlBackendReqH* const &handle,
                                        std::chrono::microseconds &duration,
+                                       std::chrono::microseconds &error_margin,
+                                       nixl_xfer_cost_err_margin_t &error_margin_type,
                                        const nixl_opt_args_t* extra_params=nullptr) const override;
 
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,

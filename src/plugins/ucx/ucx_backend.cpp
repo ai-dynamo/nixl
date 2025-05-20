@@ -916,6 +916,8 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                                                const std::string &remote_agent,
                                                nixlBackendReqH* const &handle,
                                                std::chrono::microseconds &duration,
+                                               std::chrono::microseconds &error_margin,
+                                               nixl_xfer_cost_err_margin_t &error_margin_type,
                                                const nixl_opt_args_t* extra_params) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
@@ -926,6 +928,10 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                    << ") descriptor lists differ in size for cost estimation";
         return NIXL_ERR_MISMATCH;
     }
+
+    // Currently we do not support error margin estimation
+    error_margin_type = NIXL_XFER_COST_ERR_MARGIN_NONE;
+    error_margin = std::chrono::microseconds(0);
 
     if (local.descCount() == 0) {
         // Nothing to do
