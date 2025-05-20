@@ -242,7 +242,7 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        estimateXferCost(const nixlXferReqH &req_hndl,
+        estimateXferCost(const nixlXferReqH* req_hndl,
                          std::chrono::microseconds &duration,
                          const nixl_opt_args_t* extra_params = nullptr) const;
 

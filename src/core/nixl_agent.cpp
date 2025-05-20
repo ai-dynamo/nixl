@@ -766,7 +766,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
-nixlAgent::estimateXferCost(const nixlXferReqH &req_hndl,
+nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
                             std::chrono::microseconds &duration,
                             const nixl_opt_args_t* extra_params) const
 {
@@ -774,24 +774,24 @@ nixlAgent::estimateXferCost(const nixlXferReqH &req_hndl,
 
     // Check if the remote agent connection info is still valid
     // (assuming cost estimation requires connection info like transfers)
-    if (!req_hndl.remoteAgent.empty() &&
-        (data->remoteSections.count(req_hndl.remoteAgent) == 0)) {
+    if (!req_hndl->remoteAgent.empty() &&
+        (data->remoteSections.count(req_hndl->remoteAgent) == 0)) {
         NIXL_ERROR << "Invalid request handle: remote agent not found";
         return NIXL_ERR_NOT_FOUND;
     }
 
-    if (!req_hndl.engine) {
+    if (!req_hndl->engine) {
         NIXL_ERROR << "Invalid request handle: engine is null";
         return NIXL_ERR_UNKNOWN;
     }
 
-    return req_hndl.engine->estimateXferCost(req_hndl.backendOp,
-                                             *req_hndl.initiatorDescs,
-                                             *req_hndl.targetDescs,
-                                             req_hndl.remoteAgent,
-                                             req_hndl.backendHandle,
-                                             duration,
-                                             extra_params);
+    return req_hndl->engine->estimateXferCost(req_hndl->backendOp,
+                                              *req_hndl->initiatorDescs,
+                                              *req_hndl->targetDescs,
+                                              req_hndl->remoteAgent,
+                                              req_hndl->backendHandle,
+                                              duration,
+                                              extra_params);
 }
 
 nixl_status_t

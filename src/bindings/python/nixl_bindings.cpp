@@ -428,7 +428,7 @@ PYBIND11_MODULE(_bindings, m) {
                    py::arg("backend") = std::vector<uintptr_t>({}))
         .def("estimateXferCost", [](nixlAgent &agent, uintptr_t reqh) -> double {
                 std::chrono::microseconds duration;
-                nixl_status_t ret = agent.estimateXferCost(reinterpret_cast<nixlXferReqH&>(reqh), duration, nullptr);
+                nixl_status_t ret = agent.estimateXferCost(reinterpret_cast<const nixlXferReqH*>(reqh), duration, nullptr);
                 throw_nixl_exception(ret);
                 return duration.count() / 1.0e6;
             }, py::arg("req_handle"))

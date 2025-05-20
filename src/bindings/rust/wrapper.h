@@ -155,6 +155,10 @@ nixl_capi_status_t nixl_capi_create_xfer_req(
     nixl_capi_xfer_dlist_t remote_descs, const char* remote_agent, nixl_capi_xfer_req_t* req_hndl,
     nixl_capi_opt_args_t opt_args);
 
+nixl_capi_status_t nixl_capi_estimate_xfer_cost(
+    nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl, nixl_capi_opt_args_t opt_args,
+    int64_t *duration_us);
+
 nixl_capi_status_t nixl_capi_post_xfer_req(
     nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl, nixl_capi_opt_args_t opt_args);
 
