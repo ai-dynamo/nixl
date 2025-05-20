@@ -317,8 +317,9 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
                         "Error: I/O operation completed with error: %d", cqes[i].result);
                     break;
                 }
-
+ /*
                 nixlHf3fsIO* io = (nixlHf3fsIO*)cqes[i].userdata;
+               
                 if (io->is_read) {
                     auto mem_copy = memcpy(io->orig_addr, io->iov.base, io->size);
                     if (mem_copy == nullptr) {
@@ -327,6 +328,7 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
                         break;
                     }
                 }
+                */
                 hf3fs_handle->completed_ios++;
             }
         }

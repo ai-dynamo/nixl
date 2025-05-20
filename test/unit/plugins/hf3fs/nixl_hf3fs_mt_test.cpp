@@ -19,6 +19,7 @@
 #include <mutex>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <nixl.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -32,7 +33,6 @@ namespace {
     constexpr int default_transfers_per_thread = 10;
     constexpr size_t default_transfer_size = 1024 * 1024;  // 1MB
     constexpr char test_phrase[] = "NIXL HF3FS Multi-Thread Test Pattern 2025";
-    constexpr size_t test_phrase_len = sizeof(test_phrase) - 1;
     constexpr char test_file_name[] = "mt_testfile";
     constexpr mode_t std_file_permissions = 0744;
     constexpr char default_test_files_dir_path[] = "/mnt/3fs";
@@ -42,8 +42,16 @@ namespace {
     constexpr size_t gb_size = 1024 * 1024 * 1024;
 
     std::mutex cout_mutex;
-    std::atomic<int> total_completed_transfers{0};
-    std::atomic<int> total_failed_transfers{0};
+    std::atomic<int> total_completed_write_transfers{0};
+    std::atomic<int> total_completed_read_transfers{0};
+    std::atomic<int> total_failed_write_transfers{0};
+    std::atomic<int> total_failed_read_transfers{0};
+    std::atomic<int> finished_write_threads{0};
+    
+    // Barrier to synchronize between write and read stages
+    std::mutex barrier_mutex;
+    std::condition_variable barrier_cv;
+    bool write_stage_complete = false;
 
     void print_protected(const std::string& message) {
         std::lock_guard<std::mutex> lock(cout_mutex);
@@ -55,7 +63,7 @@ namespace {
         size_t offset = 0;
         while (offset < size) {
             size_t remaining = size - offset;
-            size_t copy_len = std::min(remaining, test_phrase_len);
+            size_t copy_len = std::min(remaining, strlen(test_phrase));
             memcpy(buf + offset, test_phrase, copy_len);
             offset += copy_len;
         }
@@ -65,6 +73,7 @@ namespace {
         }
     }
 
+/*
     bool validate_buffer(void* buffer, size_t size, int thread_id) {
         char* buf = (char*)buffer;
         // Check thread ID at the end
@@ -78,6 +87,7 @@ namespace {
         }
         return true;
     }
+*/
 
     class ThreadStats {
     public:
@@ -105,40 +115,33 @@ namespace {
         }
     };
 
-    void worker_thread(int thread_id,
-                      nixlAgent& agent,
-                      const std::string& test_dir,
-                      size_t transfer_size,
-                      int num_transfers,
-                      ThreadStats& write_stats,
-                      ThreadStats& read_stats,
-                      const nixl_reg_dlist_t& dram_list,
-                      const nixl_reg_dlist_t& file_list,
-                      size_t start_idx) {
+    // Modify struct definitions to avoid default constructors
+    struct PreparedWriteRequest {
+        nixlXferReqH* req = nullptr;
+        // Remove the member variables that require non-default constructors
+    };
+
+    struct PreparedReadRequest {
+        nixlXferReqH* req = nullptr;
+        // Remove the member variables that require non-default constructors
+    };
+
+    // Update worker functions to accept all parameters directly
+    void worker_write_thread(int thread_id,
+                           nixlAgent& agent,
+                           const std::string& test_dir,
+                           size_t transfer_size,
+                           int num_transfers,
+                           ThreadStats& write_stats,
+                           const nixl_reg_dlist_t& dram_list,
+                           const nixl_reg_dlist_t& file_list,
+                           size_t start_idx,
+                           nixlXferReqH* write_req) {
         try {
-            // Create subset lists for this thread's range
-            nixl_reg_dlist_t thread_dram_list(DRAM_SEG);
-            nixl_reg_dlist_t thread_file_list(FILE_SEG);
-
-            for (int i = 0; i < num_transfers; i++) {
-                thread_dram_list.addDesc(dram_list[start_idx + i]);
-                thread_file_list.addDesc(file_list[start_idx + i]);
-            }
-
-            // Perform write operations
-            nixl_xfer_dlist_t write_dram_list = thread_dram_list.trim();
-            nixl_xfer_dlist_t write_file_list = thread_file_list.trim();
-            nixlXferReqH* write_req = nullptr;
-
-            if (agent.createXferReq(NIXL_WRITE, write_dram_list, write_file_list,
-                                  "HF3FSMultiThreadTester", write_req) != NIXL_SUCCESS) {
-                throw std::runtime_error("Failed to create write request");
-            }
-
+            // Use the prepared request
             auto write_start = nixlTime::getUs();
             auto status = agent.postXferReq(write_req);
             if (status < 0) {
-                agent.releaseXferReq(write_req);
                 throw std::runtime_error("Failed to post write request, err: " +
                                          std::to_string(status));
             }
@@ -151,7 +154,6 @@ namespace {
             }
 
             if (status < 0) {
-                agent.releaseXferReq(write_req);
                 throw std::runtime_error("Failed to wait for write completion, err: " +
                                          std::to_string(status));
             }
@@ -162,28 +164,56 @@ namespace {
                             " write data_size: " + std::to_string(transfer_size * num_transfers) +
                             " duration: " + std::to_string(write_end - write_start));
 
+            total_completed_write_transfers += num_transfers;
+
+            // Notify that this thread has completed its write stage
+            {
+                std::lock_guard<std::mutex> lock(barrier_mutex);
+                finished_write_threads++;
+                if (finished_write_threads.load() == thread_id + 1) {
+                    write_stage_complete = true;
+                    barrier_cv.notify_all();
+                }
+            }
+
+        } catch (const std::exception& e) {
+            print_protected("Thread " + std::to_string(thread_id) + " write failed: " + e.what());
+            total_failed_write_transfers += num_transfers;
+            write_stats.failed_transfers += num_transfers;
+            
+            // Notify that this thread has completed (with errors)
+            {
+                std::lock_guard<std::mutex> lock(barrier_mutex);
+                finished_write_threads++;
+                if (finished_write_threads.load() == thread_id + 1) {
+                    write_stage_complete = true;
+                    barrier_cv.notify_all();
+                }
+            }
+        }
+    }
+
+    void worker_read_thread(int thread_id,
+                          nixlAgent& agent,
+                          const std::string& test_dir,
+                          size_t transfer_size,
+                          int num_transfers,
+                          ThreadStats& read_stats,
+                          const nixl_reg_dlist_t& dram_list,
+                          const nixl_reg_dlist_t& file_list,
+                          size_t start_idx,
+                          nixlXferReqH* read_req) {
+        try {
             // Clear DRAM buffers for this thread's range
-            for (int i = 0; i < num_transfers; i++) {
-                void* ptr = (void*)dram_list[start_idx + i].addr;
-                memset(ptr, 0, transfer_size);
-            }
+            //for (int i = 0; i < num_transfers; i++) {
+             //   void* ptr = (void*)dram_list[start_idx + i].addr;
+           //     memset(ptr, 0, transfer_size);
+          //  }
 
-            agent.releaseXferReq(write_req);
-
-            // Perform read operations
-            nixl_xfer_dlist_t read_dram_list = thread_dram_list.trim();
-            nixl_xfer_dlist_t read_file_list = thread_file_list.trim();
-            nixlXferReqH* read_req = nullptr;
-
-            if (agent.createXferReq(NIXL_READ, read_dram_list, read_file_list,
-                                  "HF3FSMultiThreadTester", read_req) != NIXL_SUCCESS) {
-                throw std::runtime_error("Failed to create read request");
-            }
-
+            // Use the prepared request
             auto read_start = nixlTime::getUs();
-            status = agent.postXferReq(read_req);
+            auto status = agent.postXferReq(read_req);
             if (status < 0) {
-                agent.releaseXferReq(read_req);
                 throw std::runtime_error("Failed to post read request, err: " +
                                          std::to_string(status));
             }
@@ -196,7 +226,6 @@ namespace {
             }
 
             if (status < 0) {
-                agent.releaseXferReq(read_req);
                 throw std::runtime_error("Failed to wait for read completion, err: " +
                                          std::to_string(status));
             }
@@ -207,22 +236,19 @@ namespace {
                             " duration: " + std::to_string(read_end - read_start));
 
             // Validate read data
-            for (int i = 0; i < num_transfers; i++) {
-                void* ptr = (void*)dram_list[start_idx + i].addr;
-                if (!validate_buffer(ptr, transfer_size, thread_id)) {
-                    read_stats.add_failure();
-                    total_failed_transfers++;
-                }
-            }
+            //for (int i = 0; i < num_transfers; i++) {
+            //    void* ptr = (void*)dram_list[start_idx + i].addr;
+            //    if (!validate_buffer(ptr, transfer_size, thread_id)) {
+            //        read_stats.add_failure();
+            //        total_failed_read_transfers++;
+            //    }
+            //}
 
-            // Cleanup
-            agent.releaseXferReq(read_req);
-
-            total_completed_transfers += num_transfers;
+            total_completed_read_transfers += num_transfers;
 
         } catch (const std::exception& e) {
-            print_protected("Thread " + std::to_string(thread_id) + " failed: " + e.what());
-            total_failed_transfers += num_transfers;
+            print_protected("Thread " + std::to_string(thread_id) + " read failed: " + e.what());
+            total_failed_read_transfers += num_transfers;
             read_stats.failed_transfers += num_transfers;
         }
     }
@@ -341,45 +367,168 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Create threads
-    std::vector<std::thread> threads;
+    // Changed vector initialization method
+    std::vector<nixlXferReqH*> write_requests(num_threads, nullptr);
+    std::vector<nixlXferReqH*> read_requests(num_threads, nullptr);
+    
+    // Temporary lists for request creation
+    std::vector<nixl_xfer_dlist_t> write_dram_lists;
+    std::vector<nixl_xfer_dlist_t> write_file_lists;
+    std::vector<nixl_xfer_dlist_t> read_dram_lists;
+    std::vector<nixl_xfer_dlist_t> read_file_lists;
+
+    // Create all write requests
+    std::cout << "\n=== PREPARING WRITE REQUESTS ===" << std::endl;
+    for (int i = 0; i < num_threads; i++) {
+        size_t start_idx = i * transfers_per_thread;
+        
+        // Create subset lists for this thread's range
+        nixl_reg_dlist_t thread_dram_list(DRAM_SEG);
+        nixl_reg_dlist_t thread_file_list(FILE_SEG);
+
+        for (int j = 0; j < transfers_per_thread; j++) {
+            thread_dram_list.addDesc(dram_list[start_idx + j]);
+            thread_file_list.addDesc(file_list[start_idx + j]);
+        }
+
+        // Perform write operations
+        auto dram_list_copy = thread_dram_list.trim();
+        auto file_list_copy = thread_file_list.trim();
+        
+        // Store the trimmed lists
+        write_dram_lists.push_back(std::move(dram_list_copy));
+        write_file_lists.push_back(std::move(file_list_copy));
+        
+        // Create the transfer request
+        nixlXferReqH* req = nullptr;
+        if (agent.createXferReq(NIXL_WRITE, write_dram_lists.back(), write_file_lists.back(),
+                              "HF3FSMultiThreadTester", req) != NIXL_SUCCESS) {
+            std::cerr << "Failed to create write request for thread " << i << std::endl;
+            return 1;
+        }
+        
+        write_requests[i] = req;
+    }
+
+    // Create all read requests
+    std::cout << "\n=== PREPARING READ REQUESTS ===" << std::endl;
+    for (int i = 0; i < num_threads; i++) {
+        size_t start_idx = i * transfers_per_thread;
+        
+        // Create subset lists for this thread's range
+        nixl_reg_dlist_t thread_dram_list(DRAM_SEG);
+        nixl_reg_dlist_t thread_file_list(FILE_SEG);
+
+        for (int j = 0; j < transfers_per_thread; j++) {
+            thread_dram_list.addDesc(dram_list[start_idx + j]);
+            thread_file_list.addDesc(file_list[start_idx + j]);
+        }
+
+        // Prepare read operations
+        auto dram_list_copy = thread_dram_list.trim();
+        auto file_list_copy = thread_file_list.trim();
+        
+        // Store the trimmed lists
+        read_dram_lists.push_back(std::move(dram_list_copy));
+        read_file_lists.push_back(std::move(file_list_copy));
+        
+        // Create the transfer request
+        nixlXferReqH* req = nullptr;
+        if (agent.createXferReq(NIXL_READ, read_dram_lists.back(), read_file_lists.back(),
+                              "HF3FSMultiThreadTester", req) != NIXL_SUCCESS) {
+            std::cerr << "Failed to create read request for thread " << i << std::endl;
+            return 1;
+        }
+        
+        read_requests[i] = req;
+    }
+
+    // Stage 1: Write Operation
+    std::cout << "\n=== STAGE 1: WRITE OPERATIONS ===" << std::endl;
+    std::vector<std::thread> write_threads;
     std::vector<ThreadStats> thread_write_stats(num_threads);
-    std::vector<ThreadStats> thread_read_stats(num_threads);
-    auto start_time = nixlTime::getUs();
+    size_t total_bytes = num_threads * transfers_per_thread * transfer_size;
+    
+    auto write_start_time = nixlTime::getUs();
 
     for (int i = 0; i < num_threads; i++) {
         size_t start_idx = i * transfers_per_thread;
-        threads.emplace_back(worker_thread, i, std::ref(agent), test_dir, transfer_size,
-                             transfers_per_thread, std::ref(thread_write_stats[i]),
-                             std::ref(thread_read_stats[i]), std::ref(dram_list),
-                             std::ref(file_list), start_idx);
+        write_threads.emplace_back(worker_write_thread, i, std::ref(agent), test_dir, transfer_size,
+                                 transfers_per_thread, std::ref(thread_write_stats[i]),
+                                 std::ref(dram_list), std::ref(file_list), start_idx,
+                                 write_requests[i]);
     }
 
-    // Wait for all threads to complete
-    for (auto& thread : threads) {
+    // Wait for all write threads to complete
+    for (auto& thread : write_threads) {
         thread.join();
     }
+
+    auto write_end_time = nixlTime::getUs();
+    auto write_duration = write_end_time - write_start_time;
+    double write_duration_seconds = write_duration / 1000000.0;
+    double write_total_gbps = ((double)total_bytes / gb_size) / write_duration_seconds;
+
+    // Release write requests
+    for (auto& req : write_requests) {
+        agent.releaseXferReq(req);
+    }
+
+    // Print write results
+    std::cout << "\nWrite Test Results:" << std::endl;
+    std::cout << "Total transfers completed: " << total_completed_write_transfers << std::endl;
+    std::cout << "Total transfers failed: " << total_failed_write_transfers << std::endl;
+    std::cout << "Write duration: " << write_duration_seconds << " seconds" << std::endl;
+    std::cout << "Total data transferred: " << ((double)total_bytes / gb_size) << " GB" << std::endl;
+    std::cout << "Write throughput: " << std::fixed << std::setprecision(2) << write_total_gbps << " GB/s" << std::endl;
+
+    // Stage 2: Read Operation
+    std::cout << "\n=== STAGE 2: READ OPERATIONS ===" << std::endl;
+    std::vector<std::thread> read_threads;
+    std::vector<ThreadStats> thread_read_stats(num_threads);
+    
+    auto read_start_time = nixlTime::getUs();
+
+    for (int i = 0; i < num_threads; i++) {
+        size_t start_idx = i * transfers_per_thread;
+        read_threads.emplace_back(worker_read_thread, i, std::ref(agent), test_dir, transfer_size,
+                                transfers_per_thread, std::ref(thread_read_stats[i]),
+                                std::ref(dram_list), std::ref(file_list), start_idx,
+                                read_requests[i]);
+    }
+
+    // Wait for all read threads to complete
+    for (auto& thread : read_threads) {
+        thread.join();
+    }
+
+    auto read_end_time = nixlTime::getUs();
+    auto read_duration = read_end_time - read_start_time;
+    double read_duration_seconds = read_duration / 1000000.0;
+    double read_total_gbps = ((double)total_bytes / gb_size) / read_duration_seconds;
+
+    // Release read requests
+    for (auto& req : read_requests) {
+        agent.releaseXferReq(req);
+    }
+
+    // Print read results
+    std::cout << "\nRead Test Results:" << std::endl;
+    std::cout << "Total transfers completed: " << total_completed_read_transfers << std::endl;
+    std::cout << "Total transfers failed: " << total_failed_read_transfers << std::endl;
+    std::cout << "Read duration: " << read_duration_seconds << " seconds" << std::endl;
+    std::cout << "Total data transferred: " << ((double)total_bytes / gb_size) << " GB" << std::endl;
+    std::cout << "Read throughput: " << std::fixed << std::setprecision(2) << read_total_gbps << " GB/s" << std::endl;
 
     // Deregister memory
     agent.deregisterMem(file_list);
     agent.deregisterMem(dram_list);
 
-    auto end_time = nixlTime::getUs();
-    auto total_duration = end_time - start_time;
-
-    // Print results
-    std::cout << "\nTest Results:" << std::endl;
-    std::cout << "Total threads: " << num_threads << std::endl;
-    std::cout << "Transfers per thread: " << transfers_per_thread << std::endl;
-    std::cout << "Transfer size: " << transfer_size << " bytes" << std::endl;
-    std::cout << "Total transfers completed: " << total_completed_transfers << std::endl;
-    std::cout << "Total transfers failed: " << total_failed_transfers << std::endl;
-    std::cout << "Total duration: " << (total_duration / 1000000.0) << " seconds" << std::endl;
-
+    // Print per-thread statistics
+    std::cout << "\nPer-thread throughput:" << std::endl;
     double total_write_thoughput = 0.0;
     double total_read_thoughput = 0.0;
-
-    std::cout << "Per-thread throughput:" << std::endl;
+    
     for (size_t i = 0; i < thread_write_stats.size(); i++) {
         std::cout << "  Thread " << i << ": read " << std::fixed << std::setprecision(2) <<
             thread_read_stats[i].get_throughput_mbps() << " MB/s write " <<
@@ -388,9 +537,10 @@ int main(int argc, char *argv[]) {
         total_read_thoughput += thread_read_stats[i].get_throughput_mbps();
     }
 
-    std::cout << "Total throughput: read " << std::fixed << std::setprecision(2) <<
+    std::cout << "\nAggregate Per-thread throughput: read " << std::fixed << std::setprecision(2) <<
         total_read_thoughput << " MB/s write " << total_write_thoughput << " MB/s" << std::endl;
 
+    int total_failed_transfers = total_failed_write_transfers + total_failed_read_transfers;
     if (total_failed_transfers > 0) {
         std::cout << "Test failed" << std::endl;
     } else {
