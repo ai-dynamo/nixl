@@ -1250,7 +1250,11 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
 {
     nixl_status_t ret;
     nixlUcxReq req;
-    size_t wid = getWorkerId();
+    size_t wid;
+    ret = threadWorkerMap->threadToWorkerId(wid, uws.size());
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
 
     ret = notifSendPriv(remote_agent, msg, req, wid);
 
