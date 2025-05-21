@@ -67,6 +67,14 @@ nixlMDStreamListener::~nixlMDStreamListener() {
 void nixlMDStreamListener::setupListener() {
     setupStream();
 
+    int opt = 1;
+    if (setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR,
+                   &opt, sizeof(opt)) < 0) {
+        std::cerr << "setsockopt(REUSEADDR) failed while setting up listener for MD\n";
+        closeStream();
+        return;
+    }
+
     if (bind(socketFd, (struct sockaddr*)&listenerAddr,
              sizeof(listenerAddr)) < 0) {
         std::cerr << "Socket Bind failed while setting up listener for MD\n";

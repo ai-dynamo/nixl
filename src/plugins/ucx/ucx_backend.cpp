@@ -52,6 +52,70 @@ public:
     int cudaSetCtx();
 };
 
+class nixlUcxCudaDevicePrimaryCtx {
+#ifndef HAVE_CUDA
+public:
+    bool push() { return false; }
+    void pop() {};
+#else
+    static constexpr int defaultCudaDeviceOrdinal = 0;
+    int m_ordinal{defaultCudaDeviceOrdinal};
+    CUdevice m_device{CU_DEVICE_INVALID};
+    CUcontext m_context{nullptr};
+public:
+
+    bool push() {
+        CUcontext context;
+
+        const auto res = cuCtxGetCurrent(&context);
+        if (res != CUDA_SUCCESS || context != nullptr) {
+            return false;
+        }
+
+        if (m_context == nullptr) {
+            CUresult res = cuDeviceGet(&m_device, m_ordinal);
+            if (res != CUDA_SUCCESS) {
+                return false;
+            }
+
+            res = cuDevicePrimaryCtxRetain(&m_context, m_device);
+            if (res != CUDA_SUCCESS) {
+                m_context = nullptr;
+                return false;
+            }
+        }
+
+        return cuCtxPushCurrent(m_context) == CUDA_SUCCESS;
+    }
+
+    void pop() {
+        cuCtxPopCurrent(nullptr);
+    }
+
+    ~nixlUcxCudaDevicePrimaryCtx() {
+        if (m_context != nullptr) {
+            cuDevicePrimaryCtxRelease(m_device);
+        }
+    }
+#endif
+};
+
+class nixlUcxCudaCtxGuard {
+    nixlUcxCudaDevicePrimaryCtxPtr m_primary;
+public:
+    nixlUcxCudaCtxGuard(nixl_mem_t nixl_mem,
+                        nixlUcxCudaDevicePrimaryCtxPtr primary) {
+        if (nixl_mem == VRAM_SEG && primary && primary->push()) {
+            m_primary = primary;
+        }
+    }
+    ~nixlUcxCudaCtxGuard() {
+        if (m_primary) {
+            m_primary->pop();
+        }
+    }
+};
+
 #ifdef HAVE_CUDA
 
 static int cudaQueryAddr(void *address, bool &is_dev,
@@ -526,6 +590,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     } else {
         cuda_addr_wa = true;
     }
+
+    m_cudaPrimaryCtx = std::make_shared<nixlUcxCudaDevicePrimaryCtx>();
     vramInitCtx();
     progressThreadStart();
 }
@@ -861,6 +927,8 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
                                            const std::string &remote_agent,
                                            nixlBackendMD* &output)
 {
+    // Set CUDA context of first device, UCX will anyways detect proper device when sending
+    nixlUcxCudaCtxGuard guard(nixl_mem, m_cudaPrimaryCtx);
     return internalMDHelper(input.metaInfo, remote_agent, output);
 }
 
