@@ -18,6 +18,7 @@
 #define NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_H
 
 #include <vector>
+#include <queue>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -110,6 +111,8 @@ class nixlUcxEngine
         std::unique_ptr<nixlUcxContext> uc;
         std::vector<std::unique_ptr<nixlUcxWorker>> uws;
         std::string workerAddr;
+        size_t recvNotifWorkerId;
+        size_t numSharedWorkers;
 
         /* Progress thread data */
         std::mutex pthrActiveLock;
@@ -136,6 +139,32 @@ class nixlUcxEngine
         // Map of agent name to saved nixlUcxConnection info
         std::unordered_map<std::string, ucx_connection_ptr_t,
                            std::hash<std::string>, strEqual> remoteConnMap;
+
+        // Thread to worker mapping
+        pthread_key_t keyThreadToWorker;
+        mutable std::queue<size_t> freeWorkers;
+        mutable std::mutex workersMutex;
+
+        nixl_status_t
+        initThreadMapping();
+        void
+        destroyThreadMapping();
+        nixl_status_t
+        getDedicatedWorkerId(size_t &worker_id) const;
+        nixl_status_t
+        getSharedWorkerId(size_t &worker_id) const;
+        nixl_status_t
+        getWorkerIdWithPreference(bool prefer_shared, size_t &worker_id) const;
+        nixl_status_t
+        getFreeDedicatedWorkerId(size_t &worker_id) const;
+        static void
+        threadMapDestructor(void *arg);
+        // Add worker back to the free workers queue
+        void
+        pushFreeWorker(size_t worker_id) const {
+            const std::lock_guard<std::mutex> lock(workersMutex);
+            freeWorkers.push(worker_id);
+        }
 
 
         void vramInitCtx();
@@ -255,13 +284,18 @@ class nixlUcxEngine
         nixl_status_t checkConn(const std::string &remote_agent);
         nixl_status_t endConn(const std::string &remote_agent);
 
-        const std::unique_ptr<nixlUcxWorker> &getWorker(size_t worker_id) const {
+        const std::unique_ptr<nixlUcxWorker> &
+        getWorker(size_t worker_id) const {
             return uws[worker_id];
         }
+};
 
-        size_t getWorkerId() const {
-            return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
-        }
+class nixlUcxWorkerInfo {
+public:
+    const nixlUcxEngine *engine;
+    const size_t workerId;
+    nixlUcxWorkerInfo(const nixlUcxEngine *eng, size_t id) : engine(eng), workerId(id) {}
+    ~nixlUcxWorkerInfo() {}
 };
 
 #endif
