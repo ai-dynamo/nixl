@@ -55,8 +55,6 @@ public:
 class nixlUcxCudaDevicePrimaryCtx {
 #ifndef HAVE_CUDA
 public:
-
-    nixlUcxCudaDevicePrimaryCtx(int ordinal) {}
     bool push() { return false; }
     void pop() {};
 #else
