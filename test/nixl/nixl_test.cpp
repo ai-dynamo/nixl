@@ -203,8 +203,8 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
     agent.deregisterMem(dram_for_ucx, extra_params);
 }
 
-static void runTarget(const std::string &ip, int port) {
-    nixlAgentConfig cfg(true, true, port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_mode) {
+    nixlAgentConfig cfg(true, true, port, sync_mode);
 
     std::cout << "Starting Agent for target\n";
     nixlAgent agent(target, cfg);
@@ -226,8 +226,8 @@ static void runTarget(const std::string &ip, int port) {
         thread.join();
 }
 
-static void runInitiator(const std::string &target_ip, int target_port) {
-    nixlAgentConfig cfg(true, true, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+static void runInitiator(const std::string &target_ip, int target_port, nixl_thread_sync_t sync_mode) {
+    nixlAgentConfig cfg(true, true, 0, sync_mode);
 
     std::cout << "Starting Agent for initiator\n";
     nixlAgent agent(initiator, cfg);
@@ -273,12 +273,28 @@ int main(int argc, char *argv[]) {
             return 1;
     }
 
+    auto sync_mode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+    if (argc == 5) {
+        std::string sync_mode_str{argv[4]};
+        std::transform(sync_mode_str.begin(), sync_mode_str.end(), sync_mode_str.begin(), ::tolower);
+        if (sync_mode_str == "rw") {
+            sync_mode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+            std::cout << "Using RW sync mode" << std::endl;
+        } else if (sync_mode_str == "strict") {
+            sync_mode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
+            std::cout << "Using Strict sync mode" << std::endl;
+        } else {
+            std::cerr << "Invalid sync mode. Use 'rw' or 'strict'." << std::endl;
+            return 1;
+        }
+    }
+
     /*** End - Argument Parsing */
 
     if (role == target)
-        runTarget(target_ip, target_port);
+        runTarget(target_ip, target_port, sync_mode);
     else
-        runInitiator(target_ip, target_port);
+        runInitiator(target_ip, target_port, sync_mode);
 
     return 0;
 }
