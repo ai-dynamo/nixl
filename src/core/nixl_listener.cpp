@@ -306,14 +306,14 @@ public:
                 return;
             }
             const auto &event = response.events()[0];
-            if (event.event_type() == etcd::Event::EventType::PUT) {
-                NIXL_ERROR << "Unexpected PUT: " << event.kv().key()
-                           << " (rev " << event.kv().modified_index() << ") = " << event.kv().as_string();
-
-            } else if (event.event_type() == etcd::Event::EventType::DELETE_) {
-                NIXL_DEBUG << "DELETE: " << event.kv().key() << " (rev " << event.kv().modified_index() << ")";
+            if (event.event_type() == etcd::Event::EventType::DELETE_) {
+                NIXL_DEBUG << "Watcher DELETE: " << event.kv().key()
+                           << " (rev " << event.kv().modified_index() << ")";
                 std::lock_guard<std::mutex> lock(invalidated_agents_mutex);
                 invalidated_agents.push_back(agent_name);
+            } else {
+                NIXL_ERROR << "Watcher for " << event.kv().key() << " received unexpected event from etcd: "
+                           << event.event_type();
             }
         };
 
