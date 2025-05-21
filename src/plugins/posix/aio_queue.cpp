@@ -23,8 +23,8 @@
 #include <time.h>
 #include <stdexcept>
 
-aioQueue::aioQueue(int num_entries, bool is_read)
-    : aiocbs(num_entries), num_entries(num_entries), num_completed(0), num_submitted(0), is_read(is_read) {
+aioQueue::aioQueue(int num_entries, nixl_xfer_op_t operation)
+    : aiocbs(num_entries), num_entries(num_entries), num_completed(0), num_submitted(0), operation(operation) {
     if (num_entries <= 0) {
         throw std::runtime_error("Invalid number of entries for AIO queue");
     }
@@ -59,7 +59,7 @@ nixl_status_t aioQueue::submit() {
         }
 
         int ret;
-        if (is_read) {
+        if (operation == NIXL_READ) {
             ret = aio_read(&aiocb);
         } else {
             ret = aio_write(&aiocb);
@@ -116,7 +116,7 @@ nixl_status_t aioQueue::checkCompleted() {
     return (num_completed == num_entries) ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
-nixl_status_t aioQueue::prepareIO(int fd, void* buf, size_t len, off_t offset) {
+nixl_status_t aioQueue::prepIO(int fd, void* buf, size_t len, off_t offset) {
     // Find an unused control block
     for (auto& aiocb : aiocbs) {
         if (aiocb.aio_fildes == 0) {
