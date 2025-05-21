@@ -28,6 +28,8 @@
 #include "common/nixl_time.h"
 #include "temp_file.h"
 
+#define NIXL_3FS_VALIDATION_MODE 1
+
 namespace {
     constexpr int default_num_threads = 4;
     constexpr int default_transfers_per_thread = 10;
@@ -73,7 +75,7 @@ namespace {
         }
     }
 
-/*
+#if NIXL_3FS_VALIDATION_MODE
     bool validate_buffer(void* buffer, size_t size, int thread_id) {
         char* buf = (char*)buffer;
         // Check thread ID at the end
@@ -87,7 +89,7 @@ namespace {
         }
         return true;
     }
-*/
+#endif
 
     class ThreadStats {
     public:
@@ -139,7 +141,9 @@ namespace {
                            nixlXferReqH* write_req) {
         try {
             // Use the prepared request
+#if NIXL_3FS_VALIDATION_MODE
             auto write_start = nixlTime::getUs();
+#endif
             auto status = agent.postXferReq(write_req);
             if (status < 0) {
                 throw std::runtime_error("Failed to post write request, err: " +
@@ -157,13 +161,14 @@ namespace {
                 throw std::runtime_error("Failed to wait for write completion, err: " +
                                          std::to_string(status));
             }
-
+#if NIXL_3FS_VALIDATION_MODE
             auto write_end = nixlTime::getUs();
             write_stats.add_transfer(transfer_size * num_transfers, write_end - write_start);
+
             print_protected("thread_id: " + std::to_string(thread_id) +
                             " write data_size: " + std::to_string(transfer_size * num_transfers) +
                             " duration: " + std::to_string(write_end - write_start));
-
+#endif
             total_completed_write_transfers += num_transfers;
 
             // Notify that this thread has completed its write stage
@@ -204,14 +209,15 @@ namespace {
                           size_t start_idx,
                           nixlXferReqH* read_req) {
         try {
+#if NIXL_3FS_VALIDATION_MODE
             // Clear DRAM buffers for this thread's range
-            //for (int i = 0; i < num_transfers; i++) {
-             //   void* ptr = (void*)dram_list[start_idx + i].addr;
-           //     memset(ptr, 0, transfer_size);
-          //  }
+            for (int i = 0; i < num_transfers; i++) {
+                void* ptr = (void*)dram_list[start_idx + i].addr;
+                memset(ptr, 0, transfer_size);
+            }
 
-            // Use the prepared request
             auto read_start = nixlTime::getUs();
+#endif
             auto status = agent.postXferReq(read_req);
             if (status < 0) {
                 throw std::runtime_error("Failed to post read request, err: " +
@@ -229,6 +235,7 @@ namespace {
                 throw std::runtime_error("Failed to wait for read completion, err: " +
                                          std::to_string(status));
             }
+#if NIXL_3FS_VALIDATION_MODE
             auto read_end = nixlTime::getUs();
             read_stats.add_transfer(transfer_size * num_transfers, read_end - read_start);
             print_protected("thread_id: " + std::to_string(thread_id) +
@@ -236,13 +243,14 @@ namespace {
                             " duration: " + std::to_string(read_end - read_start));
 
             // Validate read data
-            //for (int i = 0; i < num_transfers; i++) {
-            //    void* ptr = (void*)dram_list[start_idx + i].addr;
-            //    if (!validate_buffer(ptr, transfer_size, thread_id)) {
-            //        read_stats.add_failure();
-            //        total_failed_read_transfers++;
-            //    }
-            //}
+            for (int i = 0; i < num_transfers; i++) {
+                void* ptr = (void*)dram_list[start_idx + i].addr;
+                if (!validate_buffer(ptr, transfer_size, thread_id)) {
+                    read_stats.add_failure();
+                    total_failed_read_transfers++;
+                }
+            }
+#endif
 
             total_completed_read_transfers += num_transfers;
 
@@ -524,6 +532,8 @@ int main(int argc, char *argv[]) {
     agent.deregisterMem(file_list);
     agent.deregisterMem(dram_list);
 
+
+#if NIXL_3FS_VALIDATION_MODE
     // Print per-thread statistics
     std::cout << "\nPer-thread throughput:" << std::endl;
     double total_write_thoughput = 0.0;
@@ -539,6 +549,7 @@ int main(int argc, char *argv[]) {
 
     std::cout << "\nAggregate Per-thread throughput: read " << std::fixed << std::setprecision(2) <<
         total_read_thoughput << " MB/s write " << total_write_thoughput << " MB/s" << std::endl;
+#endif
 
     int total_failed_transfers = total_failed_write_transfers + total_failed_read_transfers;
     if (total_failed_transfers > 0) {
