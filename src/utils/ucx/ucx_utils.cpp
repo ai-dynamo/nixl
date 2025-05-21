@@ -229,7 +229,8 @@ nixl_status_t nixlUcxEp::read(uint64_t raddr, nixlUcxRkey &rk,
     }
 
     ucp_request_param_t param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
+        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH |
+                        UCP_OP_ATTR_FLAG_MULTI_SEND,
         .memh         = mem.memh,
     };
 
@@ -253,7 +254,8 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
     }
 
     ucp_request_param_t param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
+        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH |
+                        UCP_OP_ATTR_FLAG_MULTI_SEND,
         .memh         = mem.memh,
     };
 
