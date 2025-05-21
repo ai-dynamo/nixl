@@ -769,7 +769,7 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
                             nixl_cost_estimate_t &source,
                             const nixl_opt_args_t* extra_params) const
 {
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
 
     // Check if the remote agent connection info is still valid
     // (assuming cost estimation requires connection info like transfers)
