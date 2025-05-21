@@ -267,10 +267,6 @@ class nixlUcxEngine
         const std::unique_ptr<nixlUcxWorker> &getWorker(size_t worker_id) const {
             return uws[worker_id];
         }
-
-        size_t getWorkerId() const {
-            return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
-        }
 };
 
 #endif
