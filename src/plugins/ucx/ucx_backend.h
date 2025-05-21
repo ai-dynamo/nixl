@@ -25,6 +25,7 @@
 #include <memory>
 #include <condition_variable>
 #include <atomic>
+#include <chrono>
 #include <poll.h>
 
 #include "nixl.h"
@@ -116,6 +117,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         bool pthrActive;
         bool pthrOn;
         std::thread pthr;
+        std::chrono::milliseconds pthrDelay;
         int pthrControlPipe[2];
         std::vector<pollfd> pollFds;
 
