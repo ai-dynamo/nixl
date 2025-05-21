@@ -70,6 +70,7 @@ enum nixl_status_t {
 enum class nixl_thread_sync_t {
     NIXL_THREAD_SYNC_NONE,
     NIXL_THREAD_SYNC_STRICT,
+    NIXL_THREAD_SYNC_RW,
     NIXL_THREAD_SYNC_DEFAULT = NIXL_THREAD_SYNC_NONE,
 };
 
