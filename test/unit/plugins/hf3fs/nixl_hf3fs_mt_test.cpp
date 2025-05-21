@@ -435,7 +435,7 @@ int main(int argc, char *argv[]) {
         // Prepare read operations
         auto dram_list_copy = thread_dram_list.trim();
         auto file_list_copy = thread_file_list.trim();
-        
+
         // Store the trimmed lists
         read_dram_lists.push_back(std::move(dram_list_copy));
         read_file_lists.push_back(std::move(file_list_copy));
