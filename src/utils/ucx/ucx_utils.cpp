@@ -385,10 +385,10 @@ nixlUcxWorker::nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx): ctx(_ctx)
 
     switch (ctx->mt_type) {
     case NIXL_UCX_MT_CTX:
-        worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
+        worker_params.thread_mode = UCS_THREAD_MODE_SERIALIZED;
         break;
     case NIXL_UCX_MT_SINGLE:
-        worker_params.thread_mode = UCS_THREAD_MODE_SERIALIZED;
+        worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
         break;
     case NIXL_UCX_MT_WORKER:
         worker_params.thread_mode = UCS_THREAD_MODE_MULTI;
