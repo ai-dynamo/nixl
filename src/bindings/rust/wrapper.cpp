@@ -1047,12 +1047,12 @@ nixl_capi_estimate_xfer_cost(
   }
 
   try {
-    int64_t duration_us_ref;
-    int64_t err_margin_us_ref;
+    std::chrono::microseconds duration_us_ref;
+    std::chrono::microseconds err_margin_us_ref;
     nixl_cost_estimate_t source_ref;
     nixl_status_t ret = agent->inner->estimateXferCost(req_hndl->req, duration_us_ref, err_margin_us_ref, source_ref, opt_args ? &opt_args->args : nullptr);
-    *duration_us = duration_us_ref;
-    *err_margin_us = err_margin_us_ref;
+    *duration_us = duration_us_ref.count();
+    *err_margin_us = err_margin_us_ref.count();
     *source = static_cast<nixl_capi_cost_estimate_t>(source_ref);
     return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
   }

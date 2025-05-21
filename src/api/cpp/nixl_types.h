@@ -141,7 +141,7 @@ extern const std::string default_partial_metadata_label;
  * @brief An enumeration of cost estimation types for transfer cost estimation.
  */
 enum nixl_cost_estimate_t {
-    NIXL_COST_ESTIMATE_UCX_EP = 0, // UCX endpoint-based cost estimate
+    NIXL_COST_ESTIMATE_HEURISTIC_EP = 0, // Endpoint-based heuristic cost estimate
 };
 
 /**

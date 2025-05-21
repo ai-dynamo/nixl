@@ -227,8 +227,8 @@ class nixlUcxEngine : public nixlBackendEngine {
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* const &handle,
-                                       int64_t &duration_us,
-                                       int64_t &err_margin_us,
+                                       std::chrono::microseconds &duration,
+                                       std::chrono::microseconds &err_margin,
                                        nixl_cost_estimate_t &source,
                                        const nixl_opt_args_t* extra_params=nullptr) const override;
 

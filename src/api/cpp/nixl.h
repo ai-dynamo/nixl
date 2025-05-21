@@ -24,6 +24,7 @@
 #include "nixl_types.h"
 #include "nixl_params.h"
 #include "nixl_descriptors.h"
+#include <chrono>
 #include <memory>
 
 /**
@@ -243,8 +244,8 @@ class nixlAgent {
          */
         nixl_status_t
         estimateXferCost(const nixlXferReqH* req_hndl,
-                         int64_t &duration_us,
-                         int64_t &err_margin_us,
+                         std::chrono::microseconds &duration,
+                         std::chrono::microseconds &err_margin,
                          nixl_cost_estimate_t &source,
                          const nixl_opt_args_t* extra_params = nullptr) const;
 

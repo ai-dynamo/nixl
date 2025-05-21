@@ -426,13 +426,13 @@ PYBIND11_MODULE(_bindings, m) {
                    py::arg("remote_descs"), py::arg("remote_agent"),
                    py::arg("notif_msg") = std::string(""),
                    py::arg("backend") = std::vector<uintptr_t>({}))
-        .def("estimateXferCost", [](nixlAgent &agent, uintptr_t reqh) -> std::tuple<double, double, int> {
-                int64_t duration_us;
-                int64_t err_margin_us;
+        .def("estimateXferCost", [](nixlAgent &agent, uintptr_t reqh) -> std::tuple<int64_t, int64_t, int> {
+                std::chrono::microseconds duration;
+                std::chrono::microseconds err_margin;
                 nixl_cost_estimate_t source;
-                nixl_status_t ret = agent.estimateXferCost(reinterpret_cast<const nixlXferReqH*>(reqh), duration_us, err_margin_us, source);
+                nixl_status_t ret = agent.estimateXferCost(reinterpret_cast<const nixlXferReqH*>(reqh), duration, err_margin, source);
                 throw_nixl_exception(ret);
-                return std::make_tuple(duration_us / 1.0e6, err_margin_us, int(source));
+                return std::make_tuple(duration.count(), err_margin.count(), int(source));
             }, py::arg("req_handle"))
         .def("postXferReq", [](nixlAgent &agent, uintptr_t reqh, std::string notif_msg) -> nixl_status_t {
                     nixl_opt_args_t extra_params;

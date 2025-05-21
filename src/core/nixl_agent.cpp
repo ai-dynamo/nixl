@@ -763,8 +763,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
 nixl_status_t
 nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
-                            int64_t &duration_us,
-                            int64_t &err_margin_us,
+                            std::chrono::microseconds &duration,
+                            std::chrono::microseconds &err_margin,
                             nixl_cost_estimate_t &source,
                             const nixl_opt_args_t* extra_params) const
 {
@@ -788,8 +788,8 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
                                               *req_hndl->targetDescs,
                                               req_hndl->remoteAgent,
                                               req_hndl->backendHandle,
-                                              duration_us,
-                                              err_margin_us,
+                                              duration,
+                                              err_margin,
                                               source,
                                               extra_params);
 }
