@@ -213,6 +213,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.customParams = const_cast<nixl_b_params_t*>(&params);
     init_params.enableProgTh = data->config.useProgThread;
     init_params.pthrDelay    = data->config.pthrDelay;
+    init_params.syncMode     = data->config.syncMode;
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -654,7 +655,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     req_hndl = nullptr;
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
     {
         return NIXL_ERR_NOT_FOUND;
@@ -805,7 +806,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (!req_hndl)
         return NIXL_ERR_INVALID_PARAM;
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     // Check if the remote was invalidated before post/repost
     if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
         delete req_hndl;
@@ -860,7 +861,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 nixl_status_t
 nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     // If the status is done, no need to recheck.
     if (req_hndl->status == NIXL_IN_PROG) {
         // Check if the remote was invalidated before completion
@@ -887,7 +888,7 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
 nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     //attempt to cancel request
     if(req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
@@ -975,7 +976,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
     nixlBackendEngine* backend = nullptr;
     backend_list_t*    backend_list;
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->notifEngines;
         if (backend_list->empty())

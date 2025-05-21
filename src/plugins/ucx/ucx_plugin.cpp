@@ -24,7 +24,11 @@ namespace
    const char* ucx_plugin_version = "0.1.0";
 
    [[nodiscard]] nixlBackendEngine* create_ucx_engine(const nixlBackendInitParams* init_params) {
-       return new nixlUcxEngine(init_params);
+        try {
+            return new nixlUcxEngine(init_params);
+        } catch (const std::exception &e) {
+            return nullptr;
+        }
    }
 
    void destroy_ucx_engine(nixlBackendEngine *engine) {
@@ -40,10 +44,7 @@ namespace
    }
 
    [[nodiscard]] nixl_b_params_t get_backend_options() {
-       return {
-        { "ucx_devices", "" },
-        { "ucx_error_handling_mode", "none" } // or "peer"
-       };
+       return get_ucx_backend_common_options();
    }
 
    [[nodiscard]] nixl_mem_list_t get_backend_mems() {
