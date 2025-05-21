@@ -34,11 +34,13 @@ static nixl_status_t ucx_status_to_nixl(ucs_status_t status)
     switch(status) {
     case UCS_INPROGRESS:
         return NIXL_IN_PROG;
+    case UCS_ERR_NOT_CONNECTED:
     case UCS_ERR_CONNECTION_RESET:
         return NIXL_ERR_REMOTE_DISCONNECT;
     case UCS_ERR_INVALID_PARAM:
         return NIXL_ERR_INVALID_PARAM;
     default:
+        NIXL_WARN << "Unexpected UCX error: " << ucs_status_string(status);
         return NIXL_ERR_BACKEND;
     }
 }
@@ -86,7 +88,7 @@ void nixlUcxEp::setState(nixl_ucx_ep_state_t new_state)
 }
 
 nixl_status_t
-nixlUcxEp::closeImpl(ucp_worker_h worker, ucp_ep_close_flags_t flags)
+nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
 {
     ucs_status_ptr_t request      = nullptr;
     ucp_request_param_t req_param = {
@@ -117,33 +119,16 @@ nixlUcxEp::closeImpl(ucp_worker_h worker, ucp_ep_close_flags_t flags)
             return ucx_status_to_nixl(UCS_PTR_STATUS(request));
         }
 
-        if (worker == nullptr) {
-            ucp_request_free(request);
-            eph = nullptr;
-            return NIXL_SUCCESS;
-        }
-        break;
+        ucp_request_free(request);
+        eph = nullptr;
+        return NIXL_SUCCESS;
     default:
         NIXL_FATAL << "Invalid endpoint state: " << state;
     }
-
-    NIXL_ASSERT(UCS_PTR_IS_PTR(request));
-    NIXL_ASSERT(worker != nullptr);
-
-    // Blocking close.
-    ucs_status_t status;
-    do {
-        ucp_worker_progress(worker);
-        status = ucp_request_check_status(request);
-    } while (status == UCS_INPROGRESS);
-
-    ucp_request_free(request);
-    eph = nullptr;
-
-    return ucx_status_to_nixl(status);
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr)
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
+                     ucp_err_handling_mode_t err_handling_mode)
 {
     ucp_ep_params_t ep_params;
     nixl_status_t status;
@@ -151,7 +136,7 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr)
     ep_params.field_mask      = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
                                 UCP_EP_PARAM_FIELD_ERR_HANDLER |
                                 UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-    ep_params.err_mode        = UCP_ERR_HANDLING_MODE_PEER;
+    ep_params.err_mode        = err_handling_mode;
     ep_params.err_handler.cb  = err_cb_wrapper;
     ep_params.err_handler.arg = reinterpret_cast<void*>(this);
     ep_params.address         = reinterpret_cast<ucp_address_t*>(addr);
@@ -176,7 +161,10 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr)
 
 nixl_status_t nixlUcxEp::disconnect_nb()
 {
-    return closeNb();
+    nixl_status_t status = closeImpl(ucp_ep_close_flags_t(0));
+
+    // At step of disconnect we can ignore the remote disconnect error.
+    return (status == NIXL_ERR_REMOTE_DISCONNECT) ? NIXL_SUCCESS : status;
 }
 
 /* ===========================================
@@ -320,16 +308,22 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                size_t req_size,
                                nixlUcxContext::req_cb_t init_cb,
                                nixlUcxContext::req_cb_t fini_cb,
-                               nixl_ucx_mt_t __mt_type)
+                               nixl_ucx_mt_t __mt_type,
+                               bool prog_thread,
+                               ucp_err_handling_mode_t __err_handling_mode)
 {
     ucp_params_t ucp_params;
     ucp_config_t *ucp_config;
     ucs_status_t status = UCS_OK;
 
-    mt_type = __mt_type;
+    mt_type           = __mt_type;
+    err_handling_mode = __err_handling_mode;
 
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
     ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 | UCP_FEATURE_AM;
+    if (prog_thread)
+        ucp_params.features |= UCP_FEATURE_WAKEUP;
+
     switch(mt_type) {
     case NIXL_UCX_MT_SINGLE:
         ucp_params.mt_workers_shared = 0;
@@ -446,7 +440,7 @@ std::unique_ptr<char []> nixlUcxWorker::epAddr(size_t &size)
 absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, size_t size)
 {
     try {
-        return std::make_unique<nixlUcxEp>(worker, addr);
+        return std::make_unique<nixlUcxEp>(worker, addr, ctx->err_handling_mode);
     } catch (const std::exception &e) {
         return absl::UnavailableError(e.what());
     }
