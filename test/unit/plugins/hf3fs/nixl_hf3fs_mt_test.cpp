@@ -49,7 +49,7 @@ namespace {
     std::atomic<int> total_failed_write_transfers{0};
     std::atomic<int> total_failed_read_transfers{0};
     std::atomic<int> finished_write_threads{0};
-    
+
     // Barrier to synchronize between write and read stages
     std::mutex barrier_mutex;
     std::condition_variable barrier_cv;
@@ -185,7 +185,7 @@ namespace {
             print_protected("Thread " + std::to_string(thread_id) + " write failed: " + e.what());
             total_failed_write_transfers += num_transfers;
             write_stats.failed_transfers += num_transfers;
-            
+
             // Notify that this thread has completed (with errors)
             {
                 std::lock_guard<std::mutex> lock(barrier_mutex);
@@ -378,7 +378,7 @@ int main(int argc, char *argv[]) {
     // Changed vector initialization method
     std::vector<nixlXferReqH*> write_requests(num_threads, nullptr);
     std::vector<nixlXferReqH*> read_requests(num_threads, nullptr);
-    
+
     // Temporary lists for request creation
     std::vector<nixl_xfer_dlist_t> write_dram_lists;
     std::vector<nixl_xfer_dlist_t> write_file_lists;
@@ -389,7 +389,7 @@ int main(int argc, char *argv[]) {
     std::cout << "\n=== PREPARING WRITE REQUESTS ===" << std::endl;
     for (int i = 0; i < num_threads; i++) {
         size_t start_idx = i * transfers_per_thread;
-        
+
         // Create subset lists for this thread's range
         nixl_reg_dlist_t thread_dram_list(DRAM_SEG);
         nixl_reg_dlist_t thread_file_list(FILE_SEG);
@@ -402,11 +402,11 @@ int main(int argc, char *argv[]) {
         // Perform write operations
         auto dram_list_copy = thread_dram_list.trim();
         auto file_list_copy = thread_file_list.trim();
-        
+
         // Store the trimmed lists
         write_dram_lists.push_back(std::move(dram_list_copy));
         write_file_lists.push_back(std::move(file_list_copy));
-        
+
         // Create the transfer request
         nixlXferReqH* req = nullptr;
         if (agent.createXferReq(NIXL_WRITE, write_dram_lists.back(), write_file_lists.back(),
@@ -414,7 +414,7 @@ int main(int argc, char *argv[]) {
             std::cerr << "Failed to create write request for thread " << i << std::endl;
             return 1;
         }
-        
+
         write_requests[i] = req;
     }
 
@@ -422,7 +422,7 @@ int main(int argc, char *argv[]) {
     std::cout << "\n=== PREPARING READ REQUESTS ===" << std::endl;
     for (int i = 0; i < num_threads; i++) {
         size_t start_idx = i * transfers_per_thread;
-        
+
         // Create subset lists for this thread's range
         nixl_reg_dlist_t thread_dram_list(DRAM_SEG);
         nixl_reg_dlist_t thread_file_list(FILE_SEG);
@@ -439,7 +439,7 @@ int main(int argc, char *argv[]) {
         // Store the trimmed lists
         read_dram_lists.push_back(std::move(dram_list_copy));
         read_file_lists.push_back(std::move(file_list_copy));
-        
+
         // Create the transfer request
         nixlXferReqH* req = nullptr;
         if (agent.createXferReq(NIXL_READ, read_dram_lists.back(), read_file_lists.back(),
@@ -447,7 +447,7 @@ int main(int argc, char *argv[]) {
             std::cerr << "Failed to create read request for thread " << i << std::endl;
             return 1;
         }
-        
+
         read_requests[i] = req;
     }
 
@@ -456,7 +456,7 @@ int main(int argc, char *argv[]) {
     std::vector<std::thread> write_threads;
     std::vector<ThreadStats> thread_write_stats(num_threads);
     size_t total_bytes = num_threads * transfers_per_thread * transfer_size;
-    
+
     auto write_start_time = nixlTime::getUs();
 
     for (int i = 0; i < num_threads; i++) {
@@ -494,7 +494,7 @@ int main(int argc, char *argv[]) {
     std::cout << "\n=== STAGE 2: READ OPERATIONS ===" << std::endl;
     std::vector<std::thread> read_threads;
     std::vector<ThreadStats> thread_read_stats(num_threads);
-    
+
     auto read_start_time = nixlTime::getUs();
 
     for (int i = 0; i < num_threads; i++) {
@@ -538,7 +538,7 @@ int main(int argc, char *argv[]) {
     std::cout << "\nPer-thread throughput:" << std::endl;
     double total_write_thoughput = 0.0;
     double total_read_thoughput = 0.0;
-    
+
     for (size_t i = 0; i < thread_write_stats.size(); i++) {
         std::cout << "  Thread " << i << ": read " << std::fixed << std::setprecision(2) <<
             thread_read_stats[i].get_throughput_mbps() << " MB/s write " <<
