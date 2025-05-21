@@ -326,8 +326,9 @@ const std::string TestTransfer::NOTIF_MSG = "notification";
 TEST_P(TestTransfer, RandomSizes)
 {
     // Tuple fields are: size, count, repeat
-    constexpr std::array<std::tuple<size_t, size_t, size_t>, 3> test_cases = {
-        {{4096, 8, 3},
+    constexpr std::array<std::tuple<size_t, size_t, size_t>, 4> test_cases = {
+        {{40, 1000, 1},
+         {4096, 8, 3},
          {32768, 64, 3},
          {1000000, 100, 3}}
     };
@@ -364,5 +365,6 @@ TEST_P(TestTransfer, remoteMDFromSocket)
 }
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values("UCX"));
+INSTANTIATE_TEST_SUITE_P(ucx_mo, TestTransfer, testing::Values("UCX_MO"));
 
 } // namespace gtest
