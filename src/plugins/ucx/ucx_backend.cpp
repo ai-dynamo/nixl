@@ -55,21 +55,21 @@ public:
 class nixlUcxCudaDevicePrimaryCtx {
 #ifndef HAVE_CUDA
 public:
+
     nixlUcxCudaDevicePrimaryCtx(int ordinal) {}
     bool push() { return false; }
     void pop() {};
 #else
-    int m_ordinal;
-    CUdevice m_device;
-    CUcontext m_context;
+    static constexpr int defaultCudaDeviceOrdinal = 0;
+    int m_ordinal{defaultCudaDeviceOrdinal};
+    CUdevice m_device{CU_DEVICE_INVALID};
+    CUcontext m_context{nullptr};
 public:
-    nixlUcxCudaDevicePrimaryCtx(int ordinal)
-        : m_ordinal(ordinal), m_context(nullptr) {}
 
     bool push() {
         CUcontext context;
 
-        CUresult res = cuCtxGetCurrent(&context);
+        const auto res = cuCtxGetCurrent(&context);
         if (res != CUDA_SUCCESS || context != nullptr) {
             return false;
         }
@@ -593,7 +593,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         cuda_addr_wa = true;
     }
 
-    m_cudaPrimaryCtx = std::make_shared<nixlUcxCudaDevicePrimaryCtx>(0);
+    m_cudaPrimaryCtx = std::make_shared<nixlUcxCudaDevicePrimaryCtx>();
     vramInitCtx();
     progressThreadStart();
 }
