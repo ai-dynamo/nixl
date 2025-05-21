@@ -89,6 +89,17 @@ class nixlUcxPublicMetadata : public nixlBackendMD {
     friend class nixlUcxEngine;
 };
 
+class nixlUcxThreadToWorker {
+    private:
+        pthread_key_t keyThreadToWorker;
+        std::atomic<size_t> nextWorkerId;
+
+    public:
+        nixlUcxThreadToWorker();
+        ~nixlUcxThreadToWorker();
+        nixl_status_t threadToWorkerId(size_t &worker_id, size_t num_workers);
+};
+
 // Forward declaration of CUDA context
 // It is only visible in ucx_backend.cpp to ensure that
 // HAVE_CUDA works properly
@@ -133,6 +144,8 @@ class nixlUcxEngine
         std::unordered_map<std::string, ucx_connection_ptr_t,
                            std::hash<std::string>, strEqual> remoteConnMap;
 
+        // Thread to worker mapping
+        nixlUcxThreadToWorker *threadWorkerMap;
 
         void vramInitCtx();
         void vramFiniCtx();

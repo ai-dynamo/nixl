@@ -529,8 +529,23 @@ void nixlUcxEngine::progressThreadRestart()
 nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 : nixlBackendEngine (init_params) {
     unsigned long numWorkers;
+    nixl_ucx_mt_t mode = NIXL_UCX_MT_WORKER;
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
+
+    if (custom_params->count("worker_mode") != 0) {
+        if (custom_params->at("worker_mode") == "single") {
+            mode = NIXL_UCX_MT_SINGLE;
+        } else if (custom_params->at("worker_mode") == "serialized") {
+            mode = NIXL_UCX_MT_CTX;
+        } else if (custom_params->at("worker_mode") == "multi") {
+            mode = NIXL_UCX_MT_WORKER;
+        } else {
+            NIXL_ERROR << "Invalid worker mode: " << custom_params->at("worker_mode");
+            this->initErr = true;
+            return;
+        }
+    }
 
     if (init_params->enableProgTh) {
         pthrOn = true;
@@ -550,6 +565,11 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         pthrDelay = std::chrono::ceil<std::chrono::milliseconds>(
             std::chrono::microseconds(init_params->pthrDelay < std::numeric_limits<int>::max() ?
                                       init_params->pthrDelay : std::numeric_limits<int>::max()));
+        if (mode != NIXL_UCX_MT_WORKER) {
+            NIXL_ERROR << "Non NIXL_UCX_MT_WORKER mode does not support progress thread";
+            this->initErr = true;
+            return;
+        }
     } else {
         pthrOn = false;
     }
@@ -617,6 +637,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     m_cudaPrimaryCtx = std::make_shared<nixlUcxCudaDevicePrimaryCtx>();
     vramInitCtx();
     progressThreadStart();
+    threadWorkerMap = new nixlUcxThreadToWorker();
 }
 
 nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
@@ -642,6 +663,7 @@ nixlUcxEngine::~nixlUcxEngine () {
         close(pthrControlPipe[1]);
     }
     vramFiniCtx();
+    delete threadWorkerMap;
 }
 
 /****************************************
@@ -954,8 +976,14 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
+    size_t worker_id;
+    nixl_status_t status = threadWorkerMap->threadToWorkerId(worker_id, uws.size());
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
     /* TODO: try to get from a pool first */
-    nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, getWorkerId());
+    nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, worker_id);
 
     handle = (nixlBackendReqH*)intHandle;
     return NIXL_SUCCESS;
@@ -1242,5 +1270,37 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
         /* error case */
         return ret;
     }
+    return NIXL_SUCCESS;
+}
+
+/****************************************
+ * Thread to worker mapping
+*****************************************/
+
+nixlUcxThreadToWorker::nixlUcxThreadToWorker()
+{
+    pthread_key_create(&keyThreadToWorker, nullptr);
+    nextWorkerId = 0;
+}
+
+nixlUcxThreadToWorker::~nixlUcxThreadToWorker()
+{
+    pthread_key_delete(keyThreadToWorker);
+}
+
+nixl_status_t nixlUcxThreadToWorker::threadToWorkerId(size_t &worker_id, size_t num_workers)
+{
+    size_t cur_id = (size_t)pthread_getspecific(keyThreadToWorker);
+    if (cur_id == 0) {
+        cur_id = ++nextWorkerId;
+        if (cur_id > num_workers) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+        pthread_setspecific(keyThreadToWorker, (void*)cur_id);
+    }
+
+    // 0 mean the id not exists, so we save the worker id as + 1
+    worker_id = cur_id - 1;
+
     return NIXL_SUCCESS;
 }

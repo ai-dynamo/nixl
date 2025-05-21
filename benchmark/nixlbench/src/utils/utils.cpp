@@ -65,6 +65,10 @@ DEFINE_int32(num_initiator_dev, 1, "Number of device in initiator process");
 DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 DEFINE_bool(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
+
+// UCX options
+DEFINE_string(threading_mode, "multi", "Threading mode for operations [single, serialized, multi]");
+
 // GDS options - only used when backend is GDS
 DEFINE_string(gds_filepath, "", "File path for GDS operations (only used with GDS backend)");
 DEFINE_int32(gds_batch_pool_size, 32, "Batch pool size for GDS operations (default: 32, only used with GDS backend)");
@@ -189,6 +193,7 @@ int xferBenchConfig::loadFromFlags() {
     posix_api_type = FLAGS_posix_api_type;
     posix_filepath = FLAGS_posix_filepath;
     storage_enable_direct = FLAGS_storage_enable_direct;
+    threading_mode = FLAGS_threading_mode;
 
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&

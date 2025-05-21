@@ -123,6 +123,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
                 }
             }
         }
+        if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
+            backend_params.emplace("num_workers", std::to_string(xferBenchConfig::num_threads));
+            backend_params.emplace("worker_mode", xferBenchConfig::threading_mode);
+        }
 
         if (gethostname(hostname, 256)) {
            std::cerr << "Failed to get hostname" << std::endl;
