@@ -83,8 +83,8 @@ JOB_ID=$(aws batch submit-job \
 # Function to wait for a specific job status
 wait_for_status() {
     local target_status="$1"
-    local timeout=600
-    local interval=60
+    local timeout=1800
+    local interval=180
     local status=""
     SECONDS=0
 
