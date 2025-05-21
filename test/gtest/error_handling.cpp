@@ -26,12 +26,12 @@ namespace nixl {
     constexpr const char* ucx_err_handling_mode_none = "none";
     constexpr const char* ucx_err_handling_mode_peer = "peer";
 
-    static nixlBackendH* createUcxBackend(nixlAgent& agent)
+    static nixlBackendH* createUcxBackend(nixlAgent& agent, const std::string& backend_name)
     {
         std::vector<nixl_backend_t> plugins;
         nixl_status_t status = agent.getAvailPlugins(plugins);
         EXPECT_EQ(status, NIXL_SUCCESS);
-        auto it = std::find(plugins.begin(), plugins.end(), "UCX");
+        auto it = std::find(plugins.begin(), plugins.end(), backend_name);
         EXPECT_NE(it, plugins.end()) << "UCX plugin not found";
 
         nixl_b_params_t params;
@@ -59,7 +59,7 @@ namespace nixl {
     }
 } // namespace nixl
 
-class TestErrorHandling : public testing::Test {
+class TestErrorHandling : public testing::TestWithParam<std::string> {
     class Agent {
         struct MemDesc {
             MemDesc() : m_dlist(DRAM_SEG), m_desc() {}
@@ -81,7 +81,7 @@ class TestErrorHandling : public testing::Test {
         };
 
     public:
-        void init(const std::string& name);
+        void init(const std::string& name, const std::string& backend_name);
         void destroy();
         void fillRegList(nixl_xfer_dlist_t& dlist, nixlBasicDesc& desc) const;
         std::string getLocalMD() const;
@@ -123,12 +123,13 @@ private:
     std::pair<bool, std::string> m_plugin_dir_backup = {false, ""};
     Agent                        m_Initiator;
     Agent                        m_Target;
+    std::string                  m_backend_name;
 };
 
-void TestErrorHandling::Agent::init(const std::string& name) {
+void TestErrorHandling::Agent::init(const std::string& name, const std::string& backend_name) {
     m_priv    = std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
     // At the moment, only UCX backend is tested for error handling support.
-    m_backend = nixl::createUcxBackend(*m_priv);
+    m_backend = nixl::createUcxBackend(*m_priv, backend_name);
     m_mem.init(m_backend);
     m_mem.fillData();
 
@@ -209,6 +210,7 @@ bool TestErrorHandling::Agent::dataCmp(const TestErrorHandling::Agent& other) co
 }
 
 TestErrorHandling::TestErrorHandling() {
+    m_backend_name = GetParam();
     const char* plugin_dir_env = getenv("NIXL_PLUGIN_DIR");
     m_plugin_dir_backup.first  = plugin_dir_env != nullptr;
     if (m_plugin_dir_backup.first) {
@@ -237,8 +239,8 @@ TestErrorHandling::~TestErrorHandling() {
 
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
 void TestErrorHandling::testXfer() {
-    m_Initiator.init("initiator");
-    m_Target.init("target");
+    m_Initiator.init("initiator", m_backend_name);
+    m_Target.init("target", m_backend_name);
 
     exchangeMetaData();
 
@@ -327,19 +329,21 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, bool target_failure) {
     return req_handle;
 }
 
-TEST_F(TestErrorHandling, BasicXfer) {
+TEST_P(TestErrorHandling, BasicXfer) {
     testXfer<TestType::BASIC_XFER, NIXL_WRITE>();
     testXfer<TestType::BASIC_XFER, NIXL_READ>();
 }
 
-TEST_F(TestErrorHandling, LoadRemoteThenFail) {
+TEST_P(TestErrorHandling, LoadRemoteThenFail) {
     testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_WRITE>();
     testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_READ>();
 }
 
-TEST_F(TestErrorHandling, XferThenFail) {
+TEST_P(TestErrorHandling, XferThenFail) {
     testXfer<TestType::XFER_THEN_FAIL, NIXL_WRITE>();
     testXfer<TestType::XFER_THEN_FAIL, NIXL_READ>();
 }
+
+INSTANTIATE_TEST_SUITE_P(UCX, TestErrorHandling, testing::Values("UCX", "UCX_MO"));
 
 } // namespace gtest

@@ -26,7 +26,7 @@ if 'UCX_MO' in static_plugins
                'ucx_mo_backend.cpp', 'ucx_mo_backend.h', 'ucx_mo_plugin.cpp',
                dependencies: [nixl_infra, nixl_common_deps, ucx_mo_utils_dep, serdes_interface, cuda_dep, ucx_dep],
                link_with: [ucx_backend_lib],
-               include_directories: [nixl_inc_dirs, utils_inc_dirs, ucx_backend_inc_dirs],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, ucx_backend_inc_dirs, ucx_utils_inc_dirs],
                install: false,
                cpp_args : compile_flags,
                name_prefix: 'libplugin_') # Custom prefix for plugin libraries
@@ -35,7 +35,7 @@ else
                'ucx_mo_backend.cpp', 'ucx_mo_backend.h', 'ucx_mo_plugin.cpp',
                dependencies: [nixl_infra, nixl_common_deps, ucx_mo_utils_dep, serdes_interface, cuda_dep, ucx_dep],
                link_with: [ucx_backend_lib],
-               include_directories: [nixl_inc_dirs, utils_inc_dirs, ucx_backend_inc_dirs],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, ucx_backend_inc_dirs, ucx_utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries

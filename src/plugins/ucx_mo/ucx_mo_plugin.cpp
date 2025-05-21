@@ -17,6 +17,8 @@
 
  #include "backend/backend_plugin.h"
  #include "ucx_mo_backend.h"
+ #include "ucx_utils.h"
+
  // Plugin version information
  static const char* PLUGIN_NAME = "UCX_MO";
  static const char* PLUGIN_VERSION = "0.1.0";
@@ -39,8 +41,7 @@
  }
  // Function to get backend options
  static nixl_b_params_t get_backend_options() {
-     nixl_b_params_t params;
-     params["ucx_devices"] = "";
+     nixl_b_params_t params = get_ucx_backend_common_options();
      params["num_ucx_engines"] = "8";
      return params;
  }
