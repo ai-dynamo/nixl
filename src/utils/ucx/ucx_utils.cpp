@@ -35,7 +35,7 @@ using namespace std;
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
-    nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
+    nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "0"}, {"num_shared_workers", "1"}};
 
     params.emplace(nixl_ucx_err_handling_param_name,
                    ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
@@ -478,9 +478,14 @@ namespace
 }  // namespace
 
 ucp_worker *
-nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
+nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx, bool is_shared) {
     ucp_worker* worker = nullptr;
-    const nixlUcpWorkerParams params(ctx.mt_type);
+    nixl_ucx_mt_t mt_type = ctx.mt_type;
+    if (is_shared) {
+        mt_type = nixl_ucx_mt_t::WORKER;
+    }
+
+    const nixlUcpWorkerParams params(mt_type);
     const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
     if(status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create UCX worker: ") +
@@ -490,8 +495,8 @@ nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
     return worker;
 }
 
-nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx, ucp_err_handling_mode_t err_handling_mode)
-    : worker(createUcpWorker(ctx), &ucp_worker_destroy),
+nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx, ucp_err_handling_mode_t err_handling_mode, bool is_shared)
+    : worker(createUcpWorker(ctx, is_shared), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode) {}
 
 std::string nixlUcxWorker::epAddr()
