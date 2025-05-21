@@ -24,6 +24,9 @@
 #include <algorithm>
 #include "nixl_types.h"
 
+static constexpr uint64_t NIXL_DEFAULT_GLOBAL_DEVID = 0;
+static constexpr uint32_t NIXL_DEFAULT_NODE_NUMS = 1;
+
 /**
  * @class nixlBasicDesc
  * @brief A basic descriptor class, single contiguous memory/storage
@@ -37,14 +40,32 @@ class nixlBasicDesc {
         size_t    len;
         /** @var deviceID/blockID/fileID */
         uint64_t  devId;
+        /** @var Global Device ID */
+        uint64_t  globalDevId;
+        /** @var Number of Nodes */
+        uint32_t  nodeNums;
 
         /**
          * @brief Default constructor for nixlBasicDesc
-         *      Does not initialize members to zero
+         *      Initializes members to default values
          */
-        nixlBasicDesc() {};
+        nixlBasicDesc() : addr(0), len(0), devId(0), globalDevId(0), nodeNums(1) {};
         /**
-         * @brief Parametrized constructor for nixlBasicDesc
+         * @brief Parametrized constructor for nixlBasicDesc with all fields
+         *
+         * @param addr  Start of buffer/block/offset-in-file
+         * @param len   Length of buffer
+         * @param devID deviceID/BlockID/fileID
+         * @param globalDevId Global device ID
+         * @param nodeNums Number of nodes
+         */
+        nixlBasicDesc(const uintptr_t &addr,
+                      const size_t &len,
+                      const uint64_t &dev_id,
+                      const uint64_t &global_dev_id,
+                      const uint32_t &node_nums);
+        /**
+         * @brief Parametrized constructor for nixlBasicDesc with 3 fields
          *
          * @param addr  Start of buffer/block/offset-in-file
          * @param len   Length of buffer
@@ -101,6 +122,7 @@ class nixlBasicDesc {
         /**
          * @brief Check if current object address range covers the input object's
          *
+         * 
          * @param query   nixlBasicDesc object
          */
         bool covers (const nixlBasicDesc &query) const;
@@ -120,6 +142,26 @@ class nixlBasicDesc {
          * @param suffix gets prepended to the descriptor print
          */
         void print(const std::string &suffix) const;
+        /**
+         * @brief Get the global device ID
+         */
+        inline uint64_t getGlobalDevId() const { return globalDevId; }
+        /**
+         * @brief Set the global device ID
+         * 
+         * @param id Global device ID to set
+         */
+        inline void setGlobalDevId(const uint64_t &id) { globalDevId = id; }
+        /**
+         * @brief Get the number of nodes
+         */
+        inline uint32_t getNodeNums() const { return nodeNums; }
+        /**
+         * @brief Set the number of nodes
+         * 
+         * @param nums Number of nodes to set
+         */
+        inline void setNodeNums(const uint32_t &nums) { nodeNums = nums; }
 };
 
 /**
@@ -136,15 +178,28 @@ class nixlBlobDesc : public nixlBasicDesc {
         using nixlBasicDesc::nixlBasicDesc;
 
         /**
-         * @brief Parametrized constructor for nixlBlobDesc
+         * @brief Parametrized constructor for nixlBlobDesc with all fields
+         *
+         * @param addr      Start of buffer/block/offset-in-file
+         * @param len       Length of buffer
+         * @param devID     deviceID/BlockID/fileID
+         * @param meta_info Metadata blob
+         * @param globalDevId Global device ID
+         * @param nodeNums  Number of nodes
+         */
+        nixlBlobDesc(const uintptr_t &addr, const size_t &len,
+                    const uint64_t &dev_id, const nixl_blob_t &meta_info, const uint64_t &global_dev_id,
+                    const uint32_t &node_nums);
+        /**
+         * @brief Parametrized constructor for nixlBlobDesc with 4 fields
          *
          * @param addr      Start of buffer/block/offset-in-file
          * @param len       Length of buffer
          * @param devID     deviceID/BlockID/fileID
          * @param meta_info Metadata blob
          */
-         nixlBlobDesc(const uintptr_t &addr, const size_t &len,
-                      const uint64_t &dev_id, const nixl_blob_t &meta_info);
+        nixlBlobDesc(const uintptr_t &addr, const size_t &len,
+                    const uint64_t &dev_id, const nixl_blob_t &meta_info);
         /**
          * @brief Constructor for nixlBlobDesc from nixlBasicDesc and metadata blob
          *

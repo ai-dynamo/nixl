@@ -790,7 +790,7 @@ class nixl_agent:
 
     """
     @brief Get nixlRegDList from different input types:
-            a) list of 4 element tuples (address, len, device ID, meta info) alongside a mandatory memory type
+            a) list of 6 element tuples (address, len, local device ID, meta info, global device ID, node nums) alongside a mandatory memory type
             b) a tensor
             c) a list of tensors
             d) passes along if a reg_dlist is given.
@@ -816,7 +816,7 @@ class nixl_agent:
             print("XferList type detected for registration, please use RegList")
             new_descs = None
         elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 4:
+            if mem_type is not None and len(descs[0]) == 6:
                 new_descs = nixlBind.nixlRegDList(
                     self.nixl_mems[mem_type], descs, is_sorted
                 )

@@ -64,8 +64,8 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     void* dst_buf = malloc(n_mems*descs_per_mem*8);
 
     for(int i = 0; i<n_mems; i++) {
-        nixlBlobDesc src_desc((uintptr_t) src_buf + i*descs_per_mem*8, descs_per_mem*8, 0);
-        nixlBlobDesc dst_desc((uintptr_t) dst_buf + i*descs_per_mem*8, descs_per_mem*8, 0);
+        nixlBlobDesc src_desc((uintptr_t) src_buf + i*descs_per_mem*8, descs_per_mem*8, 0, NIXL_DEFAULT_GLOBAL_DEVID, NIXL_DEFAULT_NODE_NUMS);
+        nixlBlobDesc dst_desc((uintptr_t) dst_buf + i*descs_per_mem*8, descs_per_mem*8, 0, NIXL_DEFAULT_GLOBAL_DEVID, NIXL_DEFAULT_NODE_NUMS);
 
         mem_list1.addDesc(src_desc);
         mem_list2.addDesc(dst_desc);
@@ -73,8 +73,8 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
         //std::cout << "mem region " << i << " working \n";
 
         for(int j = 0; j<descs_per_mem; j++){
-            nixlBasicDesc src_desc2((uintptr_t) src_buf + i*descs_per_mem*8 + 8*j, 8, 0);
-            nixlBasicDesc dst_desc2((uintptr_t) dst_buf + i*descs_per_mem*8 + 8*j, 8, 0);
+            nixlBasicDesc src_desc2((uintptr_t) src_buf + i*descs_per_mem*8 + 8*j, 8, 0, NIXL_DEFAULT_GLOBAL_DEVID, NIXL_DEFAULT_NODE_NUMS);
+            nixlBasicDesc dst_desc2((uintptr_t) dst_buf + i*descs_per_mem*8 + 8*j, 8, 0, NIXL_DEFAULT_GLOBAL_DEVID, NIXL_DEFAULT_NODE_NUMS  );
 
             src_list.addDesc(src_desc2);
             dst_list.addDesc(dst_desc2);
@@ -198,8 +198,8 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
             src_bufs[update_idx][buf_idx] = calloc(1, BUF_SIZE);
             dst_bufs[update_idx][buf_idx] = calloc(1, BUF_SIZE);
 
-            nixlBlobDesc src_desc((uintptr_t)src_bufs[update_idx][buf_idx], BUF_SIZE, 0);
-            nixlBlobDesc dst_desc((uintptr_t)dst_bufs[update_idx][buf_idx], BUF_SIZE, 0);
+            nixlBlobDesc src_desc((uintptr_t)src_bufs[update_idx][buf_idx], BUF_SIZE, 0, NIXL_DEFAULT_GLOBAL_DEVID, NIXL_DEFAULT_NODE_NUMS);
+            nixlBlobDesc dst_desc((uintptr_t)dst_bufs[update_idx][buf_idx], BUF_SIZE, 0, NIXL_DEFAULT_GLOBAL_DEVID, NIXL_DEFAULT_NODE_NUMS  );
 
             src_mem_lists[update_idx].addDesc(src_desc);
             dst_mem_lists[update_idx].addDesc(dst_desc);

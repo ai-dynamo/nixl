@@ -767,7 +767,7 @@ nixl_capi_xfer_dlist_add_desc(nixl_capi_xfer_dlist_t dlist, uintptr_t addr, size
   }
 
   try {
-    nixlBasicDesc desc(addr, len, dev_id);
+    nixlBasicDesc desc(addr, len, dev_id, NIXL_DEFAULT_GLOBAL_DEVID, NIXL_DEFAULT_NODE_NUMS);
     dlist->dlist->addDesc(desc);
     return NIXL_CAPI_SUCCESS;
   }
@@ -884,7 +884,7 @@ nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist, uintptr_t addr, size_t
   }
 
   try {
-    nixlBlobDesc desc(addr, len, dev_id);  // Empty metadata
+    nixlBlobDesc desc(addr, len, dev_id, NIXL_DEFAULT_GLOBAL_DEVID, NIXL_DEFAULT_NODE_NUMS);  // Empty metadata
     dlist->dlist->addDesc(desc);
 #ifdef NIXL_DEBUG
     printf("** Adding descriptor\n");
