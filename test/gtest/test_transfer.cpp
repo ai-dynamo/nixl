@@ -28,6 +28,10 @@
 #include <string>
 #include <vector>
 
+#ifdef HAVE_CUDA
+#include <cuda_runtime.h>
+#endif
+
 namespace gtest {
 
 class MemBuffer : std::shared_ptr<void> {
@@ -57,6 +61,11 @@ private:
         switch (mem_type) {
         case DRAM_SEG:
             return malloc(size);
+#ifdef HAVE_CUDA
+        case VRAM_SEG:
+            void *ptr;
+            return cudaSuccess == cudaMalloc(&ptr, size)? ptr : nullptr;
+#endif
         default:
             return nullptr; // TODO
         }
@@ -68,6 +77,11 @@ private:
         case DRAM_SEG:
             free(ptr);
             break;
+#ifdef HAVE_CUDA
+        case VRAM_SEG:
+            cudaFree(ptr);
+            break;
+#endif
         default:
             return; // TODO
         }
@@ -78,18 +92,28 @@ private:
 
 class TestTransfer : public testing::TestWithParam<std::string> {
 protected:
-    static nixlAgentConfig getConfig()
+    static nixlAgentConfig getConfig(int listen_port)
     {
-        return nixlAgentConfig(false, false, 0,
+        return nixlAgentConfig(false, listen_port > 0, listen_port,
                                nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 0,
                                100000);
     }
 
+    static int getPort(int i)
+    {
+        return 9000 + i;
+    }
+
     void SetUp() override
     {
+#ifdef HAVE_CUDA
+        m_cuda_device = (cudaSetDevice(0) == cudaSuccess);
+#endif
+
         // Create two agents
         for (size_t i = 0; i < 2; i++) {
-            agents.emplace_back(std::make_unique<nixlAgent>(getAgentName(i), getConfig()));
+            agents.emplace_back(std::make_unique<nixlAgent>(getAgentName(i),
+                                                            getConfig(getPort(i))));
             nixlBackendH *backend_handle = nullptr;
             nixl_status_t status = agents.back()->createBackend(getBackendName(), {},
                                                                 backend_handle);
@@ -108,6 +132,29 @@ protected:
         return GetParam();
     }
 
+    static nixl_opt_args_t extra_params_ip(int remote)
+    {
+        nixl_opt_args_t extra_params;
+
+        extra_params.ipAddr = "127.0.0.1";
+        extra_params.port   = getPort(remote);
+        return extra_params;
+    }
+
+    nixl_status_t fetchRemoteMD(int local = 0, int remote = 1)
+    {
+        auto extra_params = extra_params_ip(remote);
+
+        return agents[local]->fetchRemoteMD(getAgentName(remote),
+                                            &extra_params);
+    }
+
+    nixl_status_t checkRemoteMD(int local = 0, int remote = 1)
+    {
+        nixl_xfer_dlist_t descs(DRAM_SEG);
+        return agents[local]->checkRemoteMD(getAgentName(remote), descs);
+    }
+
     template<typename Desc>
     nixlDescList<Desc>
     makeDescList(const std::vector<MemBuffer> &buffers, nixl_mem_t mem_type)
@@ -124,6 +171,23 @@ protected:
     {
         auto reg_list = makeDescList<nixlBlobDesc>(buffers, mem_type);
         agent.registerMem(reg_list);
+    }
+
+    void exchangeMDIP()
+    {
+        for (size_t i = 0; i < agents.size(); i++) {
+            for (size_t j = 0; j < agents.size(); j++) {
+                if (i == j) {
+                    continue;
+                }
+
+                auto status = fetchRemoteMD(i, j);
+                ASSERT_EQ(NIXL_SUCCESS, status);
+                do {
+                    status = checkRemoteMD(i, j);
+                } while (status != NIXL_SUCCESS);
+            }
+        }
     }
 
     void exchangeMD()
@@ -181,21 +245,26 @@ protected:
         EXPECT_EQ(notif_list.front(), NOTIF_MSG);
     }
 
-    void doTransfer(nixlAgent &from, const std::string &from_name,
-                    nixlAgent &to, const std::string &to_name, size_t size,
-                    size_t count, size_t repeat, nixl_mem_t src_mem_type,
-                    nixl_mem_t dst_mem_type)
+    void createRegisteredMem(nixlAgent& agent,
+                             size_t size, size_t count,
+                             nixl_mem_t mem_type,
+                             std::vector<MemBuffer>& out)
     {
-        std::vector<MemBuffer> src_buffers, dst_buffers;
-        for (size_t i = 0; i < count; i++) {
-            src_buffers.emplace_back(size, src_mem_type);
-            dst_buffers.emplace_back(size, dst_mem_type);
+        while (count-- != 0) {
+            out.emplace_back(size, mem_type);
         }
 
-        registerMem(from, src_buffers, src_mem_type);
-        registerMem(to, dst_buffers, dst_mem_type);
-        exchangeMD();
+        registerMem(agent, out, mem_type);
+    }
 
+    void doTransfer(nixlAgent &from, const std::string &from_name,
+                    nixlAgent &to, const std::string &to_name, size_t size,
+                    size_t count, size_t repeat,
+                    nixl_mem_t src_mem_type,
+                    std::vector<MemBuffer> src_buffers,
+                    nixl_mem_t dst_mem_type,
+                    std::vector<MemBuffer> dst_buffers)
+    {
         nixl_opt_args_t extra_params;
         extra_params.hasNotif = true;
         extra_params.notifMsg = NOTIF_MSG;
@@ -243,6 +312,8 @@ protected:
         return absl::StrFormat("agent_%d", idx);
     }
 
+    bool m_cuda_device = false;
+
 private:
     static constexpr uint64_t DEV_ID = 0;
     static const std::string NOTIF_MSG;
@@ -262,9 +333,34 @@ TEST_P(TestTransfer, RandomSizes)
     };
 
     for (const auto &[size, count, repeat] : test_cases) {
+        std::vector<MemBuffer> src_buffers, dst_buffers;
+
+        createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
+        createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+
+        exchangeMD();
         doTransfer(getAgent(0), getAgentName(0), getAgent(1), getAgentName(1),
-                   size, count, repeat, DRAM_SEG, DRAM_SEG);
+                   size, count, repeat,
+                   DRAM_SEG, src_buffers,
+                   DRAM_SEG, dst_buffers);
     }
+}
+
+TEST_P(TestTransfer, remoteMDFromSocket)
+{
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    constexpr size_t size = 16 * 1024;
+    constexpr size_t count = 4;
+    nixl_mem_t mem_type = m_cuda_device? VRAM_SEG : DRAM_SEG;
+
+    createRegisteredMem(getAgent(0), size, count, mem_type, src_buffers);
+    createRegisteredMem(getAgent(1), size, count, mem_type, dst_buffers);
+
+    exchangeMDIP();
+    doTransfer(getAgent(0), getAgentName(0), getAgent(1), getAgentName(1),
+               size, count, 1,
+               mem_type, src_buffers,
+               mem_type, dst_buffers);
 }
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values("UCX"));

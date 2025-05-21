@@ -22,17 +22,18 @@ if not gtest_dep.found()
     subdir_done()
 endif
 
-if cuda_dep.found()
-    cuda_dependencies = [cuda_dep]
-else
-    cuda_dependencies = []
-endif
-
 subdir('mocks')
 
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
 cpp_flags = []
+
+if cuda_dep.found()
+    cpp_flags += '-DHAVE_CUDA'
+    cuda_dependencies = [cuda_dep]
+else
+    cuda_dependencies = []
+endif
 
 if get_option('test_all_plugins')
   cpp_flags+='-DTEST_ALL_PLUGINS'
@@ -42,7 +43,7 @@ endif
 cpp_flags += '-DBUILD_DIR="' + meson.project_build_root() + '"'
 
 test_exe = executable('gtest',
-    sources : ['main.cpp', 'plugin_manager.cpp', 'ucx_tests.cpp', 'test_transfer.cpp'],
+    sources : ['main.cpp', 'plugin_manager.cpp', 'error_handling.cpp', 'test_transfer.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     cpp_args : cpp_flags,
     dependencies : [nixl_dep, cuda_dep, gtest_dep, absl_strings_dep, absl_time_dep],
