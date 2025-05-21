@@ -229,7 +229,8 @@ nixl_status_t nixlUcxEp::read(uint64_t raddr, nixlUcxRkey &rk,
     }
 
     ucp_request_param_t param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
+        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH |
+                        UCP_OP_ATTR_FLAG_MULTI_SEND,
         .memh         = mem.memh,
     };
 
@@ -253,7 +254,8 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
     }
 
     ucp_request_param_t param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH,
+        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH |
+                        UCP_OP_ATTR_FLAG_MULTI_SEND,
         .memh         = mem.memh,
     };
 
@@ -306,34 +308,28 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                size_t req_size,
                                nixlUcxContext::req_cb_t init_cb,
                                nixlUcxContext::req_cb_t fini_cb,
-                               nixl_ucx_mt_t __mt_type,
                                bool prog_thread,
-                               ucp_err_handling_mode_t __err_handling_mode)
+                               ucp_err_handling_mode_t __err_handling_mode,
+                               unsigned long num_workers,
+                               nixl_thread_sync_t sync_mode)
 {
     ucp_params_t ucp_params;
     ucp_config_t *ucp_config;
     ucs_status_t status = UCS_OK;
 
-    mt_type           = __mt_type;
+    // With strict synchronization model nixlAgent serializes access to backends, with more
+    // permissive models backends need to account for concurrent access and ensure their internal
+    // state is properly protected. Progress thread creates internal concurrency in UCX backend
+    // irrespective of nixlAgent synchronization model.
+    mt_type = (sync_mode == nixl_thread_sync_t::NIXL_THREAD_SYNC_RW || prog_thread) ?
+        NIXL_UCX_MT_WORKER : NIXL_UCX_MT_SINGLE;
     err_handling_mode = __err_handling_mode;
 
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
     ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 | UCP_FEATURE_AM;
     if (prog_thread)
         ucp_params.features |= UCP_FEATURE_WAKEUP;
-
-    switch(mt_type) {
-    case NIXL_UCX_MT_SINGLE:
-        ucp_params.mt_workers_shared = 0;
-        break;
-    case NIXL_UCX_MT_WORKER:
-    case NIXL_UCX_MT_CTX:
-        ucp_params.mt_workers_shared = 1;
-        break;
-    default:
-        assert(mt_type < NIXL_UCX_MT_MAX);
-        abort();
-    }
+    ucp_params.mt_workers_shared = num_workers > 1 ? 1 : 0;
 
     if (req_size) {
         ucp_params.request_size = req_size;
@@ -382,7 +378,7 @@ nixlUcxContext::~nixlUcxContext()
 nixlUcxWorker::nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx): ctx(_ctx)
 {
     ucp_worker_params_t worker_params;
-    ucs_status_t status = UCS_OK;
+    ucs_status_t status;
 
     memset(&worker_params, 0, sizeof(worker_params));
     worker_params.field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
@@ -398,15 +394,15 @@ nixlUcxWorker::nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx): ctx(_ctx)
         worker_params.thread_mode = UCS_THREAD_MODE_MULTI;
         break;
     default:
-        assert(ctx->mt_type < NIXL_UCX_MT_MAX);
-        abort();
+        NIXL_FATAL << "Invalid UCX worker type: " << ctx->mt_type;
     }
 
     status = ucp_worker_create(ctx->ctx, &worker_params, &worker);
-    if (status != UCS_OK)
-    {
-       // TODO: MSW_NET_ERROR(priv->net, "failed to create ucp_worker (%s)\n", ucs_status_string(status));
-        return;
+    if (status != UCS_OK) {
+        auto err_str = std::string("Failed to create UCX worker: ") +
+                       ucs_status_string(status);
+        NIXL_ERROR << err_str;
+        throw std::runtime_error(err_str);
     }
 }
 
