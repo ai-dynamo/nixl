@@ -236,8 +236,8 @@ class nixlAgent {
          * @brief Estimate the cost (e.g., duration) of executing a transfer request.
          *
          * @param req_hndl     Transfer request handle
-         * @param duration     [out] Estimated duration of the transfer (in microseconds)
-         * @param err_margin   [out] Estimated error margin of the transfer (in microseconds)
+         * @param duration     [out] Estimated duration of the transfer
+         * @param err_margin   [out] Estimated error margin of the transfer
          * @param source       [out] Source of the cost estimate
          * @param extra_params Optional extra parameters
          * @return nixl_status_t Error code if call was not successful
