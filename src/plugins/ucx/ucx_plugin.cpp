@@ -24,7 +24,11 @@ namespace
    const char* ucx_plugin_version = "0.1.0";
 
    [[nodiscard]] nixlBackendEngine* create_ucx_engine(const nixlBackendInitParams* init_params) {
-       return new nixlUcxEngine(init_params);
+        try {
+            return new nixlUcxEngine(init_params);
+        } catch (const std::exception &e) {
+            return nullptr;
+        }
    }
 
    void destroy_ucx_engine(nixlBackendEngine *engine) {
