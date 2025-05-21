@@ -41,7 +41,7 @@ class nixlAgentConfig {
     public:
 
         /**
-         * @var Progress thread sleep timeout Progress thread event waiting timeout.
+         * @var Progress thread event waiting timeout.
          *      Defines a delay between periodic main loop iterations that progress every worker
          *      unconditionally of any pending event signals.
          */
