@@ -214,7 +214,8 @@ public:
 
             if (response.is_ok()) {
                 metadata = response.value().as_string();
-                NIXL_DEBUG << "Successfully fetched key: " << metadata_key << " (rev " << response.value().modified_index() << ")";
+                NIXL_DEBUG << "Successfully fetched key: " << metadata_key
+                           << " (rev " << response.value().modified_index() << ")";
                 return NIXL_SUCCESS;
             } else {
                 NIXL_ERROR << "Failed to fetch key: " << metadata_key << " from etcd: " << response.error_message();
@@ -294,7 +295,8 @@ public:
         // DELETE events are enqueued to be deleted in commWorker (can't be done inside the Watcher callback)
         auto process_response = [this, agent_name](etcd::Response response) -> void {
             if (!response.is_ok()) {
-                NIXL_ERROR << "Watcher failed to watch agent " << agent_name << " from etcd: " << response.error_message();
+                NIXL_ERROR << "Watcher failed to watch agent " << agent_name
+                           << " from etcd: " << response.error_message();
                 return;
             }
             NIXL_DEBUG << "Watcher received " << response.events().size() << " events from etcd";
@@ -484,8 +486,9 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     if (ret != NIXL_SUCCESS) {
                         NIXL_ERROR << "Failed to load remote metadata: " << ret;
                         break;
-                    }else if (remote_agent_from_md != remote_agent) {
-                        NIXL_ERROR << "Metadata mismatch for agent: " << remote_agent << " from md: " << remote_agent_from_md;
+                    } else if (remote_agent_from_md != remote_agent) {
+                        NIXL_ERROR << "Metadata mismatch for agent: " << remote_agent
+                                   << " from md: " << remote_agent_from_md;
                         break;
                     }
                     NIXL_DEBUG << "Successfully loaded metadata for agent: " << remote_agent;
