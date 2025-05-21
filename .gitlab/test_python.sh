@@ -25,7 +25,7 @@ if [ -z "$INSTALL_DIR" ]; then
     exit 1
 fi
 
-apt-get -qq install liburing-dev
+apt-get -qq install liburing-dev pip
 
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
@@ -42,9 +42,17 @@ pip3 install --break-system-packages .
 pip3 install --break-system-packages pytest
 pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
+pip3 install --break-system-packages torch
+
+echo "==== Running ETCD server ===="
+export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:2379"
+etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} &
+sleep 5
 
 echo "==== Running python tests ===="
 python3 examples/python/nixl_api_example.py
+python3 examples/python/partial_md_example.py
+python3 examples/python/partial_md_example.py --etcd
 pytest test/python
 python3 test/python/prep_xfer_perf.py list
 python3 test/python/prep_xfer_perf.py array
@@ -55,3 +63,5 @@ python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port=1234
 sleep 5
 python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port=1234
 python3 partial_md_example.py
+
+pkill etcd
