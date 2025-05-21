@@ -28,7 +28,9 @@
 #include <string>
 #include <vector>
 
+#ifdef HAVE_CUDA
 #include <cuda_runtime.h>
+#endif
 
 namespace gtest {
 
@@ -56,13 +58,14 @@ public:
 private:
     static void *allocate(size_t size, nixl_mem_t mem_type)
     {
-        void *ptr;
-
         switch (mem_type) {
         case DRAM_SEG:
             return malloc(size);
+#ifdef HAVE_CUDA
         case VRAM_SEG:
+            void *ptr;
             return cudaSuccess == cudaMalloc(&ptr, size)? ptr : nullptr;
+#endif
         default:
             return nullptr; // TODO
         }
@@ -74,9 +77,11 @@ private:
         case DRAM_SEG:
             free(ptr);
             break;
+#ifdef HAVE_CUDA
         case VRAM_SEG:
             cudaFree(ptr);
             break;
+#endif
         default:
             return; // TODO
         }
@@ -101,7 +106,9 @@ protected:
 
     void SetUp() override
     {
-        cudaSetDevice(0);
+#ifdef HAVE_CUDA
+        m_cuda_device = (cudaSetDevice(0) == cudaSuccess);
+#endif
 
         // Create two agents
         for (size_t i = 0; i < 2; i++) {
@@ -305,6 +312,8 @@ protected:
         return absl::StrFormat("agent_%d", idx);
     }
 
+    bool m_cuda_device = false;
+
 private:
     static constexpr uint64_t DEV_ID = 0;
     static const std::string NOTIF_MSG;
@@ -342,15 +351,16 @@ TEST_P(TestTransfer, remoteMDFromSocket)
     std::vector<MemBuffer> src_buffers, dst_buffers;
     constexpr size_t size = 16 * 1024;
     constexpr size_t count = 4;
+    nixl_mem_t mem_type = m_cuda_device? VRAM_SEG : DRAM_SEG;
 
-    createRegisteredMem(getAgent(0), size, count, VRAM_SEG, src_buffers);
-    createRegisteredMem(getAgent(1), size, count, VRAM_SEG, dst_buffers);
+    createRegisteredMem(getAgent(0), size, count, mem_type, src_buffers);
+    createRegisteredMem(getAgent(1), size, count, mem_type, dst_buffers);
 
     exchangeMDIP();
     doTransfer(getAgent(0), getAgentName(0), getAgent(1), getAgentName(1),
                size, count, 1,
-               VRAM_SEG, src_buffers,
-               VRAM_SEG, dst_buffers);
+               mem_type, src_buffers,
+               mem_type, dst_buffers);
 }
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values("UCX"));

@@ -22,17 +22,18 @@ if not gtest_dep.found()
     subdir_done()
 endif
 
-if cuda_dep.found()
-    cuda_dependencies = [cuda_dep]
-else
-    cuda_dependencies = []
-endif
-
 subdir('mocks')
 
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
 cpp_flags = []
+
+if cuda_dep.found()
+    cpp_flags += '-DHAVE_CUDA'
+    cuda_dependencies = [cuda_dep]
+else
+    cuda_dependencies = []
+endif
 
 if get_option('test_all_plugins')
   cpp_flags+='-DTEST_ALL_PLUGINS'
