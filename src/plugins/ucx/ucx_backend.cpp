@@ -21,6 +21,7 @@
 #include "common/nixl_log.h"
 
 #include <optional>
+#include <limits>
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
@@ -424,14 +425,12 @@ void nixlUcxEngine::progressFunc()
     }
     pthrActiveCV.notify_one();
 
-    // Set POLLIN event on all worker fds so that the main loop would process them all on first iteration
-    for (size_t wid = 0; wid < pollFds.size() - 1; wid++)
-        pollFds[wid].revents = POLLIN;
-
+    // Set timeout event so that the main loop would progress all workers on first iteration
+    bool timeout = true;
     bool pthrStop = false;
     while (!pthrStop) {
         for (size_t wid = 0; wid < pollFds.size() - 1; wid++) {
-            if (!(pollFds[wid].revents & POLLIN))
+            if (!(pollFds[wid].revents & POLLIN) && !timeout)
                 continue;
             pollFds[wid].revents = 0;
 
@@ -449,11 +448,15 @@ void nixlUcxEngine::progressFunc()
             if (made_progress && !wid)
                 notifProgress();
         }
+        timeout = false;
 
-        while (poll(pollFds.data(), pollFds.size(), -1) <= 0)
-            NIXL_ERROR << "Call to poll() was interrupted, retrying. Error: " << strerror(errno);
+        int ret;
+        while ((ret = poll(pollFds.data(), pollFds.size(), pthrDelay.count())) < 0)
+            NIXL_TRACE << "Call to poll() was interrupted, retrying. Error: " << strerror(errno);
 
-        if (pollFds.back().revents & POLLIN) {
+        if (!ret) {
+            timeout = true;
+        } else if (pollFds.back().revents & POLLIN) {
             pollFds.back().revents = 0;
 
             char signal;
@@ -527,6 +530,12 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
             this->initErr = true;
             return;
         }
+
+        // This will ensure that the resulting delay is at least 1ms and fits into int in order for
+        // it to be compatible with poll()
+        pthrDelay = std::chrono::ceil<std::chrono::milliseconds>(
+            std::chrono::microseconds(init_params->pthrDelay < std::numeric_limits<int>::max() ?
+                                      init_params->pthrDelay : std::numeric_limits<int>::max()));
     } else {
         pthrOn = false;
     }
