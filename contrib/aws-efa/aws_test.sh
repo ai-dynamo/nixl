@@ -83,8 +83,8 @@ JOB_ID=$(aws batch submit-job \
 # Function to wait for a specific job status
 wait_for_status() {
     local target_status="$1"
-    local timeout=1800
-    local interval=180
+    local timeout="$2"
+    local interval="$3"
     local status=""
     SECONDS=0
 
@@ -103,8 +103,8 @@ wait_for_status() {
 }
 
 # Wait for the job to start running
-echo "Waiting for job to start running..."
-if ! wait_for_status "RUNNING"; then
+echo "Waiting for job to start running (timeout: 30m)..."
+if ! wait_for_status "RUNNING" 1800 180; then
     echo "Job failed to start"
     exit 1
 fi
@@ -115,8 +115,8 @@ echo "Streaming logs from pod: $POD"
 kubectl -n ucx-ci-batch-nodes logs -f "$POD"
 
 # Check final job status
-echo "Waiting for job completion..."
-exit_status=$(wait_for_status "SUCCEEDED|FAILED")
+echo "Waiting for job completion (timeout: 10m)..."
+exit_status=$(wait_for_status "SUCCEEDED|FAILED" 600 60)
 if [[ "$exit_status" =~ FAILED ]]; then
     echo "Failure running NIXL tests"
     exit 1
