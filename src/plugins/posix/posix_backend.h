@@ -21,35 +21,22 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <absl/strings/str_format.h>
 #include "backend/backend_engine.h"
-#include "async_queue.h"
-
-// Forward declarations
-class aioQueue;
-class UringQueue;
-class QueueFactory;
-
-// Factory for creating IO queues
-class IOQueueFactory {
-public:
-    static std::unique_ptr<nixlPosixQueue> createQueue(bool use_aio, int num_entries, bool is_read = false,
-                                                      const void* params = nullptr);
-};
+#include "posix_queue.h"
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
 private:
-    const nixl_xfer_op_t         &operation;              // The transfer operation (read/write)
-    const nixl_meta_dlist_t      &local;                  // Local memory descriptor list
-    const nixl_meta_dlist_t      &remote;                 // Remote memory descriptor list
-    const nixl_opt_b_args_t      *opt_args;               // Optional backend-specific arguments
-    const nixl_b_params_t        *custom_params_;         // Custom backend parameters
-    int                          queue_depth_;            // Queue depth for async I/O
-    std::unique_ptr<nixlPosixQueue> queue;                // Async I/O queue instance
-    bool                         is_prepped;              // Flag indicating if operations are prepared
-    nixl_status_t                status;                  // Current status of the transfer operation
-    bool                         use_aio_;                // Whether to use AIO instead of io_uring
+    const nixl_xfer_op_t            &operation;      // The transfer operation (read/write)
+    const nixl_meta_dlist_t         &local;          // Local memory descriptor list
+    const nixl_meta_dlist_t         &remote;         // Remote memory descriptor list
+    const nixl_opt_b_args_t         *opt_args;       // Optional backend-specific arguments
+    const nixl_b_params_t           *custom_params_; // Custom backend parameters
+    const int                       queue_depth_;    // Queue depth for async I/O
+    std::unique_ptr<nixlPosixQueue> queue;           // Async I/O queue instance
+    const nixlPosixQueue::queue_t   queue_type_;     // Type of queue used
 
-    nixl_status_t initQueues(bool use_aio);               // Initialize async I/O queue
+    nixl_status_t initQueues();                      // Initialize async I/O queue
 
 public:
     nixlPosixBackendReqH(const nixl_xfer_op_t &operation,
@@ -57,89 +44,90 @@ public:
                          const nixl_meta_dlist_t &remote,
                          const nixl_opt_b_args_t* opt_args,
                          const nixl_b_params_t* custom_params);
-    ~nixlPosixBackendReqH();
+    ~nixlPosixBackendReqH() {};
 
     nixl_status_t postXfer();
     nixl_status_t prepXfer();
     nixl_status_t checkXfer();
+
+    // Exception classes
+    class exception: public std::exception {
+        private:
+            const nixl_status_t code_;
+        public:
+            exception(const std::string& msg, nixl_status_t code)
+                : std::exception(), code_(code) {}
+            nixl_status_t code() const noexcept { return code_; }
+    };
 };
 
 class nixlPosixEngine : public nixlBackendEngine {
 private:
-    bool use_aio;                             // Use AIO instead of io_uring
-    const nixl_mem_list_t supported_mems = {  // supported memory types
-        FILE_SEG,
-        DRAM_SEG
-    };
-
-    bool validatePrepXferParams(const nixl_xfer_op_t &operation,
-                                const nixl_meta_dlist_t &local,
-                                const nixl_meta_dlist_t &remote,
-                                const std::string &remote_agent,
-                                const std::string &local_agent) const ;
+    const nixlPosixQueue::queue_t queue_type_;
 
 public:
     nixlPosixEngine(const nixlBackendInitParams* init_params);
     virtual ~nixlPosixEngine() = default;
 
-    // Initialize the engine after construction
-    nixl_status_t init();
+    bool supportsRemote() const override {
+        return false;
+    }
 
-    bool supportsNotif   () const {
-        return false;
-    }
-    bool supportsRemote  () const {
-        return false;
-    }
-    bool supportsLocal   () const {
+    bool supportsLocal() const override {
         return true;
     }
-    bool supportsProgTh  () const {
+
+    bool supportsNotif() const override {
         return false;
     }
 
-    nixl_mem_list_t getSupportedMems() const;
-
-    nixl_status_t connect(const std::string &remote_agent) {
-        return NIXL_SUCCESS;
+    bool supportsProgTh() const override {
+        return false;
     }
 
-    nixl_status_t disconnect(const std::string &remote_agent) {
-        return NIXL_SUCCESS;
-    }
-
-    nixl_status_t loadLocalMD(nixlBackendMD* input,
-                              nixlBackendMD* &output) {
-        output = input;
-        return NIXL_SUCCESS;
-    }
-
-    nixl_status_t unloadMD(nixlBackendMD* input) {
-        return NIXL_SUCCESS;
+    nixl_mem_list_t getSupportedMems() const override {
+        return {FILE_SEG, DRAM_SEG};
     }
 
     nixl_status_t registerMem(const nixlBlobDesc &mem,
                               const nixl_mem_t &nixl_mem,
                               nixlBackendMD* &out) override;
 
-    nixl_status_t deregisterMem(nixlBackendMD* meta);
+    nixl_status_t deregisterMem(nixlBackendMD* meta) override;
+
+    nixl_status_t connect(const std::string &remote_agent) override {
+        return NIXL_SUCCESS;
+    }
+
+    nixl_status_t disconnect(const std::string &remote_agent) override {
+        return NIXL_SUCCESS;
+    }
+
+    nixl_status_t unloadMD(nixlBackendMD* input) override {
+        return NIXL_SUCCESS;
+    }
 
     nixl_status_t prepXfer(const nixl_xfer_op_t &operation,
                            const nixl_meta_dlist_t &local,
                            const nixl_meta_dlist_t &remote,
                            const std::string &remote_agent,
                            nixlBackendReqH* &handle,
-                           const nixl_opt_b_args_t* opt_args=nullptr) const;
+                           const nixl_opt_b_args_t* opt_args=nullptr) const override;
 
     nixl_status_t postXfer(const nixl_xfer_op_t &operation,
                            const nixl_meta_dlist_t &local,
                            const nixl_meta_dlist_t &remote,
                            const std::string &remote_agent,
                            nixlBackendReqH* &handle,
-                           const nixl_opt_b_args_t* opt_args=nullptr) const;
+                           const nixl_opt_b_args_t* opt_args=nullptr) const override;
 
-    nixl_status_t checkXfer(nixlBackendReqH* handle) const;
-    nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
+    nixl_status_t checkXfer(nixlBackendReqH* handle) const override;
+    nixl_status_t releaseReqH(nixlBackendReqH* handle) const override;
+
+    nixl_status_t loadLocalMD(nixlBackendMD* input, nixlBackendMD* &output) override {
+        output = input;
+        return NIXL_SUCCESS;
+    }
 };
 
 #endif // POSIX_BACKEND_H

@@ -43,7 +43,7 @@ endif
 cpp_flags += '-DBUILD_DIR="' + meson.project_build_root() + '"'
 
 test_exe = executable('gtest',
-    sources : ['main.cpp', 'plugin_manager.cpp', 'error_handling.cpp', 'test_transfer.cpp'],
+    sources : ['main.cpp', 'plugin_manager.cpp', 'error_handling.cpp', 'test_transfer.cpp', 'metadata_exchange.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     cpp_args : cpp_flags,
     dependencies : [nixl_dep, cuda_dep, gtest_dep, absl_strings_dep, absl_time_dep],
