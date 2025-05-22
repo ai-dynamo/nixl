@@ -51,6 +51,7 @@ struct nixl_capi_backend_s;
 struct nixl_capi_opt_args_s;
 struct nixl_capi_param_iter_s;
 struct nixl_capi_xfer_dlist_s;
+struct nixl_capi_xfer_dlist_handle_s;
 struct nixl_capi_reg_dlist_s;
 struct nixl_capi_xfer_req_s;
 struct nixl_capi_notif_map_s;
@@ -64,9 +65,16 @@ typedef struct nixl_capi_backend_s* nixl_capi_backend_t;
 typedef struct nixl_capi_opt_args_s* nixl_capi_opt_args_t;
 typedef struct nixl_capi_param_iter_s* nixl_capi_param_iter_t;
 typedef struct nixl_capi_xfer_dlist_s* nixl_capi_xfer_dlist_t;
+typedef struct nixl_capi_xfer_dlist_handle_s* nixl_capi_xfer_dlist_handle_t;
 typedef struct nixl_capi_reg_dlist_s* nixl_capi_reg_dlist_t;
 typedef struct nixl_capi_xfer_req_s* nixl_capi_xfer_req_t;
 typedef struct nixl_capi_notif_map_s* nixl_capi_notif_map_t;
+
+// Transfer request functions
+typedef enum {
+  NIXL_CAPI_XFER_OP_READ = 0,
+  NIXL_CAPI_XFER_OP_WRITE = 1,
+} nixl_capi_xfer_op_t;
 
 // Core API functions
 nixl_capi_status_t nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent);
@@ -148,6 +156,19 @@ nixl_capi_status_t nixl_capi_register_mem(
 nixl_capi_status_t nixl_capi_deregister_mem(
     nixl_capi_agent_t agent, nixl_capi_reg_dlist_t dlist, nixl_capi_opt_args_t opt_args);
 
+nixl_capi_status_t nixl_capi_agent_make_connection(
+    nixl_capi_agent_t agent, const char* remote_agent, nixl_capi_opt_args_t opt_args);
+
+nixl_capi_status_t nixl_capi_agent_prep_xfer_dlist(
+    nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs,
+    nixl_capi_xfer_dlist_handle_t handle, nixl_capi_opt_args_t opt_args);
+
+nixl_capi_status_t nixl_capi_agent_make_xfer_req(
+    nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation, nixl_capi_xfer_dlist_t local_descs,
+    nixl_capi_xfer_dlist_t remote_descs, const char* remote_agent, nixl_capi_xfer_req_t* req_hndl,
+    nixl_capi_opt_args_t opt_args);
+
+
 // Notification functions
 nixl_capi_status_t nixl_capi_get_notifs(
     nixl_capi_agent_t agent, nixl_capi_notif_map_t notif_map, nixl_capi_opt_args_t opt_args);
@@ -161,11 +182,6 @@ nixl_capi_status_t nixl_capi_gen_notif(nixl_capi_agent_t agent, const char* remo
                                       const void* data, size_t len, nixl_capi_opt_args_t opt_args);
 
 // Transfer request functions
-typedef enum {
-  NIXL_CAPI_XFER_OP_READ = 0,
-  NIXL_CAPI_XFER_OP_WRITE = 1,
-} nixl_capi_xfer_op_t;
-
 nixl_capi_status_t nixl_capi_create_xfer_req(
     nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation, nixl_capi_xfer_dlist_t local_descs,
     nixl_capi_xfer_dlist_t remote_descs, const char* remote_agent, nixl_capi_xfer_req_t* req_hndl,
@@ -189,24 +205,43 @@ nixl_capi_status_t nixl_capi_release_xfer_req(nixl_capi_agent_t agent, nixl_capi
 nixl_capi_status_t nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req);
 
 // Descriptor list functions
-nixl_capi_status_t nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t* dlist);
+nixl_capi_status_t nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t* dlist, bool sorted);
 nixl_capi_status_t nixl_capi_destroy_xfer_dlist(nixl_capi_xfer_dlist_t dlist);
+nixl_capi_status_t nixl_capi_xfer_dlist_get_type(nixl_capi_xfer_dlist_t dlist, nixl_capi_mem_type_t* mem_type);
 nixl_capi_status_t nixl_capi_xfer_dlist_add_desc(
     nixl_capi_xfer_dlist_t dlist, uintptr_t addr, size_t len, uint64_t dev_id);
+nixl_capi_status_t nixl_capi_xfer_dlist_desc_count(nixl_capi_xfer_dlist_t dlist, size_t* count);
 nixl_capi_status_t nixl_capi_xfer_dlist_len(nixl_capi_xfer_dlist_t dlist, size_t* len);
+nixl_capi_status_t nixl_capi_xfer_dlist_is_empty(nixl_capi_xfer_dlist_t dlist, bool* is_empty);
+nixl_capi_status_t nixl_capi_xfer_dlist_is_sorted(nixl_capi_xfer_dlist_t dlist, bool* is_sorted);
+nixl_capi_status_t nixl_capi_xfer_dlist_trim(nixl_capi_xfer_dlist_t dlist);
+nixl_capi_status_t nixl_capi_xfer_dlist_rem_desc(nixl_capi_xfer_dlist_t dlist, int index);
 nixl_capi_status_t nixl_capi_xfer_dlist_has_overlaps(nixl_capi_xfer_dlist_t dlist, bool* has_overlaps);
+nixl_capi_status_t nixl_capi_xfer_dlist_verify_sorted(nixl_capi_xfer_dlist_t dlist, bool *is_sorted);
 nixl_capi_status_t nixl_capi_xfer_dlist_clear(nixl_capi_xfer_dlist_t dlist);
 nixl_capi_status_t nixl_capi_xfer_dlist_resize(nixl_capi_xfer_dlist_t dlist, size_t new_size);
+nixl_capi_status_t nixl_capi_xfer_dlist_print(nixl_capi_xfer_dlist_t dlist);
 
-nixl_capi_status_t nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist);
+// Descriptor list handle functions
+nixl_capi_status_t nixl_capi_create_xfer_dlist_handle(nixl_capi_xfer_dlist_handle_t* handle);
+nixl_capi_status_t nixl_capi_destroy_xfer_dlist_handle(nixl_capi_xfer_dlist_handle_t handle);
+
+nixl_capi_status_t nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist, bool sorted);
 nixl_capi_status_t nixl_capi_destroy_reg_dlist(nixl_capi_reg_dlist_t dlist);
+nixl_capi_status_t nixl_capi_reg_dlist_get_type(nixl_capi_reg_dlist_t dlist, nixl_capi_mem_type_t* mem_type);
+nixl_capi_status_t nixl_capi_reg_dlist_verify_sorted(nixl_capi_reg_dlist_t dlist, bool *is_sorted);
 nixl_capi_status_t nixl_capi_reg_dlist_add_desc(
     nixl_capi_reg_dlist_t dlist, uintptr_t addr, size_t len, uint64_t dev_id);
 nixl_capi_status_t nixl_capi_reg_dlist_len(nixl_capi_reg_dlist_t dlist, size_t* len);
+nixl_capi_status_t nixl_capi_reg_dlist_desc_count(nixl_capi_reg_dlist_t dlist, size_t* count);
+nixl_capi_status_t nixl_capi_reg_dlist_is_empty(nixl_capi_reg_dlist_t dlist, bool* is_empty);
+nixl_capi_status_t nixl_capi_reg_dlist_is_sorted(nixl_capi_reg_dlist_t dlist, bool* is_sorted);
+nixl_capi_status_t nixl_capi_reg_dlist_trim(nixl_capi_reg_dlist_t dlist);
+nixl_capi_status_t nixl_capi_reg_dlist_rem_desc(nixl_capi_reg_dlist_t dlist, int index);
 nixl_capi_status_t nixl_capi_reg_dlist_has_overlaps(nixl_capi_reg_dlist_t dlist, bool* has_overlaps);
 nixl_capi_status_t nixl_capi_reg_dlist_clear(nixl_capi_reg_dlist_t dlist);
 nixl_capi_status_t nixl_capi_reg_dlist_resize(nixl_capi_reg_dlist_t dlist, size_t new_size);
-
+nixl_capi_status_t nixl_capi_reg_dlist_print(nixl_capi_reg_dlist_t dlist);
 nixl_capi_status_t nixl_capi_notif_map_size(nixl_capi_notif_map_t map, size_t* size);
 
 nixl_capi_status_t nixl_capi_notif_map_get_agent_at(nixl_capi_notif_map_t map, size_t index, const char** agent_name);
