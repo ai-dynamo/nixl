@@ -52,10 +52,7 @@ private:
     nixl_ucx_ep_state_t state{NIXL_UCX_EP_STATE_NULL};
 
     void setState(nixl_ucx_ep_state_t new_state);
-    nixl_status_t closeImpl(ucp_worker_h worker, ucp_ep_close_flags_t flags);
-    nixl_status_t closeNb() {
-        return closeImpl(nullptr, ucp_ep_close_flags_t(0));
-    }
+    nixl_status_t closeImpl(ucp_ep_close_flags_t flags);
 
     /* Connection */
     nixl_status_t disconnect_nb();
@@ -75,7 +72,7 @@ public:
         }
     }
 
-    nixlUcxEp(ucp_worker_h worker, void* addr);
+    nixlUcxEp(ucp_worker_h worker, void* addr, ucp_err_handling_mode_t err_handling_mode);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp&) = delete;
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
@@ -97,6 +94,10 @@ public:
     nixl_status_t write(void *laddr, nixlUcxMem &mem,
                         uint64_t raddr, nixlUcxRkey &rk,
                         size_t size, nixlUcxReq &req);
+    nixl_status_t estimateCost(size_t size,
+                               std::chrono::microseconds &duration,
+                               std::chrono::microseconds &err_margin,
+                               nixl_cost_t &method);
     nixl_status_t flushEp(nixlUcxReq &req);
 };
 
@@ -126,12 +127,14 @@ private:
     /* Local UCX stuff */
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
+    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
 public:
 
     using req_cb_t = void(void *request);
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
-                   nixl_ucx_mt_t mt_type);
+                   bool prog_thread, ucp_err_handling_mode_t err_handling_mode,
+                   unsigned long num_workers, nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     static bool mtLevelIsSupproted(nixl_ucx_mt_t mt_type);
@@ -169,6 +172,17 @@ public:
 
     void reqRelease(nixlUcxReq req);
     void reqCancel(nixlUcxReq req);
+
+    /* Worker access */
+    ucp_worker_h getWorker() const { return worker; }
 };
+
+[[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {
+    return {
+        { "ucx_devices", "" },
+        { "ucx_error_handling_mode", "none" }, // or "peer"
+        { "num_workers", "1" }
+    };
+}
 
 #endif

@@ -343,6 +343,22 @@ class nixl_agent:
         return handle
 
     """
+    @brief Estimate the cost of a transfer operation.
+           Times are in microseconds and the method indicates how the estimation was performed.
+
+    @param req_handle Handle to the transfer operation.
+    @return Tuple of duration, error margin, method
+    """
+
+    def estimate_xfer_cost(self, req_handle: nixl_xfer_handle) -> tuple[int, int, int]:
+        duration, err_margin, method = self.agent.estimateXferCost(req_handle)
+        if method == nixlBind.NIXL_COST_ANALYTICAL_BACKEND:
+            method = "ANALYTICAL_BACKEND"
+        else:
+            method = "UNKNOWN"
+        return duration, err_margin, method
+
+    """
     @brief Prepare a transfer operation using prep_xfer_dlist handles.
 
     @param operation Type of operation ("WRITE" or "READ").
@@ -640,21 +656,27 @@ class nixl_agent:
     @brief Send all of your metadata to a peer or central metadata server.
 
     @param ip_addr If specified, will only send metadata to one peer by IP address.
-    @param port    If specified, will try to send to specific port.
+                   Otherwise, metadata will be sent to central metadata server, if supported.
+    @param port    If specified next to ip_addr, will try to send to this specific port of a peer.
+                   Ignored when sending to a central metadata server.
     """
 
     def send_local_metadata(self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT):
         self.agent.sendLocalMD(ip_addr, port)
 
     """
-    @brief Send partial metadata of the local agent.
+    @brief Send partial metadata of the local agent to a peer or central metadata server.
 
     @param descs         The list of descriptors to include metadata about.
                          List can be empty if only trying to send connection info.
     @param inc_conn_info Whether to include connection info in the metadata.
     @param backends      List of backends to consider when constructing partial metadata.
     @param ip_addr       If specified, will only send metadata to one peer by IP address.
-    @param port          If specified, will try to send to specific port.
+                         Otherwise, metadata will be sent to central metadata server, if supported.
+    @param port          If specified next to ip_addr, will try to send to this specific port of a peer.
+                         Ignored when sending to a central metadata server.
+    @param label         Label to use for the metadata when sending to central metadata server.
+                         Ignored when sending to a peer.
     """
 
     def send_partial_agent_metadata(
@@ -664,11 +686,14 @@ class nixl_agent:
         backends: list[str] = [],
         ip_addr: str = "",
         port: int = DEFAULT_COMM_PORT,
+        label: str = "",
     ):
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
-        self.agent.sendLocalPartialMD(descs, inc_conn_info, handle_list, ip_addr, port)
+        self.agent.sendLocalPartialMD(
+            descs, inc_conn_info, handle_list, ip_addr, port, label
+        )
 
     """
     @brief Request metadata be retrieved from central metadata server or sent by peer.
@@ -682,8 +707,9 @@ class nixl_agent:
         remote_agent: str,
         ip_addr: str = "",
         port: int = DEFAULT_COMM_PORT,
+        label: str = "",
     ):
-        self.agent.fetchRemoteMD(remote_agent, ip_addr, port)
+        self.agent.fetchRemoteMD(remote_agent, ip_addr, port, label)
 
     """
     @brief Invalidate your own metadata in the central metadata server, or from a specific peer.

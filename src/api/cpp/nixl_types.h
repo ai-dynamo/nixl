@@ -70,6 +70,7 @@ enum nixl_status_t {
 enum class nixl_thread_sync_t {
     NIXL_THREAD_SYNC_NONE,
     NIXL_THREAD_SYNC_STRICT,
+    NIXL_THREAD_SYNC_RW,
     NIXL_THREAD_SYNC_DEFAULT = NIXL_THREAD_SYNC_NONE,
 };
 
@@ -133,6 +134,15 @@ extern const std::string default_metadata_label;
  *        Appended to the agent's key prefix to form the full key for partial metadata.
  */
 extern const std::string default_partial_metadata_label;
+
+
+/**
+ * @enum nixl_cost_t
+ * @brief An enumeration of cost types for transfer cost estimation.
+ */
+enum class nixl_cost_t {
+    ANALYTICAL_BACKEND = 0, // Analytical backend cost estimate
+};
 
 /**
  * @class nixlAgentOptionalArgs

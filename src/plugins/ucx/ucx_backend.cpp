@@ -18,8 +18,12 @@
 #include "ucx_backend.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
+#include "common/nixl_log.h"
 
 #include <optional>
+#include <limits>
+#include <string.h>
+#include <unistd.h>
 #include "absl/strings/numbers.h"
 
 #ifdef HAVE_CUDA
@@ -28,8 +32,6 @@
 #include <cufile.h>
 
 #endif
-
-static constexpr int const noSyncIters = 32;
 
 /****************************************
  * CUDA related code
@@ -49,6 +51,70 @@ public:
     void cudaResetCtxPtr();
     int cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated);
     int cudaSetCtx();
+};
+
+class nixlUcxCudaDevicePrimaryCtx {
+#ifndef HAVE_CUDA
+public:
+    bool push() { return false; }
+    void pop() {};
+#else
+    static constexpr int defaultCudaDeviceOrdinal = 0;
+    int m_ordinal{defaultCudaDeviceOrdinal};
+    CUdevice m_device{CU_DEVICE_INVALID};
+    CUcontext m_context{nullptr};
+public:
+
+    bool push() {
+        CUcontext context;
+
+        const auto res = cuCtxGetCurrent(&context);
+        if (res != CUDA_SUCCESS || context != nullptr) {
+            return false;
+        }
+
+        if (m_context == nullptr) {
+            CUresult res = cuDeviceGet(&m_device, m_ordinal);
+            if (res != CUDA_SUCCESS) {
+                return false;
+            }
+
+            res = cuDevicePrimaryCtxRetain(&m_context, m_device);
+            if (res != CUDA_SUCCESS) {
+                m_context = nullptr;
+                return false;
+            }
+        }
+
+        return cuCtxPushCurrent(m_context) == CUDA_SUCCESS;
+    }
+
+    void pop() {
+        cuCtxPopCurrent(nullptr);
+    }
+
+    ~nixlUcxCudaDevicePrimaryCtx() {
+        if (m_context != nullptr) {
+            cuDevicePrimaryCtxRelease(m_device);
+        }
+    }
+#endif
+};
+
+class nixlUcxCudaCtxGuard {
+    nixlUcxCudaDevicePrimaryCtxPtr m_primary;
+public:
+    nixlUcxCudaCtxGuard(nixl_mem_t nixl_mem,
+                        nixlUcxCudaDevicePrimaryCtxPtr primary) {
+        if (nixl_mem == VRAM_SEG && primary && primary->push()) {
+            m_primary = primary;
+        }
+    }
+    ~nixlUcxCudaCtxGuard() {
+        if (m_primary) {
+            m_primary->pop();
+        }
+    }
 };
 
 #ifdef HAVE_CUDA
@@ -239,7 +305,7 @@ static void _internalRequestReset(nixlUcxIntReq *req) {
 class nixlUcxBackendH : public nixlBackendReqH {
 private:
     nixlUcxIntReq head;
-    nixlUcxEngine &eng;
+    const nixlUcxEngine &eng;
     size_t worker_id;
 
     // Notification to be sent after completion of all requests
@@ -256,7 +322,7 @@ public:
         return notif;
     }
 
-    nixlUcxBackendH(nixlUcxEngine &eng_, size_t worker_id_): eng(eng_), worker_id(worker_id_) {}
+    nixlUcxBackendH(const nixlUcxEngine &eng_, size_t worker_id_): eng(eng_), worker_id(worker_id_) {}
 
     void append(nixlUcxIntReq *req) {
         head.link(req);
@@ -359,34 +425,52 @@ void nixlUcxEngine::progressFunc()
     }
     pthrActiveCV.notify_one();
 
+    // Set timeout event so that the main loop would progress all workers on first iteration
+    bool timeout = true;
+    bool pthrStop = false;
     while (!pthrStop) {
-        int i;
-        for(i = 0; i < noSyncIters; i++) {
-            for (auto &uw: uws)
-                uw->progress();
+        for (size_t wid = 0; wid < pollFds.size() - 1; wid++) {
+            if (!(pollFds[wid].revents & POLLIN) && !timeout)
+                continue;
+            pollFds[wid].revents = 0;
+
+            bool made_progress = false;
+            ucs_status_t status = UCS_INPROGRESS;
+            const auto &uw = uws[wid];
+            do {
+                while (uw->progress())
+                    made_progress = true;
+
+                status = ucp_worker_arm(uw->getWorker());
+            } while (status == UCS_ERR_BUSY);
+            NIXL_ASSERT(status == UCS_OK);
+
+            if (made_progress && !wid)
+                notifProgress();
         }
-        notifProgress();
-        // TODO: once NIXL thread infrastructure is available - move it there!!!
+        timeout = false;
 
-        // {
-        //     static uint64_t cnt = 0;
-        //     if ( !(cnt % 1000000)) {
-        //         std::cout << "Progress round" << std::endl;
-        //     }
-        //     cnt++;
-        // }
+        int ret;
+        while ((ret = poll(pollFds.data(), pollFds.size(), pthrDelay.count())) < 0)
+            NIXL_TRACE << "Call to poll() was interrupted, retrying. Error: " << strerror(errno);
 
-        /* Wait for predefined number of */
-        us_t start = getUs();
-        while( (start + pthrDelay) > getUs()) {
-            std::this_thread::yield();
+        if (!ret) {
+            timeout = true;
+        } else if (pollFds.back().revents & POLLIN) {
+            pollFds.back().revents = 0;
+
+            char signal;
+            int ret = read(pollFds.back().fd, &signal, sizeof(signal));
+            if (ret < 0)
+                NIXL_ERROR << "read() on control pipe failed. Error: " << strerror(errno);
+
+            pthrStop = true;
         }
     }
 }
 
 void nixlUcxEngine::progressThreadStart()
 {
-    pthrStop = false;
     {
         std::unique_lock<std::mutex> lock(pthrActiveLock);
         pthrActive = false;
@@ -410,7 +494,11 @@ void nixlUcxEngine::progressThreadStop()
         return;
     }
 
-    pthrStop = true;
+    const char signal = 'X';
+    int ret = write(pthrControlPipe[1], &signal, sizeof(signal));
+    if (ret < 0)
+        NIXL_ERROR << "write to progress thread control pipe failed, error: "
+                   << strerror(errno);
     pthr.join();
 }
 
@@ -431,11 +519,25 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     nixl_b_params_t* custom_params = init_params->customParams;
 
     if (init_params->enableProgTh) {
+        pthrOn = true;
         if (!nixlUcxContext::mtLevelIsSupproted(NIXL_UCX_MT_WORKER)) {
             NIXL_ERROR << "UCX library does not support multi-threading";
             this->initErr = true;
             return;
         }
+        if (pipe(pthrControlPipe) < 0) {
+            NIXL_ERROR << "Couldn't create progress thread control pipe, error: " << strerror(errno);
+            this->initErr = true;
+            return;
+        }
+
+        // This will ensure that the resulting delay is at least 1ms and fits into int in order for
+        // it to be compatible with poll()
+        pthrDelay = std::chrono::ceil<std::chrono::milliseconds>(
+            std::chrono::microseconds(init_params->pthrDelay < std::numeric_limits<int>::max() ?
+                                      init_params->pthrDelay : std::numeric_limits<int>::max()));
+    } else {
+        pthrOn = false;
     }
 
     if (custom_params->count("device_list")!=0)
@@ -445,8 +547,20 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (num_workers_iter == custom_params->end() || !absl::SimpleAtoi(num_workers_iter->second, &numWorkers))
         numWorkers = 1;
 
+    const auto err_handling_mode_it =
+            custom_params->find("ucx_error_handling_mode");
+    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
+    if (err_handling_mode_it != custom_params->end() &&
+        (err_handling_mode_it->second == "peer")) {
+        err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+    }
+
     uc = std::make_shared<nixlUcxContext>(devs, sizeof(nixlUcxIntReq),
-                                          _internalRequestInit, _internalRequestFini, NIXL_UCX_MT_WORKER);
+                                          _internalRequestInit,
+                                          _internalRequestFini,
+                                          pthrOn,
+                                          err_handling_mode, numWorkers, init_params->syncMode);
+
     for (unsigned int i = 0; i < numWorkers; i++)
         uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
 
@@ -459,16 +573,24 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         return;
     }
 
+    if (pthrOn) {
+        for (auto &uw: uws) {
+            int fd;
+            ucs_status_t ret = ucp_worker_get_efd(uw->getWorker(), &fd);
+            if (ret != UCS_OK) {
+                NIXL_ERROR << "Couldn't obtain fd for a worker, status: " << ucs_status_string(ret);
+                initErr = true;
+                return;
+            }
+
+            pollFds.push_back({fd, POLLIN, 0});
+        }
+        pollFds.push_back({pthrControlPipe[0], POLLIN, 0});
+    }
+
     uw->regAmCallback(CONN_CHECK, connectionCheckAmCb, this);
     uw->regAmCallback(DISCONNECT, connectionTermAmCb, this);
     uw->regAmCallback(NOTIF_STR, notifAmCb, this);
-
-    if (init_params->enableProgTh) {
-        pthrOn = true;
-        pthrDelay = init_params->pthrDelay;
-    } else {
-        pthrOn = false;
-    }
 
     // Temp fixup
     if (getenv("NIXL_DISABLE_CUDA_ADDR_WA")) {
@@ -477,6 +599,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     } else {
         cuda_addr_wa = true;
     }
+
+    m_cudaPrimaryCtx = std::make_shared<nixlUcxCudaDevicePrimaryCtx>();
     vramInitCtx();
     progressThreadStart();
 }
@@ -499,6 +623,10 @@ nixlUcxEngine::~nixlUcxEngine () {
     }
 
     progressThreadStop();
+    if (pthrOn) {
+        close(pthrControlPipe[0]);
+        close(pthrControlPipe[1]);
+    }
     vramFiniCtx();
 }
 
@@ -719,6 +847,8 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
         }
         if (need_restart) {
             progressThreadRestart();
+            // set the ctx for main thread
+            vramApplyCtx();
         }
     }
 
@@ -806,6 +936,8 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
                                            const std::string &remote_agent,
                                            nixlBackendMD* &output)
 {
+    // Set CUDA context of first device, UCX will anyways detect proper device when sending
+    nixlUcxCudaCtxGuard guard(nixl_mem, m_cudaPrimaryCtx);
     return internalMDHelper(input.metaInfo, remote_agent, output);
 }
 
@@ -846,7 +978,7 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args)
+                                       const nixl_opt_b_args_t* opt_args) const
 {
     /* TODO: try to get from a pool first */
     nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, getWorkerId());
@@ -855,12 +987,68 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
+nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
+                                               const nixl_meta_dlist_t &local,
+                                               const nixl_meta_dlist_t &remote,
+                                               const std::string &remote_agent,
+                                               nixlBackendReqH* const &handle,
+                                               std::chrono::microseconds &duration,
+                                               std::chrono::microseconds &err_margin,
+                                               nixl_cost_t &method,
+                                               const nixl_opt_args_t* opt_args) const
+{
+    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    size_t workerId = intHandle->getWorkerId();
+
+    if (local.descCount() != remote.descCount()) {
+        NIXL_ERROR << "Local (" << local.descCount() << ") and remote (" << remote.descCount()
+                   << ") descriptor lists differ in size for cost estimation";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    duration = std::chrono::microseconds(0);
+    err_margin = std::chrono::microseconds(0);
+
+    if (local.descCount() == 0) {
+        // Nothing to do, use a default value
+        method = nixl_cost_t::ANALYTICAL_BACKEND;
+        return NIXL_SUCCESS;
+    }
+
+    for (int i = 0; i < local.descCount(); i++) {
+        size_t lsize = local[i].len;
+        size_t rsize = remote[i].len;
+
+        nixlUcxPrivateMetadata *lmd = static_cast<nixlUcxPrivateMetadata*>(local[i].metadataP);
+        nixlUcxPublicMetadata *rmd = static_cast<nixlUcxPublicMetadata*>(remote[i].metadataP);
+
+        NIXL_ASSERT(lmd && rmd) << "No metadata found in descriptor lists at index " << i << " during cost estimation";
+        NIXL_ASSERT(lsize == rsize) << "Local size (" << lsize << ") != Remote size (" << rsize
+                                    << ") at index " << i << " during cost estimation";
+
+        std::chrono::microseconds msg_duration;
+        std::chrono::microseconds msg_err_margin;
+        nixl_cost_t msg_method;
+        nixl_status_t ret = rmd->conn->getEp(workerId)->estimateCost(lsize, msg_duration, msg_err_margin, msg_method);
+        if (ret != NIXL_SUCCESS) {
+            NIXL_ERROR << "Worker failed to estimate cost for segment " << i << " status: " << ret;
+            return ret;
+        }
+
+        duration += msg_duration;
+        err_margin += msg_err_margin;
+        method = msg_method;
+    }
+
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
                                        const std::string &remote_agent,
                                        nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args)
+                                       const nixl_opt_b_args_t* opt_args) const
 {
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
@@ -932,7 +1120,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     return ret;
 }
 
-nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
+nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
     size_t workerId = intHandle->getWorkerId();
@@ -953,7 +1141,7 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle)
     return status;
 }
 
-nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle)
+nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
     nixl_status_t status = intHandle->release();
@@ -980,7 +1168,7 @@ int nixlUcxEngine::progress() {
 nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                                            const std::string &msg,
                                            nixlUcxReq &req,
-                                           size_t worker_id)
+                                           size_t worker_id) const
 {
     nixlSerDes ser_des;
     // TODO - temp fix, need to have an mpool
@@ -1095,7 +1283,7 @@ nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
+nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg) const
 {
     nixl_status_t ret;
     nixlUcxReq req;

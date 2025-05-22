@@ -21,12 +21,59 @@ import nixl._utils as nixl_utils
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl._bindings import nixlNotFoundError
 
+
+def exchange_target_metadata(
+    target_agent,
+    init_agent,
+    ip_addr,
+    init_port,
+    etcd_endpoints,
+    label,
+    target_reg_descs,
+):
+    """
+    Exchange metadata from target to initiator
+    """
+    if etcd_endpoints:
+        # With ETCD, target sends MD to server and initiator fetches it
+        target_agent.send_partial_agent_metadata(
+            target_reg_descs, True, ["UCX"], label=label
+        )
+        init_agent.fetch_remote_metadata(target_agent.name, label=label)
+    else:
+        # With socket exchange, target sends MD directly to initiator
+        target_agent.send_partial_agent_metadata(
+            target_reg_descs, True, ["UCX"], ip_addr, init_port
+        )
+
+
+def invalidate_target_metadata(
+    target_agent,
+    ip_addr,
+    init_port,
+    etcd_endpoints,
+):
+    """
+    Invalidate metadata from target to initiator
+    """
+    if etcd_endpoints:
+        target_agent.invalidate_local_metadata()
+    else:
+        target_agent.invalidate_local_metadata(ip_addr, init_port)
+
+
 if __name__ == "__main__":
     buf_size = 256
     # Allocate memory and register with NIXL
 
     print("Using NIXL Plugins from:")
     print(os.environ["NIXL_PLUGIN_DIR"])
+
+    etcd_endpoints = os.getenv("NIXL_ETCD_ENDPOINTS", "")
+    if etcd_endpoints:
+        print("NIXL_ETCD_ENDPOINTS is set, using endpoints: ", etcd_endpoints)
+    else:
+        print("NIXL_ETCD_ENDPOINTS is not set, using socket exchange")
 
     # Needed for socket exchange
     ip_addr = "127.0.0.1"
@@ -74,9 +121,14 @@ if __name__ == "__main__":
 
     assert init_agent.register_memory(init_reg_descs) is not None
 
-    # Send first set of descriptors first
-    target_agent.send_partial_agent_metadata(
-        target_reg_descs1, True, ["UCX"], ip_addr, init_port
+    exchange_target_metadata(
+        target_agent,
+        init_agent,
+        ip_addr,
+        init_port,
+        etcd_endpoints,
+        "label_1",
+        target_reg_descs1,
     )
 
     # Wait for metadata to be loaded
@@ -122,8 +174,14 @@ if __name__ == "__main__":
         os.abort()
 
     # Now send rest of descs
-    target_agent.send_partial_agent_metadata(
-        target_reg_descs2, True, ["UCX"], ip_addr, init_port
+    exchange_target_metadata(
+        target_agent,
+        init_agent,
+        ip_addr,
+        init_port,
+        etcd_endpoints,
+        "label_2",
+        target_reg_descs2,
     )
 
     # Wait for metadata to be loaded
