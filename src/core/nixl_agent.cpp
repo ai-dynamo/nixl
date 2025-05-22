@@ -658,6 +658,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     NIXL_SHARED_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
     {
+        delete backend_set;
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1215,6 +1216,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     if (ret) {
         delete data->remoteSections[remote_agent];
         data->remoteSections.erase(remote_agent);
+        data->remoteBackends.erase(remote_agent);
         return ret;
     }
 
@@ -1352,6 +1354,7 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
             return NIXL_SUCCESS;
         } else {
             nixl_meta_dlist_t dummy(descs.getType(), descs.isSorted());
+            // We only add to data->remoteBackends if data->backendEngines[backend] exists
             for (const auto& [backend, conn_info] : data->remoteBackends[remote_name])
                 if (data->remoteSections[remote_name]->populate(
                           descs, data->backendEngines[backend], dummy) == NIXL_SUCCESS)
