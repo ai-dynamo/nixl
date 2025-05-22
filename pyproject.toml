@@ -28,5 +28,8 @@ authors = [
   {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
 ]
 
+[tool.isort]
+profile = "black"
+
 [tool.meson-python.args]
 setup = ['-Dinstall_headers=false']
