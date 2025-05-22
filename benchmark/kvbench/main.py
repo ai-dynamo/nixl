@@ -13,8 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import commands 
-import argparse 
+import commands
+import argparse
+
+
 def main():
     parser = argparse.ArgumentParser(description="KVBench")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -32,6 +34,7 @@ def main():
                 break
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()

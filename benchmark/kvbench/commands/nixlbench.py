@@ -16,45 +16,48 @@
 from models.models import BaseModelArch
 from models.model_config import ModelConfig
 
+
 class NIXLBench:
     """
     NIXL Benchmarking utility for KV cache performance testing.
-    
+
     This class provides a configurable interface for running benchmarks
     on NIXL with various parameters and configurations. It handles parameter
     validation, default values, and command generation.
     """
 
-    def __init__(self,
-                 model: BaseModelArch,
-                 model_config: ModelConfig,
-                 backend="UCX",
-                 check_consistency=False,
-                 device_list="all",
-                 enable_pt=False,
-                 etcd_endpoints="http://localhost:2379",
-                 storage_enable_direct=False,
-                 gds_filepath="",
-                 initiator_seg_type="DRAM",
-                 max_batch_size=None, 
-                 max_block_size=None,
-                 mode="SG",
-                 num_initiator_dev=1,
-                 num_iter=1000,
-                 num_target_dev=1,
-                 num_threads=1,
-                 op_type="WRITE",
-                 runtime_type="ETCD",
-                 scheme="pairwise",
-                 start_batch_size=None,
-                 start_block_size=None,
-                 target_seg_type="DRAM",
-                 total_buffer_size=None,
-                 warmup_iter=100,
-                 worker_type="nixl"):
+    def __init__(
+        self,
+        model: BaseModelArch,
+        model_config: ModelConfig,
+        backend="UCX",
+        check_consistency=False,
+        device_list="all",
+        enable_pt=False,
+        etcd_endpoints="http://localhost:2379",
+        storage_enable_direct=False,
+        gds_filepath="",
+        initiator_seg_type="DRAM",
+        max_batch_size=None,
+        max_block_size=None,
+        mode="SG",
+        num_initiator_dev=1,
+        num_iter=1000,
+        num_target_dev=1,
+        num_threads=1,
+        op_type="WRITE",
+        runtime_type="ETCD",
+        scheme="pairwise",
+        start_batch_size=None,
+        start_block_size=None,
+        target_seg_type="DRAM",
+        total_buffer_size=None,
+        warmup_iter=100,
+        worker_type="nixl",
+    ):
         """
         Initialize a NIXLBench instance with benchmark configuration.
-        
+
         Args:
             model (BaseModelArch): Model architecture specification.
             model_config (ModelConfig): Model runtime and system configuration.
@@ -111,10 +114,9 @@ class NIXLBench:
         self.worker_type = worker_type
         self._override_defaults()
 
-
     def set_io_size(self, io_size: int):
         self.start_block_size = io_size
-        self.max_block_size   = io_size
+        self.max_block_size = io_size
 
     def configure_segment_type(self, backend: str, source: str, destination: str):
         if backend == "GDS":
@@ -150,7 +152,7 @@ class NIXLBench:
 
     def set_batch_size(self, batch_size: int):
         self.start_batch_size = batch_size
-        self.max_batch_size   = batch_size
+        self.max_batch_size = batch_size
 
     def configure_buffer_size(self):
         self.total_buffer_size = self.max_batch_size * self.max_block_size
@@ -158,17 +160,17 @@ class NIXLBench:
     def _override_defaults(self):
         """
         Set default values for parameters that were not explicitly provided.
-        
+
         This method is called during initialization to ensure all required
         parameters have valid values before running benchmarks.
         """
         if self.total_buffer_size is None:
             self.total_buffer_size = 8589934592
 
-    def _params(self):   
+    def _params(self):
         """
         Collect all benchmark parameters into a dictionary.
-        
+
         Returns:
             dict: Dictionary containing all benchmark parameters.
         """
@@ -196,17 +198,17 @@ class NIXLBench:
             "target_seg_type": self.target_seg_type,
             "total_buffer_size": self.total_buffer_size,
             "warmup_iter": self.warmup_iter,
-            "worker_type": self.worker_type
+            "worker_type": self.worker_type,
         }
-    
+
     @staticmethod
     def defaults():
         """
         Get the default benchmark parameters.
-        
+
         This static method provides the default values for all benchmark parameters
         when not explicitly specified.
-        
+
         Returns:
             dict: Dictionary containing default values for all benchmark parameters.
         """
@@ -219,8 +221,8 @@ class NIXLBench:
             "storage_enable_direct": False,
             "gds_filepath": "",
             "initiator_seg_type": "DRAM",
-            "max_batch_size": 1, # ios per gpu 
-            "max_block_size": 67108864, # io size 
+            "max_batch_size": 1,  # ios per gpu
+            "max_block_size": 67108864,  # io size
             "mode": "SG",
             "num_initiator_dev": 1,
             "num_iter": 1000,
@@ -234,22 +236,23 @@ class NIXLBench:
             "target_seg_type": "DRAM",
             "total_buffer_size": 8589934592,
             "warmup_iter": 100,
-            "worker_type": "nixl"
+            "worker_type": "nixl",
         }
 
     def plan(self, format: str = "text"):
         """
         Generate the nixlbench command with appropriate parameters.
-        
+
         This method builds a command string for the nixlbench tool,
         including only non-default parameters to keep the command concise.
         The generated command is printed to the console.
-        
+
         For JSON output, all parameters including defaults are included,
         with configured non-null values overriding defaults.
         """
         defaults = NIXLBench.defaults()
         command_parts = ["nixlbench"]
+
         def should_include(name, value, include_defaults=False):
             if value is None:
                 return False
@@ -258,7 +261,6 @@ class NIXLBench:
 
             return True
 
-        
         params = self._params()
         # For JSON output, include all parameters (including defaults)
         if format == "json" or format == "csv":
@@ -272,25 +274,27 @@ class NIXLBench:
             return merged_params
         else:  # for text format, exclude defaults to keep command concise
             for name, value in params.items():
-                if should_include(name, value): 
+                if should_include(name, value):
                     command_parts.append(f"--{name} {value}")
-            
+
             command = " \\\n    ".join(command_parts)
             return command
 
     def profile(self):
         """
         Run the nixlbench command with appropriate parameters.
-        
+
         This method builds a command for the nixlbench tool,
         including only non-default parameters to keep the command concise,
         and executes it as a subprocess.
         """
         import subprocess
         import os
+
         env = os.environ.copy()
         defaults = NIXLBench.defaults()
         command_parts = ["nixlbench"]
+
         def should_include(name, value):
             if value is None:
                 return False

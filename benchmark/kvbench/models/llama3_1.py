@@ -19,6 +19,7 @@ from typing import Any, Dict
 from models.utils import get_precision_size
 import yaml
 
+
 class Llama3_1(BaseModelArch):
     """
     Implementation of the Llama 3.1 model architecture.
@@ -27,11 +28,16 @@ class Llama3_1(BaseModelArch):
     to access its parameters and configuration.
     """
 
-    def __init__(self, model: str, num_layers: int,
-                num_query_heads_with_mha: int,
-                query_head_dimension: int,
-                gqa_num_queries_in_group: int,
-                num_model_params: int, model_config: ModelConfig = None):
+    def __init__(
+        self,
+        model: str,
+        num_layers: int,
+        num_query_heads_with_mha: int,
+        query_head_dimension: int,
+        gqa_num_queries_in_group: int,
+        num_model_params: int,
+        model_config: ModelConfig = None,
+    ):
         """
         Initialize a Llama 3.1 model architecture.
 
@@ -52,7 +58,7 @@ class Llama3_1(BaseModelArch):
         self.num_model_params = num_model_params
         self.model_dimension = self.num_query_heads_with_mha * self.query_head_dimension
 
-    def get_kv_size_per_token(self, token_count: int=1) -> int:
+    def get_kv_size_per_token(self, token_count: int = 1) -> int:
         """
         Get the key-value cache size for the Llama 3.1 model (per token).
 
@@ -60,8 +66,12 @@ class Llama3_1(BaseModelArch):
             int: The size of the key-value cache, currently hardcoded to 1.
         """
         return int(
-            self.num_layers * (self.num_query_heads_with_mha / self.gqa_num_queries_in_group) *
-            self.query_head_dimension * 2 * get_precision_size(self.model_config.model.model_quant_mode) * token_count
+            self.num_layers
+            * (self.num_query_heads_with_mha / self.gqa_num_queries_in_group)
+            * self.query_head_dimension
+            * 2
+            * get_precision_size(self.model_config.model.model_quant_mode)
+            * token_count
         )
 
     def get_io_size(self, page_size: int = 1) -> int:
@@ -73,12 +83,12 @@ class Llama3_1(BaseModelArch):
         """
 
         kv_size = self.get_kv_size_per_token()
-        # we need the size of kv per token per attention layer 
+        # we need the size of kv per token per attention layer
         kv_size = int(kv_size / self.num_layers)
         if kv_size <= 0:
             raise ValueError("Invalid KV Size: 0")
         io_size = int(kv_size / self.model_config.model.tp_size)
-        if self.model_config.system.access_pattern == 'block':
+        if self.model_config.system.access_pattern == "block":
             io_size = io_size * (self.num_layers / self.model_config.model.pp_size)
         return int(io_size * page_size)
 
@@ -90,13 +100,13 @@ class Llama3_1(BaseModelArch):
             Dict[str, Any]: A dictionary containing all model configuration parameters.
         """
         return {
-            'model': self.model.lower(),
-            'num_layers': self.num_layers,
-            'num_query_heads_with_mha': self.num_query_heads_with_mha,
-            'query_head_dimension': self.query_head_dimension,
-            'gqa_num_queries_in_group': self.gqa_num_queries_in_group,
-            'num_model_params': self.num_model_params,
-            'model_dimension': self.model_dimension
+            "model": self.model.lower(),
+            "num_layers": self.num_layers,
+            "num_query_heads_with_mha": self.num_query_heads_with_mha,
+            "query_head_dimension": self.query_head_dimension,
+            "gqa_num_queries_in_group": self.gqa_num_queries_in_group,
+            "num_model_params": self.num_model_params,
+            "model_dimension": self.model_dimension,
         }
 
     def __str__(self) -> str:

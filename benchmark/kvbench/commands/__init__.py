@@ -18,5 +18,5 @@ available_commands = [
     plan.Command(),
     profile.Command(),
     kvcache.Command(),
-    io_size.Command()
+    io_size.Command(),
 ]

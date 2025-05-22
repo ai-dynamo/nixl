@@ -20,6 +20,7 @@ from typing import Any, Dict
 import math
 import yaml
 
+
 class DeepSeekR1(BaseModelArch):
     """
     Implementation of the DeepSeek-R1 model architecture.
@@ -28,14 +29,18 @@ class DeepSeekR1(BaseModelArch):
     to access its parameters and configuration.
     """
 
-    def __init__(self, model: str, num_layers: int,
-                num_query_heads: int,
-                query_head_dimension: int,
-                embedding_dimension: int,
-                rope_mla_dimension: int,
-                mla_latent_vector_dimension: int,
-                num_model_params: int,
-                model_config: ModelConfig = None):
+    def __init__(
+        self,
+        model: str,
+        num_layers: int,
+        num_query_heads: int,
+        query_head_dimension: int,
+        embedding_dimension: int,
+        rope_mla_dimension: int,
+        mla_latent_vector_dimension: int,
+        num_model_params: int,
+        model_config: ModelConfig = None,
+    ):
         """
         Initialize a DeepSeek-R1 model architecture.
 
@@ -70,9 +75,14 @@ class DeepSeekR1(BaseModelArch):
 
         #         ( rope_mla_dimension + mla mla_latent_vector_dimension )
         # * quantization * num_layers
-        return int((self.rope_mla_dimension + self.mla_latent_vector_dimension) *
-                get_precision_size(self.model_config.model.kvcache_quant_mode) *
-                self.num_layers) * token_count
+        return (
+            int(
+                (self.rope_mla_dimension + self.mla_latent_vector_dimension)
+                * get_precision_size(self.model_config.model.kvcache_quant_mode)
+                * self.num_layers
+            )
+            * token_count
+        )
 
     def get_io_size(self, page_size: int = 1) -> int:
         """
@@ -88,10 +98,12 @@ class DeepSeekR1(BaseModelArch):
             raise ValueError("Invalid KV Size: 0")
 
         # we need the size of kv per token per attention layer
-        kv_size = (kv_size / self.num_layers)
+        kv_size = kv_size / self.num_layers
         io_size = kv_size / self.model_config.model.tp_size
-        if self.model_config.system.access_pattern == 'block':
-            io_size = io_size * math.ceil(self.num_layers/self.model_config.model.pp_size)
+        if self.model_config.system.access_pattern == "block":
+            io_size = io_size * math.ceil(
+                self.num_layers / self.model_config.model.pp_size
+            )
 
         return int(io_size * page_size)
 
@@ -103,14 +115,14 @@ class DeepSeekR1(BaseModelArch):
             Dict[str, Any]: A dictionary containing all model configuration parameters.
         """
         return {
-            'model': self.model.lower(),
-            'num_layers': self.num_layers,
-            'num_query_heads': self.num_query_heads,
-            'query_head_dimension': self.query_head_dimension,
-            'embedding_dimension': self.embedding_dimension,
-            'rope_mla_dimension': self.rope_mla_dimension,
-            'mla_latent_vector_dimension': self.mla_latent_vector_dimension,
-            'num_model_params': self.num_model_params
+            "model": self.model.lower(),
+            "num_layers": self.num_layers,
+            "num_query_heads": self.num_query_heads,
+            "query_head_dimension": self.query_head_dimension,
+            "embedding_dimension": self.embedding_dimension,
+            "rope_mla_dimension": self.rope_mla_dimension,
+            "mla_latent_vector_dimension": self.mla_latent_vector_dimension,
+            "num_model_params": self.num_model_params,
         }
 
     def __str__(self) -> str:
