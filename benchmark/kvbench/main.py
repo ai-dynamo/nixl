@@ -13,23 +13,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[build-system]
-requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest"]
-build-backend = "mesonpy"
+import argparse
 
-[project]
-name = 'nixl'
-version = '0.2.0'
-description = 'NIXL Python API'
-readme = 'README.md'
-license = {file = 'LICENSE'}
-requires-python = '>=3.9'
-authors = [
-  {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
-]
+import commands
 
-[tool.isort]
-profile = "black"
 
-[tool.meson-python.args]
-setup = ['-Dinstall_headers=false']
+def main():
+    parser = argparse.ArgumentParser(description="KVBench")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    for command in commands.available_commands:
+        subparser = subparsers.add_parser(command.name, help=command.help)
+        command.add_arguments(subparser)
+
+    args = parser.parse_args()
+
+    if args.command:
+        for command in commands.available_commands:
+            if command.name == args.command:
+                command.execute(args)
+                break
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

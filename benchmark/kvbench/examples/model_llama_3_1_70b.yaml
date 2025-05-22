@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-black
-flake8
-isort
-mypy
-pre-commit
-pytest
-pyyaml
-toml
-tomli
-types-PyYAML
+model_name: 'LLAMA3.1_70B'
+num_layers: 80
+num_query_heads_with_mha: 64
+query_head_dimension: 128
+gqa_num_queries_in_group: 8
+num_model_params: 70000000000

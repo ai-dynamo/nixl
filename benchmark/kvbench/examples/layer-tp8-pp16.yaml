@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-black
-flake8
-isort
-mypy
-pre-commit
-pytest
-pyyaml
-toml
-tomli
-types-PyYAML
+strategy:
+  tp_size: 8
+  pp_size: 16
+  model_quant_mode: "fp8"
+  kvcache_quant_mode: "fp8"
+
+runtime:
+  isl: 1000
+  osl: 100
+  num_requests: 10
+
+system:
+  hardware: "H100"
+  backend: "SGLANG"
+  access_pattern: "layer"
+  page_size: 16
