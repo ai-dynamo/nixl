@@ -512,8 +512,23 @@ void nixlUcxEngine::progressThreadRestart()
 nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 : nixlBackendEngine (init_params) {
     unsigned long numWorkers;
+    nixl_ucx_mt_t mode = NIXL_UCX_MT_MAX;
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
+
+    if (custom_params->count("worker_mode") != 0) {
+        if (custom_params->at("worker_mode") == "single") {
+            mode = NIXL_UCX_MT_SINGLE;
+        } else if (custom_params->at("worker_mode") == "serialized") {
+            mode = NIXL_UCX_MT_CTX;
+        } else if (custom_params->at("worker_mode") == "multi") {
+            mode = NIXL_UCX_MT_WORKER;
+        } else {
+            NIXL_ERROR << "Invalid worker mode: " << custom_params->at("worker_mode");
+            this->initErr = true;
+            return;
+        }
+    }
 
     if (init_params->enableProgTh) {
         pthrOn = true;
@@ -524,6 +539,11 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         }
         if (pipe(pthrControlPipe) < 0) {
             NIXL_ERROR << "Couldn't create progress thread control pipe, error: " << strerror(errno);
+            this->initErr = true;
+            return;
+        }
+        if (mode == NIXL_UCX_MT_SINGLE || mode == NIXL_UCX_MT_CTX) {
+            NIXL_ERROR << "Non-NIXL_UCX_MT_WORKER mode does not support progress thread";
             this->initErr = true;
             return;
         }
@@ -550,7 +570,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
                                           _internalRequestInit,
                                           _internalRequestFini,
                                           pthrOn,
-                                          err_handling_mode, numWorkers, init_params->syncMode);
+                                          err_handling_mode, numWorkers,
+                                          mode, init_params->syncMode);
 
     for (unsigned int i = 0; i < numWorkers; i++)
         uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
@@ -563,6 +584,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         initErr = true;
         return;
     }
+
+    threadWorkerMap = std::make_unique<nixlUcxThreadToWorker>(numWorkers, uc->getMtType());
 
     if (pthrOn) {
         for (auto &uw: uws) {
@@ -971,8 +994,14 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
+    size_t worker_id;
+    nixl_status_t status = threadWorkerMap->threadToWorkerId(worker_id);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
     /* TODO: try to get from a pool first */
-    nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, getWorkerId());
+    nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, worker_id);
 
     handle = (nixlBackendReqH*)intHandle;
     return NIXL_SUCCESS;
@@ -1222,7 +1251,11 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
 {
     nixl_status_t ret;
     nixlUcxReq req;
-    size_t wid = getWorkerId();
+    size_t wid;
+    ret = threadWorkerMap->threadToWorkerId(wid);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
 
     ret = notifSendPriv(remote_agent, msg, req, wid);
 
@@ -1236,5 +1269,48 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
         /* error case */
         return ret;
     }
+    return NIXL_SUCCESS;
+}
+
+/****************************************
+ * Thread to worker mapping
+*****************************************/
+
+nixlUcxThreadToWorker::nixlUcxThreadToWorker(size_t num_workers, nixl_ucx_mt_t mode)
+    : numWorkers(num_workers), mode(mode)
+{
+    pthread_key_create(&keyThreadToWorker, nullptr);
+    nextWorkerId = 0;
+}
+
+nixlUcxThreadToWorker::~nixlUcxThreadToWorker()
+{
+    pthread_key_delete(keyThreadToWorker);
+}
+
+nixl_status_t nixlUcxThreadToWorker::threadToWorkerId(size_t &worker_id)
+{
+    size_t cur_id = (size_t)pthread_getspecific(keyThreadToWorker);
+    if (cur_id == 0) {
+        if (mode == NIXL_UCX_MT_WORKER) {
+            do {
+                cur_id = ++nextWorkerId;
+            } while (cur_id == 0);
+            cur_id = ((cur_id - 1) % numWorkers) + 1;
+        } else {
+            if (nextWorkerId >= numWorkers) {
+                return NIXL_ERR_NOT_SUPPORTED;
+            }
+            cur_id = ++nextWorkerId;
+            if (cur_id > numWorkers) {
+                return NIXL_ERR_NOT_SUPPORTED;
+            }
+        }
+        pthread_setspecific(keyThreadToWorker, (void*)cur_id);
+    }
+
+    // 0 mean the id not exists, so we save the worker id as + 1
+    worker_id = cur_id - 1;
+
     return NIXL_SUCCESS;
 }

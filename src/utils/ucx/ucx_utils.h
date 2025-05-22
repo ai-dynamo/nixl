@@ -130,7 +130,8 @@ public:
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
                    bool prog_thread, ucp_err_handling_mode_t err_handling_mode,
-                   unsigned long num_workers, nixl_thread_sync_t sync_mode);
+                   unsigned long num_workers, nixl_ucx_mt_t threading_mode,
+                   nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     static bool mtLevelIsSupproted(nixl_ucx_mt_t mt_type);
@@ -139,6 +140,9 @@ public:
     int memReg(void *addr, size_t size, nixlUcxMem &mem);
     std::unique_ptr<char []> packRkey(nixlUcxMem &mem, size_t &size);
     void memDereg(nixlUcxMem &mem);
+    nixl_ucx_mt_t getMtType() {
+        return mt_type;
+    }
 
     friend class nixlUcxWorker;
 };
