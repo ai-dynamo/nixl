@@ -18,10 +18,12 @@
 SOURCE_DIR=$(dirname "$(readlink -f "$0")")
 BUILD_CONTEXT=$(dirname "$(readlink -f "$SOURCE_DIR")")
 BUILD_CONTEXT_ARGS=""
-NIXL_BUILD_CONTEXT_ARGS=""
+NIXL_SRC=$(readlink -f "${SOURCE_DIR}/../../..")
+NIXL_BUILD_CONTEXT_ARGS="--build-context nixl=$NIXL_SRC"
 NIXL_BENCH_BUILD_CONTEXT_ARGS="--build-context nixlbench=$BUILD_CONTEXT/"
-NIXL_SRC=""
 DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
+UCX_SRC=""
+UCX_BUILD_CONTEXT_ARGS=""
 commit_id=$(git rev-parse --short HEAD)
 
 # Get latest TAG and add COMMIT_ID for dev
@@ -63,7 +65,7 @@ get_options() {
         --nixl)
             if [ "$2" ]; then
                 NIXL_BUILD_CONTEXT_ARGS="--build-context nixl=$2"
-		NIXL_SRC=$2
+                NIXL_SRC=$2
                 shift
             else
                 missing_requirement $1
@@ -97,6 +99,15 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --ucx)
+            if [ "$2" ]; then
+                UCX_SRC=$2
+                UCX_BUILD_CONTEXT_ARGS="--build-context ucx=$2 --build-arg UCX=custom"
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --)
             shift
             break
@@ -118,7 +129,7 @@ get_options() {
         error "ERROR: --nixl <path to nixl source> is required"
     fi
 
-    BUILD_CONTEXT_ARGS="$NIXL_BUILD_CONTEXT_ARGS $NIXL_BENCH_BUILD_CONTEXT_ARGS"
+    BUILD_CONTEXT_ARGS="$NIXL_BUILD_CONTEXT_ARGS $NIXL_BENCH_BUILD_CONTEXT_ARGS $UCX_BUILD_CONTEXT_ARGS"
 
     VERSION=v$latest_tag.dev.$commit_id
     if [ -z "$TAG" ]; then
@@ -131,6 +142,7 @@ show_build_options() {
     echo ""
     echo "Building NIXLBench Image"
     echo "NIXL Source: ${NIXL_SRC}"
+    echo "UCX Source: ${UCX_SRC} (optional)"
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
     echo "Build Context Args: ${BUILD_CONTEXT_ARGS}"
@@ -144,6 +156,7 @@ show_help() {
     echo "  [--base base image]"
     echo "  [--base-image-tag base image tag]"
     echo "  [--nixlbench path/to/nixlbench/source/dir]"
+    echo "  [--ucx path/to/ucx/source/dir]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--python-versions python versions to build for, comma separated]"

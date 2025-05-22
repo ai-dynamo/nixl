@@ -51,8 +51,8 @@ nixl_status_t MockDramBackendEngine::prepXfer(const nixl_xfer_op_t &operation,
                                              const nixl_meta_dlist_t &remote,
                                              const std::string &remote_agent,
                                              nixlBackendReqH *&handle,
-                                             const nixl_opt_b_args_t *opt_args) {
-  sharedState++;
+                                             const nixl_opt_b_args_t *opt_args) const {
+  assert(sharedState > 0);
   return NIXL_SUCCESS;
 }
 
@@ -61,18 +61,19 @@ nixl_status_t MockDramBackendEngine::postXfer(const nixl_xfer_op_t &operation,
                                              const nixl_meta_dlist_t &remote,
                                              const std::string &remote_agent,
                                              nixlBackendReqH *&handle,
-                                             const nixl_opt_b_args_t *opt_args) {
-  sharedState++;
+                                             const nixl_opt_b_args_t *opt_args) const {
+  assert(sharedState > 0);
   return NIXL_SUCCESS;
 }
 
-nixl_status_t MockDramBackendEngine::checkXfer(nixlBackendReqH *handle) {
-  sharedState++;
+nixl_status_t MockDramBackendEngine::checkXfer(nixlBackendReqH *handle) const {
+  assert(sharedState > 0);
   return NIXL_SUCCESS;
 }
 
-nixl_status_t MockDramBackendEngine::releaseReqH(nixlBackendReqH *handle) {
-  sharedState++;
+nixl_status_t MockDramBackendEngine::releaseReqH(nixlBackendReqH *handle) const {
+
+  assert(sharedState > 0);
   return NIXL_SUCCESS;
 }
 
@@ -102,8 +103,8 @@ nixl_status_t MockDramBackendEngine::getNotifs(notif_list_t &notif_list) {
 }
 
 nixl_status_t MockDramBackendEngine::genNotif(const std::string &remote_agent,
-                                             const std::string &msg) {
-  sharedState++;
+                                             const std::string &msg) const {
+  assert(sharedState > 0);
   return NIXL_SUCCESS;
 }
 

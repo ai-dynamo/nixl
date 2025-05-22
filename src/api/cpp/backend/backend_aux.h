@@ -51,13 +51,14 @@ class nixlBackendInitParams {
 
         bool              enableProgTh;
         nixlTime::us_t    pthrDelay;
+        nixl_thread_sync_t syncMode;
 };
 
 // Pure virtual class to have a common pointer type
 class nixlBackendReqH {
 public:
     nixlBackendReqH() { }
-    ~nixlBackendReqH() { }
+    virtual ~nixlBackendReqH() { }
 };
 
 // Pure virtual class to have a common pointer type for different backendMD.

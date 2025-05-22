@@ -28,7 +28,8 @@ static xferBenchRT *createRT(int *terminate) {
             total = xferBenchConfig::num_initiator_dev +
                 xferBenchConfig::num_target_dev;
         }
-        if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) {
+        if ((XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) ||
+            (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend)) {
             total = 1;
         }
         return new xferBenchEtcdRT(xferBenchConfig::etcd_endpoints, total, terminate);

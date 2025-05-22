@@ -14,29 +14,13 @@
 # limitations under the License.
 
 # Check for libaio dependency (required)
-compiler = meson.get_compiler('cpp')
-libaio_dep = compiler.find_library('aio', required: false)
-
-# If libaio is not found, skip building the POSIX plugin entirely
-if not libaio_dep.found()
-    message('libaio not found, POSIX plugin will not be built')
-    subdir_done()
-endif
-
-# Configure compile flags and set AIO as default
-compile_defs = ['-DHAVE_LIBAIO']
-message('libaio found, building POSIX plugin')
+aio_dep = cpp.find_library('aio', required: false)
 
 # Try to find liburing (optional) - first try pkg-config
-liburing_dep = dependency('liburing', required: false)
+uring_dep = dependency('liburing', required: false)
+plugin_deps = [nixl_infra, nixl_common_dep]
 
-have_liburing = liburing_dep.found()
-if have_liburing
-    compile_defs += ['-DHAVE_LIBURING']
-    message('liburing found, adding io_uring support')
-else
-    message('liburing not found, building with AIO support only')
-endif
+paio = false
 
 # Define base source files - conditionally include uring_queue.cpp
 posix_sources = [
@@ -46,18 +30,34 @@ posix_sources = [
     'aio_queue.cpp'  # Always include AIO source since it's required
 ]
 
-# Add io_uring source if available
-if have_liburing
-    posix_sources += ['uring_queue.cpp']
+if aio_dep.found()
+    paio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
 endif
 
-# Prepare dependencies list - only include liburing if found
-plugin_deps = [nixl_infra, nixl_common_dep, libaio_dep, rt_dep]
-plugin_link_args = ['-laio']
+# If libaio is not found, skip building the POSIX plugin entirely
+if aio_dep.found() and paio
+    message('Correct libaio found, Building POSIX plugin')
+    compile_defs = ['-DHAVE_LIBAIO']
+    plugin_link_args = ['-laio']
+    plugin_deps += [ aio_dep ]
+elif rt_dep.found()
+    message('Compat AIO library found')
+    compile_defs = ['-DHAVE_LIBAIO']
+    plugin_link_args = ['-lrt']
+    plugin_deps += [ rt_dep ]
+else
+    subdir_done()
+endif
 
-if have_liburing
-    plugin_deps += [liburing_dep]
+have_uring = uring_dep.found()
+if have_uring
+    compile_defs += ['-DHAVE_LIBURING']
+    posix_sources += ['uring_queue.cpp']
+    plugin_deps += [uring_dep]
     plugin_link_args += ['-luring']
+    message('liburing found, adding io_uring support')
+else
+    message('liburing not found, building with AIO support only')
 endif
 
 if 'POSIX' in static_plugins

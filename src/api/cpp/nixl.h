@@ -51,9 +51,9 @@ class nixlAgent {
          */
         ~nixlAgent ();
 
-        /* Declare move operations (needed because we declared a destructor) */
-        nixlAgent(nixlAgent&&) noexcept;
-        nixlAgent &operator=(nixlAgent&&) noexcept;
+        /* It is unsafe to move nixlAgent object */
+        nixlAgent(nixlAgent&&) noexcept = delete;
+        nixlAgent &operator=(nixlAgent&&) noexcept = delete;
 
         /**
          * @brief  Discover the available supported plugins found in the plugin paths
@@ -254,7 +254,7 @@ class nixlAgent {
          * @return nixl_status_t NIXL_IN_PROG or error code if call was not successful
          */
         nixl_status_t
-        getXferStatus (nixlXferReqH* req_hndl);
+        getXferStatus (nixlXferReqH* req_hndl) const;
 
         /**
          * @brief  Query the backend associated with `req_hndl`. E.g., if for genNotif
@@ -276,7 +276,7 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        releaseXferReq (nixlXferReqH* req_hndl);
+        releaseXferReq (nixlXferReqH* req_hndl) const;
 
         /**
          * @brief  Release the prepared descriptor list handle `dlist_hndl`
@@ -319,7 +319,7 @@ class nixlAgent {
         nixl_status_t
         genNotif (const std::string &remote_agent,
                   const nixl_blob_t &msg,
-                  const nixl_opt_args_t* extra_params = nullptr);
+                  const nixl_opt_args_t* extra_params = nullptr) const;
 
         /*** Metadata handling through side channel ***/
         /**

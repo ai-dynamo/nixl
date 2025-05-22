@@ -562,7 +562,10 @@ int main()
 int ndevices = NUM_WORKERS;
 #ifdef HAVE_CUDA
     int n_vram_dev;
-    cudaGetDeviceCount(&n_vram_dev);
+    if (cudaGetDeviceCount(&n_vram_dev) != cudaSuccess) {
+        std::cout << "Call to cudaGetDeviceCount failed, assuming 0 devices";
+        n_vram_dev = 0;
+    }
     std::cout << "Detected " << n_vram_dev << " CUDA devices" << std::endl;
 #endif
 

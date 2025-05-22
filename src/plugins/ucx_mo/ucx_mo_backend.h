@@ -91,7 +91,7 @@ private:
     int setEngCnt(uint32_t host_engines);
     uint32_t getEngCnt();
     int32_t getEngIdx(nixl_mem_t type, uint64_t devId);
-    std::string getEngName(const std::string &baseName, uint32_t eidx);
+    std::string getEngName(const std::string &baseName, uint32_t eidx) const;
     std::string getEngBase(const std::string &engName);
     bool pthrOn;
 
@@ -149,21 +149,21 @@ public:
                             const nixl_meta_dlist_t &remote,
                             const std::string &remote_agent,
                             nixlBackendReqH* &handle,
-                            const nixl_opt_b_args_t* opt_args=nullptr);
+                            const nixl_opt_b_args_t* opt_args=nullptr) const;
 
     nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                             const nixl_meta_dlist_t &local,
                             const nixl_meta_dlist_t &remote,
                             const std::string &remote_agent,
                             nixlBackendReqH* &handle,
-                            const nixl_opt_b_args_t* opt_args=nullptr);
-    nixl_status_t checkXfer (nixlBackendReqH* handle);
-    nixl_status_t releaseReqH(nixlBackendReqH* handle);
+                            const nixl_opt_b_args_t* opt_args=nullptr) const;
+    nixl_status_t checkXfer (nixlBackendReqH* handle) const;
+    nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
 
     int progress();
 
     nixl_status_t getNotifs(notif_list_t &notif_list);
-    nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg);
+    nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const;
 
     //public function for UCX worker to mark connections as connected
     nixl_status_t checkConn(const std::string &remote_agent);
