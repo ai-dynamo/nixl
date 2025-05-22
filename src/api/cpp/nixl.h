@@ -415,10 +415,11 @@ class nixlAgent {
          *         backends supporting the memory type is also included.
          *         If `extra_params->backends` is non-empty, only the descriptors supported by the
          *         backends in the list and the backends' connection info are included in the metadata.
-         *         If 'extra_params->ip_addr' is set, the metadata will only be sent to a single peer.
+         *         If 'extra_params->ip_addr' is set, the metadata will only be sent to a single peer, otherwise
+         *         it will be sent to the central metadata server, if supported.
          *         If 'extra_params->port' can be set in addition to IP address, or will default to default_comm_port.
-         *         If 'extra_params->metadataLabel' is set, it will be used as the label of the partial metadata
-         *         to be sent. Otherwise, the default label of the partial metadata will be used for sending.
+         *         The 'extra_params->metadataLabel' is required when sending to a central metadata server and
+         *         ignored when sending to a peer.
          *
          * @param  descs         [in]  Descriptor list to include in the metadata
          * @param  str           [out] The serialized metadata blob
@@ -430,7 +431,10 @@ class nixlAgent {
                            const nixl_opt_args_t* extra_params = nullptr) const;
 
         /**
-         * @brief  Fetch other agent's metadata and unpack it internally.
+         * @brief  Fetch other agent's metadata from a peer or central metadata server,
+         *         then unpack it internally. When fetching from a peer, only the full metadata
+         *         is supported. When fetching from a central metadata server, the metadataLabel
+         *         can be specified to fetch partial metadata.
          *
          * @param  remote_name   Name of remote agent to fetch from ETCD or socket.
          * @param  extra_params  Only to optionally specify IP address and/or port.

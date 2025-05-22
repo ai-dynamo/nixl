@@ -29,7 +29,6 @@
 #endif // HAVE_ETCD
 
 const std::string default_metadata_label = "metadata";
-const std::string default_partial_metadata_label = "partial_metadata";
 
 namespace {
 
