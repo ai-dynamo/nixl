@@ -607,6 +607,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         return;
     }
 
+    threadWorkerMap = std::make_unique<nixlUcxThreadToWorker>(numWorkers, mode);
+
     if (pthrOn) {
         for (auto &uw: uws) {
             int fd;
@@ -637,7 +639,6 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     m_cudaPrimaryCtx = std::make_shared<nixlUcxCudaDevicePrimaryCtx>();
     vramInitCtx();
     progressThreadStart();
-    threadWorkerMap = new nixlUcxThreadToWorker();
 }
 
 nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
@@ -663,7 +664,6 @@ nixlUcxEngine::~nixlUcxEngine () {
         close(pthrControlPipe[1]);
     }
     vramFiniCtx();
-    delete threadWorkerMap;
 }
 
 /****************************************
@@ -977,7 +977,7 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_opt_b_args_t* opt_args) const
 {
     size_t worker_id;
-    nixl_status_t status = threadWorkerMap->threadToWorkerId(worker_id, uws.size());
+    nixl_status_t status = threadWorkerMap->threadToWorkerId(worker_id);
     if (status != NIXL_SUCCESS) {
         return status;
     }
@@ -1257,7 +1257,7 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
     nixl_status_t ret;
     nixlUcxReq req;
     size_t wid;
-    ret = threadWorkerMap->threadToWorkerId(wid, uws.size());
+    ret = threadWorkerMap->threadToWorkerId(wid);
     if (ret != NIXL_SUCCESS) {
         return ret;
     }
@@ -1281,7 +1281,8 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
  * Thread to worker mapping
 *****************************************/
 
-nixlUcxThreadToWorker::nixlUcxThreadToWorker()
+nixlUcxThreadToWorker::nixlUcxThreadToWorker(size_t num_workers, nixl_ucx_mt_t mode)
+    : numWorkers(num_workers), mode(mode)
 {
     pthread_key_create(&keyThreadToWorker, nullptr);
     nextWorkerId = 0;
@@ -1292,13 +1293,23 @@ nixlUcxThreadToWorker::~nixlUcxThreadToWorker()
     pthread_key_delete(keyThreadToWorker);
 }
 
-nixl_status_t nixlUcxThreadToWorker::threadToWorkerId(size_t &worker_id, size_t num_workers)
+nixl_status_t nixlUcxThreadToWorker::threadToWorkerId(size_t &worker_id)
 {
     size_t cur_id = (size_t)pthread_getspecific(keyThreadToWorker);
     if (cur_id == 0) {
-        cur_id = ++nextWorkerId;
-        if (cur_id > num_workers) {
-            return NIXL_ERR_NOT_SUPPORTED;
+        if (mode == NIXL_UCX_MT_WORKER) {
+            do {
+                cur_id = ++nextWorkerId;
+            } while (cur_id == 0);
+            cur_id = ((cur_id - 1) % numWorkers) + 1;
+        } else {
+            if (nextWorkerId >= numWorkers) {
+                return NIXL_ERR_NOT_SUPPORTED;
+            }
+            cur_id = ++nextWorkerId;
+            if (cur_id > numWorkers) {
+                return NIXL_ERR_NOT_SUPPORTED;
+            }
         }
         pthread_setspecific(keyThreadToWorker, (void*)cur_id);
     }
