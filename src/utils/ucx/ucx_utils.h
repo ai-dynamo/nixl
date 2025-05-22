@@ -25,12 +25,20 @@ extern "C"
 #include <ucp/api/ucp.h>
 }
 
+#include <memory>
+#include "absl/status/statusor.h"
+
 enum nixl_ucx_mt_t {
     NIXL_UCX_MT_SINGLE,
     NIXL_UCX_MT_CTX,
     NIXL_UCX_MT_WORKER,
     NIXL_UCX_MT_MAX
 };
+
+using nixlUcxReq = void*;
+
+class nixlUcxRkey;
+class nixlUcxMem;
 
 class nixlUcxEp {
     enum nixl_ucx_ep_state_t {
@@ -43,13 +51,13 @@ private:
     ucp_ep_h            eph{nullptr};
     nixl_ucx_ep_state_t state{NIXL_UCX_EP_STATE_NULL};
 
-    static void err_cb(void *arg, ucp_ep_h ucp_ep, ucs_status_t status);
     void setState(nixl_ucx_ep_state_t new_state);
-    nixl_status_t closeImpl(ucp_worker_h worker, ucp_ep_close_flags_t flags);
+    nixl_status_t closeImpl(ucp_ep_close_flags_t flags);
 
+    /* Connection */
+    nixl_status_t disconnect_nb();
 public:
-    // TODO: Add read/write methods to avoid using raw handle outside.
-    ucp_ep_h getHandle() const { return eph; }
+    void err_cb(ucp_ep_h ucp_ep, ucs_status_t status);
 
     nixl_status_t checkTxState() const {
         switch (state) {
@@ -64,17 +72,33 @@ public:
         }
     }
 
-    nixl_status_t connect(ucp_worker_h worker, void* addr);
+    nixlUcxEp(ucp_worker_h worker, void* addr, ucp_err_handling_mode_t err_handling_mode);
+    ~nixlUcxEp();
+    nixlUcxEp(const nixlUcxEp&) = delete;
+    nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
-    nixl_status_t close(ucp_worker_h worker) {
-        return closeImpl(worker, ucp_ep_close_flags_t(0));
-    }
-    nixl_status_t closeForce() {
-        return closeImpl(nullptr, UCP_EP_CLOSE_FLAG_FORCE);
-    }
-    nixl_status_t closeNb() {
-        return closeImpl(nullptr, ucp_ep_close_flags_t(0));
-    }
+    /* Rkey */
+    int rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey);
+    void rkeyDestroy(nixlUcxRkey &rkey);
+
+    /* Active message handling */
+    nixl_status_t sendAm(unsigned msg_id,
+                         void* hdr, size_t hdr_len,
+                         void* buffer, size_t len,
+                         uint32_t flags, nixlUcxReq &req);
+
+    /* Data access */
+    nixl_status_t read(uint64_t raddr, nixlUcxRkey &rk,
+                       void *laddr, nixlUcxMem &mem,
+                       size_t size, nixlUcxReq &req);
+    nixl_status_t write(void *laddr, nixlUcxMem &mem,
+                        uint64_t raddr, nixlUcxRkey &rk,
+                        size_t size, nixlUcxReq &req);
+    nixl_status_t estimateCost(size_t size,
+                               std::chrono::microseconds &duration,
+                               std::chrono::microseconds &err_margin,
+                               nixl_cost_t &method);
+    nixl_status_t flushEp(nixlUcxReq &req);
 };
 
 class nixlUcxMem {
@@ -84,6 +108,8 @@ private:
     ucp_mem_h memh;
 public:
     friend class nixlUcxWorker;
+    friend class nixlUcxContext;
+    friend class nixlUcxEp;
 };
 
 class nixlUcxRkey {
@@ -93,24 +119,30 @@ private:
 public:
 
     friend class nixlUcxWorker;
+    friend class nixlUcxEp;
 };
-
-using nixlUcxReq = void*;
 
 class nixlUcxContext {
 private:
     /* Local UCX stuff */
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
+    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
 public:
 
     using req_cb_t = void(void *request);
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
-                   nixl_ucx_mt_t mt_type);
+                   bool prog_thread, ucp_err_handling_mode_t err_handling_mode,
+                   unsigned long num_workers, nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     static bool mtLevelIsSupproted(nixl_ucx_mt_t mt_type);
+
+    /* Memory management */
+    int memReg(void *addr, size_t size, nixlUcxMem &mem);
+    std::unique_ptr<char []> packRkey(nixlUcxMem &mem, size_t &size);
+    void memDereg(nixlUcxMem &mem);
 
     friend class nixlUcxWorker;
 };
@@ -118,52 +150,39 @@ public:
 class nixlUcxWorker {
 private:
     /* Local UCX stuff */
-    nixlUcxContext *ctx;
+    std::shared_ptr<nixlUcxContext> ctx;
     ucp_worker_h worker;
 
 public:
-    nixlUcxWorker(nixlUcxContext *ctx);
+    nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx);
     ~nixlUcxWorker();
 
     /* Connection */
     std::unique_ptr<char []> epAddr(size_t &size);
-    int connect(void* addr, size_t size, nixlUcxEp &ep);
-    int disconnect(nixlUcxEp &ep);
-    int disconnect_nb(nixlUcxEp &ep);
-
-    /* Memory management */
-    int memReg(void *addr, size_t size, nixlUcxMem &mem);
-    std::unique_ptr<char []> packRkey(nixlUcxMem &mem, size_t &size);
-    void memDereg(nixlUcxMem &mem);
-
-    /* Rkey */
-    int rkeyImport(nixlUcxEp &ep, void* addr, size_t size, nixlUcxRkey &rkey);
-    void rkeyDestroy(nixlUcxRkey &rkey);
+    absl::StatusOr<std::unique_ptr<nixlUcxEp>> connect(void* addr, size_t size);
 
     /* Active message handling */
     int regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void* arg);
-    nixl_status_t sendAm(nixlUcxEp &ep, unsigned msg_id,
-                         void* hdr, size_t hdr_len,
-                         void* buffer, size_t len,
-                         uint32_t flags, nixlUcxReq &req);
     int getRndvData(void* data_desc, void* buffer, size_t len,
                     const ucp_request_param_t *param, nixlUcxReq &req);
 
     /* Data access */
     int progress();
-    nixl_status_t flushEp(nixlUcxEp &ep, nixlUcxReq &req);
-    nixl_status_t read(nixlUcxEp &ep,
-                       uint64_t raddr, nixlUcxRkey &rk,
-                       void *laddr, nixlUcxMem &mem,
-                       size_t size, nixlUcxReq &req);
-    nixl_status_t write(nixlUcxEp &ep,
-                        void *laddr, nixlUcxMem &mem,
-                        uint64_t raddr, nixlUcxRkey &rk,
-                        size_t size, nixlUcxReq &req);
     nixl_status_t test(nixlUcxReq req);
 
     void reqRelease(nixlUcxReq req);
     void reqCancel(nixlUcxReq req);
+
+    /* Worker access */
+    ucp_worker_h getWorker() const { return worker; }
 };
+
+[[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {
+    return {
+        { "ucx_devices", "" },
+        { "ucx_error_handling_mode", "none" }, // or "peer"
+        { "num_workers", "1" }
+    };
+}
 
 #endif

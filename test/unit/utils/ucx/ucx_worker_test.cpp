@@ -85,16 +85,24 @@ int main()
     // TODO: pass dev name for testing
     // in CI it would be goot to test both SHM and IB
     //devs.push_back("mlx5_0");
-    nixlUcxContext c[2] = {
-        nixlUcxContext(devs, sizeof(requestData), nixlUcxRequestInit, NULL, NIXL_UCX_MT_SINGLE),
-        nixlUcxContext(devs, sizeof(requestData), nixlUcxRequestInit, NULL, NIXL_UCX_MT_SINGLE)
+    std::shared_ptr<nixlUcxContext> c[2] = {
+        std::make_shared<nixlUcxContext>(devs, sizeof(requestData),
+                                         nixlUcxRequestInit, nullptr,
+                                         false,
+                                         UCP_ERR_HANDLING_MODE_NONE, 1,
+                                         nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE),
+        std::make_shared<nixlUcxContext>(devs, sizeof(requestData),
+                                         nixlUcxRequestInit, nullptr,
+                                         false,
+                                         UCP_ERR_HANDLING_MODE_NONE, 1,
+                                         nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)
     };
 
     nixlUcxWorker w[2] = {
-        nixlUcxWorker(&c[0]),
-        nixlUcxWorker(&c[1])
+        nixlUcxWorker(c[0]),
+        nixlUcxWorker(c[1])
     };
-    nixlUcxEp ep[2];
+    std::unique_ptr<nixlUcxEp> ep[2];
     nixlUcxMem mem[2];
     nixlUcxRkey rkey[2];
     nixlUcxReq req;
@@ -121,11 +129,13 @@ int main()
         size_t size;
         std::unique_ptr<char []> addr = w[i].epAddr(size);
         assert(addr != nullptr);
-        assert(0 == w[!i].connect((void*) addr.get(), size, ep[!i]));
-        assert(0 == w[i].memReg(buffer[i], buf_size, mem[i]));
-        std::unique_ptr<char []> rkey_tmp = w[i].packRkey(mem[i], size);
+        auto result = w[!i].connect((void*) addr.get(), size);
+        assert(result.ok());
+        ep[!i] = std::move(*result);
+        assert(0 == c[i]->memReg(buffer[i], buf_size, mem[i]));
+        std::unique_ptr<char []> rkey_tmp = c[i]->packRkey(mem[i], size);
         assert(rkey_tmp != nullptr);
-        assert(0 == w[!i].rkeyImport(ep[!i], rkey_tmp.get(), size, rkey[!i]));
+        assert(0 == ep[!i]->rkeyImport(rkey_tmp.get(), size, rkey[!i]));
     }
 
     /* =========================================
@@ -141,11 +151,11 @@ int main()
 #endif
 
     // Write request
-    ret = w[0].write(ep[0], buffer[0], mem[0], (uint64_t) buffer[1], rkey[0], buf_size/2, req);
+    ret = ep[0]->write(buffer[0], mem[0], (uint64_t) buffer[1], rkey[0], buf_size/2, req);
     completeRequest(w, std::string("WRITE"), false, ret, req);
 
     // Flush to ensure that all data is in-place
-    ret = w[0].flushEp(ep[0], req);
+    ret = ep[0]->flushEp(req);
     completeRequest(w, std::string("WRITE"), true, ret, req);
 
 #ifdef USE_VRAM
@@ -176,11 +186,11 @@ int main()
 #endif
 
     // Read request
-    ret = w[0].read(ep[0], (uint64_t) buffer[1], rkey[0], buffer[0], mem[0], buf_size, req);
+    ret = ep[0]->read((uint64_t) buffer[1], rkey[0], buffer[0], mem[0], buf_size, req);
     completeRequest(w, std::string("READ"), false, ret, req);
 
     // Flush to ensure that all data is in-place
-    ret = w[0].flushEp(ep[0], req);
+    ret = ep[0]->flushEp(req);
     completeRequest(w, std::string("READ"), true, ret, req);
 
 #ifdef USE_VRAM
@@ -198,9 +208,9 @@ int main()
 
     /* Test shutdown */
     for(i = 0; i < 2; i++) {
-        w[i].rkeyDestroy(rkey[i]);
-        w[i].memDereg(mem[i]);
-        assert(0 == w[i].disconnect(ep[i]));
+        ep[i]->rkeyDestroy(rkey[i]);
+        c[i]->memDereg(mem[i]);
+        assert(ep[i].release());
     }
 
 

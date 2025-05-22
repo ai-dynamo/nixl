@@ -132,8 +132,16 @@ static int processBatchSizes(xferBenchWorker &worker,
                 return 1;
             }
 
-            if (xferBenchConfig::check_consistency && xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                xferBenchUtils::checkConsistency(local_trans_lists);
+            if (xferBenchConfig::check_consistency) {
+                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+                    xferBenchUtils::checkConsistency(local_trans_lists);
+                } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
+                    // Only storage backends support consistency check for write on initiator
+                    if ((xferBenchConfig::backend == XFERBENCH_BACKEND_GDS) ||
+                        (xferBenchConfig::backend == XFERBENCH_BACKEND_POSIX)) {
+                        xferBenchUtils::checkConsistency(remote_trans_lists);
+                    }
+                }
             }
 
             xferBenchUtils::printStats(false, block_size, batch_size,

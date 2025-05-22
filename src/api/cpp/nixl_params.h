@@ -41,11 +41,9 @@ class nixlAgentConfig {
     public:
 
         /**
-         * @var Progress thread frequency knob (in us)
-         *      The progress thread is calling sched_yield to avoid blocking a core
-         *      If pthrDelay time is less than sched_yield time - option has no effect
-         *      Otherwise pthread will be calling sched_yield until the specified
-         *      amount of time has past.
+         * @var Progress thread event waiting timeout.
+         *      Defines a delay between periodic main loop iterations that progress every worker
+         *      unconditionally of any pending event signals.
          */
         uint64_t pthrDelay;
         /**
@@ -69,6 +67,7 @@ class nixlAgentConfig {
                          const bool use_listen_thread=false,
                          const int port=0,
                          nixl_thread_sync_t sync_mode=nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT,
+                         unsigned int num_workers = 1,
                          const uint64_t pthr_delay_us=0,
                          const uint64_t lthr_delay_us = 100000) :
                          useProgThread(use_prog_thread),
