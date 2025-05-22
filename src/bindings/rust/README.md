@@ -41,7 +41,8 @@ cargo doc
 ## Testing
 
 The bindings include a comprehensive test suite that can be run with:
+Note that multithreading is disabled because NIXL might deadlock.
 
 ```bash
-cargo test
+cargo test -- --test-threads=1
 ```
