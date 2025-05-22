@@ -352,6 +352,7 @@ class nixl_agent:
             - "ANALYTICAL_BACKEND"
             - "UNKNOWN"
     """
+
     def estimate_xfer_cost(self, req_handle: nixl_xfer_handle) -> tuple[int, int, int]:
         duration, err_margin, method = self.agent.estimateXferCost(req_handle)
         if method == nixlBind.NIXL_COST_ANALYTICAL_BACKEND:
