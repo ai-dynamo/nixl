@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-model: 'DEEPSEEK_R1'
+model_name: 'DEEPSEEK_R1'
 num_layers: 61
 num_query_heads: 128
 query_head_dimension: 128

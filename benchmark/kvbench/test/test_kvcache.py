@@ -17,7 +17,7 @@ import os
 import sys
 from pathlib import Path
 
-import pytest
+import pytest   # type: ignore
 
 p = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, p + "/../")

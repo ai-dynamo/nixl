@@ -74,7 +74,7 @@ class Command:
             return -1
 
         # Load model architecture
-        model = BaseModelArch.from_yaml(args.model)
+        model = BaseModelArch.from_yaml(args.model, None)
 
         # Load model configuration
         model_config = ModelConfig.from_yaml(args.model_config)

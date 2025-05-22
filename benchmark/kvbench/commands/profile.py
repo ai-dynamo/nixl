@@ -75,7 +75,7 @@ class Command:
             return -1
 
         if args.model:
-            model = BaseModelArch.from_yaml(args.model)
+            model = BaseModelArch.from_yaml(args.model, None)
         if args.model_config:
             model_config = ModelConfig.from_yaml(args.model_config)
             override_yaml_args(model_config, args)

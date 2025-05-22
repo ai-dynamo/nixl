@@ -31,13 +31,13 @@ class Llama3_1(BaseModelArch):
 
     def __init__(
         self,
-        model: str,
+        model_name: str,
         num_layers: int,
         num_query_heads_with_mha: int,
         query_head_dimension: int,
         gqa_num_queries_in_group: int,
         num_model_params: int,
-        model_config: ModelConfig = None,
+        model_config: ModelConfig,
     ):
         """
         Initialize a Llama 3.1 model architecture.
@@ -50,7 +50,7 @@ class Llama3_1(BaseModelArch):
             gqa_num_queries_in_group (int): Number of queries in a group for grouped-query attention.
             num_model_params (int): Total number of model parameters.
         """
-        self.model = model
+        self.model_name = model_name
         self.model_config = model_config
         self.num_layers = num_layers
         self.num_query_heads_with_mha = num_query_heads_with_mha

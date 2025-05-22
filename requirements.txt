@@ -18,7 +18,7 @@ flake8
 isort
 mypy
 pre-commit
-pytests
+pytest
 pyyaml
 toml
 tomli

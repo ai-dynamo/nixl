@@ -35,8 +35,9 @@ def get_precision_size(precision: str) -> int:
 
 def get_batch_size(model: BaseModelArch, model_config: ModelConfig, io_size: int):
     return math.ceil(
-        (model.get_kv_size_per_token(int(model_config.runtime.isl)) / io_size) * \
-         model_config.runtime.num_requests)
+        (model.get_kv_size_per_token(int(model_config.runtime.isl)) / io_size)
+        * model_config.runtime.num_requests
+    )
 
 
 def override_yaml_args(model_config: ModelConfig, args: argparse.Namespace):

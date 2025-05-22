@@ -44,9 +44,9 @@ class RuntimeConfig:
     Specifies batch size and sequence length parameters for inference.
     """
 
-    num_requests: Optional[int] = None
-    isl: Optional[int] = None  # input sequence length
-    osl: Optional[int] = None  # output sequence length
+    num_requests: int = 1
+    isl: int = 1  # input sequence length
+    osl: int = 1  # output sequence length
 
 
 @dataclass
@@ -59,7 +59,7 @@ class SystemConfig:
 
     backend: str = "SGLANG"
     hardware: Optional[str] = None
-    page_size: Optional[int] = None
+    page_size: int = 1
     access_pattern: Optional[str] = None
     source: Optional[str] = None
     destination: Optional[str] = None

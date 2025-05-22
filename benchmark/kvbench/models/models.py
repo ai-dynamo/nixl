@@ -28,6 +28,8 @@ class BaseModelArch(ABC):
     the required abstract methods.
     """
 
+    model = ''
+
     @abstractmethod
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """
@@ -69,7 +71,7 @@ class BaseModelArch(ABC):
         raise NotImplementedError("Subclasses must implement this method")
 
     @abstractmethod
-    def get_io_size(self, page_size: int) -> int:
+    def get_io_size(self, page_size: int = 1) -> int:
         raise NotImplementedError("Subclasses must implement this method")
 
     @abstractmethod
@@ -86,9 +88,7 @@ class BaseModelArch(ABC):
         raise NotImplementedError("Subclasses must implement this method")
 
     @classmethod
-    def from_yaml(
-        cls, yaml_path: str, model_config: None
-    ) -> "BaseModelArch":
+    def from_yaml(cls, yaml_path: str, model_config: None) -> "BaseModelArch":
         """
         Create a model architecture instance from a YAML configuration file.
 
@@ -108,20 +108,23 @@ class BaseModelArch(ABC):
             filtered_dict = {k: v for k, v in config.items() if v is not None}
             model_name = filtered_dict.get("model")
 
+            if model_name is None:
+                raise ValueError(f"Model name is None")
+
+            modelc: BaseModelArch
+
             # Initialize the model
             if "llama3.1" in model_name.lower():
                 from models.llama3_1 import Llama3_1
-
-                model = Llama3_1(**filtered_dict)
+                modelc = Llama3_1(**filtered_dict)
             elif "deepseek_r1" in model_name.lower():
                 from models.deepseek_r1 import DeepSeekR1
-
-                model = DeepSeekR1(**filtered_dict)
+                modelc = DeepSeekR1(**filtered_dict)
             else:
                 raise ValueError(f"Model name {model_name} not supported")
 
             # Set model_config if provided
             if model_config is not None:
-                model.set_model_config(model_config)
+                modelc.set_model_config(model_config)
 
-            return model
+            return modelc

@@ -91,7 +91,7 @@ class Command:
             return -1
 
         # Load model architecture
-        model = BaseModelArch.from_yaml(args.model)
+        model = BaseModelArch.from_yaml(args.model, None)
 
         # Get list of model config files
         config_files = []
@@ -199,7 +199,7 @@ class Command:
             fieldnames = set()
             for plan in all_plans:
                 fieldnames.update(plan.keys())
-            fieldnames = sorted(list(fieldnames))
+            fieldnames = set(sorted(list(fieldnames)))
 
             # Write CSV to string buffer
             output = io.StringIO()

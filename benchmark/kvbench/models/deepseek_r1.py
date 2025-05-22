@@ -32,7 +32,7 @@ class DeepSeekR1(BaseModelArch):
 
     def __init__(
         self,
-        model: str,
+        model_name: str,
         num_layers: int,
         num_query_heads: int,
         query_head_dimension: int,
@@ -40,7 +40,7 @@ class DeepSeekR1(BaseModelArch):
         rope_mla_dimension: int,
         mla_latent_vector_dimension: int,
         num_model_params: int,
-        model_config: ModelConfig = None,
+        model_config: ModelConfig,
     ):
         """
         Initialize a DeepSeek-R1 model architecture.
@@ -56,7 +56,7 @@ class DeepSeekR1(BaseModelArch):
             num_model_params (int): Total number of model parameters.
         """
 
-        self.model = model
+        self.model_name = model_name
         self.model_config = model_config
         self.num_layers = num_layers
         self.num_query_heads = num_query_heads
@@ -80,9 +80,7 @@ class DeepSeekR1(BaseModelArch):
             int(
                 (self.rope_mla_dimension + self.mla_latent_vector_dimension)
                 * get_precision_size(self.model_config.model.kvcache_quant_mode)
-                * self.num_layers
-            )
-            * token_count
+                * self.num_layers) * token_count
         )
 
     def get_io_size(self, page_size: int = 1) -> int:
@@ -99,7 +97,7 @@ class DeepSeekR1(BaseModelArch):
             raise ValueError("Invalid KV Size: 0")
 
         # we need the size of kv per token per attention layer
-        kv_size = kv_size / self.num_layers
+        kv_size = int(kv_size / self.num_layers)
         io_size = kv_size / self.model_config.model.tp_size
         if self.model_config.system.access_pattern == "block":
             io_size = io_size * math.ceil(
