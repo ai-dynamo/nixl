@@ -338,18 +338,23 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                bool prog_thread,
                                ucp_err_handling_mode_t __err_handling_mode,
                                unsigned long num_workers,
+                               nixl_ucx_mt_t threading_mode,
                                nixl_thread_sync_t sync_mode)
 {
     ucp_params_t ucp_params;
     ucp_config_t *ucp_config;
     ucs_status_t status = UCS_OK;
 
-    // With strict synchronization model nixlAgent serializes access to backends, with more
-    // permissive models backends need to account for concurrent access and ensure their internal
-    // state is properly protected. Progress thread creates internal concurrency in UCX backend
-    // irrespective of nixlAgent synchronization model.
-    mt_type = (sync_mode == nixl_thread_sync_t::NIXL_THREAD_SYNC_RW || prog_thread) ?
-        NIXL_UCX_MT_WORKER : NIXL_UCX_MT_SINGLE;
+    if (threading_mode < NIXL_UCX_MT_MAX) {
+        mt_type = threading_mode;
+    } else {
+        // With strict synchronization model nixlAgent serializes access to backends, with more
+        // permissive models backends need to account for concurrent access and ensure their internal
+        // state is properly protected. Progress thread creates internal concurrency in UCX backend
+        // irrespective of nixlAgent synchronization model.
+        mt_type = (sync_mode == nixl_thread_sync_t::NIXL_THREAD_SYNC_RW || prog_thread) ?
+            NIXL_UCX_MT_WORKER : NIXL_UCX_MT_SINGLE;
+    }
     err_handling_mode = __err_handling_mode;
 
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
