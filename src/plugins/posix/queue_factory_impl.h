@@ -18,7 +18,7 @@
 #ifndef QUEUE_FACTORY_IMPL_H
 #define QUEUE_FACTORY_IMPL_H
 
-#include "async_queue.h"
+#include "posix_queue.h"
 #include <memory>
 
 // Backend-specific includes
@@ -30,59 +30,47 @@
 #include "uring_queue.h"
 #endif
 
-class QueueFactory {
-    public:
-        // Backend-specific queue creation
+namespace QueueFactory {
+    // Backend-specific queue creation
 #ifdef HAVE_LIBAIO
-        static std::unique_ptr<nixlPosixQueue> createAioQueue(int num_entries, bool is_read) {
-            return std::make_unique<aioQueue>(num_entries, is_read);
-        }
+    std::unique_ptr<nixlPosixQueue> createAioQueue(int num_entries, nixl_xfer_op_t operation) {
+        return std::make_unique<aioQueue>(num_entries, operation);
+    }
 #else
-        static std::unique_ptr<nixlPosixQueue> createAioQueue(int num_entries, bool is_read) {
-            (void)num_entries; // Avoid unused parameter warning
-            (void)is_read;
-            return nullptr;
-        }
+    std::unique_ptr<nixlPosixQueue> createAioQueue(int num_entries, nixl_xfer_op_t operation) {
+        (void)num_entries; // Avoid unused parameter warning
+        (void)operation;
+        return nullptr;
+    }
 #endif // HAVE_LIBAIO
 
 #ifdef HAVE_LIBURING
-        static std::unique_ptr<nixlPosixQueue> createUringQueue(int num_entries, bool is_read, const io_uring_params* params) {
-            if (!params) {
-                return nullptr;
-            }
-            return std::make_unique<UringQueue>(num_entries, *params, is_read);
-        }
-#else
-        static std::unique_ptr<nixlPosixQueue> createUringQueue(int num_entries, bool is_read, const void* params) {
-            (void)num_entries; // Avoid unused parameter warning
-            (void)is_read;
-            (void)params;
+    std::unique_ptr<nixlPosixQueue> createUringQueue(int num_entries, nixl_xfer_op_t operation, const io_uring_params* params) {
+        if (!params) {
             return nullptr;
         }
+        return std::make_unique<UringQueue>(num_entries, *params, operation);
+    }
 #endif // HAVE_LIBURING
 
-        // Backend availability checks
-        static bool isAioAvailable() {
+    // Backend availability checks
+    bool isAioAvailable() {
 #ifdef HAVE_LIBAIO
-            return createAioQueue(1, true) != nullptr;
+        return createAioQueue(1, NIXL_READ) != nullptr;
 #else
-            return false;
+        return false;
 #endif // HAVE_LIBAIO
-        }
+    }
 
-        static bool isUringAvailable() {
+    bool isUringAvailable() {
 #ifdef HAVE_LIBURING
-            io_uring_params params = {};
-            params.cq_entries = 1;  // Match the sq_entries (1) to avoid 2x overhead
-            return createUringQueue(1, true, &params) != nullptr;
+        io_uring_params params = {};
+        params.cq_entries = 1;  // Match the sq_entries (1) to avoid 2x overhead
+        return createUringQueue(1, NIXL_READ, &params) != nullptr;
 #else
             return false;
 #endif // HAVE_LIBURING
-        }
-
-    private:
-        // Make constructor private to prevent instantiation
-        QueueFactory() = delete;
+    }
 };
 
 #endif // QUEUE_FACTORY_IMPL_H
