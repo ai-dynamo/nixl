@@ -15,11 +15,19 @@
 
 use std::env;
 use std::path::PathBuf;
+use os_info;
 
 fn main() {
     let nixl_root_path =
         env::var("NIXL_PREFIX").unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
     let nixl_include_path = format!("{}/include", nixl_root_path);
+    let nixl_include_paths = [
+        &nixl_include_path,
+        "../../api/cpp",
+        "../../infra",
+        "../../core",
+        "/usr/include",
+    ];
 
     // Determine architecture based on target
     let arch = match env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_else(|_| "x86_64".to_string()).as_str() {
@@ -28,10 +36,16 @@ fn main() {
         other => panic!("Unsupported architecture: {}", other),
     };
 
-    let nixl_lib_path = format!("{}/lib/{}-linux-gnu", nixl_root_path, arch);
+    let nixl_lib_path_ubuntu = format!("{}/lib/{}-linux-gnu", nixl_root_path, arch);
+    let nixl_lib_path_redhat = format!("{}/lib64", nixl_root_path);
 
-    // Tell cargo to look for shared libraries in the specified directories
-    println!("cargo:rustc-link-search={}", nixl_lib_path);
+    // Tell cargo to look for shared libraries in the specified directories depending on the OS
+    let os_info = os_info::get();
+    if (os_info.os_type() == os_info::Type::Redhat) || (os_info.os_type() == os_info::Type::CentOS) {
+        println!("cargo:rustc-link-search={}", nixl_lib_path_redhat);
+    } else {
+        println!("cargo:rustc-link-search={}", nixl_lib_path_ubuntu);
+    }
 
     // Build the C++ wrapper
     cc::Build::new()
@@ -40,20 +54,29 @@ fn main() {
         .file("wrapper.cpp")
         .flag("-std=c++17")
         .flag("-fPIC")
-        .include(&nixl_include_path)
+        .includes(nixl_include_paths)
         // Change ABI flag if necessary to match your precompiled libraries:
         //    .flag("-D_GLIBCXX_USE_CXX11_ABI=0")
         .flag("-Wno-unused-parameter")
         .flag("-Wno-unused-variable")
+        .flag("-pthread")
+        .flag("-Wl,-rpath")
+        .flag("-Wl,--no-as-needed")
         .compile("wrapper");
 
+    // Link against C++ standard library first
+    println!("cargo:rustc-link-lib=dylib=stdc++");
+
     // Link against NIXL libraries in correct order
+    println!("cargo:rustc-link-search={}", nixl_lib_path_redhat);
+    println!("cargo:rustc-link-search={}", nixl_lib_path_ubuntu);
+
+    // Link against NIXL libraries
     println!("cargo:rustc-link-lib=dylib=nixl");
     println!("cargo:rustc-link-lib=dylib=nixl_build");
     println!("cargo:rustc-link-lib=dylib=serdes");
-
-    // Link against C++ standard library
-    println!("cargo:rustc-link-lib=dylib=stdc++");
+    println!("cargo:rustc-link-lib=dylib=nixl_common");
+    println!("cargo:rustc-link-lib=dylib=stream");
 
     // Tell cargo to invalidate the built crate whenever the wrapper changes
     println!("cargo:rerun-if-changed=wrapper.h");
