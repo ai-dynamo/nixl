@@ -27,6 +27,7 @@ posix_sources = [
     'posix_backend.cpp',
     'posix_backend.h',
     'posix_plugin.cpp',
+    'queue_factory_impl.cpp',
     'aio_queue.cpp'  # Always include AIO source since it's required
 ]
 

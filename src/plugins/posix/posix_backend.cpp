@@ -75,14 +75,6 @@ namespace {
         }
     }
 
-    static bool isAioAvailable() {
-        return QueueFactory::isAioAvailable();
-    }
-
-    static bool isUringAvailable() {
-        return QueueFactory::isUringAvailable();
-    }
-
     static nixlPosixQueue::queue_t getQueueType(const nixl_b_params_t* custom_params) {
         using queue_t = nixlPosixQueue::queue_t;
 
@@ -92,10 +84,6 @@ namespace {
             if (custom_params->count("use_aio") > 0) {
                 const auto& value = custom_params->at("use_aio");
                 if (value == "true" || value == "1") {
-                    if (!isAioAvailable()) {
-                        NIXL_ERROR << "AIO backend requested but not available";
-                        return queue_t::UNSUPPORTED;
-                    }
                     return queue_t::AIO;
                 }
             }
@@ -108,7 +96,7 @@ namespace {
                     NIXL_ERROR << "io_uring backend requested but not available - not built with liburing support";
                     return queue_t::UNSUPPORTED;
 #endif
-                    if (!isUringAvailable()) {
+                    if (!QueueFactory::isUringAvailable()) {
                         NIXL_ERROR << "io_uring backend requested but not available at runtime";
                         return queue_t::URING;
                     }
@@ -116,13 +104,6 @@ namespace {
                 }
             }
         }
-
-        // If no explicit choice is made or both are false, default to AIO if available
-        if (!isAioAvailable()) {
-            NIXL_ERROR << "No backend available - AIO not available";
-            return queue_t::UNSUPPORTED;
-        }
-
         return queue_t::AIO;
     }
 }
@@ -169,32 +150,18 @@ nixl_status_t nixlPosixBackendReqH::initQueues() {
         switch (queue_type_) {
             case nixlPosixQueue::queue_t::AIO:
                 queue = QueueFactory::createAioQueue(queue_depth_, operation);
-                if (!queue) {
-                    throw std::runtime_error("Failed to create AIO queue");
-                }
                 break;
             case nixlPosixQueue::queue_t::URING:
-#ifdef HAVE_LIBURING
-                {
-                    // Initialize io_uring parameters with basic configuration
-                    // Start with basic parameters, no special flags
-                    // We can add optimizations like SQPOLL later
-                    struct io_uring_params params = {};
-                    queue = QueueFactory::createUringQueue(queue_depth_, operation, &params);
-                    if (!queue) {
-                        throw std::runtime_error("Failed to create io_uring queue");
-                    }
-                    break;
-                }
-#else
-                NIXL_ERROR << "io_uring support not compiled in";
-                return NIXL_ERR_NOT_SUPPORTED;
-#endif
+                queue = QueueFactory::createUringQueue(queue_depth_, operation);
+                break;
             default:
                 NIXL_ERROR << absl::StrFormat("Invalid queue type: %s", queue_type_);
                 return NIXL_ERR_INVALID_PARAM;
         }
         return NIXL_SUCCESS;
+    } catch (const nixlPosixBackendReqH::exception& e) {
+        NIXL_ERROR << absl::StrFormat("Failed to initialize queues: %s", e.what());
+        return e.code();
     } catch (const std::exception& e) {
         NIXL_ERROR << absl::StrFormat("Failed to initialize queues: %s", e.what());
         return NIXL_ERR_BACKEND;
