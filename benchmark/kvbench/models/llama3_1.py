@@ -16,8 +16,8 @@
 from typing import Any, Dict
 
 import yaml
-from models.models import BaseModelArch
 from models.model_config import ModelConfig
+from models.models import BaseModelArch
 from models.utils import get_precision_size
 
 
@@ -90,7 +90,7 @@ class Llama3_1(BaseModelArch):
             raise ValueError("Invalid KV Size: 0")
         io_size = int(kv_size / self.model_config.model.tp_size)
         if self.model_config.system.access_pattern == "block":
-            io_size = io_size * (self.num_layers / self.model_config.model.pp_size)
+            io_size = int(io_size * (self.num_layers / self.model_config.model.pp_size))
         return int(io_size * page_size)
 
     def to_dict(self) -> Dict[str, Any]:

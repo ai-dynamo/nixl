@@ -15,24 +15,24 @@ from typing import Any, Dict
 from models.utils import get_precision_size
 
 class MyModel(BaseModelArch):
-    def __init__(self, model: str, 
+    def __init__(self, model: str,
                  # Add other parameters specific to your model architecture
                  model_config: ModelConfig = None):
         self.model = model
         self.model_config = model_config
         # Initialize other model-specific attributes
-        
+
     def get_kv_size_per_token(self, token_count: int=1) -> int:
         # Calculate and return the KV cache size per token
         # Example implementation:
         return int(
             # Model-specific KV cache size calculation
         )
-    
+
     def get_io_size(self, page_size: int = 1) -> int:
         # Calculate and return the IO size
         # Example implementation based on your model's architecture
-        
+
     def to_dict(self) -> Dict[str, Any]:
         # Convert model attributes to a dictionary
         return {
@@ -52,11 +52,11 @@ def from_yaml(cls, yaml_path: str, model_config: ModelConfig = None) -> 'BaseMod
         config = yaml.safe_load(f)
         filtered_dict = {k: v for k, v in config.items() if v is not None}
         model_name = filtered_dict.get('model')
-        
+
         # Add your model to the factory method
         if "llama3.1" in model_name.lower():
             from models.llama3_1 import Llama3_1
-            model = Llama3_1(**filtered_dict)    
+            model = Llama3_1(**filtered_dict)
         elif "deepseek_r1" in model_name.lower():
             from models.deepseek_r1 import DeepSeekR1
             model = DeepSeekR1(**filtered_dict)
@@ -65,11 +65,11 @@ def from_yaml(cls, yaml_path: str, model_config: ModelConfig = None) -> 'BaseMod
             model = MyModel(**filtered_dict)
         else:
             raise ValueError(f"Model name {model_name} not supported")
-        
+
         # Set model_config if provided
         if model_config is not None:
             model.set_model_config(model_config)
-            
+
         return model
 ```
 
@@ -95,7 +95,7 @@ This method should calculate the key-value cache size for your model architectur
 def get_kv_size_per_token(self, token_count: int=1) -> int:
     # Example implementation based on Llama 3.1:
     return int(
-        self.num_layers * (self.num_heads / self.group_size) * 
+        self.num_layers * (self.num_heads / self.group_size) * \
         self.head_dim * 2 * get_precision_size(self.model_config.model.model_quant_mode) * token_count
     )
 ```

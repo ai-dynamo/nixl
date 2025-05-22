@@ -21,10 +21,10 @@ import json
 import os
 
 from commands.args import (
+    add_cli_args,
     add_common_args,
     add_nixl_bench_args,
     add_plan_args,
-    add_cli_args,
 )
 from commands.nixlbench import NIXLBench
 from models.model_config import ModelConfig
