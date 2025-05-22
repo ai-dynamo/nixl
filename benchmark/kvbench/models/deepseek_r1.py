@@ -13,12 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+from typing import Any, Dict
+
+import yaml
+from models.model_config import ModelConfig
 from models.models import BaseModelArch
 from models.utils import get_precision_size
-from models.model_config import ModelConfig
-from typing import Any, Dict
-import math
-import yaml
 
 
 class DeepSeekR1(BaseModelArch):

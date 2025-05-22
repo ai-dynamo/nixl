@@ -15,6 +15,7 @@
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict
+
 import yaml
 from models.model_config import ModelConfig
 

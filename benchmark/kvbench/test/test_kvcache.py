@@ -13,12 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import sys, os
+import os
+import sys
 from pathlib import Path
+
+import pytest
 
 p = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, p + "/../")
+
+
 # Define fixtures for file paths
 @pytest.fixture
 def examples_dir():

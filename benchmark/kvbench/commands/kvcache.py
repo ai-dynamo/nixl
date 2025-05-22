@@ -14,9 +14,10 @@
 # limitations under the License.
 
 import argparse
+
+from commands.args import add_cli_args, add_common_args
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
-from commands.args import add_common_args, add_cli_args
 from models.utils import get_batch_size, override_yaml_args
 
 

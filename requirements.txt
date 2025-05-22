@@ -18,8 +18,8 @@ flake8
 isort
 mypy
 pre-commit
+pytests
+pyyaml
 toml
 tomli
-pyyaml
-pytests
 types-PyYAML

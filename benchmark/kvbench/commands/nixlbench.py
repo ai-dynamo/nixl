@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from models.models import BaseModelArch
 from models.model_config import ModelConfig
+from models.models import BaseModelArch
 
 
 class NIXLBench:
@@ -288,8 +288,8 @@ class NIXLBench:
         including only non-default parameters to keep the command concise,
         and executes it as a subprocess.
         """
-        import subprocess
         import os
+        import subprocess
 
         env = os.environ.copy()
         defaults = NIXLBench.defaults()

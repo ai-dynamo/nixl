@@ -14,9 +14,10 @@
 # limitations under the License.
 
 import argparse
+
+from commands.args import add_common_args
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
-from commands.args import add_common_args
 
 
 class Command:

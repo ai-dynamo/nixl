@@ -13,11 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Dict
+
+import yaml
 from models.models import BaseModelArch
 from models.model_config import ModelConfig
-from typing import Any, Dict
 from models.utils import get_precision_size
-import yaml
 
 
 class Llama3_1(BaseModelArch):

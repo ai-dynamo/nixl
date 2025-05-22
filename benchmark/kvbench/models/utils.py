@@ -13,10 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-from models.models import BaseModelArch
-from models.model_config import ModelConfig
 import argparse
+import math
+
+from models.model_config import ModelConfig
+from models.models import BaseModelArch
 
 
 def get_precision_size(precision: str) -> int:

@@ -26,7 +26,7 @@ A utility for generating NIXL Bench commands that test KVCache transfer across v
 
 ## Supported LLM Architectures
 - DeepSeek R1
-- LLama 3.1 
+- LLama 3.1
 - and more
 
 ## Building
@@ -48,7 +48,7 @@ source venv/bin/activate
 pip install uv
 uv sync --active
 ```
-## Usage 
+## Usage
 
 ### Basic Usage
 ```bash

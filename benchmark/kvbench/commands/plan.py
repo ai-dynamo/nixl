@@ -14,13 +14,12 @@
 # limitations under the License.
 
 import argparse
-import glob
-import os
-import json
 import csv
+import glob
 import io
-from models.model_config import ModelConfig
-from models.models import BaseModelArch
+import json
+import os
+
 from commands.args import (
     add_common_args,
     add_nixl_bench_args,
@@ -28,6 +27,8 @@ from commands.args import (
     add_cli_args,
 )
 from commands.nixlbench import NIXLBench
+from models.model_config import ModelConfig
+from models.models import BaseModelArch
 from models.utils import get_batch_size, override_yaml_args
 
 
