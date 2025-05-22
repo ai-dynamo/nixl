@@ -1002,7 +1002,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
 
     if (local.descCount() == 0) {
         // Nothing to do, use a default value
-        method = NIXL_COST_ANALYTICAL_BACKEND;
+        method = nixl_cost_t::ANALYTICAL_BACKEND;
         return NIXL_SUCCESS;
     }
 

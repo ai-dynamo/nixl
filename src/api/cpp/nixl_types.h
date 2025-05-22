@@ -140,8 +140,8 @@ extern const std::string default_partial_metadata_label;
  * @enum nixl_cost_t
  * @brief An enumeration of cost types for transfer cost estimation.
  */
-enum nixl_cost_t {
-    NIXL_COST_ANALYTICAL_BACKEND = 0, // Analytical backend cost estimate
+enum class nixl_cost_t {
+    ANALYTICAL_BACKEND = 0, // Analytical backend cost estimate
 };
 
 /**
