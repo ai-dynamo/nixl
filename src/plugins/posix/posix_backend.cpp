@@ -22,64 +22,110 @@
 #include "posix_backend.h"
 #include <absl/log/log.h>
 #include <absl/strings/str_format.h>
-#include "common/status.h"
 #include "common/nixl_log.h"
 #include "queue_factory_impl.h"
+#include "nixl_types.h"
 
-
-// Helper class to manage backend availability and selection
-class BackendManager {
-    public:
-        static bool isAioAvailable() {
-            return QueueFactory::isAioAvailable();
+namespace {
+    bool isValidPrepXferParams(const nixl_xfer_op_t &operation,
+                               const nixl_meta_dlist_t &local,
+                               const nixl_meta_dlist_t &remote,
+                               const std::string &remote_agent,
+                               const std::string &local_agent) {
+        if (remote_agent != local_agent) {
+            NIXL_ERROR << absl::StrFormat("Error: Remote agent must match the requesting agent (%s). Got %s",
+                                        local_agent, remote_agent);
+            return false;
         }
 
-        static bool isUringAvailable() {
-            return QueueFactory::isUringAvailable();
+        if (local.getType() != DRAM_SEG) {
+            NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d", local.getType());
+            return false;
         }
 
-        static std::tuple<nixl_status_t, bool> shouldUseAio(const nixl_b_params_t* custom_params) {
-            // Check for explicit backend request
-            if (custom_params) {
-                // First check if AIO is explicitly requested
-                if (custom_params->count("use_aio") > 0) {
-                    const auto& value = custom_params->at("use_aio");
-                    if (value == "true" || value == "1") {
-                        if (!BackendManager::isAioAvailable()) {
-                            NIXL_ERROR << "AIO backend requested but not available";
-                            return {NIXL_ERR_NOT_SUPPORTED, false};
-                        }
-                        return {NIXL_SUCCESS, true};
+        if (remote.getType() != FILE_SEG) {
+            NIXL_ERROR << absl::StrFormat("Error: Remote memory type must be FILE_SEG, got %d", remote.getType());
+            return false;
+        }
+
+        if (local.descCount() != remote.descCount()) {
+            NIXL_ERROR << absl::StrFormat("Error: Mismatch in descriptor counts - local: %d, remote: %d",
+                                        local.descCount(), remote.descCount());
+            return false;
+        }
+
+        return true;
+    }
+
+    nixlPosixBackendReqH& castPosixHandle(nixlBackendReqH* handle) {
+        if (!handle) {
+            throw nixlPosixBackendReqH::exception("received null handle", NIXL_ERR_INVALID_PARAM);
+        }
+        return dynamic_cast<nixlPosixBackendReqH&>(*handle);
+    }
+
+    // Stringify function for queue_t
+    inline const char* to_string(nixlPosixQueue::queue_t type) {
+        using queue_t = nixlPosixQueue::queue_t;
+        switch (type) {
+            case queue_t::AIO: return "AIO";
+            case queue_t::URING: return "URING";
+            case queue_t::UNSUPPORTED: return "UNSUPPORTED";
+            default: return "UNKNOWN";
+        }
+    }
+
+    static bool isAioAvailable() {
+        return QueueFactory::isAioAvailable();
+    }
+
+    static bool isUringAvailable() {
+        return QueueFactory::isUringAvailable();
+    }
+
+    static nixlPosixQueue::queue_t getQueueType(const nixl_b_params_t* custom_params) {
+        using queue_t = nixlPosixQueue::queue_t;
+
+        // Check for explicit backend request
+        if (custom_params) {
+            // First check if AIO is explicitly requested
+            if (custom_params->count("use_aio") > 0) {
+                const auto& value = custom_params->at("use_aio");
+                if (value == "true" || value == "1") {
+                    if (!isAioAvailable()) {
+                        NIXL_ERROR << "AIO backend requested but not available";
+                        return queue_t::UNSUPPORTED;
                     }
+                    return queue_t::AIO;
                 }
+            }
 
-                // Then check if io_uring is explicitly requested
-                if (custom_params->count("use_uring") > 0) {
-                    const auto& value = custom_params->at("use_uring");
-                    if (value == "true" || value == "1") {
+            // Then check if io_uring is explicitly requested
+            if (custom_params->count("use_uring") > 0) {
+                const auto& value = custom_params->at("use_uring");
+                if (value == "true" || value == "1") {
 #ifndef HAVE_LIBURING
-                        NIXL_ERROR << "io_uring backend requested but not available - not built with liburing support";
-                        return {NIXL_ERR_NOT_SUPPORTED, false};
+                    NIXL_ERROR << "io_uring backend requested but not available - not built with liburing support";
+                    return queue_t::UNSUPPORTED;
 #endif
-                        if (!BackendManager::isUringAvailable()) {
-                            NIXL_ERROR << "io_uring backend requested but not available at runtime";
-                            return {NIXL_ERR_NOT_SUPPORTED, false};
-                        }
-                        return {NIXL_SUCCESS, false};
+                    if (!isUringAvailable()) {
+                        NIXL_ERROR << "io_uring backend requested but not available at runtime";
+                        return queue_t::URING;
                     }
+                    return queue_t::URING;
                 }
             }
-
-            // If no explicit choice is made or both are false, default to AIO if available
-            if (!BackendManager::isAioAvailable()) {
-                NIXL_ERROR << "No backend available - AIO not available";
-                return {NIXL_ERR_NOT_SUPPORTED, false};
-            }
-
-            NIXL_INFO << "Using default AIO backend";
-            return {NIXL_SUCCESS, true};
         }
-};
+
+        // If no explicit choice is made or both are false, default to AIO if available
+        if (!isAioAvailable()) {
+            NIXL_ERROR << "No backend available - AIO not available";
+            return queue_t::UNSUPPORTED;
+        }
+
+        return queue_t::AIO;
+    }
+}
 
 // -----------------------------------------------------------------------------
 // POSIX Backend Request Handle Implementation
@@ -96,75 +142,74 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
     , opt_args(args)
     , custom_params_(params)
     , queue_depth_(loc.descCount())
-    , is_prepped(false)
-    , status(NIXL_SUCCESS) {
-
-    auto [init_status, should_use_aio] = BackendManager::shouldUseAio(params);
-    if (init_status != NIXL_SUCCESS) {
-        throw std::runtime_error("Failed to determine backend type");
+    , queue_type_(getQueueType(params)) {
+    if (queue_type_ == nixlPosixQueue::queue_t::UNSUPPORTED) {
+        throw exception(
+            absl::StrFormat("Unsupported backend type: %s", queue_type_),
+            NIXL_ERR_NOT_SUPPORTED);
     }
-    use_aio_ = should_use_aio;
 
-    try {
-        status = initQueues(use_aio_);
-        if (status != NIXL_SUCCESS) {
-            throw std::runtime_error("Failed to initialize queues: " +
-                                   std::to_string(status));
-        }
-    } catch (const std::exception& e) {
-        NIXL_ERROR << "Failed to initialize queues: " << e.what();
-        status = NIXL_ERR_BACKEND;
+    if (local.descCount() == 0 || remote.descCount() == 0) {
+        throw exception(
+            absl::StrFormat("Invalid descriptor count - local: %zu, remote: %zu", local.descCount(), remote.descCount()),
+            NIXL_ERR_INVALID_PARAM);
+    }
+
+    nixl_status_t status = initQueues();
+    if (status != NIXL_SUCCESS) {
+        throw exception(
+            absl::StrFormat("Failed to initialize queues: %s", queue_type_),
+            status);
     }
 }
 
-nixl_status_t nixlPosixBackendReqH::initQueues(bool use_aio) {
-    try {
-        if (use_aio) {
-            queue = QueueFactory::createAioQueue(queue_depth_, operation == NIXL_READ);
-            if (!queue) {
-                throw std::runtime_error("Failed to create AIO queue");
-            }
-            NIXL_INFO << "Using AIO backend";
-        } else {
-#ifdef HAVE_LIBURING
-            // Initialize io_uring parameters with basic configuration
-            struct io_uring_params params = {};
-            // Start with basic parameters, no special flags
-            // We can add optimizations like SQPOLL later once basic functionality works
 
-            queue = QueueFactory::createUringQueue(queue_depth_, operation == NIXL_READ, &params);
-            if (!queue) {
-                throw std::runtime_error("Failed to create io_uring queue");
-            }
-            NIXL_INFO << "Using io_uring backend";
+nixl_status_t nixlPosixBackendReqH::initQueues() {
+    try {
+        switch (queue_type_) {
+            case nixlPosixQueue::queue_t::AIO:
+                queue = QueueFactory::createAioQueue(queue_depth_, operation);
+                if (!queue) {
+                    throw std::runtime_error("Failed to create AIO queue");
+                }
+                break;
+            case nixlPosixQueue::queue_t::URING:
+#ifdef HAVE_LIBURING
+                {
+                    // Initialize io_uring parameters with basic configuration
+                    // Start with basic parameters, no special flags
+                    // We can add optimizations like SQPOLL later
+                    struct io_uring_params params = {};
+                    queue = QueueFactory::createUringQueue(queue_depth_, operation, &params);
+                    if (!queue) {
+                        throw std::runtime_error("Failed to create io_uring queue");
+                    }
+                    break;
+                }
 #else
-            NIXL_ERROR << "io_uring support not compiled in";
-            return NIXL_ERR_NOT_SUPPORTED;
+                NIXL_ERROR << "io_uring support not compiled in";
+                return NIXL_ERR_NOT_SUPPORTED;
 #endif
+            default:
+                NIXL_ERROR << absl::StrFormat("Invalid queue type: %s", queue_type_);
+                return NIXL_ERR_INVALID_PARAM;
         }
         return NIXL_SUCCESS;
     } catch (const std::exception& e) {
-        NIXL_ERROR << "Failed to initialize queues: " << e.what();
+        NIXL_ERROR << absl::StrFormat("Failed to initialize queues: %s", e.what());
         return NIXL_ERR_BACKEND;
     }
 }
 
 nixl_status_t nixlPosixBackendReqH::prepXfer() {
-    if (!queue) {
-        return NIXL_ERR_BACKEND;
-    }
-
-    if (is_prepped) {
-        return status;
-    }
-
-    const int desc_count = static_cast<int>(local.descCount());
-    for (int i = 0; i < desc_count; ++i) {
-        status = queue->prepareIO(
-            remote[i].devId,
-            reinterpret_cast<void*>(local[i].addr),
-            remote[i].len,
-            remote[i].addr
+    for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
+         local_it != local.end() && remote_it != remote.end();
+         ++local_it, ++remote_it) {
+        nixl_status_t status = queue->prepIO(
+            remote_it->devId,
+            reinterpret_cast<void*>(local_it->addr),
+            remote_it->len,
+            remote_it->addr
         );
 
         if (status != NIXL_SUCCESS) {
@@ -173,28 +218,15 @@ nixl_status_t nixlPosixBackendReqH::prepXfer() {
         }
     }
 
-    is_prepped = true;
     return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlPosixBackendReqH::checkXfer() {
-    if (!queue) {
-        return NIXL_ERR_BACKEND;
-    }
-
     return queue->checkCompleted();
 }
 
 nixl_status_t nixlPosixBackendReqH::postXfer() {
-    if (!queue) {
-        return NIXL_ERR_BACKEND;
-    }
-
     return queue->submit();
-}
-
-nixlPosixBackendReqH::~nixlPosixBackendReqH() {
-    // Queue will be automatically cleaned up by unique_ptr
 }
 
 // -----------------------------------------------------------------------------
@@ -202,59 +234,21 @@ nixlPosixBackendReqH::~nixlPosixBackendReqH() {
 // -----------------------------------------------------------------------------
 
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams* init_params)
-    : nixlBackendEngine(init_params) {
-    use_aio = true;
-    auto [init_status, should_use_aio] = BackendManager::shouldUseAio(init_params->customParams);
-    if (init_status != NIXL_SUCCESS) {
+    : nixlBackendEngine(init_params)
+    , queue_type_(getQueueType(init_params->customParams)) {
+    if (queue_type_ == nixlPosixQueue::queue_t::UNSUPPORTED) {
         initErr = true;
-        NIXL_ERROR << "Failed to initialize POSIX backend - requested backend not available";
+        NIXL_ERROR << absl::StrFormat("Failed to initialize POSIX backend - requested backend not available: %s",
+                                      queue_type_);
         return;
     }
-    use_aio = should_use_aio;
-    NIXL_INFO << "POSIX backend initialized using " << (use_aio ? "AIO" : "io_uring") << " backend";
-}
-
-nixl_status_t nixlPosixEngine::init() {
-    if (initErr) {
-        return NIXL_ERR_BACKEND;
-    }
-    return NIXL_SUCCESS;
-}
-
-
-bool nixlPosixEngine::validatePrepXferParams(const nixl_xfer_op_t &operation,
-                                             const nixl_meta_dlist_t &local,
-                                             const nixl_meta_dlist_t &remote,
-                                             const std::string &remote_agent,
-                                             const std::string &local_agent) const {
-    if (remote_agent != local_agent) {
-        NIXL_ERROR << absl::StrFormat("Error: Remote agent must match the requesting agent (%s). Got %s",
-                                       local_agent, remote_agent);
-        return false;
-    }
-
-    if (local.getType() != DRAM_SEG) {
-        NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d", local.getType());
-        return false;
-    }
-
-    if (remote.getType() != FILE_SEG) {
-        NIXL_ERROR << absl::StrFormat("Error: Remote memory type must be FILE_SEG, got %d", remote.getType());
-        return false;
-    }
-
-    if (local.descCount() != remote.descCount()) {
-        NIXL_ERROR << absl::StrFormat("Error: Mismatch in descriptor counts - local: %d, remote: %d",
-                local.descCount(), remote.descCount());
-        return false;
-    }
-
-    return true;
+    NIXL_INFO << absl::StrFormat("POSIX backend initialized using %s backend", queue_type_);
 }
 
 nixl_status_t nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
                                            const nixl_mem_t &nixl_mem,
                                            nixlBackendMD* &out) {
+    auto supported_mems = getSupportedMems();
     if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) != supported_mems.end())
         return NIXL_SUCCESS;
 
@@ -271,15 +265,24 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
                                         const std::string &remote_agent,
                                         nixlBackendReqH* &handle,
                                         const nixl_opt_b_args_t* opt_args) const {
-    if (!validatePrepXferParams(operation, local, remote, remote_agent, localAgent)) {
+    if (!isValidPrepXferParams(operation, local, remote, remote_agent, localAgent)) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
     try {
         // Create a params map with our backend selection
         nixl_b_params_t params;
-        params["use_uring"] = use_aio ? "false" : "true";
-        params["use_aio"] = use_aio ? "true" : "false";
+        switch (queue_type_) {
+            case nixlPosixQueue::queue_t::AIO:
+                params["use_aio"] = "true";
+                break;
+            case nixlPosixQueue::queue_t::URING:
+                params["use_uring"] = "true";
+                break;
+            default:
+                NIXL_ERROR << absl::StrFormat("Invalid queue type: %s", queue_type_);
+                return NIXL_ERR_INVALID_PARAM;
+        }
 
         auto posix_handle = std::make_unique<nixlPosixBackendReqH>(operation, local, remote, opt_args, &params);
         nixl_status_t status = posix_handle->prepXfer();
@@ -289,8 +292,11 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
 
         handle = posix_handle.release();
         return NIXL_SUCCESS;
+    } catch (const nixlPosixBackendReqH::exception& e) {
+        NIXL_ERROR << absl::StrFormat("Error: %s", e.what());
+        return e.code();
     } catch (const std::exception& e) {
-        NIXL_ERROR << e.what();
+        NIXL_ERROR << absl::StrFormat("Unexpected error: %s", e.what());
         return NIXL_ERR_BACKEND;
     }
 }
@@ -301,23 +307,40 @@ nixl_status_t nixlPosixEngine::postXfer(const nixl_xfer_op_t &operation,
                                         const std::string &remote_agent,
                                         nixlBackendReqH* &handle,
                                         const nixl_opt_b_args_t* opt_args) const {
-    nixl_status_t status = NIXL_SUCCESS;
-
-    status = static_cast<nixlPosixBackendReqH*>(handle)->postXfer();
-    NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error in submitting queue");
-
-    return status;
+    try {
+        auto& posix_handle = castPosixHandle(handle);
+        nixl_status_t status = posix_handle.postXfer();
+        if (status != NIXL_IN_PROG) {
+            NIXL_ERROR << "Error in submitting queue";
+        }
+        return status;
+    } catch (const nixlPosixBackendReqH::exception& e) {
+        NIXL_ERROR << e.what();
+        return e.code();
+    }
+    return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t nixlPosixEngine::checkXfer(nixlBackendReqH* handle) const {
-    return static_cast<nixlPosixBackendReqH*>(handle)->checkXfer();
+    try {
+        auto& posix_handle = castPosixHandle(handle);
+        return posix_handle.checkXfer();
+    }
+    catch (const nixlPosixBackendReqH::exception& e) {
+        NIXL_ERROR << e.what();
+        return e.code();
+    }
+    return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t nixlPosixEngine::releaseReqH(nixlBackendReqH* handle) const {
-    delete static_cast<nixlPosixBackendReqH*>(handle);
-    return NIXL_SUCCESS;
-}
-
-nixl_mem_list_t nixlPosixEngine::getSupportedMems() const {
-    return supported_mems;
+    try {
+        auto& posix_handle = castPosixHandle(handle);
+        posix_handle.~nixlPosixBackendReqH();
+        return NIXL_SUCCESS;
+    } catch (const nixlPosixBackendReqH::exception& e) {
+        NIXL_ERROR << e.what();
+        return e.code();
+    }
+    return NIXL_ERR_BACKEND;
 }
