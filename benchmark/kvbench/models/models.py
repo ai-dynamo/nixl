@@ -87,7 +87,7 @@ class BaseModelArch(ABC):
 
     @classmethod
     def from_yaml(
-        cls, yaml_path: str, model_config: ModelConfig = None
+        cls, yaml_path: str, model_config: None
     ) -> "BaseModelArch":
         """
         Create a model architecture instance from a YAML configuration file.

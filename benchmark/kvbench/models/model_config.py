@@ -18,7 +18,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-import yaml # type: ignore
+import yaml  # type: ignore
 
 
 @dataclass

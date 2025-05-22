@@ -15,7 +15,7 @@
 
 from typing import Any, Dict
 
-import yaml
+import yaml  # type: ignore
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
 from models.utils import get_precision_size
