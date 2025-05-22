@@ -987,6 +987,62 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
+nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
+                                               const nixl_meta_dlist_t &local,
+                                               const nixl_meta_dlist_t &remote,
+                                               const std::string &remote_agent,
+                                               nixlBackendReqH* const &handle,
+                                               std::chrono::microseconds &duration,
+                                               std::chrono::microseconds &err_margin,
+                                               nixl_cost_t &method,
+                                               const nixl_opt_args_t* opt_args) const
+{
+    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    size_t workerId = intHandle->getWorkerId();
+
+    if (local.descCount() != remote.descCount()) {
+        NIXL_ERROR << "Local (" << local.descCount() << ") and remote (" << remote.descCount()
+                   << ") descriptor lists differ in size for cost estimation";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    duration = std::chrono::microseconds(0);
+    err_margin = std::chrono::microseconds(0);
+
+    if (local.descCount() == 0) {
+        // Nothing to do, use a default value
+        method = nixl_cost_t::ANALYTICAL_BACKEND;
+        return NIXL_SUCCESS;
+    }
+
+    for (int i = 0; i < local.descCount(); i++) {
+        size_t lsize = local[i].len;
+        size_t rsize = remote[i].len;
+
+        nixlUcxPrivateMetadata *lmd = static_cast<nixlUcxPrivateMetadata*>(local[i].metadataP);
+        nixlUcxPublicMetadata *rmd = static_cast<nixlUcxPublicMetadata*>(remote[i].metadataP);
+
+        NIXL_ASSERT(lmd && rmd) << "No metadata found in descriptor lists at index " << i << " during cost estimation";
+        NIXL_ASSERT(lsize == rsize) << "Local size (" << lsize << ") != Remote size (" << rsize
+                                    << ") at index " << i << " during cost estimation";
+
+        std::chrono::microseconds msg_duration;
+        std::chrono::microseconds msg_err_margin;
+        nixl_cost_t msg_method;
+        nixl_status_t ret = rmd->conn->getEp(workerId)->estimateCost(lsize, msg_duration, msg_err_margin, msg_method);
+        if (ret != NIXL_SUCCESS) {
+            NIXL_ERROR << "Worker failed to estimate cost for segment " << i << " status: " << ret;
+            return ret;
+        }
+
+        duration += msg_duration;
+        err_margin += msg_err_margin;
+        method = msg_method;
+    }
+
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,

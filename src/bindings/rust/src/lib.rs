@@ -61,7 +61,7 @@ use bindings::{
     nixl_capi_reg_dlist_has_overlaps, nixl_capi_reg_dlist_len, nixl_capi_reg_dlist_resize,
     nixl_capi_register_mem, nixl_capi_string_list_get, nixl_capi_string_list_size,
     nixl_capi_xfer_dlist_add_desc, nixl_capi_xfer_dlist_clear, nixl_capi_xfer_dlist_has_overlaps,
-    nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize,
+    nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize, nixl_capi_estimate_xfer_cost,
 };
 
 // Re-export status codes
