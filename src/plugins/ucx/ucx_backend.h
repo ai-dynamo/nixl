@@ -97,11 +97,13 @@ class nixlUcxThreadToWorker {
     private:
         pthread_key_t keyThreadToWorker;
         std::atomic<size_t> nextWorkerId;
+        const size_t numWorkers;
+        const nixl_ucx_mt_t mode;
 
     public:
-        nixlUcxThreadToWorker();
+        nixlUcxThreadToWorker(size_t num_workers, nixl_ucx_mt_t mode);
         ~nixlUcxThreadToWorker();
-        nixl_status_t threadToWorkerId(size_t &worker_id, size_t num_workers);
+        nixl_status_t threadToWorkerId(size_t &worker_id);
 };
 
 // Forward declaration of CUDA context
@@ -149,7 +151,7 @@ class nixlUcxEngine : public nixlBackendEngine {
                            std::hash<std::string>, strEqual> remoteConnMap;
 
         // Thread to worker mapping
-        nixlUcxThreadToWorker *threadWorkerMap;
+        std::unique_ptr<nixlUcxThreadToWorker> threadWorkerMap;
 
         void vramInitCtx();
         void vramFiniCtx();
