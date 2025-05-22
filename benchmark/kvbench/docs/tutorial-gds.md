@@ -1,6 +1,6 @@
 # NIXL KVCache GDS Profiling Tutorial
 
-This tutorial explains how to use kvbench to profile KV cache transfers between file storage and GPU memory using NIXLBench
+This tutorial explains how to use KVBench to profile KV cache transfers between file storage and GPU memory using NIXLBench
 
 ## Prerequisites
 
