@@ -269,6 +269,33 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
+nixl_status_t nixlUcxEp::estimateCost(size_t size,
+                                      std::chrono::microseconds &duration,
+                                      std::chrono::microseconds &err_margin,
+                                      nixl_cost_t &method)
+{
+    ucp_ep_evaluate_perf_param_t params = {
+        .field_mask   = UCP_EP_PERF_PARAM_FIELD_MESSAGE_SIZE,
+        .message_size = size,
+    };
+
+    ucp_ep_evaluate_perf_attr_t cost_result = {
+        .field_mask = UCP_EP_PERF_ATTR_FIELD_ESTIMATED_TIME,
+    };
+
+    ucs_status_t status = ucp_ep_evaluate_perf(this->eph, &params, &cost_result);
+    if (status != UCS_OK) {
+        NIXL_ERROR << "ucp_ep_evaluate_perf failed: " << ucs_status_string(status);
+        return NIXL_ERR_BACKEND;
+    }
+
+    duration = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::duration<double>(cost_result.estimated_time));
+    method = nixl_cost_t::ANALYTICAL_BACKEND;
+    // Currently, we do not have a way to estimate the error margin
+    err_margin = std::chrono::microseconds(0);
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t nixlUcxEp::flushEp(nixlUcxReq &req)
 {
     ucp_request_param_t param;
