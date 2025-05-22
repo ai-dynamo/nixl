@@ -55,7 +55,7 @@ class Llama3_1(BaseModelArch):
     def get_kv_size_per_token(self, token_count: int=1) -> int:
         """
         Get the key-value cache size for the Llama 3.1 model (per token).
-        
+
         Returns:
             int: The size of the key-value cache, currently hardcoded to 1.
         """
@@ -64,14 +64,14 @@ class Llama3_1(BaseModelArch):
             self.query_head_dimension*2*get_precision_size(self.model_config.model.model_quant_mode)*token_count
         )
 
-
     def get_io_size(self, page_size: int = 1) -> int:
         """
         Calculates the number of IOPs for one token per GPU
-        
+
         Returns:
             int: The number of IOPs.
         """
+
         kv_size = self.get_kv_size_per_token()
         # we need the size of kv per token per attention layer 
         kv_size = int(kv_size / self.num_layers)
@@ -85,7 +85,7 @@ class Llama3_1(BaseModelArch):
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert the Llama 3.1 model configuration to a dictionary.
-        
+
         Returns:
             Dict[str, Any]: A dictionary containing all model configuration parameters.
         """

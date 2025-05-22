@@ -16,7 +16,6 @@
 import argparse
 import glob
 import os
-import math
 import json
 import csv
 import io

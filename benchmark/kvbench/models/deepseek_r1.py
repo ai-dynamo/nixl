@@ -77,13 +77,16 @@ class DeepSeekR1(BaseModelArch):
     def get_io_size(self, page_size: int = 1) -> int:
         """
         Calculates the size (bytes) of an IO request for the DeepSeek-R1 model.
-        
+ 
         Returns:
             int: The number of bytes in an IO request.
         """
+
         kv_size = self.get_kv_size_per_token()
+
         if kv_size <= 0:
             raise ValueError("Invalid KV Size: 0")
+
         # we need the size of kv per token per attention layer 
         kv_size = (kv_size / self.num_layers)
         io_size = kv_size / self.model_config.model.tp_size

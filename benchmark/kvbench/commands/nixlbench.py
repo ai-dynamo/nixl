@@ -15,7 +15,7 @@
 
 from models.models import BaseModelArch
 from models.model_config import ModelConfig
-import json
+
 class NIXLBench:
     """
     NIXL Benchmarking utility for KV cache performance testing.
