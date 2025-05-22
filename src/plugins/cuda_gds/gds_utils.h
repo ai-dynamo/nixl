@@ -48,7 +48,6 @@ class nixlGdsIOBatch {
         nixl_status_t submitBatch(int flags);
         nixl_status_t checkStatus();
         nixl_status_t cancelBatch();
-        void destroyBatch();
         void reset();
 
     private:
