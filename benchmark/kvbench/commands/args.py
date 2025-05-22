@@ -19,7 +19,7 @@ def add_common_args(subparser: argparse.ArgumentParser):
     subparser.add_argument("--model", type=str, help="Model name (e.g., 'llama3.1-8b')")
     subparser.add_argument("--model_config", type=str, help="Path to a single model config YAML file")
     subparser.add_argument("--model_configs", type=str, help="Path to multiple model config YAML files (supports glob patterns like 'configs/*.yaml')")
-
+    
 def add_cli_args(subparser: argparse.ArgumentParser):
     subparser.add_argument("--pp", type=int, help="Pipeline parallelism size")
     subparser.add_argument("--tp", type=int, help="Tensor parallelism size")
@@ -28,7 +28,6 @@ def add_cli_args(subparser: argparse.ArgumentParser):
     subparser.add_argument("--num_requests", type=int, help="Number of requests")
     subparser.add_argument("--page_size", type=int, help="Page size")
     subparser.add_argument("--access_pattern", type=str, help="Access pattern")
-    
 
 def add_plan_args(subparser: argparse.ArgumentParser):
     subparser.add_argument("--format", default="text", type=str, help="Output of the nixl command [text, json, csv] (default: text)")
@@ -58,7 +57,5 @@ def add_nixl_bench_args(subparser: argparse.ArgumentParser):
     subparser.add_argument("--device_list", type=str, help="Comma-separated device names (default: all)")
     subparser.add_argument("--runtime_type", type=str, help="Type of runtime to use [ETCD] (default: ETCD)")
     subparser.add_argument("--etcd-endpoints", type=str, help="ETCD server URL for coordination (default: http://localhost:2379)")
-    subparser.add_argument("--gds_enable_direct", type=bool, help="Enable direct I/O for GDS operations", default=False)
+    subparser.add_argument("--storage_enable_direct", type=bool, help="Enable direct I/O for storage operations (only used with POSIX backend)", default=False)
     subparser.add_argument("--gds_filepath", type=str, help="(File path for GDS operations")
-    
-
