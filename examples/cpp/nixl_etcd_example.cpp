@@ -317,6 +317,13 @@ int main() {
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
+    // 5. Fetch metadata with invalid label. This should not block forever and print error message.
+    std::cout << "\n5. Fetching metadata with invalid label...\n";
+    status = A2.fetchRemoteMD("INVALID_AGENT", &fetch_params);
+    assert(status == NIXL_SUCCESS);
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
     free(addr1);
     free(addr2);
 
