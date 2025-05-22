@@ -14,27 +14,18 @@
 # limitations under the License.
 
 [package]
-name = "nixl-sys"
-version = "0.2.1"
+name = "nixl-examples"
+version = "0.1.1"
 edition = "2021"
-description = "Low-level bindings to the nixl library"
-license = "Apache-2.0"
-homepage = "https://github.com/ai-dynamo/nixl"
-repository = "https://github.com/ai-dynamo/nixl.git"
-authors = ["NIXL Developers <nixl-developers@nvidia.com>"]
-readme = "README.md"
-links = "nixl"
-build = "build.rs"
 
 [dependencies]
-thiserror = { version = "2" }
-tracing = { version = "0.1" }
-serde = { version = "1", features = ["derive"] }
+nixl-sys = { path = "../../src/bindings/rust" }
+clap = { version = "4.5.38", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tokio = { version = "1.45", features = ["full"] }
+chrono = "0.4"
 
-libc = "0.2"
-
-[build-dependencies]
-bindgen = "0.71"
-cc = { version = "1.2.23", features = ["parallel"] }
-pkg-config = "0.3"
-os_info = "3.11"
+[[bin]]
+name = "single_process_example"
+path = "src/single_process_example.rs"

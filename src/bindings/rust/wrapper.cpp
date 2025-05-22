@@ -200,6 +200,80 @@ nixl_capi_invalidate_remote_md(nixl_capi_agent_t agent, const char* remote_agent
 }
 
 nixl_capi_status_t
+nixl_capi_send_local_md(nixl_capi_agent_t agent, nixl_capi_opt_args_t opt_args)
+{
+  if (!agent) {
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
+  }
+
+  try {
+    nixl_opt_args_t* args = opt_args ? &opt_args->args : nullptr;
+    nixl_status_t ret = agent->inner->sendLocalMD(args);
+    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+  }
+  catch (...) {
+    return NIXL_CAPI_ERROR_BACKEND;
+  }
+}
+
+nixl_capi_status_t
+nixl_capi_fetch_remote_md(nixl_capi_agent_t agent, const char* remote_name, nixl_capi_opt_args_t opt_args)
+{
+  if (!agent || !remote_name) {
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
+  }
+
+  try {
+    nixl_opt_args_t* args = opt_args ? &opt_args->args : nullptr;
+    nixl_status_t ret = agent->inner->fetchRemoteMD(std::string(remote_name), args);
+    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+  }
+  catch (...) {
+    return NIXL_CAPI_ERROR_BACKEND;
+  }
+}
+
+nixl_capi_status_t
+nixl_capi_invalidate_local_md(nixl_capi_agent_t agent, nixl_capi_opt_args_t opt_args)
+{
+  if (!agent) {
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
+  }
+
+  try {
+    nixl_opt_args_t* args = opt_args ? &opt_args->args : nullptr;
+    nixl_status_t ret = agent->inner->invalidateLocalMD(args);
+    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+  }
+  catch (...) {
+    return NIXL_CAPI_ERROR_BACKEND;
+  }
+}
+
+nixl_capi_status_t
+nixl_capi_check_remote_md(nixl_capi_agent_t agent, const char* remote_name, nixl_capi_xfer_dlist_t descs)
+{
+  if (!agent || !remote_name) {
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
+  }
+
+  try {
+    // If descs is null, create an empty descriptor list of DRAM type
+    if (!descs) {
+      nixl_xfer_dlist_t empty_list(DRAM_SEG, true);
+      nixl_status_t ret = agent->inner->checkRemoteMD(remote_name, empty_list);
+      return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    } else {
+      nixl_status_t ret = agent->inner->checkRemoteMD(remote_name, *descs->dlist);
+      return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    }
+  }
+  catch (...) {
+    return NIXL_CAPI_ERROR_BACKEND;
+  }
+}
+
+nixl_capi_status_t
 nixl_capi_get_available_plugins(nixl_capi_agent_t agent, nixl_capi_string_list_t* plugins)
 {
   if (!agent || !plugins) {
@@ -1148,6 +1222,29 @@ nixl_capi_get_notifs(nixl_capi_agent_t agent, nixl_capi_notif_map_t notif_map, n
     return NIXL_CAPI_SUCCESS;
   }
   catch (const std::exception& e) {
+    return NIXL_CAPI_ERROR_BACKEND;
+  }
+}
+
+nixl_capi_status_t
+nixl_capi_gen_notif(nixl_capi_agent_t agent, const char* remote_agent,
+                   const void* data, size_t len, nixl_capi_opt_args_t opt_args)
+{
+  if (!agent || !remote_agent) {
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
+  }
+
+  try {
+    // Create a blob from the data
+    nixl_blob_t msg;
+    msg.assign((const char*)data, len);
+
+    // Call the C++ function with the correct signature
+    nixl_status_t ret = agent->inner->genNotif(std::string(remote_agent), msg,
+                                              opt_args ? &opt_args->args : nullptr);
+    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+  }
+  catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
   }
 }
