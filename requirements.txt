@@ -20,3 +20,6 @@ mypy
 pre-commit
 toml
 tomli
+pyyaml
+pytests
+types-PyYAML

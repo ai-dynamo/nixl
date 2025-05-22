@@ -22,11 +22,11 @@ import yaml
 class Llama3_1(BaseModelArch):
     """
     Implementation of the Llama 3.1 model architecture.
-    
+
     This class represents the Llama 3.1 model and provides methods
     to access its parameters and configuration.
     """
-    
+
     def __init__(self, model: str, num_layers: int,
                 num_query_heads_with_mha: int,
                 query_head_dimension: int,
@@ -34,7 +34,7 @@ class Llama3_1(BaseModelArch):
                 num_model_params: int, model_config: ModelConfig = None):
         """
         Initialize a Llama 3.1 model architecture.
-        
+
         Args:
             model (str): The model identifier.
             num_layers (int): Number of transformer layers.
@@ -60,8 +60,8 @@ class Llama3_1(BaseModelArch):
             int: The size of the key-value cache, currently hardcoded to 1.
         """
         return int(
-            self.num_layers * (self.num_query_heads_with_mha/self.gqa_num_queries_in_group) * 
-            self.query_head_dimension*2*get_precision_size(self.model_config.model.model_quant_mode)*token_count
+            self.num_layers * (self.num_query_heads_with_mha / self.gqa_num_queries_in_group) *
+            self.query_head_dimension * 2 * get_precision_size(self.model_config.model.model_quant_mode) * token_count
         )
 
     def get_io_size(self, page_size: int = 1) -> int:
@@ -79,7 +79,7 @@ class Llama3_1(BaseModelArch):
             raise ValueError("Invalid KV Size: 0")
         io_size = int(kv_size / self.model_config.model.tp_size)
         if self.model_config.system.access_pattern == 'block':
-            io_size = io_size * (self.num_layers/self.model_config.model.pp_size)
+            io_size = io_size * (self.num_layers / self.model_config.model.pp_size)
         return int(io_size * page_size)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -102,7 +102,7 @@ class Llama3_1(BaseModelArch):
     def __str__(self) -> str:
         """
         Get a string representation of the Llama 3.1 model.
-        
+
         Returns:
             str: YAML formatted string of the model configuration.
         """

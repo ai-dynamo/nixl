@@ -23,11 +23,11 @@ import yaml
 class DeepSeekR1(BaseModelArch):
     """
     Implementation of the DeepSeek-R1 model architecture.
-    
+
     This class represents the DeepSeek-R1 model and provides methods
     to access its parameters and configuration.
     """
-    
+
     def __init__(self, model: str, num_layers: int,
                 num_query_heads: int,
                 query_head_dimension: int,
@@ -38,7 +38,7 @@ class DeepSeekR1(BaseModelArch):
                 model_config: ModelConfig = None):
         """
         Initialize a DeepSeek-R1 model architecture.
-        
+
         Args:
             model (str): The model identifier.
             num_layers (int): Number of transformer layers.
@@ -49,7 +49,7 @@ class DeepSeekR1(BaseModelArch):
             mla_latent_vector_dimension (int): Dimension of the latent vectors in multi-linear attention.
             num_model_params (int): Total number of model parameters.
         """
-        
+
         self.model = model
         self.model_config = model_config
         self.num_layers = num_layers
@@ -63,21 +63,21 @@ class DeepSeekR1(BaseModelArch):
     def get_kv_size_per_token(self, token_count: int = 1) -> int:
         """
         Get the key-value cache size for the DeepSeek-R1 model.
-        
+
         Returns:
             int: The size of the key-value cache, currently hardcoded to 1.
         """
 
         #         ( rope_mla_dimension + mla mla_latent_vector_dimension )
         # * quantization * num_layers
-        return int((self.rope_mla_dimension + self.mla_latent_vector_dimension) * 
-                get_precision_size(self.model_config.model.kvcache_quant_mode) * 
-                self.num_layers)*token_count
-    
+        return int((self.rope_mla_dimension + self.mla_latent_vector_dimension) *
+                get_precision_size(self.model_config.model.kvcache_quant_mode) *
+                self.num_layers) * token_count
+
     def get_io_size(self, page_size: int = 1) -> int:
         """
         Calculates the size (bytes) of an IO request for the DeepSeek-R1 model.
- 
+
         Returns:
             int: The number of bytes in an IO request.
         """
@@ -87,17 +87,18 @@ class DeepSeekR1(BaseModelArch):
         if kv_size <= 0:
             raise ValueError("Invalid KV Size: 0")
 
-        # we need the size of kv per token per attention layer 
+        # we need the size of kv per token per attention layer
         kv_size = (kv_size / self.num_layers)
         io_size = kv_size / self.model_config.model.tp_size
         if self.model_config.system.access_pattern == 'block':
             io_size = io_size * math.ceil(self.num_layers/self.model_config.model.pp_size)
+
         return int(io_size * page_size)
 
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert the DeepSeek-R1 model configuration to a dictionary.
-        
+
         Returns:
             Dict[str, Any]: A dictionary containing all model configuration parameters.
         """
@@ -115,7 +116,7 @@ class DeepSeekR1(BaseModelArch):
     def __str__(self) -> str:
         """
         Get a string representation of the DeepSeek-R1 model.
-        
+
         Returns:
             str: YAML formatted string of the model configuration.
         """
