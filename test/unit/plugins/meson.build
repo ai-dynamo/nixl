@@ -28,3 +28,10 @@ disable_mooncake_backend = get_option('disable_mooncake_backend')
 if libtransfer_engine.found() and not disable_mooncake_backend
     subdir('mooncake')
 endif
+
+hf3fs_lib_path = '/usr/lib/'
+hf3fs_lib_file = 'hf3fs_api_shared'
+hf3fs_lib_found = cc.find_library(hf3fs_lib_file, dirs: [hf3fs_lib_path], required: false)
+if hf3fs_lib_found.found()
+    subdir('hf3fs')
+endif
