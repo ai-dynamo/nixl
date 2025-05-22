@@ -295,7 +295,7 @@ int main(int argc, char *argv[])
 
     // Only proceed with resource allocation if backend creation succeeded
     try {
-        print_segment_title("PHASE 1: Allocating and initializing buffers");
+        print_segment_title(phase_title("Allocating and initializing buffers"));
 
         // Allocate resources
         std::vector<std::unique_ptr<void, PosixMemalignDeleter>> dram_addr;

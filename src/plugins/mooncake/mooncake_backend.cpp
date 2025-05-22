@@ -210,7 +210,7 @@ nixl_status_t nixlMooncakeEngine::prepXfer (const nixl_xfer_op_t &operation,
                                             const nixl_meta_dlist_t &remote,
                                             const std::string &remote_agent,
                                             nixlBackendReqH* &handle,
-                                            const nixl_opt_b_args_t* opt_args)
+                                            const nixl_opt_b_args_t* opt_args) const
 {
     const static size_t kMaxRequestCount = 1024;
     uint64_t batch_id = allocateBatchID(engine_, kMaxRequestCount);
@@ -227,15 +227,16 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
                                             const nixl_meta_dlist_t &remote,
                                             const std::string &remote_agent,
                                             nixlBackendReqH* &handle,
-                                            const nixl_opt_b_args_t* opt_args)
+                                            const nixl_opt_b_args_t* opt_args) const
 {
     auto priv = (nixlMooncakeBackendReqH *) handle;
     int segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!connected_agents_.count(remote_agent))
+        const auto agent = connected_agents_.find(remote_agent);
+        if (agent == connected_agents_.end())
             return NIXL_ERR_INVALID_PARAM;
-        segment_id = connected_agents_[remote_agent].segment_id;
+        segment_id = agent->second.segment_id;
     }
     if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
     size_t request_count = local.descCount();
@@ -255,7 +256,7 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
     return NIXL_IN_PROG;
 }
 
-nixl_status_t nixlMooncakeEngine::checkXfer (nixlBackendReqH* handle)
+nixl_status_t nixlMooncakeEngine::checkXfer (nixlBackendReqH* handle) const
 {
     auto priv = (nixlMooncakeBackendReqH *) handle;
     bool has_failed = false;
@@ -270,7 +271,7 @@ nixl_status_t nixlMooncakeEngine::checkXfer (nixlBackendReqH* handle)
     return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }
 
-nixl_status_t nixlMooncakeEngine::releaseReqH(nixlBackendReqH* handle)
+nixl_status_t nixlMooncakeEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     auto priv = (nixlMooncakeBackendReqH *) handle;
     freeBatchID(engine_, priv->batch_id);

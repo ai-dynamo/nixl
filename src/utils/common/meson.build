@@ -18,6 +18,7 @@ absl_log_dep = abseil_proj.get_variable('absl_log_dep')
 absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
 absl_status_dep = abseil_proj.get_variable('absl_status_dep')
 absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
+absl_synchronization_dep = abseil_proj.get_variable('absl_synchronization_dep')
 
 nixl_common_inc = include_directories('.')
 
@@ -26,6 +27,7 @@ nixl_common_deps = [
     absl_strings_dep,
     absl_status_dep,
     absl_strings_dep,
+    absl_synchronization_dep,
 ]
 
 # Define a shared library for common utilities

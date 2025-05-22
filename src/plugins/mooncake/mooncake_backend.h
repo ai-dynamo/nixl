@@ -77,24 +77,24 @@ class nixlMooncakeEngine : public nixlBackendEngine {
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr);
+                                const nixl_opt_b_args_t* opt_args=nullptr) const;
 
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,
                                 const nixl_meta_dlist_t &remote,
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr);
+                                const nixl_opt_b_args_t* opt_args=nullptr) const;
 
-        nixl_status_t checkXfer (nixlBackendReqH* handle);
-        nixl_status_t releaseReqH(nixlBackendReqH* handle);
+        nixl_status_t checkXfer (nixlBackendReqH* handle) const;
+        nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
 
     private:
         struct AgentInfo {
             int segment_id;
         };
 
-        std::mutex mutex_;
+        mutable std::mutex mutex_;
         transfer_engine_t engine_;
         std::string local_agent_name_;
         std::unordered_map<uint64_t, nixlMooncakeBackendMD *> mem_reg_info_;
