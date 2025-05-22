@@ -142,6 +142,10 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_WRITE", NIXL_WRITE)
         .export_values();
 
+    py::enum_<nixl_cost_t>(m, "nixl_cost_t")
+        .value("NIXL_COST_ANALYTICAL_BACKEND", nixl_cost_t::ANALYTICAL_BACKEND)
+        .export_values();
+
     py::enum_<nixl_status_t>(m, "nixl_status_t")
         .value("NIXL_IN_PROG", NIXL_IN_PROG)
         .value("NIXL_SUCCESS", NIXL_SUCCESS)

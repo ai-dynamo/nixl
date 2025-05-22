@@ -343,6 +343,22 @@ class nixl_agent:
         return handle
 
     """
+    @brief Estimate the cost of a transfer operation.
+           Times are in microseconds and the method indicates how the estimation was performed.
+
+    @param req_handle Handle to the transfer operation.
+    @return Tuple of duration, error margin, method
+    """
+
+    def estimate_xfer_cost(self, req_handle: nixl_xfer_handle) -> tuple[int, int, int]:
+        duration, err_margin, method = self.agent.estimateXferCost(req_handle)
+        if method == nixlBind.NIXL_COST_ANALYTICAL_BACKEND:
+            method = "ANALYTICAL_BACKEND"
+        else:
+            method = "UNKNOWN"
+        return duration, err_margin, method
+
+    """
     @brief Prepare a transfer operation using prep_xfer_dlist handles.
 
     @param operation Type of operation ("WRITE" or "READ").
