@@ -156,7 +156,7 @@ nixl_capi_status_t nixl_capi_create_xfer_req(
     nixl_capi_opt_args_t opt_args);
 
 typedef enum {
-  NIXL_CAPI_COST_ESTIMATE_HEURISTIC_EP = 0,
+  NIXL_CAPI_COST_ESTIMATE_ANALYTICAL_BACKEND = 0,
 } nixl_capi_cost_estimate_t;
 
 nixl_capi_status_t nixl_capi_estimate_xfer_cost(

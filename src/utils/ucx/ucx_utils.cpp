@@ -290,7 +290,7 @@ nixl_status_t nixlUcxEp::estimateCost(size_t size,
     }
 
     duration = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::duration<double>(cost_result.estimated_time));
-    source = NIXL_COST_ESTIMATE_HEURISTIC_EP;
+    source = NIXL_COST_ANALYTICAL_BACKEND;
     // Currently, we do not have a way to estimate the error margin
     err_margin = std::chrono::microseconds(0);
     return NIXL_SUCCESS;
