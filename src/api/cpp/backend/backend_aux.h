@@ -58,7 +58,7 @@ class nixlBackendInitParams {
 class nixlBackendReqH {
 public:
     nixlBackendReqH() { }
-    ~nixlBackendReqH() { }
+    virtual ~nixlBackendReqH() { }
 };
 
 // Pure virtual class to have a common pointer type for different backendMD.

@@ -13,25 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('ucx')
-subdir('ucx_mo')
-subdir('posix')
+nixl_hf3fs_app = executable('nixl_hf3fs_test', 'nixl_hf3fs_test.cpp',
+                          dependencies: [nixl_dep, nixl_infra],
+                          include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                          install: true)
 
-disable_gds_backend = get_option('disable_gds_backend')
-if not disable_gds_backend
-    subdir('cuda_gds')
-endif
-
-cc = meson.get_compiler('cpp')
-libtransfer_engine = cc.find_library('transfer_engine', required: false)
-disable_mooncake_backend = get_option('disable_mooncake_backend')
-if libtransfer_engine.found() and not disable_mooncake_backend
-    subdir('mooncake')
-endif
-
-hf3fs_lib_path = '/usr/lib/'
-hf3fs_lib_file = 'hf3fs_api_shared'
-hf3fs_lib_found = cc.find_library(hf3fs_lib_file, dirs: [hf3fs_lib_path], required: false)
-if hf3fs_lib_found.found()
-    subdir('hf3fs')
-endif
+nixl_hf3fs_mt_app = executable('nixl_hf3fs_mt_test', 'nixl_hf3fs_mt_test.cpp',
+                          dependencies: [nixl_dep, nixl_infra],
+                          include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                          install: true)

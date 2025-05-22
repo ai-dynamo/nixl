@@ -21,6 +21,7 @@
 #include "common/nixl_log.h"
 
 #include <optional>
+#include <limits>
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
@@ -424,14 +425,12 @@ void nixlUcxEngine::progressFunc()
     }
     pthrActiveCV.notify_one();
 
-    // Set POLLIN event on all worker fds so that the main loop would process them all on first iteration
-    for (size_t wid = 0; wid < pollFds.size() - 1; wid++)
-        pollFds[wid].revents = POLLIN;
-
+    // Set timeout event so that the main loop would progress all workers on first iteration
+    bool timeout = true;
     bool pthrStop = false;
     while (!pthrStop) {
         for (size_t wid = 0; wid < pollFds.size() - 1; wid++) {
-            if (!(pollFds[wid].revents & POLLIN))
+            if (!(pollFds[wid].revents & POLLIN) && !timeout)
                 continue;
             pollFds[wid].revents = 0;
 
@@ -449,11 +448,15 @@ void nixlUcxEngine::progressFunc()
             if (made_progress && !wid)
                 notifProgress();
         }
+        timeout = false;
 
-        while (poll(pollFds.data(), pollFds.size(), -1) <= 0)
-            NIXL_ERROR << "Call to poll() was interrupted, retrying. Error: " << strerror(errno);
+        int ret;
+        while ((ret = poll(pollFds.data(), pollFds.size(), pthrDelay.count())) < 0)
+            NIXL_TRACE << "Call to poll() was interrupted, retrying. Error: " << strerror(errno);
 
-        if (pollFds.back().revents & POLLIN) {
+        if (!ret) {
+            timeout = true;
+        } else if (pollFds.back().revents & POLLIN) {
             pollFds.back().revents = 0;
 
             char signal;
@@ -527,6 +530,12 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
             this->initErr = true;
             return;
         }
+
+        // This will ensure that the resulting delay is at least 1ms and fits into int in order for
+        // it to be compatible with poll()
+        pthrDelay = std::chrono::ceil<std::chrono::milliseconds>(
+            std::chrono::microseconds(init_params->pthrDelay < std::numeric_limits<int>::max() ?
+                                      init_params->pthrDelay : std::numeric_limits<int>::max()));
     } else {
         pthrOn = false;
     }
@@ -975,6 +984,62 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
     nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, getWorkerId());
 
     handle = (nixlBackendReqH*)intHandle;
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
+                                               const nixl_meta_dlist_t &local,
+                                               const nixl_meta_dlist_t &remote,
+                                               const std::string &remote_agent,
+                                               nixlBackendReqH* const &handle,
+                                               std::chrono::microseconds &duration,
+                                               std::chrono::microseconds &err_margin,
+                                               nixl_cost_t &method,
+                                               const nixl_opt_args_t* opt_args) const
+{
+    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    size_t workerId = intHandle->getWorkerId();
+
+    if (local.descCount() != remote.descCount()) {
+        NIXL_ERROR << "Local (" << local.descCount() << ") and remote (" << remote.descCount()
+                   << ") descriptor lists differ in size for cost estimation";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    duration = std::chrono::microseconds(0);
+    err_margin = std::chrono::microseconds(0);
+
+    if (local.descCount() == 0) {
+        // Nothing to do, use a default value
+        method = nixl_cost_t::ANALYTICAL_BACKEND;
+        return NIXL_SUCCESS;
+    }
+
+    for (int i = 0; i < local.descCount(); i++) {
+        size_t lsize = local[i].len;
+        size_t rsize = remote[i].len;
+
+        nixlUcxPrivateMetadata *lmd = static_cast<nixlUcxPrivateMetadata*>(local[i].metadataP);
+        nixlUcxPublicMetadata *rmd = static_cast<nixlUcxPublicMetadata*>(remote[i].metadataP);
+
+        NIXL_ASSERT(lmd && rmd) << "No metadata found in descriptor lists at index " << i << " during cost estimation";
+        NIXL_ASSERT(lsize == rsize) << "Local size (" << lsize << ") != Remote size (" << rsize
+                                    << ") at index " << i << " during cost estimation";
+
+        std::chrono::microseconds msg_duration;
+        std::chrono::microseconds msg_err_margin;
+        nixl_cost_t msg_method;
+        nixl_status_t ret = rmd->conn->getEp(workerId)->estimateCost(lsize, msg_duration, msg_err_margin, msg_method);
+        if (ret != NIXL_SUCCESS) {
+            NIXL_ERROR << "Worker failed to estimate cost for segment " << i << " status: " << ret;
+            return ret;
+        }
+
+        duration += msg_duration;
+        err_margin += msg_err_margin;
+        method = msg_method;
+    }
+
     return NIXL_SUCCESS;
 }
 

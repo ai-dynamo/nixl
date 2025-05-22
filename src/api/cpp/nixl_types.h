@@ -135,6 +135,15 @@ extern const std::string default_metadata_label;
  */
 extern const std::string default_partial_metadata_label;
 
+
+/**
+ * @enum nixl_cost_t
+ * @brief An enumeration of cost types for transfer cost estimation.
+ */
+enum class nixl_cost_t {
+    ANALYTICAL_BACKEND = 0, // Analytical backend cost estimate
+};
+
 /**
  * @class nixlAgentOptionalArgs
  * @brief A class for optional argument that can be provided to relevant agent methods.

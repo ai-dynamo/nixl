@@ -25,6 +25,7 @@
 #include <memory>
 #include <condition_variable>
 #include <atomic>
+#include <chrono>
 #include <poll.h>
 
 #include "nixl.h"
@@ -116,6 +117,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         bool pthrActive;
         bool pthrOn;
         std::thread pthr;
+        std::chrono::milliseconds pthrDelay;
         int pthrControlPipe[2];
         std::vector<pollfd> pollFds;
 
@@ -224,6 +226,16 @@ class nixlUcxEngine : public nixlBackendEngine {
                                 const std::string &remote_agent,
                                 nixlBackendReqH* &handle,
                                 const nixl_opt_b_args_t* opt_args=nullptr) const override;
+
+        nixl_status_t estimateXferCost(const nixl_xfer_op_t &operation,
+                                       const nixl_meta_dlist_t &local,
+                                       const nixl_meta_dlist_t &remote,
+                                       const std::string &remote_agent,
+                                       nixlBackendReqH* const &handle,
+                                       std::chrono::microseconds &duration,
+                                       std::chrono::microseconds &err_margin,
+                                       nixl_cost_t &method,
+                                       const nixl_opt_args_t* opt_args=nullptr) const override;
 
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                 const nixl_meta_dlist_t &local,
