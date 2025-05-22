@@ -41,28 +41,27 @@ mod bindings {
 
 // Re-export types from the included bindings
 use bindings::{
-    nixl_capi_check_remote_md, nixl_capi_create_agent, nixl_capi_create_backend,
-    nixl_capi_create_notif_map, nixl_capi_create_opt_args, nixl_capi_create_reg_dlist,
-    nixl_capi_create_xfer_dlist, nixl_capi_deregister_mem, nixl_capi_destroy_agent,
-    nixl_capi_destroy_backend, nixl_capi_destroy_mem_list, nixl_capi_destroy_notif_map,
-    nixl_capi_destroy_opt_args, nixl_capi_destroy_params, nixl_capi_destroy_reg_dlist,
-    nixl_capi_destroy_string_list, nixl_capi_destroy_xfer_dlist, nixl_capi_fetch_remote_md,
-    nixl_capi_gen_notif, nixl_capi_get_available_plugins, nixl_capi_get_backend_params,
-    nixl_capi_get_local_md, nixl_capi_get_notifs, nixl_capi_get_plugin_params,
-    nixl_capi_get_xfer_status, nixl_capi_invalidate_remote_md, nixl_capi_load_remote_md,
-    nixl_capi_mem_list_get, nixl_capi_mem_list_is_empty, nixl_capi_mem_list_size,
-    nixl_capi_mem_type_t, nixl_capi_mem_type_to_string, nixl_capi_notif_map_get_agent_at,
-    nixl_capi_notif_map_get_notif, nixl_capi_notif_map_get_notifs_size, nixl_capi_notif_map_size,
-    nixl_capi_opt_args_add_backend, nixl_capi_opt_args_get_has_notif,
-    nixl_capi_opt_args_get_notif_msg, nixl_capi_opt_args_get_skip_desc_merge,
-    nixl_capi_opt_args_set_has_notif, nixl_capi_opt_args_set_notif_msg,
-    nixl_capi_opt_args_set_skip_desc_merge, nixl_capi_params_create_iterator,
-    nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty, nixl_capi_params_iterator_next,
-    nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc, nixl_capi_reg_dlist_clear,
-    nixl_capi_reg_dlist_has_overlaps, nixl_capi_reg_dlist_len, nixl_capi_reg_dlist_resize,
-    nixl_capi_register_mem, nixl_capi_string_list_get, nixl_capi_string_list_size,
-    nixl_capi_xfer_dlist_add_desc, nixl_capi_xfer_dlist_clear, nixl_capi_xfer_dlist_has_overlaps,
-    nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize, nixl_capi_estimate_xfer_cost,
+    nixl_capi_create_agent, nixl_capi_create_backend, nixl_capi_create_notif_map,
+    nixl_capi_create_opt_args, nixl_capi_create_reg_dlist, nixl_capi_create_xfer_dlist,
+    nixl_capi_deregister_mem, nixl_capi_destroy_agent, nixl_capi_destroy_backend,
+    nixl_capi_destroy_mem_list, nixl_capi_destroy_notif_map, nixl_capi_destroy_opt_args,
+    nixl_capi_destroy_params, nixl_capi_destroy_reg_dlist, nixl_capi_destroy_string_list,
+    nixl_capi_destroy_xfer_dlist, nixl_capi_estimate_xfer_cost, nixl_capi_gen_notif,
+    nixl_capi_get_available_plugins, nixl_capi_get_backend_params, nixl_capi_get_local_md,
+    nixl_capi_get_notifs, nixl_capi_get_plugin_params, nixl_capi_get_xfer_status,
+    nixl_capi_invalidate_remote_md, nixl_capi_load_remote_md, nixl_capi_mem_list_get,
+    nixl_capi_mem_list_is_empty, nixl_capi_mem_list_size, nixl_capi_mem_type_t,
+    nixl_capi_mem_type_to_string, nixl_capi_notif_map_get_agent_at, nixl_capi_notif_map_get_notif,
+    nixl_capi_notif_map_get_notifs_size, nixl_capi_notif_map_size, nixl_capi_opt_args_add_backend,
+    nixl_capi_opt_args_get_has_notif, nixl_capi_opt_args_get_notif_msg,
+    nixl_capi_opt_args_get_skip_desc_merge, nixl_capi_opt_args_set_has_notif,
+    nixl_capi_opt_args_set_notif_msg, nixl_capi_opt_args_set_skip_desc_merge,
+    nixl_capi_params_create_iterator, nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty,
+    nixl_capi_params_iterator_next, nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc,
+    nixl_capi_reg_dlist_clear, nixl_capi_reg_dlist_has_overlaps, nixl_capi_reg_dlist_len,
+    nixl_capi_reg_dlist_resize, nixl_capi_register_mem, nixl_capi_string_list_get,
+    nixl_capi_string_list_size, nixl_capi_xfer_dlist_add_desc, nixl_capi_xfer_dlist_clear,
+    nixl_capi_xfer_dlist_has_overlaps, nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize,
 };
 
 // Re-export status codes
@@ -815,7 +814,7 @@ impl Agent {
 
         let c_remote_name = CString::new(remote_agent)?;
 
-        let mut opt_args = if backend.is_some() {
+        let opt_args = if backend.is_some() {
             let mut args = OptArgs::new()?;
             if let Some(b) = backend {
                 args.add_backend(b)?;
@@ -973,6 +972,44 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok(false), // Transfer completed
             NIXL_CAPI_IN_PROG => Ok(true),  // Transfer in progress
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Estimates the cost of a transfer request
+    ///
+    /// # Arguments
+    /// * `req` - Transfer request handle
+    /// * `opt_args` - Optional arguments for the estimation
+    ///
+    /// # Returns
+    /// A tuple containing (duration in microseconds, error margin in microseconds, cost method)
+    ///
+    /// # Errors
+    /// Returns a NixlError if the operation fails
+    pub fn estimate_xfer_cost(
+        &self,
+        req: &XferRequest,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<(i64, i64, CostMethod), NixlError> {
+        let mut duration_us: i64 = 0;
+        let mut err_margin_us: i64 = 0;
+        let mut method: u32 = 0;
+
+        let status = unsafe {
+            nixl_capi_estimate_xfer_cost(
+                self.inner.write().unwrap().handle.as_ptr(),
+                req.inner.as_ptr(),
+                opt_args.map_or(ptr::null_mut(), |args| args.inner.as_ptr()),
+                &mut duration_us,
+                &mut err_margin_us,
+                &mut method as *mut u32 as *mut bindings::nixl_capi_cost_t,
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok((duration_us, err_margin_us, CostMethod::from(method))),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }
@@ -1761,6 +1798,23 @@ impl NixlRegistration for SystemStorage {
 pub enum XferOp {
     Read = 0,
     Write = 1,
+}
+
+/// Methods used for estimating transfer costs
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum CostMethod {
+    AnalyticalBackend = 0,
+    Unknown = 1,
+}
+
+impl From<u32> for CostMethod {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => CostMethod::AnalyticalBackend,
+            _ => CostMethod::Unknown,
+        }
+    }
 }
 
 /// A handle to a transfer request
