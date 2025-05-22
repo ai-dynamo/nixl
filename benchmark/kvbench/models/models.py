@@ -16,7 +16,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
-import yaml
+import yaml  # type: ignore
 from models.model_config import ModelConfig
 
 
@@ -28,7 +28,7 @@ class BaseModelArch(ABC):
     the required abstract methods.
     """
 
-    model = ''
+    model = ""
 
     @abstractmethod
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -109,16 +109,18 @@ class BaseModelArch(ABC):
             model_name = filtered_dict.get("model")
 
             if model_name is None:
-                raise ValueError(f"Model name is None")
+                raise ValueError("Model name is None")
 
             modelc: BaseModelArch
 
             # Initialize the model
             if "llama3.1" in model_name.lower():
                 from models.llama3_1 import Llama3_1
+
                 modelc = Llama3_1(**filtered_dict)
             elif "deepseek_r1" in model_name.lower():
                 from models.deepseek_r1 import DeepSeekR1
+
                 modelc = DeepSeekR1(**filtered_dict)
             else:
                 raise ValueError(f"Model name {model_name} not supported")

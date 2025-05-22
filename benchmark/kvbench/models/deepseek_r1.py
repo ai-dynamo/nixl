@@ -16,7 +16,7 @@
 import math
 from typing import Any, Dict
 
-import yaml
+import yaml  # type: ignore
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
 from models.utils import get_precision_size
@@ -80,7 +80,9 @@ class DeepSeekR1(BaseModelArch):
             int(
                 (self.rope_mla_dimension + self.mla_latent_vector_dimension)
                 * get_precision_size(self.model_config.model.kvcache_quant_mode)
-                * self.num_layers) * token_count
+                * self.num_layers
+            )
+            * token_count
         )
 
     def get_io_size(self, page_size: int = 1) -> int:
