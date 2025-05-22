@@ -97,7 +97,7 @@ public:
     nixl_status_t estimateCost(size_t size,
                                std::chrono::microseconds &duration,
                                std::chrono::microseconds &err_margin,
-                               nixl_cost_estimate_t &source);
+                               nixl_cost_t &method);
     nixl_status_t flushEp(nixlUcxReq &req);
 };
 

@@ -232,7 +232,7 @@ class nixlUcxEngine : public nixlBackendEngine {
                                        nixlBackendReqH* const &handle,
                                        std::chrono::microseconds &duration,
                                        std::chrono::microseconds &err_margin,
-                                       nixl_cost_estimate_t &source,
+                                       nixl_cost_t &method,
                                        const nixl_opt_args_t* opt_args=nullptr) const override;
 
         nixl_status_t postXfer (const nixl_xfer_op_t &operation,

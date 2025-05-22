@@ -238,7 +238,7 @@ class nixlAgent {
          * @param req_hndl     Transfer request handle
          * @param duration     [out] Estimated duration of the transfer
          * @param err_margin   [out] Estimated error margin of the transfer
-         * @param source       [out] Source of the cost estimate
+         * @param method       [out] Method to compute the cost estimate
          * @param extra_params Optional extra parameters
          * @return nixl_status_t Error code if call was not successful
          */
@@ -246,7 +246,7 @@ class nixlAgent {
         estimateXferCost(const nixlXferReqH* req_hndl,
                          std::chrono::microseconds &duration,
                          std::chrono::microseconds &err_margin,
-                         nixl_cost_estimate_t &source,
+                         nixl_cost_t &method,
                          const nixl_opt_args_t* extra_params = nullptr) const;
 
         /**

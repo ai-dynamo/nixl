@@ -123,7 +123,7 @@ class nixlBackendEngine {
                                                nixlBackendReqH* const &handle,
                                                std::chrono::microseconds &duration,
                                                std::chrono::microseconds &err_margin,
-                                               nixl_cost_estimate_t &source,
+                                               nixl_cost_t &method,
                                                const nixl_opt_args_t* extra_params = nullptr) const
         {
             return NIXL_ERR_NOT_SUPPORTED;

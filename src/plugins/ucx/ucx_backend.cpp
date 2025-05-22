@@ -985,7 +985,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                                                nixlBackendReqH* const &handle,
                                                std::chrono::microseconds &duration,
                                                std::chrono::microseconds &err_margin,
-                                               nixl_cost_estimate_t &source,
+                                               nixl_cost_t &method,
                                                const nixl_opt_args_t* opt_args) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
@@ -1002,7 +1002,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
 
     if (local.descCount() == 0) {
         // Nothing to do, use a default value
-        source = NIXL_COST_ANALYTICAL_BACKEND;
+        method = NIXL_COST_ANALYTICAL_BACKEND;
         return NIXL_SUCCESS;
     }
 
@@ -1019,8 +1019,8 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
 
         std::chrono::microseconds msg_duration;
         std::chrono::microseconds msg_err_margin;
-        nixl_cost_estimate_t msg_source;
-        nixl_status_t ret = rmd->conn->getEp(workerId)->estimateCost(lsize, msg_duration, msg_err_margin, msg_source);
+        nixl_cost_t msg_method;
+        nixl_status_t ret = rmd->conn->getEp(workerId)->estimateCost(lsize, msg_duration, msg_err_margin, msg_method);
         if (ret != NIXL_SUCCESS) {
             NIXL_ERROR << "Worker failed to estimate cost for segment " << i << " status: " << ret;
             return ret;
@@ -1028,7 +1028,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
 
         duration += msg_duration;
         err_margin += msg_err_margin;
-        source = msg_source;
+        method = msg_method;
     }
 
     return NIXL_SUCCESS;

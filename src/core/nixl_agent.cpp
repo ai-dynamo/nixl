@@ -766,7 +766,7 @@ nixl_status_t
 nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
                             std::chrono::microseconds &duration,
                             std::chrono::microseconds &err_margin,
-                            nixl_cost_estimate_t &source,
+                            nixl_cost_t &method,
                             const nixl_opt_args_t* extra_params) const
 {
     NIXL_SHARED_LOCK_GUARD(data->lock);
@@ -791,7 +791,7 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
                                               req_hndl->backendHandle,
                                               duration,
                                               err_margin,
-                                              source,
+                                              method,
                                               extra_params);
 }
 
