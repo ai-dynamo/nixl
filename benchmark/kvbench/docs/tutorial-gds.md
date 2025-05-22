@@ -34,7 +34,9 @@ system:
 
 ## Profiling
 
-**Important**: When using KVBench/NIXLBench, you should perform a WRITE operation before a READ. This is because the files need to be created and populated with data before you can read from them.
+> [!NOTE]
+> When using KVBench/NIXLBench, you should perform a WRITE operation before a READ. 
+> This is because the files need to be created and populated with data before you can read from them.
 
 ### Step 1: Perform a WRITE operation first (GPU to Storage)
 
