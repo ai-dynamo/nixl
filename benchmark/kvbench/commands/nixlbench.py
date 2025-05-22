@@ -33,7 +33,7 @@ class NIXLBench:
                  device_list="all",
                  enable_pt=False,
                  etcd_endpoints="http://localhost:2379",
-                 gds_enable_direct=False,
+                 storage_enable_direct=False,
                  gds_filepath="",
                  initiator_seg_type="DRAM",
                  max_batch_size=None, 
@@ -63,7 +63,7 @@ class NIXLBench:
             device_list (str, optional): List of devices to use. Defaults to "all".
             enable_pt (bool, optional): Whether to enable peer-to-peer transfer. Defaults to False.
             etcd_endpoints (str, optional): ETCD endpoints for runtime. Defaults to "http://localhost:2379".
-            gds_enable_direct (bool, optional): Whether to enable GDS direct access. Defaults to False.
+            storage_enable_direct (bool, optional): Whether to enable direct I/O for storage operations. Defaults to False.
             gds_filepath (str, optional): Path for GDS file. Defaults to "".
             initiator_seg_type (str, optional): Type of initiator segment. Defaults to "DRAM".
             max_batch_size (int, optional): Maximum batch size for testing. Defaults to model_config value.
@@ -90,7 +90,7 @@ class NIXLBench:
         self.device_list = device_list
         self.enable_pt = enable_pt
         self.etcd_endpoints = etcd_endpoints
-        self.gds_enable_direct = gds_enable_direct
+        self.storage_enable_direct = storage_enable_direct
         self.gds_filepath = gds_filepath
         self.initiator_seg_type = initiator_seg_type
         self.max_batch_size = max_batch_size
@@ -178,7 +178,7 @@ class NIXLBench:
             "device_list": self.device_list,
             "enable_pt": self.enable_pt,
             "etcd_endpoints": self.etcd_endpoints,
-            "gds_enable_direct": self.gds_enable_direct,
+            "storage_enable_direct": self.storage_enable_direct,
             "gds_filepath": self.gds_filepath,
             "initiator_seg_type": self.initiator_seg_type,
             "max_batch_size": self.max_batch_size,
@@ -216,7 +216,7 @@ class NIXLBench:
             "device_list": "all",
             "enable_pt": False,
             "etcd_endpoints": "http://localhost:2379",
-            "gds_enable_direct": False,
+            "storage_enable_direct": False,
             "gds_filepath": "",
             "initiator_seg_type": "DRAM",
             "max_batch_size": 1, # ios per gpu 
@@ -255,6 +255,7 @@ class NIXLBench:
                 return False
             if not include_defaults and name in defaults and value == defaults[name]:
                 return False
+
             return True
 
         

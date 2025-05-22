@@ -135,7 +135,7 @@ These arguments are used by both `plan` and `profile` commands:
 | `--device_list` | Comma-separated device names (default: all) |
 | `--runtime_type` | Type of runtime to use [ETCD] (default: ETCD) |
 | `--etcd-endpoints` | ETCD server URL for coordination (default: http://localhost:2379) |
-| `--gds_enable_direct` | Enable direct I/O for GDS operations |
+| `--storage_enable_direct` | Enable direct I/O for GDS operations |
 | `--gds_filepath` | File path for GDS operations |
 
 ## Command Descriptions
