@@ -529,7 +529,7 @@ void nixlUcxEngine::progressThreadRestart()
 nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 : nixlBackendEngine (init_params) {
     unsigned long numWorkers;
-    nixl_ucx_mt_t mode = NIXL_UCX_MT_WORKER;
+    nixl_ucx_mt_t mode = NIXL_UCX_MT_MAX;
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
 
@@ -565,8 +565,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         pthrDelay = std::chrono::ceil<std::chrono::milliseconds>(
             std::chrono::microseconds(init_params->pthrDelay < std::numeric_limits<int>::max() ?
                                       init_params->pthrDelay : std::numeric_limits<int>::max()));
-        if (mode != NIXL_UCX_MT_WORKER) {
-            NIXL_ERROR << "Non NIXL_UCX_MT_WORKER mode does not support progress thread";
+        if (mode == NIXL_UCX_MT_SINGLE || mode == NIXL_UCX_MT_CTX) {
+            NIXL_ERROR << "Non-NIXL_UCX_MT_WORKER mode does not support progress thread";
             this->initErr = true;
             return;
         }
@@ -593,7 +593,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
                                           _internalRequestInit,
                                           _internalRequestFini,
                                           pthrOn,
-                                          err_handling_mode, numWorkers, init_params->syncMode);
+                                          err_handling_mode, numWorkers,
+                                          mode, init_params->syncMode);
 
     for (unsigned int i = 0; i < numWorkers; i++)
         uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
@@ -607,7 +608,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         return;
     }
 
-    threadWorkerMap = std::make_unique<nixlUcxThreadToWorker>(numWorkers, mode);
+    threadWorkerMap = std::make_unique<nixlUcxThreadToWorker>(numWorkers, uc->getMtType());
 
     if (pthrOn) {
         for (auto &uw: uws) {

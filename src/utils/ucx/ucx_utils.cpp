@@ -341,6 +341,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                bool prog_thread,
                                ucp_err_handling_mode_t __err_handling_mode,
                                unsigned long num_workers,
+                               nixl_ucx_mt_t threading_mode,
                                nixl_thread_sync_t sync_mode)
 {
     ucp_params_t ucp_params;
