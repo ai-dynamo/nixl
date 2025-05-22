@@ -258,5 +258,6 @@ nixlbench \
 
 ## Developer Guides
 For more detailed information, please refer to the following documentation:
+- [Tutorial with GDS](docs/tutorial-gds.md) - Quick tutorial for running NIXLBench with GDS
 - [Creating a Model Configuration](docs/creating-a-model-config.md) - Guide for creating model configuration files
 - [Adding a New Model Architecture](docs/adding-a-new-model-architecture.md) - Instructions for extending KVBench with new model architectures
