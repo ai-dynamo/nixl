@@ -9,3 +9,9 @@ subprojects/packagecache/
 
 # AWS EFA test files
 contrib/aws-efa/aws_vars.json
+
+# TaskFlow
+subprojects/taskflow-*
+
+# CuFile Logs
+cufile.log
