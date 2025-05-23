@@ -453,5 +453,35 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors)
     ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 }
 
+TEST_F(MetadataExchangeTestFixture, LocalNonLocalMDExchange)
+{
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    nixlBackendH *backend;
+    nixl_status_t status;
+    std::string backend_name;
+    for (const auto& name : std::set<std::string>{"GDS", "POSIX"}) {
+        status = src.agent->createBackend(name, {}, backend);
+        if (status == NIXL_SUCCESS) {
+            backend_name = name;
+            break;
+        }
+    }
+
+    if (status != NIXL_SUCCESS) {
+        GTEST_SKIP() << "No local-only backend found";
+    }
+
+    ASSERT_EQ(NIXL_SUCCESS, dst.agent->createBackend(backend_name, {}, backend));
+
+    initAgentsDefault();
+
+    std::string meta, remote_name;
+    ASSERT_EQ(NIXL_SUCCESS, src.agent->getLocalMD(meta));
+    ASSERT_EQ(NIXL_SUCCESS, dst.agent->loadRemoteMD(meta, remote_name));
+    ASSERT_EQ("agent_0", remote_name);
+}
+
 } // namespace metadata_exchange
 } // namespace gtest

@@ -267,21 +267,27 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
 namespace {
 nixl_status_t serializeSections(nixlSerDes* serializer,
                                 const section_map_t &sections) {
-    nixl_status_t ret;
+  size_t seg_count =
+      std::count_if(sections.begin(), sections.end(), [](const auto &pair) {
+        section_key_t sec_key = pair.first;
+        return sec_key.second->supportsRemote();
+      });
 
-    size_t seg_count = sections.size();
-    ret = serializer->addBuf("nixlSecElms", &seg_count, sizeof(seg_count));
-    if (ret) return ret;
+  auto ret = serializer->addBuf("nixlSecElms", &seg_count, sizeof(seg_count));
+  if (ret)
+    return ret;
 
-    for (const auto &[sec_key, dlist] : sections) {
-        nixlBackendEngine* eng = sec_key.second;
-        if (!eng->supportsRemote())
-            continue;
+  for (const auto &[sec_key, dlist] : sections) {
+    nixlBackendEngine *eng = sec_key.second;
+    if (!eng->supportsRemote())
+      continue;
 
-        ret = serializer->addStr("bknd", eng->getType());
-        if (ret) return ret;
-        ret = dlist->serialize(serializer);
-        if (ret) return ret;
+    ret = serializer->addStr("bknd", eng->getType());
+    if (ret)
+      return ret;
+    ret = dlist->serialize(serializer);
+    if (ret)
+      return ret;
     }
 
     return NIXL_SUCCESS;
