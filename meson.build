@@ -124,7 +124,7 @@ if get_option('buildtype') == 'debug'
 endif
 
 nixl_inc_dirs = include_directories('src/api/cpp', 'src/infra', 'src/core')
-utils_inc_dirs = include_directories('src/utils')
+utils_inc_dirs = include_directories('src/utils', 'src/utils/file')
 
 subdir('src')
 

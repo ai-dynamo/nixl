@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 #include <pybind11/pybind11.h>
+#include <cassert>
+#include <file_utils.h>
 
 namespace py = pybind11;
 
@@ -39,9 +41,61 @@ void verify_transfer(uintptr_t addr1, uintptr_t addr2, int size) {
     for(int i = 0; i<size; i++) assert(((uint8_t*) addr1)[i] == ((uint8_t*) addr2)[i]);
 }
 
+// File utils wrapper functions
+int open_file(const std::string& path, nixlFileMode mode) {
+    int fd;
+    nixl_status_t status = nixlFileUtils::openFile(path, mode, fd);
+    if (status != NIXL_SUCCESS) {
+        throw py::value_error("Failed to open file: " + path);
+    }
+    return fd;
+}
+
+void close_file(int fd) {
+    nixl_status_t status = nixlFileUtils::closeFile(fd);
+    if (status != NIXL_SUCCESS) {
+        throw py::value_error("Failed to close file descriptor: " + std::to_string(fd));
+    }
+}
+
+void unlink_file(const std::string& path) {
+    nixl_status_t status = nixlFileUtils::unlinkFile(path);
+    if (status != NIXL_SUCCESS) {
+        throw py::value_error("Failed to unlink file: " + path);
+    }
+}
+
+bool file_exists(const std::string& path) {
+    nixl_status_t status = nixlFileUtils::fileExists(path);
+    return status == NIXL_SUCCESS;
+}
+
 PYBIND11_MODULE(_utils, m) {
     m.def("malloc_passthru", &malloc_passthru);
     m.def("free_passthru", &free_passthru);
     m.def("ba_buf", &ba_buf);
     m.def("verify_transfer", &verify_transfer);
+
+    py::enum_<nixlFileMode>(m, "FileMode")
+        .value("CREATE", nixlFileMode::CREATE)
+        .value("READ_ONLY", nixlFileMode::READ_ONLY)
+        .value("WRITE_ONLY", nixlFileMode::WRITE_ONLY)
+        .value("READ_WRITE", nixlFileMode::READ_WRITE)
+        .export_values();
+
+    py::enum_<nixlFileOperation>(m, "FileOperation")
+        .value("OPEN", nixlFileOperation::OPEN)
+        .value("CLOSE", nixlFileOperation::CLOSE)
+        .value("UNLINK", nixlFileOperation::UNLINK)
+        .value("STAT", nixlFileOperation::STAT)
+        .export_values();
+
+    m.def("open_file", &open_file, "Open a file with specified mode",
+          py::arg("path"), py::arg("mode"));
+    m.def("close_file", &close_file, "Close a file descriptor",
+          py::arg("fd"));
+    m.def("unlink_file", &unlink_file, "Delete a file",
+          py::arg("path"));
+    m.def("file_exists", &file_exists, "Check if a file exists",
+          py::arg("path"));
 }
