@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 Serapheim Dimitropoulos, WekaIO Ltd.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +27,11 @@ endif
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend
     subdir('cuda_gds')
+endif
+
+disable_gds_mt_backend = get_option('disable_gds_mt_backend')
+if not disable_gds_mt_backend
+    subdir('gds_mt')
 endif
 
 cc = meson.get_compiler('cpp')
