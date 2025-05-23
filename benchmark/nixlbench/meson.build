@@ -40,7 +40,14 @@ nvshmem_lib_path = get_option('nvshmem_lib_path')
 
 # Find required libraries
 # NIXL
-nixl_lib_path = nixl_path + '/lib/x86_64-linux-gnu'
+host_cpu_family = host_machine.cpu_family()
+host_system = host_machine.system().to_lower()
+
+if host_system != 'linux' or host_cpu_family not in ['x86_64', 'aarch64']
+    error('This build only supports Linux on x86_64 or aarch64 architectures.')
+endif
+
+nixl_lib_path = nixl_path + '/lib/' + host_cpu_family + '-linux-gnu'
 nixl_lib = cpp.find_library('nixl', dirs: [nixl_lib_path])
 nixl_build = cpp.find_library('nixl_build', dirs: [nixl_lib_path])
 nixl_serdes = cpp.find_library('serdes', dirs: [nixl_lib_path])
