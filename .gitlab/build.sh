@@ -53,6 +53,7 @@ apt-get -qq install -y curl \
                              libgrpc-dev \
                              libgrpc++-dev \
                              libprotobuf-dev \
+                             libcpprest-dev \
                              libaio-dev \
                              meson \
                              ninja-build \
@@ -86,6 +87,17 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
         make -j && \
         make -j install-strip && \
         ldconfig \
+)
+
+( \
+  cd /tmp && \
+  git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+  cd etcd-cpp-apiv3 && \
+  mkdir build && cd build && \
+  cmake .. && \
+  make -j$(nproc) && \
+  make install && \
+  ldconfig \
 )
 
 export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64

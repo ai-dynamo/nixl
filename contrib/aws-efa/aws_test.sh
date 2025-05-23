@@ -30,7 +30,7 @@ usage() {
     echo "  GITHUB_REPOSITORY - GitHub repository (e.g., \"ai-dynamo/nixl\")"
     echo ""
     echo "Optional environment variables:"
-    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/pytorch:25.02-py3)"
+    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda-dl-base:25.03-cuda12.8-devel-ubuntu24.04)"
     exit 1
 }
 
@@ -46,7 +46,7 @@ if [ -z "$GITHUB_REF" ] || [ -z "$GITHUB_SERVER_URL" ] || [ -z "$GITHUB_REPOSITO
 fi
 
 test_cmd="$1"
-export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/pytorch:25.02-py3"}
+export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda-dl-base:25.03-cuda12.8-devel-ubuntu24.04"}
 
 # Set Git checkout command based on GITHUB_REF
 case "$GITHUB_REF" in
