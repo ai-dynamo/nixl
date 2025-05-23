@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025 Serapheim Dimitropoulos, WekaIO Ltd.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -388,6 +389,13 @@ void nixlPluginManager::registerBuiltinPlugins() {
         registerStaticPlugin("GDS", createStaticGdsPlugin);
 #endif // DISABLE_GDS_BACKEND
 #endif // STATIC_PLUGIN_GDS
+
+#ifdef STATIC_PLUGIN_GDS_MT
+#ifndef DISABLE_GDS_MT_BACKEND
+        extern nixlBackendPlugin* createStaticGdsMtPlugin();
+        registerStaticPlugin("GDS_MT", createStaticGdsMtPlugin);
+#endif // DISABLE_GDS_MT_BACKEND
+#endif // STATIC_PLUGIN_GDS_MT
 
 #ifdef STATIC_PLUGIN_POSIX
         extern nixlBackendPlugin* createStaticPosixPlugin();
