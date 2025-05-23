@@ -28,6 +28,8 @@ authors = [
   {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
 ]
 
+dependencies = ["torch", "numpy"]
+
 [tool.isort]
 profile = "black"
 
