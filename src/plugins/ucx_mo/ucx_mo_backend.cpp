@@ -651,36 +651,29 @@ nixlUcxMoEngine::postXfer (const nixl_xfer_op_t &operation,
         }
     }
 
-    if (opt_args->hasNotif) {
-        // The transfers are performed via parallel UCX workers (read QPs)
-        // This doesn't allows piggybacking the notification command in postXfer
-        // as we need to chose one of the workers to send it,
-        // but we can only be sent after all workers are flushed.
-        // Instead, we will initiate Notification from the CheckXfer
-
-        if (!in_progress) {
-
-        } else {
+    if (in_progress) {
+        // The transfers are performed via parallel UCX workers (meaning QPs).
+        // This doesn't allow piggybacking the notification in postXfer. We
+        // can only send it after all workers are flushed, in checkXfer().
+        if (opt_args->hasNotif) {
             req->notifNeed = true;
             req->notifMsg = opt_args->notifMsg;
             req->remoteAgent = remote_agent;
         }
-    }
 
-    if (in_progress) {
         return NIXL_IN_PROG;
-    } else {
-        if(req->notifNeed) {
-            nixl_status_t ret;
-
-            ret = engines[0]->genNotif(getEngName(req->remoteAgent, 0), req->notifMsg);
-            if (NIXL_SUCCESS != ret) {
-                /* Return error, TODO: add output */
-                return ret;
-            }
-        }
-        return  NIXL_SUCCESS;
     }
+
+    if (opt_args->hasNotif) {
+        auto ret = engines[0]->genNotif(getEngName(remote_agent, 0),
+                                        opt_args->notifMsg);
+        if (NIXL_SUCCESS != ret) {
+            /* Return error, TODO: add output */
+            return ret;
+        }
+    }
+
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t

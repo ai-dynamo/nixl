@@ -61,7 +61,15 @@ use bindings::{
     nixl_capi_reg_dlist_has_overlaps, nixl_capi_reg_dlist_len, nixl_capi_reg_dlist_resize,
     nixl_capi_register_mem, nixl_capi_string_list_get, nixl_capi_string_list_size,
     nixl_capi_xfer_dlist_add_desc, nixl_capi_xfer_dlist_clear, nixl_capi_xfer_dlist_has_overlaps,
-    nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize,
+    nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize, nixl_capi_xfer_dlist_get_type,
+    nixl_capi_reg_dlist_get_type, nixl_capi_xfer_dlist_verify_sorted, nixl_capi_reg_dlist_verify_sorted,
+    nixl_capi_xfer_dlist_is_empty, nixl_capi_reg_dlist_is_empty, nixl_capi_xfer_dlist_is_sorted,
+    nixl_capi_reg_dlist_is_sorted, nixl_capi_xfer_dlist_desc_count, nixl_capi_reg_dlist_desc_count,
+    nixl_capi_xfer_dlist_trim, nixl_capi_reg_dlist_trim, nixl_capi_xfer_dlist_rem_desc,
+    nixl_capi_reg_dlist_rem_desc, nixl_capi_xfer_dlist_print, nixl_capi_reg_dlist_print,
+    nixl_capi_agent_make_connection, nixl_capi_agent_prep_xfer_dlist,
+    nixl_capi_agent_make_xfer_req, nixl_capi_create_xfer_dlist_handle,
+    nixl_capi_destroy_xfer_dlist_handle, nixl_capi_estimate_xfer_cost, nixl_capi_gen_notif
 };
 
 // Re-export status codes
@@ -249,6 +257,513 @@ impl Drop for Params {
     }
 }
 
+/// A safe wrapper around a NIXL transfer descriptor list
+pub struct XferDescList<'a> {
+    inner: NonNull<bindings::nixl_capi_xfer_dlist_s>,
+    _phantom: PhantomData<&'a dyn NixlDescriptor>,
+}
+
+impl<'a> XferDescList<'a> {
+    /// Creates a new transfer descriptor list for the given memory type
+    fn _new(mem_type: MemType, sorted: bool) -> Result<Self, NixlError> {
+        let mut dlist = ptr::null_mut();
+        let status =
+            unsafe { nixl_capi_create_xfer_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist, sorted) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                // SAFETY: If status is NIXL_CAPI_SUCCESS, dlist is non-null
+                let inner = unsafe { NonNull::new_unchecked(dlist) };
+
+                Ok(Self {
+                    inner,
+                    _phantom: PhantomData,
+                })
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Creates a new transfer descriptor list for the given memory type
+    pub fn new(mem_type: MemType) -> Result<Self, NixlError> {
+        Self::_new(mem_type, false)
+    }
+
+    /// Creates a new sorted transfer descriptor list for the given memory type
+    pub fn new_sorted(mem_type: MemType) -> Result<Self, NixlError> {
+        Self::_new(mem_type, true)
+    }
+
+    /// Returns the memory type of the transfer descriptor list
+    pub fn get_type(&self) -> Result<MemType, NixlError> {
+        let mut mem_type = 0;
+        let status = unsafe { nixl_capi_xfer_dlist_get_type(self.inner.as_ptr(), &mut mem_type) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(MemType::from(mem_type)),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Adds a descriptor to the list
+    pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
+        let status = unsafe {
+            nixl_capi_xfer_dlist_add_desc(self.inner.as_ptr(), addr as uintptr_t, len, dev_id)
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if the list is sorted
+    fn verify_sorted_inner(inner: NonNull<bindings::nixl_capi_xfer_dlist_s>) -> Result<bool, NixlError>   {
+        let mut is_sorted = false;
+        let status = unsafe { nixl_capi_xfer_dlist_verify_sorted(inner.as_ptr(), &mut is_sorted) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(is_sorted),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if the list is sorted
+    pub fn verify_sorted(&self) -> Result<bool, NixlError> {
+        Self::verify_sorted_inner(self.inner)
+    }
+
+    /// Returns the number of descriptors in the list
+    /// Deprecated: Use desc_count instead
+    #[deprecated(since = "0.1.0", note = "Use desc_count instead")]
+    pub fn len(&self) -> Result<usize, NixlError> {
+        let mut len = 0;
+        let status = unsafe { nixl_capi_xfer_dlist_len(self.inner.as_ptr(), &mut len) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(len),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns the number of descriptors in the list
+    pub fn desc_count(&self) -> Result<usize, NixlError> {
+        let mut count = 0;
+        let status = unsafe { nixl_capi_xfer_dlist_desc_count(self.inner.as_ptr(), &mut count) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(count),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if the list is empty
+    pub fn is_empty(&self) -> Result<bool, NixlError> {
+        let mut is_empty: bool = false;
+        let status = unsafe { nixl_capi_xfer_dlist_is_empty(self.inner.as_ptr(), &mut is_empty) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(is_empty),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if the list is sorted
+    pub fn is_sorted(&self) -> Result<bool, NixlError> {
+        let mut is_sorted = false;
+        let status = unsafe { nixl_capi_xfer_dlist_is_sorted(self.inner.as_ptr(), &mut is_sorted) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(is_sorted),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Trims the list to the given size
+    pub fn trim(&mut self) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_xfer_dlist_trim(self.inner.as_ptr()) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Removes the descriptor at the given index
+    pub fn rem_desc(&mut self, index: i32) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_xfer_dlist_rem_desc(self.inner.as_ptr(), index) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if any descriptors in the list overlap
+    fn has_overlaps(&self) -> Result<bool, NixlError> {
+        let mut has_overlaps = false;
+        let status =
+            unsafe { nixl_capi_xfer_dlist_has_overlaps(self.inner.as_ptr(), &mut has_overlaps) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(has_overlaps),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Clears all descriptors from the list
+    pub fn clear(&mut self) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_xfer_dlist_clear(self.inner.as_ptr()) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Prints the list contents
+    pub fn print(&self) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_xfer_dlist_print(self.inner.as_ptr()) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Resizes the list to the given size
+    fn resize(&mut self, new_size: usize) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_xfer_dlist_resize(self.inner.as_ptr(), new_size) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Add a descriptor from a type implementing NixlDescriptor
+    ///
+    /// # Safety
+    /// The caller must ensure that:
+    /// - The descriptor remains valid for the lifetime of the list
+    /// - The memory region pointed to by the descriptor remains valid
+    pub fn add_storage_desc<D: NixlDescriptor + 'a>(
+        &mut self,
+        desc: &'a D,
+    ) -> Result<(), NixlError> {
+        // Validate memory type matches
+        let desc_mem_type = desc.mem_type();
+        let list_mem_type = unsafe {
+            // Get the memory type from the list by checking first descriptor
+            let mut len = 0;
+            match nixl_capi_xfer_dlist_len(self.inner.as_ptr(), &mut len) {
+                0 => Ok(()),
+                -1 => Err(NixlError::InvalidParam),
+                _ => Err(NixlError::BackendError),
+            }?;
+            if len > 0 {
+                // TODO: Add API to get descriptor memory type
+                MemType::Unknown
+            } else {
+                desc_mem_type
+            }
+        };
+
+        if desc_mem_type != list_mem_type && list_mem_type != MemType::Unknown {
+            return Err(NixlError::InvalidParam);
+        }
+
+        // Get descriptor details
+        let addr = unsafe { desc.as_ptr() } as usize;
+        let len = desc.size();
+        let dev_id = desc.device_id();
+
+        // Add to list
+        self.add_desc(addr, len, dev_id)
+    }
+}
+
+impl<'a> Drop for XferDescList<'a> {
+    fn drop(&mut self) {
+        // SAFETY: self.inner is guaranteed to be valid by NonNull
+        unsafe {
+            nixl_capi_destroy_xfer_dlist(self.inner.as_ptr());
+        }
+    }
+}
+
+/// A safe wrapper around a NIXL transfer descriptor list handle
+pub struct XferDescListHandle {
+    inner: NonNull<bindings::nixl_capi_xfer_dlist_handle_s>,
+}
+
+impl XferDescListHandle {
+    pub fn new() -> Result<Self, NixlError> {
+        let mut handle = ptr::null_mut();
+        let status = unsafe { nixl_capi_create_xfer_dlist_handle(&mut handle) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(Self { inner: unsafe { NonNull::new_unchecked(handle) } }),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+}
+
+impl Drop for XferDescListHandle {
+    fn drop(&mut self) {
+        unsafe { nixl_capi_destroy_xfer_dlist_handle(self.inner.as_ptr()) };
+    }
+}
+
+
+/// A safe wrapper around a NIXL registration descriptor list
+pub struct RegDescList<'a> {
+    inner: NonNull<bindings::nixl_capi_reg_dlist_s>,
+    _phantom: PhantomData<&'a dyn NixlDescriptor>,
+}
+
+impl<'a> RegDescList<'a> {
+    /// Creates a new registration descriptor list for the given memory type
+    fn _new(mem_type: MemType, sorted: bool) -> Result<Self, NixlError> {
+        let mut dlist = ptr::null_mut();
+        let status =
+            unsafe { nixl_capi_create_reg_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist, sorted) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                if dlist.is_null() {
+                    tracing::error!("Failed to create registration descriptor list");
+                    return Err(NixlError::RegDescListCreationFailed);
+                }
+
+                // SAFETY: If status is NIXL_CAPI_SUCCESS, dlist is non-null
+                let ptr = unsafe { NonNull::new_unchecked(dlist) };
+
+                Ok(Self {
+                    inner: ptr,
+                    _phantom: PhantomData,
+                })
+            }
+            _ => Err(NixlError::RegDescListCreationFailed),
+        }
+    }
+
+    /// Creates a new registration descriptor list for the given memory type
+    pub fn new(mem_type: MemType) -> Result<Self, NixlError> {
+        Self::_new(mem_type, false)
+    }
+
+    /// Creates a new sorted registration descriptor list for the given memory type
+    pub fn new_sorted(mem_type: MemType) -> Result<Self, NixlError> {
+        Self::_new(mem_type, true)
+    }
+
+    pub fn get_type(&self) -> Result<MemType, NixlError> {
+        let mut mem_type = 0;
+        let status = unsafe { nixl_capi_reg_dlist_get_type(self.inner.as_ptr(), &mut mem_type) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(MemType::from(mem_type)),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Adds a descriptor to the list
+    pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
+        let status = unsafe {
+            nixl_capi_reg_dlist_add_desc(self.inner.as_ptr(), addr as uintptr_t, len, dev_id)
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if the list is sorted
+    fn verify_sorted_inner(inner: NonNull<bindings::nixl_capi_reg_dlist_s>) -> Result<bool, NixlError> {
+        let mut is_sorted = false;
+        let status = unsafe { nixl_capi_reg_dlist_verify_sorted(inner.as_ptr(), &mut is_sorted) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(is_sorted),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if the list is sorted
+    pub fn verify_sorted(&self) -> Result<bool, NixlError> {
+        Self::verify_sorted_inner(self.inner)
+    }
+
+    /// Returns the number of descriptors in the list
+    pub fn len(&self) -> Result<usize, NixlError> {
+        let mut len = 0;
+        let status = unsafe { nixl_capi_reg_dlist_len(self.inner.as_ptr(), &mut len) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(len),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns the number of descriptors in the list
+    pub fn desc_count(&self) -> Result<usize, NixlError> {
+        let mut count = 0;
+        let status = unsafe { nixl_capi_reg_dlist_desc_count(self.inner.as_ptr(), &mut count) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(count),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if the list is empty
+    pub fn is_empty(&self) -> Result<bool, NixlError> {
+        let mut is_empty = false;
+        let status = unsafe { nixl_capi_reg_dlist_is_empty(self.inner.as_ptr(), &mut is_empty) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(is_empty),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    pub fn is_sorted(&self) -> Result<bool, NixlError> {
+        let mut is_sorted = false;
+        let status = unsafe { nixl_capi_reg_dlist_is_sorted(self.inner.as_ptr(), &mut is_sorted) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(is_sorted),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Trims the list to the given size
+    pub fn trim(&mut self) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_reg_dlist_trim(self.inner.as_ptr()) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Removes the descriptor at the given index
+    pub fn rem_desc(&mut self, index: i32) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_reg_dlist_rem_desc(self.inner.as_ptr(), index) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if any descriptors in the list overlap
+    fn has_overlaps(&self) -> Result<bool, NixlError> {
+        let mut has_overlaps = false;
+        let status =
+            unsafe { nixl_capi_reg_dlist_has_overlaps(self.inner.as_ptr(), &mut has_overlaps) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(has_overlaps),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Clears all descriptors from the list
+    pub fn clear(&mut self) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_reg_dlist_clear(self.inner.as_ptr()) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Prints the list contents
+    pub fn print(&self) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_reg_dlist_print(self.inner.as_ptr()) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Resizes the list to the given size
+    fn resize(&mut self, new_size: usize) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_reg_dlist_resize(self.inner.as_ptr(), new_size) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Add a descriptor from a type implementing NixlDescriptor
+    ///
+    /// # Safety
+    /// The caller must ensure that:
+    /// - The descriptor remains valid for the lifetime of the list
+    /// - The memory region pointed to by the descriptor remains valid
+    pub fn add_storage_desc(&mut self, desc: &'a dyn NixlDescriptor) -> Result<(), NixlError> {
+        // Validate memory type matches
+        let desc_mem_type = desc.mem_type();
+        let list_mem_type = unsafe {
+            // Get the memory type from the list by checking first descriptor
+            let mut len = 0;
+            match nixl_capi_reg_dlist_len(self.inner.as_ptr(), &mut len) {
+                0 => Ok(()),
+                -1 => Err(NixlError::InvalidParam),
+                _ => Err(NixlError::BackendError),
+            }?;
+            if len > 0 {
+                // TODO: Add API to get descriptor memory type
+                MemType::Unknown
+            } else {
+                desc_mem_type
+            }
+        };
+
+        if desc_mem_type != list_mem_type && list_mem_type != MemType::Unknown {
+            return Err(NixlError::InvalidParam);
+        }
+
+        // Get descriptor details
+        let addr = unsafe { desc.as_ptr() } as usize;
+        let len = desc.size();
+        let dev_id = desc.device_id();
+
+        // Add to list
+        self.add_desc(addr, len, dev_id)
+    }
+}
+
+impl<'a> Drop for RegDescList<'a> {
+    fn drop(&mut self) {
+        tracing::trace!("Dropping registration descriptor list");
+        unsafe {
+            bindings::nixl_capi_destroy_reg_dlist(self.inner.as_ptr());
+        }
+        tracing::trace!("Registration descriptor list dropped");
+    }
+}
+
 /// Inner state for an agent that manages the raw pointer
 #[derive(Debug)]
 struct AgentInner {
@@ -432,6 +947,37 @@ impl Agent {
         }
     }
 
+    /// Gets the parameters and memory types for a backend after initialization
+    pub fn get_backend_params(&self, backend: &Backend) -> Result<(MemList, Params), NixlError> {
+        let mut mem_list = ptr::null_mut();
+        let mut params = ptr::null_mut();
+
+        let status = unsafe {
+            nixl_capi_get_backend_params(
+                self.inner.read().unwrap().handle.as_ptr(),
+                backend.inner.as_ptr(),
+                &mut mem_list,
+                &mut params,
+            )
+        };
+
+        if status != NIXL_CAPI_SUCCESS {
+            return Err(NixlError::BackendError);
+        }
+
+        // SAFETY: If status is NIXL_CAPI_SUCCESS, both pointers are non-null
+        unsafe {
+            Ok((
+                MemList {
+                    inner: NonNull::new_unchecked(mem_list),
+                },
+                Params {
+                    inner: NonNull::new_unchecked(params),
+                },
+            ))
+        }
+    }
+
     /// Creates a new backend for the given plugin using the provided parameters
     pub fn create_backend(&self, plugin: &str, params: &Params) -> Result<Backend, NixlError> {
         tracing::trace!(plugin.name = %plugin, "Creating new NIXL backend");
@@ -479,37 +1025,6 @@ impl Agent {
         }
     }
 
-    /// Gets the parameters and memory types for a backend after initialization
-    pub fn get_backend_params(&self, backend: &Backend) -> Result<(MemList, Params), NixlError> {
-        let mut mem_list = ptr::null_mut();
-        let mut params = ptr::null_mut();
-
-        let status = unsafe {
-            nixl_capi_get_backend_params(
-                self.inner.read().unwrap().handle.as_ptr(),
-                backend.inner.as_ptr(),
-                &mut mem_list,
-                &mut params,
-            )
-        };
-
-        if status != NIXL_CAPI_SUCCESS {
-            return Err(NixlError::BackendError);
-        }
-
-        // SAFETY: If status is NIXL_CAPI_SUCCESS, both pointers are non-null
-        unsafe {
-            Ok((
-                MemList {
-                    inner: NonNull::new_unchecked(mem_list),
-                },
-                Params {
-                    inner: NonNull::new_unchecked(params),
-                },
-            ))
-        }
-    }
-
     pub fn register_memory(
         &self,
         descriptor: &impl NixlDescriptor,
@@ -534,86 +1049,69 @@ impl Agent {
         })
     }
 
-    /// Gets the local metadata for this agent as a byte array
-    pub fn get_local_md(&self) -> Result<Vec<u8>, NixlError> {
-        tracing::trace!("Getting local metadata");
-        let mut data = std::ptr::null_mut();
-        let mut len = 0;
-
+    pub fn make_connection(&self, remote_agent: &str) -> Result<(), NixlError> {
+        let remote_agent = CString::new(remote_agent)?;
         let status = unsafe {
-            nixl_capi_get_local_md(
+            nixl_capi_agent_make_connection(
                 self.inner.write().unwrap().handle.as_ptr(),
-                &mut data as *mut *mut _ as *mut *mut std::ffi::c_void,
-                &mut len,
+                remote_agent.as_ptr(),
+                std::ptr::null_mut(),
             )
         };
 
-        let data = data as *const u8;
-
-        if data.is_null() {
-            tracing::trace!(
-                error = "invalid_data_pointer",
-                "Failed to get local metadata"
-            );
-            return Err(NixlError::InvalidDataPointer);
-        }
-
         match status {
-            NIXL_CAPI_SUCCESS => {
-                let bytes = unsafe {
-                    let slice = std::slice::from_raw_parts(data, len);
-                    let vec = slice.to_vec();
-                    libc::free(data as *mut libc::c_void);
-                    vec
-                };
-                tracing::trace!(metadata.size = len, "Successfully retrieved local metadata");
-                Ok(bytes)
-            }
-            NIXL_CAPI_ERROR_INVALID_PARAM => {
-                tracing::trace!(error = "invalid_param", "Failed to get local metadata");
-                Err(NixlError::InvalidParam)
-            }
-            _ => {
-                tracing::trace!(error = "backend_error", "Failed to get local metadata");
-                Err(NixlError::BackendError)
-            }
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
         }
     }
 
-    /// Loads remote metadata from a byte slice
-    pub fn load_remote_md(&self, metadata: &[u8]) -> Result<String, NixlError> {
-        tracing::trace!(metadata.size = metadata.len(), "Loading remote metadata");
-        let mut agent_name = std::ptr::null_mut();
+    pub fn prep_xfer_dlist(&self, agent_name: &str, descs: &XferDescList, handle: &mut XferDescListHandle,
+                           opt_args: &OptArgs) -> Result<(), NixlError> {
+        let agent_name = CString::new(agent_name)?;
+        let status = unsafe {
+            nixl_capi_agent_prep_xfer_dlist(
+                self.inner.write().unwrap().handle.as_ptr(),
+                agent_name.as_ptr(),
+                descs.inner.as_ptr(),
+                handle.inner.as_ptr(),
+                opt_args.inner.as_ptr(),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    pub fn make_xfer_req(&self, operation: XferOp, local_descs: &XferDescList, remote_descs: &XferDescList, remote_agent: &str, opt_args: &OptArgs) -> Result<XferRequest, NixlError> {
+        let remote_agent = CString::new(remote_agent)?;
+        let mut req = std::ptr::null_mut();
 
         let status = unsafe {
-            nixl_capi_load_remote_md(
+            nixl_capi_agent_make_xfer_req(
                 self.inner.write().unwrap().handle.as_ptr(),
-                metadata.as_ptr() as *const std::ffi::c_void,
-                metadata.len(),
-                &mut agent_name,
+                operation as bindings::nixl_capi_xfer_op_t,
+                local_descs.inner.as_ptr(),
+                remote_descs.inner.as_ptr(),
+                remote_agent.as_ptr(),
+                &mut req,
+                opt_args.inner.as_ptr(),
             )
         };
 
         match status {
             NIXL_CAPI_SUCCESS => {
-                let name = unsafe {
-                    let c_str = std::ffi::CStr::from_ptr(agent_name);
-                    let s = c_str.to_str().unwrap().to_string();
-                    libc::free(agent_name as *mut libc::c_void);
-                    s
-                };
-                self.inner.write().unwrap().remotes.insert(name.clone());
-                tracing::trace!(remote.agent = %name, "Successfully loaded remote metadata");
-                Ok(name)
+                let inner = NonNull::new(req).ok_or(NixlError::FailedToCreateXferRequest)?;
+                Ok(XferRequest {
+                    inner,
+                    agent: self.inner.clone(),
+                })
             }
-            NIXL_CAPI_ERROR_INVALID_PARAM => {
-                tracing::trace!(error = "invalid_param", "Failed to load remote metadata");
-                Err(NixlError::InvalidParam)
-            }
-            _ => {
-                tracing::trace!(error = "backend_error", "Failed to load remote metadata");
-                Err(NixlError::BackendError)
-            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
         }
     }
 
@@ -626,6 +1124,230 @@ impl Agent {
 
     pub fn invalidate_all_remotes(&self) -> Result<(), NixlError> {
         self.inner.write().unwrap().invalidate_all_remotes()
+    }
+
+    /// Send this agent's metadata to etcd
+    ///
+    /// This enables other agents to discover this agent's metadata via etcd.
+    ///
+    /// # Arguments
+    /// * `opt_args` - Optional arguments for sending metadata
+    pub fn send_local_md(&self, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
+        tracing::trace!("Sending local metadata to etcd");
+        let status = unsafe {
+            bindings::nixl_capi_send_local_md(
+                self.inner.write().unwrap().handle.as_ptr(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!("Successfully sent local metadata to etcd");
+                Ok(())
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(
+                    error = "invalid_param",
+                    "Failed to send local metadata to etcd"
+                );
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(
+                    error = "backend_error",
+                    "Failed to send local metadata to etcd"
+                );
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Fetch a remote agent's metadata from etcd
+    ///
+    /// Once fetched, the metadata will be loaded and cached locally, enabling
+    /// communication with the remote agent.
+    ///
+    /// # Arguments
+    /// * `remote_name` - Name of the remote agent to fetch metadata for
+    /// * `opt_args` - Optional arguments for fetching metadata
+    pub fn fetch_remote_md(
+        &self,
+        remote_name: &str,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<(), NixlError> {
+        tracing::trace!(remote_agent = %remote_name, "Fetching remote metadata from etcd");
+
+        let c_remote_name = CString::new(remote_name)?;
+        let status = unsafe {
+            bindings::nixl_capi_fetch_remote_md(
+                self.inner.write().unwrap().handle.as_ptr(),
+                c_remote_name.as_ptr(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                self.inner
+                    .write()
+                    .unwrap()
+                    .remotes
+                    .insert(remote_name.to_string());
+                tracing::trace!(remote_agent = %remote_name, "Successfully fetched remote metadata from etcd");
+                Ok(())
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(error = "invalid_param", remote_agent = %remote_name, "Failed to fetch remote metadata from etcd");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(error = "backend_error", remote_agent = %remote_name, "Failed to fetch remote metadata from etcd");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Invalidate this agent's metadata in etcd
+    ///
+    /// This signals to other agents that this agent's metadata is no longer valid.
+    ///
+    /// # Arguments
+    /// * `opt_args` - Optional arguments for invalidating metadata
+    pub fn invalidate_local_md(&self, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
+        tracing::trace!("Invalidating local metadata in etcd");
+        let status = unsafe {
+            bindings::nixl_capi_invalidate_local_md(
+                self.inner.write().unwrap().handle.as_ptr(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!("Successfully invalidated local metadata in etcd");
+                Ok(())
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(
+                    error = "invalid_param",
+                    "Failed to invalidate local metadata in etcd"
+                );
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(
+                    error = "backend_error",
+                    "Failed to invalidate local metadata in etcd"
+                );
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Check if remote metadata for a specific agent is available
+    ///
+    /// This function checks if the metadata for the specified remote agent has been
+    /// loaded and if specific descriptors can be found in the metadata.
+    ///
+    /// # Arguments
+    /// * `remote_agent` - Name of the remote agent to check
+    /// * `descs` - Optional descriptor list to check against the remote metadata.
+    ///            If None, only checks if any metadata exists for the agent.
+    ///
+    /// # Returns
+    /// `true` if the remote agent's metadata is available (and descriptors are found if provided),
+    /// `false` otherwise
+    pub fn check_remote_metadata(&self, remote_agent: &str, descs: Option<&XferDescList>) -> bool {
+        tracing::trace!(remote_agent = %remote_agent, "Checking remote metadata");
+
+        let c_remote_name = match CString::new(remote_agent) {
+            Ok(name) => name,
+            Err(_) => {
+                tracing::trace!(
+                    error = "invalid_param",
+                    remote_agent = %remote_agent,
+                    "Invalid remote agent name"
+                );
+                return false;
+            }
+        };
+
+        let status = unsafe {
+            bindings::nixl_capi_check_remote_md(
+                self.inner.read().unwrap().handle.as_ptr(),
+                c_remote_name.as_ptr(),
+                descs.map_or(std::ptr::null_mut(), |d| d.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!(remote_agent = %remote_agent, "Remote metadata is available");
+                true
+            }
+            _ => {
+                tracing::trace!(remote_agent = %remote_agent, "Remote metadata is not available");
+                false
+            }
+        }
+    }
+
+    /// Send a notification to a remote agent
+    ///
+    /// # Arguments
+    /// * `remote_agent` - Name of the remote agent to send notification to
+    /// * `message` - The notification message to send
+    /// * `backend` - Optional backend to use for sending the notification
+    ///
+    /// # Returns
+    /// `Ok(())` if the notification was sent successfully
+    pub fn send_notification(
+        &self,
+        remote_agent: &str,
+        message: &[u8],
+        backend: Option<&Backend>,
+    ) -> Result<(), NixlError> {
+        tracing::trace!(remote_agent = %remote_agent, "Sending notification");
+
+        let c_remote_name = CString::new(remote_agent)?;
+
+        let opt_args = if backend.is_some() {
+            let mut args = OptArgs::new()?;
+            if let Some(b) = backend {
+                args.add_backend(b)?;
+            }
+            Some(args)
+        } else {
+            None
+        };
+
+        let status = unsafe {
+            nixl_capi_gen_notif(
+                self.inner.write().unwrap().handle.as_ptr(),
+                c_remote_name.as_ptr(),
+                message.as_ptr() as *const std::ffi::c_void,
+                message.len(),
+                opt_args
+                    .as_ref()
+                    .map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!(remote_agent = %remote_agent, "Successfully sent notification");
+                Ok(())
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(error = "invalid_param", remote_agent = %remote_agent, "Failed to send notification");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(error = "backend_error", remote_agent = %remote_agent, "Failed to send notification");
+                Err(NixlError::BackendError)
+            }
+        }
     }
 
     /// Creates a transfer request between local and remote descriptors
@@ -753,6 +1475,44 @@ impl Agent {
         }
     }
 
+    /// Estimates the cost of a transfer request
+    ///
+    /// # Arguments
+    /// * `req` - Transfer request handle
+    /// * `opt_args` - Optional arguments for the estimation
+    ///
+    /// # Returns
+    /// A tuple containing (duration in microseconds, error margin in microseconds, cost method)
+    ///
+    /// # Errors
+    /// Returns a NixlError if the operation fails
+    pub fn estimate_xfer_cost(
+        &self,
+        req: &XferRequest,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<(i64, i64, CostMethod), NixlError> {
+        let mut duration_us: i64 = 0;
+        let mut err_margin_us: i64 = 0;
+        let mut method: u32 = 0;
+
+        let status = unsafe {
+            nixl_capi_estimate_xfer_cost(
+                self.inner.write().unwrap().handle.as_ptr(),
+                req.inner.as_ptr(),
+                opt_args.map_or(ptr::null_mut(), |args| args.inner.as_ptr()),
+                &mut duration_us,
+                &mut err_margin_us,
+                &mut method as *mut u32 as *mut bindings::nixl_capi_cost_t,
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok((duration_us, err_margin_us, CostMethod::from(method))),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
     /// Gets notifications from other agents
     ///
     /// # Arguments
@@ -786,6 +1546,100 @@ impl Agent {
                 Err(NixlError::BackendError)
             }
         }
+    }
+
+    /// Gets the local metadata for this agent as a byte array
+    pub fn get_local_md(&self) -> Result<Vec<u8>, NixlError> {
+        tracing::trace!("Getting local metadata");
+        let mut data = std::ptr::null_mut();
+        let mut len = 0;
+
+        let status = unsafe {
+            nixl_capi_get_local_md(
+                self.inner.write().unwrap().handle.as_ptr(),
+                &mut data as *mut *mut _ as *mut *mut std::ffi::c_void,
+                &mut len,
+            )
+        };
+
+        let data = data as *const u8;
+
+        if data.is_null() {
+            tracing::trace!(
+                error = "invalid_data_pointer",
+                "Failed to get local metadata"
+            );
+            return Err(NixlError::InvalidDataPointer);
+        }
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                let bytes = unsafe {
+                    let slice = std::slice::from_raw_parts(data, len);
+                    let vec = slice.to_vec();
+                    libc::free(data as *mut libc::c_void);
+                    vec
+                };
+                tracing::trace!(metadata.size = len, "Successfully retrieved local metadata");
+                Ok(bytes)
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(error = "invalid_param", "Failed to get local metadata");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(error = "backend_error", "Failed to get local metadata");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Loads remote metadata from a byte slice
+    pub fn load_remote_md(&self, metadata: &[u8]) -> Result<String, NixlError> {
+        tracing::trace!(metadata.size = metadata.len(), "Loading remote metadata");
+        let mut agent_name = std::ptr::null_mut();
+
+        let status = unsafe {
+            nixl_capi_load_remote_md(
+                self.inner.write().unwrap().handle.as_ptr(),
+                metadata.as_ptr() as *const std::ffi::c_void,
+                metadata.len(),
+                &mut agent_name,
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                let name = unsafe {
+                    let c_str = std::ffi::CStr::from_ptr(agent_name);
+                    let s = c_str.to_str().unwrap().to_string();
+                    libc::free(agent_name as *mut libc::c_void);
+                    s
+                };
+                self.inner.write().unwrap().remotes.insert(name.clone());
+                tracing::trace!(remote.agent = %name, "Successfully loaded remote metadata");
+                Ok(name)
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(error = "invalid_param", "Failed to load remote metadata");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(error = "backend_error", "Failed to load remote metadata");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    pub fn invalidate_remote_md(&self, remote_agent: &str) -> Result<(), NixlError> {
+        self.inner
+            .write()
+            .unwrap()
+            .invalidate_remote_md(remote_agent)
+    }
+
+    pub fn invalidate_all_remotes(&self) -> Result<(), NixlError> {
+        self.inner.write().unwrap().invalidate_all_remotes()
     }
 }
 
@@ -1171,283 +2025,6 @@ impl<'a> Iterator for MemListIterator<'a> {
     }
 }
 
-/// A safe wrapper around a NIXL transfer descriptor list
-pub struct XferDescList<'a> {
-    inner: NonNull<bindings::nixl_capi_xfer_dlist_s>,
-    _phantom: PhantomData<&'a dyn NixlDescriptor>,
-}
-
-impl<'a> XferDescList<'a> {
-    /// Creates a new transfer descriptor list for the given memory type
-    pub fn new(mem_type: MemType) -> Result<Self, NixlError> {
-        let mut dlist = ptr::null_mut();
-        let status =
-            unsafe { nixl_capi_create_xfer_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => {
-                // SAFETY: If status is NIXL_CAPI_SUCCESS, dlist is non-null
-                let inner = unsafe { NonNull::new_unchecked(dlist) };
-                Ok(Self {
-                    inner,
-                    _phantom: PhantomData,
-                })
-            }
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Adds a descriptor to the list
-    pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
-        let status = unsafe {
-            nixl_capi_xfer_dlist_add_desc(self.inner.as_ptr(), addr as uintptr_t, len, dev_id)
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Returns the number of descriptors in the list
-    pub fn len(&self) -> Result<usize, NixlError> {
-        let mut len = 0;
-        let status = unsafe { nixl_capi_xfer_dlist_len(self.inner.as_ptr(), &mut len) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(len),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Returns true if any descriptors in the list overlap
-    pub fn has_overlaps(&self) -> Result<bool, NixlError> {
-        let mut has_overlaps = false;
-        let status =
-            unsafe { nixl_capi_xfer_dlist_has_overlaps(self.inner.as_ptr(), &mut has_overlaps) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(has_overlaps),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Clears all descriptors from the list
-    pub fn clear(&mut self) -> Result<(), NixlError> {
-        let status = unsafe { nixl_capi_xfer_dlist_clear(self.inner.as_ptr()) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Resizes the list to the given size
-    pub fn resize(&mut self, new_size: usize) -> Result<(), NixlError> {
-        let status = unsafe { nixl_capi_xfer_dlist_resize(self.inner.as_ptr(), new_size) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Add a descriptor from a type implementing NixlDescriptor
-    ///
-    /// # Safety
-    /// The caller must ensure that:
-    /// - The descriptor remains valid for the lifetime of the list
-    /// - The memory region pointed to by the descriptor remains valid
-    pub fn add_storage_desc<D: NixlDescriptor + 'a>(
-        &mut self,
-        desc: &'a D,
-    ) -> Result<(), NixlError> {
-        // Validate memory type matches
-        let desc_mem_type = desc.mem_type();
-        let list_mem_type = unsafe {
-            // Get the memory type from the list by checking first descriptor
-            let mut len = 0;
-            match nixl_capi_xfer_dlist_len(self.inner.as_ptr(), &mut len) {
-                0 => Ok(()),
-                -1 => Err(NixlError::InvalidParam),
-                _ => Err(NixlError::BackendError),
-            }?;
-            if len > 0 {
-                // TODO: Add API to get descriptor memory type
-                MemType::Unknown
-            } else {
-                desc_mem_type
-            }
-        };
-
-        if desc_mem_type != list_mem_type && list_mem_type != MemType::Unknown {
-            return Err(NixlError::InvalidParam);
-        }
-
-        // Get descriptor details
-        let addr = unsafe { desc.as_ptr() } as usize;
-        let len = desc.size();
-        let dev_id = desc.device_id();
-
-        // Add to list
-        self.add_desc(addr, len, dev_id)
-    }
-}
-
-impl<'a> Drop for XferDescList<'a> {
-    fn drop(&mut self) {
-        // SAFETY: self.inner is guaranteed to be valid by NonNull
-        unsafe {
-            nixl_capi_destroy_xfer_dlist(self.inner.as_ptr());
-        }
-    }
-}
-
-/// A safe wrapper around a NIXL registration descriptor list
-pub struct RegDescList<'a> {
-    inner: NonNull<bindings::nixl_capi_reg_dlist_s>,
-    _phantom: PhantomData<&'a dyn NixlDescriptor>,
-}
-
-impl<'a> RegDescList<'a> {
-    /// Creates a new registration descriptor list for the given memory type
-    pub fn new(mem_type: MemType) -> Result<Self, NixlError> {
-        let mut dlist = ptr::null_mut();
-        let status =
-            unsafe { nixl_capi_create_reg_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => {
-                if dlist.is_null() {
-                    tracing::error!("Failed to create registration descriptor list");
-                    return Err(NixlError::RegDescListCreationFailed);
-                }
-                let ptr = NonNull::new(dlist).ok_or(NixlError::RegDescListCreationFailed)?;
-
-                Ok(Self {
-                    inner: ptr,
-                    _phantom: PhantomData,
-                })
-            }
-            _ => Err(NixlError::RegDescListCreationFailed),
-        }
-    }
-
-    /// Adds a descriptor to the list
-    pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
-        let status = unsafe {
-            nixl_capi_reg_dlist_add_desc(self.inner.as_ptr(), addr as uintptr_t, len, dev_id)
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Returns the number of descriptors in the list
-    pub fn len(&self) -> Result<usize, NixlError> {
-        let mut len = 0;
-        let status = unsafe { nixl_capi_reg_dlist_len(self.inner.as_ptr(), &mut len) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(len),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Returns true if any descriptors in the list overlap
-    pub fn has_overlaps(&self) -> Result<bool, NixlError> {
-        let mut has_overlaps = false;
-        let status =
-            unsafe { nixl_capi_reg_dlist_has_overlaps(self.inner.as_ptr(), &mut has_overlaps) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(has_overlaps),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Clears all descriptors from the list
-    pub fn clear(&mut self) -> Result<(), NixlError> {
-        let status = unsafe { nixl_capi_reg_dlist_clear(self.inner.as_ptr()) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Resizes the list to the given size
-    pub fn resize(&mut self, new_size: usize) -> Result<(), NixlError> {
-        let status = unsafe { nixl_capi_reg_dlist_resize(self.inner.as_ptr(), new_size) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Add a descriptor from a type implementing NixlDescriptor
-    ///
-    /// # Safety
-    /// The caller must ensure that:
-    /// - The descriptor remains valid for the lifetime of the list
-    /// - The memory region pointed to by the descriptor remains valid
-    pub fn add_storage_desc(&mut self, desc: &'a dyn NixlDescriptor) -> Result<(), NixlError> {
-        // Validate memory type matches
-        let desc_mem_type = desc.mem_type();
-        let list_mem_type = unsafe {
-            // Get the memory type from the list by checking first descriptor
-            let mut len = 0;
-            match nixl_capi_reg_dlist_len(self.inner.as_ptr(), &mut len) {
-                0 => Ok(()),
-                -1 => Err(NixlError::InvalidParam),
-                _ => Err(NixlError::BackendError),
-            }?;
-            if len > 0 {
-                // TODO: Add API to get descriptor memory type
-                MemType::Unknown
-            } else {
-                desc_mem_type
-            }
-        };
-
-        if desc_mem_type != list_mem_type && list_mem_type != MemType::Unknown {
-            return Err(NixlError::InvalidParam);
-        }
-
-        // Get descriptor details
-        let addr = unsafe { desc.as_ptr() } as usize;
-        let len = desc.size();
-        let dev_id = desc.device_id();
-
-        // Add to list
-        self.add_desc(addr, len, dev_id)
-    }
-}
-
-impl<'a> Drop for RegDescList<'a> {
-    fn drop(&mut self) {
-        tracing::trace!("Dropping registration descriptor list");
-        unsafe {
-            nixl_capi_destroy_reg_dlist(self.inner.as_ptr());
-        }
-        tracing::trace!("Registration descriptor list dropped");
-    }
-}
-
 /// A trait for storage types that can be used with NIXL
 pub trait MemoryRegion: std::fmt::Debug + Send + Sync {
     /// Get a raw pointer to the storage
@@ -1536,6 +2113,23 @@ impl NixlRegistration for SystemStorage {
 pub enum XferOp {
     Read = 0,
     Write = 1,
+}
+
+/// Methods used for estimating transfer costs
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum CostMethod {
+    AnalyticalBackend = 0,
+    Unknown = 1,
+}
+
+impl From<u32> for CostMethod {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => CostMethod::AnalyticalBackend,
+            _ => CostMethod::Unknown,
+        }
+    }
 }
 
 /// A handle to a transfer request

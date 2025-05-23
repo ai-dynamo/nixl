@@ -213,6 +213,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.customParams = const_cast<nixl_b_params_t*>(&params);
     init_params.enableProgTh = data->config.useProgThread;
     init_params.pthrDelay    = data->config.pthrDelay;
+    init_params.syncMode     = data->config.syncMode;
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -654,9 +655,10 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     req_hndl = nullptr;
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
     {
+        delete backend_set;
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -762,6 +764,39 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
+nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
+                            std::chrono::microseconds &duration,
+                            std::chrono::microseconds &err_margin,
+                            nixl_cost_t &method,
+                            const nixl_opt_args_t* extra_params) const
+{
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+
+    // Check if the remote agent connection info is still valid
+    // (assuming cost estimation requires connection info like transfers)
+    if (!req_hndl->remoteAgent.empty() &&
+        (data->remoteSections.count(req_hndl->remoteAgent) == 0)) {
+        NIXL_ERROR << "Invalid request handle: remote agent not found";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    if (!req_hndl->engine) {
+        NIXL_ERROR << "Invalid request handle: engine is null";
+        return NIXL_ERR_UNKNOWN;
+    }
+
+    return req_hndl->engine->estimateXferCost(req_hndl->backendOp,
+                                              *req_hndl->initiatorDescs,
+                                              *req_hndl->targetDescs,
+                                              req_hndl->remoteAgent,
+                                              req_hndl->backendHandle,
+                                              duration,
+                                              err_margin,
+                                              method,
+                                              extra_params);
+}
+
+nixl_status_t
 nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                        const nixl_opt_args_t* extra_params) const {
     nixl_status_t ret;
@@ -772,7 +807,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (!req_hndl)
         return NIXL_ERR_INVALID_PARAM;
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     // Check if the remote was invalidated before post/repost
     if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
         delete req_hndl;
@@ -827,7 +862,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 nixl_status_t
 nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     // If the status is done, no need to recheck.
     if (req_hndl->status == NIXL_IN_PROG) {
         // Check if the remote was invalidated before completion
@@ -854,7 +889,7 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
 nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     //attempt to cancel request
     if(req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
@@ -942,7 +977,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
     nixlBackendEngine* backend = nullptr;
     backend_list_t*    backend_list;
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->notifEngines;
         if (backend_list->empty())
@@ -1181,6 +1216,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     if (ret) {
         delete data->remoteSections[remote_agent];
         data->remoteSections.erase(remote_agent);
+        data->remoteBackends.erase(remote_agent);
         return ret;
     }
 
@@ -1252,10 +1288,11 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 #if HAVE_ETCD
     // If no IP is provided, use etcd (now via thread)
     if (data->useEtcd) {
-        std::string metadata_label = extra_params && !extra_params->metadataLabel.empty() ?
-                                     extra_params->metadataLabel :
-                                     default_partial_metadata_label;
-        data->enqueueCommWork(std::make_tuple(ETCD_SEND, std::move(metadata_label), 0, std::move(myMD)));
+        if (!extra_params || extra_params->metadataLabel.empty()) {
+            NIXL_ERROR << "Metadata label is required for etcd send of local partial metadata";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        data->enqueueCommWork(std::make_tuple(ETCD_SEND, extra_params->metadataLabel, 0, std::move(myMD)));
         return NIXL_SUCCESS;
     }
     return NIXL_ERR_INVALID_PARAM;
@@ -1317,6 +1354,7 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
             return NIXL_SUCCESS;
         } else {
             nixl_meta_dlist_t dummy(descs.getType(), descs.isSorted());
+            // We only add to data->remoteBackends if data->backendEngines[backend] exists
             for (const auto& [backend, conn_info] : data->remoteBackends[remote_name])
                 if (data->remoteSections[remote_name]->populate(
                           descs, data->backendEngines[backend], dummy) == NIXL_SUCCESS)

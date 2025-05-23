@@ -46,10 +46,7 @@ elif rt_dep.found()
     plugin_link_args = ['-lrt']
     plugin_deps += [ rt_dep ]
 else
-    if not uring_dep.found()
-        message('No IO Library found. Skip building POSIX plugin.')
-        subdir_done()
-    endif
+    subdir_done()
 endif
 
 have_uring = uring_dep.found()

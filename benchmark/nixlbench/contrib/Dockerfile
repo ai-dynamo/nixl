@@ -95,7 +95,7 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/usr/local/lib:$LD_LIBRARY_P
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade meson pybind11 patchelf
+    uv pip install --upgrade meson pybind11 patchelf pyYAML
 
 RUN rm -rf build && \
     mkdir build && \
@@ -130,5 +130,5 @@ RUN rm -rf build && \
     mkdir build && \
     uv run meson setup build -Dnixl_path=/usr/local/nixl/ && \
     cd build && ninja
-
-WORKDIR /workspace/nixlbench/build
+ENV PATH=/workspace/nixlbench/build:$PATH
+WORKDIR /workspace/nixl/benchmark/kvbench
