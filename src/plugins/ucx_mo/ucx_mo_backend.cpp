@@ -355,7 +355,10 @@ nixlUcxMoEngine::registerMem (const nixlBlobDesc &mem,
 
     priv->memType = nixl_mem;
     priv->eidx = eidx;
-    engines[eidx]->registerMem(mem, nixl_mem, priv->md);
+    status = engines[eidx]->registerMem(mem, nixl_mem, priv->md);
+    if (NIXL_SUCCESS != status) {
+        return status;
+    }
 
     sd.addBuf("EngIdx", &eidx, sizeof(eidx));
     status = engines[eidx]->getPublicData(priv->md, str);
