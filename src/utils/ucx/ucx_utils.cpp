@@ -364,6 +364,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         ucp_config_modify(ucp_config, "NET_DEVICES", dev_str.c_str());
     }
 
+    ucp_config_modify(ucp_config, "MAX_RMA_RAILS", "2");
     status = ucp_init(&ucp_params, ucp_config, &ctx);
     if (status != UCS_OK) {
         /* TODO: proper cleanup */
