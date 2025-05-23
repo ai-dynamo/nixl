@@ -24,6 +24,6 @@
     do { \
         NIXL_ERROR << absl::StrFormat("Error: %d - %s", (error_code), (message)); \
         return error_code; \
-    } while (0) 
+    } while (0)
 
 #endif // HF3FS_LOG_H
