@@ -41,35 +41,35 @@ mod bindings {
 
 // Re-export types from the included bindings
 use bindings::{
-    nixl_capi_create_agent, nixl_capi_create_backend, nixl_capi_create_notif_map,
-    nixl_capi_create_opt_args, nixl_capi_create_reg_dlist, nixl_capi_create_xfer_dlist,
-    nixl_capi_deregister_mem, nixl_capi_destroy_agent, nixl_capi_destroy_backend,
-    nixl_capi_destroy_mem_list, nixl_capi_destroy_notif_map, nixl_capi_destroy_opt_args,
-    nixl_capi_destroy_params, nixl_capi_destroy_reg_dlist, nixl_capi_destroy_string_list,
-    nixl_capi_destroy_xfer_dlist, nixl_capi_get_available_plugins, nixl_capi_get_backend_params,
-    nixl_capi_get_local_md, nixl_capi_get_notifs, nixl_capi_get_plugin_params,
-    nixl_capi_get_xfer_status, nixl_capi_invalidate_remote_md, nixl_capi_load_remote_md,
-    nixl_capi_mem_list_get, nixl_capi_mem_list_is_empty, nixl_capi_mem_list_size,
-    nixl_capi_mem_type_t, nixl_capi_mem_type_to_string, nixl_capi_notif_map_get_agent_at,
-    nixl_capi_notif_map_get_notif, nixl_capi_notif_map_get_notifs_size, nixl_capi_notif_map_size,
-    nixl_capi_opt_args_add_backend, nixl_capi_opt_args_get_has_notif,
-    nixl_capi_opt_args_get_notif_msg, nixl_capi_opt_args_get_skip_desc_merge,
-    nixl_capi_opt_args_set_has_notif, nixl_capi_opt_args_set_notif_msg,
-    nixl_capi_opt_args_set_skip_desc_merge, nixl_capi_params_create_iterator,
-    nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty, nixl_capi_params_iterator_next,
-    nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc, nixl_capi_reg_dlist_clear,
-    nixl_capi_reg_dlist_has_overlaps, nixl_capi_reg_dlist_len, nixl_capi_reg_dlist_resize,
+    nixl_capi_agent_make_connection, nixl_capi_agent_make_xfer_req,
+    nixl_capi_agent_prep_xfer_dlist, nixl_capi_create_agent, nixl_capi_create_backend,
+    nixl_capi_create_notif_map, nixl_capi_create_opt_args, nixl_capi_create_reg_dlist,
+    nixl_capi_create_xfer_dlist, nixl_capi_create_xfer_dlist_handle, nixl_capi_deregister_mem,
+    nixl_capi_destroy_agent, nixl_capi_destroy_backend, nixl_capi_destroy_mem_list,
+    nixl_capi_destroy_notif_map, nixl_capi_destroy_opt_args, nixl_capi_destroy_params,
+    nixl_capi_destroy_reg_dlist, nixl_capi_destroy_string_list, nixl_capi_destroy_xfer_dlist,
+    nixl_capi_destroy_xfer_dlist_handle, nixl_capi_estimate_xfer_cost, nixl_capi_gen_notif,
+    nixl_capi_get_available_plugins, nixl_capi_get_backend_params, nixl_capi_get_local_md,
+    nixl_capi_get_notifs, nixl_capi_get_plugin_params, nixl_capi_get_xfer_status,
+    nixl_capi_invalidate_remote_md, nixl_capi_load_remote_md, nixl_capi_mem_list_get,
+    nixl_capi_mem_list_is_empty, nixl_capi_mem_list_size, nixl_capi_mem_type_t,
+    nixl_capi_mem_type_to_string, nixl_capi_notif_map_get_agent_at, nixl_capi_notif_map_get_notif,
+    nixl_capi_notif_map_get_notifs_size, nixl_capi_notif_map_size, nixl_capi_opt_args_add_backend,
+    nixl_capi_opt_args_get_has_notif, nixl_capi_opt_args_get_notif_msg,
+    nixl_capi_opt_args_get_skip_desc_merge, nixl_capi_opt_args_set_has_notif,
+    nixl_capi_opt_args_set_notif_msg, nixl_capi_opt_args_set_skip_desc_merge,
+    nixl_capi_params_create_iterator, nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty,
+    nixl_capi_params_iterator_next, nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc,
+    nixl_capi_reg_dlist_clear, nixl_capi_reg_dlist_desc_count, nixl_capi_reg_dlist_get_type,
+    nixl_capi_reg_dlist_has_overlaps, nixl_capi_reg_dlist_is_empty, nixl_capi_reg_dlist_is_sorted,
+    nixl_capi_reg_dlist_len, nixl_capi_reg_dlist_print, nixl_capi_reg_dlist_rem_desc,
+    nixl_capi_reg_dlist_resize, nixl_capi_reg_dlist_trim, nixl_capi_reg_dlist_verify_sorted,
     nixl_capi_register_mem, nixl_capi_string_list_get, nixl_capi_string_list_size,
-    nixl_capi_xfer_dlist_add_desc, nixl_capi_xfer_dlist_clear, nixl_capi_xfer_dlist_has_overlaps,
-    nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize, nixl_capi_xfer_dlist_get_type,
-    nixl_capi_reg_dlist_get_type, nixl_capi_xfer_dlist_verify_sorted, nixl_capi_reg_dlist_verify_sorted,
-    nixl_capi_xfer_dlist_is_empty, nixl_capi_reg_dlist_is_empty, nixl_capi_xfer_dlist_is_sorted,
-    nixl_capi_reg_dlist_is_sorted, nixl_capi_xfer_dlist_desc_count, nixl_capi_reg_dlist_desc_count,
-    nixl_capi_xfer_dlist_trim, nixl_capi_reg_dlist_trim, nixl_capi_xfer_dlist_rem_desc,
-    nixl_capi_reg_dlist_rem_desc, nixl_capi_xfer_dlist_print, nixl_capi_reg_dlist_print,
-    nixl_capi_agent_make_connection, nixl_capi_agent_prep_xfer_dlist,
-    nixl_capi_agent_make_xfer_req, nixl_capi_create_xfer_dlist_handle,
-    nixl_capi_destroy_xfer_dlist_handle, nixl_capi_estimate_xfer_cost, nixl_capi_gen_notif
+    nixl_capi_xfer_dlist_add_desc, nixl_capi_xfer_dlist_clear, nixl_capi_xfer_dlist_desc_count,
+    nixl_capi_xfer_dlist_get_type, nixl_capi_xfer_dlist_has_overlaps,
+    nixl_capi_xfer_dlist_is_empty, nixl_capi_xfer_dlist_is_sorted, nixl_capi_xfer_dlist_len,
+    nixl_capi_xfer_dlist_print, nixl_capi_xfer_dlist_rem_desc, nixl_capi_xfer_dlist_resize,
+    nixl_capi_xfer_dlist_trim, nixl_capi_xfer_dlist_verify_sorted,
 };
 
 // Re-export status codes
@@ -267,8 +267,9 @@ impl<'a> XferDescList<'a> {
     /// Creates a new transfer descriptor list for the given memory type
     fn _new(mem_type: MemType, sorted: bool) -> Result<Self, NixlError> {
         let mut dlist = ptr::null_mut();
-        let status =
-            unsafe { nixl_capi_create_xfer_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist, sorted) };
+        let status = unsafe {
+            nixl_capi_create_xfer_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist, sorted)
+        };
 
         match status {
             NIXL_CAPI_SUCCESS => {
@@ -320,7 +321,9 @@ impl<'a> XferDescList<'a> {
     }
 
     /// Returns true if the list is sorted
-    fn verify_sorted_inner(inner: NonNull<bindings::nixl_capi_xfer_dlist_s>) -> Result<bool, NixlError>   {
+    fn verify_sorted_inner(
+        inner: NonNull<bindings::nixl_capi_xfer_dlist_s>,
+    ) -> Result<bool, NixlError> {
         let mut is_sorted = false;
         let status = unsafe { nixl_capi_xfer_dlist_verify_sorted(inner.as_ptr(), &mut is_sorted) };
         match status {
@@ -509,7 +512,9 @@ impl XferDescListHandle {
         let mut handle = ptr::null_mut();
         let status = unsafe { nixl_capi_create_xfer_dlist_handle(&mut handle) };
         match status {
-            NIXL_CAPI_SUCCESS => Ok(Self { inner: unsafe { NonNull::new_unchecked(handle) } }),
+            NIXL_CAPI_SUCCESS => Ok(Self {
+                inner: unsafe { NonNull::new_unchecked(handle) },
+            }),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -521,7 +526,6 @@ impl Drop for XferDescListHandle {
     }
 }
 
-
 /// A safe wrapper around a NIXL registration descriptor list
 pub struct RegDescList<'a> {
     inner: NonNull<bindings::nixl_capi_reg_dlist_s>,
@@ -532,8 +536,9 @@ impl<'a> RegDescList<'a> {
     /// Creates a new registration descriptor list for the given memory type
     fn _new(mem_type: MemType, sorted: bool) -> Result<Self, NixlError> {
         let mut dlist = ptr::null_mut();
-        let status =
-            unsafe { nixl_capi_create_reg_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist, sorted) };
+        let status = unsafe {
+            nixl_capi_create_reg_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist, sorted)
+        };
 
         match status {
             NIXL_CAPI_SUCCESS => {
@@ -588,7 +593,9 @@ impl<'a> RegDescList<'a> {
     }
 
     /// Returns true if the list is sorted
-    fn verify_sorted_inner(inner: NonNull<bindings::nixl_capi_reg_dlist_s>) -> Result<bool, NixlError> {
+    fn verify_sorted_inner(
+        inner: NonNull<bindings::nixl_capi_reg_dlist_s>,
+    ) -> Result<bool, NixlError> {
         let mut is_sorted = false;
         let status = unsafe { nixl_capi_reg_dlist_verify_sorted(inner.as_ptr(), &mut is_sorted) };
         match status {
@@ -1066,8 +1073,13 @@ impl Agent {
         }
     }
 
-    pub fn prep_xfer_dlist(&self, agent_name: &str, descs: &XferDescList, handle: &mut XferDescListHandle,
-                           opt_args: &OptArgs) -> Result<(), NixlError> {
+    pub fn prep_xfer_dlist(
+        &self,
+        agent_name: &str,
+        descs: &XferDescList,
+        handle: &mut XferDescListHandle,
+        opt_args: &OptArgs,
+    ) -> Result<(), NixlError> {
         let agent_name = CString::new(agent_name)?;
         let status = unsafe {
             nixl_capi_agent_prep_xfer_dlist(
@@ -1086,7 +1098,14 @@ impl Agent {
         }
     }
 
-    pub fn make_xfer_req(&self, operation: XferOp, local_descs: &XferDescList, remote_descs: &XferDescList, remote_agent: &str, opt_args: &OptArgs) -> Result<XferRequest, NixlError> {
+    pub fn make_xfer_req(
+        &self,
+        operation: XferOp,
+        local_descs: &XferDescList,
+        remote_descs: &XferDescList,
+        remote_agent: &str,
+        opt_args: &OptArgs,
+    ) -> Result<XferRequest, NixlError> {
         let remote_agent = CString::new(remote_agent)?;
         let mut req = std::ptr::null_mut();
 
@@ -1653,6 +1672,8 @@ impl Drop for NotificationMap {
     }
 }
 
+/// A handle to a memory registration
+/// This handle keeps the nixl agent alive until the handle is dropped
 #[derive(Debug)]
 pub struct RegistrationHandle {
     agent: Option<Arc<RwLock<AgentInner>>>,
@@ -1663,12 +1684,21 @@ pub struct RegistrationHandle {
 }
 
 impl RegistrationHandle {
+    /// Get the name of the agent that registered this memory
     pub fn agent_name(&self) -> Option<String> {
         self.agent
             .as_ref()
             .map(|agent| agent.read().unwrap().name.clone())
     }
 
+    /// Acquire the [`Agent`] that registered this memory
+    pub fn agent(&self) -> Option<Agent> {
+        self.agent.as_ref().map(|agent| Agent {
+            inner: Arc::new(RwLock::new(agent.clone())),
+        })
+    }
+
+    /// Deregister the memory from the agent
     pub fn deregister(&mut self) -> Result<(), NixlError> {
         if let Some(agent) = self.agent.take() {
             tracing::trace!(
