@@ -452,7 +452,7 @@ void nixlUcxEngine::progressFunc()
 
         int ret;
         while ((ret = poll(pollFds.data(), pollFds.size(), pthrDelay.count())) < 0)
-            NIXL_TRACE << "Call to poll() was interrupted, retrying. Error: " << strerror(errno);
+            NIXL_TRACE << "Call to poll() was interrupted, retrying. Error: " << nixl_strerror(errno);
 
         if (!ret) {
             timeout = true;
@@ -462,7 +462,7 @@ void nixlUcxEngine::progressFunc()
             char signal;
             int ret = read(pollFds.back().fd, &signal, sizeof(signal));
             if (ret < 0)
-                NIXL_ERROR << "read() on control pipe failed. Error: " << strerror(errno);
+                NIXL_ERROR << "read() on control pipe failed. Error: " << nixl_strerror(errno);
 
             pthrStop = true;
         }
@@ -498,7 +498,7 @@ void nixlUcxEngine::progressThreadStop()
     int ret = write(pthrControlPipe[1], &signal, sizeof(signal));
     if (ret < 0)
         NIXL_ERROR << "write to progress thread control pipe failed, error: "
-                   << strerror(errno);
+                   << nixl_strerror(errno);
     pthr.join();
 }
 
@@ -526,7 +526,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
             return;
         }
         if (pipe(pthrControlPipe) < 0) {
-            NIXL_ERROR << "Couldn't create progress thread control pipe, error: " << strerror(errno);
+            NIXL_ERROR << "Couldn't create progress thread control pipe, error: " << nixl_strerror(errno);
             this->initErr = true;
             return;
         }
