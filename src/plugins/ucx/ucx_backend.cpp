@@ -25,10 +25,29 @@
 #include "absl/strings/numbers.h"
 #include <serdes/serdes.h>
 
+
+class nixlUcxCudaCtxGuard {
+    std::shared_ptr<nixl::cuda::memCtx> m_ctx;
+public:
+    nixlUcxCudaCtxGuard(nixl_mem_t nixl_mem, std::shared_ptr<nixl::cuda::memCtx> ctx) {
+
+        if (nixl_mem == VRAM_SEG) {
+            auto status = ctx->pushIfNeed();
+            if (NIXL_IN_PROG == status) {
+                m_ctx = ctx;
+            }
+        }
+    }
+    ~nixlUcxCudaCtxGuard() {
+        if (m_ctx) {
+            m_ctx->pop();
+        }
+    }
+};
+
 /****************************************
  * UCX request management
 *****************************************/
-
 
 class nixlUcxIntReq : public nixlLinkElem<nixlUcxIntReq> {
     private:
@@ -357,7 +376,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     uw->regAmCallback(DISCONNECT, connectionTermAmCb, this);
     uw->regAmCallback(NOTIF_STR, notifAmCb, this);
 
-    cudaMemCtx = nixlCuda::makeMemCtx();
+    cudaMemCtx = nixl::cuda::makeMemCtx();
     progressThreadStart();
 }
 
@@ -595,7 +614,7 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
     size_t rkey_size;
 
     if (nixl_mem == VRAM_SEG) {
-        nixl_status_t status = cudaMemCtx->enableAddr((void*)mem.addr, mem.devId);
+        nixl_status_t status = cudaMemCtx->initFromAddr((void*)mem.addr, mem.devId);
         if (NIXL_IN_PROG == status) {
             // The context was updated and must be set in the progress thread
             // This procedure ensures that access to cudaMemCtx is serialized
@@ -696,7 +715,7 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
                                            nixlBackendMD* &output)
 {
     // Set CUDA context of first device, UCX will anyways detect proper device when sending
-    nixlUcxCudaCtxGuard guard(nixl_mem, m_cudaPrimaryCtx);
+    nixlUcxCudaCtxGuard guard(nixl_mem, cudaMemCtx);
     return internalMDHelper(input.metaInfo, remote_agent, output);
 }
 
