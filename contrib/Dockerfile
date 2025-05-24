@@ -78,8 +78,6 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
     uv pip install --upgrade meson pybind11 patchelf
 
-COPY . /workspace/nixl
-
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
