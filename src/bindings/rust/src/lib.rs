@@ -1115,6 +1115,344 @@ impl Agent {
         }
     }
 
+    /// Creates a transfer request between local and remote descriptors
+    ///
+    /// # Arguments
+    /// * `operation` - The transfer operation (read or write)
+    /// * `local_descs` - The local descriptor list
+    /// * `remote_descs` - The remote descriptor list
+    /// * `remote_agent` - The name of the remote agent
+    /// * `opt_args` - Optional arguments for the transfer
+    ///
+    /// # Returns
+    /// A handle to the transfer request
+    ///
+    /// # Errors
+    /// Returns a NixlError if the operation fails
+    pub fn create_xfer_req(
+        &self,
+        operation: XferOp,
+        local_descs: &XferDescList,
+        remote_descs: &XferDescList,
+        remote_agent: &str,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<XferRequest, NixlError> {
+        let remote_agent = CString::new(remote_agent)?;
+        let mut req = std::ptr::null_mut();
+
+        // SAFETY: All pointers are guaranteed to be valid
+        let status = unsafe {
+            bindings::nixl_capi_create_xfer_req(
+                self.inner.read().unwrap().handle.as_ptr(),
+                operation as bindings::nixl_capi_xfer_op_t,
+                local_descs.inner.as_ptr(),
+                remote_descs.inner.as_ptr(),
+                remote_agent.as_ptr(),
+                &mut req,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                // SAFETY: If status is NIXL_CAPI_SUCCESS, req is guaranteed to be non-null
+                let inner = NonNull::new(req).ok_or(NixlError::FailedToCreateXferRequest)?;
+                Ok(XferRequest {
+                    inner,
+                    agent: self.inner.clone(),
+                })
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::FailedToCreateXferRequest),
+        }
+    }
+
+    /// Estimates the cost of a transfer request
+    ///
+    /// # Arguments
+    /// * `req` - Transfer request handle
+    /// * `opt_args` - Optional arguments for the estimation
+    ///
+    /// # Returns
+    /// A tuple containing (duration in microseconds, error margin in microseconds, cost method)
+    ///
+    /// # Errors
+    /// Returns a NixlError if the operation fails
+    pub fn estimate_xfer_cost(
+        &self,
+        req: &XferRequest,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<(i64, i64, CostMethod), NixlError> {
+        let mut duration_us: i64 = 0;
+        let mut err_margin_us: i64 = 0;
+        let mut method: u32 = 0;
+
+        let status = unsafe {
+            nixl_capi_estimate_xfer_cost(
+                self.inner.write().unwrap().handle.as_ptr(),
+                req.inner.as_ptr(),
+                opt_args.map_or(ptr::null_mut(), |args| args.inner.as_ptr()),
+                &mut duration_us,
+                &mut err_margin_us,
+                &mut method as *mut u32 as *mut bindings::nixl_capi_cost_t,
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok((duration_us, err_margin_us, CostMethod::from(method))),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Posts a transfer request to initiate a transfer
+    ///
+    /// After this, the transfer state can be checked asynchronously until completion.
+    /// For small transfers that complete within the call, the function returns `Ok(false)`.
+    /// Otherwise, it returns `Ok(true)` to indicate the transfer is in progress.
+    ///
+    /// # Arguments
+    /// * `req` - Transfer request handle obtained from `create_xfer_req`
+    /// * `opt_args` - Optional arguments for the transfer request
+    ///
+    /// # Returns
+    /// * `Ok(false)` - If the transfer completed immediately
+    /// * `Ok(true)` - If the transfer is in progress
+    /// * `Err` - If there was an error posting the transfer request
+    pub fn post_xfer_req(
+        &self,
+        req: &XferRequest,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<bool, NixlError> {
+        tracing::trace!("Posting transfer request");
+        let status = unsafe {
+            nixl_capi_post_xfer_req(
+                self.inner.write().unwrap().handle.as_ptr(),
+                req.inner.as_ptr(),
+                opt_args.map_or(ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!(
+                    status = "completed",
+                    "Transfer request completed immediately"
+                );
+                Ok(false)
+            }
+            NIXL_CAPI_IN_PROG => {
+                tracing::trace!(status = "in_progress", "Transfer request in progress");
+                Ok(true)
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(error = "invalid_param", "Failed to post transfer request");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(error = "backend_error", "Failed to post transfer request");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Checks the status of a transfer request
+    ///
+    /// Returns `Ok(true)` if the transfer is still in progress, `Ok(false)` if it completed successfully.
+    ///
+    /// # Arguments
+    /// * `req` - Transfer request handle after `post_xfer_req`
+    pub fn get_xfer_status(&self, req: &XferRequest) -> Result<bool, NixlError> {
+        let status = unsafe {
+            nixl_capi_get_xfer_status(
+                self.inner.write().unwrap().handle.as_ptr(),
+                req.inner.as_ptr(),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(false), // Transfer completed
+            NIXL_CAPI_IN_PROG => Ok(true),  // Transfer in progress
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Gets notifications from other agents
+    ///
+    /// # Arguments
+    /// * `notifs` - Notification map to populate with notifications
+    /// * `opt_args` - Optional arguments to filter notifications by backend
+    pub fn get_notifications(
+        &self,
+        notifs: &mut NotificationMap,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<(), NixlError> {
+        tracing::trace!("Getting notifications");
+        let status = unsafe {
+            nixl_capi_get_notifs(
+                self.inner.write().unwrap().handle.as_ptr(),
+                notifs.inner.as_ptr(),
+                opt_args.map_or(ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!("Successfully retrieved notifications");
+                Ok(())
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(error = "invalid_param", "Failed to get notifications");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(error = "backend_error", "Failed to get notifications");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Send a notification to a remote agent
+    ///
+    /// # Arguments
+    /// * `remote_agent` - Name of the remote agent to send notification to
+    /// * `message` - The notification message to send
+    /// * `backend` - Optional backend to use for sending the notification
+    ///
+    /// # Returns
+    /// `Ok(())` if the notification was sent successfully
+    pub fn send_notification(
+        &self,
+        remote_agent: &str,
+        message: &[u8],
+        backend: Option<&Backend>,
+    ) -> Result<(), NixlError> {
+        tracing::trace!(remote_agent = %remote_agent, "Sending notification");
+
+        let c_remote_name = CString::new(remote_agent)?;
+
+        let opt_args = if backend.is_some() {
+            let mut args = OptArgs::new()?;
+            if let Some(b) = backend {
+                args.add_backend(b)?;
+            }
+            Some(args)
+        } else {
+            None
+        };
+
+        let status = unsafe {
+            nixl_capi_gen_notif(
+                self.inner.write().unwrap().handle.as_ptr(),
+                c_remote_name.as_ptr(),
+                message.as_ptr() as *const std::ffi::c_void,
+                message.len(),
+                opt_args
+                    .as_ref()
+                    .map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!(remote_agent = %remote_agent, "Successfully sent notification");
+                Ok(())
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(error = "invalid_param", remote_agent = %remote_agent, "Failed to send notification");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(error = "backend_error", remote_agent = %remote_agent, "Failed to send notification");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Gets the local metadata for this agent as a byte array
+    pub fn get_local_md(&self) -> Result<Vec<u8>, NixlError> {
+        tracing::trace!("Getting local metadata");
+        let mut data = std::ptr::null_mut();
+        let mut len = 0;
+
+        let status = unsafe {
+            nixl_capi_get_local_md(
+                self.inner.write().unwrap().handle.as_ptr(),
+                &mut data as *mut *mut _ as *mut *mut std::ffi::c_void,
+                &mut len,
+            )
+        };
+
+        let data = data as *const u8;
+
+        if data.is_null() {
+            tracing::trace!(
+                error = "invalid_data_pointer",
+                "Failed to get local metadata"
+            );
+            return Err(NixlError::InvalidDataPointer);
+        }
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                let bytes = unsafe {
+                    let slice = std::slice::from_raw_parts(data, len);
+                    let vec = slice.to_vec();
+                    libc::free(data as *mut libc::c_void);
+                    vec
+                };
+                tracing::trace!(metadata.size = len, "Successfully retrieved local metadata");
+                Ok(bytes)
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(error = "invalid_param", "Failed to get local metadata");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(error = "backend_error", "Failed to get local metadata");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Loads remote metadata from a byte slice
+    pub fn load_remote_md(&self, metadata: &[u8]) -> Result<String, NixlError> {
+        tracing::trace!(metadata.size = metadata.len(), "Loading remote metadata");
+        let mut agent_name = std::ptr::null_mut();
+
+        let status = unsafe {
+            nixl_capi_load_remote_md(
+                self.inner.write().unwrap().handle.as_ptr(),
+                metadata.as_ptr() as *const std::ffi::c_void,
+                metadata.len(),
+                &mut agent_name,
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                let name = unsafe {
+                    let c_str = std::ffi::CStr::from_ptr(agent_name);
+                    let s = c_str.to_str().unwrap().to_string();
+                    libc::free(agent_name as *mut libc::c_void);
+                    s
+                };
+                self.inner.write().unwrap().remotes.insert(name.clone());
+                tracing::trace!(remote.agent = %name, "Successfully loaded remote metadata");
+                Ok(name)
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(error = "invalid_param", "Failed to load remote metadata");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(error = "backend_error", "Failed to load remote metadata");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
     pub fn invalidate_remote_md(&self, remote_agent: &str) -> Result<(), NixlError> {
         self.inner
             .write()
@@ -1291,355 +1629,6 @@ impl Agent {
                 false
             }
         }
-    }
-
-    /// Send a notification to a remote agent
-    ///
-    /// # Arguments
-    /// * `remote_agent` - Name of the remote agent to send notification to
-    /// * `message` - The notification message to send
-    /// * `backend` - Optional backend to use for sending the notification
-    ///
-    /// # Returns
-    /// `Ok(())` if the notification was sent successfully
-    pub fn send_notification(
-        &self,
-        remote_agent: &str,
-        message: &[u8],
-        backend: Option<&Backend>,
-    ) -> Result<(), NixlError> {
-        tracing::trace!(remote_agent = %remote_agent, "Sending notification");
-
-        let c_remote_name = CString::new(remote_agent)?;
-
-        let opt_args = if backend.is_some() {
-            let mut args = OptArgs::new()?;
-            if let Some(b) = backend {
-                args.add_backend(b)?;
-            }
-            Some(args)
-        } else {
-            None
-        };
-
-        let status = unsafe {
-            nixl_capi_gen_notif(
-                self.inner.write().unwrap().handle.as_ptr(),
-                c_remote_name.as_ptr(),
-                message.as_ptr() as *const std::ffi::c_void,
-                message.len(),
-                opt_args
-                    .as_ref()
-                    .map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => {
-                tracing::trace!(remote_agent = %remote_agent, "Successfully sent notification");
-                Ok(())
-            }
-            NIXL_CAPI_ERROR_INVALID_PARAM => {
-                tracing::trace!(error = "invalid_param", remote_agent = %remote_agent, "Failed to send notification");
-                Err(NixlError::InvalidParam)
-            }
-            _ => {
-                tracing::trace!(error = "backend_error", remote_agent = %remote_agent, "Failed to send notification");
-                Err(NixlError::BackendError)
-            }
-        }
-    }
-
-    /// Creates a transfer request between local and remote descriptors
-    ///
-    /// # Arguments
-    /// * `operation` - The transfer operation (read or write)
-    /// * `local_descs` - The local descriptor list
-    /// * `remote_descs` - The remote descriptor list
-    /// * `remote_agent` - The name of the remote agent
-    /// * `opt_args` - Optional arguments for the transfer
-    ///
-    /// # Returns
-    /// A handle to the transfer request
-    ///
-    /// # Errors
-    /// Returns a NixlError if the operation fails
-    pub fn create_xfer_req(
-        &self,
-        operation: XferOp,
-        local_descs: &XferDescList,
-        remote_descs: &XferDescList,
-        remote_agent: &str,
-        opt_args: Option<&OptArgs>,
-    ) -> Result<XferRequest, NixlError> {
-        let remote_agent = CString::new(remote_agent)?;
-        let mut req = std::ptr::null_mut();
-
-        // SAFETY: All pointers are guaranteed to be valid
-        let status = unsafe {
-            bindings::nixl_capi_create_xfer_req(
-                self.inner.read().unwrap().handle.as_ptr(),
-                operation as bindings::nixl_capi_xfer_op_t,
-                local_descs.inner.as_ptr(),
-                remote_descs.inner.as_ptr(),
-                remote_agent.as_ptr(),
-                &mut req,
-                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => {
-                // SAFETY: If status is NIXL_CAPI_SUCCESS, req is guaranteed to be non-null
-                let inner = NonNull::new(req).ok_or(NixlError::FailedToCreateXferRequest)?;
-                Ok(XferRequest {
-                    inner,
-                    agent: self.inner.clone(),
-                })
-            }
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::FailedToCreateXferRequest),
-        }
-    }
-
-    /// Posts a transfer request to initiate a transfer
-    ///
-    /// After this, the transfer state can be checked asynchronously until completion.
-    /// For small transfers that complete within the call, the function returns `Ok(false)`.
-    /// Otherwise, it returns `Ok(true)` to indicate the transfer is in progress.
-    ///
-    /// # Arguments
-    /// * `req` - Transfer request handle obtained from `create_xfer_req`
-    /// * `opt_args` - Optional arguments for the transfer request
-    ///
-    /// # Returns
-    /// * `Ok(false)` - If the transfer completed immediately
-    /// * `Ok(true)` - If the transfer is in progress
-    /// * `Err` - If there was an error posting the transfer request
-    pub fn post_xfer_req(
-        &self,
-        req: &XferRequest,
-        opt_args: Option<&OptArgs>,
-    ) -> Result<bool, NixlError> {
-        tracing::trace!("Posting transfer request");
-        let status = unsafe {
-            nixl_capi_post_xfer_req(
-                self.inner.write().unwrap().handle.as_ptr(),
-                req.inner.as_ptr(),
-                opt_args.map_or(ptr::null_mut(), |args| args.inner.as_ptr()),
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => {
-                tracing::trace!(
-                    status = "completed",
-                    "Transfer request completed immediately"
-                );
-                Ok(false)
-            }
-            NIXL_CAPI_IN_PROG => {
-                tracing::trace!(status = "in_progress", "Transfer request in progress");
-                Ok(true)
-            }
-            NIXL_CAPI_ERROR_INVALID_PARAM => {
-                tracing::trace!(error = "invalid_param", "Failed to post transfer request");
-                Err(NixlError::InvalidParam)
-            }
-            _ => {
-                tracing::trace!(error = "backend_error", "Failed to post transfer request");
-                Err(NixlError::BackendError)
-            }
-        }
-    }
-
-    /// Checks the status of a transfer request
-    ///
-    /// Returns `Ok(true)` if the transfer is still in progress, `Ok(false)` if it completed successfully.
-    ///
-    /// # Arguments
-    /// * `req` - Transfer request handle after `post_xfer_req`
-    pub fn get_xfer_status(&self, req: &XferRequest) -> Result<bool, NixlError> {
-        let status = unsafe {
-            nixl_capi_get_xfer_status(
-                self.inner.write().unwrap().handle.as_ptr(),
-                req.inner.as_ptr(),
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(false), // Transfer completed
-            NIXL_CAPI_IN_PROG => Ok(true),  // Transfer in progress
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Estimates the cost of a transfer request
-    ///
-    /// # Arguments
-    /// * `req` - Transfer request handle
-    /// * `opt_args` - Optional arguments for the estimation
-    ///
-    /// # Returns
-    /// A tuple containing (duration in microseconds, error margin in microseconds, cost method)
-    ///
-    /// # Errors
-    /// Returns a NixlError if the operation fails
-    pub fn estimate_xfer_cost(
-        &self,
-        req: &XferRequest,
-        opt_args: Option<&OptArgs>,
-    ) -> Result<(i64, i64, CostMethod), NixlError> {
-        let mut duration_us: i64 = 0;
-        let mut err_margin_us: i64 = 0;
-        let mut method: u32 = 0;
-
-        let status = unsafe {
-            nixl_capi_estimate_xfer_cost(
-                self.inner.write().unwrap().handle.as_ptr(),
-                req.inner.as_ptr(),
-                opt_args.map_or(ptr::null_mut(), |args| args.inner.as_ptr()),
-                &mut duration_us,
-                &mut err_margin_us,
-                &mut method as *mut u32 as *mut bindings::nixl_capi_cost_t,
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok((duration_us, err_margin_us, CostMethod::from(method))),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Gets notifications from other agents
-    ///
-    /// # Arguments
-    /// * `notifs` - Notification map to populate with notifications
-    /// * `opt_args` - Optional arguments to filter notifications by backend
-    pub fn get_notifications(
-        &self,
-        notifs: &mut NotificationMap,
-        opt_args: Option<&OptArgs>,
-    ) -> Result<(), NixlError> {
-        tracing::trace!("Getting notifications");
-        let status = unsafe {
-            nixl_capi_get_notifs(
-                self.inner.write().unwrap().handle.as_ptr(),
-                notifs.inner.as_ptr(),
-                opt_args.map_or(ptr::null_mut(), |args| args.inner.as_ptr()),
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => {
-                tracing::trace!("Successfully retrieved notifications");
-                Ok(())
-            }
-            NIXL_CAPI_ERROR_INVALID_PARAM => {
-                tracing::trace!(error = "invalid_param", "Failed to get notifications");
-                Err(NixlError::InvalidParam)
-            }
-            _ => {
-                tracing::trace!(error = "backend_error", "Failed to get notifications");
-                Err(NixlError::BackendError)
-            }
-        }
-    }
-
-    /// Gets the local metadata for this agent as a byte array
-    pub fn get_local_md(&self) -> Result<Vec<u8>, NixlError> {
-        tracing::trace!("Getting local metadata");
-        let mut data = std::ptr::null_mut();
-        let mut len = 0;
-
-        let status = unsafe {
-            nixl_capi_get_local_md(
-                self.inner.write().unwrap().handle.as_ptr(),
-                &mut data as *mut *mut _ as *mut *mut std::ffi::c_void,
-                &mut len,
-            )
-        };
-
-        let data = data as *const u8;
-
-        if data.is_null() {
-            tracing::trace!(
-                error = "invalid_data_pointer",
-                "Failed to get local metadata"
-            );
-            return Err(NixlError::InvalidDataPointer);
-        }
-
-        match status {
-            NIXL_CAPI_SUCCESS => {
-                let bytes = unsafe {
-                    let slice = std::slice::from_raw_parts(data, len);
-                    let vec = slice.to_vec();
-                    libc::free(data as *mut libc::c_void);
-                    vec
-                };
-                tracing::trace!(metadata.size = len, "Successfully retrieved local metadata");
-                Ok(bytes)
-            }
-            NIXL_CAPI_ERROR_INVALID_PARAM => {
-                tracing::trace!(error = "invalid_param", "Failed to get local metadata");
-                Err(NixlError::InvalidParam)
-            }
-            _ => {
-                tracing::trace!(error = "backend_error", "Failed to get local metadata");
-                Err(NixlError::BackendError)
-            }
-        }
-    }
-
-    /// Loads remote metadata from a byte slice
-    pub fn load_remote_md(&self, metadata: &[u8]) -> Result<String, NixlError> {
-        tracing::trace!(metadata.size = metadata.len(), "Loading remote metadata");
-        let mut agent_name = std::ptr::null_mut();
-
-        let status = unsafe {
-            nixl_capi_load_remote_md(
-                self.inner.write().unwrap().handle.as_ptr(),
-                metadata.as_ptr() as *const std::ffi::c_void,
-                metadata.len(),
-                &mut agent_name,
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => {
-                let name = unsafe {
-                    let c_str = std::ffi::CStr::from_ptr(agent_name);
-                    let s = c_str.to_str().unwrap().to_string();
-                    libc::free(agent_name as *mut libc::c_void);
-                    s
-                };
-                self.inner.write().unwrap().remotes.insert(name.clone());
-                tracing::trace!(remote.agent = %name, "Successfully loaded remote metadata");
-                Ok(name)
-            }
-            NIXL_CAPI_ERROR_INVALID_PARAM => {
-                tracing::trace!(error = "invalid_param", "Failed to load remote metadata");
-                Err(NixlError::InvalidParam)
-            }
-            _ => {
-                tracing::trace!(error = "backend_error", "Failed to load remote metadata");
-                Err(NixlError::BackendError)
-            }
-        }
-    }
-
-    pub fn invalidate_remote_md(&self, remote_agent: &str) -> Result<(), NixlError> {
-        self.inner
-            .write()
-            .unwrap()
-            .invalidate_remote_md(remote_agent)
-    }
-
-    pub fn invalidate_all_remotes(&self) -> Result<(), NixlError> {
-        self.inner.write().unwrap().invalidate_all_remotes()
     }
 }
 
