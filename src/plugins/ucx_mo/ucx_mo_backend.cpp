@@ -89,7 +89,7 @@ public:
 int
 nixlUcxMoEngine::setEngCnt(uint32_t num_host)
 {
-    _gpuCnt = nixlCuda::numDevices();
+    _gpuCnt = nixl::cuda::numDevices();
     _engineCnt = (_gpuCnt > num_host) ? _gpuCnt : num_host;
     return 0;
 }

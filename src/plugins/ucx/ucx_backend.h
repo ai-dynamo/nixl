@@ -113,7 +113,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         std::vector<pollfd> pollFds;
 
         /* CUDA data*/
-        std::unique_ptr<nixlCuda::memCtx> cudaMemCtx;
+        std::shared_ptr<nixl::cuda::memCtx> cudaMemCtx;
 
         /* Notifications */
         notif_list_t notifMainList;
