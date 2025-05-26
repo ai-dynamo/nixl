@@ -46,20 +46,47 @@ class _DistUtils(ABC):
         # Key is tuple of the sorted ranks, value is backend group
         self.groups: Dict[Tuple[int, ...], Any] = {}
 
-    @abstractmethod
     def init_dist(self):
         pass
 
-    @abstractmethod
     def destroy_dist(self):
+        """Cleanup distributed process group"""
+        pass
+    
+    @abstractmethod
+    def barrier(self, ranks: Optional[List[int]] = None):
+        """Barrier for a group of ranks
+
+        Args:
+            ranks: List of ranks to barrier, if None, barrier for all ranks
+        """
         pass
 
     @abstractmethod
     def allgather_obj(self, obj: Any) -> List[Any]:
+        """Allgather arbitrary object on world
+
+        Args:
+            obj: Object to gather from all ranks
+
+        Returns:
+            List[Any]: List of gathered objects, one from each rank
+        """
         pass
 
     @abstractmethod
     def alltoall_obj(self, send_objs: List[Any]) -> List[Any]:
+        """All-to-all communication of arbitrary objects on world
+
+        Args:
+            send_objs: List of objects to send, length must equal world_size
+
+        Returns:
+            List[Any]: List of received objects
+
+        Raises:
+            AssertionError: If length of send_objs doesn't match world_size
+        """
         pass
 
     @abstractmethod
@@ -74,7 +101,6 @@ class _DistUtils(ABC):
     def get_world_size(self) -> int:
         pass
 
-    @abstractmethod
     def init_group(self, ranks: List[int]):
         pass
 
@@ -194,7 +220,6 @@ class _TorchDistUtils(_DistUtils):
         dist.barrier(group=group)
 
     def destroy_dist(self):
-        """Cleanup distributed process group"""
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -245,6 +270,7 @@ class _TorchDistUtils(_DistUtils):
         recv_objs = [None for _ in range(len(send_objs))]
 
         for other_rank in range(world_size):
+            log.debug(f"[Rank {self.get_rank()}] Alltoall step - Scattering from rank {other_rank}")
             output = [None]
             dist.scatter_object_list(
                 scatter_object_output_list=output,

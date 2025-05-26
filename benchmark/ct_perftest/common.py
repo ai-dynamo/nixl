@@ -73,8 +73,10 @@ class NixlBuffer:
                     (size % chunk_size,), fill_value, dtype=dtype, device=device
                 )
             )
-
+        
+        log.debug(f"[Rank {dist_utils.get_rank()}] Get reg descs")
         self.reg_descs = nixl_agent.get_reg_descs(self.bufs, mem_type=mem_type)
+        log.debug(f"[Rank {dist_utils.get_rank()}] Get xfer descs")
         self.xfer_descs = nixl_agent.get_xfer_descs(self.bufs, mem_type=mem_type)
 
         log.debug(

@@ -85,7 +85,7 @@ def sequential_ct_perftest(
         pattern = TrafficPattern(
             matrix=load_matrix(Path(tp_config["matrix_file"])),
             shards=tp_config.get("shards", 1),
-            mem_type=tp_config.get("mem_type", "dram").lower(),
+            mem_type=tp_config.get("mem_type", "cuda").lower(),
             xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
             sleep_after_launch_sec=tp_config.get("sleep_after_launch_sec", 0),
         )
@@ -129,7 +129,7 @@ def ct_perftest(config_file, verify_buffers, print_recv_buffers):
     pattern = TrafficPattern(
         matrix=load_matrix(Path(tp_config["matrix_file"])),
         shards=tp_config.get("shards", 1),
-        mem_type=tp_config.get("mem_type", "dram").lower(),
+        mem_type=tp_config.get("mem_type", "cuda").lower(),
         xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
     )
 
