@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import yaml  # type: ignore
 from models.model_config import ModelConfig
@@ -37,13 +37,13 @@ class Llama3_1(BaseModelArch):
         query_head_dimension: int,
         gqa_num_queries_in_group: int,
         num_model_params: int,
-        model_config: ModelConfig,
+        model_config: Optional[ModelConfig] = None,
     ):
         """
         Initialize a Llama 3.1 model architecture.
 
         Args:
-            model (str): The model identifier.
+            model_name (str): The model identifier.
             num_layers (int): Number of transformer layers.
             num_query_heads_with_mha (int): Number of query heads with multi-head attention.
             query_head_dimension (int): Dimension of each query head.
@@ -51,7 +51,7 @@ class Llama3_1(BaseModelArch):
             num_model_params (int): Total number of model parameters.
         """
         self.model_name = model_name
-        self.model_config = model_config
+        self.model_config = model_config or ModelConfig()
         self.num_layers = num_layers
         self.num_query_heads_with_mha = num_query_heads_with_mha
         self.query_head_dimension = query_head_dimension
@@ -101,7 +101,7 @@ class Llama3_1(BaseModelArch):
             Dict[str, Any]: A dictionary containing all model configuration parameters.
         """
         return {
-            "model": self.model.lower(),
+            "model_name": self.model_name.lower(),
             "num_layers": self.num_layers,
             "num_query_heads_with_mha": self.num_query_heads_with_mha,
             "query_head_dimension": self.query_head_dimension,
