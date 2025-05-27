@@ -103,7 +103,7 @@ RUN GDS_PATH=$(find /usr/local/cuda/targets -name '*-linux' | head -n 1) && \
     sed -i "s|option('gds_path'.*)|option('gds_path', type: 'string', value: '$GDS_PATH', description: 'Path to GDS CuFile install')|g" meson_options.txt && \
     rm -rf build && \
     mkdir build && \
-    uv run -- meson setup build --prefix=/usr/local/nixl && \
+    uv run meson setup build/ --prefix=/usr/local/nixl && \
     cd build && \
     ninja && \
     ninja install
