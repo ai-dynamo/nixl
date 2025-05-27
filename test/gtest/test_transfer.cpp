@@ -272,17 +272,15 @@ protected:
     void verifyNotifs(nixlAgent &agent, const std::string &from_name, size_t expected_count)
     {
         nixl_notifs_t notif_map;
-        int backoff_ms = 1;
 
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < retry_count; i++) {
             nixl_status_t status = agent.getNotifs(notif_map);
             ASSERT_EQ(status, NIXL_SUCCESS);
 
             if (notif_map[from_name].size() >= expected_count) {
                 break;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
-            backoff_ms *= 2;
+            std::this_thread::sleep_for(retry_timeout);
         }
 
         auto& notif_list = notif_map[from_name];
@@ -331,15 +329,13 @@ protected:
                     nixl_mem_t dst_mem_type,
                     std::vector<MemBuffer> dst_buffers)
     {
-        nixl_opt_args_t extra_params;
-        extra_params.hasNotif = true;
-        extra_params.notifMsg = NOTIF_MSG;
-
-        auto start_time = absl::Now();
-
         std::vector<std::thread> threads;
         for (size_t thread = 0; thread < num_threads; ++thread) {
-            threads.emplace_back([&]() {
+            threads.emplace_back([&, thread]() {
+                nixl_opt_args_t extra_params;
+                extra_params.hasNotif = true;
+                extra_params.notifMsg = NOTIF_MSG;
+
                 nixlXferReqH *xfer_req = nullptr;
                 nixl_status_t status = from.createXferReq(
                         NIXL_WRITE,
@@ -349,20 +345,29 @@ protected:
                 ASSERT_EQ(status, NIXL_SUCCESS);
                 EXPECT_NE(xfer_req, nullptr);
 
+                auto start_time = absl::Now();
+
                 for (size_t i = 0; i < repeat; i++) {
                     status = from.postXferReq(xfer_req);
-                    ASSERT_GE(status, NIXL_SUCCESS);
+                    ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
 
-                    bool xfer_done = false;
-                    do {
+                    for (int i = 0; i < retry_count; i++) {
                         status = from.getXferStatus(xfer_req);
                         EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-                        xfer_done = (status == NIXL_SUCCESS);
-                    } while (!xfer_done);
-
-                    status = from.getXferStatus(xfer_req);
-                    EXPECT_EQ(status, NIXL_SUCCESS);
+                        if (status == NIXL_SUCCESS) {
+                            break;
+                        }
+                        std::this_thread::sleep_for(retry_timeout);
+                    }
+                    EXPECT_TRUE(status == NIXL_SUCCESS);
                 }
+
+                auto total_time = absl::ToDoubleSeconds(absl::Now() - start_time);
+                auto total_size = size * count * repeat;
+                auto bandwidth  = total_size / total_time / (1024 * 1024 * 1024);
+                Logger() << "Thread " << thread << ": " << size << "x" << count << "x" << repeat
+                         << "=" << total_size << " bytes in " << total_time << " seconds "
+                         << "(" << bandwidth << " GB/s)";
 
                 status = from.releaseXferReq(xfer_req);
                 EXPECT_EQ(status, NIXL_SUCCESS);
@@ -374,13 +379,6 @@ protected:
         }
 
         verifyNotifs(to, from_name, repeat * num_threads);
-
-        auto total_time = absl::ToDoubleSeconds(absl::Now() - start_time);
-        auto total_size = size * count * repeat * num_threads;
-        auto bandwidth  = total_size / total_time / (1024 * 1024 * 1024);
-        Logger() << size << "x" << count << "x" << repeat << "x" << num_threads << "=" << total_size
-                 << " bytes in " << total_time << " seconds "
-                 << "(" << bandwidth << " GB/s)";
 
         invalidateMD();
     }
@@ -400,6 +398,8 @@ protected:
 private:
     static constexpr uint64_t DEV_ID = 0;
     static const std::string NOTIF_MSG;
+    static constexpr int retry_count{1000};
+    static constexpr std::chrono::milliseconds retry_timeout{1};
 
     std::vector<std::unique_ptr<nixlAgent>> agents;
 };
@@ -410,10 +410,10 @@ TEST_P(TestTransfer, RandomSizes)
 {
     // Tuple fields are: size, count, repeat, num_threads
     constexpr std::array<std::tuple<size_t, size_t, size_t, size_t>, 4> test_cases = {
-        {{40, 1000, 1, 4},
-         {4096, 8, 3, 4},
-         {32768, 64, 3, 4},
-         {1000000, 100, 3, 4}}
+        {{4096, 8, 3, 1},
+         {32768, 64, 3, 2},
+         {1000000, 100, 3, 4},
+         {40, 1000, 1, 4}}
     };
 
     for (const auto &[size, count, repeat, num_threads] : test_cases) {
