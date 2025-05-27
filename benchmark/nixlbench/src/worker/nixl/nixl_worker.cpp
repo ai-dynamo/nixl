@@ -633,7 +633,9 @@ static int execTransfer(nixlAgent *agent,
                         const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
                         const nixl_xfer_op_t op,
                         const int num_iter,
-                        const int num_threads)
+                        const int num_threads,
+                        std::chrono::microseconds &estimated_duration,
+                        std::chrono::microseconds &estimation_error)
 {
     int ret = 0;
 
@@ -674,7 +676,8 @@ static int execTransfer(nixlAgent *agent,
 
         CHECK_NIXL_ERROR(agent->createXferReq(op, local_desc, remote_desc, target,
                                             req, &params), "createTransferReq failed");
-
+        nixl_cost_t method = nixl_cost_t::ANALYTICAL_BACKEND;
+        CHECK_NIXL_ERROR(agent->estimateXferCost(req, estimated_duration, estimation_error, method), "estimateXferCost failed");
         for (int i = 0; i < num_iter && !error; i++) {
             rc = agent->postXferReq(req);
             if (NIXL_ERR_BACKEND == rc) {
@@ -703,9 +706,10 @@ static int execTransfer(nixlAgent *agent,
     return ret;
 }
 
-std::variant<double, int> xferBenchNixlWorker::transfer(size_t block_size,
-                                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
-                                               const std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
+int xferBenchNixlWorker::transfer(size_t block_size,
+                                  const std::vector<std::vector<xferBenchIOV>> &local_iovs,
+                                  const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
+                                  xferBenchTransferMetrics &metrics) {
     int num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
     int skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
     struct timeval t_start, t_end;
@@ -720,9 +724,11 @@ std::variant<double, int> xferBenchNixlWorker::transfer(size_t block_size,
         num_iter /= LARGE_BLOCK_SIZE_ITER_FACTOR;
     }
 
-    ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads);
+    std::chrono::microseconds estimated_duration;
+    std::chrono::microseconds estimation_error;
+    ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, estimated_duration, estimation_error);
     if (ret < 0) {
-        return std::variant<double, int>(ret);
+        return ret;
     }
 
     // Synchronize to ensure all processes have completed the warmup (iter and polling)
@@ -730,13 +736,16 @@ std::variant<double, int> xferBenchNixlWorker::transfer(size_t block_size,
 
     gettimeofday(&t_start, nullptr);
 
-    ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads);
+    ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, estimated_duration, estimation_error);
 
     gettimeofday(&t_end, nullptr);
     total_duration += (((t_end.tv_sec - t_start.tv_sec) * 1e6) +
                        (t_end.tv_usec - t_start.tv_usec)); // In us
 
-    return ret < 0 ? std::variant<double, int>(ret) : std::variant<double, int>(total_duration);
+    metrics.total_duration = total_duration;
+    metrics.estimated_duration = estimated_duration.count();
+    metrics.estimation_error = estimation_error.count();
+    return ret;
 }
 
 void xferBenchNixlWorker::poll(size_t block_size) {
