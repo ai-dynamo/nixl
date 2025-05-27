@@ -19,6 +19,7 @@ ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_REF="v1.19.x"
 
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
@@ -84,7 +85,7 @@ RUN rm -rf /opt/hpcx/ucx
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && 			     \
-     git checkout v1.19.x &&	     \
+     git checkout $UCX_REF &&        \
      ./autogen.sh && ./configure     \
          --enable-shared             \
          --disable-static            \

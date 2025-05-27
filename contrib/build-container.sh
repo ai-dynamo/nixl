@@ -32,6 +32,7 @@ BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
 BASE_IMAGE_TAG=25.03-cuda12.8-devel-ubuntu24.04
 WHL_PLATFORM=manylinux_2_39_x86_64
 WHL_PYTHON_VERSIONS="3.12"
+UCX_REF=v1.19.x
 OS="ubuntu24"
 
 get_options() {
@@ -84,6 +85,10 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --efa)
+            # Master branch (v1.20) containing EFA SRD support
+            UCX_REF=3842a65f02a8e2f3635a66189cd82dc86bf065c2
+            ;;
         --)
             shift
             break
@@ -119,6 +124,7 @@ show_build_options() {
     echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
+    echo "UCX Ref: ${UCX_REF}"
 }
 
 show_help() {
@@ -129,6 +135,7 @@ show_help() {
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
+    echo "  [--efa ucx version that supports EFA SRD transport]"
     exit 0
 }
 
@@ -151,7 +158,8 @@ fi
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
+BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
 
 show_build_options
 
-docker build -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_ARGS $BUILD_CONTEXT
+docker build -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
