@@ -19,6 +19,7 @@ ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
 # UCX argument is either "upstream" (default installed in base image) or "custom" (build from source)
 ARG UCX="upstream"
 ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG TARGETARCH="x86_64"
 
 # --- Stage 1: Common OS setup ---
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
@@ -76,6 +77,7 @@ FROM ucx_${UCX}_image AS ucx_image
 ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_x86_64"
+ARG TARGETARCH="x86_64"
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
@@ -97,16 +99,18 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
     uv pip install --upgrade meson pybind11 patchelf pyYAML
 
-RUN rm -rf build && \
+RUN GDS_PATH=$(find /usr/local/cuda/targets -name '*-linux' | head -n 1) && \
+    sed -i "s|option('gds_path'.*)|option('gds_path', type: 'string', value: '$GDS_PATH', description: 'Path to GDS CuFile install')|g" meson_options.txt && \
+    rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl && \
+    uv run -- meson setup build --prefix=/usr/local/nixl && \
     cd build && \
     ninja && \
     ninja install
 
-ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/x86_64-linux-gnu/plugins
-RUN echo "/usr/local/nixl/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
-    echo "/usr/local/nixl/lib/x86_64-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
+ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/${TARGETARCH}-linux-gnu/plugins
+RUN echo "/usr/local/nixl/lib/${TARGETARCH}-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "/usr/local/nixl/lib/${TARGETARCH}-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
 # Create the wheel
@@ -131,4 +135,4 @@ RUN rm -rf build && \
     uv run meson setup build -Dnixl_path=/usr/local/nixl/ && \
     cd build && ninja
 ENV PATH=/workspace/nixlbench/build:$PATH
-WORKDIR /workspace/nixl/benchmark/kvbench
+WORKDIR /workspace/nixlbench/build
