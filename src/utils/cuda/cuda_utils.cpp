@@ -52,7 +52,7 @@ private:
         if (m_context) {
             return NIXL_SUCCESS;
         }
-        
+
         nixl_status_t status = retain();
         if (NIXL_SUCCESS != status) {
             return status;
@@ -71,7 +71,7 @@ public:
     virtual ~regularCtx() = default;
 
     [[nodiscard]] virtual nixl_status_t
-    retain() { 
+    retain() {
         // Nothing to retain
         return NIXL_ERR_NOT_FOUND;
     }

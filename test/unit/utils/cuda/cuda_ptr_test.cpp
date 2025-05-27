@@ -155,7 +155,7 @@ void releaseVMM(int dev_id, size_t len, void* addr)
                             "Failed to release memory");
     CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree((CUdeviceptr)addr, padded_size),
                             "Failed to free reserved address");
-    
+
     dropContext();
 }
 
@@ -200,7 +200,7 @@ int main()
         CUcontext context;
         CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&context), "Failed to query current context");
         assert(nullptr == context);
-        
+
         std::shared_ptr<nixl::cuda::memCtx> ctx = nixl::cuda::makeMemCtx();
         assert(NIXL_IN_PROG == ctx->pushIfNeed());
         CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&context), "Failed to query current context");
