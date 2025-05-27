@@ -177,7 +177,7 @@ class _TorchDistUtils(_DistUtils):
         world_size: int = int(world_size_str)
 
         dist.init_process_group(
-            backend="gloo",
+            backend="nccl",
             rank=rank,
             world_size=world_size,
         )
