@@ -23,6 +23,7 @@
 #include <thread>
 #include <mutex>
 #include <cassert>
+#include <memory>
 
 #include "nixl.h"
 #include "ucx_backend.h"
@@ -90,12 +91,12 @@ private:
     int setEngCnt(uint32_t host_engines);
     uint32_t getEngCnt();
     int32_t getEngIdx(nixl_mem_t type, uint64_t devId);
-    std::string getEngName(const std::string &baseName, uint32_t eidx);
+    std::string getEngName(const std::string &baseName, uint32_t eidx) const;
     std::string getEngBase(const std::string &engName);
     bool pthrOn;
 
     // UCX backends data
-    std::vector<nixlBackendEngine*> engines;
+    std::vector<std::unique_ptr<nixlBackendEngine>> engines;
     // Map of agent name to saved nixlUcxConnection info
     using remote_conn_map_t = std::map<std::string, nixlUcxMoConnection>;
     using remote_comm_it_t = remote_conn_map_t::iterator;
@@ -109,7 +110,7 @@ private:
 
 public:
     nixlUcxMoEngine(const nixlBackendInitParams* init_params);
-    ~nixlUcxMoEngine();
+    ~nixlUcxMoEngine() = default;
 
     bool supportsRemote () const { return true; }
     bool supportsLocal  () const { return false; }
@@ -148,21 +149,21 @@ public:
                             const nixl_meta_dlist_t &remote,
                             const std::string &remote_agent,
                             nixlBackendReqH* &handle,
-                            const nixl_opt_b_args_t* opt_args=nullptr);
+                            const nixl_opt_b_args_t* opt_args=nullptr) const;
 
     nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                             const nixl_meta_dlist_t &local,
                             const nixl_meta_dlist_t &remote,
                             const std::string &remote_agent,
                             nixlBackendReqH* &handle,
-                            const nixl_opt_b_args_t* opt_args=nullptr);
-    nixl_status_t checkXfer (nixlBackendReqH* handle);
-    nixl_status_t releaseReqH(nixlBackendReqH* handle);
+                            const nixl_opt_b_args_t* opt_args=nullptr) const;
+    nixl_status_t checkXfer (nixlBackendReqH* handle) const;
+    nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
 
     int progress();
 
     nixl_status_t getNotifs(notif_list_t &notif_list);
-    nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg);
+    nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const;
 
     //public function for UCX worker to mark connections as connected
     nixl_status_t checkConn(const std::string &remote_agent);

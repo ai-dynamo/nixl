@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '0.2.0',
+project('nixlbench', 'CPP', version: '0.3.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -40,7 +40,14 @@ nvshmem_lib_path = get_option('nvshmem_lib_path')
 
 # Find required libraries
 # NIXL
-nixl_lib_path = nixl_path + '/lib/x86_64-linux-gnu'
+host_cpu_family = host_machine.cpu_family()
+host_system = host_machine.system().to_lower()
+
+if host_system != 'linux' or host_cpu_family not in ['x86_64', 'aarch64']
+    error('This build only supports Linux on x86_64 or aarch64 architectures.')
+endif
+
+nixl_lib_path = nixl_path + '/lib/' + host_cpu_family + '-linux-gnu'
 nixl_lib = cpp.find_library('nixl', dirs: [nixl_lib_path])
 nixl_build = cpp.find_library('nixl_build', dirs: [nixl_lib_path])
 nixl_serdes = cpp.find_library('serdes', dirs: [nixl_lib_path])
@@ -185,7 +192,7 @@ if nvshmem_available
                  ]
 
     if etcd_available
-        nvcc_args += ['-letcd-cpp-api']
+        nvcc_args += ['-letcd-cpp-api', '-lcpprest']
         etcd_rt = meson.current_build_dir() + '/src/runtime/etcd/libetcd_rt.a.p/etcd_rt.cpp.o'
         nvcc_cmd_files += etcd_rt
     endif

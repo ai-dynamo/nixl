@@ -17,6 +17,7 @@
 #ifndef __BACKEND_ENGINE_H
 #define __BACKEND_ENGINE_H
 
+#include <memory>
 #include <mutex>
 #include <string>
 #include "nixl_types.h"
@@ -26,66 +27,66 @@
 class nixlBackendEngine {
     private:
         // Members that cannot be modified by a child backend and parent bookkeep
-        nixl_backend_t   backendType;
-        nixl_b_params_t* customParams;
+        nixl_backend_t  backendType;
+        nixl_b_params_t customParams;
 
     protected:
         // Members that can be accessed by the child (localAgent cannot be modified)
-        bool              initErr;
+        bool              initErr = false;
         const std::string localAgent;
 
-        nixl_status_t setInitParam(const std::string &key, const std::string &value) {
-            if (customParams->count(key)==0) {
-                (*customParams)[key] = value;
+        [[nodiscard]] nixl_status_t setInitParam(const std::string &key, const std::string &value) {
+	    if (customParams.try_emplace(key,value).second) {
                 return NIXL_SUCCESS;
-            } else {
-                return NIXL_ERR_NOT_ALLOWED;
             }
+	    return NIXL_ERR_NOT_ALLOWED;
         }
 
-        nixl_status_t getInitParam(const std::string &key, std::string &value) {
-            if (customParams->count(key)==0) {
-                return NIXL_ERR_INVALID_PARAM;
-            } else {
-                value = (*customParams)[key];
+        [[nodiscard]] nixl_status_t getInitParam(const std::string &key, std::string &value) const {
+	    const auto iter = customParams.find(key);
+            if (iter != customParams.end()) {
+                value = iter->second;
                 return NIXL_SUCCESS;
-            }
+	    }
+	    return NIXL_ERR_INVALID_PARAM;
         }
 
     public:
-        nixlBackendEngine (const nixlBackendInitParams* init_params)
-            : localAgent(init_params->localAgent) {
-
-            this->backendType  = init_params->type;
-            this->initErr      = false;
-            this->customParams = new nixl_b_params_t(*(init_params->customParams));
+        explicit nixlBackendEngine (const nixlBackendInitParams* init_params)
+            : backendType(init_params->type),
+              customParams(*init_params->customParams),
+              localAgent(init_params->localAgent) {
         }
 
-        virtual ~nixlBackendEngine () {
-            delete customParams;
-        }
+        nixlBackendEngine(nixlBackendEngine&&) = delete;
+        nixlBackendEngine(const nixlBackendEngine&) = delete;
 
-        bool getInitErr() { return initErr; }
-        nixl_backend_t getType () const { return backendType; }
-        nixl_b_params_t getCustomParams () const { return *customParams; }
+        void operator=(nixlBackendEngine&&) = delete;
+        void operator=(const nixlBackendEngine&) = delete;
+
+        virtual ~nixlBackendEngine() = default;
+
+        bool getInitErr() const noexcept { return initErr; }
+        const nixl_backend_t& getType() const noexcept { return backendType; }
+        const nixl_b_params_t& getCustomParams() const noexcept { return customParams; }
 
         // The support function determine which methods are necessary by the child backend, and
         // if they're called by mistake, they will return error if not implemented by backend.
 
         // Determines if a backend supports remote operations
-        virtual bool supportsRemote () const = 0;
+        virtual bool supportsRemote() const = 0;
 
         // Determines if a backend supports local operations
-        virtual bool supportsLocal () const = 0;
+        virtual bool supportsLocal() const = 0;
 
         // Determines if a backend supports sending notifications. Related methods are not
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
-        virtual bool supportsNotif () const = 0;
+        virtual bool supportsNotif() const = 0;
 
         // Determines if a backend supports progress thread.
-        virtual bool supportsProgTh () const = 0;
+        virtual bool supportsProgTh() const = 0;
 
-        virtual nixl_mem_list_t getSupportedMems () const = 0;
+        virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 
 
         // *** Pure virtual methods that need to be implemented by any backend *** //
@@ -112,7 +113,21 @@ class nixlBackendEngine {
                                         const std::string &remote_agent,
                                         nixlBackendReqH* &handle,
                                         const nixl_opt_b_args_t* opt_args=nullptr
-                                       ) = 0;
+                                       ) const = 0;
+
+        // Estimate the cost (duration) of a transfer operation.
+        virtual nixl_status_t estimateXferCost(const nixl_xfer_op_t &operation,
+                                               const nixl_meta_dlist_t &local,
+                                               const nixl_meta_dlist_t &remote,
+                                               const std::string &remote_agent,
+                                               nixlBackendReqH* const &handle,
+                                               std::chrono::microseconds &duration,
+                                               std::chrono::microseconds &err_margin,
+                                               nixl_cost_t &method,
+                                               const nixl_opt_args_t* extra_params = nullptr) const
+        {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
 
         // Posting a request, which completes the async handle creation and posts it
         virtual nixl_status_t postXfer (const nixl_xfer_op_t &operation,
@@ -121,13 +136,13 @@ class nixlBackendEngine {
                                         const std::string &remote_agent,
                                         nixlBackendReqH* &handle,
                                         const nixl_opt_b_args_t* opt_args=nullptr
-                                       ) = 0;
+                                       ) const = 0;
 
         // Use a handle to progress backend engine and see if a transfer is completed or not
-        virtual nixl_status_t checkXfer(nixlBackendReqH* handle) = 0;
+        virtual nixl_status_t checkXfer(nixlBackendReqH* handle) const = 0;
 
         //Backend aborts the transfer if necessary, and destructs the relevant objects
-        virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) = 0;
+        virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
 
         // *** Needs to be implemented if supportsRemote() is true *** //
@@ -174,7 +189,7 @@ class nixlBackendEngine {
         virtual nixl_status_t getNotifs(notif_list_t &notif_list) { return NIXL_ERR_BACKEND; }
 
         // Generates a standalone notification, not bound to a transfer.
-        virtual nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) {
+        virtual nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const {
             return NIXL_ERR_BACKEND;
         }
 

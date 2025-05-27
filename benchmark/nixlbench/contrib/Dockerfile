@@ -16,10 +16,15 @@
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
 
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
-
+# UCX argument is either "upstream" (default installed in base image) or "custom" (build from source)
+ARG UCX="upstream"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 
+# --- Stage 1: Common OS setup ---
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
+
+# Re-declare for use in this stage
+ARG DEFAULT_PYTHON_VERSION
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
@@ -33,6 +38,44 @@ RUN apt-get update -y && \
     libcpprest-dev \
     etcd-server \
     etcd-client
+
+# --- Stage 2a: Represents using UCX from the base image ---
+FROM os_setup_stage AS ucx_upstream_image
+RUN echo "INFO: Using UCX from base image (UCX=${UCX})."
+
+# --- Stage 2b: Represents building UCX from source ---
+FROM os_setup_stage AS ucx_custom_image
+RUN mkdir -p /workspace/ucx
+COPY --from=ucx . /workspace/ucx
+
+RUN echo "INFO: Starting custom UCX build..." && \
+    apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        autoconf automake libtool pkg-config make g++ \
+        libnuma-dev librdmacm-dev ibverbs-providers && \
+    echo "INFO: Removing pre-existing UCX installations..." && \
+    rm -rf /usr/local/ucx /opt/hpcx/ucx && \
+    cd /workspace/ucx && \
+    ./autogen.sh && \
+    echo "INFO: Building UCX..." && \
+    ./contrib/configure-release --prefix=/usr/local/ucx \
+                                --with-cuda=/usr/local/cuda \
+                                --enable-mt \
+                                --without-go && \
+    make -j$(nproc) && \
+    make install && \
+    cd / && \
+    echo "INFO: Finished building and installing UCX to /usr/local/ucx."
+
+# --- Stage 3: UCX Image Selection ---
+# This stage selects the correct UCX image based on the UCX argument
+FROM ucx_${UCX}_image AS ucx_image
+
+# --- Stage 4: Final Image Assembly ---
+# Re-declare ARGs needed in this final stage
+ARG DEFAULT_PYTHON_VERSION
+ARG WHL_PYTHON_VERSIONS="3.12"
+ARG WHL_PLATFORM="manylinux_2_39_x86_64"
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
@@ -52,7 +95,7 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/usr/local/lib:$LD_LIBRARY_P
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade meson pybind11 patchelf
+    uv pip install --upgrade meson pybind11 patchelf pyYAML
 
 RUN rm -rf build && \
     mkdir build && \
@@ -67,8 +110,6 @@ RUN echo "/usr/local/nixl/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/nixl.conf &&
     ldconfig
 
 # Create the wheel
-ARG WHL_PYTHON_VERSIONS="3.12"
-ARG WHL_PLATFORM="manylinux_2_39_x86_64"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
@@ -89,5 +130,5 @@ RUN rm -rf build && \
     mkdir build && \
     uv run meson setup build -Dnixl_path=/usr/local/nixl/ && \
     cd build && ninja
-
-WORKDIR /workspace/nixlbench/build
+ENV PATH=/workspace/nixlbench/build:$PATH
+WORKDIR /workspace/nixl/benchmark/kvbench

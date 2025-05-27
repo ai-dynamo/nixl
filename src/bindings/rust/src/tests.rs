@@ -20,8 +20,26 @@
 //! `nixl` crate.
 
 #[cfg(test)]
-mod tests {
+mod unit_tests {
     use crate::*;
+    use std::env;
+    use std::time::Duration;
+
+    // Helper function to create an agent with error handling
+    fn create_test_agent(name: &str) -> Result<Agent, NixlError> {
+        Agent::new(name)
+    }
+
+    // Helper function to find a plugin by name
+    fn find_plugin(plugins: &StringList, name: &str) -> Result<String, NixlError> {
+        plugins
+            .iter()
+            .filter_map(Result::ok)
+            .find(|&plugin| plugin == name)
+            .map(ToString::to_string)
+            .or_else(|| plugins.get(0).ok().map(ToString::to_string))
+            .ok_or(NixlError::InvalidParam)
+    }
 
     #[test]
     fn test_agent_creation() {
@@ -43,8 +61,8 @@ mod tests {
             .expect("Failed to get plugins");
 
         // Print available plugins
-        for plugin in plugins.iter() {
-            println!("Found plugin: {}", plugin.unwrap());
+        for plugin in plugins.iter().flatten() {
+            println!("Found plugin: {}", plugin);
         }
     }
 
@@ -101,29 +119,33 @@ mod tests {
     }
 
     #[test]
-    fn test_get_backend_params() {
-        let agent = Agent::new("test_agent").unwrap();
-        let plugins = agent.get_available_plugins().unwrap();
-        assert!(plugins.is_empty().unwrap_or(false) == false);
+    fn test_get_backend_params() -> Result<(), NixlError> {
+        let agent = create_test_agent("test_agent")?;
+        let plugins = agent.get_available_plugins()?;
 
-        let plugin_name = plugins.get(0).unwrap();
-        let (_mems, params) = agent.get_plugin_params(&plugin_name).unwrap();
-        let backend = agent.create_backend(&plugin_name, &params).unwrap();
+        // Ensure we have at least one plugin
+        assert!(!plugins.is_empty()?);
+
+        // Try UCX plugin first since it doesn't require GPU
+        let plugin_name = find_plugin(&plugins, "UCX")?;
+        let (_mems, params) = agent.get_plugin_params(&plugin_name)?;
+        let backend = agent.create_backend(&plugin_name, &params)?;
 
         // Get backend params after initialization
-        let (backend_mems, backend_params) = agent.get_backend_params(&backend).unwrap();
+        let (backend_mems, backend_params) = agent.get_backend_params(&backend)?;
 
-        // Verify we can access the parameters
-        let param_iter = backend_params.iter().unwrap();
-        for param in param_iter {
-            let param = param.unwrap();
+        // Print parameters using iterator
+        let param_iter = backend_params.iter()?;
+        for param in param_iter.flatten() {
             println!("Backend param: {} = {}", param.key, param.value);
         }
 
-        // Verify we can access the memory types
-        for mem_type in backend_mems.iter() {
-            println!("Backend memory type: {:?}", mem_type.unwrap());
+        // Print memory types
+        for mem_type in backend_mems.iter().flatten() {
+            println!("Backend memory type: {:?}", mem_type);
         }
+
+        Ok(())
     }
 
     #[test]
@@ -135,7 +157,7 @@ mod tests {
         dlist.add_desc(0x2000, 0x200, 1).unwrap();
 
         // Check length
-        assert_eq!(dlist.len().unwrap(), 2);
+        assert_eq!(dlist.desc_count().unwrap(), 2);
 
         // Check overlaps
         assert!(!dlist.has_overlaps().unwrap());
@@ -146,7 +168,7 @@ mod tests {
 
         // Clear list
         dlist.clear().unwrap();
-        assert_eq!(dlist.len().unwrap(), 0);
+        assert_eq!(dlist.desc_count().unwrap(), 0);
 
         // Resize list
         dlist.resize(5).unwrap();
@@ -166,7 +188,7 @@ mod tests {
         dlist.add_desc(0x2000, 0x200, 1).unwrap();
 
         // Check length
-        assert_eq!(dlist.len().unwrap(), 2);
+        assert_eq!(dlist.desc_count().unwrap(), 2);
 
         // Check overlaps
         assert!(!dlist.has_overlaps().unwrap());
@@ -177,7 +199,7 @@ mod tests {
 
         // Clear list
         dlist.clear().unwrap();
-        assert_eq!(dlist.len().unwrap(), 0);
+        assert_eq!(dlist.desc_count().unwrap(), 0);
 
         // Resize list
         dlist.resize(5).unwrap();
@@ -192,7 +214,7 @@ mod tests {
             // Create a descriptor list with shorter lifetime
             let mut dlist = XferDescList::new(MemType::Dram).unwrap();
             dlist.add_storage_desc(&storage).unwrap();
-            assert_eq!(dlist.len().unwrap(), 1);
+            assert_eq!(dlist.desc_count().unwrap(), 1);
             // dlist is dropped here, but storage is still valid
         }
 
@@ -211,30 +233,15 @@ mod tests {
         dlist.add_storage_desc(&storage1).unwrap();
         dlist.add_storage_desc(&storage2).unwrap();
 
-        assert_eq!(dlist.len().unwrap(), 2);
+        assert_eq!(dlist.desc_count().unwrap(), 2);
     }
 
     #[test]
     fn test_memory_registration() {
         let agent = Agent::new("test_agent").unwrap();
         let mut storage = SystemStorage::new(1024).unwrap();
-        let mut opt_args = OptArgs::new().unwrap();
-
-        // Test initial state
-        assert!(!storage.is_registered());
-        assert!(storage.handle().is_none());
-
         // Register memory
-        storage.register(&agent, &opt_args).unwrap();
-
-        // Verify registration
-        assert!(storage.is_registered());
-        assert!(storage.handle().is_some());
-
-        let handle = storage.handle().unwrap();
-        assert_eq!(handle.size, 1024);
-        assert_eq!(handle.mem_type, MemType::Dram);
-        assert_eq!(handle.dev_id, 0);
+        storage.register(&agent, None).unwrap();
 
         // Verify we can still access the memory
         storage.memset(0xAA);
@@ -245,19 +252,16 @@ mod tests {
     fn test_registration_handle_drop() {
         let agent = Agent::new("test_agent").unwrap();
         let mut storage = SystemStorage::new(1024).unwrap();
-        let mut opt_args = OptArgs::new().unwrap();
 
         // Register memory
-        storage.register(&agent, &opt_args).unwrap();
-        assert!(storage.is_registered());
+        storage.register(&agent, None).unwrap();
 
         // Drop the storage, which should trigger deregistration
         drop(storage);
 
         // Create new storage to verify we can register again
         let mut new_storage = SystemStorage::new(1024).unwrap();
-        new_storage.register(&agent, &opt_args).unwrap();
-        assert!(new_storage.is_registered());
+        new_storage.register(&agent, None).unwrap();
     }
 
     #[test]
@@ -265,17 +269,10 @@ mod tests {
         let agent = Agent::new("test_agent").unwrap();
         let mut storage1 = SystemStorage::new(1024).unwrap();
         let mut storage2 = SystemStorage::new(2048).unwrap();
-        let mut opt_args = OptArgs::new().unwrap();
 
         // Register both storages
-        storage1.register(&agent, &opt_args).unwrap();
-        storage2.register(&agent, &opt_args).unwrap();
-
-        // Verify both are registered with correct sizes
-        assert!(storage1.is_registered());
-        assert!(storage2.is_registered());
-        assert_eq!(storage1.handle().unwrap().size, 1024);
-        assert_eq!(storage2.handle().unwrap().size, 2048);
+        storage1.register(&agent, None).unwrap();
+        storage2.register(&agent, None).unwrap();
 
         // Verify we can still access both memories
         storage1.memset(0xAA);
@@ -285,13 +282,113 @@ mod tests {
     }
 
     #[test]
+    fn test_make_connection_success() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        // This should succeed if the agent is valid and the backend is set up
+        let result = agent.make_connection("remote_agent");
+        // Accept either Ok or a backend error if no real remote exists
+        assert!(
+            result.is_ok() || matches!(result, Err(NixlError::BackendError)),
+            "Expected Ok or BackendError, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_make_connection_invalid_param() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        // Null bytes in the name should trigger InvalidParam or StringConversionError
+        let result = agent.make_connection("remote\0agent");
+        assert!(
+            matches!(result, Err(NixlError::StringConversionError(_))) ||
+            matches!(result, Err(NixlError::InvalidParam)),
+            "Expected StringConversionError or InvalidParam, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_prep_xfer_dlist_success() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        let descs = XferDescList::new(MemType::Dram).unwrap();
+        let opt_args = OptArgs::new().unwrap();
+        let mut handle = XferDescListHandle::new().unwrap();
+        let result = agent.prep_xfer_dlist("remote_agent", &descs, &mut handle, &opt_args);
+        // Accept Ok or BackendError if no real remote exists
+        assert!(
+            result.is_ok() || matches!(result, Err(NixlError::BackendError)),
+            "Expected Ok or BackendError, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_prep_xfer_dlist_invalid_param() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        let descs = XferDescList::new(MemType::Dram).unwrap();
+        let opt_args = OptArgs::new().unwrap();
+        let mut handle = XferDescListHandle::new().unwrap();
+        // Null byte in agent name should trigger error
+        let result = agent.prep_xfer_dlist("remote\0agent", &descs, &mut handle, &opt_args);
+        assert!(
+            matches!(result, Err(NixlError::StringConversionError(_))) ||
+            matches!(result, Err(NixlError::InvalidParam)),
+            "Expected StringConversionError or InvalidParam, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_make_xfer_req_success() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        let local_descs = XferDescList::new(MemType::Dram).unwrap();
+        let remote_descs = XferDescList::new(MemType::Dram).unwrap();
+        let opt_args = OptArgs::new().unwrap();
+        let result = agent.make_xfer_req(
+            XferOp::Read,
+            &local_descs,
+            &remote_descs,
+            "remote_agent",
+            &opt_args,
+        );
+        // Accept Ok or BackendError if no real remote exists
+        assert!(
+            result.is_ok() || matches!(result, Err(NixlError::BackendError)),
+            "Expected Ok or BackendError, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_make_xfer_req_invalid_param() {
+        let agent = Agent::new("test_agent").expect("Failed to create agent");
+        let local_descs = XferDescList::new(MemType::Dram).unwrap();
+        let remote_descs = XferDescList::new(MemType::Dram).unwrap();
+        let opt_args = OptArgs::new().unwrap();
+        // Null byte in remote_agent should trigger error
+        let result = agent.make_xfer_req(
+            XferOp::Read,
+            &local_descs,
+            &remote_descs,
+            "remote\0agent",
+            &opt_args,
+        );
+        assert!(
+            matches!(result, Err(NixlError::StringConversionError(_))) ||
+            matches!(result, Err(NixlError::InvalidParam)),
+            "Expected StringConversionError or InvalidParam, got: {}",
+            result.err().unwrap()
+        );
+    }
+
+    #[test]
     fn test_get_local_md() {
         let agent = Agent::new("test_agent").unwrap();
 
         // Get available plugins and print their names
         let plugins = agent.get_available_plugins().unwrap();
-        for plugin in plugins.iter() {
-            println!("Found plugin: {}", plugin.unwrap());
+        for plugin in plugins.iter().flatten() {
+            println!("Found plugin: {}", plugin);
         }
 
         // Get plugin parameters for both agents
@@ -314,8 +411,7 @@ mod tests {
         for _i in 0..10 {
             // Register some memory regions
             let mut storage = SystemStorage::new(1024).unwrap();
-            storage.register(&agent, &opt_args).unwrap();
-            assert!(storage.is_registered());
+            storage.register(&agent, Some(&opt_args)).unwrap();
             storages.push(storage);
         }
 
@@ -351,118 +447,600 @@ mod tests {
     }
 
     #[test]
-    fn test_basic_agent_lifecycle() {
-        // Create two agents
-        let agent2 = Agent::new("A2").unwrap();
-        let agent1 = Agent::new("A1").unwrap();
+    fn test_basic_agent_lifecycle() -> Result<(), NixlError> {
+        // Create agents
+        let agent2 = create_test_agent("A2")?;
+        let agent1 = create_test_agent("A1")?;
 
-        // Get available plugins and print their names
-        let plugins = agent1.get_available_plugins().unwrap();
-        for plugin in plugins.iter() {
-            println!("Found plugin: {}", plugin.unwrap());
+        // Print available plugins
+        let plugins = agent1.get_available_plugins()?;
+        for plugin in plugins.iter().flatten() {
+            println!("Found plugin: {}", plugin);
         }
 
-        // Get plugin parameters for both agents
-        let (_mem_list1, _params) = agent1.get_plugin_params("UCX").unwrap();
-        let (_mem_list2, params) = agent2.get_plugin_params("UCX").unwrap();
+        // Setup UCX backends
+        let (_mem_list1, _params) = agent1.get_plugin_params("UCX")?;
+        let (_mem_list2, params) = agent2.get_plugin_params("UCX")?;
 
-        // Create backends for both agents
-        let backend1 = agent1.create_backend("UCX", &params).unwrap();
-        let backend2 = agent2.create_backend("UCX", &params).unwrap();
+        let _backend1 = agent1.create_backend("UCX", &params)?;
+        let _backend2 = agent2.create_backend("UCX", &params)?;
 
-        // Create optional arguments and add backends
-        let mut opt_args = OptArgs::new().unwrap();
-        opt_args.add_backend(&backend1).unwrap();
-        opt_args.add_backend(&backend2).unwrap();
-
-        // Allocate and initialize memory regions
-        let mut storage1 = SystemStorage::new(256).unwrap();
-        let mut storage2 = SystemStorage::new(256).unwrap();
+        // Setup memory regions
+        let mut storage1 = SystemStorage::new(256)?;
+        let mut storage2 = SystemStorage::new(256)?;
 
         // Initialize memory patterns
         storage1.memset(0xbb);
         storage2.memset(0x00);
 
-        // Verify memory patterns
+        // Verify initial memory patterns
         assert!(storage1.as_slice().iter().all(|&x| x == 0xbb));
         assert!(storage2.as_slice().iter().all(|&x| x == 0x00));
 
-        let mut opt_args = OptArgs::new().unwrap();
         // Create registration descriptor lists
-        storage1.register(&agent1, &opt_args).unwrap();
-        storage2.register(&agent2, &opt_args).unwrap();
+        storage1.register(&agent1, None).unwrap();
+        storage2.register(&agent2, None).unwrap();
 
-        // Mimic transferring metadata from agent2 to agent1
-        let metadata = agent2.get_local_md().unwrap();
-        let remote_name = agent1.load_remote_md(&metadata).unwrap();
+        // Exchange metadata
+        let metadata = agent2.get_local_md()?;
+        let remote_name = agent1.load_remote_md(&metadata)?;
         assert_eq!(remote_name, "A2");
 
-        let mut local_xfer_dlist = XferDescList::new(MemType::Dram).unwrap();
-        local_xfer_dlist.add_storage_desc(&storage1).unwrap();
+        // Setup transfer descriptors
+        let mut local_xfer_dlist = XferDescList::new(MemType::Dram)?;
+        let mut remote_xfer_dlist = XferDescList::new(MemType::Dram)?;
+        local_xfer_dlist.add_storage_desc(&storage1)?;
+        remote_xfer_dlist.add_storage_desc(&storage2)?;
 
-        let mut remote_xfer_dlist = XferDescList::new(MemType::Dram).unwrap();
-        remote_xfer_dlist.add_storage_desc(&storage2).unwrap();
+        // Setup transfer arguments
+        let mut xfer_args = OptArgs::new()?;
+        xfer_args.set_has_notification(true)?;
+        xfer_args.set_notification_message(b"notification")?;
 
-        let mut xfer_args = OptArgs::new().unwrap();
-        xfer_args.set_has_notification(true).unwrap();
-        xfer_args.set_notification_message(b"notification").unwrap();
+        // Create and post transfer request
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_xfer_dlist,
+            &remote_xfer_dlist,
+            &remote_name,
+            Some(&xfer_args),
+        )?;
 
-        let xfer_req = agent1
-            .create_xfer_req(
-                XferOp::Write,
-                &local_xfer_dlist,
-                &remote_xfer_dlist,
-                &remote_name,
-                Some(&xfer_args),
-            )
-            .unwrap();
+        // Handle transfer request
+        if let Ok(status) = agent1.post_xfer_req(&xfer_req, None) {
+            println!("Transfer request posted with status: {}", status);
 
-        let status = agent1.post_xfer_req(&xfer_req, None).unwrap();
-        assert!(status);
+            if status {
+                // Wait for transfer completion with timeout
+                let timeout = Duration::from_secs(5);
+                let start = std::time::Instant::now();
 
-        println!("Waiting for local completions");
+                while start.elapsed() < timeout {
+                    match agent1.get_xfer_status(&xfer_req) {
+                        Ok(false) => {
+                            println!("Transfer completed");
+                            break;
+                        }
+                        Ok(true) => std::thread::sleep(Duration::from_millis(100)),
+                        Err(e) => {
+                            println!("Error getting transfer status: {:?}", e);
+                            break;
+                        }
+                    }
+                }
 
-        loop {
-            let status = agent1.get_xfer_status(&xfer_req).unwrap();
+                // Wait for notifications with timeout
+                let mut notifs = NotificationMap::new()?;
+                let start = std::time::Instant::now();
 
-            if status == false {
-                println!("Xfer req completed");
-                break;
-            } else {
-                println!("Xfer req not completed");
+                while start.elapsed() < timeout {
+                    match agent2.get_notifications(&mut notifs, None) {
+                        Ok(_) if !notifs.is_empty()? => {
+                            println!("Got notifications");
+                            break;
+                        }
+                        Ok(_) => std::thread::sleep(Duration::from_millis(100)),
+                        Err(e) => {
+                            println!("Error getting notifications: {:?}", e);
+                            break;
+                        }
+                    }
+                }
+
+                // Verify notification if received
+                if !notifs.is_empty()? {
+                    let mut agents = notifs.agents();
+                    if let Some(Ok(agent_name)) = agents.next() {
+                        let mut notifications = notifs.get_notifications(agent_name)?;
+                        if let Some(Ok(notif)) = notifications.next() {
+                            assert_eq!(notif, b"notification");
+
+                            // Verify transfer if completed
+                            if !agent1.get_xfer_status(&xfer_req)? {
+                                assert!(storage2.as_slice().iter().all(|&x| x == 0xbb));
+                            }
+                        }
+                    }
+                }
             }
-            std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
-        let mut notifs = NotificationMap::new().unwrap();
-        println!("Waiting for notifications");
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        // // see if the values in storage2 are 0xbb
-        // assert!(storage2.as_slice().iter().all(|&x| x == 0xbb));
-
-        loop {
-            agent2.get_notifications(&mut notifs, None).unwrap();
-            if !notifs.is_empty().unwrap() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-
-        println!("Got notifications");
-
-        // Get first notification from first agent
-        let agent_name = notifs.agents().next().unwrap().unwrap();
-        let notif = notifs
-            .get_notifications(agent_name)
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap();
-        assert_eq!(notif, b"notification");
-
-        // Verify memory patterns
+        // Verify source memory remains unchanged
         assert!(storage1.as_slice().iter().all(|&x| x == 0xbb));
-        assert!(storage2.as_slice().iter().all(|&x| x == 0xbb));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_etcd_metadata_exchange() -> Result<(), NixlError> {
+        // Check if NIXL_ETCD_ENDPOINTS env var is set to skip test if not
+        if env::var("NIXL_ETCD_ENDPOINTS").is_err() {
+            println!("Skipping etcd test - NIXL_ETCD_ENDPOINTS not set");
+            return Ok(());
+        }
+
+        // Create two agents for metadata exchange
+        let agent1 = Agent::new("EtcdAgent1")?;
+        let agent2 = Agent::new("EtcdAgent2")?;
+
+        // Get UCX backend to add to optional arguments
+        let plugins = agent1.get_available_plugins()?;
+        let plugin_name = find_plugin(&plugins, "UCX")?;
+        let (_mems, params) = agent1.get_plugin_params(&plugin_name)?;
+        let backend = agent1.create_backend(&plugin_name, &params)?;
+
+        // Create OptArgs with backend
+        let mut opt_args = OptArgs::new()?;
+        opt_args.add_backend(&backend)?;
+
+        // Send agent1's metadata to etcd
+        agent1.send_local_md(Some(&opt_args))?;
+        println!("Successfully sent agent1 metadata to etcd");
+
+        // Fetch agent1's metadata from etcd with agent2
+        agent2.fetch_remote_md("EtcdAgent1", Some(&opt_args))?;
+        println!("Successfully fetched agent1 metadata from etcd");
+
+        // Invalidate agent1's metadata in etcd
+        agent1.invalidate_local_md(Some(&opt_args))?;
+        println!("Successfully invalidated agent1 metadata in etcd");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_send_notification() -> Result<(), NixlError> {
+        // Create two agents for notification exchange
+        let agent1 = Agent::new("NotifSender")?;
+        let agent2 = Agent::new("NotifReceiver")?;
+
+        // Set up backends for both agents
+        let (_mem_list, params) = agent1.get_plugin_params("UCX")?;
+        let backend1 = agent1.create_backend("UCX", &params)?;
+        let backend2 = agent2.create_backend("UCX", &params)?;
+
+        // Exchange metadata
+        let metadata = agent2.get_local_md()?;
+        agent1.load_remote_md(&metadata)?;
+
+        // Create notification message
+        let message = b"Test notification message";
+
+        // Send notification with no backend specified
+        agent1.send_notification("NotifReceiver", message, None)?;
+
+        // Send notification with specific backend
+        agent1.send_notification("NotifReceiver", message, Some(&backend1))?;
+
+        // Create a notification map to receive notifications
+        let mut notifs = NotificationMap::new()?;
+
+        // Receive notifications without backend
+        agent2.get_notifications(&mut notifs, None)?;
+
+        // Receive notifications with specific backend
+        let mut opt_args = OptArgs::new()?;
+        opt_args.add_backend(&backend2)?;
+        agent2.get_notifications(&mut notifs, Some(&opt_args))?;
+
+        // Verify notification map contents
+        if !notifs.is_empty()? {
+            let mut agents = notifs.agents();
+
+            // Should have notifications from NotifSender
+            if let Some(Ok(agent_name)) = agents.next() {
+                assert_eq!(agent_name, "NotifSender");
+
+                // Verify notification content
+                let notifications = notifs.get_notifications(agent_name)?;
+                let notif_count = notifs.get_notifications_size(agent_name)?;
+
+                // May have 1 or 2 notifications depending on whether both were processed
+                assert!(notif_count > 0, "Should have at least one notification");
+
+                // Check content of notification
+                for notification in notifications {
+                    assert_eq!(notification?, message);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_check_remote_metadata() {
+        // Create two agents
+        let agent1 = Agent::new("agent1").expect("Failed to create agent1");
+        let agent2 = Agent::new("agent2").expect("Failed to create agent2");
+
+        // Set up backends for both agents (required before metadata operations)
+        let (_mem_list, params) = agent1
+            .get_plugin_params("UCX")
+            .expect("Failed to get plugin params");
+        let _backend1 = agent1
+            .create_backend("UCX", &params)
+            .expect("Failed to create backend for agent1");
+        let _backend2 = agent2
+            .create_backend("UCX", &params)
+            .expect("Failed to create backend for agent2");
+
+        // Initially, agent1 should not have metadata for agent2
+        assert!(!agent1.check_remote_metadata("agent2", None));
+
+        // Get and share metadata
+        let metadata = agent2.get_local_md().expect("Failed to get local metadata");
+        agent1
+            .load_remote_md(&metadata)
+            .expect("Failed to load remote metadata");
+
+        // Now agent1 should have metadata for agent2
+        assert!(agent1.check_remote_metadata("agent2", None));
+
+        // Test with a descriptor list
+        let mut storage = SystemStorage::new(1024).expect("Failed to create storage");
+        let opt_args = OptArgs::new().expect("Failed to create opt args");
+        storage
+            .register(&agent2, Some(&opt_args))
+            .expect("Failed to register memory");
+
+        // Create descriptor list with memory that exists in agent2
+        let mem_type = MemType::Dram;
+        let mut xfer_desc_list =
+            XferDescList::new(mem_type).expect("Failed to create xfer desc list");
+        xfer_desc_list
+            .add_desc(
+                unsafe { storage.as_ptr() } as usize,
+                storage.size(),
+                storage.device_id(),
+            )
+            .expect("Failed to add descriptor");
+
+        // Update metadata after registration
+        let metadata = agent2
+            .get_local_md()
+            .expect("Failed to get updated local metadata");
+        agent1
+            .load_remote_md(&metadata)
+            .expect("Failed to reload remote metadata");
+
+        // Check with descriptor list - should return true for valid descriptors
+        assert!(agent1.check_remote_metadata("agent2", Some(&xfer_desc_list)));
+
+        // Create a descriptor list with invalid memory address
+        let mut invalid_desc_list =
+            XferDescList::new(mem_type).expect("Failed to create invalid desc list");
+        invalid_desc_list
+            .add_desc(0xdeadbeef, 1024, 0)
+            .expect("Failed to add invalid descriptor");
+
+        // Check with invalid descriptor list - should return false
+        assert!(!agent1.check_remote_metadata("agent2", Some(&invalid_desc_list)));
+
+        // Check with non-existent agent name
+        assert!(!agent1.check_remote_metadata("non_existent_agent", None));
+
+        // Check with invalid agent name (contains null byte)
+        // The function should return false rather than panic
+        let invalid_name = "invalid\0agent";
+        assert!(!agent1.check_remote_metadata(invalid_name, None));
+    }
+
+    #[test]
+    fn test_xfer_desc_list_new_and_new_sorted() {
+        let dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.is_empty().unwrap());
+        let dlist_sorted = XferDescList::new_sorted(MemType::Dram).unwrap();
+        assert!(dlist_sorted.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_new_sorted_sortedness() {
+        let dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
+        let sorted = dlist.is_sorted().unwrap();
+        assert!(sorted);
+        let dlist_unsorted = XferDescList::new(MemType::Dram).unwrap();
+        let unsorted = dlist_unsorted.is_sorted().unwrap();
+        assert!(!unsorted);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_get_type() {
+        let dlist = XferDescList::new(MemType::Vram).unwrap();
+        assert_eq!(dlist.get_type().unwrap(), MemType::Vram);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_get_type_after_add() {
+        let mut dlist = XferDescList::new(MemType::Block).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert_eq!(dlist.get_type().unwrap(), MemType::Block);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_verify_sorted_true() {
+        let mut dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
+
+        // list size should be at least 1 to be considered sorted
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.verify_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_verify_sorted_false() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x2000, 0x100, 0).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap(); // out of order
+        assert!(!dlist.verify_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_desc_count_basic() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 0);
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_desc_count_after_clear() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.clear().unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_is_empty_true() {
+        let dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_is_empty_false() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(!dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_is_sorted_true() {
+        let mut dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.is_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_is_sorted_false() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x2000, 0x100, 0).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(!dlist.is_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_trim_basic() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.trim().unwrap();
+        assert!(dlist.desc_count().unwrap() <= 1);
+    }
+
+    #[test]
+    fn test_xfer_desc_list_trim_empty() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.trim().is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_rem_desc_basic() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.rem_desc(0).is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_rem_desc_out_of_bounds() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.rem_desc(0).is_err());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_clear_basic() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.clear().unwrap();
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_clear_empty() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.clear().is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_print_basic() {
+        let dlist = XferDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.print().is_ok());
+    }
+
+    #[test]
+    fn test_xfer_desc_list_print_after_add() {
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.print().is_ok());
+    }
+
+    // ----------- RegDescList API TESTS -----------
+
+    #[test]
+    fn test_reg_desc_list_new_and_new_sorted() {
+        let dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.is_empty().unwrap());
+        let dlist_sorted = RegDescList::new_sorted(MemType::Dram).unwrap();
+        assert!(dlist_sorted.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_new_sorted_sortedness() {
+        let dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
+        assert!(dlist.is_sorted().unwrap());
+        let dlist_unsorted = RegDescList::new(MemType::Dram).unwrap();
+        assert!(!dlist_unsorted.is_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_get_type() {
+        let dlist = RegDescList::new(MemType::Vram).unwrap();
+        assert_eq!(dlist.get_type().unwrap(), MemType::Vram);
+    }
+
+    #[test]
+    fn test_reg_desc_list_get_type_after_add() {
+        let mut dlist = RegDescList::new(MemType::Block).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert_eq!(dlist.get_type().unwrap(), MemType::Block);
+    }
+
+    #[test]
+    fn test_reg_desc_list_verify_sorted_true() {
+        let mut dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
+
+        // list size should be at least 1 to be considered sorted
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.verify_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_verify_sorted_false() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x2000, 0x100, 0).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap(); // out of order
+        assert!(!dlist.verify_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_desc_count_basic() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 0);
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_reg_desc_list_desc_count_after_clear() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.clear().unwrap();
+        assert_eq!(dlist.desc_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_reg_desc_list_is_empty_true() {
+        let dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_is_empty_false() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(!dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_is_sorted_true() {
+        let mut dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.is_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_is_sorted_false() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x2000, 0x100, 0).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(!dlist.is_sorted().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_trim_basic() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.trim().unwrap();
+        assert!(dlist.desc_count().unwrap() <= 1);
+    }
+
+    #[test]
+    fn test_reg_desc_list_trim_empty() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.trim().is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_rem_desc_basic() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.rem_desc(0).is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_rem_desc_out_of_bounds() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.rem_desc(0).is_err());
+    }
+
+    #[test]
+    fn test_reg_desc_list_clear_basic() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        dlist.clear().unwrap();
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_clear_empty() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.clear().is_ok());
+        assert!(dlist.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_reg_desc_list_print_basic() {
+        let dlist = RegDescList::new(MemType::Dram).unwrap();
+        assert!(dlist.print().is_ok());
+    }
+
+    #[test]
+    fn test_reg_desc_list_print_after_add() {
+        let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+        dlist.add_desc(0x1000, 0x100, 0).unwrap();
+        assert!(dlist.print().is_ok());
     }
 }

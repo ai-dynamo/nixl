@@ -15,18 +15,26 @@
 
 [package]
 name = "nixl-sys"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
+description = "Low-level bindings to the nixl library"
+license = "Apache-2.0"
+homepage = "https://github.com/ai-dynamo/nixl"
+repository = "https://github.com/ai-dynamo/nixl.git"
+authors = ["NIXL Developers <nixl-developers@nvidia.com>"]
+readme = "README.md"
 links = "nixl"
 build = "build.rs"
 
 [dependencies]
-thiserror = { version = "*" }
+thiserror = { version = "2" }
 tracing = { version = "0.1" }
+serde = { version = "1", features = ["derive"] }
 
 libc = "0.2"
 
 [build-dependencies]
 bindgen = "0.71"
-cc = { version = "1.0", features = ["parallel"] }
+cc = { version = "1.2.23", features = ["parallel"] }
 pkg-config = "0.3"
+os_info = "3.11"

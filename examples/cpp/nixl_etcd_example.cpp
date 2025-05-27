@@ -26,6 +26,8 @@
 const std::string ETCD_ENDPOINT = "http://localhost:2379";
 const std::string AGENT1_NAME = "EtcdAgent1";
 const std::string AGENT2_NAME = "EtcdAgent2";
+const std::string PARTIAL_LABEL_1 = "conn_info_1";
+const std::string PARTIAL_LABEL_2 = "conn_info_2";
 
 void printStatus(const std::string& operation, nixl_status_t status) {
     std::cout << operation << ": " << nixlEnumStrings::statusStr(status) << std::endl;
@@ -114,7 +116,7 @@ int main() {
     nixlAgentConfig cfg(true);
     nixl_b_params_t init1, init2;
     nixl_mem_list_t mems1, mems2;
-    nixl_reg_dlist_t dlist1(DRAM_SEG), dlist2(DRAM_SEG);
+    nixl_reg_dlist_t dlist1(DRAM_SEG), dlist2(DRAM_SEG), empty_dlist(DRAM_SEG);
 
     nixl_opt_args_t extra_params1, extra_params2;
 
@@ -264,9 +266,11 @@ int main() {
     nixl_opt_args_t conn_params1, conn_params2;
     conn_params1.includeConnInfo = true;
     conn_params1.backends.push_back(ucx1);
+    conn_params1.metadataLabel = PARTIAL_LABEL_1;
 
     conn_params2.includeConnInfo = true;
     conn_params2.backends.push_back(ucx2);
+    conn_params2.metadataLabel = PARTIAL_LABEL_1;
 
     // Send partial metadata
     status = A1.sendLocalPartialMD(empty_dlist1, &conn_params1);
@@ -274,6 +278,25 @@ int main() {
 
     status = A2.sendLocalPartialMD(empty_dlist2, &conn_params2);
     assert(status == NIXL_SUCCESS);
+
+    // Send once partial with different label
+    conn_params1.metadataLabel = PARTIAL_LABEL_2;
+    status = A1.sendLocalPartialMD(empty_dlist1, &conn_params1);
+    assert(status == NIXL_SUCCESS);
+
+    conn_params2.metadataLabel = PARTIAL_LABEL_2;
+    status = A2.sendLocalPartialMD(empty_dlist2, &conn_params2);
+    assert(status == NIXL_SUCCESS);
+
+    nixl_opt_args_t fetch_params;
+    fetch_params.metadataLabel = PARTIAL_LABEL_1;
+    status = A1.fetchRemoteMD(AGENT2_NAME, &fetch_params);
+    assert(status == NIXL_SUCCESS);
+
+    status = A2.fetchRemoteMD(AGENT1_NAME, &fetch_params);
+    assert(status == NIXL_SUCCESS);
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     // 4. Invalidate Metadata
     std::cout << "\n4. Invalidating metadata in etcd...\n";
@@ -286,7 +309,23 @@ int main() {
 
     // Try fetching the invalidated metadata
     std::cout << "\nTrying to fetch invalidated metadata for Agent1...\n";
-    status = A2.fetchRemoteMD(AGENT1_NAME);
+    status = A2.fetchRemoteMD(AGENT1_NAME, &extra_params2);
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    // Try invalidating again, this should log a debug message
+    std::cout << "Trying to invalidate again...\n";
+    status = A1.invalidateLocalMD();
+    assert(status == NIXL_SUCCESS);
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    // 5. Fetch metadata with invalid label. This should not block forever and print error message.
+    std::cout << "\n5. Fetching metadata with invalid label...\n";
+    status = A2.fetchRemoteMD("INVALID_AGENT", &fetch_params);
+    assert(status == NIXL_SUCCESS);
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     free(addr1);
     free(addr2);

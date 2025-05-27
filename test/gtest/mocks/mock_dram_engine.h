@@ -59,21 +59,22 @@ public:
                          const nixl_meta_dlist_t &remote,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
-                         const nixl_opt_b_args_t *opt_args) override;
+                         const nixl_opt_b_args_t *opt_args) const override;
   nixl_status_t postXfer(const nixl_xfer_op_t &operation,
                          const nixl_meta_dlist_t &local,
                          const nixl_meta_dlist_t &remote,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
-                         const nixl_opt_b_args_t *opt_args) override;
-  nixl_status_t checkXfer(nixlBackendReqH *handle) override;
-  nixl_status_t releaseReqH(nixlBackendReqH *handle) override;
+                         const nixl_opt_b_args_t *opt_args) const override;
+  nixl_status_t checkXfer(nixlBackendReqH *handle) const override;
+  nixl_status_t releaseReqH(nixlBackendReqH *handle) const override;
   nixl_status_t getPublicData(const nixlBackendMD *meta, std::string &str) const override {
     assert(sharedState > 0);
     return NIXL_SUCCESS;
   }
   nixl_status_t getConnInfo(std::string &str) const override {
     assert(sharedState > 0);
+    str = "MockDramBackendEngineConnInfo";
     return NIXL_SUCCESS;
   }
   nixl_status_t loadRemoteConnInfo(const std::string &remote_agent,
@@ -85,7 +86,7 @@ public:
   nixl_status_t loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output);
   nixl_status_t getNotifs(notif_list_t &notif_list) override;
   nixl_status_t genNotif(const std::string &remote_agent,
-                         const std::string &msg) override;
+                         const std::string &msg) const override;
   int progress() override;
 
 private:

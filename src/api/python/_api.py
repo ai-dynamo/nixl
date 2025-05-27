@@ -343,6 +343,22 @@ class nixl_agent:
         return handle
 
     """
+    @brief Estimate the cost of a transfer operation.
+           Times are in microseconds and the method indicates how the estimation was performed.
+
+    @param req_handle Handle to the transfer operation.
+    @return Tuple of duration, error margin, method
+    """
+
+    def estimate_xfer_cost(self, req_handle: nixl_xfer_handle) -> tuple[int, int, int]:
+        duration, err_margin, method = self.agent.estimateXferCost(req_handle)
+        if method == nixlBind.NIXL_COST_ANALYTICAL_BACKEND:
+            method = "ANALYTICAL_BACKEND"
+        else:
+            method = "UNKNOWN"
+        return duration, err_margin, method
+
+    """
     @brief Prepare a transfer operation using prep_xfer_dlist handles.
 
     @param operation Type of operation ("WRITE" or "READ").
@@ -371,26 +387,22 @@ class nixl_agent:
         skip_desc_merge: bool = False,
     ) -> nixl_xfer_handle:
         op = self.nixl_ops[operation]
-        if op:
-            handle_list = []
-            for backend_string in backends:
-                handle_list.append(self.backends[backend_string])
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
 
-            handle = self.agent.makeXferReq(
-                op,
-                local_xfer_side,
-                local_indices,
-                remote_xfer_side,
-                remote_indices,
-                notif_msg,
-                handle_list,
-                skip_desc_merge,
-            )
+        handle = self.agent.makeXferReq(
+            op,
+            local_xfer_side,
+            local_indices,
+            remote_xfer_side,
+            remote_indices,
+            notif_msg,
+            handle_list,
+            skip_desc_merge,
+        )
 
-            return handle
-        else:
-            raise nixlBind.nixlInvalidParamError("Invalid op code")
-            return nixlBind.nixlInvalidParamError
+        return handle
 
     """
     @brief  Initialize a transfer operation. This is a combined API, to create a transfer request
@@ -419,19 +431,15 @@ class nixl_agent:
         backends: list[str] = [],
     ) -> nixl_xfer_handle:
         op = self.nixl_ops[operation]
-        if op:
-            handle_list = []
-            for backend_string in backends:
-                handle_list.append(self.backends[backend_string])
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
 
-            handle = self.agent.createXferReq(
-                op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
-            )
+        handle = self.agent.createXferReq(
+            op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
+        )
 
-            return handle
-        else:
-            raise nixlBind.nixlInvalidParamError("Invalid op code")
-            return nixlBind.nixlInvalidParamError
+        return handle
 
     """
     @brief  Initiate a data transfer operation.
@@ -648,21 +656,27 @@ class nixl_agent:
     @brief Send all of your metadata to a peer or central metadata server.
 
     @param ip_addr If specified, will only send metadata to one peer by IP address.
-    @param port    If specified, will try to send to specific port.
+                   Otherwise, metadata will be sent to central metadata server, if supported.
+    @param port    If specified next to ip_addr, will try to send to this specific port of a peer.
+                   Ignored when sending to a central metadata server.
     """
 
     def send_local_metadata(self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT):
         self.agent.sendLocalMD(ip_addr, port)
 
     """
-    @brief Send partial metadata of the local agent.
+    @brief Send partial metadata of the local agent to a peer or central metadata server.
 
     @param descs         The list of descriptors to include metadata about.
                          List can be empty if only trying to send connection info.
     @param inc_conn_info Whether to include connection info in the metadata.
     @param backends      List of backends to consider when constructing partial metadata.
     @param ip_addr       If specified, will only send metadata to one peer by IP address.
-    @param port          If specified, will try to send to specific port.
+                         Otherwise, metadata will be sent to central metadata server, if supported.
+    @param port          If specified next to ip_addr, will try to send to this specific port of a peer.
+                         Ignored when sending to a central metadata server.
+    @param label         Label to use for the metadata when sending to central metadata server.
+                         Ignored when sending to a peer.
     """
 
     def send_partial_agent_metadata(
@@ -672,11 +686,14 @@ class nixl_agent:
         backends: list[str] = [],
         ip_addr: str = "",
         port: int = DEFAULT_COMM_PORT,
+        label: str = "",
     ):
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
-        self.agent.sendLocalPartialMD(descs, inc_conn_info, handle_list, ip_addr, port)
+        self.agent.sendLocalPartialMD(
+            descs, inc_conn_info, handle_list, ip_addr, port, label
+        )
 
     """
     @brief Request metadata be retrieved from central metadata server or sent by peer.
@@ -690,8 +707,9 @@ class nixl_agent:
         remote_agent: str,
         ip_addr: str = "",
         port: int = DEFAULT_COMM_PORT,
+        label: str = "",
     ):
-        self.agent.fetchRemoteMD(remote_agent, ip_addr, port)
+        self.agent.fetchRemoteMD(remote_agent, ip_addr, port, label)
 
     """
     @brief Invalidate your own metadata in the central metadata server, or from a specific peer.
@@ -748,6 +766,9 @@ class nixl_agent:
 
         if isinstance(descs, nixlBind.nixlXferDList):
             return descs
+        elif isinstance(descs, nixlBind.nixlRegDList):
+            print("RegList type detected for transfer, please use XferList")
+            new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
                 new_descs = nixlBind.nixlXferDList(
@@ -788,9 +809,6 @@ class nixl_agent:
             new_descs = nixlBind.nixlXferDList(
                 self.nixl_mems[mem_type], dlist, is_sorted
             )
-        elif isinstance(descs, nixlBind.nixlRegDList):
-            print("RegList type detected for transfer, please use XferList")
-            new_descs = None
         else:
             new_descs = None
 
@@ -820,6 +838,9 @@ class nixl_agent:
 
         if isinstance(descs, nixlBind.nixlRegDList):
             return descs
+        elif isinstance(descs, nixlBind.nixlXferDList):
+            print("XferList type detected for registration, please use RegList")
+            new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 4:
                 new_descs = nixlBind.nixlRegDList(
@@ -860,9 +881,6 @@ class nixl_agent:
             new_descs = nixlBind.nixlRegDList(
                 self.nixl_mems[mem_type], dlist, is_sorted
             )
-        elif isinstance(descs, nixlBind.nixlXferDList):
-            print("XferList type detected for registration, please use RegList")
-            new_descs = None
         else:
             new_descs = None
 

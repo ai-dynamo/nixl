@@ -30,11 +30,21 @@ RUN apt-get update -y && \
     libgrpc-dev \
     libgrpc++-dev \
     libprotobuf-dev \
+    libaio-dev \
     liburing-dev \
     protobuf-compiler-grpc \
     libcpprest-dev \
     etcd-server \
-    etcd-client
+    etcd-client \
+    autotools-dev \
+    automake \
+    libtool \
+    libz-dev \
+    flex \
+    build-essential
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
+    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
@@ -57,6 +67,7 @@ RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
 WORKDIR /workspace/nixl
+COPY . /workspace/nixl
 
 # LD_LIBRARY_PATH is needed for auditwheel to find libcuda.so.1
 # Set incorrectly to `compat/lib` in cuda-dl-base image
@@ -67,7 +78,29 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
     uv pip install --upgrade meson pybind11 patchelf
 
-COPY . /workspace/nixl
+RUN rm -rf /usr/lib/ucx
+RUN rm -rf /opt/hpcx/ucx
+
+RUN cd /usr/local/src && \
+     git clone https://github.com/openucx/ucx.git && \
+     cd ucx && 			     \
+     git checkout v1.19.x &&	     \
+     ./autogen.sh && ./configure     \
+         --enable-shared             \
+         --disable-static            \
+         --disable-doxygen-doc       \
+         --enable-optimizations      \
+         --enable-cma                \
+         --enable-devel-headers      \
+         --with-cuda=/usr/local/cuda \
+         --with-verbs                \
+         --with-dm                   \
+         --with-gdrcopy=/usr/local   \
+         --with-efa                  \
+         --enable-mt &&              \
+     make -j &&                      \
+     make -j install-strip &&        \
+     ldconfig
 
 RUN rm -rf build && \
     mkdir build && \
