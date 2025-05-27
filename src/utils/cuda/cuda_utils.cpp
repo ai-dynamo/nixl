@@ -44,6 +44,24 @@ enum memory_t {
 class regularCtx {
 protected:
     CUcontext m_context{nullptr};
+private:
+
+    [[nodiscard]] nixl_status_t
+    update_context()
+    {
+        if (m_context) {
+            return NIXL_SUCCESS;
+        }
+        
+        nixl_status_t status = retain();
+        if (NIXL_SUCCESS != status) {
+            return status;
+        }
+        assert(m_context);
+
+        return NIXL_SUCCESS;
+    }
+
 public:
 
     regularCtx() = default;
@@ -52,32 +70,24 @@ public:
 
     virtual ~regularCtx() = default;
 
-    [[nodiscard]] nixl_status_t
-    set() {
-        if (nullptr == m_context) {
-            return NIXL_ERR_NOT_FOUND;
-        }
-
-        CUresult result = cuCtxSetCurrent(m_context);
-        if (CUDA_SUCCESS != result) {
-            NIXL_ERROR << "cuCtxSetCurrent() failed. result = "
-                    << result;
-            return NIXL_ERR_UNKNOWN;
-        }
-        return NIXL_SUCCESS;
+    [[nodiscard]] virtual nixl_status_t
+    retain() { 
+        // Nothing to retain
+        return NIXL_ERR_NOT_FOUND;
     }
 
     [[nodiscard]]
-    virtual nixl_status_t
+    nixl_status_t
     pushIfNeed() {
         CUcontext context;
-            const auto res = cuCtxGetCurrent(&context);
+        const auto res = cuCtxGetCurrent(&context);
         if (res != CUDA_SUCCESS || context != nullptr) {
             return NIXL_SUCCESS;
         }
 
-        if (m_context == nullptr) {
-            return NIXL_ERR_NOT_FOUND;
+        nixl_status_t status = update_context();
+        if (NIXL_SUCCESS != status) {
+            return status;
         }
 
         return (CUDA_SUCCESS == cuCtxPushCurrent(m_context)) ?
@@ -90,6 +100,23 @@ public:
         return (CUDA_SUCCESS == cuCtxPopCurrent(nullptr)) ?
             NIXL_SUCCESS : NIXL_ERR_UNKNOWN;
     }
+
+    [[nodiscard]] nixl_status_t
+    set() {
+        nixl_status_t status = update_context();
+        if (NIXL_SUCCESS != status) {
+            return status;
+        }
+
+        CUresult result = cuCtxSetCurrent(m_context);
+        if (CUDA_SUCCESS != result) {
+            NIXL_ERROR << "cuCtxSetCurrent() failed. result = "
+                    << result;
+            return NIXL_ERR_UNKNOWN;
+        }
+        return NIXL_SUCCESS;
+    }
+
 };
 
 class primaryCtx : public regularCtx{
@@ -108,8 +135,7 @@ public:
     }
 
     [[nodiscard]] nixl_status_t
-    retain()
-    {
+    retain() override {
         CUdevice device;
 
         auto result = cuDeviceGet(&device, m_ordinal);
@@ -140,23 +166,6 @@ public:
         }
 
         return NIXL_SUCCESS;
-    }
-
-    [[nodiscard]]
-    virtual nixl_status_t
-    pushIfNeed() override {
-        CUcontext context;
-            const auto res = cuCtxGetCurrent(&context);
-        if (res != CUDA_SUCCESS || context != nullptr) {
-            return NIXL_SUCCESS;
-        }
-
-        if (m_context == nullptr) {
-            return NIXL_ERR_NOT_FOUND;
-        }
-
-        return (CUDA_SUCCESS == cuCtxPushCurrent(m_context)) ?
-                NIXL_IN_PROG : NIXL_ERR_NOT_POSTED ;
     }
 };
 

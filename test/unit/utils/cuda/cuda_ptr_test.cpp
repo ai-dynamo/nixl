@@ -46,22 +46,38 @@ using namespace std;
         }                                                                           \
     } while(0)
 
+
+void setContext(int dev_id, CUcontext *context)
+{
+    CHECK_CUDA_ERROR(cudaSetDevice(dev_id), "Failed to cudaSetDevice()");
+    CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(context), "Failed to query current context");
+    assert(nullptr != context);
+}
+
+void dropContext()
+{
+    // Drop the context
+    CHECK_CUDA_DRIVER_ERROR(cuCtxPopCurrent(nullptr), "Failed to pop the context");
+
+    CUcontext contextTmp;
+    CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&contextTmp), "Failed to query current context");
+    assert(nullptr == contextTmp);
+}
+
+
 void allocateCUDA(int dev_id, size_t len, void* &addr, CUcontext *context)
 {
-    CUcontext contextTmp;
-    CHECK_CUDA_ERROR(cudaSetDevice(dev_id), "Failed to cudaSetDevice()");
+    setContext(dev_id, context);
     CHECK_CUDA_ERROR(cudaMalloc(&addr, len), "Failed to allocate CUDA buffer");
-    CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(context), "Failed to query current context");
-
-    CHECK_CUDA_DRIVER_ERROR(cuCtxPopCurrent(nullptr), "Failed to pop the context");
-    CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&contextTmp), "Failed to query current context");
-    assert(contextTmp == nullptr);
+    dropContext();
 }
 
 void releaseCUDA(int dev_id, void* addr)
 {
-    CHECK_CUDA_ERROR(cudaSetDevice(dev_id), "Failed to set device");
+    CUcontext context;
+    setContext(dev_id, &context);
     CHECK_CUDA_ERROR(cudaFree(addr), "Failed to allocate CUDA buffer 0");
+    dropContext();
 }
 
 #ifdef HAVE_CUDA_VMM
@@ -80,8 +96,7 @@ void allocateVMM(int dev_id, size_t len, void* &_addr, CUcontext *context)
     CUmemAllocationProp prop = {};
     CUmemGenericAllocationHandle handle;
 
-    CHECK_CUDA_ERROR(cudaSetDevice(dev_id), "Failed to set device");
-    CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(context), "Failed to query current context");
+    setContext(dev_id, context);
 
     prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
     // prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
@@ -124,16 +139,14 @@ void allocateVMM(int dev_id, size_t len, void* &_addr, CUcontext *context)
 
     _addr = (void*)addr;
 
-    // Release the context
-    CUcontext contextTmp;
-    CHECK_CUDA_DRIVER_ERROR(cuCtxPopCurrent(nullptr), "Failed to pop the context");
-    CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&contextTmp), "Failed to query current context");
-    assert(contextTmp == nullptr);
+    dropContext();
 }
 
 void releaseVMM(int dev_id, size_t len, void* addr)
 {
-    CHECK_CUDA_ERROR(cudaSetDevice(dev_id), "Failed to set device");
+    CUcontext context;
+    setContext(dev_id, &context);
+
     CHECK_CUDA_DRIVER_ERROR(cuMemUnmap((CUdeviceptr)addr, padded_size),
                             "Failed to unmap memory");
 
@@ -142,6 +155,8 @@ void releaseVMM(int dev_id, size_t len, void* addr)
                             "Failed to release memory");
     CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree((CUdeviceptr)addr, padded_size),
                             "Failed to free reserved address");
+    
+    dropContext();
 }
 
 #endif
@@ -160,7 +175,7 @@ int main()
         return 0;
     }
 
-    /* Test regular CUDA malloc */
+    /* Test regular malloc */
     {
         cout << endl << "*************************" << endl;
         cout << "      Test malloc'd memory" << endl;
@@ -175,6 +190,52 @@ int main()
         cout << "*************************" << endl;
     }
 
+    /* Test push/pop when no context is set */
+    {
+        cout << endl << "*************************" << endl;
+        cout << "      Test Push/Pop (no ctx)" << endl;
+
+        CUcontext primContext;
+        CHECK_CUDA_DRIVER_ERROR(cuDevicePrimaryCtxRetain(&primContext, 0), "Failed to cuDevicePrimaryCtxRetain");
+        CUcontext context;
+        CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&context), "Failed to query current context");
+        assert(nullptr == context);
+        
+        std::shared_ptr<nixl::cuda::memCtx> ctx = nixl::cuda::makeMemCtx();
+        assert(NIXL_IN_PROG == ctx->pushIfNeed());
+        CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&context), "Failed to query current context");
+        assert(primContext == context);
+
+        assert(NIXL_SUCCESS == ctx->pop());
+        CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&context), "Failed to query current context");
+        assert(nullptr == context);
+        cout << "      >>>> PASSED! <<<<<<<" << endl;
+        CHECK_CUDA_DRIVER_ERROR(cuDevicePrimaryCtxRelease(0), "Failed to cuDevicePrimaryCtxRelease");
+        CHECK_CUDA_DRIVER_ERROR(cuDevicePrimaryCtxReset(0), "Failed to cuDevicePrimaryCtxReset");
+        cout << "*************************" << endl;
+    }
+
+    /* Test push/pop when context is present */
+    {
+        cout << endl << "*************************" << endl;
+        cout << "      Test Push/Pop (with ctx)" << endl;
+
+        CUcontext context, context2;
+
+        setContext(0, &context);
+        assert(nullptr != context);
+
+        std::shared_ptr<nixl::cuda::memCtx> ctx = nixl::cuda::makeMemCtx();
+        assert(NIXL_SUCCESS == ctx->pushIfNeed());
+        CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&context2), "Failed to query current context");
+        assert(context2 == context);
+
+        cout << "      >>>> PASSED! <<<<<<<" << endl;
+        dropContext();
+        cout << "*************************" << endl;
+    }
+
+
     /* Test regular CUDA malloc */
     {
         cout << endl << "*************************" << endl;
@@ -183,18 +244,19 @@ int main()
         void *address;
         CUcontext context, context1;
         allocateCUDA(0, len, address, &context);
+        assert(context != nullptr);
 
-        assert(context1 == nullptr);
         std::shared_ptr<nixl::cuda::memCtx> ctx = nixl::cuda::makeMemCtx();
         assert(NIXL_IN_PROG == ctx->initFromAddr(address, 0));
         assert(NIXL_SUCCESS == ctx->set());
         CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&context1), "Failed to query current context");
         assert(context == context1);
+
         cout << "      >>>> PASSED! <<<<<<<" << endl;
+        dropContext();
         releaseCUDA(0, address);
         cout << "*************************" << endl;
     }
-
 
     /* Test regular CUDA malloc address mismatch */
     if (ngpus > 1) {
@@ -208,6 +270,7 @@ int main()
         allocateCUDA(0, len, address, &context);
         assert(NIXL_IN_PROG == ctx->initFromAddr(address, 0));
         assert(NIXL_SUCCESS == ctx->set());
+        dropContext();
 
         void *address2;
         allocateCUDA(1, len, address2, &context);
@@ -237,6 +300,8 @@ int main()
         CHECK_CUDA_DRIVER_ERROR(cuCtxGetCurrent(&context1), "Failed to query current context");
         assert(context == context1);
 
+        dropContext();
+
         // CUDA malloc'd memory is OK as long as on the same dev
         void *address2;
         allocateCUDA(0, len, address2, &context);
@@ -259,6 +324,7 @@ int main()
         allocateVMM(0, len, address, &context);
         assert(NIXL_IN_PROG == ctx->initFromAddr(address, 0));
         assert(NIXL_SUCCESS == ctx->set());
+        dropContext();
 
         // VMM memory on a different device is a mismatch
         void *address2;
