@@ -476,51 +476,35 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             const auto client = remoteSockets.find(req_sock);
             int client_fd;
 
-            switch(req_command) {
-                case SOCK_SEND:
-                {
-                    // not connected
-                    if(client == remoteSockets.end()) {
-                        int new_client = connectToIP(req_ip, req_port);
-                        if(new_client == -1) {
-                            NIXL_ERROR << "Listener thread could not connect to IP " << req_ip << " and port " << req_port;
-                            break;
-                        }
-                        remoteSockets[req_sock] = new_client;
-                        client_fd = new_client;
-                    } else {
-                        client_fd = client->second;
+            // not connected
+            if (req_command < SOCK_MAX) {
+                if (client == remoteSockets.end()) {
+                    int new_client = connectToIP(req_ip, req_port);
+                    if (new_client == -1) {
+                        NIXL_ERROR << "Listener thread could not connect to IP " << req_ip
+                                   << " and port " << req_port;
+                        continue;
                     }
-
-                    sendCommMessage(client_fd, std::string("NIXLCOMM:LOAD" + my_MD));
-                    break;
-                }
-                case SOCK_FETCH:
-                {
-                    if(client == remoteSockets.end()) {
-                        int new_client = connectToIP(req_ip, req_port);
-                        if(new_client == -1) {
-                            NIXL_ERROR << "Listener thread could not connect to IP " << req_ip;
-                            break;
-                        }
-                        remoteSockets[req_sock] = new_client;
-                        client_fd = new_client;
-                    } else
-                        client_fd = client->second;
-
-                    sendCommMessage(client_fd, std::string("NIXLCOMM:SEND"));
-                    break;
-                }
-                case SOCK_INVAL:
-                {
-                    if(client == remoteSockets.end()) {
-                        // improper usage
-                        throw std::runtime_error("invalidate on closed socket\n");
-                    }
+                    remoteSockets[req_sock] = new_client;
+                    client_fd = new_client;
+                } else {
                     client_fd = client->second;
-                    sendCommMessage(client_fd, std::string("NIXLCOMM:INVL") + name);
-                    break;
                 }
+            }
+
+            switch(req_command) {
+            case SOCK_SEND: {
+                sendCommMessage(client_fd, "NIXLCOMM:LOAD" + my_MD);
+                break;
+            }
+            case SOCK_FETCH: {
+                sendCommMessage(client_fd, "NIXLCOMM:SEND");
+                break;
+            }
+            case SOCK_INVAL: {
+                sendCommMessage(client_fd, "NIXLCOMM:INVL" + name);
+                break;
+            }
 #if HAVE_ETCD
                 // ETCD operations using existing methods
                 case ETCD_SEND:
