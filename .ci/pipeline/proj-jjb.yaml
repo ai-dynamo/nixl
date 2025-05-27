@@ -1,0 +1,203 @@
+- job-template:
+    name: "{jjb_proj}-dispatcher"
+    project-type: pipeline
+    folder: "{jjb_folder}"
+    properties:
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 50
+            num-to-keep: 20
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-dispatcher
+    triggers:
+        - generic-webhook-trigger:
+            token: "{jjb_proj}-dispatcher"
+            print-contributors: true
+            print-posted-content: true
+            silent-response: false
+            cause: "Generic Cause"
+            post-content-params:
+            - type: JSONPath
+              key: githubData
+              value: $
+            - type: JSONPath
+              key: VARIABLE_FROM_POST
+              value: $
+    description: Do NOT edit this job through the Web GUI !
+    concurrent: true
+    sandbox: true
+    parameters:
+        - string:
+            name: "VARIABLE_FROM_POST"
+            default: ""
+            description: ""
+    dsl: |
+        @Library('blossom-github-lib@master')
+        import ipp.blossom.*
+        withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
+          githubHelper = GithubHelper.getInstance("${{GIT_PASSWORD}}", VARIABLE_FROM_POST)
+        }}
+        githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher started", GitHubCommitState.PENDING)
+        currentBuild.description = githubHelper.getBuildDescription()
+        try {{
+            parallel build: {{
+                build job: 'nixl-ci-build', parameters: [
+                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
+                    string(name: 'githubData', value: VARIABLE_FROM_POST)
+                ]
+            }},
+            slurm: {{
+                build job: 'nixl-ci-slurm', parameters: [
+                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
+                    string(name: 'githubData', value: VARIABLE_FROM_POST)
+                ]
+            }},
+            failFast: false
+
+            githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher successeded", GitHubCommitState.SUCCESS)
+        }} catch(Exception ex) {{
+            currentBuild.result = 'FAILURE'
+            println ex
+            githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher failed", GitHubCommitState.FAILURE)
+            error("failed")
+        }}
+
+
+- job-template:
+    name: "{jjb_proj}-build"
+    project-type: pipeline
+    folder: "{jjb_folder}"
+    disabled: false
+    properties:
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 50
+            num-to-keep: 20
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-build
+    description: Do NOT edit this job through the Web GUI !
+    concurrent: true
+    sandbox: true
+    parameters:
+        - string:
+            name: "sha1"
+            default: "{jjb_branch}"
+            description: "Commit to be checked, usually set by PR"
+        - string:
+            name: "githubData"
+            default: ""
+            description: "Variables from post"
+        - string:
+            name: "conf_file"
+            default: ".ci/pipeline/build-matrix.yaml"
+            description: "Job config file"
+        - bool:
+            name: "build_dockers"
+            default: false
+            description: "Force rebuild docker containers"
+        - string:
+            name: "DEBUG"
+            default: 0
+            description: "Enable debug prints and traces, valid values are 0-9"
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                credentials-id: ''
+                branches: ['$sha1']
+                shallow-clone: false
+                # depth: 10
+                do-not-fetch-tags: false
+                # honor-refspec: true
+                refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"
+
+- job-template:
+    name: "{jjb_proj}-slurm"
+    project-type: pipeline
+    folder: "{jjb_folder}"
+    disabled: false
+    properties:
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 30
+            num-to-keep: 10
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-slurm
+    description: Do NOT edit this job through the Web GUI !
+    concurrent: true
+    sandbox: true
+    parameters:
+        - string:
+            name: "sha1"
+            default: "{jjb_branch}"
+            description: "Commit to be checked, usually set by PR"
+        - string:
+            name: "githubData"
+            default: ""
+            description: "Variables from post"
+        - string:
+            name: "conf_file"
+            default: ".ci/pipeline/build-matrix.yaml"
+            description: "Job config file"
+        - string:
+            name: "SLURM_PARTITION"
+            default: "rock"
+            description: "Slurm partition to use for testing"
+        - string:
+            name: "SLURM_TIMEOUT"
+            default: "01:00:00"
+            description: "Slurm job timeout in HH:MM:SS format"
+        - string:
+            name: "DEBUG"
+            default: 0
+            description: "Enable debug prints and traces, valid values are 0-9"
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                credentials-id: ''
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"
+
+- project:
+    name: nixl
+    jjb_email: 'danielpr@nvidia.com'
+    jjb_proj: 'nixl-ci'
+    jjb_git: 'git@github.com:ai-dynamo/nixl.git'
+    jjb_owner: 'Daniel Pressler'
+    jjb_jenkinsfile: '.ci/pipeline/Jenkinsfile'
+    jjb_folder: 'NIXL'
+    jjb_branch: 'main'
+    jjb_gh_url: 'https://github.com/ai-dynamo/nixl'
+    jobs:
+        - "{jjb_proj}-dispatcher"
+        - "{jjb_proj}-build"
+        - "{jjb_proj}-slurm"
+        # - "{jjb_proj}-test"
