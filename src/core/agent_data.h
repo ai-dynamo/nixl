@@ -40,6 +40,7 @@ enum nixl_comm_t {
     SOCK_SEND,
     SOCK_FETCH,
     SOCK_INVAL,
+    SOCK_MAX,
 #if HAVE_ETCD
     ETCD_SEND,
     ETCD_FETCH,
