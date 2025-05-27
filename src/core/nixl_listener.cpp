@@ -129,13 +129,13 @@ sendCommMessage(int fd, const std::string& msg) {
 
 bool
 recvCommMessageType(int fd, void *data, size_t size, bool force = false) {
-    for (size_t sent = 0; sent < size;) {
-        auto bytes = recv(fd, static_cast<char *>(data) + sent, size - sent, 0);
+    for (size_t received = 0; received < size;) {
+        auto bytes = recv(fd, static_cast<char *>(data) + received, size - received, 0);
         if (bytes > 0) {
-            sent += bytes;
+            received += bytes;
             continue;
         }
-        if (bytes == 0 && sent == 0 && !force) {
+        if (bytes == 0 && received == 0 && !force) {
             return false;
         }
 
@@ -145,7 +145,7 @@ recvCommMessageType(int fd, void *data, size_t size, bool force = false) {
             }
 
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                if (!force && sent == 0) {
+                if (!force && received == 0) {
                     return false; // nothing to read yet
                 }
 
@@ -156,7 +156,7 @@ recvCommMessageType(int fd, void *data, size_t size, bool force = false) {
         throw std::runtime_error(
                 absl::StrFormat("recvCommMessage(fd=%d) %zu/%zu bytes failed ret=%d errno=%d",
                                 fd,
-                                sent,
+                                received,
                                 size,
                                 bytes,
                                 errno));
