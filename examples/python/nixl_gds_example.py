@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -19,6 +18,7 @@ import os
 import sys
 
 import nixl._utils as nixl_utils
+from nixl._utils import FileMode, open_file, close_file, file_exists
 from nixl._api import nixl_agent, nixl_agent_config
 
 if __name__ == "__main__":
@@ -28,6 +28,16 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Please specify file path in argv")
         exit(0)
+
+    test_file = sys.argv[1]
+
+    # Check if file exists and create/open it
+    if not file_exists(test_file):
+        print(f"Creating new file: {test_file}")
+        agent1_fd = open_file(test_file, FileMode.CREATE)
+    else:
+        print(f"Opening existing file: {test_file}")
+        agent1_fd = open_file(test_file, FileMode.READ_WRITE)
 
     print("Using NIXL Plugins from:")
     print(os.environ["NIXL_PLUGIN_DIR"])
@@ -61,10 +71,6 @@ if __name__ == "__main__":
     agent1_xfer2_descs = nixl_agent1.get_xfer_descs([(addr2, buf_size, 0)], "DRAM")
 
     assert nixl_agent1.register_memory(agent1_reg_descs) is not None
-
-    # user must pass full file path for test
-    agent1_fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT)
-    assert agent1_fd >= 0
 
     agent1_file_list = [(0, buf_size, agent1_fd, "b")]
 
@@ -128,6 +134,7 @@ if __name__ == "__main__":
     nixl_utils.free_passthru(addr1)
     nixl_utils.free_passthru(addr2)
 
-    os.close(agent1_fd)
+    # Use our close_file instead of os.close
+    close_file(agent1_fd)
 
     print("Test Complete.")

@@ -19,6 +19,11 @@
 #include <cufile.h>
 #include "gds_backend.h"
 #include "common/str_tools.h"
+#include <errno.h>
+#include "file_utils.h"
+#include <filesystem>
+#include <algorithm>
+#include <fcntl.h>
 
 /** Setting the default values to check the batch limit */
 #define DEFAULT_BATCH_LIMIT 128
@@ -87,6 +92,54 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
 
 }
 
+nixl_status_t nixlGdsEngine::handleFileDescriptor(const nixlBlobDesc &mem,
+                                                  nixlGdsMetadata *md,
+                                                  nixlBackendMD* &out) {
+    nixl_status_t status;
+
+    // Check if we have a prefixed path
+    if (!mem.metaInfo.empty()) {
+        int fd;
+        status = nixlFileUtils::openPrefixedFile(mem.metaInfo, fd);
+        if (status == NIXL_SUCCESS) {
+            // Valid prefixed path, file opened successfully
+            status = gds_utils->registerFileHandle(fd, mem.len,
+                                                   mem.metaInfo, md->handle);
+            if (status == NIXL_SUCCESS) {
+                // Use the provided devId as the key in the map
+                gds_file_map[mem.devId] = md->handle;
+                out = (nixlBackendMD*)md;
+                return NIXL_SUCCESS;
+            }
+            // Failed to register, close the file
+            nixlFileUtils::closeFile(fd);
+            return status;
+        } else if (status != NIXL_ERR_INVALID_PARAM) {
+            // Error during file open (not invalid prefix case)
+            return status;
+        }
+    }
+
+    // Handle raw file descriptor (no prefix or invalid prefix)
+    auto it = gds_file_map.find(mem.devId);
+    if (it != gds_file_map.end()) {
+        md->handle = it->second;
+        md->handle.size = mem.len;
+        md->handle.metadata = mem.metaInfo;
+        out = (nixlBackendMD*)md;
+        return NIXL_SUCCESS;
+    }
+
+    // Register new file descriptor
+    status = gds_utils->registerFileHandle(mem.devId, mem.len,
+                                       mem.metaInfo, md->handle);
+    if (status == NIXL_SUCCESS) {
+        gds_file_map[mem.devId] = md->handle;
+        out = (nixlBackendMD*)md;
+    }
+    return status;
+}
+
 nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
                                          const nixl_mem_t &nixl_mem,
                                          nixlBackendMD* &out)
@@ -98,19 +151,9 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
 
     switch (nixl_mem) {
         case FILE_SEG: {
-            // if the same file is reused - no need to re-register
-            auto it = gds_file_map.find(mem.devId);
-            if (it != gds_file_map.end()) {
-                md->handle = it->second;
-                md->handle.size = mem.len;
-                md->handle.metadata = mem.metaInfo;
-                break;
-            }
-
-            status = gds_utils->registerFileHandle(mem.devId, mem.len,
-                                                   mem.metaInfo, md->handle);
-            if (status == NIXL_SUCCESS) {
-                gds_file_map[mem.devId] = md->handle;
+            status = handleFileDescriptor(mem, md, out);
+            if (status != NIXL_SUCCESS) {
+                delete md;
             }
             break;
         }
@@ -159,7 +202,19 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     nixlGdsMetadata *md = (nixlGdsMetadata *)meta;
     if (md->type == FILE_SEG) {
         gds_utils->deregisterFileHandle(md->handle);
-	gds_file_map.erase(md->handle.fd);
+
+        // Find and erase the entry using devId
+        for (auto it = gds_file_map.begin(); it != gds_file_map.end(); ++it) {
+            if (it->second.fd == md->handle.fd) {
+                gds_file_map.erase(it);
+                break;
+            }
+        }
+
+        // Close the file if it was opened with a prefixed path
+        if (!md->handle.metadata.empty()) {
+            nixlFileUtils::closeFile(md->handle.fd);
+        }
     } else {
         gds_utils->deregisterBufHandle(md->buf.base);
     }

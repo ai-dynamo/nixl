@@ -78,9 +78,12 @@ void print_usage(const char* program_name) {
               << "  -m, --max-req-size SIZE Maximum size per request (default: 16M, Max allowed: 16M)\n"
               << "  -t, --iterations N      Number of iterations for each transfer (default: " << DEFAULT_ITERATIONS << ")\n"
               << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
+              << "  -P, --prefixed-path     Use RWD: prefix for file creation (includes O_DIRECT)\n"
               << "  -h, --help              Show this help message\n"
               << "\nExample:\n"
-              << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -t 5 -D /path/to/dir\n";
+              << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -t 5 -D /path/to/dir\n"
+              << "\nNote: When using --prefixed-path (-P), files are created with RWD: prefix\n"
+              << "      which automatically enables direct I/O (O_DIRECT) for better performance.\n";
 }
 
 void printProgress(float progress) {
@@ -219,6 +222,9 @@ int main(int argc, char *argv[])
     double                      total_data_gb = 0;
     bool                        use_direct = false;
     unsigned int                iterations = DEFAULT_ITERATIONS;
+    bool                        use_prefixed_path = false;  // New flag for RW: prefix mode
+
+
 
     // Parse command line options
     static struct option long_options[] = {
@@ -234,10 +240,11 @@ int main(int argc, char *argv[])
         {"iterations",     required_argument, 0, 't'},
         {"direct",         no_argument,       0, 'D'},
         {"help",           no_argument,       0, 'h'},
+        {"prefixed-path",  no_argument,       0, 'P'},  // Now uses RWD: prefix for direct I/O
         {0,                0,                 0,  0}
     };
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:m:t:Dh", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:m:t:DhP", long_options, NULL)) != -1) {
         switch (opt) {
             case 'd':
                 use_dram = true;
@@ -291,6 +298,9 @@ int main(int argc, char *argv[])
                 break;
             case 'D':
                 use_direct = true;
+                break;
+            case 'P':
+                use_prefixed_path = true;
                 break;
             case 'h':
                 print_usage(argv[0]);
@@ -362,6 +372,9 @@ int main(int argc, char *argv[])
     std::cout << "- Max request size: " << max_request_size << " bytes" << std::endl;
     std::cout << "- Number of iterations: " << iterations << std::endl;
     std::cout << "- Use O_DIRECT: " << (use_direct ? "Yes" : "No") << std::endl;
+    std::cout << "- File Creation Mode: " << (use_prefixed_path ?
+                                             (use_direct ? "RWD: Prefix (Direct I/O)" : "RW: Prefix (Buffered I/O)") :
+                                             "Direct") << std::endl;
     std::cout << "- Operation: ";
     if (!skip_read && !skip_write) {
         std::cout << "Read and Write";
@@ -414,18 +427,24 @@ int main(int argc, char *argv[])
             fill_test_pattern(dram_addr[i], transfer_size);
         }
 
-        // Create test file
+        // Create test file - either directly or through RW: prefix
         name = generate_timestamped_filename("testfile");
         name = dir_path + "/" + name + "_" + std::to_string(i);
 
-        int flags = O_RDWR|O_CREAT;
-        if (use_direct) {
-            flags |= O_DIRECT;
-        }
-        fd[i] = open(name.c_str(), flags, 0744);
-        if (fd[i] < 0) {
-            std::cerr << "Failed to open file: " << name << " - " << strerror(errno) << std::endl;
-            goto cleanup;
+        if (!use_prefixed_path) {
+            // Direct file creation mode
+            int flags = O_RDWR|O_CREAT;
+            if (use_direct) {
+                flags |= O_DIRECT;
+            }
+            fd[i] = open(name.c_str(), flags, 0744);
+            if (fd[i] < 0) {
+                std::cerr << "Failed to open file: " << name << " - " << strerror(errno) << std::endl;
+                goto cleanup;
+            }
+        } else {
+            // RW: prefix mode - file will be created during registration
+            fd[i] = -1;  // Will be set during registration
         }
 
         // Set up descriptors
@@ -445,36 +464,51 @@ int main(int argc, char *argv[])
 
         ftrans[i].addr  = 0;
         ftrans[i].len   = transfer_size;
-        ftrans[i].devId = fd[i];
+        if (use_prefixed_path) {
+            ftrans[i].devId = i + 1;  // Use a unique non-zero devId for each file
+            // Choose prefix based on direct I/O setting - note: no colon in prefix
+            std::string prefix = use_direct ? "RWD" : "RW";
+            ftrans[i].metaInfo = prefix + ":" + name;
+        } else {
+            ftrans[i].devId = fd[i];
+            ftrans[i].metaInfo = "";
+        }
         file_for_gds.addDesc(ftrans[i]);
 
         printProgress(float(i + 1) / num_transfers);
     }
 
     std::cout << "\n=== Registering memory ===" << std::endl;
+    std::cout << "Number of file descriptors to register: " << file_for_gds.descCount() << std::endl;
+    std::cout << "Number of VRAM buffers to register: " << (use_vram ? vram_for_gds.descCount() : 0) << std::endl;
+    std::cout << "Number of DRAM buffers to register: " << (use_dram ? dram_for_gds.descCount() : 0) << std::endl;
+    // Register file descriptors first when using RW: prefix
     ret = agent.registerMem(file_for_gds);
     if (ret != NIXL_SUCCESS) {
-        std::cerr << "Failed to register file memory\n";
+        std::cerr << "Failed to register file memory. Status: " << ret << std::endl;
         goto cleanup;
     }
 
+    // Now register memory after files are properly registered
     if (use_vram) {
+        std::cout << "Registering VRAM memory..." << std::endl;
         ret = agent.registerMem(vram_for_gds);
         if (ret != NIXL_SUCCESS) {
-            std::cerr << "Failed to register VRAM memory\n";
+            std::cerr << "Failed to register VRAM memory. Status: " << ret << std::endl;
             goto cleanup;
         }
     }
 
     if (use_dram) {
+        std::cout << "Registering DRAM memory..." << std::endl;
         ret = agent.registerMem(dram_for_gds);
         if (ret != NIXL_SUCCESS) {
-            std::cerr << "Failed to register DRAM memory\n";
+            std::cerr << "Failed to register DRAM memory. Status: " << ret << std::endl;
             goto cleanup;
         }
     }
 
-    // Prepare transfer lists
+    // Create transfer lists after all registrations are complete
     nixl_xfer_dlist_t file_for_gds_list = file_for_gds.trim();
     nixl_xfer_dlist_t src_list = use_dram ? dram_for_gds.trim() : vram_for_gds.trim();
 

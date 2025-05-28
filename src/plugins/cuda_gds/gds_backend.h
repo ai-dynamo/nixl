@@ -87,13 +87,14 @@ class nixlGdsBackendReqH : public nixlBackendReqH {
 class nixlGdsEngine : public nixlBackendEngine {
     private:
         gdsUtil *gds_utils;
-        std::unordered_map<int, gdsFileHandle> gds_file_map;
+        std::unordered_map<uint64_t, gdsFileHandle> gds_file_map;
 
         mutable std::mutex batch_pool_lock;
         mutable std::list<nixlGdsIOBatch*> batch_pool;
         unsigned int batch_pool_size;  // Renamed from pool_size
         unsigned int batch_limit;      // Added for configurable batch limit
         unsigned int max_request_size; // Added for configurable request size
+        bool initErr;
 
         nixlGdsIOBatch* getBatchFromPool(unsigned int size) const;
         void returnBatchToPool(nixlGdsIOBatch* batch) const;
@@ -104,6 +105,7 @@ class nixlGdsEngine : public nixlBackendEngine {
                                    const nixl_meta_dlist_t &local,
                                    const nixl_meta_dlist_t &remote,
                                    nixlGdsBackendReqH* gds_handle);
+        nixl_status_t handleFileDescriptor(const nixlBlobDesc &mem, nixlGdsMetadata *md, nixlBackendMD* &out);
 
     public:
         nixlGdsEngine(const nixlBackendInitParams* init_params);
