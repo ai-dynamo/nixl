@@ -4214,6 +4214,7 @@ That's all there is to it!
 - **License URL**: https://github.com/axboe/liburing/blob/master/LICENSE
 - **License name**: MIT
 ### License Text:
+```
 Copyright 2020 Jens Axboe
 
 Permission is hereby granted, free of charge, to any person obtaining a
