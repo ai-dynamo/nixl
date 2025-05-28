@@ -128,6 +128,8 @@ class xferBenchConfig {
         static std::string posix_api_type;
         static std::string posix_filepath;
         static bool storage_enable_direct;
+        static int gds_batch_pool_size;
+        static int gds_batch_limit;
 
         static int loadFromFlags();
         static void printConfig();
