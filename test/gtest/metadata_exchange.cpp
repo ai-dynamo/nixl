@@ -359,10 +359,16 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal)
     fetch_args.port = src.port;
 
     ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
-
     std::this_thread::sleep_for(sleep_time);
-
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+    nixl_opt_args_t invalidate_args;
+    invalidate_args.ipAddr = dst.ip;
+    invalidate_args.port = dst.port;
+
+    ASSERT_EQ(src.agent->invalidateLocalMD(&invalidate_args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(sleep_time);
+    ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketSendPartialLocal)
