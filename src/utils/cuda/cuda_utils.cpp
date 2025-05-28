@@ -381,14 +381,14 @@ memCtxImpl::initFromAddr(const void *address, uint64_t chkDevId)
     case MEM_VMM_DEV:
     case MEM_DEV: {
         // Try using Primary context whenever possible
-        auto ctxP = std::make_unique<primaryCtx>(newOrdinal);
-        status = ctxP->retain();
-        if (NIXL_SUCCESS == status) {
-            ctx = std::move(ctxP);
-        } else if (MEM_DEV == addrMemType) {
-            ctx = std::make_unique<regularCtx>(newCtx);
+        if (MEM_VMM_DEV == addrMemType) {
+            ctx = std::make_unique<primaryCtx>(newOrdinal);
+            status = ctx->retain();
+            if (NIXL_SUCCESS != status) {
+                return status;
+            }
         } else {
-            return status;
+            ctx = std::make_unique<regularCtx>(newCtx);
         }
         status = NIXL_IN_PROG;
         ordinal = newOrdinal;
