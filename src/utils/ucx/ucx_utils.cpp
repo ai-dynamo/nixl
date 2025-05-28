@@ -428,7 +428,6 @@ namespace
   {
     explicit nixlUcpWorkerParams( const nixl_ucx_mt_t t )
     {
-      std::memset( this, 0, sizeof( ucp_worker_params_t ) );  // TODO: Needed?
       field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
       thread_mode = toUcsThreadModeChecked( t );
     }
