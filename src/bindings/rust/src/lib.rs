@@ -41,36 +41,27 @@ mod bindings {
 
 // Re-export types from the included bindings
 use bindings::{
-    nixl_capi_agent_make_connection, nixl_capi_agent_make_xfer_req,
-    nixl_capi_agent_prep_xfer_dlist, nixl_capi_create_agent, nixl_capi_create_backend,
-    nixl_capi_create_notif_map, nixl_capi_create_opt_args, nixl_capi_create_reg_dlist,
-    nixl_capi_create_xfer_dlist, nixl_capi_create_xfer_dlist_handle, nixl_capi_deregister_mem,
-    nixl_capi_destroy_agent, nixl_capi_destroy_backend, nixl_capi_destroy_mem_list,
-    nixl_capi_destroy_notif_map, nixl_capi_destroy_opt_args, nixl_capi_destroy_params,
-    nixl_capi_destroy_reg_dlist, nixl_capi_destroy_string_list, nixl_capi_destroy_xfer_dlist,
-    nixl_capi_destroy_xfer_dlist_handle, nixl_capi_estimate_xfer_cost, nixl_capi_gen_notif,
-    nixl_capi_get_available_plugins, nixl_capi_get_backend_params, nixl_capi_get_local_md,
-    nixl_capi_get_notifs, nixl_capi_get_plugin_params, nixl_capi_get_xfer_status,
-    nixl_capi_invalidate_remote_md, nixl_capi_load_remote_md, nixl_capi_mem_list_get,
-    nixl_capi_mem_list_is_empty, nixl_capi_mem_list_size, nixl_capi_mem_type_t,
-    nixl_capi_mem_type_to_string, nixl_capi_notif_map_clear, nixl_capi_notif_map_get_agent_at,
-    nixl_capi_notif_map_get_notif, nixl_capi_notif_map_get_notifs_size, nixl_capi_notif_map_size,
-    nixl_capi_opt_args_add_backend, nixl_capi_opt_args_get_has_notif,
-    nixl_capi_opt_args_get_notif_msg, nixl_capi_opt_args_get_skip_desc_merge,
-    nixl_capi_opt_args_set_has_notif, nixl_capi_opt_args_set_notif_msg,
-    nixl_capi_opt_args_set_skip_desc_merge, nixl_capi_params_create_iterator,
-    nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty, nixl_capi_params_iterator_next,
-    nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc, nixl_capi_reg_dlist_clear,
-    nixl_capi_reg_dlist_desc_count, nixl_capi_reg_dlist_get_type, nixl_capi_reg_dlist_has_overlaps,
-    nixl_capi_reg_dlist_is_empty, nixl_capi_reg_dlist_is_sorted, nixl_capi_reg_dlist_len,
-    nixl_capi_reg_dlist_print, nixl_capi_reg_dlist_rem_desc, nixl_capi_reg_dlist_resize,
-    nixl_capi_reg_dlist_trim, nixl_capi_reg_dlist_verify_sorted, nixl_capi_register_mem,
-    nixl_capi_string_list_get, nixl_capi_string_list_size, nixl_capi_xfer_dlist_add_desc,
-    nixl_capi_xfer_dlist_clear, nixl_capi_xfer_dlist_desc_count, nixl_capi_xfer_dlist_get_type,
-    nixl_capi_xfer_dlist_has_overlaps, nixl_capi_xfer_dlist_is_empty,
-    nixl_capi_xfer_dlist_is_sorted, nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_print,
-    nixl_capi_xfer_dlist_rem_desc, nixl_capi_xfer_dlist_resize, nixl_capi_xfer_dlist_trim,
-    nixl_capi_xfer_dlist_verify_sorted,
+    nixl_capi_create_agent, nixl_capi_create_backend, nixl_capi_create_notif_map,
+    nixl_capi_create_opt_args, nixl_capi_create_reg_dlist, nixl_capi_create_xfer_dlist,
+    nixl_capi_deregister_mem, nixl_capi_destroy_agent, nixl_capi_destroy_backend,
+    nixl_capi_destroy_mem_list, nixl_capi_destroy_notif_map, nixl_capi_destroy_opt_args,
+    nixl_capi_destroy_params, nixl_capi_destroy_reg_dlist, nixl_capi_destroy_string_list,
+    nixl_capi_destroy_xfer_dlist, nixl_capi_get_available_plugins, nixl_capi_get_backend_params,
+    nixl_capi_get_local_md, nixl_capi_get_notifs, nixl_capi_get_plugin_params,
+    nixl_capi_get_xfer_status, nixl_capi_invalidate_remote_md, nixl_capi_load_remote_md,
+    nixl_capi_mem_list_get, nixl_capi_mem_list_is_empty, nixl_capi_mem_list_size,
+    nixl_capi_mem_type_t, nixl_capi_mem_type_to_string, nixl_capi_notif_map_clear,
+    nixl_capi_notif_map_get_agent_at, nixl_capi_notif_map_get_notif,
+    nixl_capi_notif_map_get_notifs_size, nixl_capi_notif_map_size, nixl_capi_opt_args_add_backend,
+    nixl_capi_opt_args_get_has_notif, nixl_capi_opt_args_get_notif_msg,
+    nixl_capi_opt_args_get_skip_desc_merge, nixl_capi_opt_args_set_has_notif,
+    nixl_capi_opt_args_set_notif_msg, nixl_capi_opt_args_set_skip_desc_merge,
+    nixl_capi_params_create_iterator, nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty,
+    nixl_capi_params_iterator_next, nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc,
+    nixl_capi_reg_dlist_clear, nixl_capi_reg_dlist_has_overlaps, nixl_capi_reg_dlist_len,
+    nixl_capi_reg_dlist_resize, nixl_capi_register_mem, nixl_capi_string_list_get,
+    nixl_capi_string_list_size, nixl_capi_xfer_dlist_add_desc, nixl_capi_xfer_dlist_clear,
+    nixl_capi_xfer_dlist_has_overlaps, nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize,
 };
 
 // Re-export status codes
@@ -247,7 +238,7 @@ impl RegistrationHandle {
                 mem_type = ?self.mem_type,
                 "Deregistering memory"
             );
-            let mut reg_dlist = RegDescList::new(self.mem_type)?;
+            let mut reg_dlist = RegDescList::new(self.mem_type, false)?;
             unsafe {
                 reg_dlist.add_desc(self.ptr, self.size, self.dev_id)?;
                 let _opt_args = OptArgs::new().unwrap();
@@ -602,10 +593,11 @@ pub struct XferDescList<'a> {
 
 impl<'a> XferDescList<'a> {
     /// Creates a new transfer descriptor list for the given memory type
-    pub fn new(mem_type: MemType) -> Result<Self, NixlError> {
+    pub fn new(mem_type: MemType, sorted: bool) -> Result<Self, NixlError> {
         let mut dlist = ptr::null_mut();
-        let status =
-            unsafe { nixl_capi_create_xfer_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist) };
+        let status = unsafe {
+            nixl_capi_create_xfer_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist, sorted)
+        };
 
         match status {
             NIXL_CAPI_SUCCESS => {
@@ -745,10 +737,11 @@ pub struct RegDescList<'a> {
 
 impl<'a> RegDescList<'a> {
     /// Creates a new registration descriptor list for the given memory type
-    pub fn new(mem_type: MemType) -> Result<Self, NixlError> {
+    pub fn new(mem_type: MemType, sorted: bool) -> Result<Self, NixlError> {
         let mut dlist = ptr::null_mut();
-        let status =
-            unsafe { nixl_capi_create_reg_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist) };
+        let status = unsafe {
+            nixl_capi_create_reg_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist, sorted)
+        };
 
         match status {
             NIXL_CAPI_SUCCESS => {

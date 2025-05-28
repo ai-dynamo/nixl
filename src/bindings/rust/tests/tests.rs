@@ -126,7 +126,7 @@ fn test_get_backend_params() {
 
 #[test]
 fn test_xfer_dlist() {
-    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
 
     // Add some descriptors
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
@@ -157,7 +157,7 @@ fn test_xfer_dlist() {
 
 #[test]
 fn test_reg_dlist() {
-    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
 
     // Add some descriptors
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
@@ -188,7 +188,7 @@ fn test_storage_descriptor_lifetime() {
 
     {
         // Create a descriptor list with shorter lifetime
-        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+        let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
         dlist.add_storage_desc(&storage).unwrap();
         assert_eq!(dlist.len().unwrap(), 1);
         // dlist is dropped here, but storage is still valid
@@ -203,7 +203,7 @@ fn test_multiple_storage_descriptors() {
     let storage1 = SystemStorage::new(1024).unwrap();
     let storage2 = SystemStorage::new(2048).unwrap();
 
-    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
 
     // Add multiple descriptors
     dlist.add_storage_desc(&storage1).unwrap();
@@ -369,10 +369,10 @@ fn test_basic_agent_lifecycle() {
     let remote_name = agent1.load_remote_md(&metadata).unwrap();
     assert_eq!(remote_name, "A2");
 
-    let mut local_xfer_dlist = XferDescList::new(MemType::Dram).unwrap();
+    let mut local_xfer_dlist = XferDescList::new(MemType::Dram, false).unwrap();
     local_xfer_dlist.add_storage_desc(&storage1).unwrap();
 
-    let mut remote_xfer_dlist = XferDescList::new(MemType::Dram).unwrap();
+    let mut remote_xfer_dlist = XferDescList::new(MemType::Dram, false).unwrap();
     remote_xfer_dlist.add_storage_desc(&storage2).unwrap();
 
     let mut xfer_args = OptArgs::new().unwrap();

@@ -170,7 +170,11 @@ impl Agent {
 
     /// Gets a backend by name
     pub fn get_backend(&self, name: &str) -> Option<Backend> {
-        self.inner.read().unwrap().get_backend(name).map(|backend| Backend { inner: backend })
+        self.inner
+            .read()
+            .unwrap()
+            .get_backend(name)
+            .map(|backend| Backend { inner: backend })
     }
 
     /// Gets the parameters and memory types for a backend after initialization
@@ -214,7 +218,7 @@ impl Agent {
         descriptor: &impl NixlDescriptor,
         opt_args: Option<&OptArgs>,
     ) -> Result<RegistrationHandle, NixlError> {
-        let mut reg_dlist = RegDescList::new(descriptor.mem_type())?;
+        let mut reg_dlist = RegDescList::new(descriptor.mem_type(), false)?;
         unsafe {
             reg_dlist.add_storage_desc(descriptor)?;
 
