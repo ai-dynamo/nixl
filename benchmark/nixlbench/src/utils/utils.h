@@ -133,7 +133,6 @@ class xferBenchConfig {
         static int gds_batch_pool_size;
         static int gds_batch_limit;
         static std::string gpunetio_device_list;
-        static std::string threading_mode;
 
         static int loadFromFlags();
         static void printConfig();

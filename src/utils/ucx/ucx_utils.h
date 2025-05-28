@@ -148,13 +148,14 @@ private:
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
     ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
+    mutable std::atomic<size_t> num_associated_workers = 0;
 public:
 
     using req_cb_t = void(void *request);
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
                    bool prog_thread, ucp_err_handling_mode_t err_handling_mode,
-                   unsigned long num_workers, nixl_ucx_mt_t threading_mode,
+                   unsigned long num_workers,
                    nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
@@ -162,8 +163,14 @@ public:
     int memReg(void *addr, size_t size, nixlUcxMem &mem);
     [[nodiscard]] std::string packRkey(nixlUcxMem &mem);
     void memDereg(nixlUcxMem &mem);
-    nixl_ucx_mt_t getMtType() {
-        return mt_type;
+    size_t getNumAssociatedWorkers() {
+        return num_associated_workers.load();
+    }
+    size_t incAssociatedWorkers() {
+        return num_associated_workers++;
+    }
+    size_t decAssociatedWorkers() {
+        return num_associated_workers--;
     }
 
     friend class nixlUcxWorker;
@@ -176,12 +183,14 @@ private:
     /* Local UCX stuff */
     const std::shared_ptr<nixlUcxContext> ctx;
     const std::unique_ptr<ucp_worker, void(*)(ucp_worker*)> worker;
+    size_t workerId;
+    std::atomic<bool> associated = false;
 
     [[nodiscard]] static ucp_worker* createUcpWorker(nixlUcxContext&);
 
   public:
-    explicit nixlUcxWorker(const std::shared_ptr<nixlUcxContext> &_ctx);
-
+    explicit nixlUcxWorker(const std::shared_ptr<nixlUcxContext> &_ctx,
+                           size_t _workerId, bool is_shared = false);
     nixlUcxWorker( nixlUcxWorker&& ) = delete;
     nixlUcxWorker( const nixlUcxWorker& ) = delete;
     void operator=( nixlUcxWorker&& ) = delete;
@@ -203,13 +212,32 @@ private:
 
     /* Worker access */
     [[nodiscard]] ucp_worker_h getWorker() const noexcept { return worker.get(); }
+
+    /* Thread to worker mapping */
+    bool associate() {
+        bool expected = false;
+        return associated.compare_exchange_strong(expected, true);
+    }
+    void disassociate() {
+        associated.store(false);
+    }
+    bool isAssociated() const {
+        return associated.load();
+    }
+    size_t getWorkerId() const {
+        return workerId;
+    }
+    std::shared_ptr<nixlUcxContext> getCtx() const {
+        return ctx;
+    }
 };
 
 [[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {
     return {
         { "ucx_devices", "" },
         { "ucx_error_handling_mode", "none" }, // or "peer"
-        { "num_workers", "1" }
+        { "num_workers", "1" },
+        { "num_shared_workers", "1" }
     };
 }
 

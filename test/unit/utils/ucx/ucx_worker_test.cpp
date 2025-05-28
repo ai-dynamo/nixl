@@ -90,19 +90,17 @@ int main()
                                          nixlUcxRequestInit, nullptr,
                                          false,
                                          UCP_ERR_HANDLING_MODE_NONE, 1,
-                                         NIXL_UCX_MT_MAX,
                                          nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE),
         std::make_shared<nixlUcxContext>(devs, sizeof(requestData),
                                          nixlUcxRequestInit, nullptr,
                                          false,
                                          UCP_ERR_HANDLING_MODE_NONE, 1,
-                                         NIXL_UCX_MT_MAX,
                                          nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)
     };
 
     nixlUcxWorker w[2] = {
-        nixlUcxWorker(c[0]),
-        nixlUcxWorker(c[1])
+        nixlUcxWorker(c[0], 0),
+        nixlUcxWorker(c[1], 1)
     };
     std::unique_ptr<nixlUcxEp> ep[2];
     nixlUcxMem mem[2];

@@ -124,8 +124,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             }
         }
         if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
-            backend_params.emplace("num_workers", std::to_string(xferBenchConfig::num_threads));
-            backend_params.emplace("worker_mode", xferBenchConfig::threading_mode);
+            backend_params["num_workers"] = std::to_string(xferBenchConfig::num_threads);
+            backend_params["num_shared_workers"] = std::to_string(2);
         }
 
         if (gethostname(hostname, 256)) {
@@ -162,7 +162,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         exit(EXIT_FAILURE);
     }
 
-    agent->createBackend(backend_name, backend_params, backend_engine);
+    if (agent->createBackend(backend_name, backend_params, backend_engine) != NIXL_SUCCESS) {
+        std::cerr << "Backend creation fail: " << xferBenchConfig::backend << std::endl;
+        exit(EXIT_FAILURE);
+    }
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
