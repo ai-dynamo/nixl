@@ -65,7 +65,7 @@ jobs:
   Upload-Log:
     name: Upload log
     runs-on: blossom
-    if : github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Jenkins log for pull request ${{ fromJson(github.event.inputs.args).pr }} (click here)
         run: blossom-ci

@@ -1,0 +1,27 @@
+#!/usr/bin/groovy
+
+/*
+ * This is the main Jenkins pipeline definition file that defines the actual build steps
+ * It is referenced by the JJB configuration (proj-jjb.yaml) and executed by Jenkins
+ * The pipeline uses a matrix-based build approach to handle multiple build configurations
+ * NOTE: This file should not be changed by none devops team members
+ */
+
+// Load required pipeline libraries
+// These libraries provide shared functionality and utilities for the build process
+// Requires pipeline-github-lib plugin to load library from github
+@Library('github.com/Mellanox/ci-demo@stable_media')  // External library for matrix build functionality
+
+// Initialize the build matrix
+// The matrix class handles the parallel execution of different build configurations
+// It manages the build environment, test execution, and result reporting
+def matrix = new com.mellanox.cicd.Matrix()
+
+// Execute the main build process
+// This will:
+// 1. Parse the build matrix configuration from .ci/jenkins/lib/build-matrix.yaml
+// 2. Set up the build environment
+// 3. Execute build steps in parallel based on the matrix configuration
+// 4. Handle test execution and reporting
+// 5. Manage artifacts and build results
+matrix.main()
