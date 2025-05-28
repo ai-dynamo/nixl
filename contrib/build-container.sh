@@ -85,8 +85,8 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
-        --efa)
-            # Master branch (v1.20) containing EFA SRD support
+        --ucx-upstream)
+            # Master branch (v1.20) also containing EFA SRD support
             UCX_REF=3842a65f02a8e2f3635a66189cd82dc86bf065c2
             ;;
         --)
@@ -135,7 +135,7 @@ show_help() {
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
-    echo "  [--efa ucx version that supports EFA SRD transport]"
+    echo "  [--ucx-upstream use ucx master branch]"
     exit 0
 }
 
