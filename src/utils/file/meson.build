@@ -13,8 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
-subdir('stream')
-subdir('ucx')
-subdir('file')
+file_utils_inc = include_directories('.')
+
+# Define a shared library for file utilities
+file_utils_lib = shared_library('nixl_file_utils',
+    'file_utils.cpp',
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, file_utils_inc],
+    dependencies: [nixl_common_dep],
+    install: true
+)
+
+# Make the library and includes available to other parts of the build
+file_utils_dep = declare_dependency(
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, file_utils_inc],
+    link_with: file_utils_lib,
+    dependencies: [nixl_common_dep]
+)
