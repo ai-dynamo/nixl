@@ -15,6 +15,12 @@
 
 use super::*;
 
+mod reg;
+mod xfer;
+
+pub use reg::RegDescList;
+pub use xfer::XferDescList;
+
 /// Memory types supported by NIXL
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemType {

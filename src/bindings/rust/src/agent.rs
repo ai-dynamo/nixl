@@ -55,7 +55,7 @@ impl Agent {
     }
 
     /// Gets the list of available plugins
-    pub fn get_available_plugins(&self) -> Result<StringList, NixlError> {
+    pub fn get_available_plugins(&self) -> Result<utils::StringList, NixlError> {
         tracing::trace!("Getting available NIXL plugins");
         let mut plugins = ptr::null_mut();
 
@@ -72,7 +72,7 @@ impl Agent {
                 // SAFETY: If status is 0, plugins was successfully created and is non-null
                 let inner = unsafe { NonNull::new_unchecked(plugins) };
                 tracing::trace!("Successfully retrieved NIXL plugins");
-                Ok(StringList { inner })
+                Ok(utils::StringList::new(inner))
             }
             -1 => {
                 tracing::trace!(error = "invalid_param", "Failed to get NIXL plugins");
@@ -97,7 +97,10 @@ impl Agent {
     /// Returns a NixlError if:
     /// * The plugin name contains interior nul bytes
     /// * The operation fails
-    pub fn get_plugin_params(&self, plugin_name: &str) -> Result<(MemList, Params), NixlError> {
+    pub fn get_plugin_params(
+        &self,
+        plugin_name: &str,
+    ) -> Result<(MemList, utils::Params), NixlError> {
         let plugin_name = CString::new(plugin_name)?;
         let mut mems = ptr::null_mut();
         let mut params = ptr::null_mut();
@@ -119,9 +122,7 @@ impl Agent {
                 let params_inner = unsafe { NonNull::new_unchecked(params) };
                 Ok((
                     MemList { inner: mems_inner },
-                    Params {
-                        inner: params_inner,
-                    },
+                    utils::Params::new(params_inner),
                 ))
             }
             -1 => Err(NixlError::InvalidParam),
@@ -130,7 +131,11 @@ impl Agent {
     }
 
     /// Creates a new backend for the given plugin using the provided parameters
-    pub fn create_backend(&self, plugin: &str, params: &Params) -> Result<Backend, NixlError> {
+    pub fn create_backend(
+        &self,
+        plugin: &str,
+        params: &utils::Params,
+    ) -> Result<Backend, NixlError> {
         tracing::trace!(plugin.name = %plugin, "Creating new NIXL backend");
         let c_plugin = CString::new(plugin).map_err(|_| NixlError::InvalidParam)?;
         let name = c_plugin.to_string_lossy().to_string();
@@ -139,7 +144,7 @@ impl Agent {
             nixl_capi_create_backend(
                 self.inner.write().unwrap().handle.as_ptr(),
                 c_plugin.as_ptr(),
-                params.inner.as_ptr(),
+                params.handle(),
                 &mut backend,
             )
         };
@@ -178,7 +183,10 @@ impl Agent {
     }
 
     /// Gets the parameters and memory types for a backend after initialization
-    pub fn get_backend_params(&self, backend: &Backend) -> Result<(MemList, Params), NixlError> {
+    pub fn get_backend_params(
+        &self,
+        backend: &Backend,
+    ) -> Result<(MemList, utils::Params), NixlError> {
         let mut mem_list = ptr::null_mut();
         let mut params = ptr::null_mut();
 
@@ -201,9 +209,7 @@ impl Agent {
                 MemList {
                     inner: NonNull::new_unchecked(mem_list),
                 },
-                Params {
-                    inner: NonNull::new_unchecked(params),
-                },
+                utils::Params::new(NonNull::new_unchecked(params)),
             ))
         }
     }
@@ -224,7 +230,7 @@ impl Agent {
 
             nixl_capi_register_mem(
                 self.inner.write().unwrap().handle.as_ptr(),
-                reg_dlist.inner.as_ptr(),
+                reg_dlist.handle(),
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             );
         }
@@ -363,8 +369,8 @@ impl Agent {
             bindings::nixl_capi_create_xfer_req(
                 self.inner.read().unwrap().handle.as_ptr(),
                 operation as bindings::nixl_capi_xfer_op_t,
-                local_descs.inner.as_ptr(),
-                remote_descs.inner.as_ptr(),
+                local_descs.handle(),
+                remote_descs.handle(),
                 remote_agent.as_ptr(),
                 &mut req,
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
@@ -375,10 +381,7 @@ impl Agent {
             NIXL_CAPI_SUCCESS => {
                 // SAFETY: If status is NIXL_CAPI_SUCCESS, req is guaranteed to be non-null
                 let inner = NonNull::new(req).ok_or(NixlError::FailedToCreateXferRequest)?;
-                Ok(XferRequest {
-                    inner,
-                    agent: self.inner.clone(),
-                })
+                Ok(XferRequest::new(inner, self.inner.clone()))
             }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::FailedToCreateXferRequest),
@@ -408,7 +411,7 @@ impl Agent {
         let status = unsafe {
             nixl_capi_post_xfer_req(
                 self.inner.write().unwrap().handle.as_ptr(),
-                req.inner.as_ptr(),
+                req.handle(),
                 opt_args.map_or(ptr::null_mut(), |args| args.inner.as_ptr()),
             )
         };
@@ -444,10 +447,7 @@ impl Agent {
     /// * `req` - Transfer request handle after `post_xfer_req`
     pub fn get_xfer_status(&self, req: &XferRequest) -> Result<bool, NixlError> {
         let status = unsafe {
-            nixl_capi_get_xfer_status(
-                self.inner.write().unwrap().handle.as_ptr(),
-                req.inner.as_ptr(),
-            )
+            nixl_capi_get_xfer_status(self.inner.write().unwrap().handle.as_ptr(), req.handle())
         };
 
         match status {
