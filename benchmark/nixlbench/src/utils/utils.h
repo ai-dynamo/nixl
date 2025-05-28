@@ -128,7 +128,6 @@ class xferBenchConfig {
         static std::string posix_api_type;
         static std::string posix_filepath;
         static bool storage_enable_direct;
-        static std::string threading_mode;
 
         static int loadFromFlags();
         static void printConfig();

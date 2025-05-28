@@ -93,19 +93,6 @@ class nixlUcxPublicMetadata : public nixlBackendMD {
     friend class nixlUcxEngine;
 };
 
-class nixlUcxThreadToWorker {
-    private:
-        pthread_key_t keyThreadToWorker;
-        std::atomic<size_t> nextWorkerId;
-        const size_t numWorkers;
-        const nixl_ucx_mt_t mode;
-
-    public:
-        nixlUcxThreadToWorker(size_t num_workers, nixl_ucx_mt_t mode);
-        ~nixlUcxThreadToWorker();
-        nixl_status_t threadToWorkerId(size_t &worker_id);
-};
-
 // Forward declaration of CUDA context
 // It is only visible in ucx_backend.cpp to ensure that
 // HAVE_CUDA works properly
@@ -123,6 +110,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         std::vector<std::unique_ptr<nixlUcxWorker>> uws;
         std::unique_ptr<char []> workerAddr;
         size_t workerSize;
+        size_t numDedicatedWorker;
 
         /* Progress thread data */
         std::mutex pthrActiveLock;
@@ -151,7 +139,14 @@ class nixlUcxEngine : public nixlBackendEngine {
                            std::hash<std::string>, strEqual> remoteConnMap;
 
         // Thread to worker mapping
-        std::unique_ptr<nixlUcxThreadToWorker> threadWorkerMap;
+        pthread_key_t keyThreadToWorker;
+        mutable std::atomic<size_t> nextWorkerId;
+        void initThreadMapping();
+        void destroyThreadMapping();
+        nixlUcxWorker *getDedicatedWorker() const;
+        nixlUcxWorker *getSharedWorker() const;
+        nixlUcxWorker *findAndAssociateDedicatedWorker() const;
+        static void threadMapDestructor(void *arg);
 
         void vramInitCtx();
         void vramFiniCtx();
