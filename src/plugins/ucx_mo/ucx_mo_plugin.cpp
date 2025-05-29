@@ -17,7 +17,6 @@
 
  #include "backend/backend_plugin.h"
  #include "ucx_mo_backend.h"
- #include "ucx_utils.h"
 
  // Plugin version information
  static const char* PLUGIN_NAME = "UCX_MO";
