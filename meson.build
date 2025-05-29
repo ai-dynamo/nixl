@@ -178,3 +178,40 @@ if get_option('build_docs')
     build_by_default: true
   )
 endif
+
+# Configure and install pkg-config file
+pkg = import('pkgconfig')
+
+# Collect all library dependencies
+nixl_libraries = [
+    '-lnixl',
+    '-lnixl_build',
+    '-lnixl_common',
+    '-lstream',
+    '-lserdes',
+    '-lucx_utils',
+    '-lstdc++'
+]
+
+nixl_private_libs = [
+    '-ldl',
+    '-lrt',
+    '-lpthread'
+]
+
+nixl_requires = ['ucx']
+if etcd_dep.found()
+    nixl_requires += ['etcd-cpp-api']
+endif
+
+pkg.generate(
+    name: 'nixl',
+    description: 'NVIDIA Inference Xfer Library',
+    version: meson.project_version(),
+    requires: nixl_requires,
+    libraries: nixl_libraries,
+    libraries_private: nixl_private_libs,
+    subdirs: ['backend','utils'],
+    install_dir: join_paths(get_option('libdir'), 'pkgconfig'),
+    extra_cflags: ['-std=c++17']
+)
