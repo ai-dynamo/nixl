@@ -45,6 +45,22 @@ bool nixlMetadataStream::setupStream() {
     return true;
 }
 
+bool nixlMetadataStream::setupStreamSync() {
+
+    socketFd = socket(AF_INET, SOCK_STREAM, 0);
+    if (socketFd == -1) {
+        std::cerr << "failed to create stream socket for listener";
+        return false;
+    }
+
+    listenerAddr.sin_family = AF_INET;
+    listenerAddr.sin_addr.s_addr = INADDR_ANY;
+    listenerAddr.sin_port = htons(port);
+
+    return true;
+}
+
+
 void nixlMetadataStream::closeStream() {
    if (socketFd != -1) {
         close(socketFd);
@@ -74,6 +90,26 @@ void nixlMDStreamListener::setupListener() {
         closeStream();
         return;
     }
+
+    if (bind(socketFd, (struct sockaddr*)&listenerAddr,
+             sizeof(listenerAddr)) < 0) {
+        std::cerr << "Socket Bind failed while setting up listener for MD\n";
+        closeStream();
+        return;
+    }
+
+    if (listen(socketFd, 128) < 0) {
+        std::cerr << "Listening failed for stream Socket: "
+                  << socketFd  << "\n";
+        closeStream();
+        return;
+    }
+    std::cout << "MD listener is listening on port "
+              << port << "...\n";
+}
+
+void nixlMDStreamListener::setupListenerSync() {
+    setupStreamSync();
 
     if (bind(socketFd, (struct sockaddr*)&listenerAddr,
              sizeof(listenerAddr)) < 0) {
@@ -195,10 +231,37 @@ bool nixlMDStreamClient::setupClient() {
     return true;
 }
 
+bool nixlMDStreamClient::setupClientSync() {
+    setupStreamSync();
+
+    struct sockaddr_in listenerAddr;
+    listenerAddr.sin_family = AF_INET;
+    listenerAddr.sin_port   = htons(port);
+
+    if (inet_pton(AF_INET, listenerAddress.c_str(),
+                  &listenerAddr.sin_addr) <= 0) {
+        perror("Invalid address/ Address not supported");
+        return false;
+    }
+
+    if (connect(socketFd, (struct sockaddr*)&listenerAddr,
+                sizeof(listenerAddr)) < 0) {
+        std::cerr << "Connection Failed: "<< strerror(errno) << std::endl;
+        closeStream();
+        return false;
+    }
+    std::cout << "Connected to listener at "
+              << listenerAddress << ":" << port << "\n";
+    return true;
+}
+
 bool nixlMDStreamClient::connectListener() {
    return setupClient();
 }
 
+bool nixlMDStreamClient::connectListenerSync() {
+   return setupClientSync();
+}
 
 void nixlMDStreamClient::sendData(const std::string &data) {
     if (send(socketFd, data.c_str(), data.size(), 0) < 0) {
