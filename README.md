@@ -251,3 +251,7 @@ meson setup build && cd build && ninja
 * [C++ examples](https://github.com/ai-dynamo/nixl/tree/main/examples/cpp)
 
 * [Python examples](https://github.com/ai-dynamo/nixl/tree/main/examples/python)
+
+## Third-Party Components
+
+This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use.
