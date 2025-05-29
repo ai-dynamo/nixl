@@ -562,10 +562,9 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (num_workers_iter == custom_params->end() || !absl::SimpleAtoi(num_workers_iter->second, &numWorkers))
         numWorkers = 1;
 
-    if (custom_params->count("num_shared_workers") != 0) {
-        if (!absl::SimpleAtoi(custom_params->at("num_shared_workers"), &numSharedWorkers)) {
-            numSharedWorkers = 1;
-        }
+    if (custom_params->count("num_shared_workers") == 0 ||
+        !absl::SimpleAtoi(custom_params->at("num_shared_workers"), &numSharedWorkers)) {
+        numSharedWorkers = 1;
     }
 
     if (numWorkers + numSharedWorkers == 0) {
