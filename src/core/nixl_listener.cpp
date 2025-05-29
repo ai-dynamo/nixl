@@ -16,7 +16,6 @@
  */
 
 #include <fcntl.h>
-#include <iostream>
 #include "nixl.h"
 #include "common/nixl_time.h"
 #include "common/str_tools.h"
@@ -72,7 +71,7 @@ int connectToIP(std::string ip_addr, int port) {
     if (ret <= 0) {
         if (ret < 0) {
             NIXL_ERROR << "select failed for ip_addr: " << ip_addr << " and port: " << port
-                       << " with error: " << strerror(errno);
+                       << " with error: " << nixl_strerror(errno);
         } else {
             NIXL_ERROR << "select timed out for ip_addr: " << ip_addr << " and port: " << port;
         }
@@ -85,7 +84,7 @@ int connectToIP(std::string ip_addr, int port) {
     socklen_t len = sizeof(error);
     if (getsockopt(ret_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
         NIXL_ERROR << "getsockopt failed for ip_addr: " << ip_addr << " and port: " << port
-                   << " with error: " << strerror(error);
+                   << " with error: " << nixl_strerror(error);
         close(ret_fd);
         return -1;
     }

@@ -15,8 +15,8 @@
 
 stream_lib = library('stream',
            'metadata_stream.cpp', 'metadata_stream.h',
-           include_directories: nixl_inc_dirs,
-           dependencies: thread_dep,
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
+           dependencies: [thread_dep, nixl_common_dep],
            install: true)
 
 stream_interface = declare_dependency(link_with: stream_lib)

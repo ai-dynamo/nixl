@@ -64,7 +64,7 @@ nixl_status_t UringQueue::init(int entries, const io_uring_params& params) {
     // Initialize with basic setup - need a mutable copy since the API modifies the params
     io_uring_params mutable_params = params;
     if (io_uring_queue_init_params(entries, &uring, &mutable_params) < 0) {
-        throw std::runtime_error(absl::StrFormat("Failed to initialize io_uring instance: %s", strerror(errno)));
+        throw std::runtime_error(absl::StrFormat("Failed to initialize io_uring instance: %s", nixl_strerror(errno)));
     }
 
     // Log the features supported by this io_uring instance
@@ -95,7 +95,7 @@ nixl_status_t UringQueue::submit() {
     int ret = io_uring_submit(&uring);
     if (ret != num_entries) {
         if (ret < 0) {
-            NIXL_ERROR << absl::StrFormat("io_uring submit failed: %s", strerror(-ret));
+            NIXL_ERROR << absl::StrFormat("io_uring submit failed: %s", nixl_strerror(-ret));
         }
         else {
             NIXL_ERROR << absl::StrFormat("io_uring submit failed. Partial submission: %d/%d", num_entries, ret);
@@ -119,7 +119,7 @@ nixl_status_t UringQueue::checkCompleted() {
     io_uring_for_each_cqe(&uring, head, cqe) {
         int res = cqe->res;
         if (res < 0) {
-            NIXL_ERROR << absl::StrFormat("IO operation failed: %s", strerror(-res));
+            NIXL_ERROR << absl::StrFormat("IO operation failed: %s", nixl_strerror(-res));
             return NIXL_ERR_BACKEND;
         }
         count++;
