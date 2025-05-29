@@ -1,0 +1,39 @@
+# Slurm Client Docker Image
+#
+# This Dockerfile creates an image with Slurm client packages installed,
+# allowing containerized applications to interact with a Slurm cluster.
+#
+# Usage:
+# - Build: docker build -t slurm-client -f Dockerfile.slurm-client .
+# - Run: docker run -it --rm slurm-client  # Will start munge and drop to bash
+# - Run with command: docker run -it --rm slurm-client sinfo  # Will run sinfo after starting munge
+#
+# Note: When running, you'll need to mount the Slurm configuration files
+# and potentially set up network access to the Slurm controller.
+
+FROM nbu-harbor.gtm.nvidia.com/swx-lab-platform/slurm-runner-client:v.29.0
+
+ARG _UID=148069
+ARG _GID=30
+ARG _LOGIN=svc-nixl
+ARG _GROUP=slurm-group
+ARG _HOME=/labhome/$_LOGIN
+
+ENV SLURM_TRACK_DIR=/tmp/slurm_track
+ENV SLURM_OUTPUT_DIR="${_HOME}"/slurm_logs
+
+# Pre-create the svc-nixl user with correct IDs
+RUN groupadd -g "${_GID}" "${_GROUP}" && \
+    useradd -u "${_UID}" -g "${_GID}" -m -s /bin/bash "${_LOGIN}" && \
+    mkdir -p "${_HOME}" && \
+    chown -R "${_LOGIN}":"${_GROUP}" "${_HOME}" && \
+    mkdir -p "${SLURM_TRACK_DIR}" && \
+    chown -R "${_LOGIN}":"${_GROUP}" "${SLURM_TRACK_DIR}"
+
+# Default command (can be overridden)
+CMD ["bash"]
+
+# Labels
+LABEL maintainer="NIXL DevOps Team"
+LABEL description="Slurm client image for interacting with Slurm clusters"
+LABEL version="1.0"

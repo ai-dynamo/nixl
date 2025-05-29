@@ -1,0 +1,92 @@
+---
+#
+# Key Components:
+# - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
+# - Docker Images: Specifies the container images used for different build stages
+#   - Slurm client image for running tests
+# - Matrix Axes: Defines build variations (currently x86_64 architecture)
+# - Run Steps: Sequential steps for running tests
+#
+# When Modified:
+# - Adding/removing Docker images: Affects available test environments
+# - Modifying matrix axes: Changes test variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts test performance and resource allocation
+# - Adding/removing steps: Changes the test pipeline sequence
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+
+job: nixl-ci-test
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+registry_host: urm.nvidia.com/sw-nbu-swx-nixl-docker
+registry_path: /ci
+registry_auth: svc-nixl-artifactory-token
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 4Gi, cpu: 4000m}"
+  requests: "{memory: 4Gi, cpu: 4000m}"
+
+volumes:
+  - {mountPath: /etc/slurm, hostPath: /labhome/svc-nixl/.slurm-config/slurm}
+  - {mountPath: /labhome/svc-nixl/slurm_logs, hostPath: /labhome/svc-nixl/slurm_logs}
+
+runs_on_dockers:
+  - {
+      file: '.ci/dockerfiles/Dockerfile.slurm-runner',
+      arch: 'x86_64',
+      name: 'slurm-runner',
+      uri: '${JOB_BASE_NAME}/$name',
+      tag: '20250603',
+      build_args: '--no-cache',
+    }
+
+env:
+  LOGIN_PRE_CMD: "su -m svc-nixl -c"
+
+matrix:
+  axes:
+    image:
+      - nvcr.io/nvidia/pytorch:25.02-py3
+    slurm_args:
+      - ${WORKSPACE}/.ci/scripts/run_in_container.sh ${JOB_BASE_NAME}-${BUILD_ID}-${axis_index} "rock" "01:00:00"
+    arch:
+      - x86_64
+
+steps:
+  - name: Prepare Environment
+    parallel: false
+    run: |
+      # we need to start munged with root first to avoid permission issues
+      # TODO: remove this once we have a proper solution for the slurm-runner image
+      munged --force > /dev/null 2>&1 &
+
+  - name: Submit Job
+    parallel: false
+    run: |
+      ${LOGIN_PRE_CMD} "source ${WORKSPACE}/.ci/runners/slurm/slurm-functions.sh && \
+        slurm_submit_job ${slurm_args} '' '' \"GIT_REF=${sha1} TEST_DOCKER_IMAGE=${image}\""
+
+  - name: Wait for Job to Complete
+    parallel: false
+    run: |
+      ${LOGIN_PRE_CMD} "source ${WORKSPACE}/.ci/runners/slurm/slurm-functions.sh && \
+        slurm_wait_for_job_completion"
+
+  - name: Get Job Output
+    parallel: false
+    run: |
+      ${LOGIN_PRE_CMD} "source ${WORKSPACE}/.ci/runners/slurm/slurm-functions.sh && \
+        slurm_get_job_output"
+
+  - name: Check Job Success
+    parallel: false
+    run: |
+      ${LOGIN_PRE_CMD} "source ${WORKSPACE}/.ci/runners/slurm/slurm-functions.sh && \
+        slurm_check_job_success"
