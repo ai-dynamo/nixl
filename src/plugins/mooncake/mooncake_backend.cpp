@@ -212,12 +212,8 @@ nixl_status_t nixlMooncakeEngine::prepXfer (const nixl_xfer_op_t &operation,
                                             nixlBackendReqH* &handle,
                                             const nixl_opt_b_args_t* opt_args) const
 {
-    const static size_t kMaxRequestCount = 1024;
-    uint64_t batch_id = allocateBatchID(engine_, kMaxRequestCount);
-    if (batch_id == INVALID_BATCH) return NIXL_ERR_BACKEND;
     auto priv = new nixlMooncakeBackendReqH();
-    priv->batch_id = batch_id;
-    priv->request_count = 0;
+    priv->batch_id = INVALID_BATCH;
     handle = priv;
     return NIXL_SUCCESS;
 }
@@ -239,6 +235,17 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
         segment_id = agent->second.segment_id;
     }
     if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
+
+    const static size_t kMaxRequestCount = 1024;
+    if (priv->batch_id == INVALID_BATCH) {
+        uint64_t batch_id = allocateBatchID(engine_, kMaxRequestCount);
+        if (batch_id == INVALID_BATCH) {
+             return NIXL_ERR_BACKEND;
+        }
+        priv->batch_id = batch_id;
+        priv->request_count = 0;
+    }
+
     size_t request_count = local.descCount();
     transfer_request_t *request = new transfer_request_t[request_count];
     for (size_t index = 0; index < request_count; ++index) {
@@ -249,9 +256,15 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
         request[index].length = local[index].len;
         request[index].target_id = segment_id;
     }
+
+    // TODO: submitTransfer could not be called multiple times for
+    // the same batch_id, it will fail when users call createXferReq
+    // once and reuse the handle and call postXferReq multiple times.
     int rc = submitTransfer(engine_, priv->batch_id, request, request_count);
     delete []request;
-    if (rc) return NIXL_ERR_BACKEND;
+    if (rc) {
+        return NIXL_ERR_BACKEND;
+    }
     priv->request_count += request_count;
     return NIXL_IN_PROG;
 }
@@ -268,13 +281,22 @@ nixl_status_t nixlMooncakeEngine::checkXfer (nixlBackendReqH* handle) const
         else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING)
             return NIXL_IN_PROG;
     }
+    if (!has_failed) {
+        // workaround the issue where submitTranfer could not be called
+        // multiple times with the same batch id. Free the batchID
+        // here and allocate a new batchID in postXfer.
+        freeBatchID(engine_, priv->batch_id);
+        priv->batch_id = INVALID_BATCH;
+    }
     return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }
 
 nixl_status_t nixlMooncakeEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     auto priv = (nixlMooncakeBackendReqH *) handle;
-    freeBatchID(engine_, priv->batch_id);
+    if (priv->batch_id != INVALID_BATCH) {
+        freeBatchID(engine_, priv->batch_id);
+    }
     delete priv;
     return NIXL_SUCCESS;
 }
