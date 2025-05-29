@@ -54,27 +54,22 @@ ucs_status_t rndv_test (void *arg, const void *header,
 				           const ucp_am_recv_param_t *param)
 {
 
-    struct sample_header* hdr = (struct sample_header*) header;
+    sample_header* hdr = (struct sample_header*) header;
     void* recv_buffer = calloc(1, length);
     nixlUcxWorker* am_worker = (nixlUcxWorker*) arg;
     ucp_request_param_t recv_param = {0};
-    uint64_t check_data;
-    nixlUcxReq req;
-    int ret = 0;
 
-    if (hdr->test != 0xcee)
+    if (hdr->test != 0xcee) {
 	    return UCS_ERR_INVALID_PARAM;
-
+    }
     std::cout << "rndv_test started\n";
     assert (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV);
-    ret = am_worker->getRndvData(data, recv_buffer, length, &recv_param, req);
-    assert (ret == 0);
+    const nixlUcxReq req = am_worker->getRndvData(data, recv_buffer, length, &recv_param);
+    assert (req != nullptr);
 
-    while (ret == 0){
-	    ret = am_worker->test(req);
-    }
+    while (am_worker->test(req) == 0 ) {}
 
-    check_data = ((uint64_t*) recv_buffer)[0];
+    const std::uint64_t check_data = ((uint64_t*) recv_buffer)[0];
     assert (check_data == 0xdeaddeaddeadbeef);
     free (recv_buffer);
 

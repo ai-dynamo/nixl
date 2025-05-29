@@ -520,7 +520,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 
     if (init_params->enableProgTh) {
         pthrOn = true;
-        if (!nixlUcxContext::mtLevelIsSupproted(NIXL_UCX_MT_WORKER)) {
+        if (!nixlUcxMtLevelIsSupported(nixl_ucx_mt_t::WORKER)) {
             NIXL_ERROR << "UCX library does not support multi-threading";
             this->initErr = true;
             return;
