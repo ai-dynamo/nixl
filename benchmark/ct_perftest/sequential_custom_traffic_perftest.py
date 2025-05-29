@@ -194,8 +194,7 @@ class SequentialCTPerftest(CTPerftest):
                     ]
                     for i, tp in enumerate(self.traffic_patterns)
                 ]
-                log.info(f"Iteration {iter_ix + 1}/{self.n_iters}\n")
-                log.info(tabulate(data, headers=headers, floatfmt=".3f"))
+                print(f"Iteration {iter_ix + 1}/{self.n_iters}\n", tabulate(data, headers=headers, floatfmt=".3f"))
 
             if verify_buffers:
                 for i, tp in enumerate(self.traffic_patterns):
