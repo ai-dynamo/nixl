@@ -206,7 +206,6 @@ int main(int argc, char *argv[]) {
 	/** Serialization/Deserialization object to create a blob */
 	nixlSerDes *serdes        = new nixlSerDes();
 	nixlSerDes *remote_serdes = new nixlSerDes();
-	// std::string target_name;
 
 	/** Descriptors and Transfer Request */
 	nixl_reg_dlist_t  dram_for_doca(DRAM_SEG);
@@ -240,7 +239,6 @@ int main(int argc, char *argv[]) {
 	}
 
 	/*** End - Argument Parsing */
-
 	checkCudaError(cudaSetDevice(0), "Failed to set device");
 	cudaFree(0);
 
@@ -295,10 +293,9 @@ int main(int argc, char *argv[]) {
 		#else
 			nixlMDStreamClient client(peer_ip, peer_port);
 			client.connectListenerSync();
-
 			nixlMDStreamListener listener(peer_port);
 			listener.setupListenerSync();
-			
+		
 			std::cout << " Desc List from Target to Initiator\n";
 			dram_for_doca.print();
 
@@ -330,6 +327,8 @@ int main(int argc, char *argv[]) {
 
 		for (const auto& n : notifs) {
 			for (size_t idx = 0; idx < n.second.size(); idx++) {
+				std::cout << "Received message from " << n.first << " msg: " << n.second[idx] << " at " << idx << std::endl;
+
 				if (n.first == initiator && n.second[idx] == "connected") {
 					std::cout << "Received correct message from " << n.first << " msg: " << n.second[idx] << " at " << idx << std::endl;
 					break;
@@ -350,7 +349,7 @@ int main(int argc, char *argv[]) {
 						std::cout << "Received correct message from " << n.first << " msg: " << n.second[idx] << " at " << idx << std::endl;
 						launch_target_wait_kernel(stream, (uintptr_t)(data_address), INITIATOR_VALUE);
 						cudaStreamSynchronize(stream);
-						std::cout << " DOCA Transfer completed!\n";
+						std::cout << " DOCA Transfer completed -- first!\n";
 						found = true;
 						break;
 					}
@@ -360,12 +359,16 @@ int main(int argc, char *argv[]) {
 		} while (found == false);
 
 		notifs.clear();
-		
+
 		//First send notif: target processed previously sent data
 		std::string msg = "processed";
-		agent.genNotif(initiator, msg, &extra_params);
+		ret = agent.genNotif(initiator, msg, &extra_params);
+		if(ret != NIXL_SUCCESS) {
+			std::cerr << "Target genNotif error " << ret << "\n";
+		}
 		found = false;
 
+		std::cout << " Waiting for second 'sent' notif\n";
 		//Third recv notif: sent
 		do {
 			for (const auto& n : notifs) {
@@ -374,7 +377,7 @@ int main(int argc, char *argv[]) {
 						std::cout << "Received correct message from " << n.first << " msg: " << n.second[idx] << " at " << idx << std::endl;
 						launch_target_wait_kernel(stream, (uintptr_t)(data_address), INITIATOR_VALUE+1);
 						cudaStreamSynchronize(stream);
-						std::cout << " DOCA Transfer completed!\n";
+						std::cout << " DOCA Transfer completed -- second!\n";
 						found = true;
 						break;
 					}
@@ -401,8 +404,9 @@ int main(int argc, char *argv[]) {
 			} while(notifs.size() == 0);
 
 			for (const auto &notif : notifs[target]) {
-					remote_serdes->importStr(notif);
-				}
+				remote_serdes->importStr(notif);
+			}
+
 			for (const auto& n : notifs) {
 				if (n.first == target && n.second[0] == "connected") {
 					std::cout << "Received correct message from " << n.first << " msg: " << n.second[0] << std::endl;
@@ -416,7 +420,7 @@ int main(int argc, char *argv[]) {
 			nixlMDStreamListener listener(peer_port);
 			listener.setupListenerSync();
 			listener.acceptClient();
-			std::string rrstr = listener.recvFromClient(); //recvFromTarget(peer_port);
+			std::string rrstr = listener.recvFromClient();
 			remote_serdes->importStr(rrstr);
 			remote_metadata = remote_serdes->getStr("AgentMD");
 			assert (remote_metadata != "");
@@ -436,7 +440,10 @@ int main(int argc, char *argv[]) {
 
 		//First send notif: connected
 		std::string msg = "connected";
-		agent.genNotif(target, msg);
+		ret = agent.genNotif(target, msg);
+		if(ret != NIXL_SUCCESS) {
+			std::cerr << "Target genNotif error " << ret << "\n";
+		}
 
 		std::cout << " Verify Deserialized Target's Desc List at Initiator\n";
 		nixl_xfer_dlist_t dram_target_doca(remote_serdes);
