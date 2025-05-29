@@ -110,6 +110,7 @@ class nixlUcxEngine : public nixlBackendEngine {
         std::vector<std::unique_ptr<nixlUcxWorker>> uws;
         std::unique_ptr<char []> workerAddr;
         size_t workerSize;
+        size_t numDedicatedWorker;
 
         /* Progress thread data */
         std::mutex pthrActiveLock;
@@ -137,6 +138,15 @@ class nixlUcxEngine : public nixlBackendEngine {
         std::unordered_map<std::string, ucx_connection_ptr_t,
                            std::hash<std::string>, strEqual> remoteConnMap;
 
+        // Thread to worker mapping
+        pthread_key_t keyThreadToWorker;
+        mutable std::atomic<size_t> nextWorkerId;
+        void initThreadMapping();
+        void destroyThreadMapping();
+        nixlUcxWorker *getDedicatedWorker() const;
+        nixlUcxWorker *getSharedWorker() const;
+        nixlUcxWorker *findAndAssociateDedicatedWorker() const;
+        static void threadMapDestructor(void *arg);
 
         void vramInitCtx();
         void vramFiniCtx();
@@ -258,10 +268,6 @@ class nixlUcxEngine : public nixlBackendEngine {
 
         const std::unique_ptr<nixlUcxWorker> &getWorker(size_t worker_id) const {
             return uws[worker_id];
-        }
-
-        size_t getWorkerId() const {
-            return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
         }
 };
 

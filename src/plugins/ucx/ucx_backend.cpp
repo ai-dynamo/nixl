@@ -514,7 +514,8 @@ void nixlUcxEngine::progressThreadRestart()
 
 nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 : nixlBackendEngine (init_params) {
-    unsigned long numWorkers;
+    unsigned int numWorkers;
+    unsigned int numSharedWorkers;
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
 
@@ -547,6 +548,15 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (num_workers_iter == custom_params->end() || !absl::SimpleAtoi(num_workers_iter->second, &numWorkers))
         numWorkers = 1;
 
+    if (custom_params->count("num_shared_workers") == 0 ||
+        !absl::SimpleAtoi(custom_params->at("num_shared_workers"), &numSharedWorkers)) {
+        numSharedWorkers = 1;
+    }
+
+    if (numWorkers + numSharedWorkers == 0) {
+        throw std::invalid_argument("Total number of workers must be greater than 0");
+    }
+
     const auto err_handling_mode_it =
             custom_params->find("ucx_error_handling_mode");
     ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
@@ -559,12 +569,20 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
                                           _internalRequestInit,
                                           _internalRequestFini,
                                           pthrOn,
-                                          err_handling_mode, numWorkers, init_params->syncMode);
+                                          err_handling_mode,
+                                          numWorkers + numSharedWorkers,
+                                          init_params->syncMode);
 
     for (unsigned int i = 0; i < numWorkers; i++)
-        uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(uc, i));
 
-    const auto &uw = uws.front();
+    for (unsigned int i = 0; i < numSharedWorkers; i++) {
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(uc, i + numWorkers, true));
+    }
+
+    numDedicatedWorker = numWorkers;
+
+    const auto &uw = uws.back();
     workerAddr = uw->epAddr(workerSize);
 
     if (workerAddr == nullptr) {
@@ -572,6 +590,8 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         initErr = true;
         return;
     }
+
+    initThreadMapping();
 
     if (pthrOn) {
         for (auto &uw: uws) {
@@ -628,6 +648,7 @@ nixlUcxEngine::~nixlUcxEngine () {
         close(pthrControlPipe[1]);
     }
     vramFiniCtx();
+    destroyThreadMapping();
 }
 
 /****************************************
@@ -980,8 +1001,17 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
+    nixlUcxWorker *worker = getDedicatedWorker();
+    if (worker == nullptr) {
+        // Use shared worker when we used up the dedicated worker.
+        worker = getSharedWorker();
+        if (worker == nullptr) {
+            return NIXL_ERR_BACKEND;
+        }
+    }
+
     /* TODO: try to get from a pool first */
-    nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, getWorkerId());
+    nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, worker->getWorkerId());
 
     handle = (nixlBackendReqH*)intHandle;
     return NIXL_SUCCESS;
@@ -1287,14 +1317,23 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
 {
     nixl_status_t ret;
     nixlUcxReq req;
-    size_t wid = getWorkerId();
 
-    ret = notifSendPriv(remote_agent, msg, req, wid);
+    nixlUcxWorker *worker = getSharedWorker();
+    if (worker == nullptr) {
+        // User may specify 0 shared workers, we will try to get a dedicated
+        // worker in this case
+        worker = getDedicatedWorker();
+        if (worker == nullptr) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
+
+    ret = notifSendPriv(remote_agent, msg, req, worker->getWorkerId());
 
     switch(ret) {
     case NIXL_IN_PROG:
         /* do not track the request */
-        getWorker(wid)->reqRelease(req);
+        worker->reqRelease(req);
     case NIXL_SUCCESS:
         break;
     default:
@@ -1302,4 +1341,86 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
         return ret;
     }
     return NIXL_SUCCESS;
+}
+
+/****************************************
+ * Thread to worker mapping
+*****************************************/
+
+void nixlUcxEngine::threadMapDestructor(void *arg)
+{
+    nixlUcxWorker *worker = (nixlUcxWorker *)arg;
+
+    /* When a thread exits, disassociate it from the worker,
+     * so that the worker could be reused by another thread.
+     */
+    worker->disassociate();
+    worker->getCtx()->decAssociatedWorkers();
+}
+
+void nixlUcxEngine::initThreadMapping()
+{
+    pthread_key_create(&keyThreadToWorker, threadMapDestructor);
+    nextWorkerId = 0;
+}
+
+void nixlUcxEngine::destroyThreadMapping()
+{
+    pthread_key_delete(keyThreadToWorker);
+}
+
+nixlUcxWorker *nixlUcxEngine::findAndAssociateDedicatedWorker() const
+{
+    for (size_t i = 0, cur = nextWorkerId; i < numDedicatedWorker; i++, cur++) {
+        if (cur >= numDedicatedWorker) {
+            cur = 0;
+        }
+        if (!uws[cur]->isAssociated()) {
+            if (uws[cur]->associate()) {
+                /*
+                 * nextWorkerId served as a hint for next thread
+                 * to learn where to start searching, in the worst
+                 * case, it still needs to search the whole list.
+                 */
+                nextWorkerId = cur + 1;
+                return uws[cur].get();
+            }
+        }
+    }
+    return nullptr;
+}
+
+nixlUcxWorker *nixlUcxEngine::getDedicatedWorker() const
+{
+    nixlUcxWorker *p = (nixlUcxWorker *)pthread_getspecific(keyThreadToWorker);
+    if (p != nullptr) {
+        return p;
+    }
+
+    if (uc->getNumAssociatedWorkers() == numDedicatedWorker) {
+        /*
+         * Do not have to search the worker list when all
+         * workers are already associated.
+         */
+        return nullptr;
+    }
+
+    nixlUcxWorker *worker = findAndAssociateDedicatedWorker();
+    if (worker != nullptr) {
+        pthread_setspecific(keyThreadToWorker, worker);
+        uc->incAssociatedWorkers();
+    }
+    return worker;
+}
+
+nixlUcxWorker *nixlUcxEngine::getSharedWorker() const
+{
+    if (uws.size() == numDedicatedWorker) {
+        /* no shared workers */
+        return nullptr;
+    }
+
+    size_t numSharedWorker = uws.size() - numDedicatedWorker;
+    size_t worker_id = std::hash<std::thread::id>{}(std::this_thread::get_id()) % numSharedWorker;
+    return uws[worker_id + numDedicatedWorker].get();
 }

@@ -407,7 +407,9 @@ nixlUcxContext::~nixlUcxContext()
 }
 
 
-nixlUcxWorker::nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx): ctx(_ctx)
+nixlUcxWorker::nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx,
+                             size_t _workerId, bool is_shared):
+                             ctx(_ctx), workerId(_workerId)
 {
     ucp_worker_params_t worker_params;
     ucs_status_t status;
@@ -415,18 +417,22 @@ nixlUcxWorker::nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx): ctx(_ctx)
     memset(&worker_params, 0, sizeof(worker_params));
     worker_params.field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
 
-    switch (ctx->mt_type) {
-    case NIXL_UCX_MT_CTX:
-        worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
-        break;
-    case NIXL_UCX_MT_SINGLE:
-        worker_params.thread_mode = UCS_THREAD_MODE_SERIALIZED;
-        break;
-    case NIXL_UCX_MT_WORKER:
+    if (is_shared) {
         worker_params.thread_mode = UCS_THREAD_MODE_MULTI;
-        break;
-    default:
-        NIXL_FATAL << "Invalid UCX worker type: " << ctx->mt_type;
+    } else {
+        switch (ctx->mt_type) {
+        case NIXL_UCX_MT_CTX:
+            worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
+            break;
+        case NIXL_UCX_MT_SINGLE:
+            worker_params.thread_mode = UCS_THREAD_MODE_SERIALIZED;
+            break;
+        case NIXL_UCX_MT_WORKER:
+            worker_params.thread_mode = UCS_THREAD_MODE_MULTI;
+            break;
+        default:
+            NIXL_FATAL << "Invalid UCX worker type: " << ctx->mt_type;
+        }
     }
 
     status = ucp_worker_create(ctx->ctx, &worker_params, &worker);
