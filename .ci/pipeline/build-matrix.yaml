@@ -1,0 +1,154 @@
+---
+job: nixl-ci-build
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 8Gi, cpu: 8000m}"
+  requests: "{memory: 8Gi, cpu: 8000m}"
+
+runs_on_dockers:
+  - { name: "pytorch-25.02-py3", url: "nvcr.io/nvidia/pytorch:25.02-py3" }
+  - { name: "pytorch-24.10-py3", url: "nvcr.io/nvidia/pytorch:24.10-py3" }
+  - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", category: 'tool', privileged: true }
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+      # - aarch64
+
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    import ipp.blossom.*
+    withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+      githubHelper = GithubHelper.getInstance("${GIT_PASSWORD}", githubData)
+      currentBuild.description = githubHelper.getBuildDescription()
+    }
+
+pipeline_stop:
+    shell: action
+    module: groovy
+    run: |
+      githubHelper.uploadLogs(this, env.JOB_NAME, env.BUILD_NUMBER, null, null)
+
+env:
+  NIXL_INSTALL_DIR: /opt/nixl
+
+steps:
+  - name: Build
+    parallel: false
+    run: |
+      if [[ "${name}" == "pytorch-24.10-py3" ]]; then
+        # distro's meson version is too old project requires >= 0.64.0
+        pip3 install meson
+      fi
+      .gitlab/build.sh ${NIXL_INSTALL_DIR}
+
+  - name: Test CPP
+    parallel: false
+    run: |
+      .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
+
+  - name: Test Python
+    parallel: false
+    run: |
+      .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
+
+  - name: Build Docker Image
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    run: |
+      # change storage driver to improve build performance
+      rm -f /etc/containers/storage.conf ; podman system reset -f || true
+      # symlink podman to docker - scripts works with docker commands
+      ln -sfT $(type -p podman) /usr/bin/docker
+      # install git for building container image
+      yum install -y git
+      contrib/build-container.sh --no-cache
+
+---
+job: nixl-ci-slurm
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 120
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 8Gi, cpu: 8000m}"
+  requests: "{memory: 8Gi, cpu: 8000m}"
+
+runs_on_dockers:
+  - { name: "pytorch-25.02", url: "harbor.mellanox.com/ucx/x86_64/pytorch:25.02-py3" }
+  - { name: "pytorch-24.10", url: "harbor.mellanox.com/ucx/x86_64/pytorch:24.10-py3" }
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    import ipp.blossom.*
+    withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+      githubHelper = GithubHelper.getInstance("${GIT_PASSWORD}", githubData)
+      currentBuild.description = githubHelper.getBuildDescription()
+    }
+
+pipeline_stop:
+    shell: action
+    module: groovy
+    run: |
+      githubHelper.uploadLogs(this, env.JOB_NAME, env.BUILD_NUMBER, null, null)
+
+env:
+  NIXL_INSTALL_DIR: /opt/nixl
+  UCX_INSTALL_DIR: /usr/local
+  SLURM_PARTITION: ${SLURM_PARTITION:-rock}
+  SLURM_TIMEOUT: ${SLURM_TIMEOUT:-01:00:00}
+
+steps:
+  - name: Slurm Test
+    parallel: true
+    credentialsId: 'svc-nixl'
+    run: |
+      # Setup SSH credentials for svc-nixl to copy Slurm configs
+      mkdir -p ~/.ssh
+      cp $SSH_KEY_FILE ~/.ssh/id_rsa
+      chmod 600 ~/.ssh/id_rsa
+
+      # Map container name to full image URL
+      case "${name}" in
+        "pytorch-25.02")
+          PYTORCH_IMAGE="harbor.mellanox.com/ucx/x86_64/pytorch:25.02-py3"
+          ;;
+        "pytorch-24.10")
+          PYTORCH_IMAGE="harbor.mellanox.com/ucx/x86_64/pytorch:24.10-py3"
+          ;;
+        *)
+          echo "Unknown container: ${name}"
+          exit 1
+          ;;
+      esac
+
+      echo "Running Slurm test with PyTorch image: ${PYTORCH_IMAGE}"
+      echo "Using Slurm partition: ${SLURM_PARTITION}"
+
+      # Run both Python and C++ tests in the Slurm job
+      ./contrib/slurm/slurm_test_orchestrator.sh \
+        '.gitlab/test_python.sh /opt/nixl && .gitlab/test_cpp.sh /opt/nixl' \
+        -i "${PYTORCH_IMAGE}" \
+        -p "${SLURM_PARTITION}" \
+        -t "${SLURM_TIMEOUT}"
