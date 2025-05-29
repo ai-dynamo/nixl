@@ -30,6 +30,7 @@ typedef enum {
   NIXL_CAPI_ERROR_INVALID_PARAM = -1,
   NIXL_CAPI_ERROR_BACKEND = -2,
   NIXL_CAPI_ERROR_INVALID_STATE = -3,
+  NIXL_CAPI_ERROR_EXCEPTION = -4,
   NIXL_CAPI_IN_PROG = 1,
 } nixl_capi_status_t;
 
@@ -243,13 +244,11 @@ nixl_capi_status_t nixl_capi_reg_dlist_clear(nixl_capi_reg_dlist_t dlist);
 nixl_capi_status_t nixl_capi_reg_dlist_resize(nixl_capi_reg_dlist_t dlist, size_t new_size);
 nixl_capi_status_t nixl_capi_reg_dlist_print(nixl_capi_reg_dlist_t dlist);
 nixl_capi_status_t nixl_capi_notif_map_size(nixl_capi_notif_map_t map, size_t* size);
-
 nixl_capi_status_t nixl_capi_notif_map_get_agent_at(nixl_capi_notif_map_t map, size_t index, const char** agent_name);
-
 nixl_capi_status_t nixl_capi_notif_map_get_notifs_size(nixl_capi_notif_map_t map, const char* agent_name, size_t* size);
-
 nixl_capi_status_t nixl_capi_notif_map_get_notif(
     nixl_capi_notif_map_t map, const char* agent_name, size_t index, const void** data, size_t* len);
+nixl_capi_status_t nixl_capi_notif_map_clear(nixl_capi_notif_map_t map);
 
 #ifdef __cplusplus
 }
