@@ -1,0 +1,83 @@
+---
+#
+# Key Components:
+# - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
+# - Docker Images: Specifies the container images used for different build stages
+#   - Slurm client image for running tests
+# - Matrix Axes: Defines build variations (currently x86_64 architecture)
+# - Run Steps: Sequential steps for running tests
+#
+# When Modified:
+# - Adding/removing Docker images: Affects available test environments
+# - Modifying matrix axes: Changes test variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts test performance and resource allocation
+# - Adding/removing steps: Changes the test pipeline sequence
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+
+job: nixl-ci-test
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 8Gi, cpu: 8000m}"
+  requests: "{memory: 8Gi, cpu: 8000m}"
+
+volumes:
+  - {mountPath: /etc/slurm, hostPath: /labhome/svc-nixl/.slurm-config/slurm}
+  - {mountPath: /labhome/svc-nixl/slurm_logs, hostPath: /labhome/svc-nixl/slurm_logs}
+
+runs_on_dockers:
+  - { name: "slurm-runner", url: "nbu-harbor.gtm.nvidia.com/ucx/x86_64/slurm-client:v1.0" }
+
+env:
+  LOGIN_PRE_CMD: "su -m svc-nixl -c"
+  SLURM_OUTPUT_DIR: "/labhome/svc-nixl/slurm_logs"
+  SLURM_TRACK_DIR: "/tmp/slurm_track"
+
+matrix:
+  axes:
+    image:
+      - nvcr.io/nvidia/pytorch:25.02-py3
+    flags:
+      - ${WORKSPACE}/contrib/test-gpu.sh ${JOB_BASE_NAME}-${BUILD_ID}-${axis_index} "rock" "01:00:00"
+    arch:
+      - x86_64
+
+steps:
+  - name: Prepare Environment
+    parallel: false
+    run: |
+      munged --force > /dev/null 2>&1 &
+      mkdir -p ${SLURM_TRACK_DIR}
+      chmod 777 ${SLURM_TRACK_DIR}
+
+  - name: Submit Job
+    parallel: false
+    run: |
+      ${LOGIN_PRE_CMD} "source ${WORKSPACE}/contrib/runners/slurm/slurm-functions.sh && \
+        slurm_submit_job ${flags} '' '' \"GIT_REF=${sha1} TEST_DOCKER_IMAGE=${image}\""
+
+  - name: Wait for Job to Complete
+    parallel: false
+    run: |
+      ${LOGIN_PRE_CMD} "source ${WORKSPACE}/contrib/runners/slurm/slurm-functions.sh && \
+        slurm_wait_for_job_completion"
+
+  - name: Get Job Output
+    parallel: false
+    run: |
+      ${LOGIN_PRE_CMD} "source ${WORKSPACE}/contrib/runners/slurm/slurm-functions.sh && \
+        slurm_get_job_output"
+
+  - name: Check Job Success
+    parallel: false
+    run: |
+      ${LOGIN_PRE_CMD} "source ${WORKSPACE}/contrib/runners/slurm/slurm-functions.sh && \
+        slurm_check_job_success"
