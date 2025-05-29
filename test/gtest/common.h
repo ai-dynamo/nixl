@@ -14,11 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#ifndef TEST_GTEST_COMMON_H
+#define TEST_GTEST_COMMON_H
 
 #include <iostream>
 #include <iomanip>
 
 namespace gtest {
+constexpr const char *GetMockBackendName() { return "MOCK_BACKEND"; }
 
 class Logger {
 public:
@@ -40,3 +43,5 @@ public:
 };
 
 } // namespace gtest
+
+#endif /* TEST_GTEST_COMMON_H */
