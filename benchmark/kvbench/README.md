@@ -137,6 +137,7 @@ These arguments are used by both `plan` and `profile` commands:
 | `--etcd-endpoints` | ETCD server URL for coordination (default: http://localhost:2379) |
 | `--storage_enable_direct` | Enable direct I/O for GDS operations |
 | `--gds_filepath` | File path for GDS operations |
+| `--enable_vmm` | Enable VMM memory allocation when DRAM is requested |
 
 ## Command Descriptions
 
