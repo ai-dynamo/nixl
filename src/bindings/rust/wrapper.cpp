@@ -157,6 +157,49 @@ nixl_capi_get_local_md(nixl_capi_agent_t agent, void** data, size_t* len)
 }
 
 nixl_capi_status_t
+nixl_capi_get_local_partial_md(nixl_capi_agent_t agent,
+                               nixl_capi_reg_dlist_t descs,
+                               nixl_capi_opt_args_t opt_args,
+                               void** data,
+                               size_t* len)
+{
+  if (!agent || !descs || !data || !len) {
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
+  }
+
+  try {
+    nixl_blob_t blob;
+    const nixl_opt_args_t* args_ptr = nullptr;
+    if (opt_args) {
+      args_ptr = &opt_args->args;
+    }
+
+    nixl_status_t ret = agent->inner->getLocalPartialMD(*descs->dlist, blob, args_ptr);
+    if (ret != NIXL_SUCCESS) {
+      return NIXL_CAPI_ERROR_BACKEND;
+    }
+
+    // Allocate memory for the blob data
+    void* blob_data = malloc(blob.size());
+    if (!blob_data && blob.size() > 0) {
+      return NIXL_CAPI_ERROR_BACKEND;
+    }
+
+    // Copy the data
+    if (blob.size() > 0) {
+      memcpy(blob_data, blob.data(), blob.size());
+    }
+    *data = blob_data;
+    *len = blob.size();
+
+    return NIXL_CAPI_SUCCESS;
+  }
+  catch (...) {
+    return NIXL_CAPI_ERROR_BACKEND;
+  }
+}
+
+nixl_capi_status_t
 nixl_capi_load_remote_md(nixl_capi_agent_t agent, const void* data, size_t len, char** agent_name)
 {
   if (!agent || !data || !len || !agent_name) {

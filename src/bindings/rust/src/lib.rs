@@ -69,7 +69,8 @@ use bindings::{
     nixl_capi_reg_dlist_rem_desc, nixl_capi_xfer_dlist_print, nixl_capi_reg_dlist_print,
     nixl_capi_agent_make_connection, nixl_capi_agent_prep_xfer_dlist,
     nixl_capi_agent_make_xfer_req, nixl_capi_create_xfer_dlist_handle,
-    nixl_capi_destroy_xfer_dlist_handle, nixl_capi_estimate_xfer_cost, nixl_capi_gen_notif
+    nixl_capi_destroy_xfer_dlist_handle, nixl_capi_estimate_xfer_cost, nixl_capi_gen_notif,
+    nixl_capi_get_local_partial_md,
 };
 
 // Re-export status codes
@@ -1627,6 +1628,58 @@ impl Agent {
             _ => {
                 tracing::trace!(remote_agent = %remote_agent, "Remote metadata is not available");
                 false
+            }
+        }
+    }
+
+    /// Gets partial local metadata for this agent for a descriptor list and optional args
+    pub fn get_local_partial_md(
+        &self,
+        descs: &RegDescList,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<Vec<u8>, NixlError> {
+        tracing::trace!("Getting local partial metadata");
+        let mut data = std::ptr::null_mut();
+        let mut len = 0;
+
+        let status = unsafe {
+            nixl_capi_get_local_partial_md(
+                self.inner.write().unwrap().handle.as_ptr(),
+                descs.inner.as_ptr(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+                &mut data as *mut *mut _ as *mut *mut std::ffi::c_void,
+                &mut len,
+            )
+        };
+
+        let data_ptr = data as *const u8;
+
+        if data_ptr.is_null() {
+            tracing::trace!(
+                error = "invalid_data_pointer",
+                "Failed to get local partial metadata"
+            );
+            return Err(NixlError::InvalidDataPointer);
+        }
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                let bytes = unsafe {
+                    let slice = std::slice::from_raw_parts(data_ptr, len);
+                    let vec = slice.to_vec();
+                    libc::free(data_ptr as *mut libc::c_void);
+                    vec
+                };
+                tracing::trace!(metadata.size = len, "Successfully retrieved partial metadata");
+                Ok(bytes)
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::trace!(error = "invalid_param", "Failed to get local partial metadata");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::trace!(error = "backend_error", "Failed to get local partial metadata");
+                Err(NixlError::BackendError)
             }
         }
     }

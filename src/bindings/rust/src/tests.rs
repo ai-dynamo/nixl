@@ -1043,4 +1043,24 @@ mod unit_tests {
         dlist.add_desc(0x1000, 0x100, 0).unwrap();
         assert!(dlist.print().is_ok());
     }
+
+    #[test]
+    fn test_get_local_partial_md() {
+        let agent = Agent::new("partial_agent").unwrap();
+
+        // Load UCX plugin and backend (assumed remote capable)
+        let (_mem_list, params) = agent.get_plugin_params("UCX").unwrap();
+        let backend = agent.create_backend("UCX", &params).unwrap();
+
+        // Create an empty registration descriptor list (no memory sections)
+        let descs = RegDescList::new(MemType::Dram).unwrap();
+
+        // Limit metadata to the UCX backend only
+        let mut opt_args = OptArgs::new().unwrap();
+        opt_args.add_backend(&backend).unwrap();
+
+        let md = agent.get_local_partial_md(&descs, Some(&opt_args)).unwrap();
+        // Metadata should not be empty because connection info should be present
+        assert!(!md.is_empty(), "Partial metadata blob should not be empty");
+    }
 }
