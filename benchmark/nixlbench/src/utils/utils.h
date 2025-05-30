@@ -26,10 +26,13 @@
 #include <vector>
 #include <optional>
 #include "runtime/runtime.h"
+#include "json.hpp"
+using json = nlohmann::json;
 
 #if HAVE_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
+
 
 #define CHECK_CUDA_ERROR(result, message)                                           \
     do {                                                                            \
@@ -128,8 +131,7 @@ class xferBenchConfig {
         static std::string posix_api_type;
         static std::string posix_filepath;
         static bool storage_enable_direct;
-        static int gds_batch_pool_size;
-        static int gds_batch_limit;
+        static std::string output_format;
 
         static int loadFromFlags();
         static void printConfig();
