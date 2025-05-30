@@ -35,7 +35,10 @@ fi
 
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
 BASE_IMAGE_TAG=25.03-cuda12.8-devel-ubuntu24.04
-WHL_PLATFORM=manylinux_2_39_x86_64
+ARCH=$(uname -m)
+[ "$ARCH" = "arm64" ] && ARCH="aarch64"
+WHL_BASE=manylinux_2_39
+WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 OS="ubuntu24"
 
@@ -108,6 +111,15 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --arch)
+            if [ "$2" ]; then
+                ARCH=$2
+                WHL_PLATFORM=${WHL_BASE}_${ARCH}
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --)
             shift
             break
@@ -147,6 +159,7 @@ show_build_options() {
     echo "Build Context: ${BUILD_CONTEXT}"
     echo "Build Context Args: ${BUILD_CONTEXT_ARGS}"
     echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+    echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
 }
@@ -161,6 +174,7 @@ show_help() {
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--tag tag for image]"
+    echo "  [--arch [x86_64|aarch64] to select target architecture]"
     exit 0
 }
 
@@ -178,7 +192,8 @@ get_options "$@"
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
+BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 
 show_build_options
 
-docker build -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_ARGS $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain
