@@ -14,13 +14,19 @@
 # limitations under the License.
 
 gds_path = get_option('gds_path')
-if gds_path != ''
-    gds_lib_path = gds_path + '/lib'
-    gds_inc_path = gds_path + '/include'
-    cufile_dep = declare_dependency(
-        link_args: ['-L' + gds_lib_path, '-lcufile'],
-        include_directories: include_directories(gds_inc_path))
+if gds_path == ''
+    arch = host_machine.cpu_family()
+    if arch == 'aarch64'
+        arch = 'sbsa'
+    endif
+    gds_path = '/usr/local/cuda/targets/' + arch + '-linux'
 endif
+
+gds_lib_path = gds_path + '/lib'
+gds_inc_path = gds_path + '/include'
+cufile_dep = declare_dependency(
+    link_args: ['-L' + gds_lib_path, '-lcufile'],
+    include_directories: include_directories(gds_inc_path))
 
 if 'GDS' in static_plugins
     gds_backend_lib = static_library('GDS',

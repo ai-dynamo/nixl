@@ -52,7 +52,8 @@ RUN echo "INFO: Starting custom UCX build..." && \
     apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         autoconf automake libtool pkg-config make g++ \
-        libnuma-dev librdmacm-dev ibverbs-providers && \
+        libnuma-dev librdmacm-dev ibverbs-providers libibverbs-dev rdma-core \
+        ibverbs-utils libibumad-dev && \
     echo "INFO: Removing pre-existing UCX installations..." && \
     rm -rf /usr/local/ucx /opt/hpcx/ucx && \
     cd /workspace/ucx && \
@@ -76,11 +77,12 @@ FROM ucx_${UCX}_image AS ucx_image
 ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_x86_64"
+ARG TARGETARCH="x86_64"
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
-	cd etcd-cpp-apiv3 && mkdir build && cd build && \
-	cmake .. && make -j$(nproc) && make install
+    cd etcd-cpp-apiv3 && mkdir build && cd build && \
+    cmake .. && make -j$(nproc) && make install
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY --from=nixl . /workspace/nixl
@@ -104,9 +106,9 @@ RUN rm -rf build && \
     ninja && \
     ninja install
 
-ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/x86_64-linux-gnu/plugins
-RUN echo "/usr/local/nixl/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
-    echo "/usr/local/nixl/lib/x86_64-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
+ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/${TARGETARCH}-linux-gnu/plugins
+RUN echo "/usr/local/nixl/lib/${TARGETARCH}-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "/usr/local/nixl/lib/${TARGETARCH}-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
 # Create the wheel
@@ -131,4 +133,4 @@ RUN rm -rf build && \
     uv run meson setup build -Dnixl_path=/usr/local/nixl/ && \
     cd build && ninja
 ENV PATH=/workspace/nixlbench/build:$PATH
-WORKDIR /workspace/nixl/benchmark/kvbench
+WORKDIR /workspace/nixlbench/build
