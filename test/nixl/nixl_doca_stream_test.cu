@@ -35,6 +35,7 @@
 #if USE_NVTX
 #include <nvtx3/nvToolsExt.h>
 
+#define USE_FETCH_REMOTE_MD 1
 
 const uint32_t colors[] = { 0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff, 0xff00ffff, 0xffff0000, 0xffffffff };
 const int num_colors = sizeof(colors)/sizeof(uint32_t);
@@ -110,7 +111,7 @@ int launch_target_wait_kernel(cudaStream_t stream, uintptr_t addr, uint8_t val)
 	return 0;
 }
 
-__global__ void initiator_kernel(uintptr_t addr)
+__global__ void initiator_kernel(uintptr_t addr, uint8_t val)
 {
 	unsigned long long start, end;
 	// Each block updates a buffer in this transfer
@@ -120,7 +121,7 @@ __global__ void initiator_kernel(uintptr_t addr)
 	DEVICE_GET_TIME(start);
 
 	for (int i = threadIdx.x; i < SIZE; i+=blockDim.x)
-		((uint8_t*)block_address)[i] = INITIATOR_VALUE;
+		((uint8_t*)block_address)[i] = val;
 
 	__syncthreads();
 
@@ -129,7 +130,7 @@ __global__ void initiator_kernel(uintptr_t addr)
 	} while (end - start < INITIATOR_THRESHOLD_NS);
 }
 
-int launch_initiator_send_kernel(cudaStream_t stream, uintptr_t addr)
+int launch_initiator_send_kernel(cudaStream_t stream, uintptr_t addr, uint8_t val)
 {
 	cudaError_t result = cudaSuccess;
 
@@ -141,7 +142,7 @@ int launch_initiator_send_kernel(cudaStream_t stream, uintptr_t addr)
 	}
 
 	// Block = # buffers x transfer
-	initiator_kernel<<<TRANSFER_NUM_BUFFER, CUDA_THREADS, 0, stream>>>(addr);
+	initiator_kernel<<<TRANSFER_NUM_BUFFER, CUDA_THREADS, 0, stream>>>(addr, val);
 	result = cudaGetLastError();
 	if (result != cudaSuccess) {
 		fprintf(stderr, "[%s:%d] cuda failed with %s", __FILE__, __LINE__, cudaGetErrorString(result));
@@ -197,8 +198,6 @@ int main(int argc, char *argv[]) {
 	static std::string initiator("initiator");
 
 	/** NIXL declarations */
-	/** Agent and backend creation parameters */
-	nixlAgentConfig cfg(true);
 	nixl_b_params_t params;
 	nixlBlobDesc    buf[TRANSFER_NUM_BUFFER];
 	nixlBackendH    *doca;
@@ -244,6 +243,17 @@ int main(int argc, char *argv[]) {
 
 	/** Common to both Initiator and Target */
 	std::cout << "Starting Agent for "<< role << "\n";
+	/** Agent and backend creation parameters */
+	#if USE_FETCH_REMOTE_MD
+		nixlAgentConfig cfg(true, true, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+		if (role == target) {
+			nixlAgentConfig cfg1(true, true, peer_port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+			cfg = cfg1;
+		}
+	#else
+		nixlAgentConfig cfg(true);
+	#endif
+
 	nixlAgent     agent(role, cfg);
 	params["network_devices"] = "mlx5_0";
 	params["gpu_devices"] = "0";
@@ -286,10 +296,18 @@ int main(int argc, char *argv[]) {
 		bool found = false;
 		//Not used
 		#if USE_FETCH_REMOTE_MD
+			nixl_xfer_dlist_t descs(DRAM_SEG);
+			// std::cout << " Waiting checkRemoteMD from " << initiator << std::endl;
+			// while (agent.checkRemoteMD(initiator, descs) != NIXL_SUCCESS);
+			// std::cout << " Received checkRemoteMD from " << initiator << std::endl;
+
+			assert(serdes->addStr("AgentMD", metadata) == NIXL_SUCCESS);
+			assert(dram_for_doca.trim().serialize(serdes) == NIXL_SUCCESS);
 			std::string message = serdes->exportStr();
-			if (agent.genNotif(initiator, message, &extra_params) != NIXL_SUCCESS) {
-				std::cout << "Can't send notif " << message << std::endl;
-			}
+			//If genNotif == NIXL_SUCCESS means initiator sendLocalMD() arrived
+			while (agent.genNotif(initiator, message, &extra_params) != NIXL_SUCCESS);
+			std::cout << " Sending serdes to " << initiator << " to enable notifications" << std::endl;
+
 		#else
 			nixlMDStreamClient client(peer_ip, peer_port);
 			client.connectListenerSync();
@@ -337,7 +355,7 @@ int main(int argc, char *argv[]) {
 		}
 
 		std::cout << " Start Data Path Exchanges \n";
-		std::cout << " Waiting to receive Data from Initiator\n";
+		std::cout << " Waiting for first 'connected' notif from " << initiator << std::endl;
 
 		checkCudaError(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), "Failed to create CUDA stream");
 	
@@ -346,7 +364,8 @@ int main(int argc, char *argv[]) {
 			for (const auto& n : notifs) {
 				for (size_t idx = 0; idx < n.second.size(); idx++) {
 					if (n.first == initiator && n.second[idx] == "sent") {
-						std::cout << "Received correct message from " << n.first << " msg: " << n.second[idx] << " at " << idx << std::endl;
+						std::cout 	<< "Received correct message from " << n.first << " msg: "
+									<< n.second[idx] << " at " << idx << std::endl;
 						launch_target_wait_kernel(stream, (uintptr_t)(data_address), INITIATOR_VALUE);
 						cudaStreamSynchronize(stream);
 						std::cout << " DOCA Transfer completed -- first!\n";
@@ -368,7 +387,7 @@ int main(int argc, char *argv[]) {
 		}
 		found = false;
 
-		std::cout << " Waiting for second 'sent' notif\n";
+		std::cout << " Waiting for second 'sent' notif from " << initiator << std::endl;
 		//Third recv notif: sent
 		do {
 			for (const auto& n : notifs) {
@@ -388,16 +407,18 @@ int main(int argc, char *argv[]) {
 
 		cudaStreamDestroy(stream);
 	} else {
-		std::cout << " Wait for metadata from Target \n";
-		std::cout << " \t -- To be handled by runtime - currently received via a TCP Stream\n";
+		std::cout << "Exchange metadata with " << target << std::endl;
+		std::cout << "\t -- To be handled by runtime - currently received via a TCP Stream\n";
 		
-		//Not used
 		#if USE_FETCH_REMOTE_MD
 			nixl_opt_args_t md_extra_params;
 			md_extra_params.ipAddr = peer_ip;
 			md_extra_params.port = peer_port;
-			agent.fetchRemoteMD(target, &md_extra_params);
-			agent.sendLocalMD(&md_extra_params);
+
+			ret = agent.fetchRemoteMD(target, &md_extra_params);
+			std::cout << "fetchRemoteMD returned " << ret << " to " << target << std::endl;
+			ret = agent.sendLocalMD(&md_extra_params);
+			std::cout << "sendLocalMD returned " << ret << " to " << target << std::endl;
 
 			do {
 				nixl_status_t ret = agent.getNotifs(notifs);
@@ -405,16 +426,11 @@ int main(int argc, char *argv[]) {
 
 			for (const auto &notif : notifs[target]) {
 				remote_serdes->importStr(notif);
+				remote_metadata = remote_serdes->getStr("AgentMD");
+				assert (remote_metadata != "");
+				agent.loadRemoteMD(remote_metadata, target);
 			}
-
-			for (const auto& n : notifs) {
-				if (n.first == target && n.second[0] == "connected") {
-					std::cout << "Received correct message from " << n.first << " msg: " << n.second[0] << std::endl;
-					break;
-				} else {
-					std::cout << "Received wrong message from " << n.first << " msg: " << n.second[0] << std::endl;
-				}
-			}
+			notifs.clear();
 		#else
 			//Wait for remote target connection
 			nixlMDStreamListener listener(peer_port);
@@ -440,17 +456,18 @@ int main(int argc, char *argv[]) {
 
 		//First send notif: connected
 		std::string msg = "connected";
+		std::cout << "Sending " << msg << " to " << target << std::endl;
 		ret = agent.genNotif(target, msg);
 		if(ret != NIXL_SUCCESS) {
 			std::cerr << "Target genNotif error " << ret << "\n";
 		}
 
-		std::cout << " Verify Deserialized Target's Desc List at Initiator\n";
+		std::cout << "Verify Deserialized Target's Desc List at Initiator\n";
 		nixl_xfer_dlist_t dram_target_doca(remote_serdes);
 		nixl_xfer_dlist_t dram_initiator_doca = dram_for_doca.trim();
 		dram_target_doca.print();
-		std::cout << " Got metadata from " << target << " \n";
-		std::cout << " Create transfer request with DOCA backend\n ";
+		std::cout << "Got metadata from " << target << " \n";
+		std::cout << "Create transfer request with DOCA backend\n ";
 
 		PUSH_RANGE("createXferReq", 1)
 
@@ -476,43 +493,32 @@ int main(int argc, char *argv[]) {
 
 		/* Synthetic simulation of GPU processing data before sending */
 		if (processing.compare("gpu") == 0) {
-			std::cout << " Prepare data, GPU mode, transfer 1" << std::endl;
+			std::cout << "First xfer, prepare data, GPU mode, transfer 1" << std::endl;
 			PUSH_RANGE("InitData", 2)
-			launch_initiator_send_kernel(stream, (uintptr_t)(data_address));
+			launch_initiator_send_kernel(stream, (uintptr_t)(data_address), INITIATOR_VALUE);
 			POP_RANGE
 
-			std::cout << " Post the request with DOCA backend transfer 1" << std::endl;
-			PUSH_RANGE("postXferReq", 3)
-			status = agent.postXferReq(treq);
-			assert(status >= NIXL_SUCCESS);
-			POP_RANGE
-		} else {
-			/* Synthetic simulation of CPU processing data before sending */
-			std::cout << "First xfer, prepare data, CPU mode, transfer 1" << std::endl;
-			PUSH_RANGE("InitData", 2)
-			cudaMemset((void*)data_address, INITIATOR_VALUE, TRANSFER_NUM_BUFFER * SIZE);
-			POP_RANGE
-
-			std::cout << " Post the request with DOCA backend transfer 1" << std::endl;
+			std::cout << "Post the request with DOCA backend transfer 1" << std::endl;
 			PUSH_RANGE("postXferReq", 3)
 			status = agent.postXferReq(treq);
 			assert(status >= NIXL_SUCCESS);
 			POP_RANGE
 
-			std::cout << " Waiting for completion\n";
+			std::cout << "Waiting for completion to re-use buffers\n";
 			PUSH_RANGE("getXferStatus", 4)
 			while (status != NIXL_SUCCESS) {
 				status = agent.getXferStatus(treq);
 				assert(status >= NIXL_SUCCESS);
 			}
 			POP_RANGE
-
-			std::cout << "Second xfer, prepare data, CPU mode, transfer 2" << std::endl;
+			//No need for cudaStreamSyncronize as CUDA kernel and Xfer are on the same stream
+			std::cout << "Second xfer, prepare data, GPU mode, transfer 2" << std::endl;
 			PUSH_RANGE("InitData", 2)
-			cudaMemset((void*)data_address, INITIATOR_VALUE + 1, TRANSFER_NUM_BUFFER * SIZE);
+			launch_initiator_send_kernel(stream, (uintptr_t)(data_address), INITIATOR_VALUE + 1);
 			POP_RANGE
 
 			//First recv notif: target processed previously sent data
+			std::cout << "Waiting from 'processed' ack from" << target << std::endl;
 			do {
 				nixl_status_t ret = agent.getNotifs(notifs);
 			} while(notifs.size() == 0);
@@ -527,13 +533,68 @@ int main(int argc, char *argv[]) {
 			}
 
 			//Repost same treq with different data in buffers
-			std::cout << " Post the request with DOCA backend transfer 2" << std::endl;
+			std::cout << "Post the request with DOCA backend transfer 2" << std::endl;
 			PUSH_RANGE("postXferReq", 3)
 			status = agent.postXferReq(treq);
 			assert(status >= NIXL_SUCCESS);
 			POP_RANGE
 
-			std::cout << " Waiting for completion\n";
+			std::cout << "Waiting for completion\n";
+			PUSH_RANGE("getXferStatus", 4)
+			while (status != NIXL_SUCCESS) {
+				status = agent.getXferStatus(treq);
+				assert(status >= NIXL_SUCCESS);
+			}
+			POP_RANGE
+		} else {
+			/* Synthetic simulation of CPU processing data before sending */
+			std::cout << "First xfer, prepare data, CPU mode, transfer 1" << std::endl;
+			PUSH_RANGE("InitData", 2)
+			cudaMemset((void*)data_address, INITIATOR_VALUE, TRANSFER_NUM_BUFFER * SIZE);
+			POP_RANGE
+
+			std::cout << "Post the request with DOCA backend transfer 1" << std::endl;
+			PUSH_RANGE("postXferReq", 3)
+			status = agent.postXferReq(treq);
+			assert(status >= NIXL_SUCCESS);
+			POP_RANGE
+
+			std::cout << "Waiting for completion\n";
+			PUSH_RANGE("getXferStatus", 4)
+			while (status != NIXL_SUCCESS) {
+				status = agent.getXferStatus(treq);
+				assert(status >= NIXL_SUCCESS);
+			}
+			POP_RANGE
+
+			std::cout << "Second xfer, prepare data, CPU mode, transfer 2" << std::endl;
+			PUSH_RANGE("InitData", 2)
+			cudaMemset((void*)data_address, INITIATOR_VALUE + 1, TRANSFER_NUM_BUFFER * SIZE);
+			POP_RANGE
+
+			//First recv notif: target processed previously sent data
+			std::cout << "Waiting from 'processed' ack from" << target << std::endl;
+			do {
+				nixl_status_t ret = agent.getNotifs(notifs);
+			} while(notifs.size() == 0);
+
+			for (const auto& n : notifs) {
+				for (size_t idx = 0; idx < n.second.size(); idx++) {
+					if (n.first == target && n.second[idx] == "processed") {
+						std::cout << "Received correct message from " << n.first << " msg: " << n.second[idx] << " at " << idx << std::endl;
+						break;
+					}
+				}
+			}
+
+			//Repost same treq with different data in buffers
+			std::cout << "Post the request with DOCA backend transfer 2" << std::endl;
+			PUSH_RANGE("postXferReq", 3)
+			status = agent.postXferReq(treq);
+			assert(status >= NIXL_SUCCESS);
+			POP_RANGE
+
+			std::cout << "Waiting for completion\n";
 			PUSH_RANGE("getXferStatus", 4)
 			while (status != NIXL_SUCCESS) {
 				status = agent.getXferStatus(treq);
@@ -551,7 +612,7 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
-	std::cout <<"Cleanup.. \n";
+	std::cout << "Cleanup.. \n";
 	
 	agent.deregisterMem(dram_for_doca, &extra_params);
 	// cudaFree(data_address);
@@ -561,7 +622,7 @@ int main(int argc, char *argv[]) {
 	else
 		delete remote_serdes;
 
-	std::cout <<"Exit.. \n";
+	std::cout << "Exit.. \n";
 
 	return 0;
 }

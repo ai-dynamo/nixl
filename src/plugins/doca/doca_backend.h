@@ -48,7 +48,7 @@
 
 #define DOCA_MAX_COMPLETION_INFLIGHT 64
 #define DOCA_DEVINFO_IBDEV_NAME_SIZE 64
-#define RDMA_RECV_QUEUE_SIZE 2048
+#define RDMA_RECV_QUEUE_SIZE 1024
 #define RDMA_SEND_QUEUE_SIZE 2048
 #define DOCA_POST_STREAM_NUM 8
 #define DOCA_XFER_REQ_SIZE 512
@@ -64,7 +64,7 @@
 #define DOCA_RDMA_SERVER_CONN_DELAY 500 // 500us
 // Pre-fill the whole recv queue with notif once
 #define DOCA_MAX_NOTIF_INFLIGHT RDMA_RECV_QUEUE_SIZE
-#define DOCA_MAX_NOTIF_MESSAGE_SIZE 4096
+#define DOCA_MAX_NOTIF_MESSAGE_SIZE 16384
 #define DOCA_NOTIF_NULL 0xFFFFFFFF
 #define DOCA_MSG_TAG 0xFF
 
@@ -81,6 +81,7 @@ struct docaXferReqGpu {
   uint8_t in_use;
   uint32_t conn_idx;
   uint32_t has_notif_msg_idx;
+  size_t msg_sz;
   struct doca_gpu_buf_arr *notif_barr_gpu;
   uint32_t *last_rsvd;
   uint32_t *last_posted;
@@ -130,6 +131,7 @@ struct docaNotifSend {
   struct doca_gpu_dev_rdma *rdma_qp;
   struct doca_gpu_buf_arr *barr_gpu;
   int buf_idx;
+  size_t msg_sz;
 };
 
 class nixlDocaConnection : public nixlBackendConnMD {
@@ -196,7 +198,8 @@ struct nixlDocaRdmaQp {
 class nixlDocaEngine : public nixlBackendEngine {
 private:
   struct doca_log_backend *sdk_log;
-  std::string msg_tag = "DOCA";
+  std::string msg_tag_start = "DOCAS";
+  std::string msg_tag_end = "DOCAE";
   std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
 
   uint32_t local_port;

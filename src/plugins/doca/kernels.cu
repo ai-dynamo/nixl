@@ -132,6 +132,7 @@ __global__ void kernel_progress(struct docaXferCompletion *completion_list,
 	struct doca_gpu_buf *recv_buf;
 	struct doca_gpu_buf *send_buf;
 	struct doca_gpu_dev_rdma_r *rdma_gpu_r;
+	int num_progress;
 
 	//Warmup
 	if (completion_list == nullptr)
@@ -155,13 +156,15 @@ __global__ void kernel_progress(struct docaXferCompletion *completion_list,
 
 						if (DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
 							#if ENABLE_DEBUG == 1
-								printf("Notif after completion at %d id %d\n",
-										index, DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu->has_notif_msg_idx));
+								printf("Notif after completion at %d id %d sz %d\n",
+										index, DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu->has_notif_msg_idx),
+										(int)completion_list[index].xferReqRingGpu->msg_sz);
 							#endif
-							doca_gpu_dev_buf_get_buf(completion_list[index].xferReqRingGpu->notif_barr_gpu, completion_list[index].xferReqRingGpu->has_notif_msg_idx, &send_buf);
+							doca_gpu_dev_buf_get_buf(completion_list[index].xferReqRingGpu->notif_barr_gpu,
+														completion_list[index].xferReqRingGpu->has_notif_msg_idx, &send_buf);
 							result = doca_gpu_dev_rdma_send_strong(completion_list[index].xferReqRingGpu->rdma_gpu_notif, 0,
-												send_buf, 0, DOCA_MAX_NOTIF_MESSAGE_SIZE,
-												0, DOCA_GPU_RDMA_SEND_FLAG_NONE);
+																		send_buf, 0, completion_list[index].xferReqRingGpu->msg_sz,
+																		0, DOCA_GPU_RDMA_SEND_FLAG_NONE);
 							if (result != DOCA_SUCCESS)
 								printf("Error %d doca_gpu_dev_rdma_send_strong\n", result);
 
@@ -191,22 +194,27 @@ __global__ void kernel_progress(struct docaXferCompletion *completion_list,
 	if (blockIdx.x == 1) {
 		while (DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0) {
 			if (DOCA_GPUNETIO_VOLATILE(notif_progress->rdma_qp) != nullptr) {
-				result = doca_gpu_dev_rdma_get_recv(notif_progress->rdma_qp, &rdma_gpu_r);
-				if (result != DOCA_SUCCESS)
-						printf("Error %d doca_gpu_dev_rdma_get_recv\n", result);
+				do {
+					num_progress = DOCA_GPUNETIO_VOLATILE(notif_progress->num_progress);
+					result = doca_gpu_dev_rdma_get_recv(notif_progress->rdma_qp, &rdma_gpu_r);
+					if (result != DOCA_SUCCESS)
+							printf("Error %d doca_gpu_dev_rdma_get_recv\n", result);
 
-				result = doca_gpu_dev_rdma_recv_wait_all(rdma_gpu_r, DOCA_GPU_RDMA_RECV_WAIT_FLAG_NB, &num_ops, nullptr, nullptr);
-				if (result != DOCA_SUCCESS) {
-						printf("Error %d doca_gpu_dev_rdma_recv_wait_all\n", result);
-						DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
-				}
-
-				#if ENABLE_DEBUG == 1
-					if (num_ops > 0) {
-							printf("Progress on %d notifications\n", num_ops);
+					result = doca_gpu_dev_rdma_recv_wait_all(rdma_gpu_r, DOCA_GPU_RDMA_RECV_WAIT_FLAG_NB,
+																&num_ops, nullptr, nullptr);
+					if (result != DOCA_SUCCESS) {
+							printf("Error %d doca_gpu_dev_rdma_recv_wait_all\n", result);
+							DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
 					}
-				#endif
+					num_progress -= num_ops;
 
+					#if ENABLE_DEBUG == 1
+						if (num_ops > 0) {
+								printf("Progress on %d notifications tot %d\n",
+										num_ops, num_progress);
+						}
+					#endif
+				} while (num_progress > 0);
 				DOCA_GPUNETIO_VOLATILE(notif_progress->rdma_qp) = nullptr;
 			}
 
@@ -233,13 +241,14 @@ __global__ void kernel_progress(struct docaXferCompletion *completion_list,
 			
 			if (DOCA_GPUNETIO_VOLATILE(notif_send_gpu->rdma_qp) != nullptr) {
 				#if ENABLE_DEBUG == 1
-					printf("Notif standalone %d id %d\n",
-							index, DOCA_GPUNETIO_VOLATILE(notif_send_gpu->buf_idx));
+					printf("Notif standalone id %d\n",
+							DOCA_GPUNETIO_VOLATILE(notif_send_gpu->buf_idx));
 				#endif
 
-				doca_gpu_dev_buf_get_buf(DOCA_GPUNETIO_VOLATILE(notif_send_gpu->barr_gpu), DOCA_GPUNETIO_VOLATILE(notif_send_gpu->buf_idx), &send_buf);
+				doca_gpu_dev_buf_get_buf(DOCA_GPUNETIO_VOLATILE(notif_send_gpu->barr_gpu),
+											DOCA_GPUNETIO_VOLATILE(notif_send_gpu->buf_idx), &send_buf);
 				result = doca_gpu_dev_rdma_send_strong(notif_send_gpu->rdma_qp, 0,
-									send_buf, 0, DOCA_MAX_NOTIF_MESSAGE_SIZE,
+									send_buf, 0, notif_send_gpu->msg_sz,
 									0, DOCA_GPU_RDMA_SEND_FLAG_NONE);
 				if (result != DOCA_SUCCESS)
 					printf("Error %d doca_gpu_dev_rdma_send_strong\n", result);
