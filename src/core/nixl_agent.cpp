@@ -104,6 +104,7 @@ nixlAgentData::~nixlAgentData() {
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
     data(std::make_unique<nixlAgentData>(name, cfg))
 {
+    printf("nixlAgent cfg.useListenThread %d\n", cfg.useListenThread);
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
         if(my_port == 0) my_port = default_comm_port;
@@ -112,6 +113,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
     }
 
     if (data->useEtcd || cfg.useListenThread) {
+        printf("nixlAgent nixlAgentData::commWorker\n");
         data->commThreadStop = false;
         data->commThread =
             std::thread(&nixlAgentData::commWorker, data.get(), this);
@@ -741,6 +743,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         delete handle;
         return NIXL_ERR_BACKEND;
     }
+
+    opt_args.customParam = extra_params->customParam;
 
     handle->remoteAgent = remote_agent;
     handle->backendOp   = operation;

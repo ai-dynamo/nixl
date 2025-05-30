@@ -37,3 +37,5 @@ hf3fs_lib_found = cc.find_library(hf3fs_lib_file, dirs: [hf3fs_lib_path], requir
 if hf3fs_lib_found.found()
     subdir('hf3fs')
 endif
+
+subdir('doca')
