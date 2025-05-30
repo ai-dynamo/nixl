@@ -26,6 +26,8 @@
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
+#include "json.hpp"
+using json = nlohmann::json;
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
@@ -38,6 +40,7 @@ DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communic
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
 DEFINE_string(backend, XFERBENCH_BACKEND_UCX, "Name of communication backend [UCX, UCX_MO, GDS, POSIX] \
               (only used with nixl worker)");
+DEFINE_string(output_format, "text", "Output format for benchmark results [text, json]");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]");
 DEFINE_string(target_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for target \
@@ -66,8 +69,6 @@ DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 // GDS options - only used when backend is GDS
 DEFINE_string(gds_filepath, "", "File path for GDS operations (only used with GDS backend)");
-DEFINE_int32(gds_batch_pool_size, 32, "Batch pool size for GDS operations (default: 32, only used with GDS backend)");
-DEFINE_int32(gds_batch_limit, 128, "Batch limit for GDS operations (default: 128, only used with GDS backend)");
 
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
@@ -104,8 +105,7 @@ bool xferBenchConfig::enable_pt = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::gds_filepath = "";
-int xferBenchConfig::gds_batch_pool_size = 0;
-int xferBenchConfig::gds_batch_limit = 0;
+
 std::vector<std::string> devices = { };
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
@@ -125,8 +125,6 @@ int xferBenchConfig::loadFromFlags() {
         // Load GDS-specific configurations if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
             gds_filepath = FLAGS_gds_filepath;
-            gds_batch_pool_size = FLAGS_gds_batch_pool_size;
-            gds_batch_limit = FLAGS_gds_batch_limit;
             num_files = FLAGS_num_files;
             storage_enable_direct = FLAGS_storage_enable_direct;
         }
@@ -259,10 +257,6 @@ void xferBenchConfig::printConfig() {
         if (backend == XFERBENCH_BACKEND_GDS) {
             std::cout << std::left << std::setw(60) << "GDS filepath (--gds_filepath=path)" << ": "
                       << gds_filepath << std::endl;
-            std::cout << std::left << std::setw(60) << "GDS batch pool size (--gds_batch_pool_size=N)" << ": "
-                      << gds_batch_pool_size << std::endl;
-            std::cout << std::left << std::setw(60) << "GDS batch limit (--gds_batch_limit=N)" << ": "
-                      << gds_batch_limit << std::endl;
             std::cout << std::left << std::setw(60) << "GDS enable direct (--gds_enable_direct=[0,1])" << ": "
                       << storage_enable_direct << std::endl;
             std::cout << std::left << std::setw(60) << "Number of files (--num_files=N)" << ": "
@@ -455,6 +449,9 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
 }
 
 void xferBenchUtils::printStatsHeader() {
+    if (xferBenchConfig::output_format == "json") {
+        return;
+    }
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         std::cout << std::left << std::setw(20) << "Block Size (B)"
                   << std::setw(15) << "Batch Size"
@@ -519,6 +516,26 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     }
 
     // Tabulate print with fixed width for each string
+    // 只在rank 0输出结果
+    if (IS_PAIRWISE_AND_SG() && rt->getRank() != 0) {
+        return;
+    }
+
+    if (xferBenchConfig::output_format == "json") {
+        json result;
+        result["block_size"] = block_size;
+        result["batch_size"] = batch_size;
+        result["avg_latency_us"] = avg_latency;
+        result["throughput_mib"] = throughput;
+        result["throughput_gib"] = throughput_gib;
+        result["throughput_gb"] = throughput_gb;
+        if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
+            result["aggregate_bw_gb"] = totalbw;
+            result["network_util_percent"] = (totalbw / (rt->getSize()/2 * MAXBW))*100;
+        }
+        std::cout << result.dump() << std::endl;
+        return;
+    }
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         std::cout << std::left << std::setw(20) << block_size
                   << std::setw(15) << batch_size
