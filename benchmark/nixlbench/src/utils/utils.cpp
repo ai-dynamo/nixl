@@ -66,9 +66,12 @@ DEFINE_int32(num_threads, 1,
 DEFINE_int32(num_files, 1, "Number of files used by benchmark");
 DEFINE_int32(num_initiator_dev, 1, "Number of device in initiator process");
 DEFINE_int32(num_target_dev, 1, "Number of device in target process");
+
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 // GDS options - only used when backend is GDS
 DEFINE_string(gds_filepath, "", "File path for GDS operations (only used with GDS backend)");
+DEFINE_int32(gds_batch_pool_size, 32, "Batch pool size for GDS operations (default: 32, only used with GDS backend)");
+DEFINE_int32(gds_batch_limit, 128, "Batch limit for GDS operations (default: 128, only used with GDS backend)");
 
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
@@ -105,6 +108,8 @@ bool xferBenchConfig::enable_pt = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::gds_filepath = "";
+int xferBenchConfig::gds_batch_pool_size = 0;
+int xferBenchConfig::gds_batch_limit = 0;
 
 std::vector<std::string> devices = { };
 int xferBenchConfig::num_files = 0;
@@ -127,6 +132,8 @@ int xferBenchConfig::loadFromFlags() {
             gds_filepath = FLAGS_gds_filepath;
             num_files = FLAGS_num_files;
             storage_enable_direct = FLAGS_storage_enable_direct;
+            gds_batch_pool_size = FLAGS_gds_batch_pool_size;
+            gds_batch_limit = FLAGS_gds_batch_limit;
         }
 
         // Load POSIX-specific configurations if backend is POSIX
@@ -257,6 +264,10 @@ void xferBenchConfig::printConfig() {
         if (backend == XFERBENCH_BACKEND_GDS) {
             std::cout << std::left << std::setw(60) << "GDS filepath (--gds_filepath=path)" << ": "
                       << gds_filepath << std::endl;
+            std::cout << std::left << std::setw(60) << "GDS batch pool size (--gds_batch_pool_size=N)" << ": "
+                      << gds_batch_pool_size << std::endl;
+            std::cout << std::left << std::setw(60) << "GDS batch limit (--gds_batch_limit=N)" << ": "
+                      << gds_batch_limit << std::endl;
             std::cout << std::left << std::setw(60) << "GDS enable direct (--gds_enable_direct=[0,1])" << ": "
                       << storage_enable_direct << std::endl;
             std::cout << std::left << std::setw(60) << "Number of files (--num_files=N)" << ": "
@@ -516,7 +527,6 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     }
 
     // Tabulate print with fixed width for each string
-    // 只在rank 0输出结果
     if (IS_PAIRWISE_AND_SG() && rt->getRank() != 0) {
         return;
     }
