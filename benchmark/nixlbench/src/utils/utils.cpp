@@ -130,6 +130,8 @@ int xferBenchConfig::loadFromFlags() {
         // Load GDS-specific configurations if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
             gds_filepath = FLAGS_gds_filepath;
+            gds_batch_pool_size = FLAGS_gds_batch_pool_size;
+            gds_batch_limit = FLAGS_gds_batch_limit;
             num_files = FLAGS_num_files;
             storage_enable_direct = FLAGS_storage_enable_direct;
             gds_batch_pool_size = FLAGS_gds_batch_pool_size;
