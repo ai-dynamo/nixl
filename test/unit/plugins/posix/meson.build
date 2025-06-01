@@ -13,13 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Get Abseil dependencies
-absl_log_dep = dependency('absl_log', required: true)
+# Using globally defined aio_dep and paio variables from the root meson.build
+if posix_aio or rt_dep.found()
+    # Get Abseil dependencies
+    absl_log_dep = dependency('absl_log', required: true)
 
-nixl_posix_app = executable('nixl_posix_test', 'nixl_posix_test.cpp',
-                            dependencies: [nixl_dep, nixl_infra, absl_log_dep],
-                            include_directories: [nixl_inc_dirs, utils_inc_dirs],
-                            install: true)
+    nixl_posix_app = executable('nixl_posix_test', 'nixl_posix_test.cpp',
+                                dependencies: [nixl_dep, nixl_infra, absl_log_dep],
+                                include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                                install: true)
 
-# Register the test with the test suite
-test('posix_plugin_test', nixl_posix_app)
+    # Register the test with the test suite
+    test('posix_plugin_test', nixl_posix_app)
+endif
