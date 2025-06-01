@@ -36,7 +36,7 @@
  **********/
 DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
-DEFINE_string(backend, XFERBENCH_BACKEND_UCX, "Name of communication backend [UCX, UCX_MO, GDS, POSIX] \
+DEFINE_string(backend, XFERBENCH_BACKEND_UCX, "Name of communication backend [UCX, UCX_MO, GDS, POSIX, DOCA] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]");
@@ -81,6 +81,10 @@ DEFINE_string(posix_api_type, XFERBENCH_POSIX_API_AIO, "API type for POSIX opera
 DEFINE_string(posix_filepath, "", "File path for POSIX operations (only used with POSIX backend)");
 DEFINE_bool(storage_enable_direct, false, "Enable direct I/O for storage operations (only used with POSIX backend)");
 
+// DOCA options - only used when backend is DOCA
+DEFINE_string(doca_gpu_device_list, "0", "Comma-separated GPU CUDA device id to use for \
+		      communication (only used with nixl worker)");
+
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
 std::string xferBenchConfig::backend = "";
@@ -106,6 +110,7 @@ std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::gds_filepath = "";
 int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
+std::string xferBenchConfig::doca_gpu_device_list = "";
 std::vector<std::string> devices = { };
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
@@ -145,6 +150,11 @@ int xferBenchConfig::loadFromFlags() {
                           << ". Must be one of [AIO, URING]" << std::endl;
                 return -1;
             }
+        }
+
+        // Load DOCA-specific configurations if backend is DOCA
+        if (backend == XFERBENCH_BACKEND_DOCA) {
+            doca_gpu_device_list = FLAGS_doca_gpu_device_list;
         }
     }
 
@@ -280,6 +290,12 @@ void xferBenchConfig::printConfig() {
             std::cout << std::left << std::setw(60) << "Number of files (--num_files=N)" << ": "
                       << num_files << std::endl;
         }
+
+        // Print DOCA options if backend is DOCA
+        if (backend == XFERBENCH_BACKEND_DOCA) {
+            std::cout << std::left << std::setw(60) << "GPU CUDA Device id list (--device_list=dev1,dev2,...)" << ": "
+                  << doca_gpu_device_list << std::endl;
+        }
     }
     std::cout << std::left << std::setw(60) << "Initiator seg type (--initiator_seg_type=[DRAM,VRAM])" << ": "
               << initiator_seg_type << std::endl;
@@ -385,7 +401,8 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             len = iov.len;
 
             if ((xferBenchConfig::backend == XFERBENCH_BACKEND_GDS) ||
-                (xferBenchConfig::backend == XFERBENCH_BACKEND_POSIX)) {
+                (xferBenchConfig::backend == XFERBENCH_BACKEND_POSIX) ||
+                (xferBenchConfig::backend == XFERBENCH_BACKEND_DOCA)) {
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
 #if HAVE_CUDA

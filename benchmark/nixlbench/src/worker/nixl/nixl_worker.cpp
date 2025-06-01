@@ -102,7 +102,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)){
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_DOCA)){
         backend_name = xferBenchConfig::backend;
     } else {
         std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
@@ -154,6 +155,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             backend_params["use_uring"] = true;
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_DOCA)) {
+        backend_params["network_devices"] = devices[rank];
+        backend_params["gpu_devices"] = xferBenchConfig::doca_gpu_device_list;
     } else {
         std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);

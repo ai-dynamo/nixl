@@ -1,6 +1,6 @@
 # Test Descriptions
 
-Here are all the explained tests in this directory. There are more specific unit tests in src/utils.
+Here are all the explained tests in this directory. There are more specific unit tests in unit/plugins.
 
 - test/agent_example.cpp - Single threaded test of the nixlAgent API
 - test/desc_example.cpp - Test of nixl descriptors and DescList

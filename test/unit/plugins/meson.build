@@ -16,6 +16,7 @@
 subdir('ucx')
 subdir('ucx_mo')
 subdir('posix')
+subdir('doca')
 
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend

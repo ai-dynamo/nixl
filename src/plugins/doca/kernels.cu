@@ -272,8 +272,6 @@ __global__ void kernel_progress(struct docaXferCompletion *completion_list,
 	}
 }
 
-extern "C" {
-
 doca_error_t doca_kernel_write(cudaStream_t stream, struct doca_gpu_dev_rdma *rdma_gpu, struct docaXferReqGpu *xferReqRing, uint32_t pos)
 {
 	cudaError_t result = cudaSuccess;
@@ -340,5 +338,3 @@ doca_error_t doca_kernel_progress(cudaStream_t stream, struct docaXferCompletion
 
     return DOCA_SUCCESS;
 }
-
-} /* extern C */

@@ -19,13 +19,16 @@ dependency_gpunetio_device = declare_dependency(compile_args : '-Wl,--whole-arch
 
 plugin_doca_deps = [dependency('doca-common'), dependency('doca-rdma'), dependency('doca-gpunetio'), dependency_gpunetio_device]
 
+# Get Abseil dependencies
+absl_log_dep = dependency('absl_log', required: true)
+
 gpu_cuda_args = []
 compile_flags += '-D DOCA_ALLOW_EXPERIMENTAL_API'
 
 if 'DOCA' in static_plugins
     doca_backend_lib = static_library('DOCA',
-               'doca_backend.cpp', 'doca_backend.h', 'doca_plugin.cpp', 'kernels.cu',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_doca_deps],
+               'doca_backend.cpp', 'doca_backend.h', 'doca_backend_aux.h', 'doca_plugin.cpp', 'doca_utils.cpp', 'kernels.cu',
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_doca_deps, absl_log_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags,
@@ -34,8 +37,8 @@ if 'DOCA' in static_plugins
                install_dir: plugin_install_dir)  # Custom prefix for plugin libraries
 else
     doca_backend_lib = shared_library('DOCA',
-               'doca_backend.cpp', 'doca_backend.h', 'doca_plugin.cpp', 'kernels.cu',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_doca_deps],
+               'doca_backend.cpp', 'doca_backend.h', 'doca_backend_aux.h', 'doca_plugin.cpp', 'doca_utils.cpp', 'kernels.cu',
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_doca_deps, absl_log_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],

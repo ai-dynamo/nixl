@@ -39,7 +39,6 @@ class nixlMetadataStream {
         struct sockaddr_in  listenerAddr;
 
         bool setupStream();
-        bool setupStreamSync();
         void closeStream();
 
     public:
@@ -62,7 +61,6 @@ class nixlMDStreamListener: public nixlMetadataStream {
 
         int         acceptClient();
         void        setupListener();
-        void        setupListenerSync();
         void        startListenerForClients();
         void        startListenerForClient();
         std::string recvFromClient();
@@ -73,14 +71,12 @@ class nixlMDStreamClient: public nixlMetadataStream {
         int         csock;
         std::string listenerAddress;
         bool setupClient();
-        bool setupClientSync();
 
     public:
         nixlMDStreamClient(const std::string& listenerAddress, int port);
         ~nixlMDStreamClient();
 
         bool connectListener();
-        bool connectListenerSync();
         void sendData(const std::string& data);
         std::string recvData();
 };
