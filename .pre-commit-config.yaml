@@ -38,13 +38,20 @@ repos:
         args: ["--max-line-length=88", "--select=C,E,F,W,B,B950", "--extend-ignore=E203,E501,W503"]
         types_or: [python, cython]
 
-  - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v16.0.5
+  # TODO: Once all files are modified by clang, we can revert to this clang pre-commit
+  # as it should no longer format the entire file
+  #- repo: https://github.com/pre-commit/mirrors-clang-format
+  #  rev: v16.0.5
+  #  hooks:
+  #    - id: clang-format
+  #      types_or: [c, c++, cuda, proto, textproto, java]
+  #      args: ["-fallback-style=none", "-style=file", "-i"]
+  #      files: \.(cpp|h|cc|c)$
+  - repo: https://github.com/aranadive/clang-format-hooks
+    rev: fcd35e1bbb0d832265797caf6ec11f1ebf0591b8
     hooks:
-      - id: clang-format
-        types_or: [c, c++, cuda, proto, textproto, java]
-        args: ["-fallback-style=none", "-style=file", "-i"]
-        files: \.(cpp|h|cc|c)$
+      - id: apply-format
+        args: ["-i", "HEAD~1"]
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.2.4
