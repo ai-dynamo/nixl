@@ -328,7 +328,7 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
     case nixl_ucx_mt_t::WORKER:
         return attr.max_thread_level >= UCS_THREAD_MODE_MULTI;
     }
-    assert(!"invalid mt type");
+    NIXL_FATAL << "invalid mt type";
     std::terminate();
 }
 
@@ -409,54 +409,54 @@ nixlUcxContext::~nixlUcxContext()
 
 namespace
 {
-  [[nodiscard]] ucs_thread_mode_t toUcsThreadModeChecked( const nixl_ucx_mt_t t )
-  {
-    switch( t ) {
-    case nixl_ucx_mt_t::CTX:
-      return UCS_THREAD_MODE_SINGLE;
-    case nixl_ucx_mt_t::SINGLE:
-      return UCS_THREAD_MODE_SERIALIZED;
-    case nixl_ucx_mt_t::WORKER:
-      return UCS_THREAD_MODE_MULTI;
-    }
-    NIXL_FATAL << "Invalid UCX worker type: " << static_cast< std::underlying_type_t< nixl_ucx_mt_t > >( t );
-    std::terminate();
-  }
+   [[nodiscard]] ucs_thread_mode_t toUcsThreadModeChecked(const nixl_ucx_mt_t t)
+   {
+       switch(t) {
+           case nixl_ucx_mt_t::CTX:
+               return UCS_THREAD_MODE_SINGLE;
+           case nixl_ucx_mt_t::SINGLE:
+               return UCS_THREAD_MODE_SERIALIZED;
+           case nixl_ucx_mt_t::WORKER:
+               return UCS_THREAD_MODE_MULTI;
+       }
+       NIXL_FATAL << "Invalid UCX worker type: " << static_cast<std::underlying_type_t<nixl_ucx_mt_t>>(t);
+       std::terminate();
+   }
 
-  struct nixlUcpWorkerParams
-    : ucp_worker_params_t
-  {
-    explicit nixlUcpWorkerParams( const nixl_ucx_mt_t t )
-    {
-      field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
-      thread_mode = toUcsThreadModeChecked( t );
-    }
-  };
+   struct nixlUcpWorkerParams
+       : ucp_worker_params_t
+   {
+       explicit nixlUcpWorkerParams(const nixl_ucx_mt_t t)
+       {
+           field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
+           thread_mode = toUcsThreadModeChecked(t);
+       }
+   };
 
-  static_assert( sizeof( nixlUcpWorkerParams ) == sizeof( ucp_worker_params_t ) );
+   static_assert(sizeof(nixlUcpWorkerParams) == sizeof(ucp_worker_params_t));
 
 }  // namespace
 
-ucp_worker* nixlUcxWorker::createUcpWorker( const std::shared_ptr< nixlUcxContext > &ctx )
+ucp_worker* nixlUcxWorker::createUcpWorker(nixlUcxContext& ctx)
 {
-  ucp_worker* result = nullptr;
-  const nixlUcpWorkerParams params( ctx->mt_type );
-  const ucs_status_t status = ucp_worker_create(ctx->ctx, &params, &result);
-  if( status != UCS_OK ) {
-    const auto err_str = std::string( "Failed to create UCX worker: " ) +
-                         ucs_status_string( status );
-    NIXL_ERROR << err_str;
-    throw std::runtime_error( err_str );  // result is nullptr -- no leak
-  }
-  return result;
+    ucp_worker* worker = nullptr;
+    const nixlUcpWorkerParams params(ctx.mt_type);
+    const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
+    if(status != UCS_OK) {
+        const auto err_str = std::string("Failed to create UCX worker: ") +
+                             ucs_status_string(status);
+        NIXL_ERROR << err_str;
+        throw std::runtime_error(err_str);  // worker is nullptr -- no leak
+    }
+    return worker;
 }
 
-nixlUcxWorker::nixlUcxWorker( const std::shared_ptr< nixlUcxContext > &_ctx )
-  : ctx(_ctx),
-    worker( createUcpWorker( ctx ), &ucp_worker_destroy )
+nixlUcxWorker::nixlUcxWorker(const std::shared_ptr< nixlUcxContext >&_ctx)
+    : ctx(_ctx),
+      worker(createUcpWorker(*ctx), &ucp_worker_destroy)
 {}
 
-std::unique_ptr<char []> nixlUcxWorker::epAddr(std::size_t &size)
+std::string nixlUcxWorker::epAddr()
 {
     ucp_worker_attr_t wattr;
 
@@ -464,15 +464,11 @@ std::unique_ptr<char []> nixlUcxWorker::epAddr(std::size_t &size)
     const ucs_status_t status = ucp_worker_query(worker.get(), &wattr);
     if (UCS_OK != status) {
         // TODO: printf
-        return nullptr;
+        return {};
     }
-
-    auto res = std::make_unique<char []>(wattr.address_length);
-    std::memcpy(res.get(), wattr.address, wattr.address_length);
+    const std::string result(reinterpret_cast<const char*>(wattr.address), wattr.address_length);
     ucp_worker_release_address(worker.get(), wattr.address);
-
-    size = wattr.address_length;
-    return res;
+    return result;
 }
 
 absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, std::size_t size)
@@ -513,22 +509,19 @@ int nixlUcxContext::memReg(void *addr, std::size_t size, nixlUcxMem &mem)
 }
 
 
-std::unique_ptr<char []> nixlUcxContext::packRkey(nixlUcxMem &mem, std::size_t &size)
+std::string nixlUcxContext::packRkey(nixlUcxMem &mem)
 {
-    void *rkey_buf;
+    void* rkey_buf;
+    std::size_t size;
 
     const ucs_status_t status = ucp_rkey_pack(ctx, mem.memh, &rkey_buf, &size);
     if (status != UCS_OK) {
         /* TODO: MSW_NET_ERROR(priv->net, "failed to ucp_rkey_pack (%s)\n", ucs_status_string(status)); */
-        return nullptr;
+        return {};
     }
-
-    /* Allocate the buffer */
-    std::unique_ptr<char []> res = std::make_unique<char []>(size);
-    std::memcpy(res.get(), rkey_buf, size);
+    const std::string result(reinterpret_cast<const char*>(rkey_buf), size);
     ucp_rkey_buffer_release(rkey_buf);
-
-    return res;
+    return result;
 }
 
 void nixlUcxContext::memDereg(nixlUcxMem &mem)
@@ -568,7 +561,7 @@ nixlUcxReq nixlUcxWorker::getRndvData(void* data_desc, void* buffer, const std::
         //TODO: error handling
         return nullptr;
     }
-    return static_cast< nixlUcxReq >( status );;
+    return static_cast<nixlUcxReq>(status);
 }
 
 /* ===========================================
@@ -585,7 +578,6 @@ nixl_status_t nixlUcxWorker::test(nixlUcxReq req)
     if(req == nullptr) {
         return NIXL_SUCCESS;
     }
-
     ucp_worker_progress(worker.get());
     return ucx_status_to_nixl(ucp_request_check_status(req));
 }

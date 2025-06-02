@@ -565,9 +565,9 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
 
     const auto &uw = uws.front();
-    workerAddr = uw->epAddr(workerSize);
+    workerAddr = uw->epAddr();
 
-    if (workerAddr == nullptr) {
+    if (workerAddr.empty()) {
         NIXL_ERROR << "Failed to get UCX worker address";
         initErr = true;
         return;
@@ -653,7 +653,7 @@ nixl_status_t nixlUcxEngine::endConn(const std::string &remote_agent) {
 }
 
 nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
-    str = nixlSerDes::_bytesToString(workerAddr.get(), workerSize);
+    str = nixlSerDes::_bytesToString(workerAddr.data(), workerAddr.size());
     return NIXL_SUCCESS;
 }
 
@@ -719,14 +719,14 @@ nixlUcxEngine::connectionTermAmCb (void *arg, const void *header,
 }
 
 nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
-    struct nixl_ucx_am_hdr hdr;
-    uint32_t flags = 0;
+    nixl_ucx_am_hdr hdr;
+    std::uint32_t flags = 0;
 
     if (remote_agent == localAgent)
         return loadRemoteConnInfo (remote_agent,
-                   nixlSerDes::_bytesToString(workerAddr.get(), workerSize));
+            nixlSerDes::_bytesToString(workerAddr.data(), workerAddr.size()));
 
-    auto search = remoteConnMap.find(remote_agent);
+    const auto search = remoteConnMap.find(remote_agent);
 
     if(search == remoteConnMap.end()) {
         return NIXL_ERR_NOT_FOUND;
@@ -835,9 +835,7 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
                                           const nixl_mem_t &nixl_mem,
                                           nixlBackendMD* &out)
 {
-    int ret;
     auto priv = std::make_unique<nixlUcxPrivateMetadata>();
-    size_t rkey_size;
 
     if (nixl_mem == VRAM_SEG) {
         bool need_restart;
@@ -853,16 +851,15 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
     }
 
     // TODO: Add nixl_mem check?
-    ret = uc->memReg((void*) mem.addr, mem.len, priv->mem);
+    const int ret = uc->memReg((void*) mem.addr, mem.len, priv->mem);
     if (ret) {
         return NIXL_ERR_BACKEND;
     }
-    auto rkey = uc->packRkey(priv->mem, rkey_size);
-    if (rkey == nullptr) {
+    const std::string rkey = uc->packRkey(priv->mem);
+    if (rkey.empty()) {
         return NIXL_ERR_BACKEND;
     }
-    priv->rkeyStr = nixlSerDes::_bytesToString((void*) rkey.get(), rkey_size);
-
+    priv->rkeyStr = nixlSerDes::_bytesToString((void*) rkey.data(), rkey.size());
     out = priv.release();
     return NIXL_SUCCESS;
 }

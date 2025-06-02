@@ -49,14 +49,14 @@ ucs_status_t check_buffer (void *arg, const void *header,
 }
 
 ucs_status_t rndv_test (void *arg, const void *header,
-   		                   size_t header_length, void *data,
-				           size_t length,
-				           const ucp_am_recv_param_t *param)
+                        size_t header_length, void *data,
+			size_t length,
+                        const ucp_am_recv_param_t *param)
 {
 
-    sample_header* hdr = (struct sample_header*) header;
-    void* recv_buffer = calloc(1, length);
-    nixlUcxWorker* am_worker = (nixlUcxWorker*) arg;
+    const sample_header* hdr = static_cast<const sample_header*>(header);
+    void* recv_buffer = std::calloc(1, length);
+    nixlUcxWorker* am_worker = static_cast<nixlUcxWorker*>(arg);
     ucp_request_param_t recv_param = {0};
 
     if (hdr->test != 0xcee) {
@@ -65,13 +65,13 @@ ucs_status_t rndv_test (void *arg, const void *header,
     std::cout << "rndv_test started\n";
     assert (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV);
     const nixlUcxReq req = am_worker->getRndvData(data, recv_buffer, length, &recv_param);
-    assert (req != nullptr);
+    assert(req != nullptr);
 
     while (am_worker->test(req) == 0 ) {}
 
-    const std::uint64_t check_data = ((uint64_t*) recv_buffer)[0];
-    assert (check_data == 0xdeaddeaddeadbeef);
-    free (recv_buffer);
+    const std::uint64_t check_data = *static_cast<const std::uint64_t*>(recv_buffer);
+    assert(check_data == 0xdeaddeaddeadbeef);
+    free(recv_buffer);
 
     std::cout << "rndv_test passed\n";
     return UCS_OK;
@@ -114,10 +114,9 @@ int main()
 
     /* Test control path */
     for (i = 0; i < 2; i++) {
-        size_t size;
-        std::unique_ptr<char []> addr = w[i].epAddr(size);
-        assert (addr != nullptr);
-        auto result = w[!i].connect((void*) addr.get(), size);
+        const std::string addr = w[i].epAddr();
+        assert(!addr.empty());
+        auto result = w[!i].connect((void*)addr.data(), addr.size());
         assert(result.ok());
         ep[!i] = std::move(*result);
 

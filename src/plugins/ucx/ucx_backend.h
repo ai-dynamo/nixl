@@ -103,13 +103,13 @@ class nixlUcxCudaCtx;
 class nixlUcxCudaDevicePrimaryCtx;
 using nixlUcxCudaDevicePrimaryCtxPtr = std::shared_ptr<nixlUcxCudaDevicePrimaryCtx>;
 
-class nixlUcxEngine : public nixlBackendEngine {
+class nixlUcxEngine
+    : public nixlBackendEngine {
     private:
         /* UCX data */
         std::shared_ptr<nixlUcxContext> uc;
         std::vector<std::unique_ptr<nixlUcxWorker>> uws;
-        std::unique_ptr<char []> workerAddr;
-        size_t workerSize;
+        std::string workerAddr;
 
         /* Progress thread data */
         std::mutex pthrActiveLock;
