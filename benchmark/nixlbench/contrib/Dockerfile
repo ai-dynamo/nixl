@@ -52,7 +52,8 @@ RUN echo "INFO: Starting custom UCX build..." && \
     apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         autoconf automake libtool pkg-config make g++ \
-        libnuma-dev librdmacm-dev ibverbs-providers && \
+        libnuma-dev librdmacm-dev ibverbs-providers libibverbs-dev rdma-core \
+        ibverbs-utils libibumad-dev && \
     echo "INFO: Removing pre-existing UCX installations..." && \
     rm -rf /usr/local/ucx /opt/hpcx/ucx && \
     cd /workspace/ucx && \

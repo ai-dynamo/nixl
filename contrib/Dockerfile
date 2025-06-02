@@ -45,7 +45,8 @@ RUN apt-get update -y && \
     build-essential
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
-    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev
+    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
