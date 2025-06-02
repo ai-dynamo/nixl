@@ -25,6 +25,7 @@ private:
   std::string msg_tag_start = "DOCAS";
   std::string msg_tag_end = "DOCAE";
   std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
+  int nstreams;
 
   uint32_t local_port;
   int noSyncIters;

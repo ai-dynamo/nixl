@@ -233,7 +233,7 @@ int main(int argc, char *argv[]) {
 	cudaFree(0);
 
 	/** Common to both Initiator and Target */
-	std::cout << "Starting Agent for "<< role << "\n";
+	std::cout << "Starting Agent for "<< role << " with stream mode " << stream_mode << "\n";
 	/** Agent and backend creation parameters */
 
 	nixlAgentConfig cfg(true, true, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
@@ -245,6 +245,9 @@ int main(int argc, char *argv[]) {
 	nixlAgent agent(role, cfg);
 	params["network_devices"] = "mlx5_0";
 	params["gpu_devices"] = "0";
+	if (stream_mode.compare("pool") == 0)
+		params["cuda_streams"] = "2";
+
 	PUSH_RANGE("createBackend", 0)
 	ret = agent.createBackend("DOCA", params, doca);
 	//check return
@@ -455,7 +458,7 @@ int main(int argc, char *argv[]) {
 
 		std::cout << "Launch initiator send kernel on stream\n";
 
-		/* Synthetic simulation of GPU stream_mode data before sending */
+		/* Synthetic simulation of GPU data processing with stream attached mode before sending */
 		if (stream_mode.compare("attached") == 0) {
 			std::cout << "First xfer, prepare data, GPU mode, transfer 1" << std::endl;
 			PUSH_RANGE("InitData", 2)
@@ -514,7 +517,7 @@ int main(int argc, char *argv[]) {
 			}
 			POP_RANGE
 		} else {
-			/* Synthetic simulation of CPU stream_mode data before sending */
+			/* Synthetic simulation of CPU data processing with stream pool mode before sending */
 			std::cout << "First xfer, prepare data, CPU mode, transfer 1" << std::endl;
 			PUSH_RANGE("InitData", 2)
 			cudaMemset((void*)data_address, INITIATOR_VALUE, TRANSFER_NUM_BUFFER * SIZE);

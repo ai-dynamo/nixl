@@ -43,9 +43,9 @@ static const char *get_plugin_version() { return PLUGIN_VERSION; }
 // Function to get backend options
 static nixl_b_params_t get_backend_options() {
   nixl_b_params_t params;
-  params["doca_net_devices"] = "";
-  params["doca_gpu_devices"] = "";
-  params["doca_conn_type"] = "";
+  params["network_devices"] = "";
+  params["gpu_devices"] = "";
+  params["cuda_streams"] = "";
   return params;
 }
 

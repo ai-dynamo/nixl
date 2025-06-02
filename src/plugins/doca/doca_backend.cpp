@@ -51,11 +51,11 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 	if (ndevs.size() > 1)
 		throw std::invalid_argument("Only 1 network device is allowed");
 
-	std::cout << "DOCA network devices:" << std::endl;
+	NIXL_INFO << "DOCA network devices ";
 	for (const std::string &str : ndevs) {
-		std::cout << str << " ";
+		NIXL_INFO << str;
 	}
-	std::cout << std::endl;
+	NIXL_INFO << std::endl;
 
 	if (custom_params->count("gpu_devices") == 0)
 		throw std::invalid_argument("At least 1 GPU device must be specified");
@@ -63,13 +63,20 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 	if (custom_params->count("gpu_devices") > 1)
 		throw std::invalid_argument("Only 1 GPU device is allowed");
 
-	std::cout << "DOCA GPU devices:" << std::endl;
+	NIXL_INFO << "DOCA GPU devices: ";
 	tmp_gdevs = str_split((*custom_params)["gpu_devices"], " ");
 	for (auto &cuda_id : tmp_gdevs) {
 		gdevs.push_back(std::pair((uint32_t)std::stoi(cuda_id), nullptr));
-		std::cout << "cuda_id " << cuda_id << "\n";
+		NIXL_INFO << "cuda_id " << cuda_id;
 	}
-	std::cout << std::endl;
+	NIXL_INFO << std::endl;
+
+	nstreams = 0;
+	if (custom_params->count("cuda_streams") != 0)
+		nstreams = std::stoi((*custom_params)["cuda_streams"]);
+	if (nstreams == 0)
+		nstreams = nstreams;
+	NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
 	/* Open DOCA device */
 	result = open_doca_device_with_ibdev_name((const uint8_t *)(ndevs[0].c_str()), ndevs[0].size(), &(ddev));
@@ -116,7 +123,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 	nixlDocaEngineCheckCudaError(
 		cudaStreamCreateWithFlags(&wait_stream, cudaStreamNonBlocking),
 		"Failed to create CUDA stream");
-	for (int i = 0; i < DOCA_POST_STREAM_NUM; i++)
+	for (int i = 0; i < nstreams; i++)
 		nixlDocaEngineCheckCudaError(
 			cudaStreamCreateWithFlags(&post_stream[i], cudaStreamNonBlocking),
 			"Failed to create CUDA stream");
@@ -231,7 +238,7 @@ nixlDocaEngine::~nixlDocaEngine()
 	doca_gpu_mem_free(gdevs[0].second, last_flags);
 
 	NIXL_ERROR << "free post_stream";
-	for (int i = 0; i < DOCA_POST_STREAM_NUM; i++) {
+	for (int i = 0; i < nstreams; i++) {
 		cudaStreamSynchronize(post_stream[i]);
 		cudaStreamDestroy(post_stream[i]);
 	}
@@ -1179,7 +1186,7 @@ nixl_status_t nixlDocaEngine::prepXfer(
 		return NIXL_ERR_INVALID_PARAM;
 
 	if (opt_args->customParam.empty()) {
-		stream_id = (xferStream.fetch_add(1) & (DOCA_POST_STREAM_NUM - 1));
+		stream_id = (xferStream.fetch_add(1) & (nstreams - 1));
 		treq->stream = post_stream[stream_id];
 	} else {
 		treq->stream = (cudaStream_t) * ((uintptr_t *)opt_args->customParam.data());
@@ -1191,7 +1198,7 @@ nixl_status_t nixlDocaEngine::prepXfer(
 					{ return x.first == treq->devId; }
 				);
 			if (it == gdevs.end()) {
-				std::cout << "Can't prepare transfer for unknown device " << treq->devId << std::endl;
+				NIXL_ERROR << "Can't prepare transfer for unknown device " << treq->devId << std::endl;
 				return NIXL_ERR_INVALID_PARAM;
 			}
 	#endif
