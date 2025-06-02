@@ -40,7 +40,6 @@ private:
   struct docaXferReqGpu *xferReqRingGpu;
   struct docaXferReqGpu *xferReqRingCpu;
   mutable std::atomic<uint32_t> xferRingPos;
-  mutable uint32_t firstXferRingPos;
 
   struct docaXferCompletion *completion_list_gpu;
   struct docaXferCompletion *completion_list_cpu;

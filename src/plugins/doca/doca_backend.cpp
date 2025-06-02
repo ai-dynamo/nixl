@@ -197,7 +197,6 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
 	lastPostedReq = 0;
 	xferRingPos = 0;
-	firstXferRingPos = 0;
 
 	progressThreadStart();
 }
@@ -961,17 +960,20 @@ nixl_status_t nixlDocaEngine::getConnInfo(std::string &str) const {
 }
 
 nixl_status_t nixlDocaEngine::connect(const std::string &remote_agent) {
-	/* Already connected to remote QP at loadRemoteConnInfo time */
+	//Already connected to remote QP at loadRemoteConnInfo time
+	//TODO: Connect part should be moved here from loadRemoteConnInfo
 	return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlDocaEngine::disconnect(const std::string &remote_agent) {
+	//Disconnection should be handled here
 	return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
 								   const std::string &remote_conn_info) {
-	// doca_error_t result;
+
+    //TODO: Connect part should be moved into connect() method
 	nixlDocaConnection conn;
 	size_t size = remote_conn_info.size();
 	// TODO: eventually std::byte?
@@ -1326,9 +1328,11 @@ nixl_status_t nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
 }
 
 nixl_status_t nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
-	firstXferRingPos = xferRingPos.load() & (DOCA_XFER_REQ_MAX - 1);
-
-	return NIXL_SUCCESS;
+	uint32_t tmp = xferRingPos.load() & (DOCA_XFER_REQ_MAX - 1);
+	if (((volatile docaXferCompletion *)completion_list_cpu)[tmp].completed > 0)
+		return NIXL_SUCCESS;
+	else
+		return NIXL_IN_PROG;
 }
 
 int nixlDocaEngine::progress() { return NIXL_SUCCESS; }
