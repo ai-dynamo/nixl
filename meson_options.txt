@@ -19,7 +19,7 @@ option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD Li
 option('disable_gds_backend', type : 'boolean', value : false, description : 'disable gds backend')
 option('disable_mooncake_backend', type : 'boolean', value : false, description : 'disable mooncake backend')
 option('install_headers', type : 'boolean', value : true, description : 'install headers')
-option('gds_path', type: 'string', value: '/usr/local/cuda/targets/x86_64-linux/', description: 'Path to GDS CuFile install')
+option('gds_path', type: 'string', value: '/usr/local/cuda/', description: 'Path to GDS CuFile install')
 option('cudapath_inc', type: 'string', value: '', description: 'Include path for CUDA')
 option('cudapath_lib', type: 'string', value: '', description: 'Library path for CUDA')
 option('cudapath_stub', type: 'string', value: '', description: 'Extra Stub path for CUDA')
