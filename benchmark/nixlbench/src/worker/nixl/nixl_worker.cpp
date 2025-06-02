@@ -291,13 +291,9 @@ static std::optional<xferBenchIOV> getVramDesc(int devid, size_t buffer_size,
     if (xferBenchConfig::enable_vmm) {
 #if HAVE_CUDA_FABRIC
         return getVramDescCudaVmm(devid, buffer_size, memset_value);
-#else
-        std::cerr << "VMM is not supported in CUDA version " << CUDA_VERSION << std::endl;
-        exit(EXIT_FAILURE);
 #endif
-    } else {
-        return getVramDescCuda(devid, buffer_size, memset_value);
     }
+    return getVramDescCuda(devid, buffer_size, memset_value);
 }
 
 std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {

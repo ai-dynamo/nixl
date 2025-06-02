@@ -125,6 +125,13 @@ int xferBenchConfig::loadFromFlags() {
         device_list = FLAGS_device_list;
         enable_vmm = FLAGS_enable_vmm;
 
+#if !HAVE_CUDA_FABRIC
+        if (enable_vmm) {
+            std::cerr << "VMM is not supported in CUDA version " << CUDA_VERSION << std::endl;
+            return -1;
+        }
+#endif
+
         // Load GDS-specific configurations if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
             gds_filepath = FLAGS_gds_filepath;
