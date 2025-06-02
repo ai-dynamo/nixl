@@ -365,6 +365,10 @@ public:
         }
 
         const auto &uw = eng.getWorker(worker_id);
+
+        /* Maximum progress */
+        while (uw->progress());
+
         /* Go over all request updating their status */
         while(req) {
             nixl_status_t ret;
@@ -753,8 +757,10 @@ nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
     //wait for AM to send
     ret = NIXL_IN_PROG;
     for (size_t i = 0; i < reqs.size(); i++)
-        while(ret == NIXL_IN_PROG)
+        while(ret == NIXL_IN_PROG) {
+            getWorker(i)->progress();
             ret = getWorker(i)->test(reqs[i]);
+        }
 
     return error ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }
