@@ -46,6 +46,12 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     protobuf-compiler \
     protobuf-c-devel \
     protobuf-devel \
+    libibverbs \
+    libibverbs-devel \
+    rdma-core \
+    rdma-core-devel \
+    libibumad \
+    libibumad-devel \
     wget \
     zlib
     
