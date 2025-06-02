@@ -21,11 +21,12 @@
 #include "nixl.h"
 #include "nixl_types.h"
 
-#include <gtest/gtest.h>
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
+#include <gtest/gtest.h>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 #include <thread>
 
@@ -185,6 +186,16 @@ protected:
         agent.registerMem(reg_list);
     }
 
+    static bool wait_until_true(std::function<bool()> func, int retries = 500) {
+        bool result;
+
+        while (!(result = func()) && retries-- > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        return result;
+    }
+
     void exchangeMDIP()
     {
         for (size_t i = 0; i < agents.size(); i++) {
@@ -195,9 +206,8 @@ protected:
 
                 auto status = fetchRemoteMD(i, j);
                 ASSERT_EQ(NIXL_SUCCESS, status);
-                do {
-                    status = checkRemoteMD(i, j);
-                } while (status != NIXL_SUCCESS);
+                ASSERT_TRUE(wait_until_true(
+                    [&]() { return checkRemoteMD(i, j) == NIXL_SUCCESS; }));
             }
         }
     }
@@ -452,6 +462,15 @@ TEST_P(TestTransfer, NotificationOnly) {
     constexpr size_t num_threads = 4;
     doNotificationTest(
             getAgent(0), getAgentName(0), getAgent(1), getAgentName(1), repeat, num_threads);
+}
+
+TEST_P(TestTransfer, ListenerCommSize) {
+    std::vector<MemBuffer> buffers;
+    createRegisteredMem(getAgent(1), 64, 10000, DRAM_SEG, buffers);
+    auto status = fetchRemoteMD(0, 1);
+    ASSERT_EQ(NIXL_SUCCESS, status);
+    ASSERT_TRUE(
+        wait_until_true([&]() { return checkRemoteMD(0, 1) == NIXL_SUCCESS; }));
 }
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values("UCX"));
