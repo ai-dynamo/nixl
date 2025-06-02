@@ -226,7 +226,7 @@ getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value)
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
 
-#if CUDA_VERSION >= 12020
+#if HAVE_CUDA_FABRIC
 static std::optional<xferBenchIOV>
 getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value)
 {
@@ -279,7 +279,7 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value)
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size,
                                        devid, padded_size, handle);
 }
-#endif /* CUDA_VERSION >= 12020 */
+#endif /* HAVE_CUDA_FABRIC */
 
 static std::optional<xferBenchIOV> getVramDesc(int devid, size_t buffer_size,
                                                bool isInit)
@@ -289,7 +289,7 @@ static std::optional<xferBenchIOV> getVramDesc(int devid, size_t buffer_size,
                                     XFERBENCH_TARGET_BUFFER_ELEMENT;
 
     if (xferBenchConfig::enable_vmm) {
-#if CUDA_VERSION >= 12020
+#if HAVE_CUDA_FABRIC
         return getVramDescCudaVmm(devid, buffer_size, memset_value);
 #else
         std::cerr << "VMM is not supported in CUDA version " << CUDA_VERSION << std::endl;
