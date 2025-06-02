@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __UCX_BACKEND_H
-#define __UCX_BACKEND_H
+#ifndef NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_H
+#define NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_H
 
 #include <vector>
 #include <cstring>
@@ -49,7 +49,7 @@ class nixlUcxConnection : public nixlBackendConnMD {
         std::vector<std::unique_ptr<nixlUcxEp>> eps;
 
     public:
-        [[nodiscard]] const std::unique_ptr<nixlUcxEp> &getEp(size_t ep_id) const noexcept {
+        [[nodiscard]] const std::unique_ptr<nixlUcxEp>& getEp(size_t ep_id) const noexcept {
             return eps[ep_id];
         }
 
@@ -86,7 +86,7 @@ class nixlUcxPublicMetadata : public nixlBackendMD {
 
         ~nixlUcxPublicMetadata() = default;
 
-        [[nodiscard]] nixlUcxRkey &getRkey(size_t id) noexcept {
+        [[nodiscard]] nixlUcxRkey& getRkey(size_t id) noexcept {
             return rkeys[id];
         }
 

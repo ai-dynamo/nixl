@@ -48,35 +48,6 @@ ucs_status_t check_buffer (void *arg, const void *header,
     return UCS_OK;
 }
 
-ucs_status_t rndv_test (void *arg, const void *header,
-                        size_t header_length, void *data,
-			size_t length,
-                        const ucp_am_recv_param_t *param)
-{
-
-    const sample_header* hdr = static_cast<const sample_header*>(header);
-    void* recv_buffer = std::calloc(1, length);
-    nixlUcxWorker* am_worker = static_cast<nixlUcxWorker*>(arg);
-    ucp_request_param_t recv_param = {0};
-
-    if (hdr->test != 0xcee) {
-	    return UCS_ERR_INVALID_PARAM;
-    }
-    std::cout << "rndv_test started\n";
-    assert (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV);
-    const nixlUcxReq req = am_worker->getRndvData(data, recv_buffer, length, &recv_param);
-    assert(req != nullptr);
-
-    while (am_worker->test(req) == 0 ) {}
-
-    const std::uint64_t check_data = *static_cast<const std::uint64_t*>(recv_buffer);
-    assert(check_data == 0xdeaddeaddeadbeef);
-    free(recv_buffer);
-
-    std::cout << "rndv_test passed\n";
-    return UCS_OK;
-}
-
 int main()
 {
     vector<string> devs;
@@ -132,10 +103,6 @@ int main()
 
     w[0].progress();
     w[1].progress();
-
-    ret = w[0].regAmCallback(rndv_cb_id, rndv_test, &(w[0]));
-    assert (ret == 0);
-
     w[0].progress();
 
     /* Test first callback */

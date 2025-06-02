@@ -14,10 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_UTILX_UCX_UCX_UTILS_H
-#define NIXL_SRC_UTILX_UCX_UCX_UTILS_H
+#ifndef NIXL_SRC_UTILS_UCX_UCX_UTILS_H
+#define NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 
 #include <memory>
+#include <type_traits>
 
 extern "C"
 {
@@ -33,6 +34,13 @@ enum class nixl_ucx_mt_t {
     CTX,
     WORKER
 };
+
+template<typename Enum>
+[[nodiscard]] constexpr auto enumToInteger(const Enum e) noexcept
+{
+    static_assert(std::is_enum_v<Enum>);
+    return std::underlying_type_t<Enum>(e);
+}
 
 [[nodiscard]] std::string_view constexpr to_string_view(const nixl_ucx_mt_t t) noexcept
 {
@@ -181,8 +189,6 @@ private:
 
     /* Active message handling */
     int regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void* arg);
-    [[nodiscard]] nixlUcxReq getRndvData(void* data_desc, void* buffer, const std::size_t len,
-					 const ucp_request_param_t *param);
 
     /* Data access */
     int progress();

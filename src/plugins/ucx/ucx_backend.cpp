@@ -653,7 +653,7 @@ nixl_status_t nixlUcxEngine::endConn(const std::string &remote_agent) {
 }
 
 nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
-    str = nixlSerDes::_bytesToString(workerAddr.data(), workerAddr.size());
+    str = workerAddr;
     return NIXL_SUCCESS;
 }
 
@@ -855,11 +855,11 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
     if (ret) {
         return NIXL_ERR_BACKEND;
     }
-    const std::string rkey = uc->packRkey(priv->mem);
-    if (rkey.empty()) {
+    priv->rkeyStr = uc->packRkey(priv->mem);
+
+    if (priv->rkeyStr.empty()) {
         return NIXL_ERR_BACKEND;
     }
-    priv->rkeyStr = nixlSerDes::_bytesToString((void*) rkey.data(), rkey.size());
     out = priv.release();
     return NIXL_SUCCESS;
 }

@@ -328,7 +328,7 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
     case nixl_ucx_mt_t::WORKER:
         return attr.max_thread_level >= UCS_THREAD_MODE_MULTI;
     }
-    NIXL_FATAL << "invalid mt type";
+    NIXL_FATAL << "invalid mt type: " << enumToInteger(mt_type);
     std::terminate();
 }
 
@@ -552,16 +552,6 @@ int nixlUcxWorker::regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, voi
         return -1;
     }
     return 0;
-}
-
-nixlUcxReq nixlUcxWorker::getRndvData(void* data_desc, void* buffer, const std::size_t len, const ucp_request_param_t *param)
-{
-    const ucs_status_ptr_t status = ucp_am_recv_data_nbx(worker.get(), data_desc, buffer, len, param);
-    if(UCS_PTR_IS_ERR(status)) {
-        //TODO: error handling
-        return nullptr;
-    }
-    return static_cast<nixlUcxReq>(status);
 }
 
 /* ===========================================
