@@ -403,7 +403,7 @@ impl<'a> XferDescList<'a> {
     }
 
     /// Returns true if any descriptors in the list overlap
-    fn has_overlaps(&self) -> Result<bool, NixlError> {
+    pub fn has_overlaps(&self) -> Result<bool, NixlError> {
         let mut has_overlaps = false;
         let status =
             unsafe { nixl_capi_xfer_dlist_has_overlaps(self.inner.as_ptr(), &mut has_overlaps) };
