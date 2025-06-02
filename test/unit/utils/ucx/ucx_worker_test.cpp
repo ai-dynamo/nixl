@@ -126,16 +126,15 @@ int main()
     assert(buffer[1]);
     /* Test control path */
     for(i = 0; i < 2; i++) {
-        size_t size;
-        std::unique_ptr<char []> addr = w[i].epAddr(size);
-        assert(addr != nullptr);
-        auto result = w[!i].connect((void*) addr.get(), size);
+        const std::string addr = w[i].epAddr();
+        assert(!addr.empty());
+        auto result = w[!i].connect((void*)addr.data(), addr.size());
         assert(result.ok());
         ep[!i] = std::move(*result);
         assert(0 == c[i]->memReg(buffer[i], buf_size, mem[i]));
-        std::unique_ptr<char []> rkey_tmp = c[i]->packRkey(mem[i], size);
-        assert(rkey_tmp != nullptr);
-        assert(0 == ep[!i]->rkeyImport(rkey_tmp.get(), size, rkey[!i]));
+        std::string rkey_tmp = c[i]->packRkey(mem[i]);
+        assert(!rkey_tmp.empty());
+        assert(0 == ep[!i]->rkeyImport(rkey_tmp.data(), rkey_tmp.size(), rkey[!i]));
     }
 
     /* =========================================

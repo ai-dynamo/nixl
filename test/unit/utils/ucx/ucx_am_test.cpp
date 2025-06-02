@@ -48,40 +48,6 @@ ucs_status_t check_buffer (void *arg, const void *header,
     return UCS_OK;
 }
 
-ucs_status_t rndv_test (void *arg, const void *header,
-   		                   size_t header_length, void *data,
-				           size_t length,
-				           const ucp_am_recv_param_t *param)
-{
-
-    struct sample_header* hdr = (struct sample_header*) header;
-    void* recv_buffer = calloc(1, length);
-    nixlUcxWorker* am_worker = (nixlUcxWorker*) arg;
-    ucp_request_param_t recv_param = {0};
-    uint64_t check_data;
-    nixlUcxReq req;
-    int ret = 0;
-
-    if (hdr->test != 0xcee)
-	    return UCS_ERR_INVALID_PARAM;
-
-    std::cout << "rndv_test started\n";
-    assert (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV);
-    ret = am_worker->getRndvData(data, recv_buffer, length, &recv_param, req);
-    assert (ret == 0);
-
-    while (ret == 0){
-	    ret = am_worker->test(req);
-    }
-
-    check_data = ((uint64_t*) recv_buffer)[0];
-    assert (check_data == 0xdeaddeaddeadbeef);
-    free (recv_buffer);
-
-    std::cout << "rndv_test passed\n";
-    return UCS_OK;
-}
-
 int main()
 {
     vector<string> devs;
@@ -119,10 +85,9 @@ int main()
 
     /* Test control path */
     for (i = 0; i < 2; i++) {
-        size_t size;
-        std::unique_ptr<char []> addr = w[i].epAddr(size);
-        assert (addr != nullptr);
-        auto result = w[!i].connect((void*) addr.get(), size);
+        const std::string addr = w[i].epAddr();
+        assert(!addr.empty());
+        auto result = w[!i].connect((void*)addr.data(), addr.size());
         assert(result.ok());
         ep[!i] = std::move(*result);
 
@@ -138,10 +103,6 @@ int main()
 
     w[0].progress();
     w[1].progress();
-
-    ret = w[0].regAmCallback(rndv_cb_id, rndv_test, &(w[0]));
-    assert (ret == 0);
-
     w[0].progress();
 
     /* Test first callback */
