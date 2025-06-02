@@ -722,10 +722,9 @@ nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
     nixl_ucx_am_hdr hdr;
     std::uint32_t flags = 0;
 
-    if (remote_agent == localAgent)
-        return loadRemoteConnInfo (remote_agent,
-            nixlSerDes::_bytesToString(workerAddr.data(), workerAddr.size()));
-
+    if(remote_agent == localAgent) {
+        return loadRemoteConnInfo(remote_agent, workerAddr);
+    }
     const auto search = remoteConnMap.find(remote_agent);
 
     if(search == remoteConnMap.end()) {
