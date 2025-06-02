@@ -23,6 +23,8 @@
 
 #include <nixl_types.h>
 
+#include "serdes/serdes.h"
+
 #include "ucx_utils.h"
 #include "common/nixl_log.h"
 
@@ -463,10 +465,10 @@ std::string nixlUcxWorker::epAddr()
     wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS;
     const ucs_status_t status = ucp_worker_query(worker.get(), &wattr);
     if (UCS_OK != status) {
-        // TODO: printf
+        NIXL_WARN << "Unable to query UCX endpoint address";
         return {};
     }
-    const std::string result(reinterpret_cast<const char*>(wattr.address), wattr.address_length);
+    const std::string result = nixlSerDes::_bytesToString(wattr.address, wattr.address_length);
     ucp_worker_release_address(worker.get(), wattr.address);
     return result;
 }
@@ -519,7 +521,7 @@ std::string nixlUcxContext::packRkey(nixlUcxMem &mem)
         /* TODO: MSW_NET_ERROR(priv->net, "failed to ucp_rkey_pack (%s)\n", ucs_status_string(status)); */
         return {};
     }
-    const std::string result(reinterpret_cast<const char*>(rkey_buf), size);
+    const std::string result = nixlSerDes::_bytesToString(rkey_buf, size);
     ucp_rkey_buffer_release(rkey_buf);
     return result;
 }
