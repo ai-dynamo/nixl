@@ -458,6 +458,7 @@ void xferBenchUtils::printStatsHeader() {
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         std::cout << std::left << std::setw(20) << "Block Size (B)"
                   << std::setw(15) << "Batch Size"
+                  << std::setw(15) << "Est. Lat. (us)"
                   << std::setw(15) << "Avg Lat. (us)"
                   << std::setw(15) << "B/W (MiB/Sec)"
                   << std::setw(15) << "B/W (GiB/Sec)"
@@ -468,6 +469,7 @@ void xferBenchUtils::printStatsHeader() {
     } else {
         std::cout << std::left << std::setw(20) << "Block Size (B)"
                   << std::setw(15) << "Batch Size"
+                  << std::setw(15) << "Est. Lat. (us)"
                   << std::setw(15) << "Avg Lat. (us)"
                   << std::setw(15) << "B/W (MiB/Sec)"
                   << std::setw(15) << "B/W (GiB/Sec)"
@@ -477,7 +479,7 @@ void xferBenchUtils::printStatsHeader() {
     std::cout << std::string(80, '-') << std::endl;
 }
 
-void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_size, double total_duration) {
+void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_size, const xferBenchTransferMetrics &metrics) {
     size_t total_data_transferred = 0;
     double avg_latency = 0, throughput = 0, throughput_gib = 0, throughput_gb = 0;
     double totalbw = 0;
@@ -496,17 +498,17 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     }
 
     total_data_transferred = ((block_size * batch_size) * num_iter); // In Bytes
-    avg_latency = (total_duration / (num_iter * batch_size)); // In microsec
+    avg_latency = (metrics.total_duration / (num_iter * batch_size)); // In microsec
     if (IS_PAIRWISE_AND_MG()) {
         total_data_transferred *= xferBenchConfig::num_initiator_dev; // In Bytes
         avg_latency /= xferBenchConfig::num_initiator_dev; // In microsec
     }
 
     throughput = (((double) total_data_transferred / (1024 * 1024)) /
-                   (total_duration / 1e6));   // In MiB/Sec
+                   (metrics.total_duration / 1e6));   // In MiB/Sec
     throughput_gib = (throughput / 1024);   // In GiB/Sec
     throughput_gb = (((double) total_data_transferred / (1000 * 1000 * 1000)) /
-                   (total_duration / 1e6));   // In GB/Sec
+                   (metrics.total_duration / 1e6));   // In GB/Sec
 
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         rt->reduceSumDouble(&throughput_gb, &totalbw, 0);
@@ -522,6 +524,7 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         std::cout << std::left << std::setw(20) << block_size
                   << std::setw(15) << batch_size
+                  << std::setw(15) << metrics.estimated_duration
                   << std::setw(15) << avg_latency
                   << std::setw(15) << throughput
                   << std::setw(15) << throughput_gib
@@ -532,6 +535,7 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     } else {
         std::cout << std::left << std::setw(20) << block_size
                   << std::setw(15) << batch_size
+                  << std::setw(15) << metrics.estimated_duration
                   << std::setw(15) << avg_latency
                   << std::setw(15) << throughput
                   << std::setw(15) << throughput_gib

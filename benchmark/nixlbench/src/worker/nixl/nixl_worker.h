@@ -52,9 +52,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
         int synchronizeStart();
 
         // Data operations
-        std::variant<double, int> transfer(size_t block_size,
-                                           const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
-                                           const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+        int transfer(size_t block_size,
+                     const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                     const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists,
+                     xferBenchTransferMetrics &metrics) override;
 
     private:
         std::optional<xferBenchIOV> initBasicDescDram(size_t buffer_size, int mem_dev_id);
