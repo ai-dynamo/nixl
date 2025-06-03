@@ -30,7 +30,10 @@ VERSION=v$latest_tag.dev.$commit_id
 
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
 BASE_IMAGE_TAG=25.03-cuda12.8-devel-ubuntu24.04
-WHL_PLATFORM=manylinux_2_39_x86_64
+ARCH=$(uname -m)
+[ "$ARCH" = "arm64" ] && ARCH="aarch64"
+WHL_BASE=manylinux_2_39
+WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 UCX_REF=v1.19.x
 OS="ubuntu24"
@@ -88,6 +91,14 @@ get_options() {
         --ucx-upstream)
             # Master branch (v1.20) also containing EFA SRD support
             UCX_REF=7ec95b95e524a87e81cac92f5ca8523e3966b16b
+        --arch)
+            if [ "$2" ]; then
+                ARCH=$2
+                WHL_PLATFORM=${WHL_BASE}_${ARCH}
+                shift
+            else
+                missing_requirement $1
+            fi
             ;;
         --)
             shift
@@ -108,7 +119,7 @@ get_options() {
 
     if [[ $OS == "ubuntu22" ]]; then
         BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04
-        WHL_PLATFORM=manylinux_2_34_x86_64
+        WHL_PLATFORM=manylinux_2_34_${ARCH}
     fi
 
     if [ -z "$TAG" ]; then
@@ -122,6 +133,7 @@ show_build_options() {
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
     echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+    echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
     echo "UCX Ref: ${UCX_REF}"
@@ -136,6 +148,7 @@ show_help() {
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-upstream use ucx master branch]"
+    echo "  [--arch [x86_64|aarch64] to select target architecture]"
     exit 0
 }
 
@@ -158,8 +171,9 @@ fi
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
+BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
 
 show_build_options
 
-docker build -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
