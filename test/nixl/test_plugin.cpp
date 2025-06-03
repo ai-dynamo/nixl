@@ -91,6 +91,7 @@ int main(int argc, char** argv) {
         staticPlugs.insert(plugin.name);
     }
 
+    // First make sure tested plugins are not already loaded
     for (const auto& plugin : plugins) {
         plugin_manager.unloadPlugin(plugin);
     }
