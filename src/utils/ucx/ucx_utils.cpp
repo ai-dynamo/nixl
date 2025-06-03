@@ -30,7 +30,7 @@
 
 using namespace std;
 
-static nixl_status_t ucx_status_to_nixl(ucs_status_t status)
+nixl_status_t ucx_status_to_nixl(ucs_status_t status)
 {
     if (status == UCS_OK) {
         return NIXL_SUCCESS;
@@ -570,6 +570,7 @@ nixl_status_t nixlUcxWorker::test(nixlUcxReq req)
     if(req == nullptr) {
         return NIXL_SUCCESS;
     }
+    ucp_worker_progress(worker.get());
     return ucx_status_to_nixl(ucp_request_check_status(req));
 }
 

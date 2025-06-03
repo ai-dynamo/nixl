@@ -373,7 +373,7 @@ public:
         while(req) {
             nixl_status_t ret;
             if (!req->is_complete()) {
-                ret = uw->test((nixlUcxReq)req);
+                ret = ucx_status_to_nixl(ucp_request_check_status((nixlUcxReq)req));
                 switch (ret) {
                     case NIXL_SUCCESS:
                         /* Mark as completed */
@@ -757,10 +757,8 @@ nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
     //wait for AM to send
     ret = NIXL_IN_PROG;
     for (size_t i = 0; i < reqs.size(); i++)
-        while(ret == NIXL_IN_PROG) {
-            getWorker(i)->progress();
+        while(ret == NIXL_IN_PROG)
             ret = getWorker(i)->test(reqs[i]);
-        }
 
     return error ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }
