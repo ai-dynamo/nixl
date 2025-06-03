@@ -23,8 +23,6 @@
 
 #include <nixl_types.h>
 
-#include "serdes/serdes.h"
-
 #include "ucx_utils.h"
 #include "common/nixl_log.h"
 
