@@ -103,10 +103,8 @@ std::string nixlDeserializer::getStr(const std::string_view& tag)
         // throw std::runtime_error("deserialization tag mismatch ...");
         return "";
     }
-    offset_ += tag.size();
-
-    const std::size_t len = peekLenUnsafe();
-    offset_ += sizeof(len);
+    const std::size_t len = peekLenUnsafe(tag.size());
+    offset_ += tag.size() + sizeof(len);
 
     if(offset_ + len + 1 > buffer_.size()) {
         // throw std::runtime_error("deserialization data insufficient");
@@ -140,7 +138,7 @@ nixl_status_t nixlDeserializer::getBuf(const std::string_view& tag, void *buf, c
         // throw std::runtime_error("deserialization tag mismatch ...");
         return NIXL_ERR_MISMATCH;
     }
-    if(peekBufLen(tag) != len) {  // NIXL_ASSERT(peekBufLen(tag) == len);
+    if(peekLenUnsafe(tag.size()) != len) {  // NIXL_ASSERT(peekBufLen(tag) == len);
         // throw std::runtime_error("deserialization size mismatch");
         return NIXL_ERR_MISMATCH;
     }

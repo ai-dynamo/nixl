@@ -1157,7 +1157,6 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                                            nixlUcxReq &req,
                                            size_t worker_id) const
 {
-    nixlSerializer sd;
     // TODO - temp fix, need to have an mpool
     static struct nixl_ucx_am_hdr hdr;
     uint32_t flags = 0;
@@ -1173,11 +1172,12 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     hdr.op = NOTIF_STR;
     flags |= UCP_AM_SEND_FLAG_EAGER;
 
+    nixlSerializer sd;
     sd.addStr("name", localAgent);
     sd.addStr("msg", msg);
     // TODO: replace with mpool for performance
 
-    auto buffer = std::make_unique<std::string>(std::move(sd.exportStr()));
+    auto buffer = std::make_unique<std::string>(std::move(sd).exportStr());
     ret = search->second->getEp(worker_id)->sendAm(NOTIF_STR,
                                                    &hdr, sizeof(struct nixl_ucx_am_hdr),
                                                    (void*)buffer->data(), buffer->size(),
