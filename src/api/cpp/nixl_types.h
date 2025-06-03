@@ -22,11 +22,13 @@
 
 
 /*** Forward declarations ***/
-class nixlSerDes;
+
 class nixlDlistH;
 class nixlBackendH;
 class nixlXferReqH;
 class nixlAgentData;
+class nixlSerializer;
+class nixlDeserializer;
 
 
 /*** NIXL memory type, operation and status enums ***/

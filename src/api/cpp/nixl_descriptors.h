@@ -208,12 +208,11 @@ class nixlDescList {
                      const bool &sorted=false,
                      const int &init_size=0);
         /**
-         * @brief Deserializer constructor for nixlDescList from nixlSerDes object
-         *        which serializes/deserializes our classes into/from blobs
+         * @brief Deserializer constructor for nixlDescList from nixlDeserializer.
          *
-         * @param deserialize nixlSerDes object to construct nixlDescList
+         * @param deserialize nixlDeserializer object to construct nixlDescList
          */
-        nixlDescList(nixlSerDes* deserializer);
+        nixlDescList(nixlDeserializer* deserializer);
         /**
          * @brief Copy constructor for creating nixlDescList from another object
          *        of the same type.
@@ -324,11 +323,11 @@ class nixlDescList {
          */
         int getIndex(const nixlBasicDesc &query) const;
         /**
-         * @brief Serialize a descriptor list with nixlSerDes class
-         * @param serializer nixlSerDes object to serialize nixlDescList
+         * @brief Serialize a descriptor list with nixlSerializer class
+         * @param serializer nixlSerializer object to serialize nixlDescList
          * @return nixl_status_t Error code if serialize was not successful
          */
-        nixl_status_t serialize(nixlSerDes* serializer) const;
+        nixl_status_t serialize(nixlSerializer* serializer) const;
         /**
          * @brief Print the descriptor list for debugging
          */

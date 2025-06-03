@@ -265,7 +265,7 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
 }
 
 namespace {
-nixl_status_t serializeSections(nixlSerDes* serializer,
+nixl_status_t serializeSections(nixlSerializer* serializer,
                                 const section_map_t &sections) {
   size_t seg_count =
       std::count_if(sections.begin(), sections.end(), [](const auto &pair) {
@@ -273,32 +273,27 @@ nixl_status_t serializeSections(nixlSerDes* serializer,
         return sec_key.second->supportsRemote();
       });
 
-  auto ret = serializer->addBuf("nixlSecElms", &seg_count, sizeof(seg_count));
-  if (ret)
-    return ret;
+  serializer->addBuf("nixlSecElms", &seg_count, sizeof(seg_count));
 
   for (const auto &[sec_key, dlist] : sections) {
     nixlBackendEngine *eng = sec_key.second;
     if (!eng->supportsRemote())
       continue;
 
-    ret = serializer->addStr("bknd", eng->getType());
+    serializer->addStr("bknd", eng->getType());
+    const nixl_status_t ret = dlist->serialize(serializer);
     if (ret)
       return ret;
-    ret = dlist->serialize(serializer);
-    if (ret)
-      return ret;
-    }
-
-    return NIXL_SUCCESS;
+  }
+  return NIXL_SUCCESS;
 }
 };
 
-nixl_status_t nixlLocalSection::serialize(nixlSerDes* serializer) const {
+nixl_status_t nixlLocalSection::serialize(nixlSerializer* serializer) const {
     return serializeSections(serializer, sectionMap);
 }
 
-nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
+nixl_status_t nixlLocalSection::serializePartial(nixlSerializer* serializer,
                                                  const backend_set_t &backends,
                                                  const nixl_reg_dlist_t &mem_elms) const {
     nixl_mem_t nixl_mem = mem_elms.getType();
@@ -400,7 +395,7 @@ nixl_status_t nixlRemoteSection::addDescList (
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlRemoteSection::loadRemoteData (nixlSerDes* deserializer,
+nixl_status_t nixlRemoteSection::loadRemoteData (nixlDeserializer* deserializer,
                                                  backend_map_t &backendToEngineMap) {
     nixl_status_t ret;
     size_t seg_count;

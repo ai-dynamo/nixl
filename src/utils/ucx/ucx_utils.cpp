@@ -132,7 +132,7 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker, const void* addr,
                      ucp_err_handling_mode_t err_handling_mode)
 {
     ucp_ep_params_t ep_params;
@@ -144,7 +144,7 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
     ep_params.err_mode        = err_handling_mode;
     ep_params.err_handler.cb  = err_cb_wrapper;
     ep_params.err_handler.arg = reinterpret_cast<void*>(this);
-    ep_params.address         = reinterpret_cast<ucp_address_t*>(addr);
+    ep_params.address         = reinterpret_cast<const ucp_address_t*>(addr);
 
     status = ucx_status_to_nixl(ucp_ep_create(worker, &ep_params, &eph));
     if (status == NIXL_SUCCESS)
@@ -176,7 +176,7 @@ nixl_status_t nixlUcxEp::disconnect_nb()
  * RKey management
  * =========================================== */
 
-int nixlUcxEp::rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey)
+int nixlUcxEp::rkeyImport(const void* addr, size_t size, nixlUcxRkey &rkey)
 {
     ucs_status_t status;
 
@@ -468,12 +468,12 @@ std::string nixlUcxWorker::epAddr()
         NIXL_WARN << "Unable to query UCX endpoint address";
         return {};
     }
-    const std::string result = nixlSerDes::_bytesToString(wattr.address, wattr.address_length);
+    const auto result = std::string(reinterpret_cast<const char*>(wattr.address), wattr.address_length);  // Deserialize?
     ucp_worker_release_address(worker.get(), wattr.address);
     return result;
 }
 
-absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, std::size_t size)
+absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(const void* addr, std::size_t size)
 {
     try {
         return std::make_unique<nixlUcxEp>(worker.get(), addr, ctx->err_handling_mode);
@@ -521,7 +521,7 @@ std::string nixlUcxContext::packRkey(nixlUcxMem &mem)
         /* TODO: MSW_NET_ERROR(priv->net, "failed to ucp_rkey_pack (%s)\n", ucs_status_string(status)); */
         return {};
     }
-    const std::string result = nixlSerDes::_bytesToString(rkey_buf, size);
+    const auto result = std::string(reinterpret_cast<const char*>(rkey_buf), size);  // Deserialize?
     ucp_rkey_buffer_release(rkey_buf);
     return result;
 }

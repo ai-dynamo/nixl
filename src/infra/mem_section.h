@@ -90,9 +90,9 @@ class nixlLocalSection : public nixlMemSection {
         nixl_status_t remDescList (const nixl_reg_dlist_t &mem_elms,
                                    nixlBackendEngine* backend);
 
-        nixl_status_t serialize(nixlSerDes* serializer) const;
+        nixl_status_t serialize(nixlSerializer* serializer) const;
 
-        nixl_status_t serializePartial(nixlSerDes* serializer,
+        nixl_status_t serializePartial(nixlSerializer* serializer,
                                        const backend_set_t &backends,
                                        const nixl_reg_dlist_t &mem_elms) const;
 
@@ -110,7 +110,7 @@ class nixlRemoteSection : public nixlMemSection {
     public:
         nixlRemoteSection (const std::string &agent_name);
 
-        nixl_status_t loadRemoteData (nixlSerDes* deserializer,
+        nixl_status_t loadRemoteData (nixlDeserializer* deserializer,
                                       backend_map_t &backendToEngineMap);
 
         // When adding self as a remote agent for local operations

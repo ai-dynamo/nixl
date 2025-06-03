@@ -798,18 +798,14 @@ nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
 nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent,
                                                  const std::string &remote_conn_info)
 {
-    size_t size = remote_conn_info.size();
-    std::vector<char> addr(size);
-
     if(remoteConnMap.count(remote_agent)) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
     std::shared_ptr<nixlUcxConnection> conn = std::make_shared<nixlUcxConnection>();
     bool error = false;
     for (auto &uw: uws) {
-        auto result = uw->connect(addr.data(), size);
+        auto result = uw->connect(remote_conn_info.data(), remote_conn_info.size());
         if (!result.ok()) {
             error = true;
             break;
@@ -885,8 +881,6 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
                                  const std::string &agent,
                                  nixlBackendMD* &output) {
     auto md = std::make_unique<nixlUcxPublicMetadata>();
-    size_t size = blob.size();
-
     auto search = remoteConnMap.find(agent);
 
     if(search == remoteConnMap.end()) {
@@ -895,13 +889,10 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
     }
     md->conn = search->second;
 
-    std::vector<char> addr(size);
-    nixlSerDes::_stringToBytes(addr.data(), blob, size);
-
     bool error = false;
     for (size_t wid = 0; wid < uws.size(); wid++) {
         nixlUcxRkey rkey;
-        error = md->conn->getEp(wid)->rkeyImport(addr.data(), size, rkey);
+        error = md->conn->getEp(wid)->rkeyImport(blob.data(), blob.size(), rkey);
         if (error)
             // TODO: error out. Should we indicate which desc failed or unroll everything prior
             break;
@@ -1166,7 +1157,7 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                                            nixlUcxReq &req,
                                            size_t worker_id) const
 {
-    nixlSerDes ser_des;
+    nixlSerializer sd;
     // TODO - temp fix, need to have an mpool
     static struct nixl_ucx_am_hdr hdr;
     uint32_t flags = 0;
@@ -1182,11 +1173,11 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     hdr.op = NOTIF_STR;
     flags |= UCP_AM_SEND_FLAG_EAGER;
 
-    ser_des.addStr("name", localAgent);
-    ser_des.addStr("msg", msg);
+    sd.addStr("name", localAgent);
+    sd.addStr("msg", msg);
     // TODO: replace with mpool for performance
 
-    auto buffer = std::make_unique<std::string>(std::move(ser_des.exportStr()));
+    auto buffer = std::make_unique<std::string>(std::move(sd.exportStr()));
     ret = search->second->getEp(worker_id)->sendAm(NOTIF_STR,
                                                    &hdr, sizeof(struct nixl_ucx_am_hdr),
                                                    (void*)buffer->data(), buffer->size(),
@@ -1206,7 +1197,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
                          const ucp_am_recv_param_t *param)
 {
     struct nixl_ucx_am_hdr* hdr = (struct nixl_ucx_am_hdr*) header;
-    nixlSerDes ser_des;
+    nixlDeserializer sd;
 
     std::string ser_str( (char*) data, length);
     nixlUcxEngine* engine = (nixlUcxEngine*) arg;
@@ -1223,9 +1214,9 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
         return UCS_ERR_INVALID_PARAM;
     }
 
-    ser_des.importStr(ser_str);
-    remote_name = ser_des.getStr("name");
-    msg = ser_des.getStr("msg");
+    (void)sd.importStr(ser_str);
+    remote_name = sd.getStr("name");
+    msg = sd.getStr("msg");
 
     if (engine->isProgressThread()) {
         /* Append to the private list to allow batching */

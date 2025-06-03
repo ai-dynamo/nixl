@@ -156,7 +156,7 @@ nixlDescList<T>::nixlDescList (const nixl_mem_t &type,
 }
 
 template <class T>
-nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
+nixlDescList<T>::nixlDescList(nixlDeserializer* deserializer) {
     size_t n_desc;
     std::string str;
 
@@ -357,9 +357,8 @@ int nixlDescList<T>::getIndex(const nixlBasicDesc &query) const {
 }
 
 template <class T>
-nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
+nixl_status_t nixlDescList<T>::serialize(nixlSerializer* serializer) const {
 
-    nixl_status_t ret;
     size_t n_desc = descs.size();
 
     // nixlMetaDesc should be internal and not be serialized
@@ -369,23 +368,16 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     // For now very few descriptor types, if needed can add a name method to each
     // descriptor. std::string_view(typeid(T).name()) is compiler dependent
     if (std::is_same<nixlBasicDesc, T>::value)
-        ret = serializer->addStr("nixlDList", "nixlBDList");
+        serializer->addStr("nixlDList", "nixlBDList");
     // We serialize SectionDesc the same as BlobDesc so it will be deserialized as BlobDesc on the other side
     else if (std::is_same<nixlBlobDesc, T>::value || std::is_same<nixlSectionDesc, T>::value)
-        ret = serializer->addStr("nixlDList", "nixlSDList");
+        serializer->addStr("nixlDList", "nixlSDList");
     else
         return NIXL_ERR_INVALID_PARAM;
 
-    if (ret) return ret;
-
-    ret = serializer->addBuf("t", &type, sizeof(type));
-    if (ret) return ret;
-
-    ret = serializer->addBuf("s", &sorted, sizeof(sorted));
-    if (ret) return ret;
-
-    ret = serializer->addBuf("n", &(n_desc), sizeof(n_desc));
-    if (ret) return ret;
+    serializer->addBuf("t", &type, sizeof(type));
+    serializer->addBuf("s", &sorted, sizeof(sorted));
+    serializer->addBuf("n", &(n_desc), sizeof(n_desc));
 
     if (n_desc==0)
         return NIXL_SUCCESS; // Unusual, but supporting it
@@ -393,14 +385,12 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     // Optimization for nixlBasicDesc,
     // contiguous in memory, so no need for per elm serialization
     if (std::is_same<nixlBasicDesc, T>::value) {
-        ret = serializer->addStr("", std::string(
-                                 reinterpret_cast<const char*>(descs.data()),
-                                 n_desc * sizeof(nixlBasicDesc)));
-        if (ret) return ret;
+        serializer->addStr("", std::string(
+                           reinterpret_cast<const char*>(descs.data()),
+                           n_desc * sizeof(nixlBasicDesc)));
     } else { // already checked it can be only nixlBlobDesc or nixlSectionDesc
-        for (auto & elm : descs) {
-            ret = serializer->addStr("", elm.serialize());
-            if (ret) return ret;
+        for (auto& elm : descs) {
+            serializer->addStr("", elm.serialize());
         }
     }
 

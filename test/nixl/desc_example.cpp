@@ -280,26 +280,27 @@ int main()
     dlist14.print();
 
     std::cout << "\nSerDes DescList tests:\n";
-    nixlSerDes* ser_des = new nixlSerDes();
-    nixlSerDes* ser_des2 = new nixlSerDes();
-
-    assert(dlist10.serialize(ser_des) == 0);
-    nixl_xfer_dlist_t importList (ser_des);;
-    assert(importList == dlist10);
-
-    assert(dlist20.serialize(ser_des2) == 0);
-    nixl_reg_dlist_t importSList (ser_des2);
-    assert(importSList == dlist20);
-
-    dlist10.print();
-    std::cout << "this should be a copy:\n";
-    importList.print();
-    std::cout << "\n";
-    dlist20.print();
-    std::cout << "this should be a copy:\n";
-    importSList.print();
-    std::cout << "\n";
-
+    {
+        nixlSerializer ser;
+        assert(dlist10.serialize(&ser) == 0);
+        nixlDeserializer des(std::move(ser).exportStr());
+        nixl_xfer_dlist_t importList(&des);
+        assert(importList == dlist10);
+        dlist10.print();
+        std::cout << "this should be a copy:\n";
+        importList.print();
+        std::cout << "\n";
+    } {
+        nixlSerializer ser;
+        assert(dlist20.serialize(&ser) == 0);
+        nixlDeserializer des(std::move(ser).exportStr());
+        nixl_reg_dlist_t importList(&des);
+        assert(importList == dlist20);
+        dlist20.print();
+        std::cout << "this should be a copy:\n";
+        importList.print();
+        std::cout << "\n";
+    }
     nixl_reg_dlist_t dlist21 (DRAM_SEG, false);
     nixl_reg_dlist_t dlist22 (DRAM_SEG, false);
     nixl_reg_dlist_t dlist23 (DRAM_SEG, false);
@@ -307,9 +308,6 @@ int main()
     nixl_reg_dlist_t dlist25 (DRAM_SEG, false);
 
     testPerf();
-
-    delete ser_des;
-    delete ser_des2;
 
     return 0;
 }
