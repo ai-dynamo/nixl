@@ -180,10 +180,6 @@ int main(int argc, char *argv[]) {
 
     xferBenchConfig::output_format = FLAGS_output_format;
 
-    if (xferBenchConfig::output_format == "json") {
-        return 0;
-    }
-
     int ret = xferBenchConfig::loadFromFlags();
     if (0 != ret) {
         return EXIT_FAILURE;

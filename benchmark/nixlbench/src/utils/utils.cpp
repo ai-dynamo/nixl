@@ -84,6 +84,7 @@ DEFINE_string(etcd_endpoints, "http://localhost:2379", "ETCD server endpoints fo
 DEFINE_string(posix_api_type, XFERBENCH_POSIX_API_AIO, "API type for POSIX operations [AIO, URING] (only used with POSIX backend)");
 DEFINE_string(posix_filepath, "", "File path for POSIX operations (only used with POSIX backend)");
 DEFINE_bool(storage_enable_direct, false, "Enable direct I/O for storage operations (only used with POSIX backend)");
+DEFINE_string(output_json_file, "", "Path to write JSON result output (optional)");
 
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
@@ -120,6 +121,7 @@ bool xferBenchConfig::storage_enable_direct = false;
 int xferBenchConfig::loadFromFlags() {
     runtime_type = FLAGS_runtime_type;
     worker_type = FLAGS_worker_type;
+    output_json_file = FLAGS_output_json_file;
 
     // Only load NIXL-specific configurations if using NIXL worker
     if (worker_type == XFERBENCH_WORKER_NIXL) {
@@ -534,20 +536,29 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     }
 
     if (xferBenchConfig::output_format == "json") {
-        json result;
-        result["block_size"] = block_size;
-        result["batch_size"] = batch_size;
-        result["avg_latency_us"] = avg_latency;
-        result["throughput_mib"] = throughput;
-        result["throughput_gib"] = throughput_gib;
-        result["throughput_gb"] = throughput_gb;
-        if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
-            result["aggregate_bw_gb"] = totalbw;
-            result["network_util_percent"] = (totalbw / (rt->getSize()/2 * MAXBW))*100;
-        }
-        std::cout << result.dump() << std::endl;
-        return;
+    json result;
+    result["block_size"] = block_size;
+    result["batch_size"] = batch_size;
+    result["avg_latency_us"] = avg_latency;
+    result["throughput_mib"] = throughput;
+    result["throughput_gib"] = throughput_gib;
+    result["throughput_gb"] = throughput_gb;
+    if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
+        result["aggregate_bw_gb"] = totalbw;
+        result["network_util_percent"] = (totalbw / (rt->getSize()/2 * MAXBW))*100;
     }
+    if (!xferBenchConfig::output_json_file.empty()) {
+        std::ofstream out(xferBenchConfig::output_json_file, std::ios::app);
+        if (!out) {
+            std::cerr << "Failed to open JSON output file: " << xferBenchConfig::output_json_file << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        out << result.dump() << std::endl;
+    } else {
+        std::cout << result.dump() << std::endl;
+    }
+    return;
+}
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         std::cout << std::left << std::setw(20) << block_size
                   << std::setw(15) << batch_size

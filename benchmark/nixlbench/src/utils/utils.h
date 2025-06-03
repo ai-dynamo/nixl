@@ -134,7 +134,8 @@ class xferBenchConfig {
         static int gds_batch_pool_size;
         static int gds_batch_limit;
         static std::string output_format;
-
+        static std::string output_json_file;
+        
         static int loadFromFlags();
         static void printConfig();
         static std::vector<std::string> parseDeviceList();
