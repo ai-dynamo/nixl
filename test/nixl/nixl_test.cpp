@@ -83,7 +83,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
 
     /** Only send desc list */
     nixlSerializer serdes;
-    assert(dram_for_ucx.trim().serialize(&serdes) == NIXL_SUCCESS);
+    assert(dram_for_ucx.trim().serialize(serdes) == NIXL_SUCCESS);
 
     std::cout << "Thread " << thread_id << " Wait for initiator and then send xfer descs\n";
     const std::string message = std::move(serdes).exportStr();
@@ -161,7 +161,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
     }
 
     std::cout << "Thread " << thread_id << " Verify Deserialized Target's Desc List at Initiator\n";
-    nixl_xfer_dlist_t dram_target_ucx(&remote_des);
+    nixl_xfer_dlist_t dram_target_ucx(remote_des);
     nixl_xfer_dlist_t dram_initiator_ucx = dram_for_ucx.trim();
     dram_target_ucx.print();
 

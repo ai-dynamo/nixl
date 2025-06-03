@@ -1172,12 +1172,12 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     hdr.op = NOTIF_STR;
     flags |= UCP_AM_SEND_FLAG_EAGER;
 
-    nixlSerializer sd;
-    sd.addStr("name", localAgent);
-    sd.addStr("msg", msg);
+    nixlSerializer nser;
+    nser.addStr("name", localAgent);
+    nser.addStr("msg", msg);
     // TODO: replace with mpool for performance
 
-    auto buffer = std::make_unique<std::string>(std::move(sd).exportStr());
+    auto buffer = std::make_unique<std::string>(std::move(nser).exportStr());
     ret = search->second->getEp(worker_id)->sendAm(NOTIF_STR,
                                                    &hdr, sizeof(struct nixl_ucx_am_hdr),
                                                    (void*)buffer->data(), buffer->size(),
@@ -1197,7 +1197,6 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
                          const ucp_am_recv_param_t *param)
 {
     struct nixl_ucx_am_hdr* hdr = (struct nixl_ucx_am_hdr*) header;
-    nixlDeserializer sd;
 
     std::string ser_str( (char*) data, length);
     nixlUcxEngine* engine = (nixlUcxEngine*) arg;
@@ -1214,9 +1213,10 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
         return UCS_ERR_INVALID_PARAM;
     }
 
-    (void)sd.importStr(ser_str);
-    remote_name = sd.getStr("name");
-    msg = sd.getStr("msg");
+    nixlDeserializer des;
+    (void)des.importStr(ser_str);
+    remote_name = des.getStr("name");
+    msg = des.getStr("msg");
 
     if (engine->isProgressThread()) {
         /* Append to the private list to allow batching */

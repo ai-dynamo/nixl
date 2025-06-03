@@ -215,14 +215,14 @@ PYBIND11_MODULE(_bindings, m) {
         .def(py::pickle(
             [](const nixl_xfer_dlist_t& self) { // __getstate__
                 nixlSerializer nser;
-                self.serialize(&nser);
+                self.serialize(nser);
                 return py::bytes(nser.exportStr());
             },
             [](py::bytes serdes_str) { // __setstate__
                 nixlDeserializer des;
                 (void)des.importStr(std::string(serdes_str));
                 nixl_xfer_dlist_t newObj =
-                    nixl_xfer_dlist_t(&des);
+                    nixl_xfer_dlist_t(des);
                 return newObj;
             }
         ));
@@ -276,14 +276,14 @@ PYBIND11_MODULE(_bindings, m) {
         .def(py::pickle(
             [](const nixl_reg_dlist_t& self) { // __getstate__
                 nixlSerializer nser;
-                self.serialize(&nser);
+                self.serialize(nser);
                 return py::bytes(nser.exportStr());
             },
             [](py::bytes serdes_str) { // __setstate__
                 nixlDeserializer des;
                 (void)des.importStr(std::string(serdes_str));
                 nixl_reg_dlist_t newObj =
-                    nixl_reg_dlist_t(&des);
+                    nixl_reg_dlist_t(des);
                 return newObj;
             }
         ));

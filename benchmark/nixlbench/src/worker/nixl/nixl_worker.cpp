@@ -582,7 +582,6 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
         }
     } else {
         for (const auto &local_iov: local_iovs) {
-            nixlSerDes ser_des;
             nixl_xfer_dlist_t local_desc(seg_type);
 
             iovListToNixlXferDlist(local_iov, local_desc);
@@ -591,8 +590,9 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 const char *buffer;
                 int destrank;
 
-                local_desc.serialize(&ser_des);
-                std::string desc_str = ser_des.exportStr();
+                nixlSerializer nser;
+                local_desc.serialize(nser);
+                const std::string desc_str = std::move(nser).exportStr();
                 buffer = desc_str.data();
                 desc_str_sz = desc_str.size();
 
@@ -620,10 +620,11 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 buffer = (char *)calloc(desc_str_sz, sizeof(*buffer));
                 rt->recvChar((char *)buffer, desc_str_sz, srcrank);
 
-                std::string desc_str(buffer, desc_str_sz);
-                ser_des.importStr(desc_str);
+                const std::string desc_str(buffer, desc_str_sz);
+                nixlDeserializer des;
+                (void)des.importStr(desc_str);
 
-                nixl_xfer_dlist_t remote_desc(&ser_des);
+                nixl_xfer_dlist_t remote_desc(des);
                 res.emplace_back(nixlXferDlistToIOVList(remote_desc));
             }
         }

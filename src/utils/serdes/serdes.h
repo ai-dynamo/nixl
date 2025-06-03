@@ -21,11 +21,30 @@
 #include <string>
 #include <string_view>
 #include <cstdint>
+#include <type_traits>
 
 #include "nixl_types.h"
 
 class nixlSerializer
 {
+public:
+    nixlSerializer();
+
+    explicit nixlSerializer(const std::size_t preAlloc);
+
+    void addStr(const std::string_view& tag, const std::string_view& str);
+    void addBuf(const std::string_view& tag, const void* buf, const std::size_t len);
+
+    template<typename Int>
+    void addInt(const std::string_view& tag, const Int in)
+    {
+        static_assert(std::is_integral_v<Int> || std::is_enum_v<Int>);
+        addBuf(tag, &in, sizeof(in));
+    }
+
+    [[nodiscard]] std::string exportStr() && noexcept;
+    [[nodiscard]] const std::string& exportStr() const & noexcept;
+
 private:
     std::string buffer_;
 
@@ -37,40 +56,37 @@ private:
     {
         addRaw(literal, N - 1);
     }
-
-public:
-    nixlSerializer();
-
-    explicit nixlSerializer(const std::size_t preAlloc);
-
-    void addStr(const std::string_view& tag, const std::string_view& str);
-    void addBuf(const std::string_view& tag, const void* buf, const std::size_t len);
-
-    [[nodiscard]] std::string exportStr() && noexcept;
-    [[nodiscard]] const std::string& exportStr() const & noexcept;
 };
 
 class nixlDeserializer
 {
-private:
-    std::string buffer_;
-    std::size_t offset_ = 0;
-
-    [[nodiscard]] std::size_t peekLenUnsafe(const std::size_t offset = 0) const;
-
 public:
     explicit nixlDeserializer(std::string&&);
     explicit nixlDeserializer(const std::string&);
 
-    [[nodiscard]] std::string getStr(const std::string_view& tag);  // Returns empty string on failure -- TODO: Use exceptions!.
-    [[nodiscard]] std::size_t peekBufLen(const std::string_view& tag) const;  // Returns -1 on failure.
-    [[nodiscard]] nixl_status_t getBuf(const std::string_view& tag, void* buf, std::size_t len);  // Assumes len is result of peekBufLen.
+    // TODO: Change these functions to throw exceptions on failure:
+
+    [[nodiscard]] std::string getStr(const std::string_view& tag);  // Returns empty string on failure.
+
+    template<typename Int>
+    [[nodiscard]] nixl_status_t getInt(const std::string_view& tag, Int& out)
+    {
+        static_assert(std::is_integral_v<Int> || std::is_enum_v<Int>);
+        return getIntImpl(tag, &out, sizeof(out));
+    }
 
     // TODO: Remove all functions below after switching to exceptions:
 
     nixlDeserializer() noexcept = default;
 
     [[nodiscard]] nixl_status_t importStr(std::string);
+
+private:
+    std::string buffer_;
+    std::size_t offset_ = 0;
+
+    [[nodiscard]] std::size_t peekLenUnsafe(const std::size_t offset = 0) const;
+    [[nodiscard]] nixl_status_t getIntImpl(const std::string_view& tag, void* data, const std::size_t size);
 };
 
 #endif

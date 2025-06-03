@@ -21,13 +21,14 @@
 
 int main() {
 
-    int i = 0xff;
-    std::string s = "testString";
-    std::string t1 = "i", t2 = "s";
+    const int i = 0xff;
+    const std::string s = "testString";
+    const std::string t1 = "i";
+    const std::string t2 = "s";
 
     nixlSerializer sd;
 
-    sd.addBuf(t1, &i, sizeof(i));
+    sd.addInt(t1, i);
     sd.addStr(t2, s);
 
     const std::string sdbuf = sd.exportStr();
@@ -42,21 +43,14 @@ int main() {
     nixl_status_t ret = sd2.importStr(sdbuf);
     assert(ret == 0);
 
-    const std::size_t osize = sd2.peekBufLen(t1);
-    assert(osize > 0);
-
-    void *ptr = malloc(osize);
-    ret = sd2.getBuf(t1, ptr, osize);
+    int j = 0;
+    ret = sd2.getInt(t1, j);
     assert(ret == 0);
+    assert(i == j);
 
     const std::string s2 =  sd2.getStr(t2);
     assert(s2.size() > 0);
-
-    assert(*((int*) ptr) == 0xff);
-
     assert(s2.compare("testString") == 0);
-
-    free(ptr);
 
     return 0;
 }

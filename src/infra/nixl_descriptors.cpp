@@ -156,13 +156,13 @@ nixlDescList<T>::nixlDescList (const nixl_mem_t &type,
 }
 
 template <class T>
-nixlDescList<T>::nixlDescList(nixlDeserializer* deserializer) {
+nixlDescList<T>::nixlDescList(nixlDeserializer& deserializer) {
     size_t n_desc;
     std::string str;
 
     descs.clear();
 
-    str = deserializer->getStr("nixlDList"); // Object type
+    str = deserializer.getStr("nixlDList"); // Object type
     if (str.size()==0)
         return;
 
@@ -170,18 +170,18 @@ nixlDescList<T>::nixlDescList(nixlDeserializer* deserializer) {
     if (std::is_same<nixlMetaDesc, T>::value || std::is_same<nixlSectionDesc, T>::value)
         return;
 
-    if (deserializer->getBuf("t", &type, sizeof(type)))
+    if (deserializer.getInt("t", type))
         return;
-    if (deserializer->getBuf("s", &sorted, sizeof(sorted)))
+    if (deserializer.getInt("s", sorted))
         return;
-    if (deserializer->getBuf("n", &n_desc, sizeof(n_desc)))
+    if (deserializer.getInt("n", n_desc))
         return;
 
     if (std::is_same<nixlBasicDesc, T>::value) {
         // Contiguous in memory, so no need for per elm deserialization
         if (str!="nixlBDList")
             return;
-        str = deserializer->getStr("");
+        str = deserializer.getStr("");
         if (str.size()!= n_desc * sizeof(nixlBasicDesc))
             return;
         // If size is proper, deserializer cannot fail
@@ -192,7 +192,7 @@ nixlDescList<T>::nixlDescList(nixlDeserializer* deserializer) {
         if (str!="nixlSDList")
             return;
         for (size_t i=0; i<n_desc; ++i) {
-            str = deserializer->getStr("");
+            str = deserializer.getStr("");
             // If size is proper, deserializer cannot fail
             // Allowing empty strings, might change later
             if (str.size() < sizeof(nixlBasicDesc)) {
@@ -357,9 +357,9 @@ int nixlDescList<T>::getIndex(const nixlBasicDesc &query) const {
 }
 
 template <class T>
-nixl_status_t nixlDescList<T>::serialize(nixlSerializer* serializer) const {
+nixl_status_t nixlDescList<T>::serialize(nixlSerializer& serializer) const {
 
-    size_t n_desc = descs.size();
+    const std::size_t n_desc = descs.size();
 
     // nixlMetaDesc should be internal and not be serialized
     if (std::is_same<nixlMetaDesc, T>::value)
@@ -368,16 +368,16 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerializer* serializer) const {
     // For now very few descriptor types, if needed can add a name method to each
     // descriptor. std::string_view(typeid(T).name()) is compiler dependent
     if (std::is_same<nixlBasicDesc, T>::value)
-        serializer->addStr("nixlDList", "nixlBDList");
+        serializer.addStr("nixlDList", "nixlBDList");
     // We serialize SectionDesc the same as BlobDesc so it will be deserialized as BlobDesc on the other side
     else if (std::is_same<nixlBlobDesc, T>::value || std::is_same<nixlSectionDesc, T>::value)
-        serializer->addStr("nixlDList", "nixlSDList");
+        serializer.addStr("nixlDList", "nixlSDList");
     else
         return NIXL_ERR_INVALID_PARAM;
 
-    serializer->addBuf("t", &type, sizeof(type));
-    serializer->addBuf("s", &sorted, sizeof(sorted));
-    serializer->addBuf("n", &(n_desc), sizeof(n_desc));
+    serializer.addInt("t", type);
+    serializer.addInt("s", sorted);
+    serializer.addInt("n", n_desc);
 
     if (n_desc==0)
         return NIXL_SUCCESS; // Unusual, but supporting it
@@ -385,12 +385,12 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerializer* serializer) const {
     // Optimization for nixlBasicDesc,
     // contiguous in memory, so no need for per elm serialization
     if (std::is_same<nixlBasicDesc, T>::value) {
-        serializer->addStr("", std::string(
+        serializer.addStr("", std::string(
                            reinterpret_cast<const char*>(descs.data()),
                            n_desc * sizeof(nixlBasicDesc)));
     } else { // already checked it can be only nixlBlobDesc or nixlSectionDesc
         for (auto& elm : descs) {
-            serializer->addStr("", elm.serialize());
+            serializer.addStr("", elm.serialize());
         }
     }
 

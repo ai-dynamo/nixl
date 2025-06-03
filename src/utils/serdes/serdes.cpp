@@ -77,8 +77,8 @@ nixlDeserializer::nixlDeserializer(std::string&& str)
     if(buffer_.size() < introString.size() ) {
         throw std::runtime_error("insufficient deserialization data for intro");
     }
-    if(std::memcmp(buffer_.data(), introString.data(), introString.size() != 0 )) {
-        throw std::runtime_error("invalid deserializtion intro data");
+    if(std::memcmp(buffer_.data(), introString.data(), introString.size()) != 0) {
+        throw std::runtime_error("invalid deserialization intro data");
     }
 }
 
@@ -115,41 +115,24 @@ std::string nixlDeserializer::getStr(const std::string_view& tag)
     return ret;
 }
 
-std::size_t nixlDeserializer::peekBufLen(const std::string_view& tag) const
+nixl_status_t nixlDeserializer::getIntImpl(const std::string_view& tag, void* data, const std::size_t size)
 {
-    if(offset_ + tag.size() + sizeof(std::size_t) > buffer_.size()) {
+    if(offset_ + tag.size() + sizeof(std::size_t) + size + 1 > buffer_.size()) {
         // throw std::runtime_error("deserialization data insufficient");
-        return -1;
+        return NIXL_ERR_MISMATCH;
     }
     if(buffer_.compare(offset_, tag.size(), tag) != 0) {
         // throw std::runtime_error("deserialization tag mismatch ...");
-        return -1;
+        return NIXL_ERR_MISMATCH;
     }
-    return peekLenUnsafe(tag.size());
-}
+    const std::size_t len = peekLenUnsafe(tag.size());
+    offset_ += tag.size() + sizeof(len);
 
-nixl_status_t nixlDeserializer::getBuf(const std::string_view& tag, void *buf, const std::size_t len)
-{
-    if(offset_ + tag.size() + sizeof(std::size_t) > buffer_.size()) {
-        // throw std::runtime_error("deserialization data insufficient");
-        return NIXL_ERR_MISMATCH;
-    }
-    if(buffer_.compare(offset_, tag.size(), tag) != 0) {
-        // throw std::runtime_error("deserialization tag mismatch ...");
-        return NIXL_ERR_MISMATCH;
-    }
-    if(peekLenUnsafe(tag.size()) != len) {  // NIXL_ASSERT(peekBufLen(tag) == len);
+    if(size != len) {
         // throw std::runtime_error("deserialization size mismatch");
         return NIXL_ERR_MISMATCH;
     }
-    offset_ += tag.size() + sizeof(std::size_t);
-
-    if(offset_ + len + 1 > buffer_.size()) {
-        // throw std::runtime_error("deserialization data insufficient");
-        return NIXL_ERR_MISMATCH;
-    }
-    std::memcpy(buf, buffer_.data() + offset_, len);
-    offset_ += len + 1;  // Also skip trailing '|'.
+    std::memcpy(data, buffer_.data() + offset_, size);
     return NIXL_SUCCESS;
 }
 

@@ -212,7 +212,7 @@ class nixlDescList {
          *
          * @param deserialize nixlDeserializer object to construct nixlDescList
          */
-        nixlDescList(nixlDeserializer* deserializer);
+        explicit nixlDescList(nixlDeserializer& deserializer);
         /**
          * @brief Copy constructor for creating nixlDescList from another object
          *        of the same type.
@@ -327,7 +327,7 @@ class nixlDescList {
          * @param serializer nixlSerializer object to serialize nixlDescList
          * @return nixl_status_t Error code if serialize was not successful
          */
-        nixl_status_t serialize(nixlSerializer* serializer) const;
+        nixl_status_t serialize(nixlSerializer& serializer) const;
         /**
          * @brief Print the descriptor list for debugging
          */
