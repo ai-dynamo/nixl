@@ -133,6 +133,7 @@ nixl_status_t nixlDeserializer::getIntImpl(const std::string_view& tag, void* da
         return NIXL_ERR_MISMATCH;
     }
     std::memcpy(data, buffer_.data() + offset_, size);
+    offset_ += size + 1;  // Also skip trailing '|'.
     return NIXL_SUCCESS;
 }
 
