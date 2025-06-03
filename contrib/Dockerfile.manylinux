@@ -54,7 +54,7 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     libibumad-devel \
     wget \
     zlib
-    
+
 ENV OPENSSL_ROOT_DIR=/usr/local/ssl \
     OPENSSL_LIBRARIES=/usr/local/ssl/lib/
 
@@ -101,7 +101,7 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     uv pip install --upgrade meson pybind11 patchelf
 
 RUN rm -rf /usr/lib/ucx
-RUN rm -rf /opt/hpcx/ucx     
+RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /workspace && \
     git clone https://github.com/NVIDIA/gdrcopy.git && \
