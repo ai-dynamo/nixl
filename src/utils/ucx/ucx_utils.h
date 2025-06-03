@@ -14,26 +14,46 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __UCX_UTILS_H
-#define __UCX_UTILS_H
+#ifndef NIXL_SRC_UTILS_UCX_UCX_UTILS_H
+#define NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 
-#include <nixl_types.h>
 #include <memory>
+#include <type_traits>
 
 extern "C"
 {
 #include <ucp/api/ucp.h>
 }
 
-#include <memory>
+#include <nixl_types.h>
+
 #include "absl/status/statusor.h"
 
-enum nixl_ucx_mt_t {
-    NIXL_UCX_MT_SINGLE,
-    NIXL_UCX_MT_CTX,
-    NIXL_UCX_MT_WORKER,
-    NIXL_UCX_MT_MAX
+enum class nixl_ucx_mt_t {
+    SINGLE,
+    CTX,
+    WORKER
 };
+
+template<typename Enum>
+[[nodiscard]] constexpr auto enumToInteger(const Enum e) noexcept
+{
+    static_assert(std::is_enum_v<Enum>);
+    return std::underlying_type_t<Enum>(e);
+}
+
+[[nodiscard]] std::string_view constexpr to_string_view(const nixl_ucx_mt_t t) noexcept
+{
+    switch(t) {
+        case nixl_ucx_mt_t::SINGLE:
+            return "SINGLE";
+        case nixl_ucx_mt_t::CTX:
+            return "CTX";
+        case nixl_ucx_mt_t::WORKER:
+            return "WORKER";
+    }
+    return "INVALID";  // It is not a to_string function's job to validate.
+}
 
 using nixlUcxReq = void*;
 
@@ -137,44 +157,48 @@ public:
                    unsigned long num_workers, nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
-    static bool mtLevelIsSupproted(nixl_ucx_mt_t mt_type);
-
     /* Memory management */
     int memReg(void *addr, size_t size, nixlUcxMem &mem);
-    std::unique_ptr<char []> packRkey(nixlUcxMem &mem, size_t &size);
+    [[nodiscard]] std::string packRkey(nixlUcxMem &mem);
     void memDereg(nixlUcxMem &mem);
 
     friend class nixlUcxWorker;
 };
 
+[[nodiscard]] bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t) noexcept;
+
 class nixlUcxWorker {
 private:
     /* Local UCX stuff */
-    std::shared_ptr<nixlUcxContext> ctx;
-    ucp_worker_h worker;
+    const std::shared_ptr<nixlUcxContext> ctx;
+    const std::unique_ptr<ucp_worker, void(*)(ucp_worker*)> worker;
 
-public:
-    nixlUcxWorker(std::shared_ptr<nixlUcxContext> &_ctx);
-    ~nixlUcxWorker();
+    [[nodiscard]] static ucp_worker* createUcpWorker(nixlUcxContext&);
+
+  public:
+    explicit nixlUcxWorker(const std::shared_ptr<nixlUcxContext> &_ctx);
+
+    nixlUcxWorker( nixlUcxWorker&& ) = delete;
+    nixlUcxWorker( const nixlUcxWorker& ) = delete;
+    void operator=( nixlUcxWorker&& ) = delete;
+    void operator=( const nixlUcxWorker& ) = delete;
 
     /* Connection */
-    std::unique_ptr<char []> epAddr(size_t &size);
+    [[nodiscard]] std::string epAddr();
     absl::StatusOr<std::unique_ptr<nixlUcxEp>> connect(void* addr, size_t size);
 
     /* Active message handling */
     int regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void* arg);
-    int getRndvData(void* data_desc, void* buffer, size_t len,
-                    const ucp_request_param_t *param, nixlUcxReq &req);
 
     /* Data access */
     int progress();
-    nixl_status_t test(nixlUcxReq req);
+    [[nodiscard]] nixl_status_t test(nixlUcxReq req);
 
     void reqRelease(nixlUcxReq req);
     void reqCancel(nixlUcxReq req);
 
     /* Worker access */
-    ucp_worker_h getWorker() const { return worker; }
+    [[nodiscard]] ucp_worker_h getWorker() const noexcept { return worker.get(); }
 };
 
 [[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {

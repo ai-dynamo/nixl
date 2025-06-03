@@ -15,7 +15,7 @@
 
 gds_path = get_option('gds_path')
 if gds_path != ''
-    gds_lib_path = gds_path + '/lib'
+    gds_lib_path = gds_path + '/lib64'
     gds_inc_path = gds_path + '/include'
     cufile_dep = declare_dependency(
         link_args: ['-L' + gds_lib_path, '-lcufile'],
