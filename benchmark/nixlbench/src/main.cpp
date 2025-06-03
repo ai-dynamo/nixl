@@ -29,8 +29,9 @@
 #include <unistd.h>
 #include <memory>
 #include <csignal>
-#include "json.hpp"
+#include "nlohmann/json.hpp"
 using json = nlohmann::json;
+DECLARE_string(output_format);
 
 static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int num_threads) {
     int initiator_device, target_device;

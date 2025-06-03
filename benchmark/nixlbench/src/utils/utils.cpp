@@ -26,8 +26,9 @@
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
-#include "json.hpp"
+#include "nlohmann/json.hpp"
 using json = nlohmann::json;
+#include <fstream>
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
@@ -40,7 +41,6 @@ DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communic
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
 DEFINE_string(backend, XFERBENCH_BACKEND_UCX, "Name of communication backend [UCX, UCX_MO, GDS, POSIX] \
               (only used with nixl worker)");
-DEFINE_string(output_format, "text", "Output format for benchmark results [text, json]");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]");
 DEFINE_string(target_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for target \
@@ -84,6 +84,7 @@ DEFINE_string(etcd_endpoints, "http://localhost:2379", "ETCD server endpoints fo
 DEFINE_string(posix_api_type, XFERBENCH_POSIX_API_AIO, "API type for POSIX operations [AIO, URING] (only used with POSIX backend)");
 DEFINE_string(posix_filepath, "", "File path for POSIX operations (only used with POSIX backend)");
 DEFINE_bool(storage_enable_direct, false, "Enable direct I/O for storage operations (only used with POSIX backend)");
+DEFINE_string(output_format, "text", "Output format for benchmark results [text, json]");
 DEFINE_string(output_json_file, "", "Path to write JSON result output (optional)");
 
 std::string xferBenchConfig::runtime_type = "";
@@ -117,6 +118,8 @@ int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::posix_filepath = "";
 bool xferBenchConfig::storage_enable_direct = false;
+std::string xferBenchConfig::output_format = "";
+std::string xferBenchConfig::output_json_file = "";
 
 int xferBenchConfig::loadFromFlags() {
     runtime_type = FLAGS_runtime_type;

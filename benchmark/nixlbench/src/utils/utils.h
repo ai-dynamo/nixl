@@ -26,7 +26,7 @@
 #include <vector>
 #include <optional>
 #include "runtime/runtime.h"
-#include "json.hpp"
+#include "nlohmann/json.hpp"
 using json = nlohmann::json;
 
 #if HAVE_CUDA
