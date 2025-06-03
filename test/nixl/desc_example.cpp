@@ -281,9 +281,9 @@ int main()
 
     std::cout << "\nSerDes DescList tests:\n";
     {
-        nixlSerializer ser;
-        assert(dlist10.serialize(&ser) == 0);
-        nixlDeserializer des(std::move(ser).exportStr());
+        nixlSerializer nser;
+        assert(dlist10.serialize(&nser) == 0);
+        nixlDeserializer des(std::move(nser).exportStr());
         nixl_xfer_dlist_t importList(&des);
         assert(importList == dlist10);
         dlist10.print();
@@ -291,9 +291,9 @@ int main()
         importList.print();
         std::cout << "\n";
     } {
-        nixlSerializer ser;
-        assert(dlist20.serialize(&ser) == 0);
-        nixlDeserializer des(std::move(ser).exportStr());
+        nixlSerializer nser;
+        assert(dlist20.serialize(&nser) == 0);
+        nixlDeserializer des(std::move(nser).exportStr());
         nixl_reg_dlist_t importList(&des);
         assert(importList == dlist20);
         dlist20.print();

@@ -214,9 +214,9 @@ PYBIND11_MODULE(_bindings, m) {
         .def("print", &nixl_xfer_dlist_t::print)
         .def(py::pickle(
             [](const nixl_xfer_dlist_t& self) { // __getstate__
-                nixlSerializer ser;
-                self.serialize(&ser);
-                return py::bytes(ser.exportStr());
+                nixlSerializer nser;
+                self.serialize(&nser);
+                return py::bytes(nser.exportStr());
             },
             [](py::bytes serdes_str) { // __setstate__
                 nixlDeserializer des;
@@ -275,9 +275,9 @@ PYBIND11_MODULE(_bindings, m) {
         .def("print", &nixl_reg_dlist_t::print)
         .def(py::pickle(
             [](const nixl_reg_dlist_t& self) { // __getstate__
-                nixlSerializer ser;
-                self.serialize(&ser);
-                return py::bytes(ser.exportStr());
+                nixlSerializer nser;
+                self.serialize(&nser);
+                return py::bytes(nser.exportStr());
             },
             [](py::bytes serdes_str) { // __setstate__
                 nixlDeserializer des;
