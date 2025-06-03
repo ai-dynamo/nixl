@@ -23,6 +23,7 @@
 #include "agent_data.h"
 #include "plugin_manager.h"
 #include "common/nixl_log.h"
+#include "common/util.h"
 
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
@@ -849,12 +850,14 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     // If status is not NIXL_IN_PROG we can repost,
+    NVTXRangePush("NixlAgent::postXferReq");
     ret = req_hndl->engine->postXfer (req_hndl->backendOp,
                                      *req_hndl->initiatorDescs,
                                      *req_hndl->targetDescs,
                                       req_hndl->remoteAgent,
                                       req_hndl->backendHandle,
                                       &opt_args);
+    NVTXRangePop();
     req_hndl->status = ret;
     return ret;
 }
