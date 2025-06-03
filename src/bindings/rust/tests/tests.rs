@@ -410,9 +410,6 @@ fn test_basic_agent_lifecycle() {
     println!("Waiting for notifications");
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    // // see if the values in storage2 are 0xbb
-    // assert!(storage2.as_slice().iter().all(|&x| x == 0xbb));
-
     loop {
         agent2.get_notifications(&mut notifs, None).unwrap();
         if !notifs.is_empty().unwrap() {
