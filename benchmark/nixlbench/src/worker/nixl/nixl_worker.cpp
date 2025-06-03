@@ -226,10 +226,10 @@ getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value)
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
 
-#if HAVE_CUDA_FABRIC
 static std::optional<xferBenchIOV>
 getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value)
 {
+#if HAVE_CUDA_FABRIC
     CUdeviceptr addr = 0;
     CUmemAllocationProp prop = {};
     CUmemAccessDesc access = {};
@@ -278,8 +278,12 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value)
 
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size,
                                        devid, padded_size, handle);
-}
+
+#else
+    std::cerr << "CUDA_FABRIC is not supported" << std::endl;
+    return std::nullopt;
 #endif /* HAVE_CUDA_FABRIC */
+}
 
 static std::optional<xferBenchIOV> getVramDesc(int devid, size_t buffer_size,
                                                bool isInit)
@@ -289,11 +293,10 @@ static std::optional<xferBenchIOV> getVramDesc(int devid, size_t buffer_size,
                                     XFERBENCH_TARGET_BUFFER_ELEMENT;
 
     if (xferBenchConfig::enable_vmm) {
-#if HAVE_CUDA_FABRIC
         return getVramDescCudaVmm(devid, buffer_size, memset_value);
-#endif
+    } else {
+        return getVramDescCuda(devid, buffer_size, memset_value);
     }
-    return getVramDescCuda(devid, buffer_size, memset_value);
 }
 
 std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
