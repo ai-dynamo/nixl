@@ -18,6 +18,7 @@ ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
+ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 
 RUN apt-get update -y && \
@@ -44,7 +45,8 @@ RUN apt-get update -y && \
     build-essential
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
-    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev
+    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
@@ -57,13 +59,16 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH \
     RUST_VERSION=1.86.0 \
-    RUSTARCH=x86_64-unknown-linux-gnu
+    RUSTARCH=${ARCH}-unknown-linux-gnu
 
-RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" && \
-    echo "a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f *rustup-init" | sha256sum -c - && \
+# Download rustup-init and its checksum for the target architecture
+RUN wget --tries=3 --waitretry=5 \
+    "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" \
+    "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init.sha256" && \
+    sha256sum -c rustup-init.sha256 && \
     chmod +x rustup-init && \
     ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
-    rm rustup-init && \
+    rm rustup-init* && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
 WORKDIR /workspace/nixl
@@ -110,16 +115,16 @@ RUN rm -rf build && \
     ninja install
 
 ENV NIXL_PREFIX=/usr/local/nixl
-ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/x86_64-linux-gnu/plugins
-RUN echo "/usr/local/nixl/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
-    echo "/usr/local/nixl/lib/x86_64-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
+ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/$ARCH-linux-gnu/plugins
+RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
 RUN cd src/bindings/rust && cargo build --release --locked
 
 # Create the wheel
 ARG WHL_PYTHON_VERSIONS="3.12"
-ARG WHL_PLATFORM="manylinux_2_39_x86_64"
+ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
