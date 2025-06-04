@@ -98,23 +98,23 @@ public:
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
     /* Rkey */
-    int rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey);
+    int rkeyImport(void* addr, std::size_t size, nixlUcxRkey &rkey);
     void rkeyDestroy(nixlUcxRkey &rkey);
 
     /* Active message handling */
     nixl_status_t sendAm(unsigned msg_id,
-                         void* hdr, size_t hdr_len,
-                         void* buffer, size_t len,
-                         uint32_t flags, nixlUcxReq &req);
+                         void* hdr, std::size_t hdr_len,
+                         void* buffer, std::size_t len,
+                         std::uint32_t flags, nixlUcxReq &req);
 
     /* Data access */
-    nixl_status_t read(uint64_t raddr, nixlUcxRkey &rk,
+    nixl_status_t read(std::uint64_t raddr, nixlUcxRkey &rk,
                        void *laddr, nixlUcxMem &mem,
-                       size_t size, nixlUcxReq &req);
+                       std::size_t size, nixlUcxReq &req);
     nixl_status_t write(void *laddr, nixlUcxMem &mem,
-                        uint64_t raddr, nixlUcxRkey &rk,
-                        size_t size, nixlUcxReq &req);
-    nixl_status_t estimateCost(size_t size,
+                        std::uint64_t raddr, nixlUcxRkey &rk,
+                        std::size_t size, nixlUcxReq &req);
+    nixl_status_t estimateCost(std::size_t size,
                                std::chrono::microseconds &duration,
                                std::chrono::microseconds &err_margin,
                                nixl_cost_t &method);
@@ -124,7 +124,7 @@ public:
 class nixlUcxMem {
 private:
     void *base;
-    size_t size;
+    std::size_t size;
     ucp_mem_h memh;
 public:
     friend class nixlUcxWorker;
@@ -152,13 +152,13 @@ public:
 
     using req_cb_t = void(void *request);
     nixlUcxContext(std::vector<std::string> devices,
-                   size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
+                   std::size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
                    bool prog_thread, ucp_err_handling_mode_t err_handling_mode,
                    unsigned long num_workers, nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     /* Memory management */
-    int memReg(void *addr, size_t size, nixlUcxMem &mem);
+    int memReg(void *addr, std::size_t size, nixlUcxMem &mem);
     [[nodiscard]] std::string packRkey(nixlUcxMem &mem);
     void memDereg(nixlUcxMem &mem);
 
@@ -185,7 +185,7 @@ private:
 
     /* Connection */
     [[nodiscard]] std::string epAddr();
-    absl::StatusOr<std::unique_ptr<nixlUcxEp>> connect(void* addr, size_t size);
+    absl::StatusOr<std::unique_ptr<nixlUcxEp>> connect(void* addr, std::size_t size);
 
     /* Active message handling */
     int regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void* arg);
