@@ -22,9 +22,8 @@
 static const char *PLUGIN_NAME = "DOCA";
 static const char *PLUGIN_VERSION = "0.1.0";
 
-// Function to create a new DOCA backend engine instance
-[[nodiscard]] nixlBackendEngine *
-create_doca_engine(const nixlBackendInitParams *init_params) {
+static nixlBackendEngine* create_engine(const nixlBackendInitParams* init_params)
+{
   try {
     return new nixlDocaEngine(init_params);
   } catch (const std::exception &e) {
@@ -32,7 +31,7 @@ create_doca_engine(const nixlBackendInitParams *init_params) {
   }
 }
 
-static void destroy_doca_engine(nixlBackendEngine *engine) { delete engine; }
+static void destroy_engine(nixlBackendEngine *engine) { delete engine; }
 
 // Function to get the plugin name
 static const char *get_plugin_name() { return PLUGIN_NAME; }
@@ -58,10 +57,13 @@ static nixl_mem_list_t get_backend_mems() {
 }
 
 // Static plugin structure
-static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION, create_doca_engine,
-                                   destroy_doca_engine,     get_plugin_name,
-                                   get_plugin_version,      get_backend_options,
-                                   get_backend_mems};
+static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
+                                    create_engine,
+                                    destroy_engine,
+                                    get_plugin_name,
+                                    get_plugin_version,
+                                    get_backend_options,
+                                    get_backend_mems};
 
 #ifdef STATIC_PLUGIN_DOCA
 

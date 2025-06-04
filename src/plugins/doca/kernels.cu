@@ -25,19 +25,45 @@
 #define ENABLE_DEBUG 0
 
 __device__ uint32_t reserve_position(struct docaXferReqGpu *xferReqRing, uint32_t pos) {
-	cuda::atomic_ref<uint32_t, cuda::thread_scope_device> index(*xferReqRing[pos].last_rsvd);
+	cuda::atomic_ref<uint64_t, cuda::thread_scope_device> index(*xferReqRing[pos].last_rsvd);
 	return (index.fetch_add(xferReqRing[pos].num, cuda::std::memory_order_relaxed) & 0xFFFF);
 }
 
 __device__ void wait_post(struct doca_gpu_dev_rdma *rdma_gpu, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
-	cuda::atomic_ref<uint32_t, cuda::thread_scope_device> index(*xferReqRing[pos].last_posted);
-	while (index.load(cuda::std::memory_order_relaxed) != xferReqRing[pos].id)
+#if ENABLE_DEBUG == 1
+	printf("wait_post waiting xferReqRing[%d].id %d last_posted %ld %p\n",
+			pos,
+			(xferReqRing[pos].id & DOCA_MAX_COMPLETION_INFLIGHT_MASK),
+			*xferReqRing[pos].last_posted,
+			(void*)xferReqRing[pos].last_posted);
+#endif
+
+	cuda::atomic_ref<uint64_t, cuda::thread_scope_device> index(*xferReqRing[pos].last_posted);
+	while (index.load(cuda::std::memory_order_relaxed) != (xferReqRing[pos].id & DOCA_MAX_COMPLETION_INFLIGHT_MASK))
 		continue;
 	// prevents the compiler from reordering
 	asm volatile("fence.acquire.gpu;");
 	doca_gpu_dev_rdma_commit_weak(rdma_gpu, 0, xferReqRing[pos].num);
 	asm volatile("fence.release.gpu;");
-	index.store((pos + 1) & DOCA_XFER_REQ_MASK, cuda::std::memory_order_relaxed);
+
+#if ENABLE_DEBUG == 1
+	printf("wait_post updating xferReqRing[%d].id %d last_posted %ld %p to %d\n",
+			pos,
+			(xferReqRing[pos].id & DOCA_MAX_COMPLETION_INFLIGHT_MASK),
+			*xferReqRing[pos].last_posted,
+			(void*)xferReqRing[pos].last_posted,
+			xferReqRing[pos].id + 1);
+#endif
+	index.store((xferReqRing[pos].id + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK, cuda::std::memory_order_relaxed);
+
+#if ENABLE_DEBUG == 1
+	printf("wait_post exit xferReqRing[%d].id %d last_posted %ld %p\n",
+			pos,
+			(xferReqRing[pos].id & DOCA_MAX_COMPLETION_INFLIGHT_MASK),
+			*xferReqRing[pos].last_posted,
+			(void*)xferReqRing[pos].last_posted);
+#endif
+
 }
 
 __global__ void kernel_read(struct doca_gpu_dev_rdma *rdma_gpu, struct docaXferReqGpu *xferReqRing, uint32_t pos)
@@ -76,7 +102,7 @@ __global__ void kernel_read(struct doca_gpu_dev_rdma *rdma_gpu, struct docaXferR
 #if ENABLE_DEBUG == 1
 		printf(">>>>>>> CUDA rdma read kernel pos %d posted %d buffers\n", pos, xferReqRing[pos].num);
 #endif
-		xferReqRing[pos].in_use = 0;
+		DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].in_use) = 1;
 	}
 }
 
@@ -91,8 +117,11 @@ __global__ void kernel_write(struct doca_gpu_dev_rdma *rdma_gpu, struct docaXfer
 	if (xferReqRing == nullptr)
 		return;
 
-	if (threadIdx.x == 0)
+	if (threadIdx.x == 0) {
 		base_position = reserve_position(xferReqRing, pos);
+		__threadfence_block();
+		// printf("pos %d id %d base %d num %d\n", pos, xferReqRing[pos].id, base_position, xferReqRing[pos].num);
+	}
 	__syncthreads();
 
 	if (threadIdx.x < xferReqRing[pos].num) {
@@ -116,7 +145,7 @@ __global__ void kernel_write(struct doca_gpu_dev_rdma *rdma_gpu, struct docaXfer
 #if ENABLE_DEBUG == 1
 		printf(">>>>>>> CUDA rdma write kernel pos %d posted %d buffers\n", pos, xferReqRing[pos].num);
 #endif
-		xferReqRing[pos].in_use = 0;
+		DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].in_use) = 1;
 	}
 }
 
@@ -127,12 +156,11 @@ __global__ void kernel_progress(struct docaXferCompletion *completion_list,
 								uint32_t *exit_flag)
 {
 	doca_error_t result;
-	uint32_t num_ops=0, num_ops_notif=0;
+	uint32_t num_msg=0, num_msg_notif=0;
 	uint32_t index = 0;
 	struct doca_gpu_buf *recv_buf;
 	struct doca_gpu_buf *send_buf;
 	struct doca_gpu_dev_rdma_r *rdma_gpu_r;
-	int num_progress;
 
 	//Warmup
 	if (completion_list == nullptr)
@@ -141,17 +169,20 @@ __global__ void kernel_progress(struct docaXferCompletion *completion_list,
 	//Wait Xfer & notify
 	if (blockIdx.x == 0) {
 		while (DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0) {
+			//Check xfer completion and send notif
 			if (DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu) != nullptr) {
-				if (DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) == 0) {
-					result = doca_gpu_dev_rdma_wait_all(completion_list[index].xferReqRingGpu->rdma_gpu_data, &num_ops);
+				if (DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) == 0 &&
+					DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu->in_use) == 1)
+				{
+					result = doca_gpu_dev_rdma_wait_all(completion_list[index].xferReqRingGpu->rdma_gpu_data, &num_msg);
 					if (result != DOCA_SUCCESS) {
 						printf("Error %d doca_gpu_dev_rdma_wait_all xfer\n", result);
 						DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
 					}
 
-					while (num_ops > 0) {
+					while (num_msg > 0) {
 						#if ENABLE_DEBUG == 1
-								printf("poll cq %d index %d\n", num_ops, index);
+								printf("Completion %d num recv %d\n", index, num_msg);
 						#endif
 
 						if (DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
@@ -162,64 +193,58 @@ __global__ void kernel_progress(struct docaXferCompletion *completion_list,
 							#endif
 							doca_gpu_dev_buf_get_buf(completion_list[index].xferReqRingGpu->notif_barr_gpu,
 														completion_list[index].xferReqRingGpu->has_notif_msg_idx, &send_buf);
-							result = doca_gpu_dev_rdma_send_strong(completion_list[index].xferReqRingGpu->rdma_gpu_notif, 0,
+							doca_gpu_dev_rdma_send_strong(completion_list[index].xferReqRingGpu->rdma_gpu_notif, 0,
 																		send_buf, 0, completion_list[index].xferReqRingGpu->msg_sz,
 																		0, DOCA_GPU_RDMA_SEND_FLAG_NONE);
-							if (result != DOCA_SUCCESS)
-								printf("Error %d doca_gpu_dev_rdma_send_strong\n", result);
 
 							result = doca_gpu_dev_rdma_commit_strong(completion_list[index].xferReqRingGpu->rdma_gpu_notif, 0);
 							if (result != DOCA_SUCCESS)
 								printf("Error %d doca_gpu_dev_rdma_push\n", result);
 
-							result = doca_gpu_dev_rdma_wait_all(completion_list[index].xferReqRingGpu->rdma_gpu_notif, &num_ops_notif);
+							result = doca_gpu_dev_rdma_wait_all(completion_list[index].xferReqRingGpu->rdma_gpu_notif, &num_msg_notif);
 							if (result != DOCA_SUCCESS) {
 								printf("Error %d doca_gpu_dev_rdma_wait_all notif\n", result);
 								DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
 							}
 							#if ENABLE_DEBUG == 1
-								printf("Notif correctly sent %d\n", num_ops_notif);
+								printf("Notif correctly sent %d\n", num_msg_notif);
 							#endif
 						}
 						DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) = 1;
-						num_ops--;
-						index = (index+1) & (DOCA_MAX_COMPLETION_INFLIGHT - 1);
+						num_msg--;
+						index = (index+1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
 					}
 				}
 			}
 		}
 	}
 	
-	//Fill recv & progress queue & send notif
+	//Receive notif: fill recv in new queue and progress queue
 	if (blockIdx.x == 1) {
 		while (DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0) {
+			//Check received notifications
 			if (DOCA_GPUNETIO_VOLATILE(notif_progress->rdma_qp) != nullptr) {
-				do {
-					num_progress = DOCA_GPUNETIO_VOLATILE(notif_progress->num_progress);
-					result = doca_gpu_dev_rdma_get_recv(notif_progress->rdma_qp, &rdma_gpu_r);
-					if (result != DOCA_SUCCESS)
-							printf("Error %d doca_gpu_dev_rdma_get_recv\n", result);
+				doca_gpu_dev_rdma_get_recv(notif_progress->rdma_qp, &rdma_gpu_r);
+				result = doca_gpu_dev_rdma_recv_wait_all(rdma_gpu_r, DOCA_GPU_RDMA_RECV_WAIT_FLAG_NB,
+															&num_msg, nullptr, nullptr);
+				if (result != DOCA_SUCCESS) {
+					printf("Error %d doca_gpu_dev_rdma_recv_wait_all\n", result);
+					DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
+				}
 
-					result = doca_gpu_dev_rdma_recv_wait_all(rdma_gpu_r, DOCA_GPU_RDMA_RECV_WAIT_FLAG_NB,
-																&num_ops, nullptr, nullptr);
-					if (result != DOCA_SUCCESS) {
-							printf("Error %d doca_gpu_dev_rdma_recv_wait_all\n", result);
-							DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
+				#if ENABLE_DEBUG == 1
+					if (num_msg > 0) {
+							printf("kernel received %d notifications\n", num_msg);
 					}
-					num_progress -= num_ops;
+				#endif
 
-					#if ENABLE_DEBUG == 1
-						if (num_ops > 0) {
-								printf("Progress on %d notifications tot %d\n",
-										num_ops, num_progress);
-						}
-					#endif
-				} while (num_progress > 0);
+				doca_gpu_dev_rdma_recv_commit_weak(rdma_gpu_r, num_msg);
+				DOCA_GPUNETIO_VOLATILE(notif_progress->num_msg) = num_msg;
+				asm volatile("fence.release.sys;");
 				DOCA_GPUNETIO_VOLATILE(notif_progress->rdma_qp) = nullptr;
 			}
 
 			if (DOCA_GPUNETIO_VOLATILE(notif_fill->rdma_qp) != nullptr) {
-				// printf("refill!!\n");
 				result = doca_gpu_dev_rdma_get_recv(notif_fill->rdma_qp, &rdma_gpu_r);
 				if (result != DOCA_SUCCESS)
 					printf("Error %d doca_gpu_dev_rdma_get_recv\n", result);
@@ -238,7 +263,12 @@ __global__ void kernel_progress(struct docaXferCompletion *completion_list,
 
 				DOCA_GPUNETIO_VOLATILE(notif_fill->rdma_qp) = nullptr;
 			}
-			
+		}
+	}
+
+	// Send standalone notifications
+	if (blockIdx.x == 2) {
+		while (DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0) {
 			if (DOCA_GPUNETIO_VOLATILE(notif_send_gpu->rdma_qp) != nullptr) {
 				#if ENABLE_DEBUG == 1
 					printf("Notif standalone id %d\n",
@@ -257,13 +287,13 @@ __global__ void kernel_progress(struct docaXferCompletion *completion_list,
 				if (result != DOCA_SUCCESS)
 					printf("Error %d doca_gpu_dev_rdma_push\n", result);
 
-				result = doca_gpu_dev_rdma_wait_all(notif_send_gpu->rdma_qp, &num_ops_notif);
+				result = doca_gpu_dev_rdma_wait_all(notif_send_gpu->rdma_qp, &num_msg_notif);
 				if (result != DOCA_SUCCESS) {
 					printf("Error %d doca_gpu_dev_rdma_wait_all standalone\n", result);
 					DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
 				}
 				#if ENABLE_DEBUG == 1
-					printf("Notif correctly sent %d\n", num_ops_notif);
+					printf("Notif correctly sent %d\n", num_msg_notif);
 				#endif
 
 				DOCA_GPUNETIO_VOLATILE(notif_send_gpu->rdma_qp) = nullptr;
@@ -329,7 +359,7 @@ doca_error_t doca_kernel_progress(cudaStream_t stream, struct docaXferCompletion
         return DOCA_ERROR_BAD_STATE;
     }
 
-	kernel_progress<<<2, 1, 0, stream>>>(completion_list, notif_fill, notif_progress, notif_send_gpu, exit_flag);
+	kernel_progress<<<3, 1, 0, stream>>>(completion_list, notif_fill, notif_progress, notif_send_gpu, exit_flag);
     result = cudaGetLastError();
     if (result != cudaSuccess) {
         fprintf(stderr, "[%s:%d] cuda failed with %s", __FILE__, __LINE__, cudaGetErrorString(result));

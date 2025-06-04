@@ -46,10 +46,11 @@
 #include "common/list_elem.h"
 #include "common/nixl_time.h"
 
-#define DOCA_MAX_COMPLETION_INFLIGHT 64
+#define DOCA_MAX_COMPLETION_INFLIGHT 128
+#define DOCA_MAX_COMPLETION_INFLIGHT_MASK (DOCA_MAX_COMPLETION_INFLIGHT - 1)
 #define DOCA_DEVINFO_IBDEV_NAME_SIZE 64
-#define RDMA_RECV_QUEUE_SIZE 2048
 #define RDMA_SEND_QUEUE_SIZE 2048
+#define RDMA_RECV_QUEUE_SIZE (RDMA_SEND_QUEUE_SIZE * 2)
 #define DOCA_POST_STREAM_NUM 4
 #define DOCA_XFER_REQ_SIZE 512
 #define DOCA_XFER_REQ_MAX 32
@@ -83,8 +84,8 @@ struct docaXferReqGpu {
   uint32_t has_notif_msg_idx;
   size_t msg_sz;
   struct doca_gpu_buf_arr *notif_barr_gpu;
-  uint32_t *last_rsvd;
-  uint32_t *last_posted;
+  uint64_t *last_rsvd;
+  uint64_t *last_posted;
   nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
   struct doca_gpu_dev_rdma *rdma_gpu_data;  /* DOCA RDMA instance GPU handler */
   struct doca_gpu_dev_rdma *rdma_gpu_notif; /* DOCA RDMA instance GPU handler */
@@ -124,7 +125,7 @@ struct docaXferCompletion {
 struct docaNotifRecv {
   struct doca_gpu_dev_rdma *rdma_qp;
   struct doca_gpu_buf_arr *barr_gpu;
-  int num_progress;
+  int num_msg;
 };
 
 struct docaNotifSend {

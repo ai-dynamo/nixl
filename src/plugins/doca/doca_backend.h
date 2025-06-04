@@ -31,7 +31,8 @@ private:
   int noSyncIters;
   uint8_t ipv4_addr[4];
   std::thread pthr;
-  uint32_t *last_flags;
+  uint64_t *last_rsvd_flags;
+  uint64_t *last_posted_flags;
   cudaStream_t post_stream[DOCA_POST_STREAM_NUM];
   cudaStream_t wait_stream;
   mutable std::atomic<uint32_t> xferStream;
@@ -99,10 +100,8 @@ private:
 public:
   CUcontext main_cuda_ctx;
   int oob_sock_server;
-  std::mutex notifFillLock;
-  std::mutex notifProgressLock;
-  std::vector<std::pair<uint32_t, struct doca_gpu *>>
-      gdevs;             /* List of DOCA GPUNetIO device handlers */
+  std::mutex notifLock;
+  std::vector<std::pair<uint32_t, struct doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
   struct doca_dev *ddev; /* DOCA device handler associated to queues */
   nixl_status_t addRdmaQp(const std::string &remote_agent);
   nixl_status_t connectServerRdmaQp(int oob_sock_client,

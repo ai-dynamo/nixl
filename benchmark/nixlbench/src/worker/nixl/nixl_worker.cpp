@@ -156,7 +156,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_DOCA)) {
-        backend_params["network_devices"] = devices[rank];
+        std::cout << "DOCA backend, network device " << devices[0] << " GPU device " << xferBenchConfig::doca_gpu_device_list << std::endl;
+        backend_params["network_devices"] = devices[0];
         backend_params["gpu_devices"] = xferBenchConfig::doca_gpu_device_list;
     } else {
         std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
