@@ -181,7 +181,6 @@ class nixlUcxEngine
                                     nixlUcxReq &req,
                                     size_t worker_id) const;
         void notifProgress();
-        void notifCombineHelper(notif_list_t &src, notif_list_t &tgt);
         void notifProgressCombineHelper(notif_list_t &src, notif_list_t &tgt);
 
     public:
