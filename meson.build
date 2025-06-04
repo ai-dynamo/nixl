@@ -116,9 +116,16 @@ ucx_path = get_option('ucx_path')
 if ucx_path != ''
   ucx_lib_path = ucx_path + '/lib'
   ucx_inc_path = ucx_path + '/include'
-  ucx_dep = declare_dependency(
-    link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
-    include_directories : include_directories(ucx_inc_path))
+  # Check if path is absolute
+  if ucx_inc_path.startswith('/')
+    ucx_dep = declare_dependency(
+      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+      compile_args : ['-I' + ucx_inc_path])
+  else
+    ucx_dep = declare_dependency(
+      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+      include_directories : include_directories(ucx_inc_path))
+  endif
 else
   ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'])
 endif
