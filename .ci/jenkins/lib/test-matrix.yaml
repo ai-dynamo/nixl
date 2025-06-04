@@ -1,0 +1,78 @@
+---
+#
+# Key Components:
+# - Job Configuration: Defines timeout, failure behavior, and server resources
+# - Docker Images: Specifies the container images used for different build stages
+# - Matrix Axes: Defines build variations (currently x86_64 architecture)
+# - Run Steps: Sequential steps for running tests
+#
+# When Modified:
+# - Adding/removing Docker images: Affects available test environments
+# - Modifying matrix axes: Changes test variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts test performance and resource allocation
+# - Adding/removing steps: Changes the test pipeline sequence
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+
+job: nixl-ci-test
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+runs_on_agents:
+  - {nodeLabel: 'nixl_gpu'}
+
+matrix:
+  axes:
+    image:
+      - nvcr.io/nvidia/pytorch:25.02-py3
+    arch:
+      - x86_64
+
+env:
+  INSTALL_DIR: /opt/nixl
+
+steps:
+  - name: Prepare Environment
+    parallel: false
+    run: |
+      docker run -dt --name "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" \
+        --ulimit memlock=-1:-1 \
+        --privileged \
+        --net=host \
+        --ipc=host \
+        --cap-add=SYS_PTRACE \
+        --gpus all \
+        --device=/dev/infiniband \
+        --device=/dev/gdrdrv \
+        -e NVIDIA_VISIBLE_DEVICES=all \
+        -e CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps \
+        -v /tmp/nvidia-mps:/tmp/nvidia-mps \
+        -v ${WORKSPACE}:${WORKSPACE} \
+        -w ${WORKSPACE} \
+        "${image}"
+
+  - name: Build
+    parallel: false
+    run: |
+      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/build.sh ${INSTALL_DIR}"
+
+  - name: Test CPP
+    parallel: false
+    run: |
+      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
+
+  - name: Test Python
+    parallel: false
+    run: |
+      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
+
+pipeline_stop:
+    agentSelector:
+      - "{nodeLabel: 'nixl_gpu'}"
+    run: |
+      docker stop "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
