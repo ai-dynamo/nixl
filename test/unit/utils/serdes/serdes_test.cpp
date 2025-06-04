@@ -26,12 +26,12 @@ int main() {
     const std::string t1 = "i";
     const std::string t2 = "s";
 
-    nixlSerializer sd;
+    nixlSerializer nser;
 
-    sd.addInt(t1, i);
-    sd.addStr(t2, s);
+    nser.addInt(t1, i);
+    nser.addStr(t2, s);
 
-    const std::string sdbuf = sd.exportStr();
+    const std::string sdbuf = nser.exportStr();
     assert(sdbuf.size() > 0);
 
     std::cout << "exported string: " << sdbuf << "\n";
@@ -39,16 +39,16 @@ int main() {
     // "nixlSDBegin|i   00000004000000ff|s   0000000AtestString|nixlSDEnd
     // |token      |tag|size.  |value.  |tag|size   |          |token
 
-    nixlDeserializer sd2;
-    nixl_status_t ret = sd2.importStr(sdbuf);
+    nixlDeserializer ndes;
+    nixl_status_t ret = ndes.importStr(sdbuf);
     assert(ret == 0);
 
     int j = 0;
-    ret = sd2.getInt(t1, j);
+    ret = ndes.getInt(t1, j);
     assert(ret == 0);
     assert(i == j);
 
-    const std::string s2 =  sd2.getStr(t2);
+    const std::string s2 = ndes.getStr(t2);
     assert(s2.size() > 0);
     assert(s2.compare("testString") == 0);
 

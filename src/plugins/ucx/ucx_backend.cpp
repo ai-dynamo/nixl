@@ -1213,10 +1213,10 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
         return UCS_ERR_INVALID_PARAM;
     }
 
-    nixlDeserializer des;
-    (void)des.importStr(ser_str);
-    remote_name = des.getStr("name");
-    msg = des.getStr("msg");
+    nixlDeserializer ndes;
+    (void)ndes.importStr(ser_str);
+    remote_name = ndes.getStr("name");
+    msg = ndes.getStr("msg");
 
     if (engine->isProgressThread()) {
         /* Append to the private list to allow batching */

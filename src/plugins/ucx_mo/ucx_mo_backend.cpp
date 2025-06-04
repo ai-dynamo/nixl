@@ -249,13 +249,13 @@ nixlUcxMoEngine::loadRemoteConnInfo (const string  &remote_agent,
 
     conn.remoteAgent = remote_agent;
 
-    nixlDeserializer des;
-    status = des.importStr(remote_conn_info);
+    nixlDeserializer ndes;
+    status = ndes.importStr(remote_conn_info);
     if (status != NIXL_SUCCESS) {
         return status;
     }
 
-    status = des.getInt("Count", sz);
+    status = ndes.getInt("Count", sz);
     if (status != NIXL_SUCCESS) {
         return status;
     }
@@ -263,7 +263,7 @@ nixlUcxMoEngine::loadRemoteConnInfo (const string  &remote_agent,
     conn.num_engines = sz;
 
     for(size_t idx = 0; idx < sz; idx++) {
-        const std::string cinfo = des.getStr("Value");
+        const std::string cinfo = ndes.getStr("Value");
         for (auto &e : engines) {
             status = e->loadRemoteConnInfo(getEngName(remote_agent, idx), cinfo);
             if (status != NIXL_SUCCESS) {
@@ -407,15 +407,15 @@ nixlUcxMoEngine::internalMDHelper (const nixl_blob_t &blob,
     }
     conn = search->second;
 
-    nixlDeserializer des;
-    status = des.importStr(blob);
+    nixlDeserializer ndes;
+    status = ndes.importStr(blob);
 
-    status = des.getInt("EngIdx", md->eidx);
+    status = ndes.getInt("EngIdx", md->eidx);
     if (status != NIXL_SUCCESS) {
         return status;
     }
 
-    ucx_blob = des.getStr("RkeyStr");
+    ucx_blob = ndes.getStr("RkeyStr");
     if (status != NIXL_SUCCESS) {
         return status;
     }

@@ -466,7 +466,7 @@ std::string nixlUcxWorker::epAddr()
         NIXL_WARN << "Unable to query UCX endpoint address";
         return {};
     }
-    const auto result = std::string(reinterpret_cast<const char*>(wattr.address), wattr.address_length);  // Deserialize?
+    const auto result = std::string(reinterpret_cast<const char*>(wattr.address), wattr.address_length);
     ucp_worker_release_address(worker.get(), wattr.address);
     return result;
 }
@@ -519,7 +519,7 @@ std::string nixlUcxContext::packRkey(nixlUcxMem &mem)
         /* TODO: MSW_NET_ERROR(priv->net, "failed to ucp_rkey_pack (%s)\n", ucs_status_string(status)); */
         return {};
     }
-    const auto result = std::string(reinterpret_cast<const char*>(rkey_buf), size);  // Deserialize?
+    const auto result = std::string(reinterpret_cast<const char*>(rkey_buf), size);
     ucp_rkey_buffer_release(rkey_buf);
     return result;
 }

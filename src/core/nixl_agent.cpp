@@ -1113,7 +1113,7 @@ nixl_status_t
 nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
                          std::string &agent_name) {
     int count = 0;
-    nixlDeserializer des;
+    nixlDeserializer ndes;
     size_t conn_cnt;
     nixl_blob_t conn_info;
     nixl_backend_t nixl_backend;
@@ -1121,11 +1121,11 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     nixl_status_t ret;
 
     NIXL_LOCK_GUARD(data->lock);
-    ret = des.importStr(remote_metadata);
+    ret = ndes.importStr(remote_metadata);
     if(ret)
         return ret;
 
-    std::string remote_agent = des.getStr("Agent");
+    std::string remote_agent = ndes.getStr("Agent");
     if (remote_agent.size() == 0)
         return NIXL_ERR_MISMATCH;
 
@@ -1134,17 +1134,17 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
 
-    ret = des.getInt("Conns", conn_cnt);
+    ret = ndes.getInt("Conns", conn_cnt);
     if(ret) {
         NIXL_ERROR << "Error getting connection count: " << nixlEnumStrings::statusStr(ret);
         return ret;
     }
 
     for (size_t i=0; i<conn_cnt; ++i) {
-        nixl_backend = des.getStr("t");
+        nixl_backend = ndes.getStr("t");
         if (nixl_backend.size() == 0)
             return NIXL_ERR_MISMATCH;
-        conn_info = des.getStr("c");
+        conn_info = ndes.getStr("c");
         if (conn_info.size() == 0)
             return NIXL_ERR_MISMATCH;
 
@@ -1179,14 +1179,14 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     if (count == 0 && conn_cnt > 0)
         return NIXL_ERR_BACKEND;
 
-    if (des.getStr("") != "MemSection")
+    if (ndes.getStr("") != "MemSection")
         return NIXL_ERR_MISMATCH;
 
     if (data->remoteSections.count(remote_agent) == 0)
         data->remoteSections[remote_agent] = new nixlRemoteSection(
                                                   remote_agent);
 
-    ret = data->remoteSections[remote_agent]->loadRemoteData(des,
+    ret = data->remoteSections[remote_agent]->loadRemoteData(ndes,
                                                   data->backendEngines);
 
     // TODO: can be more graceful, if just the new MD blob was improper

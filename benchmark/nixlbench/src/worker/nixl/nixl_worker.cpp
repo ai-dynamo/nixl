@@ -621,10 +621,10 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 rt->recvChar((char *)buffer, desc_str_sz, srcrank);
 
                 const std::string desc_str(buffer, desc_str_sz);
-                nixlDeserializer des;
-                (void)des.importStr(desc_str);
+                nixlDeserializer ndes;
+                (void)ndes.importStr(desc_str);
 
-                nixl_xfer_dlist_t remote_desc(des);
+                nixl_xfer_dlist_t remote_desc(ndes);
                 res.emplace_back(nixlXferDlistToIOVList(remote_desc));
             }
         }
