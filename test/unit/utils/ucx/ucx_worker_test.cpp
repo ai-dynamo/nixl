@@ -85,18 +85,20 @@ int main()
     // TODO: pass dev name for testing
     // in CI it would be goot to test both SHM and IB
     //devs.push_back("mlx5_0");
-    std::shared_ptr<nixlUcxContext> c[2] = {
-        std::make_shared<nixlUcxContext>(devs, sizeof(requestData),
-                                         nixlUcxRequestInit, nullptr,
-                                         false,
-                                         UCP_ERR_HANDLING_MODE_NONE, 1,
-                                         nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE),
-        std::make_shared<nixlUcxContext>(devs, sizeof(requestData),
-                                         nixlUcxRequestInit, nullptr,
-                                         false,
-                                         UCP_ERR_HANDLING_MODE_NONE, 1,
-                                         nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)
-    };
+    nixlUcxContext c[2] = {{devs,
+                            sizeof (requestData),
+                            nixlUcxRequestInit,
+                            nullptr,
+                            false,
+                            1,
+                            nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
+                           {devs,
+                            sizeof (requestData),
+                            nixlUcxRequestInit,
+                            nullptr,
+                            false,
+                            1,
+                            nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
 
     nixlUcxWorker w[2] = {
         nixlUcxWorker(c[0]),
@@ -131,8 +133,8 @@ int main()
         auto result = w[!i].connect((void*)addr.data(), addr.size());
         assert(result.ok());
         ep[!i] = std::move(*result);
-        assert(0 == c[i]->memReg(buffer[i], buf_size, mem[i]));
-        std::string rkey_tmp = c[i]->packRkey(mem[i]);
+        assert (0 == c[i].memReg (buffer[i], buf_size, mem[i]));
+        std::string rkey_tmp = c[i].packRkey (mem[i]);
         assert(!rkey_tmp.empty());
         assert(0 == ep[!i]->rkeyImport(rkey_tmp.data(), rkey_tmp.size(), rkey[!i]));
     }
@@ -208,7 +210,7 @@ int main()
     /* Test shutdown */
     for(i = 0; i < 2; i++) {
         ep[i]->rkeyDestroy(rkey[i]);
-        c[i]->memDereg(mem[i]);
+        c[i].memDereg (mem[i]);
         assert(ep[i].release());
     }
 

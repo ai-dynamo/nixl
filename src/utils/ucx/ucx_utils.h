@@ -147,14 +147,16 @@ private:
     /* Local UCX stuff */
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
-    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
 public:
 
     using req_cb_t = void(void *request);
-    nixlUcxContext(std::vector<std::string> devices,
-                   size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
-                   bool prog_thread, ucp_err_handling_mode_t err_handling_mode,
-                   unsigned long num_workers, nixl_thread_sync_t sync_mode);
+    nixlUcxContext (std::vector<std::string> devices,
+                    size_t req_size,
+                    req_cb_t init_cb,
+                    req_cb_t fini_cb,
+                    bool prog_thread,
+                    unsigned long num_workers,
+                    nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     /* Memory management */
@@ -168,15 +170,10 @@ public:
 [[nodiscard]] bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t) noexcept;
 
 class nixlUcxWorker {
-private:
-    /* Local UCX stuff */
-    const std::shared_ptr<nixlUcxContext> ctx;
-    const std::unique_ptr<ucp_worker, void(*)(ucp_worker*)> worker;
-
-    [[nodiscard]] static ucp_worker* createUcpWorker(nixlUcxContext&);
-
-  public:
-    explicit nixlUcxWorker(const std::shared_ptr<nixlUcxContext> &_ctx);
+public:
+    explicit nixlUcxWorker (
+        const nixlUcxContext &,
+        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
 
     nixlUcxWorker( nixlUcxWorker&& ) = delete;
     nixlUcxWorker( const nixlUcxWorker& ) = delete;
@@ -197,8 +194,19 @@ private:
     void reqRelease(nixlUcxReq req);
     void reqCancel(nixlUcxReq req);
 
-    /* Worker access */
-    [[nodiscard]] ucp_worker_h getWorker() const noexcept { return worker.get(); }
+    nixl_status_t
+    arm();
+
+    nixl_status_t
+    getEfd (int &fd);
+
+private:
+    /* Local UCX stuff */
+    const std::unique_ptr<ucp_worker, void (*) (ucp_worker *)> worker;
+    ucp_err_handling_mode_t err_handling_mode_;
+
+    [[nodiscard]] static ucp_worker *
+    createUcpWorker (const nixlUcxContext &);
 };
 
 [[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {
