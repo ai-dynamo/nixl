@@ -64,6 +64,8 @@ int verify_plugin(std::string name, nixlPluginManager& plugin_manager)
 int main(int argc, char** argv) {
     char *plugindir = NULL;
     std::set<nixl_backend_t> staticPlugs;
+    std::set<std::string> plugins =
+        {"UCX", "GDS", "POSIX", "UCX_MO", "MOCK_BASIC", "MOCK_DRAM"};
 
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
         print_usage(argv[0]);
@@ -89,12 +91,14 @@ int main(int argc, char** argv) {
         staticPlugs.insert(plugin.name);
     }
 
-    verify_plugin("UCX", plugin_manager);
-    verify_plugin("GDS", plugin_manager);
-    verify_plugin("POSIX", plugin_manager);
-    verify_plugin("UCX_MO", plugin_manager);
-    verify_plugin("MOCK_BASIC", plugin_manager);
-    verify_plugin("MOCK_DRAM", plugin_manager);
+    // First make sure tested plugins are not already loaded
+    for (const auto& plugin : plugins) {
+        plugin_manager.unloadPlugin(plugin);
+    }
+
+    for (const auto& plugin : plugins) {
+        verify_plugin(plugin, plugin_manager);
+    }
 
     // List all loaded plugins
     std::cout << "\nLoaded plugins:" << std::endl;
@@ -102,12 +106,9 @@ int main(int argc, char** argv) {
         std::cout << " - " << name << std::endl;
     }
 
-    plugin_manager.unloadPlugin("UCX");
-    plugin_manager.unloadPlugin("GDS");
-    plugin_manager.unloadPlugin("UCX_MO");
-    plugin_manager.unloadPlugin("MOCK_BASIC");
-    plugin_manager.unloadPlugin("MOCK_DRAM");
-    plugin_manager.unloadPlugin("POSIX");
+    for (const auto& plugin : plugins) {
+        plugin_manager.unloadPlugin(plugin);
+    }
 
     // List all loaded plugins and make sure static plugins are present
     std::cout << "Loaded plugins after unload:" << std::endl;
