@@ -21,172 +21,212 @@
 
 class nixlDocaEngine : public nixlBackendEngine {
 private:
-  struct doca_log_backend *sdk_log;
-  std::string msg_tag_start = "DOCAS";
-  std::string msg_tag_end = "DOCAE";
-  std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
-  int nstreams;
+    struct doca_log_backend *sdk_log;
+    std::string msg_tag_start = "DOCAS";
+    std::string msg_tag_end = "DOCAE";
+    std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
+    int nstreams;
 
-  uint32_t local_port;
-  int noSyncIters;
-  uint8_t ipv4_addr[4];
-  std::thread pthr;
-  uint64_t *last_rsvd_flags;
-  uint64_t *last_posted_flags;
-  cudaStream_t post_stream[DOCA_POST_STREAM_NUM];
-  cudaStream_t wait_stream;
-  mutable std::atomic<uint32_t> xferStream;
-  mutable std::atomic<uint32_t> lastPostedReq;
+    uint32_t local_port;
+    int noSyncIters;
+    uint8_t ipv4_addr[4];
+    std::thread pthr;
+    uint64_t *last_rsvd_flags;
+    uint64_t *last_posted_flags;
+    cudaStream_t post_stream[DOCA_POST_STREAM_NUM];
+    cudaStream_t wait_stream;
+    mutable std::atomic<uint32_t> xferStream;
+    mutable std::atomic<uint32_t> lastPostedReq;
 
-  struct docaXferReqGpu *xferReqRingGpu;
-  struct docaXferReqGpu *xferReqRingCpu;
-  mutable std::atomic<uint32_t> xferRingPos;
+    struct docaXferReqGpu *xferReqRingGpu;
+    struct docaXferReqGpu *xferReqRingCpu;
+    mutable std::atomic<uint32_t> xferRingPos;
 
-  struct docaXferCompletion *completion_list_gpu;
-  struct docaXferCompletion *completion_list_cpu;
-  uint32_t *wait_exit_gpu;
-  uint32_t *wait_exit_cpu;
-  int oob_sock_client;
-  struct docaNotifRecv *notif_fill_gpu;
-  struct docaNotifRecv *notif_fill_cpu;
-  struct docaNotifRecv *notif_progress_gpu;
-  struct docaNotifRecv *notif_progress_cpu;
+    struct docaXferCompletion *completion_list_gpu;
+    struct docaXferCompletion *completion_list_cpu;
+    uint32_t *wait_exit_gpu;
+    uint32_t *wait_exit_cpu;
+    int oob_sock_client;
+    struct docaNotifRecv *notif_fill_gpu;
+    struct docaNotifRecv *notif_fill_cpu;
+    struct docaNotifRecv *notif_progress_gpu;
+    struct docaNotifRecv *notif_progress_cpu;
 
-  struct docaNotifSend *notif_send_gpu;
-  struct docaNotifSend *notif_send_cpu;
+    struct docaNotifSend *notif_send_gpu;
+    struct docaNotifSend *notif_send_cpu;
 
-  // Map of agent name to saved nixlDocaConnection info
-  std::unordered_map<std::string, nixlDocaConnection, std::hash<std::string>,
-                     strEqual> remoteConnMap;
+    // Map of agent name to saved nixlDocaConnection info
+    std::unordered_map<std::string, nixlDocaConnection, std::hash<std::string>, strEqual>
+            remoteConnMap;
 
-  std::unordered_map<std::string, struct nixlDocaRdmaQp *,
-                     std::hash<std::string>, strEqual> qpMap;
+    std::unordered_map<std::string, struct nixlDocaRdmaQp *, std::hash<std::string>, strEqual>
+            qpMap;
 
-  std::unordered_map<std::string, struct nixlDocaNotif *,
-                     std::hash<std::string>, strEqual> notifMap;
+    std::unordered_map<std::string, struct nixlDocaNotif *, std::hash<std::string>, strEqual>
+            notifMap;
 
-  pthread_t server_thread_id;
+    pthread_t server_thread_id;
 
-  class nixlDocaBckndReq : public nixlBackendReqH {
-  private:
-  public:
-    cudaStream_t stream;
-    uint32_t devId;
-    uint32_t start_pos;
-    uint32_t end_pos;
-    uintptr_t backendHandleGpu;
+    class nixlDocaBckndReq : public nixlBackendReqH {
+    private:
+    public:
+        cudaStream_t stream;
+        uint32_t devId;
+        uint32_t start_pos;
+        uint32_t end_pos;
+        uintptr_t backendHandleGpu;
 
-    nixlDocaBckndReq() : nixlBackendReqH() {}
+        nixlDocaBckndReq() : nixlBackendReqH() {}
 
-    ~nixlDocaBckndReq() {}
-  };
+        ~nixlDocaBckndReq() {}
+    };
 
-  // Request management
-  static void _requestInit(void *request);
-  static void _requestFini(void *request);
-  void requestReset(nixlDocaBckndReq *req) { _requestInit((void *)req); }
+    // Request management
+    static void
+    _requestInit (void *request);
+    static void
+    _requestFini (void *request);
+    void
+    requestReset (nixlDocaBckndReq *req) {
+        _requestInit ((void *)req);
+    }
 
-  nixl_status_t progressThreadStart();
-  void progressThreadStop();
+    nixl_status_t
+    progressThreadStart();
+    void
+    progressThreadStop();
 
 
-  nixl_status_t connectClientRdmaQp(int oob_sock_client,
-                                    const std::string &remote_agent);
-  nixl_status_t nixlDocaDestroyNotif(struct doca_gpu *gpu,
-                                     struct nixlDocaNotif *notif);
+    nixl_status_t
+    connectClientRdmaQp (int oob_sock_client, const std::string &remote_agent);
+    nixl_status_t
+    nixlDocaDestroyNotif (struct doca_gpu *gpu, struct nixlDocaNotif *notif);
 
-  mutable std::mutex notifSendLock;
+    mutable std::mutex notifSendLock;
 
 public:
-  CUcontext main_cuda_ctx;
-  int oob_sock_server;
-  std::mutex notifLock;
-  std::vector<std::pair<uint32_t, struct doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
-  struct doca_dev *ddev; /* DOCA device handler associated to queues */
-  nixl_status_t addRdmaQp(const std::string &remote_agent);
-  nixl_status_t connectServerRdmaQp(int oob_sock_client,
-                                    const std::string &remote_agent);
-  nixl_status_t nixlDocaInitNotif(const std::string &remote_agent,
-                                  struct doca_dev *dev, struct doca_gpu *gpu);
+    CUcontext main_cuda_ctx;
+    int oob_sock_server;
+    std::mutex notifLock;
+    std::vector<std::pair<uint32_t, struct doca_gpu *>>
+            gdevs; /* List of DOCA GPUNetIO device handlers */
+    struct doca_dev *ddev; /* DOCA device handler associated to queues */
+    nixl_status_t
+    addRdmaQp (const std::string &remote_agent);
+    nixl_status_t
+    connectServerRdmaQp (int oob_sock_client, const std::string &remote_agent);
+    nixl_status_t
+    nixlDocaInitNotif (const std::string &remote_agent, struct doca_dev *dev, struct doca_gpu *gpu);
 
-  volatile uint8_t pthrStop, pthrActive;
-  nixlDocaEngine(const nixlBackendInitParams *init_params);
-  ~nixlDocaEngine();
+    volatile uint8_t pthrStop, pthrActive;
+    nixlDocaEngine (const nixlBackendInitParams *init_params);
+    ~nixlDocaEngine();
 
-  bool supportsRemote() const { return true; }
-  bool supportsLocal() const { return false; }
-  bool supportsNotif() const { return true; }
-  bool supportsProgTh() const { return false; }
+    bool
+    supportsRemote() const {
+        return true;
+    }
+    bool
+    supportsLocal() const {
+        return false;
+    }
+    bool
+    supportsNotif() const {
+        return true;
+    }
+    bool
+    supportsProgTh() const {
+        return false;
+    }
 
-  nixl_mem_list_t getSupportedMems() const;
+    nixl_mem_list_t
+    getSupportedMems() const;
 
-  /* Object management */
-  nixl_status_t getPublicData(const nixlBackendMD *meta,
-                              std::string &str) const override;
-  nixl_status_t getConnInfo(std::string &str) const override;
-  nixl_status_t
-  loadRemoteConnInfo(const std::string &remote_agent,
-                     const std::string &remote_conn_info) override;
+    /* Object management */
+    nixl_status_t
+    getPublicData (const nixlBackendMD *meta, std::string &str) const override;
+    nixl_status_t
+    getConnInfo (std::string &str) const override;
+    nixl_status_t
+    loadRemoteConnInfo (const std::string &remote_agent,
+                        const std::string &remote_conn_info) override;
 
-  nixl_status_t connect(const std::string &remote_agent) override;
-  nixl_status_t disconnect(const std::string &remote_agent) override;
+    nixl_status_t
+    connect (const std::string &remote_agent) override;
+    nixl_status_t
+    disconnect (const std::string &remote_agent) override;
 
-  nixl_status_t registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem,
-                            nixlBackendMD *&out) override;
-  nixl_status_t deregisterMem(nixlBackendMD *meta) override;
+    nixl_status_t
+    registerMem (const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
+    nixl_status_t
+    deregisterMem (nixlBackendMD *meta) override;
 
-  nixl_status_t loadLocalMD(nixlBackendMD *input,
-                            nixlBackendMD *&output) override;
+    nixl_status_t
+    loadRemoteMD (const nixlBlobDesc &input,
+                  const nixl_mem_t &nixl_mem,
+                  const std::string &remote_agent,
+                  nixlBackendMD *&output) override;
+    nixl_status_t
+    unloadMD (nixlBackendMD *input) override;
 
-  nixl_status_t loadRemoteMD(const nixlBlobDesc &input,
-                             const nixl_mem_t &nixl_mem,
-                             const std::string &remote_agent,
-                             nixlBackendMD *&output) override;
-  nixl_status_t unloadMD(nixlBackendMD *input) override;
+    // Data transfer
+    nixl_status_t
+    prepXfer (const nixl_xfer_op_t &operation,
+              const nixl_meta_dlist_t &local,
+              const nixl_meta_dlist_t &remote,
+              const std::string &remote_agent,
+              nixlBackendReqH *&handle,
+              const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
-  // Data transfer
-  nixl_status_t
-  prepXfer(const nixl_xfer_op_t &operation, const nixl_meta_dlist_t &local,
-           const nixl_meta_dlist_t &remote, const std::string &remote_agent,
-           nixlBackendReqH *&handle,
-           const nixl_opt_b_args_t *opt_args = nullptr) const override;
+    nixl_status_t
+    postXfer (const nixl_xfer_op_t &operation,
+              const nixl_meta_dlist_t &local,
+              const nixl_meta_dlist_t &remote,
+              const std::string &remote_agent,
+              nixlBackendReqH *&handle,
+              const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
-  nixl_status_t
-  postXfer(const nixl_xfer_op_t &operation, const nixl_meta_dlist_t &local,
-           const nixl_meta_dlist_t &remote, const std::string &remote_agent,
-           nixlBackendReqH *&handle,
-           const nixl_opt_b_args_t *opt_args = nullptr) const override;
+    nixl_status_t
+    checkXfer (nixlBackendReqH *handle) const override;
+    nixl_status_t
+    releaseReqH (nixlBackendReqH *handle) const override;
 
-  nixl_status_t checkXfer(nixlBackendReqH *handle) const override;
-  nixl_status_t releaseReqH(nixlBackendReqH *handle) const override;
-  int progress();
+    nixl_status_t
+    getNotifs (notif_list_t &notif_list);
+    nixl_status_t
+    genNotif (const std::string &remote_agent, const std::string &msg) const override;
 
-  nixl_status_t getNotifs(notif_list_t &notif_list);
-  nixl_status_t genNotif(const std::string &remote_agent,
-                         const std::string &msg) const override;
+    void
+    addConnection (struct doca_rdma_connection *connection);
+    uint32_t
+    getConnectionLast();
+    void
+    removeConnection (uint32_t connection_idx);
+    uint32_t
+    getGpuCudaId();
 
-  void addConnection(struct doca_rdma_connection *connection);
-  uint32_t getConnectionLast();
-  void removeConnection(uint32_t connection_idx);
-  uint32_t getGpuCudaId();
-
-//   nixl_status_t sendLocalAgent(int oob_sock_client);
-  nixl_status_t sendLocalAgent(int oob_sock_client, const std::string &remote_agent);
-  nixl_status_t recvLocalAgent(int oob_sock_client, std::string &remote_agent);
+    nixl_status_t
+    sendLocalAgent (int oob_sock_client, const std::string &remote_agent);
+    nixl_status_t
+    recvLocalAgent (int oob_sock_client, std::string &remote_agent);
 };
 
-doca_error_t doca_kernel_write(cudaStream_t stream,
-                               struct doca_gpu_dev_rdma *rdma_gpu,
-                               struct docaXferReqGpu *xferReqRing,
-                               uint32_t pos);
-doca_error_t doca_kernel_read(cudaStream_t stream,
-                              struct doca_gpu_dev_rdma *rdma_gpu,
-                              struct docaXferReqGpu *xferReqRing, uint32_t pos);
-doca_error_t doca_kernel_progress(cudaStream_t stream,
-                                  struct docaXferCompletion *completion_list,
-                                  struct docaNotifRecv *notif_fill,
-                                  struct docaNotifRecv *notif_progress,
-                                  struct docaNotifSend *notif_send_gpu,
-                                  uint32_t *exit_flag);
+doca_error_t
+doca_kernel_write (cudaStream_t stream,
+                   struct doca_gpu_dev_rdma *rdma_gpu,
+                   struct docaXferReqGpu *xferReqRing,
+                   uint32_t pos);
+doca_error_t
+doca_kernel_read (cudaStream_t stream,
+                  struct doca_gpu_dev_rdma *rdma_gpu,
+                  struct docaXferReqGpu *xferReqRing,
+                  uint32_t pos);
+doca_error_t
+doca_kernel_progress (cudaStream_t stream,
+                      struct docaXferCompletion *completion_list,
+                      struct docaNotifRecv *notif_fill,
+                      struct docaNotifRecv *notif_progress,
+                      struct docaNotifSend *notif_send_gpu,
+                      uint32_t *exit_flag);
 
 #endif

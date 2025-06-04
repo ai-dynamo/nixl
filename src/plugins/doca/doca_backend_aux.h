@@ -59,9 +59,8 @@
 #define DOCA_RDMA_CM_LOCAL_PORT_CLIENT 6543
 #define DOCA_RDMA_CM_LOCAL_PORT_SERVER 6544
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
-#define DOCA_RDMA_SERVER_ADDR_LEN                                              \
-  (MAX(MAX(DOCA_DEVINFO_IPV4_ADDR_SIZE, DOCA_DEVINFO_IPV6_ADDR_SIZE),          \
-       DOCA_GID_BYTE_LENGTH))
+#define DOCA_RDMA_SERVER_ADDR_LEN \
+    (MAX (MAX (DOCA_DEVINFO_IPV4_ADDR_SIZE, DOCA_DEVINFO_IPV6_ADDR_SIZE), DOCA_GID_BYTE_LENGTH))
 #define DOCA_RDMA_SERVER_CONN_DELAY 500 // 500us
 // Pre-fill the whole recv queue with notif once
 #define DOCA_MAX_NOTIF_INFLIGHT RDMA_RECV_QUEUE_SIZE
@@ -74,138 +73,157 @@
 #endif
 
 struct docaXferReqGpu {
-  uint32_t id;
-  uintptr_t larr[DOCA_XFER_REQ_SIZE];
-  uintptr_t rarr[DOCA_XFER_REQ_SIZE];
-  size_t size[DOCA_XFER_REQ_SIZE];
-  uint16_t num;
-  uint8_t in_use;
-  uint32_t conn_idx;
-  uint32_t has_notif_msg_idx;
-  size_t msg_sz;
-  struct doca_gpu_buf_arr *notif_barr_gpu;
-  uint64_t *last_rsvd;
-  uint64_t *last_posted;
-  nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
-  struct doca_gpu_dev_rdma *rdma_gpu_data;  /* DOCA RDMA instance GPU handler */
-  struct doca_gpu_dev_rdma *rdma_gpu_notif; /* DOCA RDMA instance GPU handler */
+    uint32_t id;
+    uintptr_t larr[DOCA_XFER_REQ_SIZE];
+    uintptr_t rarr[DOCA_XFER_REQ_SIZE];
+    size_t size[DOCA_XFER_REQ_SIZE];
+    uint16_t num;
+    uint8_t in_use;
+    uint32_t conn_idx;
+    uint32_t has_notif_msg_idx;
+    size_t msg_sz;
+    struct doca_gpu_buf_arr *notif_barr_gpu;
+    uint64_t *last_rsvd;
+    uint64_t *last_posted;
+    nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
+    struct doca_gpu_dev_rdma *rdma_gpu_data; /* DOCA RDMA instance GPU handler */
+    struct doca_gpu_dev_rdma *rdma_gpu_notif; /* DOCA RDMA instance GPU handler */
 };
 
 struct nixlDocaMem {
-  void *addr;
-  uint32_t len;
-  struct doca_mmap *mmap;
-  void *export_mmap;
-  size_t export_len;
-  struct doca_buf_arr *barr;
-  struct doca_gpu_buf_arr *barr_gpu;
-  uint32_t devId;
+    void *addr;
+    uint32_t len;
+    struct doca_mmap *mmap;
+    void *export_mmap;
+    size_t export_len;
+    struct doca_buf_arr *barr;
+    struct doca_gpu_buf_arr *barr_gpu;
+    uint32_t devId;
 };
 
 struct nixlDocaNotif {
-  uint32_t elems_num;
-  uint32_t elems_size;
-  uint8_t *send_addr;
-  std::atomic<uint32_t> send_pi;
-  struct doca_mmap *send_mmap;
-  struct doca_buf_arr *send_barr;
-  struct doca_gpu_buf_arr *send_barr_gpu;
-  uint8_t *recv_addr;
-  std::atomic<uint32_t> recv_pi;
-  struct doca_mmap *recv_mmap;
-  struct doca_buf_arr *recv_barr;
-  struct doca_gpu_buf_arr *recv_barr_gpu;
+    uint32_t elems_num;
+    uint32_t elems_size;
+    uint8_t *send_addr;
+    std::atomic<uint32_t> send_pi;
+    struct doca_mmap *send_mmap;
+    struct doca_buf_arr *send_barr;
+    struct doca_gpu_buf_arr *send_barr_gpu;
+    uint8_t *recv_addr;
+    std::atomic<uint32_t> recv_pi;
+    struct doca_mmap *recv_mmap;
+    struct doca_buf_arr *recv_barr;
+    struct doca_gpu_buf_arr *recv_barr_gpu;
 };
 
 struct docaXferCompletion {
-  uint8_t completed;
-  struct docaXferReqGpu *xferReqRingGpu;
+    uint8_t completed;
+    struct docaXferReqGpu *xferReqRingGpu;
 };
 
 struct docaNotifRecv {
-  struct doca_gpu_dev_rdma *rdma_qp;
-  struct doca_gpu_buf_arr *barr_gpu;
-  int num_msg;
+    struct doca_gpu_dev_rdma *rdma_qp;
+    struct doca_gpu_buf_arr *barr_gpu;
+    int num_msg;
 };
 
 struct docaNotifSend {
-  struct doca_gpu_dev_rdma *rdma_qp;
-  struct doca_gpu_buf_arr *barr_gpu;
-  int buf_idx;
-  size_t msg_sz;
+    struct doca_gpu_dev_rdma *rdma_qp;
+    struct doca_gpu_buf_arr *barr_gpu;
+    int buf_idx;
+    size_t msg_sz;
 };
 
 class nixlDocaConnection : public nixlBackendConnMD {
 private:
-  std::string remoteAgent;
-  // rdma qp
-  // nixlDocaEp ep;
-  volatile bool connected;
+    std::string remoteAgent;
+    // rdma qp
+    // nixlDocaEp ep;
+    volatile bool connected;
 
 public:
-  // Extra information required for UCX connections
+    // Extra information required for UCX connections
 
-  friend class nixlDocaEngine;
+    friend class nixlDocaEngine;
 };
 
 // A private metadata has to implement get, and has all the metadata
 class nixlDocaPrivateMetadata : public nixlBackendMD {
 private:
-  nixlDocaMem mem;
-  nixl_blob_t remoteMmapStr;
+    nixlDocaMem mem;
+    nixl_blob_t remoteMmapStr;
 
 public:
-  nixlDocaPrivateMetadata() : nixlBackendMD(true) {}
+    nixlDocaPrivateMetadata() : nixlBackendMD (true) {}
 
-  ~nixlDocaPrivateMetadata() {}
+    ~nixlDocaPrivateMetadata() {}
 
-  std::string get() const { return remoteMmapStr; }
+    std::string
+    get() const {
+        return remoteMmapStr;
+    }
 
-  friend class nixlDocaEngine;
+    friend class nixlDocaEngine;
 };
 
 // A public metadata has to implement put, and only has the remote metadata
 class nixlDocaPublicMetadata : public nixlBackendMD {
 
 public:
-  nixlDocaMem mem;
-  nixlDocaConnection conn;
+    nixlDocaMem mem;
+    nixlDocaConnection conn;
 
-  nixlDocaPublicMetadata() : nixlBackendMD(false) {}
+    nixlDocaPublicMetadata() : nixlBackendMD (false) {}
 
-  ~nixlDocaPublicMetadata() {}
+    ~nixlDocaPublicMetadata() {}
 };
 
 struct nixlDocaRdmaQp {
-  struct doca_dev *dev;        /* DOCA device handler associated to queues */
-  struct doca_gpu *gpu;        /* DOCA device handler associated to queues */
-  struct doca_rdma *rdma_data; /* DOCA RDMA instance */
-  struct doca_gpu_dev_rdma *rdma_gpu_data; /* DOCA RDMA instance GPU handler */
-  struct doca_ctx *rdma_ctx_data; /* DOCA context to be used with DOCA RDMA */
-  const void *connection_details_data; /* Remote peer connection details */
-  size_t conn_det_len_data; /* Remote peer connection details data length */
-  struct doca_rdma_connection
-      *connection_data; /* The RDMA_CM connection instance */
+    struct doca_dev *dev; /* DOCA device handler associated to queues */
+    struct doca_gpu *gpu; /* DOCA device handler associated to queues */
+    struct doca_rdma *rdma_data; /* DOCA RDMA instance */
+    struct doca_gpu_dev_rdma *rdma_gpu_data; /* DOCA RDMA instance GPU handler */
+    struct doca_ctx *rdma_ctx_data; /* DOCA context to be used with DOCA RDMA */
+    const void *connection_details_data; /* Remote peer connection details */
+    size_t conn_det_len_data; /* Remote peer connection details data length */
+    struct doca_rdma_connection *connection_data; /* The RDMA_CM connection instance */
 
-  struct doca_rdma *rdma_notif;             /* DOCA RDMA instance */
-  struct doca_gpu_dev_rdma *rdma_gpu_notif; /* DOCA RDMA instance GPU handler */
-  struct doca_ctx *rdma_ctx_notif; /* DOCA context to be used with DOCA RDMA */
-  const void *connection_details_notif; /* Remote peer connection details */
-  size_t conn_det_len_notif; /* Remote peer connection details data length */
-  struct doca_rdma_connection
-      *connection_notif; /* The RDMA_CM connection instance */
+    struct doca_rdma *rdma_notif; /* DOCA RDMA instance */
+    struct doca_gpu_dev_rdma *rdma_gpu_notif; /* DOCA RDMA instance GPU handler */
+    struct doca_ctx *rdma_ctx_notif; /* DOCA context to be used with DOCA RDMA */
+    const void *connection_details_notif; /* Remote peer connection details */
+    size_t conn_det_len_notif; /* Remote peer connection details data length */
+    struct doca_rdma_connection *connection_notif; /* The RDMA_CM connection instance */
 };
 
-void nixlDocaEngineCheckCudaError(cudaError_t result, const char *message);
-int oob_connection_client_setup(const char *server_ip, int *oob_sock_fd);
-void oob_connection_client_close(int oob_sock_fd);
-void oob_connection_server_close(int oob_sock_fd);
-doca_error_t open_doca_device_with_ibdev_name(const uint8_t *value, size_t val_size, struct doca_dev **retval);
-void *threadProgressFunc(void *arg);
-doca_error_t create_doca_mmap(void *addr, uint32_t elem_num, size_t elem_size, struct doca_dev *dev, struct doca_mmap **mmap);
-doca_error_t destroy_doca_mmap(struct doca_mmap *mmap);
-doca_error_t create_doca_buf_arr(struct doca_mmap *mmap, uint32_t elem_num, size_t elem_size, struct doca_gpu *gpu,
-                                    struct doca_buf_arr **barr, struct doca_gpu_buf_arr **barr_gpu);
-doca_error_t destroy_doca_buf_arr(struct doca_buf_arr *barr);
+void
+nixlDocaEngineCheckCudaError (cudaError_t result, const char *message);
+int
+oob_connection_client_setup (const char *server_ip, int *oob_sock_fd);
+void
+oob_connection_client_close (int oob_sock_fd);
+void
+oob_connection_server_close (int oob_sock_fd);
+doca_error_t
+open_doca_device_with_ibdev_name (const uint8_t *value, size_t val_size, struct doca_dev **retval);
+void *
+threadProgressFunc (void *arg);
+doca_error_t
+create_doca_mmap (void *addr,
+                  uint32_t elem_num,
+                  size_t elem_size,
+                  struct doca_dev *dev,
+                  struct doca_mmap **mmap);
+doca_error_t
+destroy_doca_mmap (struct doca_mmap *mmap);
+doca_error_t
+create_doca_buf_arr (struct doca_mmap *mmap,
+                     uint32_t elem_num,
+                     size_t elem_size,
+                     struct doca_gpu *gpu,
+                     struct doca_buf_arr **barr,
+                     struct doca_gpu_buf_arr **barr_gpu);
+doca_error_t
+destroy_doca_buf_arr (struct doca_buf_arr *barr);
 
 #endif /* __DOCA_BACKEND_AUX_H */
