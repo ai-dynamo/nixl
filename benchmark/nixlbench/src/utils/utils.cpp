@@ -248,6 +248,9 @@ int xferBenchConfig::loadFromFlags() {
 }
 
 void xferBenchConfig::printConfig() {
+    if (xferBenchConfig::output_format == "json") {
+        return;
+    }
     std::cout << std::string(70, '*') << std::endl;
     std::cout << "NIXLBench Configuration" << std::endl;
     std::cout << std::string(70, '*') << std::endl;
@@ -550,15 +553,19 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
         result["aggregate_bw_gb"] = totalbw;
         result["network_util_percent"] = (totalbw / (rt->getSize()/2 * MAXBW))*100;
     }
+    json final_json;
+    final_json["configuration"] = xferBenchConfig::to_json();
+    final_json["results"] = result;
+
     if (!xferBenchConfig::output_json_file.empty()) {
         std::ofstream out(xferBenchConfig::output_json_file, std::ios::app);
         if (!out) {
             std::cerr << "Failed to open JSON output file: " << xferBenchConfig::output_json_file << std::endl;
             exit(EXIT_FAILURE);
         }
-        out << result.dump() << std::endl;
+        out << final_json.dump() << std::endl;
     } else {
-        std::cout << result.dump() << std::endl;
+        std::cout << final_json.dump() << std::endl;
     }
     return;
 }
@@ -582,3 +589,52 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
                   << std::endl;
     }
 }
+
+json xferBenchConfig::to_json() {
+    json configJson;
+
+    configJson["runtime"] = {
+        {"type", runtime_type},
+        {"etcd_endpoints", etcd_endpoints}
+    };
+
+    configJson["worker"] = {
+        {"type", worker_type},
+        {"num_threads", num_threads}
+    };
+
+    configJson["storage"] = {
+        {"backend", backend},
+        {"enable_pt", enable_pt},
+        {"device_list", device_list},
+        {"total_buffer_size", total_buffer_size},
+        {"posix_api_type", posix_api_type},
+        {"posix_filepath", posix_filepath},
+        {"storage_enable_direct", storage_enable_direct},
+        {"num_files", num_files}
+    };
+
+    configJson["memory"] = {
+        {"initiator_seg_type", initiator_seg_type},
+        {"target_seg_type", target_seg_type},
+        {"num_initiator_dev", num_initiator_dev},
+        {"num_target_dev", num_target_dev}
+    };
+
+    configJson["workload"] = {
+        {"scheme", scheme},
+        {"mode", mode},
+        {"op_type", op_type},
+        {"check_consistency", check_consistency},
+        {"start_block_size", start_block_size},
+        {"max_block_size", max_block_size},
+        {"start_batch_size", start_batch_size},
+        {"max_batch_size", max_batch_size},
+        {"num_iter", num_iter},
+        {"warmup_iter", warmup_iter}
+    };
+
+    return configJson;
+}
+
+

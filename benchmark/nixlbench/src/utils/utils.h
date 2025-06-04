@@ -102,6 +102,7 @@ using json = nlohmann::json;
                               XFERBENCH_MODE_SG == xferBenchConfig::mode)
 #define IS_PAIRWISE_AND_MG() (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
                               XFERBENCH_MODE_MG == xferBenchConfig::mode)
+
 class xferBenchConfig {
     public:
         static std::string runtime_type;
@@ -139,6 +140,7 @@ class xferBenchConfig {
         static int loadFromFlags();
         static void printConfig();
         static std::vector<std::string> parseDeviceList();
+        static json to_json();
 };
 
 // Generic IOV descriptor class independent of NIXL
