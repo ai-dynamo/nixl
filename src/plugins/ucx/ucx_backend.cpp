@@ -33,6 +33,16 @@
 
 #endif
 
+namespace {
+    void moveNotifList(notif_list_t &src, notif_list_t &tgt)
+    {
+        if (src.size() > 0) {
+            std::move(src.begin(), src.end(), std::back_inserter(tgt));
+            src.clear();
+        }
+    }
+}
+
 /****************************************
  * CUDA related code
  *****************************************/
@@ -365,11 +375,15 @@ public:
         }
 
         const auto &uw = eng.getWorker(worker_id);
+
+        /* Maximum progress */
+        while (uw->progress());
+
         /* Go over all request updating their status */
         while(req) {
             nixl_status_t ret;
             if (!req->is_complete()) {
-                ret = uw->test((nixlUcxReq)req);
+                ret = ucx_status_to_nixl(ucp_request_check_status((nixlUcxReq)req));
                 switch (ret) {
                     case NIXL_SUCCESS:
                         /* Mark as completed */
@@ -1237,28 +1251,10 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     return UCS_OK;
 }
 
-
-void nixlUcxEngine::notifCombineHelper(notif_list_t &src, notif_list_t &tgt)
-{
-    if (!src.size()) {
-        // Nothing to do. Exit
-        return;
-    }
-
-    move(src.begin(), src.end(), back_inserter(tgt));
-    src.erase(src.begin(), src.end());
-}
-
 void nixlUcxEngine::notifProgressCombineHelper(notif_list_t &src, notif_list_t &tgt)
 {
-    notifMtx.lock();
-
-    if (src.size()) {
-        move(src.begin(), src.end(), back_inserter(tgt));
-        src.erase(src.begin(), src.end());
-    }
-
-    notifMtx.unlock();
+    const std::lock_guard<std::mutex> lock(notifMtx);
+    moveNotifList(src, tgt);
 }
 
 void nixlUcxEngine::notifProgress()
@@ -1273,7 +1269,7 @@ nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
 
     if(!pthrOn) while(progress());
 
-    notifCombineHelper(notifMainList, notif_list);
+    moveNotifList(notifMainList, notif_list);
     notifProgressCombineHelper(notifPthr, notif_list);
 
     return NIXL_SUCCESS;
