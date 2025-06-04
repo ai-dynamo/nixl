@@ -52,6 +52,8 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     rdma-core-devel \
     libibumad \
     libibumad-devel \
+    libnuma-devel \
+    librdmacm-devel \
     wget \
     zlib
 
