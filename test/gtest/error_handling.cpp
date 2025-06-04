@@ -218,12 +218,18 @@ TestErrorHandling::TestErrorHandling() {
     }
 
     // Set up test environment
-    // Load plugins from build directory
-    std::string plugin_dir = std::string(BUILD_DIR) + "/src/plugins/ucx";
-    setenv("NIXL_PLUGIN_DIR", plugin_dir.c_str(), 1);
+    // Only override NIXL_PLUGIN_DIR if it's not already set by the test environment
+    if (!m_plugin_dir_backup.first) {
+        // Load plugins from build directory - use general plugins dir instead of hardcoded ucx
+        std::string plugin_dir = std::string(BUILD_DIR) + "/src/plugins";
+        setenv("NIXL_PLUGIN_DIR", plugin_dir.c_str(), 1);
 
-    std::cout << "set NIXL_PLUGIN_DIR: " << getenv("NIXL_PLUGIN_DIR")
-              << std::endl;
+        std::cout << "set NIXL_PLUGIN_DIR: " << getenv("NIXL_PLUGIN_DIR")
+                  << std::endl;
+    } else {
+        std::cout << "using existing NIXL_PLUGIN_DIR: " << getenv("NIXL_PLUGIN_DIR")
+                  << std::endl;
+    }
 }
 
 TestErrorHandling::~TestErrorHandling() {
