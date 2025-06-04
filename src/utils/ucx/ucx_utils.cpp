@@ -174,21 +174,19 @@ nixl_status_t nixlUcxEp::disconnect_nb()
  * RKey management
  * =========================================== */
 
-int nixlUcxEp::rkeyImport(void* addr, std::size_t size, nixlUcxRkey &rkey)
+nixl_status_t nixlUcxEp::rkeyImport(void* addr, const std::size_t size, nixlUcxRkey &rkey)
 {
-    ucs_status_t status;
-
-    status = ucp_ep_rkey_unpack(eph, addr, &rkey.rkeyh);
+    const ucs_status_t status = ucp_ep_rkey_unpack(eph, addr, &rkey.rkeyh);
     if (status != UCS_OK)
     {
         /* TODO: MSW_NET_ERROR(priv->net, "unable to unpack key!\n"); */
-        return -1;
+        return NIXL_ERR_BACKEND;
     }
 
-    return 0;
+    return NIXL_SUCCESS;
 }
 
-void nixlUcxEp::rkeyDestroy(nixlUcxRkey &rkey)
+void nixlUcxEp::rkeyDestroy(const nixlUcxRkey &rkey)
 {
     ucp_rkey_destroy(rkey.rkeyh);
 }

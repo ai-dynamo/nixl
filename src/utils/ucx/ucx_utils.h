@@ -98,8 +98,8 @@ public:
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
     /* Rkey */
-    int rkeyImport(void* addr, std::size_t size, nixlUcxRkey &rkey);
-    void rkeyDestroy(nixlUcxRkey &rkey);
+    [[nodiscard]] nixl_status_t rkeyImport(void* addr, const std::size_t size, nixlUcxRkey &rkey);
+    void rkeyDestroy(const nixlUcxRkey &rkey);
 
     /* Active message handling */
     nixl_status_t sendAm(unsigned msg_id,

@@ -908,18 +908,20 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
     std::vector<char> addr(size);
     nixlSerDes::_stringToBytes(addr.data(), blob, size);
 
-    bool error = false;
+    nixl_status_t status = NIXL_SUCCESS;
     for (size_t wid = 0; wid < uws.size(); wid++) {
         nixlUcxRkey rkey;
-        error = md->conn->getEp(wid)->rkeyImport(addr.data(), size, rkey);
-        if (error)
+        status = md->conn->getEp(wid)->rkeyImport(addr.data(), size, rkey);
+        if (status != NIXL_SUCCESS) {
             // TODO: error out. Should we indicate which desc failed or unroll everything prior
             break;
+        }
         md->rkeys.push_back(rkey);
     }
-    if (error) {
-        for (size_t wid = 0; wid < md->rkeys.size(); wid++)
+    if (status != NIXL_SUCCESS) {
+        for (size_t wid = 0; wid < md->rkeys.size(); wid++) {
             md->conn->getEp(wid)->rkeyDestroy(md->rkeys[wid]);
+        }
         return NIXL_ERR_BACKEND;
     }
 
