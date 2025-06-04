@@ -375,11 +375,15 @@ public:
         }
 
         const auto &uw = eng.getWorker(worker_id);
+
+        /* Maximum progress */
+        while (uw->progress());
+
         /* Go over all request updating their status */
         while(req) {
             nixl_status_t ret;
             if (!req->is_complete()) {
-                ret = uw->test((nixlUcxReq)req);
+                ret = ucx_status_to_nixl(ucp_request_check_status((nixlUcxReq)req));
                 switch (ret) {
                     case NIXL_SUCCESS:
                         /* Mark as completed */
