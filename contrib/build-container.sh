@@ -35,6 +35,7 @@ ARCH=$(uname -m)
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
+UCX_REF=v1.19.x
 OS="ubuntu24"
 
 get_options() {
@@ -87,6 +88,9 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --ucx-upstream)
+            # Master branch (v1.20) also containing EFA SRD support
+            UCX_REF=7ec95b95e524a87e81cac92f5ca8523e3966b16b
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
@@ -132,6 +136,7 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
+    echo "UCX Ref: ${UCX_REF}"
 }
 
 show_help() {
@@ -142,6 +147,7 @@ show_help() {
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
+    echo "  [--ucx-upstream use ucx master branch]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     exit 0
 }
@@ -166,6 +172,7 @@ BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BAS
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
+BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
 
 show_build_options
 
