@@ -61,7 +61,7 @@ cd ${INSTALL_DIR}
 ./bin/ucx_backend_multi
 ./bin/serdes_test
 ./bin/gtest
-NIXL_LOG_LEVEL=TRACE ./bin/test_plugin
+./bin/test_plugin
 
 # Run NIXL client-server test
 ./bin/nixl_test target 127.0.0.1 1234&
