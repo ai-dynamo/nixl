@@ -636,5 +636,3 @@ json xferBenchConfig::to_json() {
 
     return configJson;
 }
-
-
