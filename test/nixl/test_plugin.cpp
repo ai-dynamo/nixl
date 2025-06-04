@@ -96,8 +96,6 @@ int main(int argc, char** argv) {
         plugin_manager.unloadPlugin(plugin);
     }
 
-    auto preloaded_plugins = plugin_manager.getLoadedPluginNames().size();
-
     for (const auto& plugin : plugins) {
         verify_plugin(plugin, plugin_manager);
     }
@@ -120,7 +118,7 @@ int main(int argc, char** argv) {
 
     // Plugins loaded should only be the static plugins
     if (plugin_manager.getLoadedPluginNames().size() !=
-        staticPlugs.size() + preloaded_plugins) {
+        staticPlugs.size()) {
         std::cerr << "TEST FAILED: Dynamic Plugins are still loaded." << std::endl;
         return -1;
     }
