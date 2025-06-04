@@ -33,6 +33,16 @@
 
 #endif
 
+namespace {
+    void moveNotifList(notif_list_t &src, notif_list_t &tgt)
+    {
+        if (src.size() > 0) {
+            std::move(src.begin(), src.end(), std::back_inserter(tgt));
+            src.clear();
+        }
+    }
+}
+
 /****************************************
  * CUDA related code
  *****************************************/
@@ -365,11 +375,15 @@ public:
         }
 
         const auto &uw = eng.getWorker(worker_id);
+
+        /* Maximum progress */
+        while (uw->progress());
+
         /* Go over all request updating their status */
         while(req) {
             nixl_status_t ret;
             if (!req->is_complete()) {
-                ret = uw->test((nixlUcxReq)req);
+                ret = ucx_status_to_nixl(ucp_request_check_status((nixlUcxReq)req));
                 switch (ret) {
                     case NIXL_SUCCESS:
                         /* Mark as completed */
@@ -520,7 +534,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 
     if (init_params->enableProgTh) {
         pthrOn = true;
-        if (!nixlUcxContext::mtLevelIsSupproted(NIXL_UCX_MT_WORKER)) {
+        if (!nixlUcxMtLevelIsSupported(nixl_ucx_mt_t::WORKER)) {
             NIXL_ERROR << "UCX library does not support multi-threading";
             this->initErr = true;
             return;
@@ -565,9 +579,9 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
 
     const auto &uw = uws.front();
-    workerAddr = uw->epAddr(workerSize);
+    workerAddr = uw->epAddr();
 
-    if (workerAddr == nullptr) {
+    if (workerAddr.empty()) {
         NIXL_ERROR << "Failed to get UCX worker address";
         initErr = true;
         return;
@@ -653,7 +667,7 @@ nixl_status_t nixlUcxEngine::endConn(const std::string &remote_agent) {
 }
 
 nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
-    str = nixlSerDes::_bytesToString(workerAddr.get(), workerSize);
+    str = workerAddr;
     return NIXL_SUCCESS;
 }
 
@@ -719,14 +733,13 @@ nixlUcxEngine::connectionTermAmCb (void *arg, const void *header,
 }
 
 nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
-    struct nixl_ucx_am_hdr hdr;
-    uint32_t flags = 0;
+    nixl_ucx_am_hdr hdr;
+    std::uint32_t flags = 0;
 
-    if (remote_agent == localAgent)
-        return loadRemoteConnInfo (remote_agent,
-                   nixlSerDes::_bytesToString(workerAddr.get(), workerSize));
-
-    auto search = remoteConnMap.find(remote_agent);
+    if(remote_agent == localAgent) {
+        return loadRemoteConnInfo(remote_agent, workerAddr);
+    }
+    const auto search = remoteConnMap.find(remote_agent);
 
     if(search == remoteConnMap.end()) {
         return NIXL_ERR_NOT_FOUND;
@@ -835,9 +848,7 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
                                           const nixl_mem_t &nixl_mem,
                                           nixlBackendMD* &out)
 {
-    int ret;
     auto priv = std::make_unique<nixlUcxPrivateMetadata>();
-    size_t rkey_size;
 
     if (nixl_mem == VRAM_SEG) {
         bool need_restart;
@@ -853,16 +864,15 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
     }
 
     // TODO: Add nixl_mem check?
-    ret = uc->memReg((void*) mem.addr, mem.len, priv->mem);
+    const int ret = uc->memReg((void*) mem.addr, mem.len, priv->mem);
     if (ret) {
         return NIXL_ERR_BACKEND;
     }
-    auto rkey = uc->packRkey(priv->mem, rkey_size);
-    if (rkey == nullptr) {
+    priv->rkeyStr = uc->packRkey(priv->mem);
+
+    if (priv->rkeyStr.empty()) {
         return NIXL_ERR_BACKEND;
     }
-    priv->rkeyStr = nixlSerDes::_bytesToString((void*) rkey.get(), rkey_size);
-
     out = priv.release();
     return NIXL_SUCCESS;
 }
@@ -1241,28 +1251,10 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     return UCS_OK;
 }
 
-
-void nixlUcxEngine::notifCombineHelper(notif_list_t &src, notif_list_t &tgt)
-{
-    if (!src.size()) {
-        // Nothing to do. Exit
-        return;
-    }
-
-    move(src.begin(), src.end(), back_inserter(tgt));
-    src.erase(src.begin(), src.end());
-}
-
 void nixlUcxEngine::notifProgressCombineHelper(notif_list_t &src, notif_list_t &tgt)
 {
-    notifMtx.lock();
-
-    if (src.size()) {
-        move(src.begin(), src.end(), back_inserter(tgt));
-        src.erase(src.begin(), src.end());
-    }
-
-    notifMtx.unlock();
+    const std::lock_guard<std::mutex> lock(notifMtx);
+    moveNotifList(src, tgt);
 }
 
 void nixlUcxEngine::notifProgress()
@@ -1277,7 +1269,7 @@ nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
 
     if(!pthrOn) while(progress());
 
-    notifCombineHelper(notifMainList, notif_list);
+    moveNotifList(notifMainList, notif_list);
     notifProgressCombineHelper(notifPthr, notif_list);
 
     return NIXL_SUCCESS;
