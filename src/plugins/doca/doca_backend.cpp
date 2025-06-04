@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
- * All rights reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include "doca_backend.h"
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
@@ -1305,7 +1306,7 @@ nixlDocaEngine::prepXfer (const nixl_xfer_op_t &operation,
 
         notif = search->second;
 
-        // Checl notifMsg size
+        // Check notifMsg size
         std::string newMsg = msg_tag_start + std::to_string (opt_args->notifMsg.size()) +
                 msg_tag_end + opt_args->notifMsg;
 

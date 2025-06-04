@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
- * All rights reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include "doca_backend.h"
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
@@ -172,7 +173,7 @@ threadProgressFunc (void *arg) {
             eng->nixlDocaInitNotif (remote_agent, eng->ddev, eng->gdevs[0].second);
             eng->connectServerRdmaQp (oob_sock_client, remote_agent);
         } else
-            NIXL_ERROR << "remote client " << remote_agent << " alredy present";
+            NIXL_ERROR << "remote client " << remote_agent << " already present";
 
         close (oob_sock_client);
         /* Wait for predefined number of */

@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <iostream>
 #include <string>
 #include <algorithm>
@@ -616,8 +617,6 @@ main (int argc, char *argv[]) {
 
     std::cout << "Cleanup.. \n";
 
-    // do we need extra_params?
-    // Check if deregistration also works implicitely when closing the app without this function
     agent.deregisterMem (local_vram_rdlist, &extra_params);
     // cudaFree(data_address);
 
