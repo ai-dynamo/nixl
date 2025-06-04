@@ -209,4 +209,6 @@ private:
     };
 }
 
+nixl_status_t ucx_status_to_nixl(ucs_status_t status);
+
 #endif

@@ -30,7 +30,7 @@
 
 using namespace std;
 
-static nixl_status_t ucx_status_to_nixl(ucs_status_t status)
+nixl_status_t ucx_status_to_nixl(ucs_status_t status)
 {
     if (status == UCS_OK) {
         return NIXL_SUCCESS;
