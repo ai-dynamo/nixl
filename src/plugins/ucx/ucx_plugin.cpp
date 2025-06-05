@@ -48,10 +48,7 @@ namespace
    }
 
    [[nodiscard]] nixl_mem_list_t get_backend_mems() {
-       return {
-	 DRAM_SEG,
-	 VRAM_SEG
-       };
+       return {DRAM_SEG, VRAM_SEG};
    }
 
    // Static plugin structure
