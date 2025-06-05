@@ -20,7 +20,7 @@
 #include <cuda.h>
 #include <cuda/atomic>
 
-#include "doca_backend.h"
+#include "gpunetio_backend.h"
 
 #define ENABLE_DEBUG 0
 

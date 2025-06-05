@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef __DOCA_BACKEND_AUX_H
-#define __DOCA_BACKEND_AUX_H
+#ifndef GPUNETIO_BACKEND_AUX_H
+#define GPUNETIO_BACKEND_AUX_H
 
 #include <atomic>
 #include <cstring>
@@ -227,4 +227,4 @@ create_doca_buf_arr (struct doca_mmap *mmap,
 doca_error_t
 destroy_doca_buf_arr (struct doca_buf_arr *barr);
 
-#endif /* __DOCA_BACKEND_AUX_H */
+#endif /* GPUNETIO_BACKEND_AUX_H */

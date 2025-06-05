@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "doca_backend.h"
+#include "gpunetio_backend.h"
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <stdexcept>
@@ -148,30 +148,12 @@ threadProgressFunc (void *arg) {
         NIXL_INFO << "Client connected at IP: " << inet_ntoa (client_addr.sin_addr)
                   << " and port: " << ntohs (client_addr.sin_port);
 
-        // // Msg
-        // if (recv (oob_sock_client, &msg_size, sizeof (size_t), 0) < 0) {
-        //     NIXL_ERROR << "Failed to recv msg details";
-        //     close (oob_sock_client);
-        // }
-
-        // remote_agent = (char *)calloc (msg_size, sizeof (char));
-        // if (remote_agent == nullptr) {
-        //     NIXL_ERROR << "Failed to alloc msg memory";
-        //     close (oob_sock_client);
-        // }
-
-        // if (recv (oob_sock_client, remote_agent, msg_size, 0) < 0) {
-        //     NIXL_ERROR << "Failed to recv msg details";
-        //     close (oob_sock_client);
-        // }
-
         cuCtxSetCurrent (eng->main_cuda_ctx);
 
         eng->recvRemoteAgentName(oob_sock_client, remote_agent);
 
         NIXL_DEBUG << "recvRemoteAgentName remoteAgent " << remote_agent << std::endl;
 
-        printf("server calling addRdmaQp for %s\n", remote_agent.c_str());
         eng->addRdmaQp (remote_agent);
         eng->nixlDocaInitNotif (remote_agent, eng->ddev, eng->gdevs[0].second);
         eng->connectServerRdmaQp (oob_sock_client, remote_agent);

@@ -26,7 +26,7 @@ else
         nvtx_dep = []
 endif
 
-nixl_doca_stream_app = executable ('nixl_doca_stream_test', 'nixl_doca_stream_test.cu',
+nixl_gpunetio_stream_app = executable ('nixl_gpunetio_stream_test', 'nixl_gpunetio_stream_test.cu',
         dependencies: [nixl_dep, nixl_infra, stream_interface] + cuda_dep + nvtx_dep,
         include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../../../src/utils/serdes'],
         link_with: [serdes_lib],

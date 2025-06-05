@@ -22,7 +22,7 @@ In order to correctly enable and use this backend, please refer to the [DOCA GPU
 
 ## Mode of operations
 
-DOCA backend enhances NIXL with GPU communications in "stream" mode. It means the backend provides an internal CUDA kernel to execute RDMA Write or RDMA Read to be launched on a CUDA stream.
+DOCA GPUNetIO backend enhances NIXL with GPU communications in "stream" mode. It means the backend provides an internal CUDA kernel to execute RDMA Write or RDMA Read to be launched on a CUDA stream.
 
 There are two mode of operation:
 - Stream attached: when a transfer request is created with `createXferRequest`, a CUDA stream is specified in the `extra_params.customParam` parameter. When postXfer is called, the backend will launch the CUDA kernel responsible for the RDMA Write or RDMA Read using the CUDA stream specified by the application.
@@ -34,18 +34,18 @@ Stream pool mode instead is when applications mostly wants to process data on th
 
 ## Input parameters
 
-DOCA backend takes 3 input parameters:
+DOCA GPUNetIO backend takes 3 input parameters:
 - network_devices: network device to be used during the execution (e.g. mlx5_0). Current release supports only 1 network device.
 - gpu_devices: GPU CUDA ID to be used during the execution (e.g. 0). Current release supports only 1 GPU device.
 - cuda_streams: how many CUDA streams the backend should created at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. If this parameter is not specified, default value is `DOCA_POST_STREAM_NUM`.
 
 ## Example
 
-In directory `test/unit/plugins/doca` there is a sample named `nixl_doca_stream_test.cu` where initiator and target exchange data through DOCA backend.
+In directory `test/unit/plugins/doca` there is a sample named `nixl_gpunetio_stream_test.cu` where initiator and target exchange data through DOCA GPUNetIO backend.
 
-NIXL bench also has the option to specify the DOCA backend. An example command line to launch NIXL bench with GPU 0 andh 512 buffers per transfer can be:
+NIXL bench also has the option to specify the DOCA GPUNetIO backend. An example command line to launch NIXL bench with GPU 0 andh 512 buffers per transfer can be:
 ```
- LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/path/to/gdrcopy/src:/opt/mellanox/doca NIXL_PLUGIN_DIR=/path/to/nixl/lib/x86_64-linux-gnu/plugins CUDA_MODULE_LOADING=EAGER ./nixlbench --etcd-endpoints http://etc_server_ip:2379 --backend=DOCA --initiator_seg_type=VRAM --target_seg_type=DRAM --runtime_type=ETCD --doca_gpu_device_list=0 --device_list=mlx5_0 --start_batch_size=512 --max_batch_size=512 --total_buffer_size=34359738368
+ LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/path/to/gdrcopy/src:/opt/mellanox/doca NIXL_PLUGIN_DIR=/path/to/nixl/lib/x86_64-linux-gnu/plugins CUDA_MODULE_LOADING=EAGER ./nixlbench --etcd-endpoints http://etc_server_ip:2379 --backend=GPUNETIO --initiator_seg_type=VRAM --target_seg_type=DRAM --runtime_type=ETCD --gpunetio_device_list=0 --device_list=mlx5_0 --start_batch_size=512 --max_batch_size=512 --total_buffer_size=34359738368
 ```
 
 ## Caveats

@@ -16,10 +16,10 @@
  */
 
 #include "backend/backend_plugin.h"
-#include "doca_backend.h"
+#include "gpunetio_backend.h"
 
 // Plugin version information
-static const char *PLUGIN_NAME = "DOCA";
+static const char *PLUGIN_NAME = "GPUNETIO";
 static const char *PLUGIN_VERSION = "0.1.0";
 
 static nixlBackendEngine *
@@ -77,7 +77,7 @@ static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
                                    get_backend_options,
                                    get_backend_mems};
 
-#ifdef STATIC_PLUGIN_DOCA
+#ifdef STATIC_PLUGIN_GPUNETIO
 
 nixlBackendPlugin *
 createStaticDocaPlugin() {

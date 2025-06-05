@@ -68,7 +68,7 @@
 #define XFERBENCH_BACKEND_UCX_MO "UCX_MO"
 #define XFERBENCH_BACKEND_GDS "GDS"
 #define XFERBENCH_BACKEND_POSIX "POSIX"
-#define XFERBENCH_BACKEND_DOCA "DOCA"
+#define XFERBENCH_BACKEND_GPUNETIO "GPUNETIO"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -131,7 +131,7 @@ class xferBenchConfig {
         static bool storage_enable_direct;
         static int gds_batch_pool_size;
         static int gds_batch_limit;
-        static std::string doca_gpu_device_list;
+        static std::string gpunetio_device_list;
         static int loadFromFlags();
         static void printConfig();
         static std::vector<std::string> parseDeviceList();

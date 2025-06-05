@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 
-#ifndef __DOCA_BACKEND_H
-#define __DOCA_BACKEND_H
+#ifndef GPUNETIO_BACKEND_H
+#define GPUNETIO_BACKEND_H
 
-#include "doca_backend_aux.h"
+#include "gpunetio_backend_aux.h"
 
 class nixlDocaEngine : public nixlBackendEngine {
 private:

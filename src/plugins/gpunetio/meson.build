@@ -17,7 +17,7 @@ gpunetio_device_path = dependency('doca-gpunetio').get_variable(pkgconfig : 'lib
 dependency_gpunetio_device = declare_dependency(compile_args : '-Wl,--whole-archive',
                                                 link_args : ['-L' + gpunetio_device_path , '-ldoca_gpunetio_device'],)
 
-plugin_doca_deps = [dependency('doca-common'), dependency('doca-rdma'), dependency('doca-gpunetio'), dependency_gpunetio_device]
+plugin_gpunetio_deps = [dependency('doca-common'), dependency('doca-rdma'), dependency('doca-gpunetio'), dependency_gpunetio_device]
 
 #Get Abseil dependencies
 absl_log_dep = dependency('absl_log', required: true)
@@ -25,10 +25,10 @@ absl_log_dep = dependency('absl_log', required: true)
 gpu_cuda_args = []
 compile_flags += '-D DOCA_ALLOW_EXPERIMENTAL_API'
 
-if 'DOCA' in static_plugins
-    doca_backend_lib = static_library('DOCA',
-               'doca_backend.cpp', 'doca_backend.h', 'doca_backend_aux.h', 'doca_plugin.cpp', 'doca_utils.cpp', 'kernels.cu',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_doca_deps, absl_log_dep],
+if 'GPUNETIO' in static_plugins
+    gpunetio_backend_lib = static_library('GPUNETIO',
+               'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags,
@@ -36,9 +36,9 @@ if 'DOCA' in static_plugins
                name_prefix: 'libplugin_',
                install_dir: plugin_install_dir)  # Custom prefix for plugin libraries
 else
-    doca_backend_lib = shared_library('DOCA',
-               'doca_backend.cpp', 'doca_backend.h', 'doca_backend_aux.h', 'doca_plugin.cpp', 'doca_utils.cpp', 'kernels.cu',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_doca_deps, absl_log_dep],
+    gpunetio_backend_lib = shared_library('GPUNETIO',
+               'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],
@@ -48,10 +48,10 @@ else
 
     if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
-                    'echo "DOCA=' + doca_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+                    'echo "GPUNETIO=' + gpunetio_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
                     check: true
                 )
     endif
 endif
 
-doca_backend_interface = declare_dependency(link_with: doca_backend_lib)
+gpunetio_backend_interface = declare_dependency(link_with: gpunetio_backend_lib)

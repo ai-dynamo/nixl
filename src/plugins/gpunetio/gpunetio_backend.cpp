@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "doca_backend.h"
+#include "gpunetio_backend.h"
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <cassert>
@@ -1222,6 +1222,7 @@ nixlDocaEngine::loadRemoteMD (const nixlBlobDesc &input,
     doca_error_t result;
     nixlDocaConnection conn;
     nixlDocaPublicMetadata *md = new nixlDocaPublicMetadata;
+
     size_t size = input.metaInfo.size();
     auto search = remoteConnMap.find (remote_agent);
 
@@ -1248,7 +1249,11 @@ nixlDocaEngine::loadRemoteMD (const nixlBlobDesc &input,
     /* Remote buffer array */
     result = create_doca_buf_arr (
             md->mem.mmap, 1, (size_t)size, gdevs[0].second, &(md->mem.barr), &(md->mem.barr_gpu));
-    if (result != DOCA_SUCCESS) goto error;
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Function create_doca_buf_arr failed "
+                   << doca_error_get_descr (result);
+        goto error;
+    }
 
     output = (nixlBackendMD *)md;
 

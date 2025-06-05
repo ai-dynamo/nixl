@@ -212,7 +212,7 @@ main (int argc, char *argv[]) {
 
     /** NIXL declarations */
     nixl_b_params_t params;
-    nixlBackendH *doca;
+    nixlBackendH *gpunetio;
     cudaStream_t stream;
     /** Serialization/Deserialization object to create a blob */
     nixlSerDes *serdes = new nixlSerDes();
@@ -265,25 +265,19 @@ main (int argc, char *argv[]) {
     /** Agent and backend creation parameters */
 
     nixlAgentConfig cfg (true, true, peer_port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
-    // if (role == target) {
-    //     nixlAgentConfig cfg1 (true, true, peer_port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
-    //     cfg = cfg1;
-    // }
-
     nixlAgent agent (role, cfg);
     
     if (stream_mode.compare ("pool") == 0) params["cuda_streams"] = "2";
 
     PUSH_RANGE ("createBackend", 0)
-    ret = agent.createBackend ("DOCA", params, doca);
+    params["network_devices"] = "mlx5_0";
+    params["gpu_devices"] = "0";
+    ret = agent.createBackend ("GPUNETIO", params, gpunetio);
     // check return
     POP_RANGE
 
     nixl_opt_args_t extra_params;
-    extra_params.backends.push_back (doca);
-
-    params["network_devices"] = "mlx5_0";
-    params["gpu_devices"] = "0";
+    extra_params.backends.push_back (gpunetio);
 
     checkCudaError (cudaMalloc (&data_address, SIZE * TRANSFER_NUM_BUFFER),
                     "Failed to allocate CUDA buffer 0");
@@ -371,7 +365,7 @@ main (int argc, char *argv[]) {
                         launch_target_wait_kernel (
                                 stream, (uintptr_t)(data_address), INITIATOR_VALUE);
                         cudaStreamSynchronize (stream);
-                        std::cout << " DOCA Transfer completed -- first!\n";
+                        std::cout << " GPUNETIO Transfer completed -- first!\n";
                         found = true;
                         break;
                     }
@@ -402,7 +396,7 @@ main (int argc, char *argv[]) {
                         launch_target_wait_kernel (
                                 stream, (uintptr_t)(data_address), INITIATOR_VALUE + 1);
                         cudaStreamSynchronize (stream);
-                        std::cout << " DOCA Transfer completed -- second!\n";
+                        std::cout << " GPUNETIO Transfer completed -- second!\n";
                         found = true;
                         break;
                     }
@@ -469,7 +463,7 @@ main (int argc, char *argv[]) {
 
         remote_vram_list.print();
         std::cout << "Got metadata from " << target << " \n";
-        std::cout << "Create transfer request with DOCA backend\n ";
+        std::cout << "Create transfer request with GPUNETIO backend\n ";
 
         PUSH_RANGE ("createXferReq", 1)
 
@@ -501,7 +495,7 @@ main (int argc, char *argv[]) {
             launch_initiator_send_kernel (stream, (uintptr_t)(data_address), INITIATOR_VALUE);
             POP_RANGE
 
-            std::cout << "Post the request with DOCA backend transfer 1" << std::endl;
+            std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
             PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
             assert (status == NIXL_IN_PROG);
@@ -537,7 +531,7 @@ main (int argc, char *argv[]) {
             }
 
             // Repost same treq with different data in buffers
-            std::cout << "Post the request with DOCA backend transfer 2" << std::endl;
+            std::cout << "Post the request with GPUNETIO backend transfer 2" << std::endl;
             PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
             assert (status >= NIXL_SUCCESS);
@@ -557,7 +551,7 @@ main (int argc, char *argv[]) {
             cudaMemset ((void *)data_address, INITIATOR_VALUE, TRANSFER_NUM_BUFFER * SIZE);
             POP_RANGE
 
-            std::cout << "Post the request with DOCA backend transfer 1" << std::endl;
+            std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
             PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
             assert (status >= NIXL_SUCCESS);
@@ -593,7 +587,7 @@ main (int argc, char *argv[]) {
             }
 
             // Repost same treq with different data in buffers
-            std::cout << "Post the request with DOCA backend transfer 2" << std::endl;
+            std::cout << "Post the request with GPUNETIO backend transfer 2" << std::endl;
             PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
             assert (status >= NIXL_SUCCESS);

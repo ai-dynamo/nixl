@@ -396,11 +396,11 @@ void nixlPluginManager::registerBuiltinPlugins() {
         registerStaticPlugin("POSIX", createStaticPosixPlugin);
 #endif // STATIC_PLUGIN_POSIX
 
-#ifdef STATIC_PLUGIN_DOCA
-#ifndef DISABLE_DOCA_BACKEND
-        extern nixlBackendPlugin* createStaticGdsPlugin();
-        registerStaticPlugin("DOCA", createStaticGdsPlugin);
-#endif // DISABLE_DOCA_BACKEND
-#endif // STATIC_PLUGIN_DOCA
+#ifdef STATIC_PLUGIN_GPUNETIO
+#ifndef DISABLE_GPUNETIO_BACKEND
+        extern nixlBackendPlugin* createStaticGpunetioPlugin();
+        registerStaticPlugin("GPUNETIO", createStaticGpunetioPlugin);
+#endif // DISABLE_GPUNETIO_BACKEND
+#endif // STATIC_PLUGIN_GPUNETIO
 
 }

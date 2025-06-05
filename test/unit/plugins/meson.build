@@ -18,9 +18,9 @@ subdir('ucx_mo')
 subdir('posix')
 
 
-disable_doca_backend = get_option('disable_doca_backend')
-if not disable_doca_backend and cuda_dep.found()
-    subdir('doca')
+disable_gpunetio_backend = get_option('disable_gpunetio_backend')
+if not disable_gpunetio_backend and cuda_dep.found()
+    subdir('gpunetio')
 endif
 
 
