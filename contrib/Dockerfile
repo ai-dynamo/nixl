@@ -128,3 +128,5 @@ RUN uv pip install auditwheel && \
     uv run auditwheel repair /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+
+RUN uv pip install -r benchmark/ct_perftest/requirements.txt
