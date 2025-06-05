@@ -205,18 +205,18 @@ int xferBenchConfig::loadFromFlags() {
     }
 
     int partition = (num_threads * LARGE_BLOCK_SIZE_ITER_FACTOR);
-    if (num_iter % partition) {
-        num_iter += partition - (num_iter % partition);
-        std::cout << "WARNING: Adjusting num_iter to " << num_iter
-                  << " to allow equal distribution to " << num_threads << " threads"
-                  << std::endl;
-    }
-    if (warmup_iter % partition) {
-        warmup_iter += partition - (warmup_iter % partition);
-        std::cout << "WARNING: Adjusting warmup_iter to " << warmup_iter
-                  << " to allow equal distribution to " << num_threads << " threads"
-                  << std::endl;
-    }
+    // if (num_iter % partition) {
+    //     num_iter += partition - (num_iter % partition);
+    //     std::cout << "WARNING: Adjusting num_iter to " << num_iter
+    //               << " to allow equal distribution to " << num_threads << " threads"
+    //               << std::endl;
+    // }
+    // if (warmup_iter % partition) {
+    //     warmup_iter += partition - (warmup_iter % partition);
+    //     std::cout << "WARNING: Adjusting warmup_iter to " << warmup_iter
+    //               << " to allow equal distribution to " << num_threads << " threads"
+    //               << std::endl;
+    // }
     partition = (num_initiator_dev * num_threads);
     if (total_buffer_size % partition) {
         std::cerr << "Total_buffer_size must be divisible by the product of num_threads and num_initiator_dev"
@@ -455,32 +455,37 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
 }
 
 void xferBenchUtils::printStatsHeader() {
-    if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
-        std::cout << std::left << std::setw(20) << "Block Size (B)"
-                  << std::setw(15) << "Batch Size"
-                  << std::setw(15) << "Avg Lat. (us)"
-                  << std::setw(15) << "B/W (MiB/Sec)"
-                  << std::setw(15) << "B/W (GiB/Sec)"
-                  << std::setw(15) << "B/W (GB/Sec)"
-                  << std::setw(25) << "Aggregate B/W (GB/Sec)"
-                  << std::setw(20) << "Network Util (%)"
-                  << std::endl;
-    } else {
-        std::cout << std::left << std::setw(20) << "Block Size (B)"
-                  << std::setw(15) << "Batch Size"
-                  << std::setw(15) << "Avg Lat. (us)"
-                  << std::setw(15) << "B/W (MiB/Sec)"
-                  << std::setw(15) << "B/W (GiB/Sec)"
-                  << std::setw(15) << "B/W (GB/Sec)"
-                  << std::endl;
-    }
-    std::cout << std::string(80, '-') << std::endl;
+    std::cout << std::left 
+              << std::setw(15) << "Block Size (B)"
+              << std::setw(15) << "Batch Size"
+              << std::setw(15) << "Min"
+              << std::setw(15) << "Max"
+              << std::setw(15) << "Avg"
+              << std::setw(15) << "Median"
+              << std::setw(15) << "P95"
+              << std::setw(15) << "P99"
+              << std::setw(15) << "Throughput"
+              << std::endl;
+    std::cout << std::string(130, '-') << std::endl;
 }
 
-void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_size, double total_duration) {
+void xferBenchUtils::printStats(bool is_target, 
+                           size_t block_size, 
+                           size_t batch_size, 
+                           double total_duration,
+                           double min_latency,
+                           double median_latency,
+                           double max_latency,
+                           double p95_latency,
+                           double p99_latency,
+                           double avg_latency_override,
+                           size_t actual_operations) {
     size_t total_data_transferred = 0;
-    double avg_latency = 0, throughput = 0, throughput_gib = 0, throughput_gb = 0;
-    double totalbw = 0;
+    double avg_latency = 0.0;
+    
+    // Variable needed for conditional code paths only
+    double throughput_gb = 0.0;
+    double totalbw = 0.0;
 
     int num_iter = xferBenchConfig::num_iter;
 
@@ -489,24 +494,27 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     }
 
     // TODO: We can avoid this by creating a sub-communicator across initiator ranks
-    // if (isTarget() && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) { - Fix this isTarget can not be called here
     if (is_target && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         rt->reduceSumDouble(&throughput_gb, &totalbw, 0);
         return;
     }
 
-    total_data_transferred = ((block_size * batch_size) * num_iter); // In Bytes
-    avg_latency = (total_duration / (num_iter * batch_size)); // In microsec
+    size_t operations_count = (actual_operations > 0) ? actual_operations : (num_iter * batch_size);
+    
+    total_data_transferred = (block_size * batch_size) * (operations_count); // In Bytes
+    
     if (IS_PAIRWISE_AND_MG()) {
         total_data_transferred *= xferBenchConfig::num_initiator_dev; // In Bytes
         avg_latency /= xferBenchConfig::num_initiator_dev; // In microsec
     }
 
-    throughput = (((double) total_data_transferred / (1024 * 1024)) /
-                   (total_duration / 1e6));   // In MiB/Sec
-    throughput_gib = (throughput / 1024);   // In GiB/Sec
-    throughput_gb = (((double) total_data_transferred / (1000 * 1000 * 1000)) /
-                   (total_duration / 1e6));   // In GB/Sec
+    // Calculate throughput in GB/s using max latency for peak performance
+    // Convert bytes to gigabytes (using 1024^3) and microseconds to seconds
+    const double bytes_to_gb = 1.0 / (1024.0 * 1024.0 * 1024.0);
+    const double us_to_s = 1.0 / 1000000.0;
+    // Calculate throughput based on block size and max latency
+    double bytes_per_op = block_size * batch_size;
+    throughput_gb = (bytes_per_op * bytes_to_gb) / (max_latency * us_to_s);
 
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         rt->reduceSumDouble(&throughput_gb, &totalbw, 0);
@@ -518,24 +526,31 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
         return;
     }
 
-    // Tabulate print with fixed width for each string
-    if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
-        std::cout << std::left << std::setw(20) << block_size
-                  << std::setw(15) << batch_size
-                  << std::setw(15) << avg_latency
-                  << std::setw(15) << throughput
-                  << std::setw(15) << throughput_gib
-                  << std::setw(15) << throughput_gb
-                  << std::setw(25) << totalbw
-                  << std::setw(20) << (totalbw / (rt->getSize()/2 * MAXBW))*100
-                  << std::endl;
-    } else {
-        std::cout << std::left << std::setw(20) << block_size
-                  << std::setw(15) << batch_size
-                  << std::setw(15) << avg_latency
-                  << std::setw(15) << throughput
-                  << std::setw(15) << throughput_gib
-                  << std::setw(15) << throughput_gb
-                  << std::endl;
-    }
+    
+    auto formatTime = [](double time_us) -> std::string {
+        std::stringstream ss;
+        ss << std::fixed << std::setprecision(2);
+        
+        if (time_us >= 1000000) {
+            ss << (time_us / 1000000.0) << " s";
+        } else if (time_us >= 1000) {
+            ss << (time_us / 1000.0) << " ms";
+        } else {
+            ss << time_us << " μs";
+        }
+        
+        return ss.str();
+    };
+
+    std::cout << std::left 
+              << std::setw(15) << block_size
+              << std::setw(15) << batch_size
+              << std::setw(15) << formatTime(min_latency)
+              << std::setw(15) << formatTime(max_latency)
+              << std::setw(15) << formatTime(avg_latency_override)
+              << std::setw(15) << formatTime(median_latency)
+              << std::setw(15) << formatTime(p95_latency)
+              << std::setw(15) << formatTime(p99_latency)
+              << std::fixed << std::setprecision(2) << throughput_gb << " GB/s"
+              << std::endl;
 }

@@ -37,7 +37,9 @@ RUN apt-get update -y && \
     protobuf-compiler-grpc \
     libcpprest-dev \
     etcd-server \
-    etcd-client
+    etcd-client \
+    liburing-dev \
+    libaio-dev
 
 # --- Stage 2a: Represents using UCX from the base image ---
 FROM os_setup_stage AS ucx_upstream_image

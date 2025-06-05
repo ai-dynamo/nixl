@@ -157,8 +157,17 @@ class xferBenchUtils {
 
         static void checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
         static void printStatsHeader();
-        static void printStats(bool is_target, size_t block_size, size_t batch_size,
-			                   double total_duration);
+        static void printStats(bool is_target, 
+                              size_t block_size, 
+                              size_t batch_size,
+                              double total_duration,
+                              double min_latency = 0,
+                              double median_latency = 0,
+                              double max_latency = 0,
+                              double p95_latency = 0,
+                              double p99_latency = 0,
+                              double avg_latency_override = 0,
+                              size_t actual_operations = 0);
 };
 
 #endif // __UTILS_H

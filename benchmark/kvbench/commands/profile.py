@@ -84,22 +84,55 @@ class Command:
         filtered_args = {
             k: v for k, v in args.__dict__.items() if k in NIXLBench.defaults()
         }
-        nixl_bench = NIXLBench(model, model_config, **filtered_args)
-        io_size = model.get_io_size(model_config.system.page_size)
-        batch_size = get_batch_size(model, model_config, io_size)
-        nixl_bench.set_io_size(io_size)
-        nixl_bench.set_batch_size(batch_size)
-        nixl_bench.configure_buffer_size()
+        
+        if args.increasing_requests:
+            # Store the original number of requests if specified
+            original_requests = model_config.runtime.num_requests
+            max_requests = args.max_requests
+            step_size = args.step_size
 
-        nixl_bench.configure_scheme(direction="isl")
-        nixl_bench.configure_segment_type(args.backend, args.source, args.destination)
-        separator = "=" * 80
+            separator = "=" * 80
+            print(f"Running benchmark with increasing number of requests (1 to {max_requests}, step size: {step_size})")
+            print(f"Model Config: {args.model_config}")
+            print(f"ISL: {model_config.runtime.isl} tokens")
+            print(f"Page Size: {model_config.system.page_size}")
+            print(f"TP: {model_config.model.tp_size}")
+            print(f"PP: {model_config.model.pp_size}")
+            print(separator)
+            
+            # Run benchmark with increasing number of requests using step size
+            for num_requests in range(1, max_requests + 1, step_size):
+                model_config.runtime.num_requests = num_requests
+                nixl_bench = NIXLBench(model, model_config, **filtered_args)
+                io_size = model.get_io_size(model_config.system.page_size)
+                batch_size = get_batch_size(model, model_config, io_size, single_agent_view=args.single_agent_view)
+                nixl_bench.set_io_size(io_size)
+                nixl_bench.set_batch_size(batch_size)
+                nixl_bench.configure_buffer_size()
+                nixl_bench.configure_scheme(direction="isl")
+                nixl_bench.configure_segment_type(args.backend, args.source, args.destination)
+                nixl_bench.profile()
+            
+            # Restore original num_requests if it was specified
+            if original_requests is not None:
+                model_config.runtime.num_requests = original_requests
+        else:
+            nixl_bench = NIXLBench(model, model_config, **filtered_args)
+            io_size = model.get_io_size(model_config.system.page_size)
+            batch_size = get_batch_size(model, model_config, io_size, single_agent_view=args.single_agent_view)
+            nixl_bench.set_io_size(io_size)
+            nixl_bench.set_batch_size(batch_size)
+            nixl_bench.configure_buffer_size()
 
-        print(f"Model Config: {args.model_config}")
-        print(f"ISL: {model_config.runtime.isl} tokens")
-        print(f"Page Size: {model_config.system.page_size}")
-        print(f"Requests: {model_config.runtime.num_requests}")
-        print(f"TP: {model_config.model.tp_size}")
-        print(f"PP: {model_config.model.pp_size}")
-        print(separator)
-        nixl_bench.profile()
+            nixl_bench.configure_scheme(direction="isl")
+            nixl_bench.configure_segment_type(args.backend, args.source, args.destination)
+            separator = "=" * 80
+
+            print(f"Model Config: {args.model_config}")
+            print(f"ISL: {model_config.runtime.isl} tokens")
+            print(f"Page Size: {model_config.system.page_size}")
+            print(f"Requests: {model_config.runtime.num_requests}")
+            print(f"TP: {model_config.model.tp_size}")
+            print(f"PP: {model_config.model.pp_size}")
+            print(separator)
+            nixl_bench.profile()

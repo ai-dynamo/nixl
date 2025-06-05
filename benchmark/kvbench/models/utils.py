@@ -33,11 +33,15 @@ def get_precision_size(precision: str) -> int:
         raise ValueError(f"Unsupported precision: {precision}")
 
 
-def get_batch_size(model: BaseModelArch, model_config: ModelConfig, io_size: int):
-    return math.ceil(
+def get_batch_size(model: BaseModelArch, model_config: ModelConfig, io_size: int, single_agent_view: bool = False):
+    batch_size = math.ceil(
         (model.get_kv_size_per_token(int(model_config.runtime.isl)) / io_size)
         * model_config.runtime.num_requests
     )
+    if single_agent_view:
+        return batch_size // (model_config.model.tp_size * model_config.model.pp_size)
+    else:
+        return batch_size
 
 
 def override_yaml_args(model_config: ModelConfig, args: argparse.Namespace):

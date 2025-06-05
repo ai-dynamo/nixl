@@ -29,8 +29,13 @@
 #include <unistd.h>
 #include <utility>
 #include <sys/time.h>
+#include <time.h>
 #include <utils/serdes/serdes.h>
 #include <omp.h>
+#include <chrono>
+#include <algorithm>
+#include <numeric>
+#include <cmath>
 
 #define USE_VMM 0
 #define ROUND_UP(value, granularity) ((((value) + (granularity) - 1) / (granularity)) * (granularity))
@@ -79,6 +84,15 @@ static CUmemGenericAllocationHandle __attribute__((unused)) handle;
         }                                                                         \
         _seg_type;                                                                \
     })
+
+thread_local double xferBenchNixlWorker::min_latency = 0.0;
+thread_local double xferBenchNixlWorker::max_latency = 0.0;
+thread_local double xferBenchNixlWorker::median_latency = 0.0;
+thread_local double xferBenchNixlWorker::p95_latency = 0.0;
+thread_local double xferBenchNixlWorker::p99_latency = 0.0;
+thread_local double xferBenchNixlWorker::avg_latency = 0.0;
+thread_local double xferBenchNixlWorker::total_duration = 0.0;
+thread_local size_t xferBenchNixlWorker::num_operations = 0;
 
 xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices) : xferBenchWorker(argc, argv) {
     seg_type = GET_SEG_TYPE(isInitiator());
@@ -147,11 +161,11 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
         // Set API type parameter for POSIX backend
         if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
-            backend_params["use_aio"] = true;
-            backend_params["use_uring"] = false;
+            backend_params["use_aio"] = "true";
+            backend_params["use_uring"] = "false";
         } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
-            backend_params["use_aio"] = false;
-            backend_params["use_uring"] = true;
+            backend_params["use_aio"] = "false";
+            backend_params["use_uring"] = "true";
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type << std::endl;
     } else {
@@ -203,12 +217,21 @@ static void iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list,
 }
 
 std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
-    void *addr;
+    void *addr = nullptr;
 
-    addr = calloc(1, buffer_size);
-    if (!addr) {
-        std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
-        return std::nullopt;
+    if (xferBenchConfig::storage_enable_direct && xferBenchConfig::backend == XFERBENCH_BACKEND_POSIX) {
+        // Allocate 4KB-aligned memory for direct I/O
+        int ret = posix_memalign(&addr, 4096, buffer_size);
+        if (ret != 0 || addr == nullptr) {
+            std::cerr << "Failed to allocate " << buffer_size << " bytes of aligned DRAM memory for direct I/O" << std::endl;
+            return std::nullopt;
+        }
+    } else {
+        addr = calloc(1, buffer_size);
+        if (!addr) {
+            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
+            return std::nullopt;
+        }
     }
 
     if (isInitiator()) {
@@ -347,26 +370,87 @@ static std::vector<int> createFileFds(std::string name, bool is_gds) {
 
 std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id) {
     auto ret = std::optional<xferBenchIOV>(std::in_place, (uintptr_t)gds_running_ptr, buffer_size, fd);
-    // Fill up with data
+
     void *buf = (void *)malloc(buffer_size);
     if (!buf) {
         std::cerr << "Failed to allocate " << buffer_size
                   << " bytes of memory" << std::endl;
         return std::nullopt;
     }
+    if (!buf) {
+        std::cerr << "Failed to allocate " << buffer_size
+                  << " bytes of memory" << std::endl;
+        return std::nullopt;
+    }
+
     // File is always initialized with XFERBENCH_TARGET_BUFFER_ELEMENT
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+    
+    // Write the initialization data to the file
     int rc = pwrite(fd, buf, buffer_size, gds_running_ptr);
     if (rc < 0) {
         std::cerr << "Failed to write to file: " << fd
                   << " with error: " << strerror(errno) << std::endl;
+        free(buf);
         return std::nullopt;
     }
-    free(buf);
-
-    gds_running_ptr += (buffer_size * mem_dev_id);
-
+        
+    // Free the temporary buffer - no longer needed
+    // free(buf);
+    
+    // Update the running pointer for the next operation
+    gds_running_ptr += buffer_size;
+    
+    // return std::optional<xferBenchIOV>(std::in_place, addr, buffer_size, fd);
     return ret;
+}
+
+std::optional<xferBenchIOV> xferBenchNixlWorker::initDirectIODescFile(size_t buffer_size, int fd, int mem_dev_id) {
+    long page_size = sysconf(_SC_PAGESIZE);
+
+    if (page_size == 0) {
+        std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
+        return std::nullopt;
+    }
+
+    if (buffer_size % page_size != 0) {
+        buffer_size = ((buffer_size + page_size - 1) / page_size) * page_size;
+        std::cout << "Adjusted transfer size to " << buffer_size << " bytes for O_DIRECT alignment" << std::endl;
+    }
+
+    void* buf;
+    int result = posix_memalign(&buf, (int)page_size, buffer_size);
+    if (result != 0) {
+        std::cerr << "Error: " << strerror(result) << std::endl;
+        std::cerr << "Failed to allocate " << buffer_size
+                  << " bytes of memory" << std::endl;
+        return std::nullopt;
+    }
+    if (!buf) {
+        std::cerr << "Failed to allocate " << buffer_size
+                  << " bytes of memory" << std::endl;
+        return std::nullopt;
+    }
+
+    // File is always initialized with XFERBENCH_TARGET_BUFFER_ELEMENT
+    memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+    
+    // Make sure running pointer is also aligned for direct I/O
+    gds_running_ptr = ((gds_running_ptr + int (page_size) - 1 ) / int (page_size)) * int (page_size);
+    // Write the initialization data to the file
+    int rc = pwrite(fd, buf, buffer_size, gds_running_ptr);
+    if (rc < 0) {
+        std::cerr << "Failed to write to file: " << fd
+                  << " with error: " << strerror(errno) << std::endl;
+        free(buf);
+        return std::nullopt;
+    }
+
+    uintptr_t addr = static_cast<uintptr_t>(gds_running_ptr);
+
+    gds_running_ptr += buffer_size;
+    
+    return std::optional<xferBenchIOV>(std::in_place, addr, buffer_size, fd);
 }
 
 void xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
@@ -392,6 +476,71 @@ void xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
     close(iov.devId);
 }
 
+bool xferBenchNixlWorker::initializeFileSeg(int num_lists, std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
+    nixl_opt_args_t opt_args;
+    opt_args.backends.push_back(backend_engine);
+    size_t buffer_size, num_devices = 0;
+    bool is_gds = XFERBENCH_BACKEND_GDS == xferBenchConfig::backend;
+    
+    // Calculate buffer size
+    if (isInitiator()) {
+        num_devices = xferBenchConfig::num_initiator_dev;
+    } else if (isTarget()) {
+        num_devices = xferBenchConfig::num_target_dev;
+    }
+    buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_lists);
+    
+    // Print the backend type
+    std::cout << "Using " << (is_gds ? "GDS" : "POSIX") << " backend" 
+              << (xferBenchConfig::storage_enable_direct ? " with direct I/O" : "") << std::endl;
+    
+    // Create file descriptors
+    remote_fds = createFileFds(getName(), is_gds);
+    if (remote_fds.empty()) {
+        std::cerr << "Failed to create " << ((is_gds) ? "GDS" : "POSIX") << " file" << std::endl;
+        return false;
+    }
+    
+    // For each thread/list, create a set of descriptors
+    for (int list_idx = 0; list_idx < num_lists; list_idx++) {
+        std::vector<xferBenchIOV> iov_list;
+        for (size_t i = 0; i < num_devices; i++) {
+            std::optional<xferBenchIOV> basic_desc;
+            
+            // Use the appropriate function based on direct I/O setting
+            if (xferBenchConfig::storage_enable_direct) {
+                std::cout << "Using direct I/O descriptor for device " << i << std::endl;
+                basic_desc = initDirectIODescFile(buffer_size, remote_fds[0], i);
+            } else {
+                std::cout << "Using standard descriptor for device " << i << std::endl;
+                basic_desc = initBasicDescFile(buffer_size, remote_fds[0], i);
+            }
+            
+            if (basic_desc) {
+                iov_list.push_back(basic_desc.value());
+            } else {
+                std::cerr << "Failed to create descriptor for device " << i << std::endl;
+                return false;
+            }
+        }
+        
+        // Register with NIXL
+        nixl_reg_dlist_t desc_list(FILE_SEG);
+        iovListToNixlRegDlist(iov_list, desc_list);
+        nixl_status_t status = agent->registerMem(desc_list, &opt_args);
+        if (status != NIXL_SUCCESS) {
+            std::cerr << "registerMem failed with status: " << status << std::endl;
+            return false;
+        }
+        
+        remote_iovs.push_back(iov_list);
+    }
+    
+    // Reset the running pointer to 0
+    gds_running_ptr = 0x0;
+    return true;
+}
+
 std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int num_lists) {
     std::vector<std::vector<xferBenchIOV>> iov_lists;
     size_t i, buffer_size, num_devices = 0;
@@ -404,33 +553,25 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
     }
     buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_lists);
 
+    // For direct I/O, ensure buffer size is a multiple of page size
+    if (xferBenchConfig::storage_enable_direct) {
+        long page_size = sysconf(_SC_PAGESIZE);
+        if (page_size > 0 && buffer_size % page_size != 0) {
+            size_t aligned_size = ((buffer_size + page_size - 1) / page_size) * page_size;
+            std::cout << "Adjusting buffer size from " << buffer_size << " to " << aligned_size 
+                      << " for direct I/O alignment" << std::endl;
+            buffer_size = aligned_size;
+        }
+    }
+
     opt_args.backends.push_back(backend_engine);
 
     if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
         XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
-        bool is_gds = XFERBENCH_BACKEND_GDS == xferBenchConfig::backend;
-        remote_fds = createFileFds(getName(), is_gds);
-        if (remote_fds.empty()) {
-            std::cerr << "Failed to create " << ((is_gds) ? "GDS" : "POSIX") << " file" << std::endl;
+        // Initialize file segment
+        if (!initializeFileSeg(num_lists, remote_iovs)) {
             exit(EXIT_FAILURE);
         }
-        for (int list_idx = 0; list_idx < num_lists; list_idx++) {
-            std::vector<xferBenchIOV> iov_list;
-            for (i = 0; i < num_devices; i++) {
-                std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(buffer_size, remote_fds[0], i);
-                if (basic_desc) {
-                    iov_list.push_back(basic_desc.value());
-                }
-            }
-            nixl_reg_dlist_t desc_list(FILE_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args),
-                        "registerMem failed");
-            remote_iovs.push_back(iov_list);
-        }
-        // Reset the running pointer to 0
-        gds_running_ptr = 0x0;
     }
 
     for (int list_idx = 0; list_idx < num_lists; list_idx++) {
@@ -506,6 +647,20 @@ void xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>
                              "deregisterMem failed");
         }
     }
+
+    // // Clean up direct I/O buffers if they were used
+    // if (xferBenchConfig::storage_enable_direct) {
+    //     size_t buffers_freed = 0;
+    //     for (auto& buffer_list : direct_io_buffers) {
+    //         for (void* buf : buffer_list) {
+    //             if (buf) {
+    //                 buffers_freed++;
+    //                 free(buf);
+    //             }
+    //         }
+    //     }
+    //     direct_io_buffers.clear();
+    // }
 }
 
 int xferBenchNixlWorker::exchangeMetadata() {
@@ -566,14 +721,17 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
-    // Special case for GDS
     if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
         XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
         for (auto &iov_list: local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov: iov_list) {
                 std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(iov.len, remote_fds[0], iov.devId);
+                if (xferBenchConfig::storage_enable_direct) {
+                    basic_desc = initDirectIODescFile(iov.len, remote_fds[0], iov.devId);
+                } else {
+                    basic_desc = initBasicDescFile(iov.len, remote_fds[0], iov.devId);
+                }
                 if (basic_desc) {
                     remote_iov_list.push_back(basic_desc.value());
                 }
@@ -638,9 +796,11 @@ static int execTransfer(nixlAgent *agent,
                         const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
                         const nixl_xfer_op_t op,
                         const int num_iter,
-                        const int num_threads)
+                        const int num_threads,
+                        std::vector<double> &latencies)
 {
     int ret = 0;
+    std::vector<std::vector<double>> thread_latencies(num_threads);
 
     #pragma omp parallel num_threads(num_threads)
     {
@@ -648,12 +808,12 @@ static int execTransfer(nixlAgent *agent,
         const auto &local_iov = local_iovs[tid];
         const auto &remote_iov = remote_iovs[tid];
 
-        // TODO: fetch local_desc and remote_desc directly from config
         nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
         nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
 
         if ((XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) ||
             (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend)) {
+
             remote_desc = nixl_xfer_dlist_t(FILE_SEG);
         }
 
@@ -677,17 +837,21 @@ static int execTransfer(nixlAgent *agent,
             target = "target";
         }
 
-        CHECK_NIXL_ERROR(agent->createXferReq(op, local_desc, remote_desc, target,
-                                            req, &params), "createTransferReq failed");
 
+        std::vector<double> local_latencies;
+
+        local_latencies.reserve(num_iter);
         for (int i = 0; i < num_iter && !error; i++) {
+
+            CHECK_NIXL_ERROR(agent->createXferReq(op, local_desc, remote_desc, target,
+                                                    req, &params), "createTransferReq failed");
+            auto start_time = std::chrono::high_resolution_clock::now();
             rc = agent->postXferReq(req);
             if (NIXL_ERR_BACKEND == rc) {
                 std::cout << "NIXL postRequest failed" << std::endl;
                 error = true;
             } else {
                 do {
-                    /* XXX agent isn't const because the getXferStatus() is not const  */
                     rc = agent->getXferStatus(req);
                     if (NIXL_ERR_BACKEND == rc) {
                         std::cout << "NIXL getStatus failed" << std::endl;
@@ -696,16 +860,86 @@ static int execTransfer(nixlAgent *agent,
                     }
                 } while (NIXL_SUCCESS != rc);
             }
+
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count();
+            double latency_us = duration / 1000.0; // Convert to microseconds
+            local_latencies.push_back(latency_us);
+            nixl_status_t release_rc = agent->releaseXferReq(req);
+            if (NIXL_SUCCESS != release_rc) {
+                std::cerr << "Warning: Failed to release transfer request" << std::endl;
+            }
         }
 
-        agent->releaseXferReq(req);
+
         if (error) {
-            std::cout << "NIXL releaseXferReq failed" << std::endl;
+            std::cout << "NIXL transfer operations failed, cleaning up" << std::endl;
             ret = -1;
         }
+        thread_latencies[tid] = std::move(local_latencies);
+    }
+    
+    for (const auto& thread_lat : thread_latencies) {
+        latencies.insert(latencies.end(), thread_lat.begin(), thread_lat.end());
+    }
+    return ret;
+}
+
+struct LatencyStats {
+    double min;
+    double max;
+    double avg;
+    double median;
+    double p90;
+    double p95;
+    double p99;
+    double std_dev;
+    double total_duration;
+};
+
+static LatencyStats calculateLatencyStats(const std::vector<double>& latencies) {
+    LatencyStats stats = {0};
+    
+    if (latencies.empty()) {
+        return stats;
+    }
+    
+    std::vector<double> sorted_latencies = latencies;
+    std::sort(sorted_latencies.begin(), sorted_latencies.end());
+    
+    double sum = 0.0;
+    int count = 0;
+    for (double lat : latencies) {
+        sum += lat;
+        count++;
     }
 
-    return ret;
+    size_t median_idx = sorted_latencies.size() / 2;
+    size_t p90_idx = sorted_latencies.size() * 90 / 100;
+    size_t p95_idx = sorted_latencies.size() * 95 / 100;
+    size_t p99_idx = sorted_latencies.size() * 99 / 100;
+    
+    median_idx = std::min(median_idx, sorted_latencies.size() - 1);
+    p90_idx = std::min(p90_idx, sorted_latencies.size() - 1);
+    p95_idx = std::min(p95_idx, sorted_latencies.size() - 1);
+    p99_idx = std::min(p99_idx, sorted_latencies.size() - 1);
+    
+    stats.min = sorted_latencies.front();
+    stats.max = sorted_latencies.back();
+    stats.total_duration = sum;
+    stats.avg = sum / count;
+    stats.median = sorted_latencies[median_idx];
+    stats.p90 = sorted_latencies[p90_idx];
+    stats.p95 = sorted_latencies[p95_idx];
+    stats.p99 = sorted_latencies[p99_idx];
+    
+    double variance = 0.0;
+    for (double lat : sorted_latencies) {
+        variance += (lat - stats.avg) * (lat - stats.avg);
+    }
+    stats.std_dev = std::sqrt(variance / sorted_latencies.size());
+    
+    return stats;
 }
 
 std::variant<double, int> xferBenchNixlWorker::transfer(size_t block_size,
@@ -713,11 +947,9 @@ std::variant<double, int> xferBenchNixlWorker::transfer(size_t block_size,
                                                const std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
     int num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
     int skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
-    struct timeval t_start, t_end;
-    double total_duration = 0.0;
     int ret = 0;
     nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == xferBenchConfig::op_type ? NIXL_READ : NIXL_WRITE;
-    // int completion_flag = 1;
+    std::vector<double> latencies;
 
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
@@ -725,23 +957,49 @@ std::variant<double, int> xferBenchNixlWorker::transfer(size_t block_size,
         num_iter /= LARGE_BLOCK_SIZE_ITER_FACTOR;
     }
 
-    ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads);
+    std::vector<double> warmup_latencies;
+    ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, warmup_latencies);
     if (ret < 0) {
         return std::variant<double, int>(ret);
     }
 
     // Synchronize to ensure all processes have completed the warmup (iter and polling)
     synchronize();
+    
+    latencies.reserve(num_iter * xferBenchConfig::num_threads);
 
-    gettimeofday(&t_start, nullptr);
+    ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, latencies);
+    if (ret < 0) {
+        return std::variant<double, int>(ret);
+    }
+    LatencyStats stats = calculateLatencyStats(latencies);
 
-    ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads);
+    if (ret < 0) {
+        return std::variant<double, int>(ret);
+    } else {
+        min_latency = stats.min;
+        max_latency = stats.max;
+        median_latency = stats.median;
+        p95_latency = stats.p95;
+        p99_latency = stats.p99;
+        avg_latency = stats.avg;
+        total_duration = stats.total_duration;
+        num_operations = latencies.size();
+        return std::variant<double, int>(stats.total_duration);
+    }
+}
 
-    gettimeofday(&t_end, nullptr);
-    total_duration += (((t_end.tv_sec - t_start.tv_sec) * 1e6) +
-                       (t_end.tv_usec - t_start.tv_usec)); // In us
-
-    return ret < 0 ? std::variant<double, int>(ret) : std::variant<double, int>(total_duration);
+void xferBenchNixlWorker::getLastLatencyStats(double& min_lat, double& med_lat, double& max_lat, double& p95_lat, 
+                                             double& p99_lat, double& avg_lat, 
+                                             double& total_dur, size_t& num_ops) {
+    min_lat = min_latency;
+    med_lat = median_latency;
+    max_lat = max_latency;
+    p95_lat = p95_latency;
+    p99_lat = p99_latency;
+    avg_lat = avg_latency;
+    total_dur = total_duration;
+    num_ops = num_operations;
 }
 
 void xferBenchNixlWorker::poll(size_t block_size) {
@@ -790,3 +1048,4 @@ int xferBenchNixlWorker::synchronizeStart() {
     }
     return -1;
 }
+

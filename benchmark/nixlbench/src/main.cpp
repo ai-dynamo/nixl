@@ -144,8 +144,31 @@ static int processBatchSizes(xferBenchWorker &worker,
                 }
             }
 
-            xferBenchUtils::printStats(false, block_size, batch_size,
-                                    std::get<double>(result));
+            // Extract the detailed statistics from our transfer result
+            double total_duration = std::get<double>(result);
+            
+            // Access the latency statistics
+            xferBenchNixlWorker* nixl_worker = dynamic_cast<xferBenchNixlWorker*>(&worker);
+            if (nixl_worker) {
+                double min_lat = 0.0, med_lat = 0.0, max_lat = 0.0, p95_lat = 0.0, p99_lat = 0.0, avg_lat = 0.0, total_dur = 0.0;
+                size_t actual_ops = 0;
+                
+                // Get the detailed latency statistics
+                nixl_worker->getLastLatencyStats(min_lat, med_lat, max_lat, p95_lat, p99_lat, avg_lat, total_dur, actual_ops);
+                
+                // Calculate proper batch size for measurements
+                int actual_batch_size = batch_size;
+                if (block_size > LARGE_BLOCK_SIZE) {
+                    actual_batch_size /= LARGE_BLOCK_SIZE_ITER_FACTOR;
+                }
+                                
+                xferBenchUtils::printStats(false, block_size, batch_size, total_dur, 
+                                          min_lat, med_lat, max_lat, p95_lat, p99_lat, avg_lat, actual_ops);
+                
+            } else {
+                // Fallback to the original behavior
+                xferBenchUtils::printStats(false, block_size, batch_size, total_duration);
+            }
         }
     }
 
