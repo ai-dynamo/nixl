@@ -16,7 +16,13 @@
 subdir('ucx')
 subdir('ucx_mo')
 subdir('posix')
-subdir('doca')
+
+
+disable_doca_backend = get_option('disable_doca_backend')
+if not disable_doca_backend and cuda_dep.found()
+    subdir('doca')
+endif
+
 
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend

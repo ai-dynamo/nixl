@@ -264,11 +264,11 @@ main (int argc, char *argv[]) {
     std::cout << "Starting Agent for " << role << " with stream mode " << stream_mode << "\n";
     /** Agent and backend creation parameters */
 
-    nixlAgentConfig cfg (true, true, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
-    if (role == target) {
-        nixlAgentConfig cfg1 (true, true, peer_port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
-        cfg = cfg1;
-    }
+    nixlAgentConfig cfg (true, true, peer_port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+    // if (role == target) {
+    //     nixlAgentConfig cfg1 (true, true, peer_port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+    //     cfg = cfg1;
+    // }
 
     nixlAgent agent (role, cfg);
     params["network_devices"] = "mlx5_0";
@@ -418,9 +418,9 @@ main (int argc, char *argv[]) {
         md_extra_params.ipAddr = peer_ip;
         md_extra_params.port = peer_port;
 
-        ret = agent.sendLocalMD (&md_extra_params);
-        assert (ret == NIXL_SUCCESS);
         ret = agent.fetchRemoteMD (target, &md_extra_params);
+        assert (ret == NIXL_SUCCESS);
+        ret = agent.sendLocalMD (&md_extra_params);
         assert (ret == NIXL_SUCCESS);
         // Not used
         nixl_xfer_dlist_t descs (DRAM_SEG);

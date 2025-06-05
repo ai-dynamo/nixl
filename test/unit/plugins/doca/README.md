@@ -21,14 +21,18 @@ The following instructions assume DOCA libraries and NIXL libraries are set in L
 Target should start first. A command line example:
 
 ```
-./nixl_doca_stream_test target <initiator IP address> <connection port> <stream mode ('attached' or 'pool')>
+LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/path/to/gdrcopy/src:/opt/mellanox/doca NIXL_PLUGIN_DIR=/path/to/nixl/lib/x86_64-linux-gnu/plugins CUDA_MODULE_LOADING=EAGER ./nixl_doca_stream_test target <initiator IP address> <connection port> <stream mode ('attached' or 'pool')>
 ```
 
 To start the initiator:
 
 ```
-./nixl_doca_stream_test initiator <target IP address> <connection port> <stream mode>
+LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/path/to/gdrcopy/src:/opt/mellanox/doca NIXL_PLUGIN_DIR=/path/to/nixl/lib/x86_64-linux-gnu/plugins CUDA_MODULE_LOADING=EAGER ./nixl_doca_stream_test initiator <target IP address> <connection port> <stream mode ('attached' or 'pool')>
 ```
+
+As specified in [DOCA GPUNetIO programming guide](https://docs.nvidia.com/doca/sdk/doca+gpunetio/index.html#src-3670647880_id-.DOCAGPUNetIOv3.0.0-RunningwithoutRootPrivileges) this application uses GDAKI technology thus can be executed without sudo/root privileges if the NVIDIA driver has been correctly configured with the right option. If not, the application must be executed with sudo/root privileges.
+
+To test this application is highly recommented to have target and initiator running on two different machines with a network connection between the two. 
 
 ## Output
 

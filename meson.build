@@ -115,6 +115,11 @@ if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
 
+if get_option('disable_doca_backend')
+    add_project_arguments('-DDISABLE_DOCA_BACKEND', language: 'cpp')
+endif
+
+
 # Configure NDEBUG for release builds
 if get_option('buildtype') == 'release'
     # Used by Abseil to strip DCHECK assertions and DVLOG at compile time

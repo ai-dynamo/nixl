@@ -41,38 +41,44 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams *init_params) :
 
     result = doca_log_backend_set_sdk_level (sdk_log, DOCA_LOG_LEVEL_ERROR);
     if (result != DOCA_SUCCESS) throw std::invalid_argument ("Can't initialize doca log");
-    if (custom_params->count ("network_devices") != 0)
-        ndevs = str_split ((*custom_params)["network_devices"], " ");
-    // Temporary: will extend to more NICs in a dedicated PR
-    if (ndevs.size() > 1) throw std::invalid_argument ("Only 1 network device is allowed");
 
-    NIXL_INFO << "DOCA network devices ";
-    for (const std::string &str : ndevs) {
-        NIXL_INFO << str;
-    }
-    NIXL_INFO << std::endl;
-
-    if (custom_params->count ("gpu_devices") == 0)
-        throw std::invalid_argument ("At least 1 GPU device must be specified");
+    std::cout << "DOCA network devices ";
     // Temporary: will extend to more GPUs in a dedicated PR
-    if (custom_params->count ("gpu_devices") > 1)
+    if (custom_params->count("network_devices") > 1)
+        throw std::invalid_argument ("Only 1 network device is allowed");
+
+    if (custom_params->count("network_devices") == 0 || (*custom_params)["network_devices"] == "" || (*custom_params)["network_devices"] == "all") {
+        ndevs.push_back("mlx5_0");
+        std::cout << "Using default network device mlx5_0";
+    } else {
+        ndevs = str_split((*custom_params)["network_devices"], " ");
+        std::cout << ndevs[0];
+    }
+    std::cout << std::endl;
+
+    std::cout << "DOCA GPU devices: ";
+    // Temporary: will extend to more GPUs in a dedicated PR
+    if (custom_params->count("gpu_devices") > 1)
         throw std::invalid_argument ("Only 1 GPU device is allowed");
 
-    NIXL_INFO << "DOCA GPU devices: ";
-    tmp_gdevs = str_split ((*custom_params)["gpu_devices"], " ");
-    for (auto &cuda_id : tmp_gdevs) {
-        gdevs.push_back (std::pair ((uint32_t)std::stoi (cuda_id), nullptr));
-        NIXL_INFO << "cuda_id " << cuda_id;
+    if (custom_params->count("gpu_devices") == 0 || (*custom_params)["gpu_devices"] == "" || (*custom_params)["gpu_devices"] == "all") {
+        gdevs.push_back (std::pair ((uint32_t)0, nullptr));
+        std::cout << "Using default CUDA device ID 0";
+    } else {
+        tmp_gdevs = str_split ((*custom_params)["gpu_devices"], " ");
+        for (auto &cuda_id : tmp_gdevs) {
+            gdevs.push_back (std::pair ((uint32_t)std::stoi (cuda_id), nullptr));
+            std::cout << "cuda_id " << cuda_id;
+        }
     }
-    NIXL_INFO << std::endl;
+    std::cout << std::endl;
 
     nstreams = 0;
     if (custom_params->count ("cuda_streams") != 0 && (*custom_params)["cuda_streams"] != "")
         nstreams = std::stoi ((*custom_params)["cuda_streams"]);
     if (nstreams == 0) nstreams = DOCA_POST_STREAM_NUM;
-    NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
-    NIXL_INFO << "CUDA streams used for pool mode: " << nstreams << std::endl;
+    std::cout << "CUDA streams used for pool mode: " << nstreams << std::endl;
 
     /* Open DOCA device */
     result = open_doca_device_with_ibdev_name (
