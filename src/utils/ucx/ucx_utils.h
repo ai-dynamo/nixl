@@ -92,13 +92,13 @@ public:
         }
     }
 
-    nixlUcxEp(ucp_worker_h worker, void* addr, ucp_err_handling_mode_t err_handling_mode);
+    nixlUcxEp(ucp_worker_h worker, const void* addr, ucp_err_handling_mode_t err_handling_mode);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp&) = delete;
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
     /* Rkey */
-    int rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey);
+    int rkeyImport(const void* addr, size_t size, nixlUcxRkey &rkey);
     void rkeyDestroy(nixlUcxRkey &rkey);
 
     /* Active message handling */
@@ -185,7 +185,7 @@ private:
 
     /* Connection */
     [[nodiscard]] std::string epAddr();
-    absl::StatusOr<std::unique_ptr<nixlUcxEp>> connect(void* addr, size_t size);
+    absl::StatusOr<std::unique_ptr<nixlUcxEp>> connect(const void* addr, size_t size);
 
     /* Active message handling */
     int regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void* arg);

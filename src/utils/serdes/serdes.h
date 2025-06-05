@@ -14,41 +14,79 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __SERDES_H
-#define __SERDES_H
+#ifndef NIXL_SRC_UTILS_SERDES_SERDES_H
+#define NIXL_SRC_UTILS_SERDES_SERDES_H
 
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <cstdint>
+#include <type_traits>
 
 #include "nixl_types.h"
 
-class nixlSerDes {
-private:
-    typedef enum { SERIALIZE, DESERIALIZE } ser_mode_t;
-
-    std::string workingStr;
-    ssize_t des_offset;
-    ser_mode_t mode;
-
+class nixlSerializer
+{
 public:
-    nixlSerDes();
+    nixlSerializer();
 
-    /* Ser/Des for Strings */
-    nixl_status_t addStr(const std::string &tag, const std::string &str);
-    std::string getStr(const std::string &tag);
+    explicit nixlSerializer(const std::size_t preAlloc);
 
-    /* Ser/Des for Byte buffers */
-    nixl_status_t addBuf(const std::string &tag, const void* buf, ssize_t len);
-    ssize_t getBufLen(const std::string &tag) const;
-    nixl_status_t getBuf(const std::string &tag, void *buf, ssize_t len);
+    void addStr(const std::string_view& tag, const std::string_view& str);
+    void addBuf(const std::string_view& tag, const void* buf, const std::size_t len);
 
-    /* Ser/Des buffer management */
-    std::string exportStr() const;
-    nixl_status_t importStr(const std::string &sdbuf);
+    template<typename Int>
+    void addInt(const std::string_view& tag, const Int in)
+    {
+        static_assert(std::is_integral_v<Int> || std::is_enum_v<Int>);
+        addBuf(tag, &in, sizeof(in));
+    }
 
-    static std::string _bytesToString(const void *buf, ssize_t size);
-    static void _stringToBytes(void* fill_buf, const std::string &s, ssize_t size);
+    [[nodiscard]] std::string exportStr() && noexcept;
+    [[nodiscard]] const std::string& exportStr() const & noexcept;
+
+private:
+    std::string buffer_;
+
+    void addRaw(const std::string_view&);
+    void addRaw(const void* buf, const std::size_t len);
+
+    template<std::size_t N>
+    void addRaw(const char(&literal)[N])
+    {
+        addRaw(literal, N - 1);
+    }
+};
+
+class nixlDeserializer
+{
+public:
+    explicit nixlDeserializer(std::string&&);
+    explicit nixlDeserializer(const std::string&);
+
+    // TODO: Change these functions to throw exceptions on failure:
+
+    [[nodiscard]] std::string getStr(const std::string_view& tag);  // Returns empty string on failure.
+
+    template<typename Int>
+    [[nodiscard]] nixl_status_t getInt(const std::string_view& tag, Int& out)
+    {
+        static_assert(std::is_integral_v<Int> || std::is_enum_v<Int>);
+        return getIntImpl(tag, &out, sizeof(out));
+    }
+
+    // TODO: Remove all functions below after switching to exceptions:
+
+    nixlDeserializer() noexcept = default;
+
+    [[nodiscard]] nixl_status_t importStr(std::string);
+
+private:
+    std::string buffer_;
+    std::size_t offset_ = 0;
+
+    [[nodiscard]] std::size_t peekLenUnsafe(const std::size_t offset = 0) const;
+    [[nodiscard]] nixl_status_t getIntImpl(const std::string_view& tag, void* data, const std::size_t size);
 };
 
 #endif

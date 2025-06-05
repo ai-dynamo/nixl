@@ -1015,7 +1015,6 @@ nixl_status_t
 nixlAgent::getLocalMD (nixl_blob_t &str) const {
     size_t conn_cnt;
     nixl_backend_t nixl_backend;
-    nixl_status_t ret;
 
     NIXL_LOCK_GUARD(data->lock);
     // data->connMD was populated when the backend was created
@@ -1024,34 +1023,23 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
     if (conn_cnt == 0) // Error, no backend supports remote
         return NIXL_ERR_INVALID_PARAM;
 
-    nixlSerDes sd;
-    ret = sd.addStr("Agent", data->name);
-    if(ret)
-        return ret;
-
-    ret = sd.addBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if(ret)
-        return ret;
+    nixlSerializer nser;
+    nser.addStr("Agent", data->name);
+    nser.addInt("Conns", conn_cnt);
 
     for (auto &c : data->connMD) {
         nixl_backend = c.first;
-        ret = sd.addStr("t", nixl_backend);
-        if(ret)
-            return ret;
-        ret = sd.addStr("c", c.second);
-        if(ret)
-            return ret;
+        nser.addStr("t", nixl_backend);
+        nser.addStr("c", c.second);
     }
 
-    ret = sd.addStr("", "MemSection");
+    nser.addStr("", "MemSection");
+
+    const nixl_status_t ret = data->memorySection->serialize(nser);
     if(ret)
         return ret;
 
-    ret = data->memorySection->serialize(&sd);
-    if(ret)
-        return ret;
-
-    str = sd.exportStr();
+    str = std::move(nser).exportStr();
     return NIXL_SUCCESS;
 }
 
@@ -1061,7 +1049,6 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
                              const nixl_opt_args_t* extra_params) const {
     backend_list_t tmp_list;
     backend_list_t *backend_list;
-    nixl_status_t ret;
 
     NIXL_LOCK_GUARD(data->lock);
 
@@ -1095,40 +1082,30 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
         selected_engines.insert(backend);
     }
 
-    nixlSerDes sd;
-    ret = sd.addStr("Agent", data->name);
-    if(ret)
-        return ret;
+    nixlSerializer nser;
+    nser.addStr("Agent", data->name);
 
     // Only add connection info if requested via extra_params or empty dlist
     size_t conn_cnt = ((extra_params && extra_params->includeConnInfo) || descs.descCount() == 0) ?
                       found_iters.size() : 0;
-    ret = sd.addBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if(ret)
-        return ret;
+    nser.addInt("Conns", conn_cnt);
 
     for (size_t i = 0; i < conn_cnt; i++) {
-        ret = sd.addStr("t", found_iters[i]->first);
-        if(ret)
-            return ret;
-        ret = sd.addStr("c", found_iters[i]->second);
-        if(ret)
-            return ret;
+        nser.addStr("t", found_iters[i]->first);
+        nser.addStr("c", found_iters[i]->second);
     }
 
     // No engines found, but there are descs, this is an error
     if (selected_engines.size() == 0 && descs.descCount() > 0)
         return NIXL_ERR_BACKEND;
 
-    ret = sd.addStr("", "MemSection");
+    nser.addStr("", "MemSection");
+
+    const nixl_status_t ret = data->memorySection->serializePartial(nser, selected_engines, descs);
     if(ret)
         return ret;
 
-    ret = data->memorySection->serializePartial(&sd, selected_engines, descs);
-    if(ret)
-        return ret;
-
-    str = sd.exportStr();
+    str = std::move(nser).exportStr();
     return NIXL_SUCCESS;
 }
 
@@ -1136,7 +1113,7 @@ nixl_status_t
 nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
                          std::string &agent_name) {
     int count = 0;
-    nixlSerDes sd;
+    nixlDeserializer ndes;
     size_t conn_cnt;
     nixl_blob_t conn_info;
     nixl_backend_t nixl_backend;
@@ -1144,11 +1121,11 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     nixl_status_t ret;
 
     NIXL_LOCK_GUARD(data->lock);
-    ret = sd.importStr(remote_metadata);
+    ret = ndes.importStr(remote_metadata);
     if(ret)
         return ret;
 
-    std::string remote_agent = sd.getStr("Agent");
+    std::string remote_agent = ndes.getStr("Agent");
     if (remote_agent.size() == 0)
         return NIXL_ERR_MISMATCH;
 
@@ -1157,17 +1134,17 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
 
-    ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
+    ret = ndes.getInt("Conns", conn_cnt);
     if(ret) {
         NIXL_ERROR << "Error getting connection count: " << nixlEnumStrings::statusStr(ret);
         return ret;
     }
 
     for (size_t i=0; i<conn_cnt; ++i) {
-        nixl_backend = sd.getStr("t");
+        nixl_backend = ndes.getStr("t");
         if (nixl_backend.size() == 0)
             return NIXL_ERR_MISMATCH;
-        conn_info = sd.getStr("c");
+        conn_info = ndes.getStr("c");
         if (conn_info.size() == 0)
             return NIXL_ERR_MISMATCH;
 
@@ -1202,14 +1179,14 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     if (count == 0 && conn_cnt > 0)
         return NIXL_ERR_BACKEND;
 
-    if (sd.getStr("") != "MemSection")
+    if (ndes.getStr("") != "MemSection")
         return NIXL_ERR_MISMATCH;
 
     if (data->remoteSections.count(remote_agent) == 0)
         data->remoteSections[remote_agent] = new nixlRemoteSection(
                                                   remote_agent);
 
-    ret = data->remoteSections[remote_agent]->loadRemoteData(&sd,
+    ret = data->remoteSections[remote_agent]->loadRemoteData(ndes,
                                                   data->backendEngines);
 
     // TODO: can be more graceful, if just the new MD blob was improper

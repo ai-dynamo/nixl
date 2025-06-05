@@ -214,15 +214,15 @@ PYBIND11_MODULE(_bindings, m) {
         .def("print", &nixl_xfer_dlist_t::print)
         .def(py::pickle(
             [](const nixl_xfer_dlist_t& self) { // __getstate__
-                nixlSerDes serdes;
-                self.serialize(&serdes);
-                return py::bytes(serdes.exportStr());
+                nixlSerializer nser;
+                self.serialize(nser);
+                return py::bytes(nser.exportStr());
             },
             [](py::bytes serdes_str) { // __setstate__
-                nixlSerDes serdes;
-                serdes.importStr(std::string(serdes_str));
+                nixlDeserializer ndes;
+                (void)ndes.importStr(std::string(serdes_str));
                 nixl_xfer_dlist_t newObj =
-                    nixl_xfer_dlist_t(&serdes);
+                    nixl_xfer_dlist_t(ndes);
                 return newObj;
             }
         ));
@@ -275,15 +275,15 @@ PYBIND11_MODULE(_bindings, m) {
         .def("print", &nixl_reg_dlist_t::print)
         .def(py::pickle(
             [](const nixl_reg_dlist_t& self) { // __getstate__
-                nixlSerDes serdes;
-                self.serialize(&serdes);
-                return py::bytes(serdes.exportStr());
+                nixlSerializer nser;
+                self.serialize(nser);
+                return py::bytes(nser.exportStr());
             },
             [](py::bytes serdes_str) { // __setstate__
-                nixlSerDes serdes;
-                serdes.importStr(std::string(serdes_str));
+                nixlDeserializer ndes;
+                (void)ndes.importStr(std::string(serdes_str));
                 nixl_reg_dlist_t newObj =
-                    nixl_reg_dlist_t(&serdes);
+                    nixl_reg_dlist_t(ndes);
                 return newObj;
             }
         ));

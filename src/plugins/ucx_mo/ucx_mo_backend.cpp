@@ -214,23 +214,22 @@ nixlUcxMoEngine::getSupportedMems () const {
 nixl_status_t
 nixlUcxMoEngine::getConnInfo(std::string &str) const
 {
-    nixlSerDes sd;
-    nixl_status_t status;
+    nixlSerializer nser;
 
     // Serialize the number of engines
-    size_t sz = engines.size();
-    sd.addBuf("Count", &sz, sizeof(sz));
+    const std::size_t sz = engines.size();
+    nser.addInt("Count", sz);
 
     for( auto &e : engines ) {
-        string s;
-        status = e->getConnInfo(s);
+        std::string s;
+        const nixl_status_t status = e->getConnInfo(s);
         if (NIXL_SUCCESS != status) {
             return status;
         }
-        sd.addStr("Value", s);
+        nser.addStr("Value", s);
     }
 
-    str = sd.exportStr();
+    str = std::move(nser).exportStr();
     return NIXL_SUCCESS;
 }
 
@@ -239,7 +238,6 @@ nixl_status_t
 nixlUcxMoEngine::loadRemoteConnInfo (const string  &remote_agent,
                                      const string &remote_conn_info)
 {
-    nixlSerDes sd;
     nixlUcxMoConnection conn;
     nixl_status_t status;
     size_t sz;
@@ -251,16 +249,13 @@ nixlUcxMoEngine::loadRemoteConnInfo (const string  &remote_agent,
 
     conn.remoteAgent = remote_agent;
 
-    status = sd.importStr(remote_conn_info);
+    nixlDeserializer ndes;
+    status = ndes.importStr(remote_conn_info);
     if (status != NIXL_SUCCESS) {
         return status;
     }
 
-    ssize_t ret = sd.getBufLen("Count");
-    if (ret != sizeof(sz)) {
-        return NIXL_ERR_MISMATCH;
-    }
-    status = sd.getBuf("Count", &sz, ret);
+    status = ndes.getInt("Count", sz);
     if (status != NIXL_SUCCESS) {
         return status;
     }
@@ -268,8 +263,7 @@ nixlUcxMoEngine::loadRemoteConnInfo (const string  &remote_agent,
     conn.num_engines = sz;
 
     for(size_t idx = 0; idx < sz; idx++) {
-        string cinfo;
-        cinfo = sd.getStr("Value");
+        const std::string cinfo = ndes.getStr("Value");
         for (auto &e : engines) {
             status = e->loadRemoteConnInfo(getEngName(remote_agent, idx), cinfo);
             if (status != NIXL_SUCCESS) {
@@ -345,7 +339,7 @@ nixlUcxMoEngine::registerMem (const nixlBlobDesc &mem,
 {
     auto priv = std::make_unique<nixlUcxMoPrivateMetadata>();
     int32_t eidx = getEngIdx(nixl_mem, mem.devId);
-    nixlSerDes sd;
+    nixlSerializer nser;
     string str;
     nixl_status_t status;
 
@@ -360,13 +354,13 @@ nixlUcxMoEngine::registerMem (const nixlBlobDesc &mem,
         return status;
     }
 
-    sd.addBuf("EngIdx", &eidx, sizeof(eidx));
+    nser.addInt("EngIdx", eidx);
     status = engines[eidx]->getPublicData(priv->md, str);
     if (NIXL_SUCCESS != status) {
         return status;
     }
-    sd.addStr("RkeyStr", str);
-    priv->rkeyStr = sd.exportStr();
+    nser.addStr("RkeyStr", str);
+    priv->rkeyStr = std::move(nser).exportStr();
     out = priv.release();
 
     return NIXL_SUCCESS;
@@ -399,7 +393,6 @@ nixlUcxMoEngine::internalMDHelper (const nixl_blob_t &blob,
                                    nixlBackendMD* &output)
 {
     nixlUcxMoConnection conn;
-    nixlSerDes sd;
     nixl_blob_t ucx_blob;
     nixl_status_t status;
     nixlBlobDesc input_int;
@@ -414,19 +407,15 @@ nixlUcxMoEngine::internalMDHelper (const nixl_blob_t &blob,
     }
     conn = search->second;
 
-    status = sd.importStr(blob);
+    nixlDeserializer ndes;
+    status = ndes.importStr(blob);
 
-    ssize_t ret = sd.getBufLen("EngIdx");
-    if (ret != sizeof(md->eidx)) {
-        return NIXL_ERR_MISMATCH;
-    }
-
-    status = sd.getBuf("EngIdx", &md->eidx, ret);
+    status = ndes.getInt("EngIdx", md->eidx);
     if (status != NIXL_SUCCESS) {
         return status;
     }
 
-    ucx_blob = sd.getStr("RkeyStr");
+    ucx_blob = ndes.getStr("RkeyStr");
     if (status != NIXL_SUCCESS) {
         return status;
     }

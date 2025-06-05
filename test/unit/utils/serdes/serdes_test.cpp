@@ -14,26 +14,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "serdes/serdes.h"
 #include <cassert>
 #include <iostream>
 
+#include "serdes/serdes.h"
+
 int main() {
 
-    int i = 0xff;
-    std::string s = "testString";
-    std::string t1 = "i", t2 = "s";
-    int ret;
+    const int i = 0xff;
+    const std::string s = "testString";
+    const std::string t1 = "i";
+    const std::string t2 = "s";
 
-    nixlSerDes sd;
+    nixlSerializer nser;
 
-    ret = sd.addBuf(t1, &i, sizeof(i));
-    assert(ret == 0);
+    nser.addInt(t1, i);
+    nser.addStr(t2, s);
 
-    ret = sd.addStr(t2, s);
-    assert(ret == 0);
-
-    std::string sdbuf = sd.exportStr();
+    const std::string sdbuf = nser.exportStr();
     assert(sdbuf.size() > 0);
 
     std::cout << "exported string: " << sdbuf << "\n";
@@ -41,25 +39,18 @@ int main() {
     // "nixlSDBegin|i   00000004000000ff|s   0000000AtestString|nixlSDEnd
     // |token      |tag|size.  |value.  |tag|size   |          |token
 
-    nixlSerDes sd2;
-    ret = sd2.importStr(sdbuf);
+    nixlDeserializer ndes;
+    nixl_status_t ret = ndes.importStr(sdbuf);
     assert(ret == 0);
 
-    size_t osize = sd2.getBufLen(t1);
-    assert(osize > 0);
-
-    void *ptr = malloc(osize);
-    ret = sd2.getBuf(t1, ptr, osize);
+    int j = 0;
+    ret = ndes.getInt(t1, j);
     assert(ret == 0);
+    assert(i == j);
 
-    std::string s2 =  sd2.getStr(t2);
+    const std::string s2 = ndes.getStr(t2);
     assert(s2.size() > 0);
-
-    assert(*((int*) ptr) == 0xff);
-
     assert(s2.compare("testString") == 0);
-
-    free(ptr);
 
     return 0;
 }

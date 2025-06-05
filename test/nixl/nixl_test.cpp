@@ -42,7 +42,7 @@
 
 struct SharedNotificationState {
     std::mutex mtx;
-    std::vector<nixlSerDes> remote_serdes;
+    std::vector<nixlDeserializer> remote_ndes;
 };
 
 static const std::string target("target");
@@ -82,11 +82,11 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
     dram_for_ucx.print();
 
     /** Only send desc list */
-    nixlSerDes serdes;
-    assert(dram_for_ucx.trim().serialize(&serdes) == NIXL_SUCCESS);
+    nixlSerializer nser;
+    assert(dram_for_ucx.trim().serialize(nser) == NIXL_SUCCESS);
 
     std::cout << "Thread " << thread_id << " Wait for initiator and then send xfer descs\n";
-    std::string message = serdes.exportStr();
+    const std::string message = std::move(nser).exportStr();
     while (agent.genNotif(initiator, message, extra_params) != NIXL_SUCCESS);
     std::cout << "Thread " << thread_id << " End Control Path metadata exchanges\n";
 
@@ -136,7 +136,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
     while (true) {
         {
             std::lock_guard<std::mutex> lock(shared_state.mtx);
-            if (shared_state.remote_serdes.size() >= NUM_THREADS) {
+            if (shared_state.remote_ndes.size() >= NUM_THREADS) {
                 break;
             }
         }
@@ -148,22 +148,20 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
         if (notifs.size() > 0) {
             std::lock_guard<std::mutex> lock(shared_state.mtx);
             for (const auto &notif : notifs[target]) {
-                nixlSerDes serdes;
-                serdes.importStr(notif);
-                shared_state.remote_serdes.push_back(serdes);
+                shared_state.remote_ndes.emplace_back(notif);
             }
         }
     }
 
-    // Get our thread's serdes instance
-    nixlSerDes remote_serdes;
+    // Get our thread's deserializer instance
+    nixlDeserializer remote_ndes;
     {
         std::lock_guard<std::mutex> lock(shared_state.mtx);
-        remote_serdes = shared_state.remote_serdes[thread_id];
+        remote_ndes = shared_state.remote_ndes[thread_id];
     }
 
     std::cout << "Thread " << thread_id << " Verify Deserialized Target's Desc List at Initiator\n";
-    nixl_xfer_dlist_t dram_target_ucx(&remote_serdes);
+    nixl_xfer_dlist_t dram_target_ucx(remote_ndes);
     nixl_xfer_dlist_t dram_initiator_ucx = dram_for_ucx.trim();
     dram_target_ucx.print();
 

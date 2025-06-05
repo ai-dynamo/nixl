@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = [ ucx_dep, nixl_common_dep, serdes_interface ]
+ucx_utils_dep = [ ucx_dep, nixl_common_dep ]
 
 if cuda_dep.found()
     ucx_utils_dep += [ cuda_dep ]
