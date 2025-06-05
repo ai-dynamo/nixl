@@ -140,6 +140,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)) {
         // Using default param values for GDS backend
         std::cout << "GDS backend" << std::endl;
+        backend_params["batch_pool_size"] = std::to_string(xferBenchConfig::gds_batch_pool_size);
+        backend_params["batch_limit"] = std::to_string(xferBenchConfig::gds_batch_limit);
+        std::cout << "GDS batch pool size: " << xferBenchConfig::gds_batch_pool_size << std::endl;
+        std::cout << "GDS batch limit: " << xferBenchConfig::gds_batch_limit << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
         // Set API type parameter for POSIX backend
         if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
@@ -404,9 +408,10 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
 
     if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
         XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
-        remote_fds = createFileFds(getName(), true);
+        bool is_gds = XFERBENCH_BACKEND_GDS == xferBenchConfig::backend;
+        remote_fds = createFileFds(getName(), is_gds);
         if (remote_fds.empty()) {
-            std::cerr << "Failed to create GDS file" << std::endl;
+            std::cerr << "Failed to create " << ((is_gds) ? "GDS" : "POSIX") << " file" << std::endl;
             exit(EXIT_FAILURE);
         }
         for (int list_idx = 0; list_idx < num_lists; list_idx++) {

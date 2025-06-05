@@ -1,0 +1,156 @@
+# Jenkins Job Builder (JJB) configuration for NIXL project
+# This file defines the CI/CD pipeline structure using Jenkins Job Builder templates
+# The configuration is split into two main job templates and a project definition
+# NOTE: This file is not used directly, it is used to generate the jobs in the Jenkins UI
+#       Any changes to this file can only be deployed by Devops team with permissions
+
+# Template for the dispatcher job that handles GitHub webhook events
+# This job acts as the entry point for CI/CD pipeline and manages the build process
+- job-template:
+    name: "{jjb_proj}-dispatcher"  # Will be expanded to 'nixl-ci-dispatcher'
+    project-type: pipeline
+    folder: "{jjb_folder}"         # Jobs will be created in the 'NIXL' folder
+    properties:
+        # GitHub integration settings
+        - github:
+            url: "{jjb_gh_url}"
+        # Build history retention policy
+        - build-discarder:
+            days-to-keep: 50       # Keep builds for 50 days
+            num-to-keep: 20        # Or keep last 20 builds, whichever comes first
+        # Inject project-specific variables
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-dispatcher
+    # Configure webhook trigger for GitHub events
+    triggers:
+        - generic-webhook-trigger:
+            token: "{jjb_proj}-dispatcher"  # Unique token for webhook identification
+            print-contributors: true        # Log who triggered the build
+            print-posted-content: true      # Log webhook payload
+            silent-response: false          # Return detailed response
+            cause: "Generic Cause"
+            # Extract data from webhook payload
+            post-content-params:
+            - type: JSONPath
+              key: githubData
+              value: $
+            - type: JSONPath
+              key: VARIABLE_FROM_POST
+              value: $
+    description: Do NOT edit this job through the Web GUI !  # Manual edits will be overwritten
+    concurrent: true    # Allow multiple builds to run simultaneously
+    sandbox: true      # Run in sandbox mode for security
+    parameters:
+        - string:
+            name: "VARIABLE_FROM_POST"
+            default: ""
+            description: ""
+    # Pipeline script that handles the build process
+    dsl: |
+        @Library('blossom-github-lib@master')  # Use custom GitHub library
+        import ipp.blossom.*
+        # Authenticate with GitHub using stored credentials
+        withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
+          githubHelper = GithubHelper.getInstance("${{GIT_PASSWORD}}", VARIABLE_FROM_POST)
+        }}
+        # Update GitHub commit status
+        githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher started", GitHubCommitState.PENDING)
+        currentBuild.description = githubHelper.getBuildDescription()
+        try {{
+            # Trigger the actual build job in parallel
+            parallel build: {{
+                build job: 'nixl-ci-build', parameters: [
+                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
+                    string(name: 'githubData', value: VARIABLE_FROM_POST)
+                ]
+            }},
+            failFast: false  # Continue even if some parallel jobs fail
+
+            githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher successeded", GitHubCommitState.SUCCESS)
+        }} catch(Exception ex) {{
+            # Handle build failures
+            currentBuild.result = 'FAILURE'
+            println ex
+            githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher failed", GitHubCommitState.FAILURE)
+            error("failed")
+        }}
+
+# Template for the main build job that performs the actual build process
+- job-template:
+    name: "{jjb_proj}-build"      # Will be expanded to 'nixl-ci-build'
+    project-type: pipeline
+    folder: "{jjb_folder}"
+    disabled: false
+    properties:
+        # Similar properties as dispatcher job
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 50
+            num-to-keep: 20
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-build
+    description: Do NOT edit this job through the Web GUI !
+    concurrent: true
+    sandbox: true
+    # Build job parameters
+    parameters:
+        - string:
+            name: "sha1"
+            default: "{jjb_branch}"    # Default to 'main' branch
+            description: "Commit to be checked, usually set by PR"
+        - string:
+            name: "githubData"
+            default: ""
+            description: "Variables from post"
+        - string:
+            name: "conf_file"
+            default: ".ci/jenkins/lib/build-matrix.yaml"  # Build matrix configuration
+            description: "Job config file"
+        - bool:
+            name: "build_dockers"
+            default: false
+            description: "Force rebuild docker containers"
+        - string:
+            name: "DEBUG"
+            default: 0
+            description: "Enable debug prints and traces, valid values are 0-9"
+    # SCM configuration for the build job
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                credentials-id: ''
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                # Configure refspec to handle branches, PRs, and tags
+                refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                # Handle git submodules
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
+
+# Project definition that instantiates the job templates
+# This section defines the actual jobs that will be created
+- project:
+    name: nixl
+    jjb_proj: 'nixl-ci'           # Project prefix for job names
+    jjb_git: 'git@github.com:ai-dynamo/nixl.git'  # Repository URL
+    jjb_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile'  # Main pipeline definition
+    jjb_folder: 'NIXL'            # Jenkins folder for organization
+    jjb_branch: 'main'            # Default branch
+    jjb_gh_url: 'https://github.com/ai-dynamo/nixl'  # GitHub web URL
+    jobs:
+        - "{jjb_proj}-dispatcher"  # Create dispatcher job
+        - "{jjb_proj}-build"       # Create build job
+        # - "{jjb_proj}-test"      # Test job template (commented out)

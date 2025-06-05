@@ -51,8 +51,9 @@ COPY --from=ucx . /workspace/ucx
 RUN echo "INFO: Starting custom UCX build..." && \
     apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        autoconf automake libtool pkg-config make g++ \
-        libnuma-dev librdmacm-dev ibverbs-providers && \
+        --reinstall autoconf automake libtool pkg-config make g++ \
+        libnuma-dev librdmacm-dev ibverbs-providers libibverbs-dev rdma-core \
+        ibverbs-utils libibumad-dev && \
     echo "INFO: Removing pre-existing UCX installations..." && \
     rm -rf /usr/local/ucx /opt/hpcx/ucx && \
     cd /workspace/ucx && \
@@ -73,9 +74,10 @@ FROM ucx_${UCX}_image AS ucx_image
 
 # --- Stage 4: Final Image Assembly ---
 # Re-declare ARGs needed in this final stage
+ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
-ARG WHL_PLATFORM="manylinux_2_39_x86_64"
+ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
@@ -104,9 +106,9 @@ RUN rm -rf build && \
     ninja && \
     ninja install
 
-ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/x86_64-linux-gnu/plugins
-RUN echo "/usr/local/nixl/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
-    echo "/usr/local/nixl/lib/x86_64-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
+ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/$ARCH-linux-gnu/plugins
+RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
 # Create the wheel
