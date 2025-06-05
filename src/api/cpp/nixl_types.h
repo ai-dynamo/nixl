@@ -145,67 +145,68 @@ enum class nixl_cost_t {
 };
 
 /**
- * @class nixlAgentOptionalArgs
- * @brief A class for optional argument that can be provided to relevant agent methods.
+ * @struct nixlAgentOptionalArgs
+ * @brief A structure for optional argument that can be provided to relevant agent methods.
  */
-class nixlAgentOptionalArgs {
-    public:
-        /**
-         * @var backends vector to specify a list of backend handles, to limit the list
-         *      of backends to be considered. Used in registerMem / deregisterMem
-         *      makeConnection / prepXferDlist / makeXferReq / createXferReq / GetNotifs / GenNotif
-         */
-        std::vector<nixlBackendH*> backends;
+struct nixlAgentOptionalArgs {
+    /**
+     * @var backends vector to specify a list of backend handles, to limit the list
+     *      of backends to be considered. Used in registerMem / deregisterMem
+     *      makeConnection / prepXferDlist / makeXferReq / createXferReq / GetNotifs / GenNotif
+     */
+    std::vector<nixlBackendH*> backends;
 
-        /**
-         * @var notifMsg A message to be used in createXferReq / makeXferReq / postXferReq,
-         *               if a notification message is desired
-         */
-        nixl_blob_t notifMsg;
-        /**
-         * @var hasNotif boolean value to indicate that a notification is provided, or to
-         *      remove notification during a repost. If set to false, notifMsg is not checked.
-         */
-        bool hasNotif = false;
+    /**
+     * @var notifMsg A message to be used in createXferReq / makeXferReq / postXferReq,
+     *               if a notification message is desired
+     */
+    nixl_blob_t notifMsg;
 
-        /**
-         * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
-         */
-        bool skipDescMerge = false;
+    /**
+     * @var hasNotif boolean value to indicate that a notification is provided, or to
+     *      remove notification during a repost. If set to false, notifMsg is not checked.
+     */
+    bool hasNotif = false;
 
-        /**
-         * @var includeConnInfo boolean to include connection information in the metadata,
-         *                      used in getLocalPartialMD.
-         */
-        bool includeConnInfo = false;
+    /**
+     * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
+     */
+    bool skipDescMerge = false;
 
-        /**
-         * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
-         *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
-         */
-        std::string ipAddr;
-        /**
-         * @var port Used to specify the port of a remote peer, ipAddr must also be set
-         *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
-         */
-        int port = default_comm_port;
+    /**
+     * @var includeConnInfo boolean to include connection information in the metadata,
+     *                      used in getLocalPartialMD.
+     */
+    bool includeConnInfo = false;
 
-        /**
-         * @var metadataLabel Used to specify the label of the metadata to be sent/fetched
-         *                    when working with ETCD metadata server. The label will be appended to the
-         *                    agent's key prefix, and the full key will be used to store/fetch
-         *                    the metadata key-value pair from the server.
-         *                    Used in fetchRemoteMD, sendLocalPartialMD.
-         *                    Note that sendLocalMD always uses default_metadata_label and ignores this parameter.
-         *                    Note that invalidateLocalMD invalidates all labels and ignores this parameter.
-         */
-        std::string metadataLabel;
+    /**
+     * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
+     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+     */
+    std::string ipAddr;
+
+    /**
+     * @var port Used to specify the port of a remote peer, ipAddr must also be set
+     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+     */
+    int port = default_comm_port;
+
+    /**
+     * @var metadataLabel Used to specify the label of the metadata to be sent/fetched
+     *                    when working with ETCD metadata server. The label will be appended to the
+     *                    agent's key prefix, and the full key will be used to store/fetch
+     *                    the metadata key-value pair from the server.
+     *                    Used in fetchRemoteMD, sendLocalPartialMD.
+     *                    Note that sendLocalMD always uses default_metadata_label and ignores this parameter.
+     *                    Note that invalidateLocalMD invalidates all labels and ignores this parameter.
+     */
+    std::string metadataLabel;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs
  *        for providing extra optional arguments
  */
-typedef nixlAgentOptionalArgs nixl_opt_args_t;
+using nixl_opt_args_t = nixlAgentOptionalArgs;
 
 /**
  * @brief A define for an empty string, that indicates the descriptor list is being
