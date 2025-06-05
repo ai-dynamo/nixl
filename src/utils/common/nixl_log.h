@@ -17,6 +17,7 @@
 #ifndef __NIXL_LOG_H
 #define __NIXL_LOG_H
 
+#include <system_error>
 #include "absl/log/log.h"
 #include "absl/log/check.h"
 #include "absl/log/initialize.h"
@@ -77,5 +78,15 @@
  *      NIXL_ASSERT(ptr != nullptr) << "Pointer must not be null";
  */
 #define NIXL_ASSERT(condition) DCHECK(condition)
+
+
+/*
+ * Get the error message for the given error number. Thread-safe.
+ * @param err: The error number.
+ * @return: The error message.
+ */
+inline std::string nixl_strerror(int err) {
+    return std::error_code(err, std::generic_category()).message();
+}
 
 #endif /* __NIXL_LOG_H */
