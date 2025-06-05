@@ -1,0 +1,165 @@
+# Build Matrix Configuration for NIXLBench Container Build Pipeline
+#
+# Manual job for building and pushing NIXLBench container images with custom NIXL/UCX versions.
+# Supports multi-architecture builds (x86_64, aarch64) with intelligent tag generation.
+
+---
+job: nixl-ci-nixlbench-container-build
+
+failFast: false
+timeout_minutes: 240
+
+# Credentials for Artifactory push
+credentials:
+  - {credentialsId: 'svc-nixl-artifactory-token', usernameVariable: 'ARTIFACTORY_USERNAME', passwordVariable: 'ARTIFACTORY_PASSWORD'}
+
+# Kubernetes configuration
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 16Gi, cpu: 8000m}"
+  requests: "{memory: 8Gi, cpu: 4000m}"
+
+# Build environment
+runs_on_dockers:
+  - {
+      name: "podman-v5.0.2",
+      url: "quay.io/podman/stable:v5.0.2",
+      category: 'tool',
+      privileged: true,
+      arch: 'x86_64'
+    }
+
+# Environment variables (Jenkins parameters will be injected)
+env:
+  ARTIFACTORY_REGISTRY: "urm.nvidia.com/sw-nbu-swx-nixl-docker/verification"
+  BUILD_SCRIPT: benchmark/nixlbench/contrib/build.sh
+
+steps:
+  - name: Setup Build Environment
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    run: |
+      # Set parameter defaults
+      NIXL_VERSION="${NIXL_VERSION:-main}"
+      UCX_VERSION="${UCX_VERSION:-master}"
+      BASE_IMAGE="${BASE_IMAGE:-nvcr.io/nvidia/cuda-dl-base}"
+      BASE_IMAGE_TAG="${BASE_IMAGE_TAG:-25.03-cuda12.8-devel-ubuntu24.04}"
+      ARCH="${ARCH:-x86_64}"
+
+      echo "=== NIXLBench Container Build Setup ==="
+      echo "NIXL: ${NIXL_VERSION}, UCX: ${UCX_VERSION}, Arch: ${ARCH}"
+      echo "Base: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+
+      # Configure podman for performance
+      rm -f /etc/containers/storage.conf
+      podman system reset -f || true
+      ln -sfT $(type -p podman) /usr/bin/docker
+
+      # Install dependencies
+      yum update -y && yum install -y git
+
+  - name: Clone UCX Source
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    run: |
+      UCX_VERSION="${UCX_VERSION:-master}"
+      echo "Cloning UCX (${UCX_VERSION})..."
+      git clone https://github.com/openucx/ucx.git /tmp/ucx-src
+      cd /tmp/ucx-src
+      git checkout "${UCX_VERSION}"
+
+  - name: Generate Container Tag
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    run: |
+      # Set parameter defaults
+      NIXL_VERSION="${NIXL_VERSION:-main}"
+      UCX_VERSION="${UCX_VERSION:-master}"
+      BASE_IMAGE_TAG="${BASE_IMAGE_TAG:-25.03-cuda12.8-devel-ubuntu24.04}"
+      PUSH_TAG="${PUSH_TAG:-}"
+
+      if [[ -z "${PUSH_TAG}" ]]; then
+        if [[ "${NIXL_VERSION}" == "main" && "${UCX_VERSION}" == "master" ]]; then
+          GENERATED_TAG="nixlbench:nightly-${BASE_IMAGE_TAG}"
+          echo "🌙 Nightly build: ${GENERATED_TAG}"
+        else
+          # Clean version names for Docker tags (replace slashes with dashes)
+          CLEAN_NIXL=${NIXL_VERSION//\//-}
+          CLEAN_UCX=${UCX_VERSION//\//-}
+
+          # Truncate long commit hashes to 8 characters
+          [[ ${#CLEAN_NIXL} -gt 12 && "${CLEAN_NIXL}" =~ ^[a-f0-9]+$ ]] && CLEAN_NIXL=${CLEAN_NIXL:0:8}
+          [[ ${#CLEAN_UCX} -gt 12 && "${CLEAN_UCX}" =~ ^[a-f0-9]+$ ]] && CLEAN_UCX=${CLEAN_UCX:0:8}
+
+          GENERATED_TAG="nixlbench:nixl-${CLEAN_NIXL}-ucx-${CLEAN_UCX}-${BASE_IMAGE_TAG}"
+          echo "🔧 Custom build: ${GENERATED_TAG}"
+        fi
+        echo "PUSH_TAG=${GENERATED_TAG}" > /tmp/build_env
+      else
+        echo "Using provided tag: ${PUSH_TAG}"
+        echo "PUSH_TAG=${PUSH_TAG}" > /tmp/build_env
+      fi
+
+  - name: Build NIXLBench Container
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    run: |
+      # Set parameter defaults
+      BASE_IMAGE="${BASE_IMAGE:-nvcr.io/nvidia/cuda-dl-base}"
+      BASE_IMAGE_TAG="${BASE_IMAGE_TAG:-25.03-cuda12.8-devel-ubuntu24.04}"
+      ARCH="${ARCH:-x86_64}"
+
+      [[ -f /tmp/build_env ]] && source /tmp/build_env
+      echo "Building container: ${PUSH_TAG}"
+
+      BUILD_ARGS=(
+        --nixl "$PWD"
+        --ucx /tmp/ucx-src
+        --base-image "${BASE_IMAGE}"
+        --base-image-tag "${BASE_IMAGE_TAG}"
+        --tag "${PUSH_TAG}"
+        --arch "${ARCH}"
+        --no-cache
+      )
+
+      "${BUILD_SCRIPT}" "${BUILD_ARGS[@]}" || {
+        echo "Build failed"
+        exit 1
+      }
+
+      docker images | grep nixlbench || echo "No nixlbench images found"
+
+  - name: Login to Artifactory
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    run: |
+      echo "Logging into ${ARTIFACTORY_REGISTRY}..."
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${ARTIFACTORY_REGISTRY}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+
+
+  - name: Tag and Push Container
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    run: |
+      [[ -f /tmp/build_env ]] && source /tmp/build_env
+
+      BUILT_IMAGE="${PUSH_TAG}"
+      if ! docker image inspect "${BUILT_IMAGE}" >/dev/null 2>&1; then
+        echo "ERROR: Image not found: ${BUILT_IMAGE}"
+        docker images | grep nixlbench || echo "No nixlbench images available"
+        exit 1
+      fi
+
+      ARTIFACTORY_TAG="${ARTIFACTORY_REGISTRY}/${PUSH_TAG}"
+      echo "Pushing ${ARTIFACTORY_TAG}..."
+
+      docker tag "${BUILT_IMAGE}" "${ARTIFACTORY_TAG}"
+      docker push "${ARTIFACTORY_TAG}"
+
+      # Tag as latest for nightly builds
+      if [[ "${PUSH_TAG}" == *"nightly"* ]]; then
+        LATEST_TAG="${ARTIFACTORY_REGISTRY}/nixlbench:latest"
+        docker tag "${BUILT_IMAGE}" "${LATEST_TAG}"
+        docker push "${LATEST_TAG}"
+      fi
