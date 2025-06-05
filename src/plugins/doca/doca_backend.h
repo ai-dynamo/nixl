@@ -63,6 +63,9 @@ private:
     std::unordered_map<std::string, struct nixlDocaRdmaQp *, std::hash<std::string>, strEqual>
             qpMap;
 
+    std::unordered_map<std::string, int, std::hash<std::string>, strEqual>
+            connMap;
+
     std::unordered_map<std::string, struct nixlDocaNotif *, std::hash<std::string>, strEqual>
             notifMap;
 
@@ -109,6 +112,8 @@ public:
     CUcontext main_cuda_ctx;
     int oob_sock_server;
     std::mutex notifLock;
+    std::mutex qpLock;
+    mutable std::mutex connectLock;
     std::vector<std::pair<uint32_t, struct doca_gpu *>>
             gdevs; /* List of DOCA GPUNetIO device handlers */
     struct doca_dev *ddev; /* DOCA device handler associated to queues */
@@ -207,9 +212,9 @@ public:
     getGpuCudaId();
 
     nixl_status_t
-    sendLocalAgent (int oob_sock_client, const std::string &remote_agent);
+    sendLocalAgentName (int oob_sock_client);
     nixl_status_t
-    recvLocalAgent (int oob_sock_client, std::string &remote_agent);
+    recvRemoteAgentName (int oob_sock_client, std::string &remote_agent);
 };
 
 doca_error_t

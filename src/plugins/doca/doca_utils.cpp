@@ -127,8 +127,7 @@ threadProgressFunc (void *arg) {
     struct sockaddr_in client_addr = {0};
     unsigned int client_size = 0;
     int oob_sock_client;
-    char *remote_agent;
-    size_t msg_size;
+    std::string remote_agent;
 
     nixlDocaEngine *eng = (nixlDocaEngine *)arg;
 
@@ -149,31 +148,33 @@ threadProgressFunc (void *arg) {
         NIXL_INFO << "Client connected at IP: " << inet_ntoa (client_addr.sin_addr)
                   << " and port: " << ntohs (client_addr.sin_port);
 
-        // Msg
-        if (recv (oob_sock_client, &msg_size, sizeof (size_t), 0) < 0) {
-            NIXL_ERROR << "Failed to recv msg details";
-            close (oob_sock_client);
-        }
+        // // Msg
+        // if (recv (oob_sock_client, &msg_size, sizeof (size_t), 0) < 0) {
+        //     NIXL_ERROR << "Failed to recv msg details";
+        //     close (oob_sock_client);
+        // }
 
-        remote_agent = (char *)calloc (msg_size, sizeof (char));
-        if (remote_agent == nullptr) {
-            NIXL_ERROR << "Failed to alloc msg memory";
-            close (oob_sock_client);
-        }
+        // remote_agent = (char *)calloc (msg_size, sizeof (char));
+        // if (remote_agent == nullptr) {
+        //     NIXL_ERROR << "Failed to alloc msg memory";
+        //     close (oob_sock_client);
+        // }
 
-        if (recv (oob_sock_client, remote_agent, msg_size, 0) < 0) {
-            NIXL_ERROR << "Failed to recv msg details";
-            close (oob_sock_client);
-        }
+        // if (recv (oob_sock_client, remote_agent, msg_size, 0) < 0) {
+        //     NIXL_ERROR << "Failed to recv msg details";
+        //     close (oob_sock_client);
+        // }
 
         cuCtxSetCurrent (eng->main_cuda_ctx);
 
-        // eng->recvLocalAgent(oob_sock_client, remote_agent);
-        if (eng->addRdmaQp (remote_agent) == NIXL_SUCCESS) {
-            eng->nixlDocaInitNotif (remote_agent, eng->ddev, eng->gdevs[0].second);
-            eng->connectServerRdmaQp (oob_sock_client, remote_agent);
-        } else
-            NIXL_ERROR << "remote client " << remote_agent << " already present";
+        eng->recvRemoteAgentName(oob_sock_client, remote_agent);
+
+        NIXL_DEBUG << "recvRemoteAgentName remoteAgent " << remote_agent << std::endl;
+
+        printf("server calling addRdmaQp for %s\n", remote_agent.c_str());
+        eng->addRdmaQp (remote_agent);
+        eng->nixlDocaInitNotif (remote_agent, eng->ddev, eng->gdevs[0].second);
+        eng->connectServerRdmaQp (oob_sock_client, remote_agent);
 
         close (oob_sock_client);
         /* Wait for predefined number of */
@@ -267,7 +268,7 @@ doca_error_t
 destroy_doca_buf_arr (struct doca_buf_arr *barr) {
     if (barr == nullptr) return DOCA_ERROR_INVALID_VALUE;
 
-    destroy_doca_buf_arr (barr);
+    doca_buf_arr_destroy (barr);
 
     return DOCA_SUCCESS;
 }

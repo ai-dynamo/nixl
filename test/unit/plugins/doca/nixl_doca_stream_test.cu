@@ -271,8 +271,7 @@ main (int argc, char *argv[]) {
     // }
 
     nixlAgent agent (role, cfg);
-    params["network_devices"] = "mlx5_0";
-    params["gpu_devices"] = "0";
+    
     if (stream_mode.compare ("pool") == 0) params["cuda_streams"] = "2";
 
     PUSH_RANGE ("createBackend", 0)
@@ -282,6 +281,9 @@ main (int argc, char *argv[]) {
 
     nixl_opt_args_t extra_params;
     extra_params.backends.push_back (doca);
+
+    params["network_devices"] = "mlx5_0";
+    params["gpu_devices"] = "0";
 
     checkCudaError (cudaMalloc (&data_address, SIZE * TRANSFER_NUM_BUFFER),
                     "Failed to allocate CUDA buffer 0");
