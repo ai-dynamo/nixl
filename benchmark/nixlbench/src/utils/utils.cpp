@@ -64,6 +64,7 @@ DEFINE_int32(num_files, 1, "Number of files used by benchmark");
 DEFINE_int32(num_initiator_dev, 1, "Number of device in initiator process");
 DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
+DEFINE_bool(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 // GDS options - only used when backend is GDS
 DEFINE_string(gds_filepath, "", "File path for GDS operations (only used with GDS backend)");
 DEFINE_int32(gds_batch_pool_size, 32, "Batch pool size for GDS operations (default: 32, only used with GDS backend)");
@@ -101,6 +102,7 @@ int xferBenchConfig::num_iter = 0;
 int xferBenchConfig::warmup_iter = 0;
 int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
+bool xferBenchConfig::enable_vmm = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::gds_filepath = "";
@@ -121,6 +123,14 @@ int xferBenchConfig::loadFromFlags() {
         backend = FLAGS_backend;
         enable_pt = FLAGS_enable_pt;
         device_list = FLAGS_device_list;
+        enable_vmm = FLAGS_enable_vmm;
+
+#if !HAVE_CUDA_FABRIC
+        if (enable_vmm) {
+            std::cerr << "VMM is not supported in CUDA version " << CUDA_VERSION << std::endl;
+            return -1;
+        }
+#endif
 
         // Load GDS-specific configurations if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
@@ -254,6 +264,8 @@ void xferBenchConfig::printConfig() {
                   << enable_pt << std::endl;
         std::cout << std::left << std::setw(60) << "Device list (--device_list=dev1,dev2,...)" << ": "
                   << device_list << std::endl;
+        std::cout << std::left << std::setw(60) << "Enable VMM (--enable_vmm=[0,1])" << ": "
+                  << enable_vmm << std::endl;
 
         // Print GDS options if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {

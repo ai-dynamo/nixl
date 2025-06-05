@@ -124,6 +124,7 @@ class xferBenchConfig {
         static std::string device_list;
         static std::string etcd_endpoints;
         static std::string gds_filepath;
+        static bool enable_vmm;
         static int num_files;
         static std::string posix_api_type;
         static std::string posix_filepath;
@@ -142,8 +143,14 @@ public:
     uintptr_t addr;
     size_t len;
     int devId;
+    size_t padded_size;
+    unsigned long long handle;
 
-    xferBenchIOV(uintptr_t a, size_t l, int d) : addr(a), len(l), devId(d) {}
+    xferBenchIOV(uintptr_t a, size_t l, int d) :
+        addr(a), len(l), devId(d), padded_size(len), handle(0) {}
+
+    xferBenchIOV(uintptr_t a, size_t l, int d, size_t p, unsigned long long h) :
+        addr(a), len(l), devId(d), padded_size(p), handle(h) {}
 };
 
 class xferBenchUtils {

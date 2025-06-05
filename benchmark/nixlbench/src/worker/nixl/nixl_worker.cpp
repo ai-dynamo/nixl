@@ -32,17 +32,11 @@
 #include <utils/serdes/serdes.h>
 #include <omp.h>
 
-#define USE_VMM 0
 #define ROUND_UP(value, granularity) ((((value) + (granularity) - 1) / (granularity)) * (granularity))
 
 static uintptr_t gds_running_ptr = 0x0;
 static std::vector<std::vector<xferBenchIOV>> gds_remote_iovs;
 static std::vector<std::vector<xferBenchIOV>> storage_remote_iovs;
-
-#if HAVE_CUDA
-static size_t __attribute__((unused)) padded_size = 0;
-static CUmemGenericAllocationHandle __attribute__((unused)) handle;
-#endif
 
 #define CHECK_NIXL_ERROR(result, message)                                         \
     do {                                                                          \
@@ -222,72 +216,87 @@ std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescDram(size_t buffer
 }
 
 #if HAVE_CUDA
-static std::optional<xferBenchIOV> getVramDesc(int devid, size_t buffer_size,
-                                 bool isInit)
+static std::optional<xferBenchIOV>
+getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value)
 {
     void *addr;
-
-    CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
-#if !USE_VMM
     CHECK_CUDA_ERROR(cudaMalloc(&addr, buffer_size), "Failed to allocate CUDA buffer");
-    if (isInit) {
-        CHECK_CUDA_ERROR(cudaMemset(addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size), "Failed to set device");
+    CHECK_CUDA_ERROR(cudaMemset(addr, memset_value, buffer_size), "Failed to set device memory" );
 
-    } else {
-        CHECK_CUDA_ERROR(cudaMemset(addr, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size), "Failed to set device");
-    }
-#else
+    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
+}
+
+static std::optional<xferBenchIOV>
+getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value)
+{
+#if HAVE_CUDA_FABRIC
     CUdeviceptr addr = 0;
-    size_t granularity = 0;
     CUmemAllocationProp prop = {};
     CUmemAccessDesc access = {};
 
     prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-    // prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+    prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
     prop.allocFlags.gpuDirectRDMACapable = 1;
     prop.location.id = devid;
     prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-    // prop.location.type = CU_MEM_LOCATION_TYPE_HOST_NUMA;
 
     // Get the allocation granularity
+    size_t granularity = 0;
     CHECK_CUDA_DRIVER_ERROR(cuMemGetAllocationGranularity(&granularity,
-                         &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM),
-                         "Failed to get allocation granularity");
+                            &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM),
+                            "Failed to get allocation granularity");
     std::cout << "Granularity: " << granularity << std::endl;
 
-    padded_size = ROUND_UP(buffer_size, granularity);
+    size_t padded_size = ROUND_UP(buffer_size, granularity);
+    CUmemGenericAllocationHandle handle;
     CHECK_CUDA_DRIVER_ERROR(cuMemCreate(&handle, padded_size, &prop, 0),
-                         "Failed to create allocation");
+                            "Failed to create allocation");
 
     // Reserve the memory address
     CHECK_CUDA_DRIVER_ERROR(cuMemAddressReserve(&addr, padded_size,
-                         granularity, 0, 0), "Failed to reserve address");
+                                                granularity, 0, 0),
+                            "Failed to reserve address");
 
     // Map the memory
     CHECK_CUDA_DRIVER_ERROR(cuMemMap(addr, padded_size, 0, handle, 0),
-                         "Failed to map memory");
+                            "Failed to map memory");
 
     std::cout << "Address: " << std::hex << std::showbase << addr
               << " Buffer size: " << std::dec << buffer_size
               << " Padded size: " << std::dec << padded_size << std::endl;
+
     // Set the memory access rights
     access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
     access.location.id = devid;
     access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
     CHECK_CUDA_DRIVER_ERROR(cuMemSetAccess(addr, buffer_size, &access, 1),
-        "Failed to set access");
+                            "Failed to set access");
 
     // Set memory content based on role
-    if (isInit) {
-        CHECK_CUDA_DRIVER_ERROR(cuMemsetD8(addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size),
-            "Failed to set device memory to XFERBENCH_INITIATOR_BUFFER_ELEMENT");
-    } else {
-        CHECK_CUDA_DRIVER_ERROR(cuMemsetD8(addr, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size),
-            "Failed to set device memory to XFERBENCH_TARGET_BUFFER_ELEMENT");
-    }
-#endif /* !USE_VMM */
+    CHECK_CUDA_DRIVER_ERROR(cuMemsetD8(addr, memset_value, buffer_size),
+                            "Failed to set VMM device memory");
 
-    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
+    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size,
+                                       devid, padded_size, handle);
+
+#else
+    std::cerr << "CUDA_FABRIC is not supported" << std::endl;
+    return std::nullopt;
+#endif /* HAVE_CUDA_FABRIC */
+}
+
+static std::optional<xferBenchIOV> getVramDesc(int devid, size_t buffer_size,
+                                               bool isInit)
+{
+    CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
+    uint8_t memset_value = isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT :
+                                    XFERBENCH_TARGET_BUFFER_ELEMENT;
+
+    if (xferBenchConfig::enable_vmm) {
+        return getVramDescCudaVmm(devid, buffer_size, memset_value);
+    } else {
+        return getVramDescCuda(devid, buffer_size, memset_value);
+    }
 }
 
 std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
@@ -376,15 +385,18 @@ void xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
 #if HAVE_CUDA
 void xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
     CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
-#if !USE_VMM
-    CHECK_CUDA_ERROR(cudaFree((void *)iov.addr), "Failed to deallocate CUDA buffer");
-#else
-    CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len),
-                         "Failed to unmap memory");
-    CHECK_CUDA_DRIVER_ERROR(cuMemRelease(handle),
-                         "Failed to release memory");
-    CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, padded_size), "Failed to free reserved address");
-#endif
+
+    if (xferBenchConfig::enable_vmm) {
+        CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len),
+                                "Failed to unmap memory");
+        CHECK_CUDA_DRIVER_ERROR(cuMemRelease(iov.handle),
+                                "Failed to release memory");
+        CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, iov.padded_size),
+                                "Failed to free reserved address");
+    } else {
+        CHECK_CUDA_ERROR(cudaFree((void *)iov.addr),
+                                  "Failed to deallocate CUDA buffer");
+    }
 }
 #endif /* HAVE_CUDA */
 
