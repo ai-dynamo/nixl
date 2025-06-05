@@ -199,6 +199,7 @@ bool nixlMDStreamClient::connectListener() {
    return setupClient();
 }
 
+
 void nixlMDStreamClient::sendData(const std::string &data) {
     if (send(socketFd, data.c_str(), data.size(), 0) < 0) {
         std::cerr << "Send failed\n";
