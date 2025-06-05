@@ -39,3 +39,4 @@ plugin_test = executable('test_plugin',
                         dependencies: [nixl_dep, cuda_dep],
                         include_directories: [nixl_inc_dirs, utils_inc_dirs],
                         install: true)
+

@@ -37,3 +37,8 @@ hf3fs_lib_found = cc.find_library(hf3fs_lib_file, dirs: [hf3fs_lib_path], requir
 if hf3fs_lib_found.found()
     subdir('hf3fs')
 endif
+
+disable_gpunetio_backend = get_option('disable_gpunetio_backend')
+if not disable_gpunetio_backend and cuda_dep.found()
+    subdir('gpunetio')
+endif
