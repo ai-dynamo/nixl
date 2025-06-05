@@ -21,13 +21,15 @@ py = import('python').find_installation('python3', pure: false)
 
 py.extension_module('_bindings',
            'nixl_bindings.cpp',
-           subdir: ('nixl'),
+        #    subdir: (py.get_install_dir() / 'nixl'),
            dependencies: [nixl_dep, serdes_interface, pybind_dep],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           install: true)
+           install: true,
+           install_dir: py.get_install_dir() / 'nixl')
 
 py.extension_module('_utils',
            'nixl_utils.cpp',
-           subdir: ('nixl'),
+        #    subdir: (py.get_install_dir() / 'nixl'),
            dependencies: [pybind_dep],
-           install: true)
+           install: true,
+           install_dir: py.get_install_dir() / 'nixl')
