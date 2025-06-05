@@ -39,10 +39,6 @@
 
 enum ucx_cb_op_t {CONN_CHECK, NOTIF_STR, DISCONNECT};
 
-struct nixl_ucx_am_hdr {
-    ucx_cb_op_t op;
-};
-
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
         std::string remoteAgent;
