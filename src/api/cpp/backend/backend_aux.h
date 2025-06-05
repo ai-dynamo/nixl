@@ -28,14 +28,13 @@
 typedef std::vector<std::pair<std::string, std::string>> notif_list_t;
 
 
-class nixlBackendOptionalArgs {
-    public:
-        // During postXfer, user might ask for a notification if supported
-        nixl_blob_t notifMsg;
-        bool        hasNotif = false;
+struct nixlBackendOptionalArgs {
+    // During postXfer, user might ask for a notification if supported
+    nixl_blob_t notifMsg;
+    bool        hasNotif = false;
 };
 
-typedef nixlBackendOptionalArgs nixl_opt_b_args_t;
+using nixl_opt_b_args_t = nixlBackendOptionalArgs;
 
 
 // A base class to point to backend initialization data
