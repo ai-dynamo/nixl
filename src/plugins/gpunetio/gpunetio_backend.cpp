@@ -1125,7 +1125,6 @@ nixlDocaEngine::loadRemoteConnInfo (const std::string &remote_agent,
         remoteConnMap[remote_agent] = conn;
         NIXL_INFO << "remoteConnMap extended with remote agent " << remote_agent << std::endl;
     }
-        
 
     NIXL_INFO << "DOCA loadRemoteConnInfo connected agent " << remote_agent;
 

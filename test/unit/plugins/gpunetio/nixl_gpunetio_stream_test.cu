@@ -266,7 +266,7 @@ main (int argc, char *argv[]) {
 
     nixlAgentConfig cfg (true, true, peer_port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
     nixlAgent agent (role, cfg);
-    
+
     if (stream_mode.compare ("pool") == 0) params["cuda_streams"] = "2";
 
     PUSH_RANGE ("createBackend", 0)
