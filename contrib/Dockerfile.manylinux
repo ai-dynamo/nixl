@@ -137,7 +137,7 @@ COPY . /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl \
+    uv run meson setup build/ --prefix=/usr/local/nixl && \
     cd build && \
     ninja && \
     ninja install
