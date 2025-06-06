@@ -72,6 +72,10 @@ RUN echo "INFO: Starting custom UCX build..." && \
 # This stage selects the correct UCX image based on the UCX argument
 FROM ucx_${UCX}_image AS ucx_image
 
+RUN mkdir -p /usr/include/nlohmann && \
+    curl -sL https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp \
+    -o /usr/include/nlohmann/json.hpp
+
 # --- Stage 4: Final Image Assembly ---
 # Re-declare ARGs needed in this final stage
 ARG ARCH="x86_64"

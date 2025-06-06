@@ -97,6 +97,8 @@ meson configure /path/to/build/dir
 --device_list LIST         # Comma-separated device names (default: all)
 --runtime_type NAME	   # Type of runtime to use [ETCD] (default: ETCD)
 --etcd-endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
+--output_format FORMAT     # Output format: 'text' or 'json' (default: text)
+--output_json_file FILE    # Optional path to write JSON output (only used when output_format=json)
 ```
 
 ### Using ETCD for Coordination

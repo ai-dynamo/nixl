@@ -26,10 +26,13 @@
 #include <vector>
 #include <optional>
 #include "runtime/runtime.h"
+#include "nlohmann/json.hpp"
+using json = nlohmann::json;
 
 #if HAVE_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
+
 
 #define CHECK_CUDA_ERROR(result, message)                                           \
     do {                                                                            \
@@ -99,6 +102,7 @@
                               XFERBENCH_MODE_SG == xferBenchConfig::mode)
 #define IS_PAIRWISE_AND_MG() (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
                               XFERBENCH_MODE_MG == xferBenchConfig::mode)
+
 class xferBenchConfig {
     public:
         static std::string runtime_type;
@@ -130,10 +134,13 @@ class xferBenchConfig {
         static bool storage_enable_direct;
         static int gds_batch_pool_size;
         static int gds_batch_limit;
+        static std::string output_format;
+        static std::string output_json_file;
 
         static int loadFromFlags();
         static void printConfig();
         static std::vector<std::string> parseDeviceList();
+        static json to_json();
 };
 
 // Generic IOV descriptor class independent of NIXL
