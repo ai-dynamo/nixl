@@ -34,6 +34,7 @@ RUN apt-get update -y && \
     libgrpc-dev \
     libgrpc++-dev \
     libprotobuf-dev \
+    libgtest-dev \
     protobuf-compiler-grpc \
     libcpprest-dev \
     etcd-server \
