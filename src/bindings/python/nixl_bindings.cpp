@@ -17,9 +17,11 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/operators.h>
+#include <pybind11/numpy.h>
 
 #include <tuple>
 #include <iostream>
+#include <cassert>
 
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -172,27 +174,47 @@ PYBIND11_MODULE(_bindings, m) {
 
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
         .def(py::init<nixl_mem_t, bool, int>(), py::arg("type"), py::arg("sorted")=false, py::arg("init_size")=0)
-        .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool sorted) {
-                nixl_xfer_dlist_t new_list(mem, sorted, descs.size());
-                for(long unsigned int i = 0; i<descs.size(); i++)
-                    new_list[i] = nixlBasicDesc(descs[i][0].cast<uintptr_t>(), descs[i][1].cast<size_t>(), descs[i][2].cast<uint64_t>());
-                if (sorted) new_list.verifySorted();
+        .def(py::init([](nixl_mem_t mem, py::array descs, bool sorted) {
+                static_assert(sizeof(nixlBasicDesc) == 3 * sizeof(uint64_t), "nixlBasicDesc size mismatch");
+                // Check array shape and dtype
+                if (descs.ndim() != 2 || descs.shape(1) != 3)
+                    throw std::invalid_argument("descs must be a Nx3 numpy array");
+                if (!py::dtype::of<uint64_t>().equal(descs.dtype()) && !py::dtype::of<int64_t>().equal(descs.dtype()))
+                    throw std::invalid_argument("descs must be a Nx3 numpy array of uint64 or int64");
+                if (!(descs.flags() & py::array::c_style)) {
+                    throw std::invalid_argument("descs must be a C-contiguous numpy array");
+                }
+                size_t n = descs.shape(0);
+                nixl_xfer_dlist_t new_list(mem, sorted, n);
+                // We assume that the Nx3 array matches the nixlBasicDesc layout so we can simply memcpy
+                std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+                assert(!sorted || new_list.verifySorted());
                 return new_list;
-            }), py::arg("type"), py::arg("descs"), py::arg("sorted")=false)
+            }), py::arg("type"), py::arg("descs").noconvert(), py::arg("sorted")=false)
+        .def(py::init([](nixl_mem_t mem, py::list descs, bool sorted) {
+                nixl_xfer_dlist_t new_list(mem, sorted, descs.size());
+                for(size_t i = 0; i < descs.size(); i++) {
+                    if (!py::isinstance<py::tuple>(descs[i])) {
+                        throw py::type_error("Each descriptor must be a tuple when provided as a list");
+                    }
+                    auto desc = py::reinterpret_borrow<py::tuple>(descs[i]);
+                    if (desc.size() != 3) {
+                        throw py::value_error("Each descriptor tuple must have exactly 3 elements");
+                    }
+                    new_list[i] = nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint64_t>());
+                }
+                assert(!sorted || new_list.verifySorted());
+                return new_list;
+            }), py::arg("type"), py::arg("descs").noconvert(), py::arg("sorted")=false)
         .def("getType", &nixl_xfer_dlist_t::getType)
         .def("descCount", &nixl_xfer_dlist_t::descCount)
         .def("isEmpty", &nixl_xfer_dlist_t::isEmpty)
         .def("isSorted", &nixl_xfer_dlist_t::isSorted)
         .def(py::self == py::self)
-        .def("__getitem__", [](nixl_xfer_dlist_t &list, unsigned int i) ->
-              std::tuple<uintptr_t, size_t, uint64_t> {
-                    std::tuple<uintptr_t, size_t, uint64_t> ret;
-                    nixlBasicDesc desc = list[i];
-                    std::get<0>(ret) = desc.addr;
-                    std::get<1>(ret) = desc.len;
-                    std::get<2>(ret) = desc.devId;
-                    return ret;
-              })
+        .def("__getitem__", [](nixl_xfer_dlist_t &list, unsigned int i) -> py::tuple {
+                nixlBasicDesc &desc = list[i];
+                return py::make_tuple(desc.addr, desc.len, desc.devId);
+            })
         .def("__setitem__", [](nixl_xfer_dlist_t &list, unsigned int i, const py::tuple &desc) {
                 list[i] = nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint64_t>());
             })
@@ -229,11 +251,42 @@ PYBIND11_MODULE(_bindings, m) {
 
     py::class_<nixl_reg_dlist_t>(m, "nixlRegDList")
         .def(py::init<nixl_mem_t, bool, int>(), py::arg("type"), py::arg("sorted")=false, py::arg("init_size")=0)
-        .def(py::init([](nixl_mem_t mem, std::vector<py::tuple> descs, bool sorted) {
+        .def(py::init([](nixl_mem_t mem, py::array descs, bool sorted) {
+                if (descs.ndim() != 2 || descs.shape(1) != 3)
+                    throw std::invalid_argument("descs must be a Nx3 numpy array");
+                if (!py::dtype::of<uint64_t>().equal(descs.dtype()) && !py::dtype::of<int64_t>().equal(descs.dtype()))
+                    throw std::invalid_argument("descs must be a Nx3 numpy array of uint64 or int64");
+                if (!(descs.flags() & py::array::c_style)) {
+                    throw std::invalid_argument("descs must be a C-contiguous numpy array");
+                }
+                size_t n = descs.shape(0);
+                nixl_reg_dlist_t new_list(mem, sorted, n);
+                if (py::dtype::of<uint64_t>().equal(descs.dtype())) {
+                    auto buffer = descs.unchecked<uint64_t, 2>();
+                    for(size_t i = 0; i < n; i++) {
+                        new_list[i] = nixlBlobDesc(buffer(i, 0), buffer(i, 1), buffer(i, 2), "");
+                    }
+                } else {
+                    auto buffer = descs.unchecked<int64_t, 2>();
+                    for(size_t i = 0; i < n; i++) {
+                        new_list[i] = nixlBlobDesc(buffer(i, 0), buffer(i, 1), buffer(i, 2), "");
+                    }
+                }
+                return new_list;
+        }))
+        .def(py::init([](nixl_mem_t mem, py::list descs, bool sorted) {
                 nixl_reg_dlist_t new_list(mem, sorted, descs.size());
-                for(long unsigned int i = 0; i<descs.size(); i++)
-                    new_list[i] = nixlBlobDesc(descs[i][0].cast<uintptr_t>(), descs[i][1].cast<size_t>(), descs[i][2].cast<uint64_t>(), descs[i][3].cast<std::string>());
-                if (sorted) new_list.verifySorted();
+                for(size_t i = 0; i < descs.size(); i++) {
+                    if (!py::isinstance<py::tuple>(descs[i])) {
+                        throw py::type_error("Each descriptor must be a tuple when provided as a list");
+                    }
+                    auto desc = descs[i].cast<py::tuple>();
+                    if (desc.size() != 4) {
+                        throw py::value_error("Each descriptor tuple must have exactly 4 elements");
+                    }
+                    new_list[i] = nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint64_t>(), desc[3].cast<std::string>());
+                }
+                assert(!sorted || new_list.verifySorted());
                 return new_list;
             }), py::arg("type"), py::arg("descs"), py::arg("sorted")=false)
         .def("getType", &nixl_reg_dlist_t::getType)
@@ -241,15 +294,9 @@ PYBIND11_MODULE(_bindings, m) {
         .def("isEmpty", &nixl_reg_dlist_t::isEmpty)
         .def("isSorted", &nixl_reg_dlist_t::isSorted)
         .def(py::self == py::self)
-        .def("__getitem__", [](nixl_reg_dlist_t &list, unsigned int i) ->
-              std::tuple<uintptr_t, size_t, uint64_t, std::string> {
-                    std::tuple<uintptr_t, size_t, uint64_t, std::string> ret;
+        .def("__getitem__", [](nixl_reg_dlist_t &list, unsigned int i) -> py::tuple {
                     nixlBlobDesc desc = list[i];
-                    std::get<0>(ret) = desc.addr;
-                    std::get<1>(ret) = desc.len;
-                    std::get<2>(ret) = desc.devId;
-                    std::get<3>(ret) = desc.metaInfo;
-                    return ret;
+                    return py::make_tuple(desc.addr, desc.len, desc.devId, py::bytes(desc.metaInfo));
               })
         .def("__setitem__", [](nixl_reg_dlist_t &list, unsigned int i, const py::tuple &desc) {
                 list[i] = nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint64_t>(), desc[3].cast<std::string>());
@@ -377,9 +424,9 @@ PYBIND11_MODULE(_bindings, m) {
         .def("makeXferReq", [](nixlAgent &agent,
                                const nixl_xfer_op_t &operation,
                                uintptr_t local_side,
-                               const std::vector<int> &local_indices,
+                               py::object local_indices,
                                uintptr_t remote_side,
-                               const std::vector<int> &remote_indices,
+                               py::object remote_indices,
                                const std::string &notif_msg,
                                std::vector<uintptr_t> backends,
                                bool skip_desc_merge) -> uintptr_t {
@@ -394,9 +441,33 @@ PYBIND11_MODULE(_bindings, m) {
                         extra_params.hasNotif = true;
                     }
                     extra_params.skipDescMerge = skip_desc_merge;
+                    std::vector<int> local_indices_vec;
+                    std::vector<int> remote_indices_vec;
+
+                    auto init_indices_lambda = [](py::object &indices) -> std::vector<int> {
+                        if (py::isinstance<py::array>(indices)) {
+                            auto indices_array = indices.cast<py::array_t<uint32_t>>();
+                            if (indices_array.ndim() != 1)
+                                throw std::invalid_argument("indices numpy array must be 1D");
+                            if (!py::dtype::of<uint32_t>().equal(indices_array.dtype()) && !py::dtype::of<int32_t>().equal(indices_array.dtype()))
+                                throw std::invalid_argument("indices numpy array must be 1D of uint32 or int32");
+                            if (!(indices_array.flags() & py::array::c_style))
+                                throw std::invalid_argument("indices numpy array must be C-contiguous");
+                            // We assume that the indices array matches the nixlBasicDesc layout so we can simply memcpy
+                            std::vector<int> ret(indices_array.size());
+                            std::memcpy(ret.data(), indices_array.data(), indices_array.size() * sizeof(uint32_t));
+                            return ret;
+                        } else {
+                            return indices.cast<std::vector<int>>();
+                        }
+                    };
+
+                    local_indices_vec = init_indices_lambda(local_indices);
+                    remote_indices_vec = init_indices_lambda(remote_indices);
+
                     throw_nixl_exception(agent.makeXferReq(operation,
-                                                           (nixlDlistH*) local_side, local_indices,
-                                                           (nixlDlistH*) remote_side, remote_indices,
+                                                           (nixlDlistH*)local_side, local_indices_vec,
+                                                           (nixlDlistH*)remote_side, remote_indices_vec,
                                                            handle, &extra_params));
 
                     return (uintptr_t) handle;

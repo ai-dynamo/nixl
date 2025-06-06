@@ -17,6 +17,7 @@
 
 import os
 
+import numpy as np
 import torch
 
 import nixl._utils as nixl_utils
@@ -53,6 +54,19 @@ if __name__ == "__main__":
 
     agent1_reg_descs = nixl_agent1.get_reg_descs(agent1_strings, "DRAM", is_sorted=True)
     agent1_xfer_descs = nixl_agent1.get_xfer_descs(agent1_addrs, "DRAM", is_sorted=True)
+
+    # Prefer numpy arrays for performance
+    agent1_addrs_np = np.array(agent1_addrs)
+    agent1_xfer_descs_np = nixl_agent1.get_xfer_descs(
+        agent1_addrs_np, "DRAM", is_sorted=True
+    )
+    agent1_reg_descs_np = nixl_agent1.get_reg_descs(
+        agent1_addrs_np, "DRAM", is_sorted=True
+    )
+
+    assert agent1_xfer_descs == agent1_xfer_descs_np
+    assert agent1_reg_descs == agent1_reg_descs_np
+    print(agent1_reg_descs, agent1_reg_descs_np)
 
     # Just for tensor test
     tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]

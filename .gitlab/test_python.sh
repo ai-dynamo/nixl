@@ -43,6 +43,8 @@ pip3 install --break-system-packages zmq
 echo "==== Running python tests ===="
 python3 examples/python/nixl_api_example.py
 pytest test/python
+python3 test/python/prep_xfer_perf.py list
+python3 test/python/prep_xfer_perf.py array
 
 echo "==== Running python example ===="
 cd examples/python
