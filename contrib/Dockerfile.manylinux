@@ -137,7 +137,9 @@ COPY . /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl && \
+    uv run meson setup build/ --prefix=/usr/local/nixl \
+    -Dcudapath_lib="/usr/local/cuda/lib64" \
+    -Dcudapath_inc="/usr/local/cuda/include" && \
     cd build && \
     ninja && \
     ninja install
