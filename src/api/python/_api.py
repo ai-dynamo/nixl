@@ -837,7 +837,7 @@ class nixl_agent:
             b) a tensor
             c) a list of tensors
             d) a Nx3 2D numpy array, each row defines a single descriptor (address, len, device ID),
-               alongside a mandatory memory type. Empty metadata will be added to each descriptor.
+               alongside a mandatory memory type. Empty meta info will be considered for each descriptor.
             e) passes along if a reg_dlist is given.
 
     @param descs List of any of the above types
