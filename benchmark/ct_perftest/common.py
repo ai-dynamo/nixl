@@ -20,12 +20,12 @@ from typing import Literal
 import numpy as np
 import torch
 from dist_utils import dist_utils
+from collections import defaultdict
 
 from nixl._api import nixl_agent
 
 
 log = logging.getLogger(__name__)
-
 
 class NixlHandle:
     def __init__(self, remote_rank, handle, traffic_pattern):
@@ -45,50 +45,43 @@ class NixlBuffer:
         size: int,
         mem_type: str,
         nixl_agent: nixl_agent,
-        shards=2,
+        shards=1,
         fill_value=0,
         dtype: torch.dtype = torch.int8,
     ):
         self.size = size
         self.nixl_agent = nixl_agent
         if mem_type in ("cuda", "vram"):
-            device = "cuda"
+            device = torch.device('cuda')
         elif mem_type in ("cpu", "dram"):
-            device = "cpu"
+            device = torch.device('cpu')
         else:
             raise ValueError(f"Unsupported memory type: {mem_type}")
+        
+        if shards > 1:
+            raise ValueError("Sharding is not supported yet")
 
         log.debug(
             f"[Rank {dist_utils.get_rank()}] Initializing NixlBuffer with size {size}, device {device}, shards {shards}, fill_value {fill_value}"
         )
-        self.bufs = []
-        chunk_size = size // shards
-        self.bufs = [
-            torch.full((chunk_size,), fill_value, dtype=dtype, device=device)
-            for _ in range(shards)
-        ]
-        if size % chunk_size != 0:
-            self.bufs.append(
-                torch.full(
-                    (size % chunk_size,), fill_value, dtype=dtype, device=device
-                )
-            )
+        self.buf = torch.full((size,), fill_value, dtype=dtype, device=device)
         
-        log.debug(f"[Rank {dist_utils.get_rank()}] Get reg descs")
-        self.reg_descs = nixl_agent.get_reg_descs(self.bufs, mem_type=mem_type)
-        log.debug(f"[Rank {dist_utils.get_rank()}] Get xfer descs")
-        self.xfer_descs = nixl_agent.get_xfer_descs(self.bufs, mem_type=mem_type)
-
-        log.debug(
-            f"[Rank {dist_utils.get_rank()}] Registering memory for bufs {self.bufs}"
-        )
+        log.debug(f"[Rank {dist_utils.get_rank()}] Registering memory for buffer {self.buf}")
+        self.reg_descs = nixl_agent.get_reg_descs(self.buf)
         assert (
             nixl_agent.register_memory(self.reg_descs) is not None
         ), "Failed to register memory"
+    
+    def get_chunk(self, size, offset):
+        if offset + size > self.size:
+            raise ValueError(f"Offset {offset} + size {size} is greater than buffer size {self.size}")
+        return self.buf[offset:offset+size]
 
-
-    def deregister(self):
+    def destroy(self):
         self.nixl_agent.deregister_memory(self.reg_descs)
+        if hasattr(self.buf, "is_cuda") and self.buf.is_cuda:
+            del self.buf
+            torch.cuda.empty_cache()
 
 
 @dataclass
@@ -123,4 +116,31 @@ class TrafficPattern:
                 if self.matrix[i, j] > 0:
                     senders_ranks.append(i)
                     break
-        return senders_ranks
+        return list(set(senders_ranks))
+    
+    def receivers_ranks(self):
+        """Return the ranks that receive messages"""
+        receivers_ranks = []
+        for i in range(self.matrix.shape[0]):
+            for j in range(self.matrix.shape[1]):
+                if self.matrix[i, j] > 0:
+                    receivers_ranks.append(j)
+                    break
+        return list(set(receivers_ranks))
+    
+    def buf_size(self, src, dst):
+        return self.matrix[src, dst]
+    
+    def total_src_size(self, rank):
+        """Return the sum of the sizes received by <rank>"""
+        total_src_size = 0
+        for other_rank in range(self.matrix.shape[0]):
+            total_src_size += self.matrix[rank][other_rank]
+        return total_src_size
+    
+    def total_dst_size(self, rank):
+        """Return the sum of the sizes received by <rank>"""
+        total_dst_size = 0
+        for other_rank in range(self.matrix.shape[0]):
+            total_dst_size += self.matrix[other_rank][rank]
+        return total_dst_size

@@ -270,7 +270,6 @@ class _TorchDistUtils(_DistUtils):
         recv_objs = [None for _ in range(len(send_objs))]
 
         for other_rank in range(world_size):
-            log.debug(f"[Rank {self.get_rank()}] Alltoall step - Scattering from rank {other_rank}")
             output = [None]
             dist.scatter_object_list(
                 scatter_object_output_list=output,

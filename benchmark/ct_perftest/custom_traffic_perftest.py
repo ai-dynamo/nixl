@@ -48,10 +48,12 @@ class CTPerftest:
 
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
 
-        # Workaround for now
-        self.buffers_pool = []
-        self.profile = {}
+        # One big buffer is used for all the transfers 
+        self.send_buf = None
+        self.recv_buf = None
+
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
+
 
     def _share_md(self) -> None:
         """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
@@ -71,11 +73,12 @@ class CTPerftest:
         Returns:
             List of buffer descriptors from all ranks
         """
-        my_recv_bufs_descs = [
-            buf.xfer_descs if buf is not None else None for buf in my_recv_bufs
+        xfer_descs = [
+            self.nixl_agent.get_xfer_descs(buf) if buf is not None else None for buf in my_recv_bufs
         ]
+
         my_recv_bufs_serdes = [
-            self.nixl_agent.get_serialized_descs(des) for des in my_recv_bufs_descs
+            self.nixl_agent.get_serialized_descs(xfer_descs) for xfer_descs in xfer_descs
         ]
 
         dst_bufs_serdes = dist_utils.alltoall_obj(my_recv_bufs_serdes)
@@ -84,40 +87,45 @@ class CTPerftest:
         ]
         return dst_bufs_descs
 
-    def _init_buffers(
-        self, tp: TrafficPattern
-    ) -> tuple[list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
+    def _init_buffers(self) -> tuple[list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]]:
+        """Initialize the buffers, one big send and recv buffer is used for all the transfers
+        it has to be chunked inside each transfer to get buffers per ranks
+        the buffer is big enough to handle any of the transfers
+        For now, support only CUDA/CPU buffers
+        """
+        
+        self.send_buf = NixlBuffer(self.traffic_pattern.total_src_size(self.my_rank), mem_type=tp.mem_type, nixl_agent=self.nixl_agent, dtype=tp.dtype)
+        self.recv_buf = NixlBuffer(self.traffic_pattern.total_dst_size(self.my_rank), mem_type=tp.mem_type, nixl_agent=self.nixl_agent, dtype=tp.dtype)
 
-        send_bufs = []
-        recv_bufs = []
-        matrix = tp.matrix
+    def _destroy(self):
+        del self.send_buf
+        del self.recv_buf
+    
+    def _init_pgs(self):
+        senders_ranks = self.traffic_pattern.senders_ranks()
+        dist_utils.init_group(senders_ranks)
+    
+    def _get_bufs(self, tp: TrafficPattern):
+        senders_ranks = tp.senders_ranks()
+
+        send_bufs = [None for _ in range(self.world_size)]
+        recv_bufs = [None for _ in range(self.world_size)]
+        send_offset = recv_offset = 0
+
         for other_rank in range(self.world_size):
-            if matrix.shape != (self.world_size, self.world_size):
-                raise ValueError(
-                    f"Matrix shape {matrix.shape} does not match world size {self.world_size}"
-                )
-            send_size = matrix[self.my_rank][other_rank]
-            recv_size = matrix[other_rank][self.my_rank]
+            send_size = tp.matrix[self.my_rank][other_rank]
+            recv_size = tp.matrix[other_rank][self.my_rank]
             send_buf = recv_buf = None
             if send_size > 0:
-                send_buf = NixlBuffer(
-                    send_size,
-                    mem_type=tp.mem_type,
-                    nixl_agent=self.nixl_agent,
-                    fill_value=self.my_rank,
-                    dtype=tp.dtype,
-                )
+                send_buf = self.send_buf.get_chunk(send_size, send_offset)
+                send_offset += send_size
             if recv_size > 0:
-                recv_buf = NixlBuffer(
-                    recv_size,
-                    mem_type=tp.mem_type,
-                    nixl_agent=self.nixl_agent,
-                    dtype=tp.dtype,
-                )
-            send_bufs.append(send_buf)
-            recv_bufs.append(recv_buf)
+                recv_buf = self.recv_buf.get_chunk(recv_size, recv_offset)
+                recv_offset += recv_size
 
-        self._share_md()
+            send_bufs[other_rank] = send_buf
+            recv_bufs[other_rank] = recv_buf
+        
         return send_bufs, recv_bufs
 
     def _prepare_tp(
@@ -125,22 +133,21 @@ class CTPerftest:
     ) -> Tuple[
         list[NixlHandle], list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]
     ]:
-        senders_ranks = tp.senders_ranks()
 
-        dist_utils.init_group(senders_ranks)
+        send_bufs, recv_bufs = self._get_bufs(tp)
 
-        send_bufs, recv_bufs = self._init_buffers(tp)
-        log.debug(f"[Rank {self.my_rank}] Initialized {len(send_bufs)} send buffers and {len(recv_bufs)} recv buffers, sharing recv buffer descriptors")
         dst_bufs_descs = self._share_recv_buf_descs(recv_bufs)
         handles: list[NixlHandle] = []
         for other, buf in enumerate(send_bufs):
             if buf is None:
                 continue
 
-            log.debug(f"[Rank {self.my_rank}] Initializing xfer with rank {other}")
+            xfer_desc = self.nixl_agent.get_xfer_descs(buf)
+
+            log.debug(f"[Rank {self.my_rank}] Initializing xfer with rank {other} - xfer_desc={xfer_desc}")
             handle = self.nixl_agent.initialize_xfer(
                 "WRITE",
-                buf.xfer_descs,
+                xfer_desc,
                 dst_bufs_descs[other],
                 f"{other}",
                 f"{tp.id}_{self.my_rank}_{other}",
@@ -189,12 +196,7 @@ class CTPerftest:
                 break
             handles = pending
 
-    def _destroy(
-        self,
-        handles: list[NixlHandle],
-        send_bufs: list[Optional[NixlBuffer]],
-        recv_bufs: list[Optional[NixlBuffer]],
-    ):
+    def _destroy( self, handles: list[NixlHandle]):
         for handle in handles:
             self.nixl_agent.release_xfer_handle(handle.handle)
 
@@ -202,11 +204,10 @@ class CTPerftest:
             if other_rank == self.my_rank:
                 continue
             self.nixl_agent.remove_remote_agent(f"{other_rank}")
-
-        for buf in chain(send_bufs, recv_bufs):
-            if buf is None:
-                continue
-            buf.deregister()
+    
+    def _destroy_buffers(self):
+        self.send_buf.destroy()
+        self.recv_buf.destroy()
 
     def _check_tp_config(self, tp: TrafficPattern):
         # Matrix size should be world * world
@@ -263,6 +264,10 @@ class CTPerftest:
         Returns:
             Total execution time in seconds
         """
+        self._init_buffers()
+        self._init_pgs()
+        self._share_md()
+
         handles, send_bufs, recv_bufs = self._prepare_tp(self.traffic_pattern)
 
         for _ in range(self.warmup_iters):
@@ -304,7 +309,9 @@ class CTPerftest:
 
         if verify_buffers:
             self._verify_tp(self.traffic_pattern, recv_bufs, print_recv_buffers)
-
-        self._destroy(handles, send_bufs, recv_bufs)
+        
+        # Destroy
+        self._destroy(handles)
+        self._destroy_buffers()
 
         return end - start

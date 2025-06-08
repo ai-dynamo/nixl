@@ -102,40 +102,41 @@ def sequential_ct_perftest(
     dist_utils.destroy_dist()
 
 
-@cli.command()
-@click.argument("config_file", type=click.Path(exists=True))
-@click.option(
-    "--verify-buffers/--no-verify-buffers",
-    default=False,
-    help="Verify buffer contents after transfer",
-)
-@click.option(
-    "--print-recv-buffers/--no-print-recv-buffers",
-    default=False,
-    help="Print received buffer contents",
-)
-def ct_perftest(config_file, verify_buffers, print_recv_buffers):
-    """Run custom traffic performance test using patterns defined in YAML config"""
-    with open(config_file, "r") as f:
-        config = yaml.safe_load(f)
+#Currently disabled 
+# @cli.command()
+# @click.argument("config_file", type=click.Path(exists=True))
+# @click.option(
+#     "--verify-buffers/--no-verify-buffers",
+#     default=False,
+#     help="Verify buffer contents after transfer",
+# )
+# @click.option(
+#     "--print-recv-buffers/--no-print-recv-buffers",
+#     default=False,
+#     help="Print received buffer contents",
+# )
+# def ct_perftest(config_file, verify_buffers, print_recv_buffers):
+#     """Run custom traffic performance test using patterns defined in YAML config"""
+#     with open(config_file, "r") as f:
+#         config = yaml.safe_load(f)
 
-    tp_config = config.get("traffic_pattern")
-    if tp_config is None:
-        raise ValueError("Config file must contain 'traffic_pattern' key")
+#     tp_config = config.get("traffic_pattern")
+#     if tp_config is None:
+#         raise ValueError("Config file must contain 'traffic_pattern' key")
 
-    iters = config.get("iters", 1)
-    warmup_iters = config.get("warmup_iters", 0)
+#     iters = config.get("iters", 1)
+#     warmup_iters = config.get("warmup_iters", 0)
 
-    pattern = TrafficPattern(
-        matrix=load_matrix(Path(tp_config["matrix_file"])),
-        shards=tp_config.get("shards", 1),
-        mem_type=tp_config.get("mem_type", "cuda").lower(),
-        xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
-    )
+#     pattern = TrafficPattern(
+#         matrix=load_matrix(Path(tp_config["matrix_file"])),
+#         shards=tp_config.get("shards", 1),
+#         mem_type=tp_config.get("mem_type", "cuda").lower(),
+#         xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
+#     )
 
-    perftest = CTPerftest(pattern, iters=iters, warmup_iters=warmup_iters)
-    perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers)
-    dist_utils.destroy_dist()
+#     perftest = CTPerftest(pattern, iters=iters, warmup_iters=warmup_iters)
+#     perftest.run(verify_buffers=verify_buffers, print_recv_buffers=print_recv_buffers)
+#     dist_utils.destroy_dist()
 
 
 if __name__ == "__main__":

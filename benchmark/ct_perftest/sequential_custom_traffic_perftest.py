@@ -19,9 +19,10 @@ import json
 import logging
 import time
 from typing import Optional, List, Dict, Any
-
+from collections import defaultdict
+from itertools import chain
 from custom_traffic_perftest import CTPerftest
-from common import TrafficPattern
+from common import TrafficPattern, NixlBuffer
 from dist_utils import dist_utils
 from tabulate import tabulate
 from nixl._api import nixl_agent
@@ -56,9 +57,66 @@ class SequentialCTPerftest(CTPerftest):
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
 
+        # NixlBuffer caches buffers and reuse them if they are big enough, let's initialize them once, with the largest needed size
+        self.send_buf_by_mem_type = {}
+        self.recv_buf_by_mem_type = {}
+    
+    def _init_pgs(self):
+        for tp in self.traffic_patterns:
+            log.debug(f"[Rank {self.my_rank}] Initializing PG - {len(tp.senders_ranks())} Ranks: {tp.senders_ranks()}, world size={self.world_size}")
+            dist_utils.init_group(tp.senders_ranks())
+
+    def _init_buffers(self):
+        max_src_by_mem_type = defaultdict(int)
+        max_dst_by_mem_type = defaultdict(int)
+
+        for tp in self.traffic_patterns:
+            max_src_by_mem_type[tp.mem_type] = max(max_src_by_mem_type[tp.mem_type], tp.total_src_size(self.my_rank))
+            max_dst_by_mem_type[tp.mem_type] = max(max_dst_by_mem_type[tp.mem_type], tp.total_dst_size(self.my_rank))
+
+        for mem_type, size in max_src_by_mem_type.items():
+            if not size:
+                continue
+            self.send_buf_by_mem_type[mem_type] = NixlBuffer(size, mem_type=mem_type, nixl_agent=self.nixl_agent)
+
+        for mem_type, size in max_dst_by_mem_type.items():
+            if not size:
+                continue
+            self.recv_buf_by_mem_type[mem_type] = NixlBuffer(size, mem_type=mem_type, nixl_agent=self.nixl_agent)
+
+    def _destroy_buffers(self):
+        for buf in chain(self.send_buf_by_mem_type.values(), self.recv_buf_by_mem_type.values()):
+            buf.destroy()
+        
     def _barrier_tp(self, tp: TrafficPattern):
         """Barrier for a traffic pattern"""
         dist_utils.barrier(tp.senders_ranks())
+    
+    def _get_bufs(self, tp: TrafficPattern):
+        senders_ranks = tp.senders_ranks()
+
+        send_bufs = [None for _ in range(self.world_size)]
+        recv_bufs = [None for _ in range(self.world_size)]
+
+        send_offset_by_memtype = defaultdict(int)
+        recv_offset_by_memtype = defaultdict(int)
+
+        for other_rank in range(self.world_size):
+            send_size = tp.matrix[self.my_rank][other_rank]
+            recv_size = tp.matrix[other_rank][self.my_rank]
+            send_buf = recv_buf = None
+
+            if send_size > 0:
+                send_buf = self.send_buf_by_mem_type[tp.mem_type].get_chunk(send_size, send_offset_by_memtype[tp.mem_type])
+                send_offset_by_memtype[tp.mem_type] += send_size
+            if recv_size > 0:
+                recv_buf = self.recv_buf_by_mem_type[tp.mem_type].get_chunk(recv_size, recv_offset_by_memtype[tp.mem_type])
+                recv_offset_by_memtype[tp.mem_type] += recv_size
+
+            send_bufs[other_rank] = send_buf
+            recv_bufs[other_rank] = recv_buf
+        
+        return send_bufs, recv_bufs
 
     def run(
         self,
@@ -78,6 +136,11 @@ class SequentialCTPerftest(CTPerftest):
         This method initializes and executes multiple traffic patterns simultaneously,
         measures their performance, and optionally verifies the results.
         """
+
+        self._init_buffers()
+        self._init_pgs()
+        self._share_md()
+
         results: Dict[str, Any] = {
             "iterations_results": [],
             "metadata": {"ts": time.time()},
@@ -87,7 +150,7 @@ class SequentialCTPerftest(CTPerftest):
             log.info(f"[Rank {self.my_rank}] Preparing TPs")
         tp_handles: list[list] = []
         tp_bufs = []
-        # for tp in self.traffic_patterns:
+
         s = time.time()
         for i, tp in enumerate(self.traffic_patterns):
             handles, send_bufs, recv_bufs = self._prepare_tp(tp)
@@ -97,6 +160,7 @@ class SequentialCTPerftest(CTPerftest):
         results["metadata"]["prepare_tp_time"] = time.time() - s
 
         # Isolated mode - Measure SOL for every matrix
+        log.debug(f"[Rank {self.my_rank}] Running isolated benchmark (to get results when there is no noise)")
         isolated_tp_latencies: list[float] = [0 for _ in tp_handles]
 
         results["metadata"]["sol_calculation_ts"] = time.time()
@@ -126,8 +190,10 @@ class SequentialCTPerftest(CTPerftest):
             else:
                 isolated_tp_latencies.append(max(tp_lats))
 
+        log.debug(f"[Rank {self.my_rank}] Running workload benchmark")
         # Workload mode - Measure perf of the matrices while running the full workload
         for iter_ix in range(self.n_iters):
+            log.debug(f"[Rank {self.my_rank}] Running iteration {iter_ix + 1}/{self.n_iters}")
             for _ in range(self.warmup_iters): # Warmup
                 for tp_ix, handles in enumerate(tp_handles):
                     self._run_tp(handles, blocking=True)
@@ -148,6 +214,7 @@ class SequentialCTPerftest(CTPerftest):
                     time.sleep(tp.sleep_before_launch_sec)
 
                 # Run TP
+                log.debug(f"[Rank {self.my_rank}] Running TP {tp_ix}/{len(tp_handles)}")
                 tp_starts[tp_ix] = time.time()
                 self._run_tp(handles, blocking=True)
                 tp_ends[tp_ix] = time.time()
@@ -218,9 +285,10 @@ class SequentialCTPerftest(CTPerftest):
             with open(json_output_path, "w") as f:
                 json.dump(results, f)
 
-        for i, tp in enumerate(self.traffic_patterns):
-            send_bufs, recv_bufs = tp_bufs[i]
-            self._destroy(tp_handles[i], send_bufs, recv_bufs)
+        # Destroy
+        self._destroy(handles)
+        self._destroy_buffers()
+
 
     def _write_yaml_results(
         self,
