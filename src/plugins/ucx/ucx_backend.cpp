@@ -684,7 +684,7 @@ nixlUcxEngine::connectionCheckAmCb(void *arg, const void *header,
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
     if(engine->checkConn(remote_agent)) {
-        NIXL_ERROR << "Received connect AM from agent we don't recognize";
+        NIXL_ERROR << "Received connect AM from agent we don't recognize: " << remote_agent;
         return UCS_OK;
     }
 
