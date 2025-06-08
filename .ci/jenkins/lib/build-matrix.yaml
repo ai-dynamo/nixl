@@ -42,7 +42,7 @@ matrix:
   axes:
     arch:
       - x86_64
-      # - aarch64
+      - aarch64
 
 env:
   NIXL_INSTALL_DIR: /opt/nixl
