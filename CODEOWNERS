@@ -13,3 +13,7 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 # UCX Plugins
 /src/plugins/ucx* @brminich @yosefe @gleon99
 /src/utils/ucx @brminich @yosefe @gleon99
+
+
+# Bindings
+/src/bindings @roiedanino
