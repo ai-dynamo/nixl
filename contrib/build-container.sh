@@ -150,7 +150,7 @@ show_build_options() {
 
 show_help() {
     echo "usage: build-container.sh"
-    echo "  [--base base image]"
+    echo "  [--base-image base image]"
     echo "  [--base-image-tag base image tag]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
@@ -158,6 +158,7 @@ show_help() {
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-upstream use ucx master branch]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
+    echo "  [--dockerfile path to a dockerfile to use]"
     exit 0
 }
 

@@ -75,7 +75,7 @@ if cuda_dep.found()
 endif
 
 # DOCA
-doca_gpunetio_dep = dependency('doca-gpunetio', required : true)
+doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
 
 # Check for etcd-cpp-api - use multiple methods for discovery
 etcd_dep = dependency('etcd-cpp-api', required : false)
