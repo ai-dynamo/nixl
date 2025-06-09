@@ -43,6 +43,7 @@ RUN apt-get update -y && \
     libtool \
     libz-dev \
     flex \
+    libgtest-dev \
     build-essential
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
