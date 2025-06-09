@@ -46,6 +46,8 @@ if __name__ == "__main__":
 
     if args.use_cuda:
         torch.set_default_device("cuda:0")
+    else:  # To be sure this is the default
+        torch.set_default_device("cpu")
 
     config = nixl_agent_config(True, True, listen_port)
 
