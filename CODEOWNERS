@@ -16,5 +16,4 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 
 
 # Bindings
-/src/bindings @roiedanino @gleon99
-
+/src/bindings/rust @roiedanino @gleon99
