@@ -57,17 +57,10 @@ private:
     struct docaNotifSend *notif_send_cpu;
 
     // Map of agent name to saved nixlDocaConnection info
-    std::unordered_map<std::string, nixlDocaConnection, std::hash<std::string>, strEqual>
-            remoteConnMap;
-
-    std::unordered_map<std::string, struct nixlDocaRdmaQp *, std::hash<std::string>, strEqual>
-            qpMap;
-
-    std::unordered_map<std::string, int, std::hash<std::string>, strEqual>
-            connMap;
-
-    std::unordered_map<std::string, struct nixlDocaNotif *, std::hash<std::string>, strEqual>
-            notifMap;
+    std::unordered_map<std::string, nixlDocaConnection> remoteConnMap;
+    std::unordered_map<std::string, struct nixlDocaRdmaQp *> qpMap;
+    std::unordered_map<std::string, int> connMap;
+    std::unordered_map<std::string, struct nixlDocaNotif *> notifMap;
 
     pthread_t server_thread_id;
 
