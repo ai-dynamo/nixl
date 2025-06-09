@@ -163,7 +163,7 @@ public:
     int memReg(void *addr, size_t size, nixlUcxMem &mem);
     [[nodiscard]] std::string packRkey(nixlUcxMem &mem);
     void memDereg(nixlUcxMem &mem);
-    size_t getNumAssociatedWorkers() {
+    size_t getNumAssociatedWorkers() const {
         return num_associated_workers.load();
     }
     size_t incAssociatedWorkers() {
@@ -182,11 +182,11 @@ class nixlUcxWorker {
 private:
     /* Local UCX stuff */
     const std::shared_ptr<nixlUcxContext> ctx;
-    const std::unique_ptr<ucp_worker, void(*)(ucp_worker*)> worker;
     size_t workerId;
+    const std::unique_ptr<ucp_worker, void(*)(ucp_worker*)> worker;
     std::atomic<bool> associated = false;
 
-    [[nodiscard]] static ucp_worker* createUcpWorker(nixlUcxContext&);
+    [[nodiscard]] static ucp_worker* createUcpWorker(nixlUcxContext&, bool);
 
   public:
     explicit nixlUcxWorker(const std::shared_ptr<nixlUcxContext> &_ctx,
@@ -227,7 +227,7 @@ private:
     size_t getWorkerId() const {
         return workerId;
     }
-    std::shared_ptr<nixlUcxContext> getCtx() const {
+    const std::shared_ptr<nixlUcxContext>& getCtx() const {
         return ctx;
     }
 };

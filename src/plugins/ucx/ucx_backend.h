@@ -106,7 +106,6 @@ class nixlUcxEngine
         std::shared_ptr<nixlUcxContext> uc;
         std::vector<std::unique_ptr<nixlUcxWorker>> uws;
         std::string workerAddr;
-        size_t workerSize;
         size_t numDedicatedWorker;
 
         /* Progress thread data */
@@ -138,10 +137,11 @@ class nixlUcxEngine
         // Thread to worker mapping
         pthread_key_t keyThreadToWorker;
         mutable std::atomic<size_t> nextWorkerId;
-        void initThreadMapping();
-        void destroyThreadMapping();
+        nixl_status_t initThreadMapping();
+        nixl_status_t destroyThreadMapping();
         nixlUcxWorker *getDedicatedWorker() const;
         nixlUcxWorker *getSharedWorker() const;
+        nixlUcxWorker *getWorkerWithPreference(bool prefer_shared) const;
         nixlUcxWorker *findAndAssociateDedicatedWorker() const;
         static void threadMapDestructor(void *arg);
 

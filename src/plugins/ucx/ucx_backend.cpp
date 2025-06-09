@@ -562,8 +562,9 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (num_workers_iter == custom_params->end() || !absl::SimpleAtoi(num_workers_iter->second, &numWorkers))
         numWorkers = 1;
 
-    if (custom_params->count("num_shared_workers") == 0 ||
-        !absl::SimpleAtoi(custom_params->at("num_shared_workers"), &numSharedWorkers)) {
+    const auto num_shared_iter = custom_params->find("num_shared_workers");
+    if (num_shared_iter == custom_params->end() ||
+        !absl::SimpleAtoi(num_shared_iter->second, &numSharedWorkers)) {
         numSharedWorkers = 1;
     }
 
@@ -597,7 +598,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     numDedicatedWorker = numWorkers;
 
     const auto &uw = uws.back();
-    workerAddr = uw->epAddr(workerSize);
+    workerAddr = uw->epAddr();
 
     if (workerAddr.empty()) {
         NIXL_ERROR << "Failed to get UCX worker address";
@@ -605,7 +606,10 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         return;
     }
 
-    initThreadMapping();
+    if (initThreadMapping() != NIXL_SUCCESS) {
+        initErr = true;
+        return;
+    }
 
     if (pthrOn) {
         for (auto &uw: uws) {
@@ -975,13 +979,9 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
-    nixlUcxWorker *worker = getDedicatedWorker();
+    nixlUcxWorker *worker = getWorkerWithPreference(false);
     if (worker == nullptr) {
-        // Use shared worker when we used up the dedicated worker.
-        worker = getSharedWorker();
-        if (worker == nullptr) {
-            return NIXL_ERR_BACKEND;
-        }
+        return NIXL_ERR_BACKEND;
     }
 
     /* TODO: try to get from a pool first */
@@ -1259,14 +1259,9 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
     nixl_status_t ret;
     nixlUcxReq req;
 
-    nixlUcxWorker *worker = getSharedWorker();
+    nixlUcxWorker *worker = getWorkerWithPreference(true);
     if (worker == nullptr) {
-        // User may specify 0 shared workers, we will try to get a dedicated
-        // worker in this case
-        worker = getDedicatedWorker();
-        if (worker == nullptr) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
+        return NIXL_ERR_INVALID_PARAM;
     }
 
     ret = notifSendPriv(remote_agent, msg, req, worker->getWorkerId());
@@ -1290,7 +1285,7 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
 
 void nixlUcxEngine::threadMapDestructor(void *arg)
 {
-    nixlUcxWorker *worker = (nixlUcxWorker *)arg;
+    nixlUcxWorker *worker = static_cast<nixlUcxWorker *>(arg);
 
     /* When a thread exits, disassociate it from the worker,
      * so that the worker could be reused by another thread.
@@ -1299,15 +1294,25 @@ void nixlUcxEngine::threadMapDestructor(void *arg)
     worker->getCtx()->decAssociatedWorkers();
 }
 
-void nixlUcxEngine::initThreadMapping()
+nixl_status_t nixlUcxEngine::initThreadMapping()
 {
-    pthread_key_create(&keyThreadToWorker, threadMapDestructor);
     nextWorkerId = 0;
+    int err = pthread_key_create(&keyThreadToWorker, threadMapDestructor);
+    if (err) {
+        NIXL_ERROR << "Failed to create keyThreadToWorker, err:" << err;
+        return NIXL_ERR_BACKEND;
+    }
+    return NIXL_SUCCESS;
 }
 
-void nixlUcxEngine::destroyThreadMapping()
+nixl_status_t nixlUcxEngine::destroyThreadMapping()
 {
-    pthread_key_delete(keyThreadToWorker);
+    int err = pthread_key_delete(keyThreadToWorker);
+    if (err) {
+        NIXL_WARN << "Failed to delete keyThreadToWorker, err:" << err;
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    return NIXL_SUCCESS;
 }
 
 nixlUcxWorker *nixlUcxEngine::findAndAssociateDedicatedWorker() const
@@ -1333,7 +1338,7 @@ nixlUcxWorker *nixlUcxEngine::findAndAssociateDedicatedWorker() const
 
 nixlUcxWorker *nixlUcxEngine::getDedicatedWorker() const
 {
-    nixlUcxWorker *p = (nixlUcxWorker *)pthread_getspecific(keyThreadToWorker);
+    nixlUcxWorker *p = static_cast<nixlUcxWorker *>(pthread_getspecific(keyThreadToWorker));
     if (p != nullptr) {
         return p;
     }
@@ -1348,7 +1353,13 @@ nixlUcxWorker *nixlUcxEngine::getDedicatedWorker() const
 
     nixlUcxWorker *worker = findAndAssociateDedicatedWorker();
     if (worker != nullptr) {
-        pthread_setspecific(keyThreadToWorker, worker);
+        int err = pthread_setspecific(keyThreadToWorker, worker);
+        if (err) {
+            NIXL_ERROR << "Failed to set keyThreadToWorker, workeriId:"
+                << worker->getWorkerId() << "err:" << err;
+            worker->disassociate();
+            return nullptr;
+        }
         uc->incAssociatedWorkers();
     }
     return worker;
@@ -1364,4 +1375,28 @@ nixlUcxWorker *nixlUcxEngine::getSharedWorker() const
     size_t numSharedWorker = uws.size() - numDedicatedWorker;
     size_t worker_id = std::hash<std::thread::id>{}(std::this_thread::get_id()) % numSharedWorker;
     return uws[worker_id + numDedicatedWorker].get();
+}
+
+nixlUcxWorker *nixlUcxEngine::getWorkerWithPreference(bool prefer_shared) const
+{
+    nixlUcxWorker *worker;
+    if (prefer_shared) {
+        worker = getSharedWorker();
+    } else {
+        worker = getDedicatedWorker();
+    }
+
+    if (worker != nullptr) {
+        return worker;
+    }
+
+    // Get the other worker type when we could not get the prefer one.
+    if (!prefer_shared) {
+        // Use shared worker when we used up the dedicated worker.
+        return getSharedWorker();
+    }
+
+    // User may specify 0 shared workers, we will try to get a dedicated
+    // worker in this case
+    return getDedicatedWorker();
 }

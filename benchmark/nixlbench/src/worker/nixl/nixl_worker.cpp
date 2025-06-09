@@ -125,7 +125,6 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         }
         if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
             backend_params["num_workers"] = std::to_string(xferBenchConfig::num_threads);
-            backend_params["num_shared_workers"] = std::to_string(2);
         }
 
         if (gethostname(hostname, 256)) {
