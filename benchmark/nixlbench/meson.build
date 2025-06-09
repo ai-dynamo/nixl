@@ -74,6 +74,15 @@ else
     cuda_available = true
 endif
 
+cuda_fabric_available = false
+if cuda_available
+    if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC',
+                             args: cuda_inc_path != '' ? '-I' + cuda_inc_path : [])
+        cuda_fabric_available = true
+    endif
+endif
+
+
 # UCX
 ucx_dep = dependency('ucx')
 
@@ -118,6 +127,10 @@ if cuda_available
     add_project_arguments('-DHAVE_CUDA', language: 'cpp')
 endif
 
+if cuda_fabric_available
+    add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
+endif
+
 # Subprojects
 subdir('src/utils')
 subdir('src/runtime')
@@ -130,6 +143,7 @@ configure_file(
         'HAVE_ETCD': etcd_available ? '1' : '0',
         'HAVE_NVSHMEM': nvshmem_available ? '1' : '0',
         'HAVE_CUDA': cuda_available ? '1' : '0',
+        'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
     },
     install: true,
     install_dir: get_option('includedir') / 'nixlbench'

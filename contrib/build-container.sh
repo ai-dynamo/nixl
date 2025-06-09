@@ -80,6 +80,14 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --dockerfile)
+            if [ "$2" ]; then
+                DOCKER_FILE="$2"
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --python-versions)
             if [ "$2" ]; then
                 WHL_PYTHON_VERSIONS=$2
