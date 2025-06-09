@@ -1,0 +1,104 @@
+# NIXLBench Container Build Configuration
+# Builds and pushes NIXLBench containers with configurable NIXL/UCX versions
+
+---
+job: nixl-ci-nixlbench-container-build
+
+# Build settings
+failFast: false
+timeout_minutes: 240
+
+# Infrastructure
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 16Gi, cpu: 8000m}"
+  requests: "{memory: 8Gi, cpu: 4000m}"
+
+runs_on_dockers:
+  - name: "podman-v5.0.2"
+    url: "quay.io/podman/stable:v5.0.2"
+    category: 'tool'
+    privileged: true
+
+# Build matrix
+matrix:
+  axes:
+    arch:
+      - x86_64
+      - aarch64
+
+# Configuration
+env:
+  ARTIFACTORY_REGISTRY: "urm.nvidia.com/sw-nbu-swx-nixl-docker/verification"
+  BUILD_SCRIPT: "benchmark/nixlbench/contrib/build.sh"
+
+credentials:
+  - credentialsId: 'svc-nixl-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USERNAME'
+    passwordVariable: 'ARTIFACTORY_PASSWORD'
+
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    def suffix = params.TAG_SUFFIX ? "-${params.TAG_SUFFIX}" : ""
+    currentBuild.displayName += "-${params.NIXL_VERSION}-${params.UCX_VERSION}${suffix}"
+
+# Build pipeline
+steps:
+  - name: Prepare
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    run: |
+      echo "=== NIXLBench Container Build Setup ==="
+      echo "NIXL: ${NIXL_VERSION}, UCX: ${UCX_VERSION}, Arch: ${arch}"
+
+      # Setup podman and dependencies
+      rm -f /etc/containers/storage.conf
+      podman system reset -f || true
+      ln -sfT $(type -p podman) /usr/bin/docker
+      yum update -y && yum install -y git
+
+      # Clone UCX source
+      echo "Cloning UCX (${UCX_VERSION})..."
+      git clone https://github.com/openucx/ucx.git /tmp/ucx-src
+      cd /tmp/ucx-src && git checkout "${UCX_VERSION}"
+
+  - name: Build
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    run: |
+      LOCAL_TAG="nixlbench:build-${arch}"
+
+      "${BUILD_SCRIPT}" \
+        --nixl "$PWD" \
+        --ucx /tmp/ucx-src \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_IMAGE_TAG}" \
+        --tag "${LOCAL_TAG}" \
+        --arch "${arch}" \
+        --no-cache
+
+  - name: Push
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    credentialsId: 'svc-nixl-artifactory-token'
+    run: |
+      # Sanitize and shorten versions for Docker tag compatibility
+      CLEAN_NIXL=${NIXL_VERSION//\//-}
+      CLEAN_NIXL=${CLEAN_NIXL:0:8}
+      CLEAN_UCX=${UCX_VERSION//\//-}
+      CLEAN_UCX=${CLEAN_UCX:0:8}
+
+      # Build complete tag: base-nixl-version-ucx-version[-suffix]-arch
+      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${CLEAN_NIXL}-ucx-${CLEAN_UCX}${TAG_SUFFIX:+-${TAG_SUFFIX}}-${arch}"
+
+      # Login to Artifactory
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${ARTIFACTORY_REGISTRY}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+
+      # Tag and push
+      docker tag "nixlbench:build-${arch}" "${ARTIFACTORY_REGISTRY}/nixlbench:${TAG_NAME}"
+      docker push "${ARTIFACTORY_REGISTRY}/nixlbench:${TAG_NAME}"
+
+      echo "Final tag: ${TAG_NAME}"
