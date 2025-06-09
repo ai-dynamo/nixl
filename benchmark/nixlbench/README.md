@@ -76,7 +76,7 @@ meson configure /path/to/build/dir
 
 ```
 --backend NAME             # Communication backend [UCX, UCX_MO] (default: UCX)
---worker_type NAME	   # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
+--worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
 --initiator_seg_type TYPE  # Memory segment type for initiator [DRAM, VRAM] (default: DRAM)
 --target_seg_type TYPE     # Memory segment type for target [DRAM, VRAM] (default: DRAM)
 --scheme NAME              # Communication scheme [pairwise, manytoone, onetomany, tp] (default: pairwise)
@@ -90,13 +90,14 @@ meson configure /path/to/build/dir
 --max_batch_size SIZE      # Maximum batch size (default: 1)
 --num_iter NUM             # Number of iterations (default: 1000)
 --warmup_iter NUM          # Number of warmup iterations (default: 100)
---num_threads NUM	   # Number of threads used by benchmark (default: 1)
+--num_threads NUM          # Number of threads used by benchmark (default: 1)
 --num_initiator_dev NUM    # Number of devices in initiator processes (default: 1)
 --num_target_dev NUM       # Number of devices in target processes (default: 1)
 --enable_pt                # Enable progress thread
 --device_list LIST         # Comma-separated device names (default: all)
---runtime_type NAME	   # Type of runtime to use [ETCD] (default: ETCD)
+--runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --etcd-endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
+--enable_vmm               # Enable VMM memory allocation when DRAM is requested
 ```
 
 ### Using ETCD for Coordination
