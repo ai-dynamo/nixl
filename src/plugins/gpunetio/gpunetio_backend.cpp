@@ -253,8 +253,7 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams *init_params) :
     progressThreadStart();
 }
 
-nixl_mem_list_t
-nixlDocaEngine::getSupportedMems() const {
+nixl_mem_list_t nixlDocaEngine::getSupportedMems() const {
     return {DRAM_SEG, VRAM_SEG};
 }
 
@@ -330,7 +329,6 @@ nixl_status_t
 nixlDocaEngine::nixlDocaInitNotif (const std::string &remote_agent,
                                    struct doca_dev *dev,
                                    struct doca_gpu *gpu) {
-    doca_error_t result;
     struct nixlDocaNotif *notif;
 
     std::lock_guard<std::mutex> lock(notifLock);
@@ -351,19 +349,17 @@ nixlDocaEngine::nixlDocaInitNotif (const std::string &remote_agent,
     }
     memset (notif->send_addr, 0, notif->elems_size * notif->elems_num);
 
-    result = create_doca_mmap (
-            notif->send_addr, notif->elems_num, notif->elems_size, ddev, &notif->send_mmap);
-    if (result != DOCA_SUCCESS)
+    try {
+        notif->send_mmap = new nixlDocaMmap(notif->send_addr, notif->elems_num, notif->elems_size, ddev);
+    } catch (const std::exception &e) {
         goto error;
+    }
 
-    result = create_doca_buf_arr (notif->send_mmap,
-                                  notif->elems_num,
-                                  (size_t)notif->elems_size,
-                                  gpu,
-                                  &(notif->send_barr),
-                                  &(notif->send_barr_gpu));
-    if (result != DOCA_SUCCESS)
+    try {
+        notif->send_barr = new nixlDocaBarr(notif->send_mmap->mmap, notif->elems_num, (size_t)notif->elems_size, gdevs[0].second);
+    } catch (const std::exception &e) {
         goto error;
+    }
 
     notif->recv_addr = (uint8_t *)calloc (notif->elems_size * notif->elems_num, sizeof (uint8_t));
     if (notif->recv_addr == nullptr) {
@@ -372,26 +368,24 @@ nixlDocaEngine::nixlDocaInitNotif (const std::string &remote_agent,
     }
     memset (notif->recv_addr, 0, notif->elems_size * notif->elems_num);
 
-    result = create_doca_mmap (
-            notif->recv_addr, notif->elems_num, notif->elems_size, ddev, &notif->recv_mmap);
-    if (result != DOCA_SUCCESS)
+    try {
+        notif->recv_mmap = new nixlDocaMmap(notif->recv_addr, notif->elems_num, notif->elems_size, ddev);
+    } catch (const std::exception &e) {
         goto error;
+    }
 
-    result = create_doca_buf_arr (notif->recv_mmap,
-                                  notif->elems_num,
-                                  (size_t)notif->elems_size,
-                                  gpu,
-                                  &(notif->recv_barr),
-                                  &(notif->recv_barr_gpu));
-    if (result != DOCA_SUCCESS)
+    try {
+        notif->recv_barr = new nixlDocaBarr(notif->recv_mmap->mmap, notif->elems_num, (size_t)notif->elems_size, gdevs[0].second);
+    } catch (const std::exception &e) {
         goto error;
+    }
 
     notif->send_pi = 0;
     notif->recv_pi = 0;
 
     // Ensure notif list is not added twice for the same peer
     notifMap[remote_agent] = notif;
-    ((volatile struct docaNotifRecv *)notif_fill_cpu)->barr_gpu = notif->recv_barr_gpu;
+    ((volatile struct docaNotifRecv *)notif_fill_cpu)->barr_gpu = notif->recv_barr->barr_gpu;
     std::atomic_thread_fence (std::memory_order_release);
     ((volatile struct docaNotifRecv *)notif_fill_cpu)->rdma_qp =
             qpMap[remote_agent]->rdma_gpu_notif;
@@ -404,24 +398,22 @@ exit_success:
     return NIXL_SUCCESS;
 
 error:
-    destroy_doca_buf_arr (notif->send_barr);
-    destroy_doca_buf_arr (notif->recv_barr);
+    delete notif->send_mmap;
+    delete notif->send_barr;
 
-    destroy_doca_mmap (notif->send_mmap);
-    destroy_doca_mmap (notif->recv_mmap);
-
+    delete notif->recv_mmap;
+    delete notif->recv_barr;
 
     return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
 nixlDocaEngine::nixlDocaDestroyNotif (struct doca_gpu *gpu, struct nixlDocaNotif *notif) {
+    delete notif->send_mmap;
+    delete notif->send_barr;
 
-    if (notif->send_barr) doca_buf_arr_destroy (notif->send_barr);
-    if (notif->recv_barr) doca_buf_arr_destroy (notif->recv_barr);
-
-    if (notif->send_mmap) doca_mmap_destroy (notif->send_mmap);
-    if (notif->recv_mmap) doca_mmap_destroy (notif->recv_mmap);
+    delete notif->recv_mmap;
+    delete notif->recv_barr;
 
     return NIXL_SUCCESS;
 }
@@ -1114,12 +1106,15 @@ nixlDocaEngine::registerMem (const nixlBlobDesc &mem,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    result = create_doca_mmap ((void *)mem.addr, 1, (size_t)mem.len, ddev, &priv->mem.mmap);
-    if (result != DOCA_SUCCESS) goto error;
+    try {
+        priv->mem.mmap = new nixlDocaMmap((void*)mem.addr, 1, (size_t)mem.len, ddev);
+    } catch (const std::exception &e) {
+        goto error;
+    }
 
     /* export mmap for rdma */
     result = doca_mmap_export_rdma (
-            priv->mem.mmap, ddev, (const void **)&(priv->mem.export_mmap), &(priv->mem.export_len));
+            priv->mem.mmap->mmap, ddev, (const void **)&(priv->mem.export_mmap), &(priv->mem.export_len));
     if (result != DOCA_SUCCESS) goto error;
 
     priv->mem.addr = (void *)mem.addr;
@@ -1129,38 +1124,29 @@ nixlDocaEngine::registerMem (const nixlBlobDesc &mem,
             nixlSerDes::_bytesToString ((void *)priv->mem.export_mmap, priv->mem.export_len);
 
     /* Local buffer array */
-    result = create_doca_buf_arr (priv->mem.mmap,
-                                  1,
-                                  (size_t)mem.len,
-                                  gdevs[0].second,
-                                  &(priv->mem.barr),
-                                  &(priv->mem.barr_gpu));
-    if (result != DOCA_SUCCESS) goto error;
+    try {
+        priv->mem.barr = new nixlDocaBarr(priv->mem.mmap->mmap, 1, (size_t)mem.len, gdevs[0].second);
+    } catch (const std::exception &e) {
+        goto error;
+    }
 
     out = (nixlBackendMD *)priv;
 
     return NIXL_SUCCESS;
 
 error:
-    destroy_doca_buf_arr (priv->mem.barr);
-    destroy_doca_mmap (priv->mem.mmap);
+    delete priv->mem.mmap;
+    delete priv->mem.barr;
 
     return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
 nixlDocaEngine::deregisterMem (nixlBackendMD *meta) {
-    doca_error_t result;
     nixlDocaPrivateMetadata *priv = (nixlDocaPrivateMetadata *)meta;
 
-    result = doca_buf_arr_destroy (priv->mem.barr);
-    if (result != DOCA_SUCCESS)
-        NIXL_ERROR << "Failed to call doca_buf_arr_destroy " << doca_error_get_descr (result);
-
-    result = doca_mmap_destroy (priv->mem.mmap);
-    if (result != DOCA_SUCCESS)
-        NIXL_ERROR << "Failed to call doca_mmap_destroy " << doca_error_get_descr (result);
-
+    delete priv->mem.barr;
+    delete priv->mem.mmap;
     delete priv;
     return NIXL_SUCCESS;
 }
@@ -1195,7 +1181,14 @@ nixlDocaEngine::loadRemoteMD (const nixlBlobDesc &input,
     // directly copy underlying conn struct
     md->conn = conn;
 
-    result = doca_mmap_create_from_export (nullptr, input.metaInfo.data(), size, ddev, &md->mem.mmap);
+    //Empty mmap, filled with imported data
+    try {
+        md->mem.mmap = new nixlDocaMmap();
+    } catch (const std::exception &e) {
+        goto error;
+    }
+
+    result = doca_mmap_create_from_export (nullptr, input.metaInfo.data(), size, ddev, &md->mem.mmap->mmap);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function doca_mmap_create_from_export failed "
                    << doca_error_get_descr (result);
@@ -1203,11 +1196,9 @@ nixlDocaEngine::loadRemoteMD (const nixlBlobDesc &input,
     }
 
     /* Remote buffer array */
-    result = create_doca_buf_arr (
-            md->mem.mmap, 1, (size_t)size, gdevs[0].second, &(md->mem.barr), &(md->mem.barr_gpu));
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Function create_doca_buf_arr failed "
-                   << doca_error_get_descr (result);
+    try {
+        md->mem.barr = new nixlDocaBarr(md->mem.mmap->mmap, 1, (size_t)size, gdevs[0].second);
+    } catch (const std::exception &e) {
         goto error;
     }
 
@@ -1216,7 +1207,7 @@ nixlDocaEngine::loadRemoteMD (const nixlBlobDesc &input,
     return NIXL_SUCCESS;
 
 error:
-    destroy_doca_buf_arr (md->mem.barr);
+    delete md->mem.barr;
 
     return NIXL_ERR_BACKEND;
 }
@@ -1283,8 +1274,8 @@ nixlDocaEngine::prepXfer (const nixl_xfer_op_t &operation,
             lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[idx].metadataP;
 
-            xferReqRingCpu[pos].larr[idx] = (uintptr_t)lmd->mem.barr_gpu;
-            xferReqRingCpu[pos].rarr[idx] = (uintptr_t)rmd->mem.barr_gpu;
+            xferReqRingCpu[pos].larr[idx] = (uintptr_t)lmd->mem.barr->barr_gpu;
+            xferReqRingCpu[pos].rarr[idx] = (uintptr_t)rmd->mem.barr->barr_gpu;
             xferReqRingCpu[pos].size[idx] = lsize;
             xferReqRingCpu[pos].num++;
         }
@@ -1323,7 +1314,7 @@ nixlDocaEngine::prepXfer (const nixl_xfer_op_t &operation,
         xferReqRingCpu[treq->end_pos - 1].has_notif_msg_idx =
                 (notif->send_pi.fetch_add (1) & (notif->elems_num - 1));
         xferReqRingCpu[treq->end_pos - 1].msg_sz = newMsg.size();
-        xferReqRingCpu[treq->end_pos - 1].notif_barr_gpu = notif->send_barr_gpu;
+        xferReqRingCpu[treq->end_pos - 1].notif_barr_gpu = notif->send_barr->barr_gpu;
 
         memcpy (notif->send_addr +
                         (xferReqRingCpu[treq->end_pos - 1].has_notif_msg_idx * notif->elems_size),
@@ -1503,7 +1494,7 @@ nixlDocaEngine::genNotif (const std::string &remote_agent, const std::string &ms
                << " msg " << newMsg << " at " << buf_idx;
 
     std::lock_guard<std::mutex> lock(notifSendLock);
-    ((volatile struct docaNotifSend *)notif_send_cpu)->barr_gpu = notif->send_barr_gpu;
+    ((volatile struct docaNotifSend *)notif_send_cpu)->barr_gpu = notif->send_barr->barr_gpu;
     ((volatile struct docaNotifSend *)notif_send_cpu)->buf_idx = buf_idx;
     ((volatile struct docaNotifSend *)notif_send_cpu)->msg_sz = newMsg.size();
     // membar

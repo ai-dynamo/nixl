@@ -27,34 +27,26 @@ public:
     std::mutex notifLock;
     std::mutex qpLock;
     mutable std::mutex connectLock;
-    std::vector<std::pair<uint32_t, struct doca_gpu *>>
-            gdevs; /* List of DOCA GPUNetIO device handlers */
+    std::vector<std::pair<uint32_t, struct doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
     struct doca_dev *ddev; /* DOCA device handler associated to queues */
-    nixl_status_t
-    addRdmaQp (const std::string &remote_agent);
-    nixl_status_t
-    connectServerRdmaQp (int oob_sock_client, const std::string &remote_agent);
-    nixl_status_t
-    nixlDocaInitNotif (const std::string &remote_agent, struct doca_dev *dev, struct doca_gpu *gpu);
+    nixl_status_t addRdmaQp (const std::string &remote_agent);
+    nixl_status_t connectServerRdmaQp (int oob_sock_client, const std::string &remote_agent);
+    nixl_status_t nixlDocaInitNotif (const std::string &remote_agent, struct doca_dev *dev, struct doca_gpu *gpu);
 
     volatile uint8_t pthrStop, pthrActive;
     nixlDocaEngine (const nixlBackendInitParams *init_params);
     ~nixlDocaEngine();
 
-    bool
-    supportsRemote() const {
+    bool supportsRemote() const {
         return true;
     }
-    bool
-    supportsLocal() const {
+    bool supportsLocal() const {
         return false;
     }
-    bool
-    supportsNotif() const {
+    bool supportsNotif() const {
         return true;
     }
-    bool
-    supportsProgTh() const {
+    bool supportsProgTh() const {
         return false;
     }
 
@@ -115,19 +107,13 @@ public:
     nixl_status_t
     genNotif (const std::string &remote_agent, const std::string &msg) const override;
 
-    void
-    addConnection (struct doca_rdma_connection *connection);
-    uint32_t
-    getConnectionLast();
-    void
-    removeConnection (uint32_t connection_idx);
-    uint32_t
-    getGpuCudaId();
+    void addConnection (struct doca_rdma_connection *connection);
+    uint32_t getConnectionLast();
+    void removeConnection (uint32_t connection_idx);
+    uint32_t getGpuCudaId();
 
-    nixl_status_t
-    sendLocalAgentName (int oob_sock_client);
-    nixl_status_t
-    recvRemoteAgentName (int oob_sock_client, std::string &remote_agent);
+    nixl_status_t sendLocalAgentName (int oob_sock_client);
+    nixl_status_t recvRemoteAgentName (int oob_sock_client, std::string &remote_agent);
 
 private:
     struct doca_log_backend *sdk_log;

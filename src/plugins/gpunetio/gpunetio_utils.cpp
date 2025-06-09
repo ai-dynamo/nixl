@@ -26,6 +26,80 @@
 // constexpr auto connection_delay = 500ms;
 constexpr std::chrono::microseconds connection_delay(500000);
 
+nixlDocaMmap::nixlDocaMmap(void *addr,
+                uint32_t elem_num,
+                size_t elem_size,
+                struct doca_dev *dev)
+{
+    doca_error_t result;
+    if (addr == nullptr || elem_num == 0 || elem_size == 0 || dev == nullptr)
+        throw std::invalid_argument("Invalid input values");
+
+    result = doca_mmap_create(&mmap);
+    if (result != DOCA_SUCCESS)
+        throw std::invalid_argument("doca_mmap_create");
+
+    result = doca_mmap_set_permissions(mmap,
+                                        DOCA_ACCESS_FLAG_LOCAL_READ_WRITE |
+                                        DOCA_ACCESS_FLAG_RDMA_WRITE |
+                                        DOCA_ACCESS_FLAG_PCI_RELAXED_ORDERING);
+    if (result != DOCA_SUCCESS)
+        throw std::invalid_argument("doca_mmap_set_permissions");
+
+    result = doca_mmap_set_memrange(mmap, (void *)addr, (size_t)elem_num * elem_size);
+    if (result != DOCA_SUCCESS)
+        throw std::invalid_argument("doca_mmap_set_memrange");
+
+    result = doca_mmap_add_dev(mmap, dev);
+    if (result != DOCA_SUCCESS)
+        throw std::invalid_argument("doca_mmap_add_dev");
+
+    result = doca_mmap_start(mmap);
+    if (result != DOCA_SUCCESS)
+        throw std::invalid_argument("doca_mmap_start");
+};
+
+nixlDocaMmap::nixlDocaMmap() {}
+
+nixlDocaMmap::~nixlDocaMmap() {
+    doca_mmap_destroy(mmap);
+};
+
+nixlDocaBarr::nixlDocaBarr(struct doca_mmap *mmap,
+                    uint32_t elem_num,
+                    size_t elem_size,
+                    struct doca_gpu *gpu)
+{
+    doca_error_t result;
+    if (mmap == nullptr || elem_num == 0 || elem_size == 0 || gpu == nullptr)
+        throw std::invalid_argument("Invalid input values");
+
+    result = doca_buf_arr_create (elem_num, &barr);
+    if (result != DOCA_SUCCESS)
+        throw std::invalid_argument("doca_buf_arr_create");
+
+    result = doca_buf_arr_set_params (barr, mmap, elem_size, 0);
+    if (result != DOCA_SUCCESS)
+        throw std::invalid_argument("doca_buf_arr_set_params");
+
+    result = doca_buf_arr_set_target_gpu (barr, gpu);
+    if (result != DOCA_SUCCESS)
+        throw std::invalid_argument("doca_buf_arr_set_target_gpu");
+
+    result = doca_buf_arr_start (barr);
+    if (result != DOCA_SUCCESS)
+        throw std::invalid_argument("doca_buf_arr_start");
+
+    result = doca_buf_arr_get_gpu_handle (barr, &barr_gpu);
+    if (result != DOCA_SUCCESS)
+        throw std::invalid_argument("doca_buf_arr_get_gpu_handle");
+};
+
+nixlDocaBarr::~nixlDocaBarr() {
+    doca_buf_arr_destroy(barr);
+};
+
+
 void
 nixlDocaEngineCheckCudaError (cudaError_t result, const char *message) {
     if (result != cudaSuccess) {
@@ -182,90 +256,4 @@ threadProgressFunc (void *arg) {
     }
 
     return nullptr;
-}
-
-doca_error_t
-create_doca_mmap (void *addr,
-                  uint32_t elem_num,
-                  size_t elem_size,
-                  struct doca_dev *dev,
-                  struct doca_mmap **mmap) {
-    doca_error_t result;
-
-    if (addr == nullptr || elem_num == 0 || elem_size == 0 || dev == nullptr || mmap == nullptr)
-        return DOCA_ERROR_INVALID_VALUE;
-
-    result = doca_mmap_create (mmap);
-    if (result != DOCA_SUCCESS) return result;
-
-    result = doca_mmap_set_permissions (*mmap,
-                                        DOCA_ACCESS_FLAG_LOCAL_READ_WRITE |
-                                                DOCA_ACCESS_FLAG_RDMA_WRITE |
-                                                DOCA_ACCESS_FLAG_PCI_RELAXED_ORDERING);
-    if (result != DOCA_SUCCESS) goto error;
-
-    result = doca_mmap_set_memrange (*mmap, (void *)addr, (size_t)elem_num * elem_size);
-    if (result != DOCA_SUCCESS) goto error;
-
-    result = doca_mmap_add_dev (*mmap, dev);
-    if (result != DOCA_SUCCESS) goto error;
-
-    result = doca_mmap_start (*mmap);
-    if (result != DOCA_SUCCESS) goto error;
-
-    return DOCA_SUCCESS;
-
-error:
-    destroy_doca_mmap (*mmap);
-    return result;
-}
-
-doca_error_t
-destroy_doca_mmap (struct doca_mmap *mmap) {
-    if (mmap == nullptr) return DOCA_ERROR_INVALID_VALUE;
-
-    doca_mmap_destroy (mmap);
-
-    return DOCA_SUCCESS;
-}
-
-doca_error_t
-create_doca_buf_arr (struct doca_mmap *mmap,
-                     uint32_t elem_num,
-                     size_t elem_size,
-                     struct doca_gpu *gpu,
-                     struct doca_buf_arr **barr,
-                     struct doca_gpu_buf_arr **barr_gpu) {
-    doca_error_t result;
-
-    /* Local buffer array */
-    result = doca_buf_arr_create (elem_num, barr);
-    if (result != DOCA_SUCCESS) goto error;
-
-    result = doca_buf_arr_set_params (*barr, mmap, elem_size, 0);
-    if (result != DOCA_SUCCESS) goto error;
-
-    result = doca_buf_arr_set_target_gpu (*barr, gpu);
-    if (result != DOCA_SUCCESS) goto error;
-
-    result = doca_buf_arr_start (*barr);
-    if (result != DOCA_SUCCESS) goto error;
-
-    result = doca_buf_arr_get_gpu_handle (*barr, barr_gpu);
-    if (result != DOCA_SUCCESS) goto error;
-
-    return DOCA_SUCCESS;
-
-error:
-    destroy_doca_buf_arr (*barr);
-    return result;
-}
-
-doca_error_t
-destroy_doca_buf_arr (struct doca_buf_arr *barr) {
-    if (barr == nullptr) return DOCA_ERROR_INVALID_VALUE;
-
-    doca_buf_arr_destroy (barr);
-
-    return DOCA_SUCCESS;
 }

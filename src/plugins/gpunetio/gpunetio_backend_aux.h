@@ -70,6 +70,38 @@ constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 #define ACCESS_ONCE(x) (*(volatile uint8_t *)&(x))
 #endif
 
+struct nixlDocaMmap {
+    nixlDocaMmap(void *addr,
+                  uint32_t elem_num,
+                  size_t elem_size,
+                  struct doca_dev *dev);
+    
+    nixlDocaMmap();
+
+    ~nixlDocaMmap();
+
+    void *addr;
+    uint32_t elem_num;
+    size_t elem_size;
+    struct doca_dev *dev;
+    struct doca_mmap *mmap;
+};
+
+struct nixlDocaBarr {
+    nixlDocaBarr(struct doca_mmap *mmap,
+                     uint32_t elem_num,
+                     size_t elem_size,
+                     struct doca_gpu *gpu);
+    ~nixlDocaBarr();
+
+    struct doca_mmap *mmap;
+    uint32_t elem_num;
+    size_t elem_size;
+    struct doca_gpu *gpu;
+    struct doca_buf_arr *barr;
+    struct doca_gpu_buf_arr *barr_gpu;
+};
+
 struct docaXferReqGpu {
     uint32_t id;
     uintptr_t larr[DOCA_XFER_REQ_SIZE];
@@ -91,11 +123,10 @@ struct docaXferReqGpu {
 struct nixlDocaMem {
     void *addr;
     uint32_t len;
-    struct doca_mmap *mmap;
+    struct nixlDocaMmap *mmap;
+    struct nixlDocaBarr *barr;
     void *export_mmap;
     size_t export_len;
-    struct doca_buf_arr *barr;
-    struct doca_gpu_buf_arr *barr_gpu;
     uint32_t devId;
 };
 
@@ -104,14 +135,12 @@ struct nixlDocaNotif {
     uint32_t elems_size;
     uint8_t *send_addr;
     std::atomic<uint32_t> send_pi;
-    struct doca_mmap *send_mmap;
-    struct doca_buf_arr *send_barr;
-    struct doca_gpu_buf_arr *send_barr_gpu;
+    struct nixlDocaMmap *send_mmap;
+    struct nixlDocaBarr *send_barr;
     uint8_t *recv_addr;
     std::atomic<uint32_t> recv_pi;
-    struct doca_mmap *recv_mmap;
-    struct doca_buf_arr *recv_barr;
-    struct doca_gpu_buf_arr *recv_barr_gpu;
+    struct nixlDocaMmap *recv_mmap;
+    struct nixlDocaBarr *recv_barr;
 };
 
 struct docaXferCompletion {
@@ -190,6 +219,7 @@ struct nixlDocaRdmaQp {
     struct doca_rdma_connection *connection_notif; /* The RDMA_CM connection instance */
 };
 
+
 void nixlDocaEngineCheckCudaError (cudaError_t result, const char *message);
 void nixlDocaEngineCheckCuError (CUresult result, const char *message);
 int oob_connection_client_setup (const char *server_ip, int *oob_sock_fd);
@@ -197,20 +227,6 @@ void oob_connection_client_close (int oob_sock_fd);
 void oob_connection_server_close (int oob_sock_fd);
 doca_error_t open_doca_device_with_ibdev_name (const uint8_t *value, size_t val_size, struct doca_dev **retval);
 void * threadProgressFunc (void *arg);
-doca_error_t create_doca_mmap (void *addr,
-                  uint32_t elem_num,
-                  size_t elem_size,
-                  struct doca_dev *dev,
-                  struct doca_mmap **mmap);
-doca_error_t destroy_doca_mmap (struct doca_mmap *mmap);
-doca_error_t create_doca_buf_arr (struct doca_mmap *mmap,
-                     uint32_t elem_num,
-                     size_t elem_size,
-                     struct doca_gpu *gpu,
-                     struct doca_buf_arr **barr,
-                     struct doca_gpu_buf_arr **barr_gpu);
-doca_error_t destroy_doca_buf_arr (struct doca_buf_arr *barr);
-
 
 doca_error_t
 doca_kernel_write (cudaStream_t stream,
