@@ -1,0 +1,94 @@
+# Jenkins Job Builder (JJB) configuration for NIXLBench Container Build job
+# Generates a pipeline that builds and pushes NIXLBench container images for x86_64 and aarch64.
+# Supports nightly automatic builds (main/master) and ad-hoc manual builds via parameters.
+
+# Template for manual NIXLBench container build job
+- job-template:
+    name: "{jjb_proj}-nixlbench-container-build" # Will be expanded to 'nixl-ci-nixlbench-container-build'
+    project-type: pipeline
+    folder: "{jjb_folder}"
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 30
+          num-to-keep: 30
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj={jjb_proj}-nixlbench-container-build
+            conf_file=.ci/jenkins/lib/nixlbench-container-build-matrix.yaml
+    description: >
+      <b>NIXLBench container build</b><br/>
+      • Nightly: automatically builds and pushes x86_64 &amp; aarch64 images from <code>main</code>/<code>master</code><br/>
+      • Manual: build any NIXL/UCX version or custom tag via parameters.<br/>
+      <br/>
+      <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: false
+    sandbox: true
+    # Nightly scheduler for automatic builds with default versions
+    triggers:
+      - timed: "H 3 * * *" # Run nightly around 3 AM (H adds randomness within the hour)
+    # Manual build parameters
+    parameters:
+      - string:
+          name: "NIXL_VERSION"
+          default: "{jjb_branch}"
+          description: "NIXL version to use (tag like v1.0.0, branch name, or commit hash)"
+      - string:
+          name: "UCX_VERSION"
+          default: "master"
+          description: "UCX version to use (tag like v1.15.0, branch name, or commit hash)"
+      - string:
+          name: "BASE_IMAGE"
+          default: "nvcr.io/nvidia/cuda-dl-base"
+          description: "Base Docker image for the container build"
+      - string:
+          name: "BASE_IMAGE_TAG"
+          default: "25.03-cuda12.8-devel-ubuntu24.04"
+          description: "Tag for the base Docker image"
+      - string:
+          name: "TAG_SUFFIX"
+          default: ""
+          description: >
+            Optional suffix to append to the automatically generated tag.<br/>
+            Leave blank for standard tagging.<br/><br/>
+            <b>All builds follow format:</b><br/>
+            <code>&lt;base-image-tag&gt;-nixl-&lt;nixl-version&gt;-ucx-&lt;ucx-version&gt;[-&lt;suffix&gt;]-&lt;arch&gt;</code><br/><br/>
+            <b>Examples (versions truncated to 8 chars):</b><br/>
+            &nbsp;&nbsp;• Nightly&nbsp;→&nbsp;<code>25.03-cuda12.8-devel-ubuntu24.04-nixl-main-ucx-master-x86_64</code><br/>
+            &nbsp;&nbsp;• Custom&nbsp;→&nbsp;<code>25.04-cuda12.9-devel-ubuntu24.04-nixl-perf-ucx-v1-19-0-aarch64</code><br/>
+            &nbsp;&nbsp;• With suffix "staging"&nbsp;→&nbsp;<code>25.03-cuda12.8-devel-ubuntu24.04-nixl-main-ucx-master-staging-x86_64</code><br/>
+            &nbsp;&nbsp;• SHA1 commits&nbsp;→&nbsp;<code>25.03-cuda12.8-devel-ubuntu24.04-nixl-a1b2c3d4-ucx-f9e8d7c6-x86_64</code><br/><br/>
+            Final image will be pushed to:<br/>
+            <code>urm.nvidia.com/sw-nbu-swx-nixl-docker/verification/nixlbench:&lt;tag&gt;</code>
+    # SCM configuration
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            credentials-id: ""
+            branches: ['$NIXL_VERSION']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+            browser: githubweb
+            browser-url: "{jjb_github_http_url}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"
+
+# Project definition
+# This creates the NIXLBench container build job
+- project:
+    name: nixl-nixlbench-container-builds
+    jjb_proj: "nixl-ci"           # Project prefix for job names
+    jjb_git: "git@github.com:ai-dynamo/nixl.git" # Repository URL
+    jjb_github_http_url: "https://github.com/ai-dynamo/nixl" # GitHub HTTP URL for browser
+    jjb_jenkinsfile: ".ci/jenkins/pipeline/Jenkinsfile" # Main pipeline definition
+    jjb_folder: "NIXL" # Jenkins folder for organization (same as old instance)
+    jjb_branch: "main" # Default branch
+    jobs:
+      - "{jjb_proj}-nixlbench-container-build" # Create the NIXLBench container build job
