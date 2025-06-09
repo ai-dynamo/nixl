@@ -108,6 +108,17 @@ RUN cd /usr/local/src && \
      make -j install-strip &&        \
      ldconfig
 
+ENV DOCA_REPO_LINK=https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/x86_64
+
+RUN LOCAL_GPG_KEY_PATH="/usr/share/keyrings/mellanox-archive-keyring.gpg" \
+    && curl -fsSL ${DOCA_REPO_LINK}/GPG-KEY-Mellanox.pub | gpg --dearmor | tee ${LOCAL_GPG_KEY_PATH} \
+    && echo "deb [signed-by=${LOCAL_GPG_KEY_PATH}] ${DOCA_REPO_LINK} ./" | tee /etc/apt/sources.list.d/mellanox.list \
+    && apt update -y \
+    && apt install -y --no-install-recommends mlnx-dpdk mlnx-dpdk-dev \
+    && apt install -y --no-install-recommends doca-sdk-common doca-sdk-dma doca-sdk-dpdk-bridge doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all doca-sdk-gpunetio libdoca-sdk-gpunetio-dev rdma-core
+
+ENV PKG_CONFIG_PATH=/opt/mellanox/doca/lib/x86_64-linux-gnu/pkgconfig:/opt/mellanox/dpdk/lib/x86_64-linux-gnu/pkgconfig:PKG_CONFIG_PATH
+
 RUN rm -rf build && \
     mkdir build && \
     uv run meson setup build/ --prefix=/usr/local/nixl && \

@@ -19,7 +19,7 @@ subdir('posix')
 
 
 disable_gpunetio_backend = get_option('disable_gpunetio_backend')
-if not disable_gpunetio_backend and cuda_dep.found()
+if not disable_gpunetio_backend and cuda_dep.found() and doca_gpunetio_dep.found()
     subdir('gpunetio')
 endif
 

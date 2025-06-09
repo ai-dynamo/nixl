@@ -99,7 +99,6 @@ nixlDocaBarr::~nixlDocaBarr() {
     doca_buf_arr_destroy(barr);
 };
 
-
 void
 nixlDocaEngineCheckCudaError (cudaError_t result, const char *message) {
     if (result != cudaSuccess) {

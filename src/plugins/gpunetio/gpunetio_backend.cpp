@@ -890,7 +890,7 @@ nixlDocaEngine::connectServerRdmaQp (int oob_sock_client, const std::string &rem
 
     struct nixlDocaRdmaQp *rdma_qp = qpMap[remote_agent]; // validate
 
-    NIXL_DEBUG << "DOCA connectServerRdmaQp for agent %s", remote_agent.c_str();
+    NIXL_DEBUG << "DOCA connectServerRdmaQp for agent " << remote_agent.c_str();
 
     if (recv (oob_sock_client, &remote_conn_details_data_len, sizeof (size_t), 0) < 0) {
         NIXL_ERROR << "Failed to receive remote connection details";

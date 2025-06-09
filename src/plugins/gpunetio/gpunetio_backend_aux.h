@@ -75,7 +75,6 @@ struct nixlDocaMmap {
                   uint32_t elem_num,
                   size_t elem_size,
                   struct doca_dev *dev);
-    
     nixlDocaMmap();
 
     ~nixlDocaMmap();

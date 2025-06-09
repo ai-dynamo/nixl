@@ -74,6 +74,9 @@ if cuda_dep.found()
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
 endif
 
+# DOCA
+doca_gpunetio_dep = dependency('doca-gpunetio', required : true)
+
 # Check for etcd-cpp-api - use multiple methods for discovery
 etcd_dep = dependency('etcd-cpp-api', required : false)
 etcd_inc_path = get_option('etcd_inc_path')
