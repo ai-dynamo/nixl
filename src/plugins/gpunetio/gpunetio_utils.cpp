@@ -21,11 +21,26 @@
 #include <stdexcept>
 #include <unistd.h>
 #include "common/nixl_log.h"
+#include <chrono>
+
+// constexpr auto connection_delay = 500ms;
+constexpr std::chrono::microseconds connection_delay(500000);
 
 void
 nixlDocaEngineCheckCudaError (cudaError_t result, const char *message) {
     if (result != cudaSuccess) {
         std::cerr << message << " (Error code: " << result << " - " << cudaGetErrorString (result)
+                  << ")" << std::endl;
+        exit (EXIT_FAILURE);
+    }
+}
+
+void
+nixlDocaEngineCheckCuError (CUresult result, const char *message) {
+    const char* pStr;
+    cuGetErrorString (result, &pStr);
+    if (result != CUDA_SUCCESS) {
+        std::cerr << message << " (Error code: " << result << " - " << pStr
                   << ")" << std::endl;
         exit (EXIT_FAILURE);
     }
@@ -84,7 +99,7 @@ open_doca_device_with_ibdev_name (const uint8_t *value, size_t val_size, struct 
     size_t i;
 
     /* Set default return value */
-    *retval = NULL;
+    *retval = nullptr;
 
     /* Setup */
     if (val_size > DOCA_DEVINFO_IBDEV_NAME_SIZE) {
@@ -142,7 +157,7 @@ threadProgressFunc (void *arg) {
             if (ACCESS_ONCE (eng->pthrStop) == 0)
                 NIXL_ERROR << "Can't accept new socket connection " << oob_sock_client;
             close (eng->oob_sock_server);
-            return NULL;
+            return nullptr;
         }
 
         NIXL_INFO << "Client connected at IP: " << inet_ntoa (client_addr.sin_addr)
@@ -160,13 +175,13 @@ threadProgressFunc (void *arg) {
 
         close (oob_sock_client);
         /* Wait for predefined number of */
-        nixlTime::us_t start = nixlTime::getUs();
-        while ((start + DOCA_RDMA_SERVER_CONN_DELAY) > nixlTime::getUs()) {
+        auto start = nixlTime::getUs();
+        while ((start + connection_delay.count()) > nixlTime::getUs()) {
             std::this_thread::yield();
         }
     }
 
-    return NULL;
+    return nullptr;
 }
 
 doca_error_t

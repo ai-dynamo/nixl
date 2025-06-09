@@ -47,27 +47,24 @@
 #include "common/list_elem.h"
 #include "common/nixl_time.h"
 
-#define DOCA_MAX_COMPLETION_INFLIGHT 128
-#define DOCA_MAX_COMPLETION_INFLIGHT_MASK (DOCA_MAX_COMPLETION_INFLIGHT - 1)
-#define DOCA_DEVINFO_IBDEV_NAME_SIZE 64
-#define RDMA_SEND_QUEUE_SIZE 2048
-#define RDMA_RECV_QUEUE_SIZE (RDMA_SEND_QUEUE_SIZE * 2)
-#define DOCA_POST_STREAM_NUM 4
-#define DOCA_XFER_REQ_SIZE 512
-#define DOCA_XFER_REQ_MAX 32
-#define DOCA_XFER_REQ_MASK (DOCA_XFER_REQ_MAX - 1)
-#define DOCA_ENG_MAX_CONN 20
-#define DOCA_RDMA_CM_LOCAL_PORT_CLIENT 6543
-#define DOCA_RDMA_CM_LOCAL_PORT_SERVER 6544
+constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
+constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
+constexpr uint32_t RDMA_SEND_QUEUE_SIZE = 2048;
+constexpr uint32_t RDMA_RECV_QUEUE_SIZE = (RDMA_SEND_QUEUE_SIZE * 2);
+constexpr uint32_t DOCA_POST_STREAM_NUM = 4;
+constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
+constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
+constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
+constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
+constexpr uint32_t DOCA_RDMA_CM_LOCAL_PORT_CLIENT = 6543;
+constexpr uint32_t DOCA_RDMA_CM_LOCAL_PORT_SERVER = 6544;
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define DOCA_RDMA_SERVER_ADDR_LEN \
     (MAX (MAX (DOCA_DEVINFO_IPV4_ADDR_SIZE, DOCA_DEVINFO_IPV6_ADDR_SIZE), DOCA_GID_BYTE_LENGTH))
-#define DOCA_RDMA_SERVER_CONN_DELAY 500 // 500us
 // Pre-fill the whole recv queue with notif once
-#define DOCA_MAX_NOTIF_INFLIGHT RDMA_RECV_QUEUE_SIZE
-#define DOCA_MAX_NOTIF_MESSAGE_SIZE 8192
-#define DOCA_NOTIF_NULL 0xFFFFFFFF
-#define DOCA_MSG_TAG 0xFF
+constexpr uint32_t DOCA_MAX_NOTIF_INFLIGHT = RDMA_RECV_QUEUE_SIZE;
+constexpr uint32_t DOCA_MAX_NOTIF_MESSAGE_SIZE = 8192;
+constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 
 #ifndef ACCESS_ONCE
 #define ACCESS_ONCE(x) (*(volatile uint8_t *)&(x))
@@ -138,13 +135,9 @@ struct docaNotifSend {
 class nixlDocaConnection : public nixlBackendConnMD {
 private:
     std::string remoteAgent;
-    // rdma qp
-    // nixlDocaEp ep;
     volatile bool connected;
 
 public:
-    // Extra information required for UCX connections
-
     friend class nixlDocaEngine;
 };
 
@@ -197,34 +190,44 @@ struct nixlDocaRdmaQp {
     struct doca_rdma_connection *connection_notif; /* The RDMA_CM connection instance */
 };
 
-void
-nixlDocaEngineCheckCudaError (cudaError_t result, const char *message);
-int
-oob_connection_client_setup (const char *server_ip, int *oob_sock_fd);
-void
-oob_connection_client_close (int oob_sock_fd);
-void
-oob_connection_server_close (int oob_sock_fd);
-doca_error_t
-open_doca_device_with_ibdev_name (const uint8_t *value, size_t val_size, struct doca_dev **retval);
-void *
-threadProgressFunc (void *arg);
-doca_error_t
-create_doca_mmap (void *addr,
+void nixlDocaEngineCheckCudaError (cudaError_t result, const char *message);
+void nixlDocaEngineCheckCuError (CUresult result, const char *message);
+int oob_connection_client_setup (const char *server_ip, int *oob_sock_fd);
+void oob_connection_client_close (int oob_sock_fd);
+void oob_connection_server_close (int oob_sock_fd);
+doca_error_t open_doca_device_with_ibdev_name (const uint8_t *value, size_t val_size, struct doca_dev **retval);
+void * threadProgressFunc (void *arg);
+doca_error_t create_doca_mmap (void *addr,
                   uint32_t elem_num,
                   size_t elem_size,
                   struct doca_dev *dev,
                   struct doca_mmap **mmap);
-doca_error_t
-destroy_doca_mmap (struct doca_mmap *mmap);
-doca_error_t
-create_doca_buf_arr (struct doca_mmap *mmap,
+doca_error_t destroy_doca_mmap (struct doca_mmap *mmap);
+doca_error_t create_doca_buf_arr (struct doca_mmap *mmap,
                      uint32_t elem_num,
                      size_t elem_size,
                      struct doca_gpu *gpu,
                      struct doca_buf_arr **barr,
                      struct doca_gpu_buf_arr **barr_gpu);
+doca_error_t destroy_doca_buf_arr (struct doca_buf_arr *barr);
+
+
 doca_error_t
-destroy_doca_buf_arr (struct doca_buf_arr *barr);
+doca_kernel_write (cudaStream_t stream,
+                   struct doca_gpu_dev_rdma *rdma_gpu,
+                   struct docaXferReqGpu *xferReqRing,
+                   uint32_t pos);
+doca_error_t
+doca_kernel_read (cudaStream_t stream,
+                  struct doca_gpu_dev_rdma *rdma_gpu,
+                  struct docaXferReqGpu *xferReqRing,
+                  uint32_t pos);
+doca_error_t
+doca_kernel_progress (cudaStream_t stream,
+                      struct docaXferCompletion *completion_list,
+                      struct docaNotifRecv *notif_fill,
+                      struct docaNotifRecv *notif_progress,
+                      struct docaNotifSend *notif_send_gpu,
+                      uint32_t *exit_flag);
 
 #endif /* GPUNETIO_BACKEND_AUX_H */

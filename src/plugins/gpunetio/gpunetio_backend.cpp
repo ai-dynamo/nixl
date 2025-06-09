@@ -78,7 +78,7 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams *init_params) :
         nstreams = std::stoi ((*custom_params)["cuda_streams"]);
     if (nstreams == 0) nstreams = DOCA_POST_STREAM_NUM;
 
-    NIXL_INFO << "CUDA streams used for pool mode: " << nstreams << std::endl;
+    NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
     /* Open DOCA device */
     result = open_doca_device_with_ibdev_name (
@@ -89,7 +89,7 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams *init_params) :
 
     char pciBusId[DOCA_DEVINFO_IBDEV_NAME_SIZE];
     for (auto &item : gdevs) {
-        cudaDeviceGetPCIBusId (pciBusId, DOCA_DEVINFO_IBDEV_NAME_SIZE, item.first);
+        nixlDocaEngineCheckCudaError(cudaDeviceGetPCIBusId (pciBusId, DOCA_DEVINFO_IBDEV_NAME_SIZE, item.first), "cudaDeviceGetPCIBusId");
         result = doca_gpu_create (pciBusId, &item.second);
         if (result != DOCA_SUCCESS)
             NIXL_ERROR << "Failed to create DOCA GPU device " << doca_error_get_descr (result);
@@ -99,75 +99,67 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams *init_params) :
             doca_dev_as_devinfo (ddev), (uint8_t *)ipv4_addr, DOCA_DEVINFO_IPV4_ADDR_SIZE);
 
     // DOCA_GPU_MEM_TYPE_GPU_CPU == GDRCopy
-    result = doca_gpu_mem_alloc (gdevs[0].second,
+    result = doca_gpu_mem_alloc(gdevs[0].second,
                                  sizeof (struct docaXferReqGpu) * DOCA_XFER_REQ_MAX,
                                  4096,
                                  DOCA_GPU_MEM_TYPE_GPU_CPU,
                                  (void **)&xferReqRingGpu,
                                  (void **)&xferReqRingCpu);
-    if (result != DOCA_SUCCESS || xferReqRingGpu == NULL || xferReqRingCpu == NULL) {
+    if (result != DOCA_SUCCESS || xferReqRingGpu == nullptr || xferReqRingCpu == nullptr) {
         NIXL_ERROR << "Function doca_gpu_mem_alloc with DOCA_GPU_MEM_TYPE_GPU_CPU returned "
                    << doca_error_get_descr (result);
         NIXL_ERROR << "Allocating memory with DOCA_GPU_MEM_TYPE_CPU_GPU";
-        result = doca_gpu_mem_alloc (gdevs[0].second,
+        result = doca_gpu_mem_alloc(gdevs[0].second,
                                      sizeof (struct docaXferReqGpu) * DOCA_XFER_REQ_MAX,
                                      4096,
                                      DOCA_GPU_MEM_TYPE_CPU_GPU,
                                      (void **)&xferReqRingGpu,
                                      (void **)&xferReqRingCpu);
-        if (result != DOCA_SUCCESS || xferReqRingGpu == NULL || xferReqRingCpu == NULL) {
+        if (result != DOCA_SUCCESS || xferReqRingGpu == nullptr || xferReqRingCpu == nullptr) {
             NIXL_ERROR << "Function doca_gpu_mem_alloc with DOCA_GPU_MEM_TYPE_CPU_GPU returned "
                        << doca_error_get_descr (result);
             throw std::invalid_argument ("Can't allocate memory");
         }
     }
 
-    nixlDocaEngineCheckCudaError (
-            cudaMemset (xferReqRingGpu, 0, sizeof (struct docaXferReqGpu) * DOCA_XFER_REQ_MAX),
-            "Failed to memset GPU memory");
+    nixlDocaEngineCheckCudaError(cudaMemset(xferReqRingGpu, 0, sizeof (struct docaXferReqGpu) * DOCA_XFER_REQ_MAX), "Failed to memset GPU memory");
 
-    result = doca_gpu_mem_alloc (gdevs[0].second,
-                                 sizeof (uint64_t) * 1,
+    result = doca_gpu_mem_alloc(gdevs[0].second,
+                                 sizeof (uint64_t),
                                  4096,
                                  DOCA_GPU_MEM_TYPE_GPU,
                                  (void **)&last_rsvd_flags,
                                  nullptr);
-    if (result != DOCA_SUCCESS || last_rsvd_flags == NULL || last_rsvd_flags == NULL) {
+    if (result != DOCA_SUCCESS || last_rsvd_flags == nullptr) {
         NIXL_ERROR << "Function doca_gpu_mem_alloc return " << doca_error_get_descr (result);
     }
 
-    nixlDocaEngineCheckCudaError (cudaMemset (last_rsvd_flags, 0, sizeof (uint64_t) * 1),
-                                  "Failed to memset GPU memory");
+    nixlDocaEngineCheckCudaError(cudaMemset (last_rsvd_flags, 0, sizeof (uint64_t)), "Failed to memset GPU memory");
 
-    result = doca_gpu_mem_alloc (gdevs[0].second,
-                                 sizeof (uint64_t) * 1,
+    result = doca_gpu_mem_alloc(gdevs[0].second,
+                                 sizeof (uint64_t),
                                  4096,
                                  DOCA_GPU_MEM_TYPE_GPU,
                                  (void **)&last_posted_flags,
                                  nullptr);
-    if (result != DOCA_SUCCESS || last_posted_flags == NULL || last_posted_flags == NULL) {
+    if (result != DOCA_SUCCESS || last_posted_flags == nullptr) {
         NIXL_ERROR << "Function doca_gpu_mem_alloc return " << doca_error_get_descr (result);
     }
 
-    nixlDocaEngineCheckCudaError (cudaMemset (last_posted_flags, 0, sizeof (uint64_t) * 1),
-                                  "Failed to memset GPU memory");
+    nixlDocaEngineCheckCudaError(cudaMemset (last_posted_flags, 0, sizeof (uint64_t)), "Failed to memset GPU memory");
 
-
-    nixlDocaEngineCheckCudaError (cudaStreamCreateWithFlags (&wait_stream, cudaStreamNonBlocking),
-                                  "Failed to create CUDA stream");
+    nixlDocaEngineCheckCudaError (cudaStreamCreateWithFlags (&wait_stream, cudaStreamNonBlocking), "Failed to create CUDA stream");
     for (int i = 0; i < nstreams; i++)
-        nixlDocaEngineCheckCudaError (
-                cudaStreamCreateWithFlags (&post_stream[i], cudaStreamNonBlocking),
-                "Failed to create CUDA stream");
+        nixlDocaEngineCheckCudaError(cudaStreamCreateWithFlags (&post_stream[i], cudaStreamNonBlocking), "Failed to create CUDA stream");
     xferStream = 0;
 
-    result = doca_gpu_mem_alloc (gdevs[0].second,
+    result = doca_gpu_mem_alloc(gdevs[0].second,
                                  sizeof (struct docaXferCompletion) * DOCA_MAX_COMPLETION_INFLIGHT,
                                  4096,
                                  DOCA_GPU_MEM_TYPE_CPU_GPU,
                                  (void **)&completion_list_gpu,
                                  (void **)&completion_list_cpu);
-    if (result != DOCA_SUCCESS || completion_list_gpu == NULL || completion_list_cpu == NULL) {
+    if (result != DOCA_SUCCESS || completion_list_gpu == nullptr || completion_list_cpu == nullptr) {
         NIXL_ERROR << "Function doca_gpu_mem_alloc return " << doca_error_get_descr (result);
     }
 
@@ -176,23 +168,23 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams *init_params) :
             sizeof (struct docaXferCompletion) * DOCA_MAX_COMPLETION_INFLIGHT);
 
     // DOCA_GPU_MEM_TYPE_GPU_CPU == GDRCopy
-    result = doca_gpu_mem_alloc (gdevs[0].second,
+    result = doca_gpu_mem_alloc(gdevs[0].second,
                                  sizeof (uint32_t),
                                  4096,
                                  DOCA_GPU_MEM_TYPE_GPU_CPU,
                                  (void **)&wait_exit_gpu,
                                  (void **)&wait_exit_cpu);
-    if (result != DOCA_SUCCESS || wait_exit_gpu == NULL || wait_exit_cpu == NULL) {
+    if (result != DOCA_SUCCESS || wait_exit_gpu == nullptr || wait_exit_cpu == nullptr) {
         NIXL_ERROR << "Function doca_gpu_mem_alloc with DOCA_GPU_MEM_TYPE_GPU_CPU returned "
                    << doca_error_get_descr (result);
         NIXL_ERROR << "Allocating memory with DOCA_GPU_MEM_TYPE_CPU_GPU";
-        result = doca_gpu_mem_alloc (gdevs[0].second,
+        result = doca_gpu_mem_alloc(gdevs[0].second,
                                      sizeof (uint32_t),
                                      4096,
                                      DOCA_GPU_MEM_TYPE_CPU_GPU,
                                      (void **)&wait_exit_gpu,
                                      (void **)&wait_exit_cpu);
-        if (result != DOCA_SUCCESS || wait_exit_gpu == NULL || wait_exit_cpu == NULL) {
+        if (result != DOCA_SUCCESS || wait_exit_gpu == nullptr || wait_exit_cpu == nullptr) {
             NIXL_ERROR << "Function doca_gpu_mem_alloc with DOCA_GPU_MEM_TYPE_CPU_GPU returned "
                        << doca_error_get_descr (result);
             throw std::invalid_argument ("Can't allocate memory");
@@ -201,41 +193,41 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams *init_params) :
 
     ((volatile uint8_t *)wait_exit_cpu)[0] = 0;
 
-    result = doca_gpu_mem_alloc (gdevs[0].second,
-                                 sizeof (struct docaNotifRecv) * 1,
+    result = doca_gpu_mem_alloc(gdevs[0].second,
+                                 sizeof (struct docaNotifRecv),
                                  4096,
                                  DOCA_GPU_MEM_TYPE_CPU_GPU,
                                  (void **)&notif_fill_gpu,
                                  (void **)&notif_fill_cpu);
-    if (result != DOCA_SUCCESS || notif_fill_gpu == NULL || notif_fill_cpu == NULL) {
+    if (result != DOCA_SUCCESS || notif_fill_gpu == nullptr || notif_fill_cpu == nullptr) {
         NIXL_ERROR << "Function doca_gpu_mem_alloc return " << doca_error_get_descr (result);
     }
 
-    result = doca_gpu_mem_alloc (gdevs[0].second,
-                                 sizeof (struct docaNotifRecv) * 1,
+    result = doca_gpu_mem_alloc(gdevs[0].second,
+                                 sizeof (struct docaNotifRecv),
                                  4096,
                                  DOCA_GPU_MEM_TYPE_CPU_GPU,
                                  (void **)&notif_progress_gpu,
                                  (void **)&notif_progress_cpu);
-    if (result != DOCA_SUCCESS || notif_progress_gpu == NULL || notif_progress_cpu == NULL) {
+    if (result != DOCA_SUCCESS || notif_progress_gpu == nullptr || notif_progress_cpu == nullptr) {
         NIXL_ERROR << "Function doca_gpu_mem_alloc return " << doca_error_get_descr (result);
     }
 
-    memset (notif_progress_cpu, 0, sizeof (struct docaNotifRecv) * 1);
+    memset (notif_progress_cpu, 0, sizeof (struct docaNotifRecv));
 
-    result = doca_gpu_mem_alloc (gdevs[0].second,
-                                 sizeof (struct docaNotifSend) * 1,
+    result = doca_gpu_mem_alloc(gdevs[0].second,
+                                 sizeof (struct docaNotifSend),
                                  4096,
                                  DOCA_GPU_MEM_TYPE_CPU_GPU,
                                  (void **)&notif_send_gpu,
                                  (void **)&notif_send_cpu);
-    if (result != DOCA_SUCCESS || notif_send_gpu == NULL || notif_send_cpu == NULL) {
+    if (result != DOCA_SUCCESS || notif_send_gpu == nullptr || notif_send_cpu == nullptr) {
         NIXL_ERROR << "Function doca_gpu_mem_alloc return " << doca_error_get_descr (result);
     }
 
-    memset (notif_send_cpu, 0, sizeof (struct docaNotifSend) * 1);
+    memset (notif_send_cpu, 0, sizeof (struct docaNotifSend));
 
-    cuCtxGetCurrent (&main_cuda_ctx);
+    nixlDocaEngineCheckCuError(cuCtxGetCurrent(&main_cuda_ctx), "cuCtxGetCurrent failure");
     // Warmup
     doca_kernel_progress (wait_stream,
                           nullptr,
@@ -243,7 +235,7 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams *init_params) :
                           notif_progress_gpu,
                           notif_send_gpu,
                           wait_exit_gpu);
-    cudaStreamSynchronize (wait_stream);
+    nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
     doca_kernel_progress (wait_stream,
                           completion_list_gpu,
                           notif_fill_gpu,
@@ -263,10 +255,7 @@ nixlDocaEngine::nixlDocaEngine (const nixlBackendInitParams *init_params) :
 
 nixl_mem_list_t
 nixlDocaEngine::getSupportedMems() const {
-    nixl_mem_list_t mems;
-    mems.push_back (DRAM_SEG);
-    mems.push_back (VRAM_SEG);
-    return mems;
+    return {DRAM_SEG, VRAM_SEG};
 }
 
 nixlDocaEngine::~nixlDocaEngine() {
@@ -281,30 +270,30 @@ nixlDocaEngine::~nixlDocaEngine() {
     }
 
     // Cause accept in thread to fail and thus exit
-    oob_connection_server_close (oob_sock_server);
-    oob_connection_client_close (oob_sock_client);
+    oob_connection_server_close(oob_sock_server);
+    oob_connection_client_close(oob_sock_client);
     progressThreadStop();
 
     ((volatile uint8_t *)wait_exit_cpu)[0] = 1;
-    cudaStreamSynchronize (wait_stream);
-    cudaStreamDestroy (wait_stream);
+    nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
+    nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
     doca_gpu_mem_free (gdevs[0].second, wait_exit_gpu);
     doca_gpu_mem_free (gdevs[0].second, xferReqRingGpu);
     doca_gpu_mem_free (gdevs[0].second, last_rsvd_flags);
     doca_gpu_mem_free (gdevs[0].second, last_posted_flags);
 
     for (int i = 0; i < nstreams; i++) {
-        cudaStreamSynchronize (post_stream[i]);
-        cudaStreamDestroy (post_stream[i]);
+        nixlDocaEngineCheckCudaError(cudaStreamSynchronize(post_stream[i]), "stream synchronize");
+        nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
     }
 
     for (auto notif : notifMap)
-        nixlDocaDestroyNotif (gdevs[0].second, notif.second);
+        nixlDocaDestroyNotif(gdevs[0].second, notif.second);
 
-    doca_gpu_mem_free (gdevs[0].second, notif_fill_gpu);
-    doca_gpu_mem_free (gdevs[0].second, notif_progress_gpu);
-    doca_gpu_mem_free (gdevs[0].second, notif_send_gpu);
-    doca_gpu_mem_free (gdevs[0].second, completion_list_gpu);
+    doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
+    doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
+    doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
+    doca_gpu_mem_free(gdevs[0].second, completion_list_gpu);
 
     for (const auto &rdma_qp : qpMap) {
         result = doca_ctx_stop (rdma_qp.second->rdma_ctx_data);
@@ -344,7 +333,7 @@ nixlDocaEngine::nixlDocaInitNotif (const std::string &remote_agent,
     doca_error_t result;
     struct nixlDocaNotif *notif;
 
-    notifLock.lock();
+    std::lock_guard<std::mutex> lock(notifLock);
     // Same peer can be server or client
     if (notifMap.find (remote_agent) != notifMap.end()) {
         NIXL_DEBUG << "nixlDocaInitNotif already found " << remote_agent << std::endl;
@@ -412,7 +401,6 @@ nixlDocaEngine::nixlDocaInitNotif (const std::string &remote_agent,
     NIXL_INFO << "nixlDocaInitNotif added new qp for " << remote_agent << std::endl;
 
 exit_success:
-    notifLock.unlock();
     return NIXL_SUCCESS;
 
 error:
@@ -422,7 +410,6 @@ error:
     destroy_doca_mmap (notif->send_mmap);
     destroy_doca_mmap (notif->recv_mmap);
 
-    notifLock.unlock();
 
     return NIXL_ERR_BACKEND;
 }
@@ -437,19 +424,6 @@ nixlDocaEngine::nixlDocaDestroyNotif (struct doca_gpu *gpu, struct nixlDocaNotif
     if (notif->recv_mmap) doca_mmap_destroy (notif->recv_mmap);
 
     return NIXL_SUCCESS;
-}
-
-void
-nixlDocaEngine::_requestInit (void *request) {
-    /* Initialize request in-place (aka "placement new")*/
-    new (request) nixlDocaBckndReq;
-}
-
-void
-nixlDocaEngine::_requestFini (void *request) {
-    /* Finalize request */
-    nixlDocaBckndReq *req = (nixlDocaBckndReq *)request;
-    req->~nixlDocaBckndReq();
 }
 
 // For now just connection setup, not used for xfers to be a complete progThread, so supportsProgTh
@@ -507,7 +481,7 @@ nixlDocaEngine::progressThreadStart() {
     // TODO [Relaxed mem] mem barrier to ensure pthr_x updates are complete
     // new (&pthr) std::thread(&nixlDocaEngine::threadProgressFunc, this);
 
-    result = pthread_create (&server_thread_id, NULL, threadProgressFunc, (void *)this);
+    result = pthread_create (&server_thread_id, nullptr, threadProgressFunc, (void *)this);
     if (result != 0) {
         NIXL_ERROR << "Failed to create threadProgressFunc thread";
         return NIXL_ERR_BACKEND;
@@ -520,7 +494,7 @@ void
 nixlDocaEngine::progressThreadStop() {
     ACCESS_ONCE (pthrStop) = 1;
     // pthr.join();
-    pthread_join (server_thread_id, NULL);
+    pthread_join (server_thread_id, nullptr);
 }
 
 uint32_t
@@ -533,13 +507,12 @@ nixlDocaEngine::addRdmaQp (const std::string &remote_agent) {
     doca_error_t result;
     struct nixlDocaRdmaQp *rdma_qp;
 
-    qpLock.lock();
+    std::lock_guard<std::mutex> lock(qpLock);
 
     NIXL_INFO << "addRdmaQp for " << remote_agent << std::endl;
 
     //if client or server already created this QP, no need to re-create
     if (qpMap.find(remote_agent) != qpMap.end()) {
-        qpLock.unlock();
         return NIXL_IN_PROG;
     }
 
@@ -558,7 +531,7 @@ nixlDocaEngine::addRdmaQp (const std::string &remote_agent) {
 
     /* Convert DOCA RDMA to general DOCA context */
     rdma_qp->rdma_ctx_data = doca_rdma_as_ctx (rdma_qp->rdma_data);
-    if (rdma_qp->rdma_ctx_data == NULL) {
+    if (rdma_qp->rdma_ctx_data == nullptr) {
         result = DOCA_ERROR_UNEXPECTED;
         NIXL_ERROR << "Failed to convert DOCA RDMA to DOCA context "
                    << doca_error_get_descr (result);
@@ -574,14 +547,16 @@ nixlDocaEngine::addRdmaQp (const std::string &remote_agent) {
     }
 
     // /* Set gid_index to DOCA RDMA if it's provided */
-    // if (cfg->is_gid_index_set) {
-    // 	/* Set gid_index to DOCA RDMA */
-    // 	result = doca_rdma_set_gid_index(rdma, cfg->gid_index);
-    // 	if (result != DOCA_SUCCESS) {
-    // 		NIXL_ERROR << "Failed to set gid_index to DOCA RDMA " << // doca_error_get_descr(result);
-    // goto exit_error;
-    // 	}
-    // }
+    #if 0
+    if (is_gid_index_set) {
+    	/* Set gid_index to DOCA RDMA */
+    	result = doca_rdma_set_gid_index(rdma, cfg->gid_index);
+    	if (result != DOCA_SUCCESS) {
+    		NIXL_ERROR << "Failed to set gid_index to DOCA RDMA " << // doca_error_get_descr(result);
+            goto exit_error;
+    	}
+    }
+    #endif
 
     /* Set send queue size to DOCA RDMA */
     result = doca_rdma_set_send_queue_size (rdma_qp->rdma_data, RDMA_SEND_QUEUE_SIZE);
@@ -645,7 +620,7 @@ nixlDocaEngine::addRdmaQp (const std::string &remote_agent) {
 
     /* Convert DOCA RDMA to general DOCA context */
     rdma_qp->rdma_ctx_notif = doca_rdma_as_ctx (rdma_qp->rdma_notif);
-    if (rdma_qp->rdma_ctx_notif == NULL) {
+    if (rdma_qp->rdma_ctx_notif == nullptr) {
         result = DOCA_ERROR_UNEXPECTED;
         NIXL_ERROR << "Failed to convert DOCA RDMA to DOCA context "
                    << doca_error_get_descr (result);
@@ -725,19 +700,17 @@ nixlDocaEngine::addRdmaQp (const std::string &remote_agent) {
 
     NIXL_DEBUG << "DOCA addRdmaQp new QP added for " << remote_agent;
 
-    qpLock.unlock();
     return NIXL_SUCCESS;
 
 exit_error:
-    qpLock.unlock();
     return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
 nixlDocaEngine::connectClientRdmaQp (int oob_sock_client, const std::string &remote_agent) {
     doca_error_t result;
-    void *remote_conn_details_data = NULL;
-    void *remote_conn_details_notif = NULL;
+    void *remote_conn_details_data = nullptr;
+    void *remote_conn_details_notif = nullptr;
     size_t remote_conn_details_len_data = 0;
     size_t remote_conn_details_len_notif = 0;
     struct nixlDocaRdmaQp *rdma_qp = qpMap[remote_agent]; // validate
@@ -785,7 +758,7 @@ nixlDocaEngine::connectClientRdmaQp (int oob_sock_client, const std::string &rem
     }
 
     remote_conn_details_data = calloc (1, remote_conn_details_len_data);
-    if (remote_conn_details_data == NULL) {
+    if (remote_conn_details_data == nullptr) {
         NIXL_ERROR << "Failed to allocate memory for remote connection details";
         result = DOCA_ERROR_NO_MEMORY;
         return NIXL_ERR_BACKEND;
@@ -811,7 +784,7 @@ nixlDocaEngine::connectClientRdmaQp (int oob_sock_client, const std::string &rem
     }
 
     remote_conn_details_notif = calloc (1, remote_conn_details_len_notif);
-    if (remote_conn_details_notif == NULL) {
+    if (remote_conn_details_notif == nullptr) {
         NIXL_ERROR << "Failed to allocate memory for remote connection details";
         result = DOCA_ERROR_NO_MEMORY;
         return NIXL_ERR_BACKEND;
@@ -824,11 +797,9 @@ nixlDocaEngine::connectClientRdmaQp (int oob_sock_client, const std::string &rem
     }
 
     //Avoid duplicating RDMA connection to the same QP by client/server threads
-    connectLock.lock();
-
+    std::lock_guard<std::mutex> lock(connectLock);
     if (connMap.find(remote_agent) != connMap.end()) {
         NIXL_INFO << "QP for " << remote_agent << " already connected" << std::endl;
-        connectLock.unlock();
         return NIXL_SUCCESS;
     }
 
@@ -841,13 +812,12 @@ nixlDocaEngine::connectClientRdmaQp (int oob_sock_client, const std::string &rem
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function doca_rdma_connect data failed " << doca_error_get_descr (result);
         free (remote_conn_details_data);
-        remote_conn_details_data = NULL;
-        connectLock.unlock();
+        remote_conn_details_data = nullptr;
         return NIXL_ERR_BACKEND;
     }
 
     free (remote_conn_details_data);
-    remote_conn_details_data = NULL;
+    remote_conn_details_data = nullptr;
 
     /* Connect local rdma to the remote rdma */
     NIXL_INFO << "Connect DOCA RDMA to remote RDMA -- notif" << std::endl;
@@ -858,17 +828,15 @@ nixlDocaEngine::connectClientRdmaQp (int oob_sock_client, const std::string &rem
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function doca_rdma_connect notif failed " << doca_error_get_descr (result);
         free (remote_conn_details_notif);
-        remote_conn_details_notif = NULL;
-        connectLock.unlock();
+        remote_conn_details_notif = nullptr;
         return NIXL_ERR_BACKEND;
     }
 
     free (remote_conn_details_notif);
-    remote_conn_details_notif = NULL;
+    remote_conn_details_notif = nullptr;
 
     connMap[remote_agent] = 1;
 
-    connectLock.unlock();
 
     return NIXL_SUCCESS;
 }
@@ -876,7 +844,6 @@ nixlDocaEngine::connectClientRdmaQp (int oob_sock_client, const std::string &rem
 nixl_status_t
 nixlDocaEngine::recvRemoteAgentName (int oob_sock_client, std::string &remote_agent) {
     size_t msg_size;
-    char *remote_agent_;
 
     // Msg
     if (recv (oob_sock_client, &msg_size, sizeof (size_t), 0) < 0) {
@@ -885,20 +852,19 @@ nixlDocaEngine::recvRemoteAgentName (int oob_sock_client, std::string &remote_ag
         return NIXL_ERR_BACKEND;
     }
 
-    remote_agent_ = (char *)calloc (msg_size, sizeof (char));
-    if (remote_agent_ == nullptr) {
-        NIXL_ERROR << "Failed to alloc msg memory";
+    if (msg_size == 0) {
+        NIXL_ERROR << "recvRemoteAgentName received msg size 0";
         close (oob_sock_client);
         return NIXL_ERR_BACKEND;
     }
 
-    if (recv (oob_sock_client, remote_agent_, msg_size, 0) < 0) {
+    remote_agent.resize(msg_size);
+
+    if (recv (oob_sock_client, remote_agent.data(), msg_size, 0) < 0) {
         NIXL_ERROR << "Failed to recv msg details";
         close (oob_sock_client);
         return NIXL_ERR_BACKEND;
     }
-
-    remote_agent = remote_agent_;
 
     return NIXL_SUCCESS;
 }
@@ -925,9 +891,9 @@ nixlDocaEngine::sendLocalAgentName (int oob_sock_client) {
 nixl_status_t
 nixlDocaEngine::connectServerRdmaQp (int oob_sock_client, const std::string &remote_agent) {
     doca_error_t result;
-    void *remote_conn_details_data = NULL;
+    void *remote_conn_details_data = nullptr;
     size_t remote_conn_details_data_len = 0;
-    void *remote_conn_details_notif = NULL;
+    void *remote_conn_details_notif = nullptr;
     size_t remote_conn_details_notif_len = 0;
 
     struct nixlDocaRdmaQp *rdma_qp = qpMap[remote_agent]; // validate
@@ -947,7 +913,7 @@ nixlDocaEngine::connectServerRdmaQp (int oob_sock_client, const std::string &rem
     }
 
     remote_conn_details_data = calloc (1, remote_conn_details_data_len);
-    if (remote_conn_details_data == NULL) {
+    if (remote_conn_details_data == nullptr) {
         NIXL_ERROR << "Failed to allocate memory for remote data details"
                    << remote_conn_details_data_len;
         result = DOCA_ERROR_NO_MEMORY;
@@ -973,7 +939,7 @@ nixlDocaEngine::connectServerRdmaQp (int oob_sock_client, const std::string &rem
     }
 
     remote_conn_details_notif = calloc (1, remote_conn_details_notif_len);
-    if (remote_conn_details_notif == NULL) {
+    if (remote_conn_details_notif == nullptr) {
         NIXL_ERROR << "Failed to allocate memory for remote notif details "
                    << remote_conn_details_notif_len;
         result = DOCA_ERROR_NO_MEMORY;
@@ -1015,11 +981,9 @@ nixlDocaEngine::connectServerRdmaQp (int oob_sock_client, const std::string &rem
     }
 
     //Avoid duplicating RDMA connection to the same QP by client/server threads
-    connectLock.lock();
-
+    std::lock_guard<std::mutex> lock(connectLock);
     if (connMap.find(remote_agent) != connMap.end()) {
         NIXL_INFO << "QP for " << remote_agent << " already connected" << std::endl;
-        connectLock.unlock();
         return NIXL_SUCCESS;
     }
 
@@ -1032,13 +996,12 @@ nixlDocaEngine::connectServerRdmaQp (int oob_sock_client, const std::string &rem
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function doca_rdma_connect failed " << doca_error_get_descr (result);
         free (remote_conn_details_data);
-        remote_conn_details_data = NULL;
-        connectLock.unlock();
+        remote_conn_details_data = nullptr;
         return NIXL_ERR_BACKEND;
     }
 
     free (remote_conn_details_data);
-    remote_conn_details_data = NULL;
+    remote_conn_details_data = nullptr;
 
     /* Connect local rdma to the remote rdma */
     NIXL_INFO << "Connect DOCA RDMA to remote RDMA -- notif";
@@ -1049,17 +1012,14 @@ nixlDocaEngine::connectServerRdmaQp (int oob_sock_client, const std::string &rem
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function doca_rdma_connect failed " << doca_error_get_descr (result);
         free (remote_conn_details_notif);
-        remote_conn_details_notif = NULL;
-        connectLock.unlock();
+        remote_conn_details_notif = nullptr;
         return NIXL_ERR_BACKEND;
     }
 
     free (remote_conn_details_notif);
-    remote_conn_details_notif = NULL;
+    remote_conn_details_notif = nullptr;
 
     connMap[remote_agent] = 1;
-
-    connectLock.unlock();
 
     return NIXL_SUCCESS;
 }
@@ -1235,10 +1195,7 @@ nixlDocaEngine::loadRemoteMD (const nixlBlobDesc &input,
     // directly copy underlying conn struct
     md->conn = conn;
 
-    char *addr = new char[size];
-    nixlSerDes::_stringToBytes (addr, input.metaInfo, size);
-
-    result = doca_mmap_create_from_export (NULL, addr, size, ddev, &md->mem.mmap);
+    result = doca_mmap_create_from_export (nullptr, input.metaInfo.data(), size, ddev, &md->mem.mmap);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function doca_mmap_create_from_export failed "
                    << doca_error_get_descr (result);
@@ -1255,8 +1212,6 @@ nixlDocaEngine::loadRemoteMD (const nixlBlobDesc &input,
     }
 
     output = (nixlBackendMD *)md;
-
-    delete[] addr;
 
     return NIXL_SUCCESS;
 
@@ -1315,17 +1270,6 @@ nixlDocaEngine::prepXfer (const nixl_xfer_op_t &operation,
     } else {
         treq->stream = (cudaStream_t) * ((uintptr_t *)opt_args->customParam.data());
     }
-
-#if 0
-            auto it = std::find_if(gdevs.begin(), gdevs.end(),
-                    [&treq](std::pair<uint32_t, struct doca_gpu*> &x)
-                    { return x.first == treq->devId; }
-                );
-            if (it == gdevs.end()) {
-                NIXL_ERROR << "Can't prepare transfer for unknown device " << treq->devId << std::endl;
-                return NIXL_ERR_INVALID_PARAM;
-            }
-#endif
 
     treq->start_pos = (xferRingPos.fetch_add (1) & (DOCA_XFER_REQ_MAX - 1));
     pos = treq->start_pos;
@@ -1474,7 +1418,7 @@ nixlDocaEngine::getNotifs (notif_list_t &notif_list) {
 
     // Lock required to prevent inconsistency if another notifyQp (new peer) is added
     // while getNotifs is running
-    notifLock.lock();
+    std::lock_guard<std::mutex> lock(notifLock);
     for (auto &notif : notifMap) {
         ((volatile struct docaNotifRecv *)notif_progress_cpu)->rdma_qp =
                 qpMap[notif.first]->rdma_gpu_notif;
@@ -1519,8 +1463,6 @@ nixlDocaEngine::getNotifs (notif_list_t &notif_list) {
         }
     }
 
-    notifLock.unlock();
-
     return NIXL_SUCCESS;
 }
 
@@ -1560,7 +1502,7 @@ nixlDocaEngine::genNotif (const std::string &remote_agent, const std::string &ms
     NIXL_DEBUG << "genNotif to " << remote_agent << " msg size " << std::to_string ((int)msg.size())
                << " msg " << newMsg << " at " << buf_idx;
 
-    notifSendLock.lock();
+    std::lock_guard<std::mutex> lock(notifSendLock);
     ((volatile struct docaNotifSend *)notif_send_cpu)->barr_gpu = notif->send_barr_gpu;
     ((volatile struct docaNotifSend *)notif_send_cpu)->buf_idx = buf_idx;
     ((volatile struct docaNotifSend *)notif_send_cpu)->msg_sz = newMsg.size();
@@ -1569,7 +1511,6 @@ nixlDocaEngine::genNotif (const std::string &remote_agent, const std::string &ms
     ((volatile struct docaNotifSend *)notif_send_cpu)->rdma_qp = rdma_gpu;
     while (((volatile struct docaNotifSend *)notif_send_cpu)->rdma_qp != nullptr)
         ;
-    notifSendLock.unlock();
 
     return NIXL_SUCCESS;
 }
