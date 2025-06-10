@@ -13,28 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-mock_basic_plugin = shared_library('MOCK_BASIC', 'mock_basic_plugin.cpp',
-               dependencies: [nixl_infra],
-               include_directories: [nixl_inc_dirs, utils_inc_dirs],
-               link_with : [ucx_backend_lib],
-               name_prefix: 'libplugin_',
-               install: true,
-               install_dir: plugin_install_dir)
+gtest_inc_dirs = include_directories('..')
 
-mock_dram_sources = ['mock_dram_plugin.cpp', 'mock_dram_engine.cpp']
-mock_dram_plugin = shared_library('MOCK_DRAM', mock_dram_sources,
-               dependencies: [nixl_infra],
-               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+mock_backend_sources = ['gmock_engine.cpp', 'mock_backend_plugin.cpp', 'mock_backend_engine.cpp']
+mock_backend_plugin = shared_library('MOCK_BACKEND', mock_backend_sources,
+               dependencies: [nixl_infra, gmock_dep],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
                link_with : [ucx_backend_lib],
                name_prefix: 'libplugin_',
                install: true,
                install_dir: plugin_install_dir)
 run_command('sh', '-c',
-            'echo "MOCK_BASIC=' + mock_basic_plugin.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
-                check: true
-            )
-run_command('sh', '-c',
-            'echo "MOCK_DRAM=' + mock_dram_plugin.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+            'echo "MOCK_BACKEND=' + mock_backend_plugin.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
                 check: true
             )
 
