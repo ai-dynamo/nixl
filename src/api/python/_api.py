@@ -14,8 +14,9 @@
 # limitations under the License.
 
 import pickle
-from typing import Optional
+from typing import Optional, Union
 
+import numpy as np
 import torch
 
 import nixl._bindings as nixlBind
@@ -313,7 +314,8 @@ class nixl_agent:
                 this is for a loopback (local) transfer to be used for remote_side handle
 
     @param agent_name Name of the agent. It can be "NIXL_INIT_AGENT", local agent name, or remote agent name
-    @param xfer_list List of transfer descriptors, can be list of memory region tuples, tensors, or nixlXferDList.
+    @param xfer_list List of transfer descriptors, can be list of memory region tuples, tensors,
+                     Nx3 numpy array, or nixlXferDList. See get_xfer_descs for more details on the structure.
     @param mem_type Optional memory type necessary for list of memory regions.
     @param is_sorted Optional bool for whether memory region list or tensor list are sorted.
                      For long lists of transfer descriptors, sorting can speed up transfer preparation.
@@ -364,10 +366,10 @@ class nixl_agent:
     @param operation Type of operation ("WRITE" or "READ").
     @param local_xfer_side Handle to the local transfer descriptor list,
             received from prep_xfer_dlist.
-    @param local_indices List of indices for selecting local descriptors.
+    @param local_indices List or numpy array (dtype=int32) of indices for selecting local descriptors.
     @param remote_xfer_side Handle to the remote (or loopback) transfer descriptor list,
             received from prep_xfer_dlist.
-    @param remote_indices List of indices for selecting remote descriptors.
+    @param remote_indices List or numpy array (dtype=int32) of indices for selecting remote descriptors.
     @param notif_msg Optional notification message to send after transfer is done.
            notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
     @param backends Optional list of backend names to limit which backends NIXL can use.
@@ -379,9 +381,9 @@ class nixl_agent:
         self,
         operation: str,
         local_xfer_side: nixl_prepped_dlist_handle,
-        local_indices: list[int],
+        local_indices: Union[list[int], np.ndarray],
         remote_xfer_side: nixl_prepped_dlist_handle,
-        remote_indices: list[int],
+        remote_indices: Union[list[int], np.ndarray],
         notif_msg: bytes = b"",
         backends: list[str] = [],
         skip_desc_merge: bool = False,
@@ -747,7 +749,9 @@ class nixl_agent:
             a) list of 3 element tuples (address, len, device ID) alongside a mandatory memory type
             b) a tensor
             c) a list of tensors
-            d) passes along if an xfer_dlist is given.
+            d) a Nx3 2D numpy array, each row defines a single descriptor (address, len, device ID),
+               alongside a mandatory memory type
+            e) passes along if an xfer_dlist is given.
 
     @param descs List of any of the above types
     @param mem_type Optional memory type necessary for (a).
@@ -780,6 +784,19 @@ class nixl_agent:
             else:
                 print("3-tuple list needed for transfer")
                 new_descs = None
+        elif isinstance(descs, np.ndarray):
+            if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
+                new_descs = nixlBind.nixlXferDList(
+                    self.nixl_mems[mem_type], descs, is_sorted
+                )
+            elif mem_type is None:
+                print("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                print(
+                    "Nx3 shape required for transfer descriptor list from numpy array"
+                )
+                new_descs = None
         elif isinstance(descs, torch.Tensor):
             mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
             base_addr = descs.data_ptr()
@@ -794,7 +811,7 @@ class nixl_agent:
             )
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
-            dlist = [(0, 0, 0)] * len(descs)
+            dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
                 if descs[i].device != tensor_type:
@@ -804,7 +821,7 @@ class nixl_agent:
                 gpu_id = descs[i].get_device()
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
-                dlist[i] = (base_addr, region_len, gpu_id)
+                dlist[i, :] = (base_addr, region_len, gpu_id)
             mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
             new_descs = nixlBind.nixlXferDList(
                 self.nixl_mems[mem_type], dlist, is_sorted
@@ -819,7 +836,9 @@ class nixl_agent:
             a) list of 4 element tuples (address, len, device ID, meta info) alongside a mandatory memory type
             b) a tensor
             c) a list of tensors
-            d) passes along if a reg_dlist is given.
+            d) a Nx3 2D numpy array, each row defines a single descriptor (address, len, device ID),
+               alongside a mandatory memory type. Empty meta info will be considered for each descriptor.
+            e) passes along if a reg_dlist is given.
 
     @param descs List of any of the above types
     @param mem_type Optional memory type necessary for (a).
@@ -852,6 +871,19 @@ class nixl_agent:
             else:
                 print("4-tuple list needed for registration")
                 new_descs = None
+        elif isinstance(descs, np.ndarray):
+            if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
+                new_descs = nixlBind.nixlRegDList(
+                    self.nixl_mems[mem_type], descs, is_sorted
+                )
+            elif mem_type is None:
+                print("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                print(
+                    "Nx3 shape required for transfer descriptor list from numpy array"
+                )
+                new_descs = None
         elif isinstance(descs, torch.Tensor):
             mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
             base_addr = descs.data_ptr()
@@ -866,7 +898,7 @@ class nixl_agent:
             )
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
-            dlist = [(0, 0, 0, "")] * len(descs)
+            dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
                 if descs[i].device != tensor_type:
@@ -876,7 +908,7 @@ class nixl_agent:
                 gpu_id = descs[i].get_device()
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
-                dlist[i] = (base_addr, region_len, gpu_id, "")
+                dlist[i, :] = (base_addr, region_len, gpu_id)
             mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
             new_descs = nixlBind.nixlRegDList(
                 self.nixl_mems[mem_type], dlist, is_sorted
