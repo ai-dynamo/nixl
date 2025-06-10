@@ -150,7 +150,7 @@ show_build_options() {
 
 show_help() {
     echo "usage: build-container.sh"
-    echo "  [--base-image base image]"
+    echo "  [--base base image]"
     echo "  [--base-image-tag base image tag]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
