@@ -109,7 +109,7 @@ RUN cd /usr/local/src && \
      make -j install-strip &&        \
      ldconfig
 
-ENV DOCA_REPO_LINK=https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/x86_64
+ENV DOCA_REPO_LINK=https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/$ARCH
 
 RUN LOCAL_GPG_KEY_PATH="/usr/share/keyrings/mellanox-archive-keyring.gpg" \
     && curl -fsSL ${DOCA_REPO_LINK}/GPG-KEY-Mellanox.pub | gpg --dearmor | tee ${LOCAL_GPG_KEY_PATH} \
