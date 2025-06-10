@@ -735,14 +735,15 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     if (extra_params && extra_params->hasNotif) {
         opt_args.notifMsg = extra_params->notifMsg;
         opt_args.hasNotif = true;
+
+        if (extra_params->customParam.length() > 0)
+            opt_args.customParam = extra_params->customParam;
     }
 
     if (opt_args.hasNotif && (!handle->engine->supportsNotif())) {
         delete handle;
         return NIXL_ERR_BACKEND;
     }
-
-    opt_args.customParam = extra_params->customParam;
 
     handle->remoteAgent = remote_agent;
     handle->backendOp   = operation;

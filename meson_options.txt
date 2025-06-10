@@ -16,7 +16,6 @@
 option('ucx_path', type: 'string', value: '', description: 'Path to UCX install')
 option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD Headers')
 option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD Libraries')
-option('disable_gpunetio_backend', type : 'boolean', value : false, description : 'disable DOCA GPUNetIO backend')
 option('disable_gds_backend', type : 'boolean', value : false, description : 'disable gds backend')
 option('disable_mooncake_backend', type : 'boolean', value : false, description : 'disable mooncake backend')
 option('install_headers', type : 'boolean', value : true, description : 'install headers')
