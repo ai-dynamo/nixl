@@ -732,9 +732,11 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    if (extra_params && extra_params->hasNotif) {
-        opt_args.notifMsg = extra_params->notifMsg;
-        opt_args.hasNotif = true;
+    if (extra_params) {
+        if (extra_params->hasNotif) {
+            opt_args.notifMsg = extra_params->notifMsg;
+            opt_args.hasNotif = true;
+        }
 
         if (extra_params->customParam.length() > 0)
             opt_args.customParam = extra_params->customParam;
