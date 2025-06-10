@@ -59,6 +59,7 @@ if cuda_dep.found()
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
 
+    # Please extend with your arch if not present in the list
     nvcc_flags = []
     nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
     nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']

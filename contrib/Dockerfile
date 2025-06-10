@@ -121,7 +121,7 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else ech
         mlnx-dpdk mlnx-dpdk-dev \
         doca-sdk-common doca-sdk-dma doca-sdk-dpdk-bridge \
         doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all \
-        doca-sdk-gpunetio libdoca-sdk-gpunetio-dev rdma-core
+        doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 
 RUN rm -rf build && \
     mkdir build && \

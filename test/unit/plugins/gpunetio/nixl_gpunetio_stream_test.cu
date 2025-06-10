@@ -31,7 +31,8 @@
 #define INITIATOR_VALUE 0xbb
 #define VOLATILE(x) (*(volatile typeof (x) *)&(x))
 #define INITIATOR_THRESHOLD_NS 50000 // 50us
-#define USE_NVTX 1
+
+#define DEVICE_GET_TIME(globaltimer) asm volatile("mov.u64 %0, %globaltimer;" : "=l"(globaltimer))
 
 #if USE_NVTX
 #include <nvtx3/nvToolsExt.h>
@@ -39,8 +40,6 @@
 const uint32_t colors[] =
         {0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff, 0xff00ffff, 0xffff0000, 0xffffffff};
 const int num_colors = sizeof (colors) / sizeof (uint32_t);
-
-#define DEVICE_GET_TIME(globaltimer) asm volatile("mov.u64 %0, %globaltimer;" : "=l"(globaltimer))
 
 #define PUSH_RANGE(name, cid)                              \
     {                                                      \
