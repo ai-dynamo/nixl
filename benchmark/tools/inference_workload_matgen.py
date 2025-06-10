@@ -365,6 +365,8 @@ if __name__ == "__main__":
     PREDEFINED_MODELS = {
         "llama-405b": ModelConfig(hidden_size=16384, num_layers=126, num_heads=128, num_kv_heads=8, dtype_size=2),
         "qwen3-30B": ModelConfig(hidden_size=32768, num_layers=48, num_heads=32, num_kv_heads=4, dtype_size=2),
+        "deepseek-r1-distill-llama-70b": ModelConfig(hidden_size=8192, num_layers=80, num_heads=64, num_kv_heads=8, dtype_size=2),
+        "deepseek-r1": ModelConfig(hidden_size=12288, num_layers=100, num_heads=96, num_kv_heads=12, dtype_size=2),
     }
 
     @click.group()

@@ -62,11 +62,13 @@ class SequentialCTPerftest(CTPerftest):
         self.recv_buf_by_mem_type = {}
     
     def _init_pgs(self):
+        log.debug(f"[Rank {self.my_rank}] Initializing PGs")
         for tp in self.traffic_patterns:
             log.debug(f"[Rank {self.my_rank}] Initializing PG - {len(tp.senders_ranks())} Ranks: {tp.senders_ranks()}, world size={self.world_size}")
             dist_utils.init_group(tp.senders_ranks())
 
     def _init_buffers(self):
+        log.debug(f"[Rank {self.my_rank}] Initializing buffers")
         max_src_by_mem_type = defaultdict(int)
         max_dst_by_mem_type = defaultdict(int)
 
@@ -85,14 +87,17 @@ class SequentialCTPerftest(CTPerftest):
             self.recv_buf_by_mem_type[mem_type] = NixlBuffer(size, mem_type=mem_type, nixl_agent=self.nixl_agent)
 
     def _destroy_buffers(self):
+        log.debug(f"[Rank {self.my_rank}] Destroying buffers")
         for buf in chain(self.send_buf_by_mem_type.values(), self.recv_buf_by_mem_type.values()):
             buf.destroy()
         
     def _barrier_tp(self, tp: TrafficPattern):
         """Barrier for a traffic pattern"""
+        log.debug(f"[Rank {self.my_rank}] Barrier TP {tp.id}")
         dist_utils.barrier(tp.senders_ranks())
     
     def _get_bufs(self, tp: TrafficPattern):
+        log.debug(f"[Rank {self.my_rank}] Getting buffers for TP {tp.id}")
         senders_ranks = tp.senders_ranks()
 
         send_bufs = [None for _ in range(self.world_size)]
@@ -136,22 +141,24 @@ class SequentialCTPerftest(CTPerftest):
         This method initializes and executes multiple traffic patterns simultaneously,
         measures their performance, and optionally verifies the results.
         """
-
+        log.debug(f"[Rank {self.my_rank}] Running sequential CT perftest")
         self._init_buffers()
         self._init_pgs()
         self._share_md()
 
         results: Dict[str, Any] = {
             "iterations_results": [],
-            "metadata": {"ts": time.time()},
+            "metadata": {
+                "ts": time.time(),
+                "iters": [{} for _ in range(self.n_iters)]
+                },
         }
 
-        if self.my_rank == 0:
-            log.info(f"[Rank {self.my_rank}] Preparing TPs")
         tp_handles: list[list] = []
         tp_bufs = []
 
         s = time.time()
+        log.info(f"[Rank {self.my_rank}] Preparing TPs")
         for i, tp in enumerate(self.traffic_patterns):
             handles, send_bufs, recv_bufs = self._prepare_tp(tp)
             tp_bufs.append((send_bufs, recv_bufs))
@@ -160,7 +167,7 @@ class SequentialCTPerftest(CTPerftest):
         results["metadata"]["prepare_tp_time"] = time.time() - s
 
         # Isolated mode - Measure SOL for every matrix
-        log.debug(f"[Rank {self.my_rank}] Running isolated benchmark (to get results when there is no noise)")
+        log.info(f"[Rank {self.my_rank}] Running isolated benchmark (to measure perf without noise)")
         isolated_tp_latencies: list[float] = [0 for _ in tp_handles]
 
         results["metadata"]["sol_calculation_ts"] = time.time()
@@ -190,9 +197,11 @@ class SequentialCTPerftest(CTPerftest):
             else:
                 isolated_tp_latencies.append(max(tp_lats))
 
-        log.debug(f"[Rank {self.my_rank}] Running workload benchmark")
+        log.info(f"[Rank {self.my_rank}] Running workload benchmark")
+
         # Workload mode - Measure perf of the matrices while running the full workload
         for iter_ix in range(self.n_iters):
+            iter_metadata = results["metadata"]["iters"][iter_ix]
             log.debug(f"[Rank {self.my_rank}] Running iteration {iter_ix + 1}/{self.n_iters}")
             for _ in range(self.warmup_iters): # Warmup
                 for tp_ix, handles in enumerate(tp_handles):
@@ -201,7 +210,8 @@ class SequentialCTPerftest(CTPerftest):
             tp_starts = [None for _ in tp_handles]
             tp_ends = [None for _ in tp_handles]
             dist_utils.barrier()
-            results["metadata"][f"iter_{iter_ix}_ts"] = time.time()
+
+            iter_metadata["start_ts"] = time.time()
             for tp_ix, handles in enumerate(tp_handles):
 
                 tp = self.traffic_patterns[tp_ix]
@@ -215,12 +225,16 @@ class SequentialCTPerftest(CTPerftest):
 
                 # Run TP
                 log.debug(f"[Rank {self.my_rank}] Running TP {tp_ix}/{len(tp_handles)}")
+
                 tp_starts[tp_ix] = time.time()
                 self._run_tp(handles, blocking=True)
                 tp_ends[tp_ix] = time.time()
 
                 if tp.sleep_after_launch_sec is not None:
                     time.sleep(tp.sleep_after_launch_sec)
+
+            iter_metadata["tps_start_ts"] = tp_starts.copy()
+            iter_metadata["tps_end_ts"] = tp_ends.copy()
 
             tp_starts_by_ranks = dist_utils.allgather_obj(tp_starts)
             tp_ends_by_ranks = dist_utils.allgather_obj(tp_ends)
@@ -281,14 +295,14 @@ class SequentialCTPerftest(CTPerftest):
 
         results["metadata"]["finished_ts"] = time.time()
         if json_output_path and self.my_rank == 0:
-            print(f"Saving results to {json_output_path}")
+            log.info(f"Saving results to {json_output_path}")
             with open(json_output_path, "w") as f:
                 json.dump(results, f)
 
         # Destroy
+        log.info(f"[Rank {self.my_rank}] Finished run, destroying objects")
         self._destroy(handles)
         self._destroy_buffers()
-
 
     def _write_yaml_results(
         self,

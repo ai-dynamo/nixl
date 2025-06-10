@@ -57,6 +57,7 @@ class CTPerftest:
 
     def _share_md(self) -> None:
         """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
+        log.debug(f"[Rank {self.my_rank}] Sharing MD")
         md = self.nixl_agent.get_agent_metadata()
         mds = dist_utils.allgather_obj(md)
         for other_rank, metadata in enumerate(mds):
@@ -136,15 +137,17 @@ class CTPerftest:
 
         send_bufs, recv_bufs = self._get_bufs(tp)
 
+        log.debug(f"[Rank {self.my_rank}] Sharing recv buf descs")
         dst_bufs_descs = self._share_recv_buf_descs(recv_bufs)
         handles: list[NixlHandle] = []
         for other, buf in enumerate(send_bufs):
             if buf is None:
                 continue
 
+            log.debug(f"[Rank {self.my_rank}] Initializing xfer handle - Getting xfer desc for rank {other}")
             xfer_desc = self.nixl_agent.get_xfer_descs(buf)
 
-            log.debug(f"[Rank {self.my_rank}] Initializing xfer with rank {other} - xfer_desc={xfer_desc}")
+            log.debug(f"[Rank {self.my_rank}] Initializing xfer handle - init xfer with rank {other}")
             handle = self.nixl_agent.initialize_xfer(
                 "WRITE",
                 xfer_desc,
@@ -264,6 +267,7 @@ class CTPerftest:
         Returns:
             Total execution time in seconds
         """
+        log.debug(f"[Rank {self.my_rank}] Running CT perftest")
         self._init_buffers()
         self._init_pgs()
         self._share_md()
