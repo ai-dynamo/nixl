@@ -54,6 +54,30 @@ else
     include_directories : include_directories(cuda_inc_path))
 endif
 
+if cuda_dep.found()
+    add_languages('CUDA')
+    cuda = import('unstable-cuda')
+    nvcc = meson.get_compiler('cuda')
+
+    # Please extend with your arch if not present in the list
+    nvcc_flags = []
+    nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
+    nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
+    add_project_arguments(nvcc_flags, language: 'cuda')
+
+    # Refer to https://mesonbuild.com/Cuda-module.html
+    add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
+    add_project_arguments('-rdc=true', language: 'cuda')
+
+    nvcc_flags_link = []
+    nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
+    nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
+    add_project_link_arguments(nvcc_flags_link, language: 'cuda')
+endif
+
+# DOCA
+doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
+
 # Check for etcd-cpp-api - use multiple methods for discovery
 etcd_dep = dependency('etcd-cpp-api', required : false)
 etcd_inc_path = get_option('etcd_inc_path')
@@ -94,6 +118,7 @@ endif
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
+
 
 # Configure NDEBUG for release builds
 if get_option('buildtype') == 'release'
