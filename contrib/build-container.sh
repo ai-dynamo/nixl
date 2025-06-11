@@ -80,6 +80,14 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --dockerfile)
+            if [ "$2" ]; then
+                DOCKER_FILE="$2"
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --python-versions)
             if [ "$2" ]; then
                 WHL_PYTHON_VERSIONS=$2
@@ -150,6 +158,7 @@ show_help() {
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-upstream use ucx master branch]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
+    echo "  [--dockerfile path to a dockerfile to use]"
     exit 0
 }
 

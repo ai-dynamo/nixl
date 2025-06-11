@@ -71,6 +71,7 @@ using json = nlohmann::json;
 #define XFERBENCH_BACKEND_UCX_MO "UCX_MO"
 #define XFERBENCH_BACKEND_GDS "GDS"
 #define XFERBENCH_BACKEND_POSIX "POSIX"
+#define XFERBENCH_BACKEND_GPUNETIO "GPUNETIO"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -128,6 +129,7 @@ class xferBenchConfig {
         static std::string device_list;
         static std::string etcd_endpoints;
         static std::string gds_filepath;
+        static bool enable_vmm;
         static int num_files;
         static std::string posix_api_type;
         static std::string posix_filepath;
@@ -136,7 +138,7 @@ class xferBenchConfig {
         static int gds_batch_limit;
         static std::string output_format;
         static std::string output_json_file;
-
+        static std::string gpunetio_device_list;
         static int loadFromFlags();
         static void printConfig();
         static std::vector<std::string> parseDeviceList();
@@ -149,8 +151,14 @@ public:
     uintptr_t addr;
     size_t len;
     int devId;
+    size_t padded_size;
+    unsigned long long handle;
 
-    xferBenchIOV(uintptr_t a, size_t l, int d) : addr(a), len(l), devId(d) {}
+    xferBenchIOV(uintptr_t a, size_t l, int d) :
+        addr(a), len(l), devId(d), padded_size(len), handle(0) {}
+
+    xferBenchIOV(uintptr_t a, size_t l, int d, size_t p, unsigned long long h) :
+        addr(a), len(l), devId(d), padded_size(p), handle(h) {}
 };
 
 class xferBenchUtils {
