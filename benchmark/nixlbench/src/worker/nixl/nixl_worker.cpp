@@ -785,13 +785,13 @@ void xferBenchNixlWorker::poll(size_t block_size) {
     /* Ensure warmup is done*/
     do {
         status = agent->getNotifs(notifs);
-    } while(skip != int(notifs["initiator"].size()) && status == NIXL_SUCCESS);
+    } while (status == NIXL_SUCCESS && skip != int(notifs["initiator"].size()));
     synchronize();
 
     /* Polling for actual iterations*/
     do {
         status = agent->getNotifs(notifs);
-    } while (total_iter != int(notifs["initiator"].size()) && status == NIXL_SUCCESS);
+    } while (status == NIXL_SUCCESS && total_iter != int(notifs["initiator"].size()));
     synchronize();
 }
 
