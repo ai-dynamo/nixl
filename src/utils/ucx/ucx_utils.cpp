@@ -28,9 +28,7 @@
 #include "ucx_utils.h"
 #include "common/nixl_log.h"
 
-using namespace std;
-
-nixl_status_t ucx_status_to_nixl(ucs_status_t status)
+nixl_status_t ucx_status_to_nixl(const ucs_status_t status)
 {
     if (status == UCS_OK) {
         return NIXL_SUCCESS;
@@ -176,21 +174,19 @@ nixl_status_t nixlUcxEp::disconnect_nb()
  * RKey management
  * =========================================== */
 
-int nixlUcxEp::rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey)
+nixl_status_t nixlUcxEp::rkeyImport(void* addr, const std::size_t size, nixlUcxRkey &rkey)
 {
-    ucs_status_t status;
-
-    status = ucp_ep_rkey_unpack(eph, addr, &rkey.rkeyh);
+    const ucs_status_t status = ucp_ep_rkey_unpack(eph, addr, &rkey.rkeyh);
     if (status != UCS_OK)
     {
         /* TODO: MSW_NET_ERROR(priv->net, "unable to unpack key!\n"); */
-        return -1;
+        return NIXL_ERR_BACKEND;
     }
 
-    return 0;
+    return NIXL_SUCCESS;
 }
 
-void nixlUcxEp::rkeyDestroy(nixlUcxRkey &rkey)
+void nixlUcxEp::rkeyDestroy(const nixlUcxRkey &rkey)
 {
     ucp_rkey_destroy(rkey.rkeyh);
 }
@@ -200,9 +196,9 @@ void nixlUcxEp::rkeyDestroy(nixlUcxRkey &rkey)
  * =========================================== */
 
 nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
-                                void* hdr, size_t hdr_len,
-                                void* buffer, size_t len,
-                                uint32_t flags, nixlUcxReq &req)
+                                void* hdr, std::size_t hdr_len,
+                                void* buffer, std::size_t len,
+                                std::uint32_t flags, nixlUcxReq &req)
 {
     ucs_status_ptr_t request;
     ucp_request_param_t param = {0};
@@ -224,9 +220,9 @@ nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
  * Data transfer
  * =========================================== */
 
-nixl_status_t nixlUcxEp::read(uint64_t raddr, nixlUcxRkey &rk,
+nixl_status_t nixlUcxEp::read(std::uint64_t raddr, nixlUcxRkey &rk,
                               void *laddr, nixlUcxMem &mem,
-                              size_t size, nixlUcxReq &req)
+                              std::size_t size, nixlUcxReq &req)
 {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
@@ -250,8 +246,8 @@ nixl_status_t nixlUcxEp::read(uint64_t raddr, nixlUcxRkey &rk,
 }
 
 nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
-                               uint64_t raddr, nixlUcxRkey &rk,
-                               size_t size, nixlUcxReq &req)
+                               std::uint64_t raddr, nixlUcxRkey &rk,
+                               std::size_t size, nixlUcxReq &req)
 {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
@@ -274,7 +270,7 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
-nixl_status_t nixlUcxEp::estimateCost(size_t size,
+nixl_status_t nixlUcxEp::estimateCost(std::size_t size,
                                       std::chrono::microseconds &duration,
                                       std::chrono::microseconds &err_margin,
                                       nixl_cost_t &method)
@@ -335,7 +331,7 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
 }
 
 nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
-                               size_t req_size,
+                               std::size_t req_size,
                                nixlUcxContext::req_cb_t init_cb,
                                nixlUcxContext::req_cb_t fini_cb,
                                bool prog_thread,
@@ -381,7 +377,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     /* If requested, restrict the set of network devices */
     if (devs.size()) {
         /* TODO: check if this is the best way */
-        string dev_str = "";
+        std::string dev_str = "";
         unsigned int i;
         for(i=0; i < devs.size() - 1; i++) {
             dev_str = dev_str + devs[i] + ":1,";
