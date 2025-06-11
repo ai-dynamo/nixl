@@ -236,7 +236,7 @@ private:
     return {
         { "ucx_devices", "" },
         { "ucx_error_handling_mode", "none" }, // or "peer"
-        { "num_workers", "1" },
+        { "num_workers", "0" },
         { "num_shared_workers", "1" }
     };
 }

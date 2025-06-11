@@ -559,8 +559,11 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         devs = str_split((*custom_params)["device_list"], ", ");
 
     const auto num_workers_iter = custom_params->find("num_workers");
-    if (num_workers_iter == custom_params->end() || !absl::SimpleAtoi(num_workers_iter->second, &numWorkers))
-        numWorkers = 1;
+    if (num_workers_iter == custom_params->end() ||
+        !absl::SimpleAtoi(num_workers_iter->second, &numWorkers)) {
+        // Default to have 1 shared worker and 0 dedicated worker
+        numWorkers = 0;
+    }
 
     const auto num_shared_iter = custom_params->find("num_shared_workers");
     if (num_shared_iter == custom_params->end() ||
