@@ -395,4 +395,12 @@ void nixlPluginManager::registerBuiltinPlugins() {
         extern nixlBackendPlugin* createStaticPosixPlugin();
         registerStaticPlugin("POSIX", createStaticPosixPlugin);
 #endif // STATIC_PLUGIN_POSIX
+
+#ifdef STATIC_PLUGIN_GPUNETIO
+#ifndef DISABLE_GPUNETIO_BACKEND
+        extern nixlBackendPlugin* createStaticGpunetioPlugin();
+        registerStaticPlugin("GPUNETIO", createStaticGpunetioPlugin);
+#endif // DISABLE_GPUNETIO_BACKEND
+#endif // STATIC_PLUGIN_GPUNETIO
+
 }
