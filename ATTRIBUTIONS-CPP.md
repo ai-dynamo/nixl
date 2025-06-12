@@ -5114,7 +5114,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## libunwind - 1.3.2
 
 - **Repository URL**: https://github.com/libunwind/libunwind
-- **License URL**: https://github.com/libunwind/libunwind/blob/master/LICENSE
+- **License URL**: https://github.com/libunwind/libunwind/blob/v1.3.2/LICENSE
 - **License name**: MIT
 ### License Text:
 ```Permission is hereby granted, free of charge, to any person obtaining
