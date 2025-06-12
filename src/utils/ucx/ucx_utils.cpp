@@ -411,8 +411,10 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     ucx_modify_config(ucp_config, "RNDV_THRESH", "inf");
 
     // Set 4 RMA lanes for UCX 1.20 and above, and 2 otherwise
+    unsigned major_version, minor_version, release_number;
+    ucp_get_version(&major_version, &minor_version, &release_number);
     ucx_modify_config(ucp_config, "MAX_RMA_RAILS",
-                      (UCP_API_MAJOR >= 1 && UCP_API_MINOR >= 20) ? "4" : "2");
+                      (major_version >= 1 && minor_version >= 20) ? "4" : "2");
 
     status = ucp_init(&ucp_params, ucp_config, &ctx);
     if (status != UCS_OK) {
