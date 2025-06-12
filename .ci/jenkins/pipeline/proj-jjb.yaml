@@ -155,8 +155,9 @@
             conf_file=.ci/jenkins/lib/nixlbench-container-build-matrix.yaml
     description: >
       <b>NIXLBench container build</b><br/>
-      • Nightly: automatically builds and pushes x86_64 &amp; aarch64 images from <code>main</code>/<code>master</code><br/>
-      • Manual: build any NIXL/UCX version or custom tag via parameters.<br/>
+      • Builds and pushes x86_64 &amp; aarch64 images with any NIXL/UCX version combination<br/>
+      • Optional latest tag update via <code>UPDATE_LATEST</code> parameter<br/>
+      • All images pushed to unified path: <code>verification/nixlbench/</code><br/>
       <br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: false
@@ -169,11 +170,11 @@
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
-          description: "NIXL version to use (tag like v1.0.0, branch name, or commit hash)"
+          description: "NIXL version to use (tag like 0.3.1, branch name, or commit hash)"
       - string:
           name: "UCX_VERSION"
           default: "master"
-          description: "UCX version to use (tag like v1.15.0, branch name, or commit hash)"
+          description: "UCX version to use (tag like v1.19.0, branch name, or commit hash)"
       - string:
           name: "BASE_IMAGE"
           default: "nvcr.io/nvidia/cuda-dl-base"
@@ -186,17 +187,15 @@
           name: "TAG_SUFFIX"
           default: ""
           description: >
-            Optional suffix to append to the automatically generated tag.<br/>
-            Leave blank for standard tagging.<br/><br/>
-            <b>All builds follow format:</b><br/>
-            <code>&lt;base-image-tag&gt;-nixl-&lt;nixl-version&gt;-ucx-&lt;ucx-version&gt;[-&lt;suffix&gt;]-&lt;arch&gt;</code><br/><br/>
-            <b>Examples (versions truncated to 8 chars):</b><br/>
-            &nbsp;&nbsp;• Nightly&nbsp;→&nbsp;<code>25.03-cuda12.8-devel-ubuntu24.04-nixl-main-ucx-master-x86_64</code><br/>
-            &nbsp;&nbsp;• Custom&nbsp;→&nbsp;<code>25.04-cuda12.9-devel-ubuntu24.04-nixl-perf-ucx-v1-19-0-aarch64</code><br/>
-            &nbsp;&nbsp;• With suffix "staging"&nbsp;→&nbsp;<code>25.03-cuda12.8-devel-ubuntu24.04-nixl-main-ucx-master-staging-x86_64</code><br/>
-            &nbsp;&nbsp;• SHA1 commits&nbsp;→&nbsp;<code>25.03-cuda12.8-devel-ubuntu24.04-nixl-a1b2c3d4-ucx-f9e8d7c6-x86_64</code><br/><br/>
-            Final image will be pushed to:<br/>
-            <code>urm.nvidia.com/sw-nbu-swx-nixl-docker/verification/nixlbench:&lt;tag&gt;</code>
+            Optional tag suffix. Does not apply if update latest is set. Tag format:<br/>
+            <code>&lt;base-image-tag&gt;-nixl-&lt;nixl-version&gt;-ucx-&lt;ucx-version&gt;-&lt;arch&gt;[-&lt;suffix&gt;]</code><br/>
+      - bool:
+          name: "UPDATE_LATEST"
+          default: false
+          description: >
+            Update the latest tag for this architecture.<br/>
+            When enabled, also creates: <code>&lt;base-image-tag&gt;-&lt;arch&gt;-latest</code><br/>
+            Example: <code>25.03-cuda12.8-devel-ubuntu24.04-aarch64-latest</code><br/>
     # SCM configuration
     pipeline-scm:
       scm:
