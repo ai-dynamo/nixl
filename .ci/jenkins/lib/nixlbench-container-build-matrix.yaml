@@ -30,7 +30,8 @@ matrix:
 
 # Configuration
 env:
-  ARTIFACTORY_REGISTRY: "urm.nvidia.com/sw-nbu-swx-nixl-docker/verification"
+  ARTIFACTORY_HOST: "urm.nvidia.com"
+  ARTIFACTORY_REPO_PATH: "sw-nbu-swx-nixl-docker-local/verification/nixlbench"
   BUILD_SCRIPT: "benchmark/nixlbench/contrib/build.sh"
   LOCAL_TAG_BASE: "nixlbench:build-"
 
@@ -52,17 +53,13 @@ steps:
     parallel: false
     containerSelector: "{ name: 'podman.*' }"
     run: |
-      echo "=== NIXLBench Container Build Setup ==="
-      echo "NIXL: ${NIXL_VERSION}, UCX: ${UCX_VERSION}, Arch: ${arch}"
-
       # Setup podman and dependencies
       rm -f /etc/containers/storage.conf
       podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
-      yum install -y git
+      yum install -y git gettext
 
       # Clone UCX source
-      echo "Cloning UCX (${UCX_VERSION})..."
       git clone https://github.com/openucx/ucx.git ucx-src
       cd ucx-src && git checkout "${UCX_VERSION}"
 
@@ -81,27 +78,56 @@ steps:
         --arch "${arch}" \
         --no-cache
 
+      # Generate version info file from template
+      export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+             NIXL_VERSION UCX_VERSION BASE_IMAGE BASE_IMAGE_TAG arch \
+             BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE
+      envsubst < .ci/jenkins/lib/nixlbench-version-info.json.template > version-info.json
+
+      # Add version info to the image
+      CONTAINER_ID=$(docker create "${LOCAL_TAG}")
+      docker cp version-info.json "${CONTAINER_ID}:/opt/nixlbench-version.json"
+      docker commit "${CONTAINER_ID}" "${LOCAL_TAG}"
+
   - name: Push
     parallel: false
     containerSelector: "{ name: 'podman.*' }"
     credentialsId: 'svc-nixl-artifactory-token'
     run: |
       LOCAL_TAG="${LOCAL_TAG_BASE}${arch}"
+      ARTIFACTORY_REGISTRY="${ARTIFACTORY_HOST}/${ARTIFACTORY_REPO_PATH}"
 
-      # Sanitize and shorten versions for Docker tag compatibility
+      # Sanitize versions for Docker tag compatibility (replace / and truncate)
       CLEAN_NIXL=${NIXL_VERSION//\//-}
-      CLEAN_NIXL=${CLEAN_NIXL:0:8}
+      CLEAN_NIXL=${CLEAN_NIXL:0:14}
       CLEAN_UCX=${UCX_VERSION//\//-}
       CLEAN_UCX=${CLEAN_UCX:0:8}
-
-      # Build complete tag: base-nixl-version-ucx-version[-suffix]-arch
-      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${CLEAN_NIXL}-ucx-${CLEAN_UCX}${TAG_SUFFIX:+-${TAG_SUFFIX}}-${arch}"
 
       # Login to Artifactory
       echo "$ARTIFACTORY_PASSWORD" | docker login "${ARTIFACTORY_REGISTRY}" -u "$ARTIFACTORY_USERNAME" --password-stdin
 
-      # Tag and push
-      docker tag "${LOCAL_TAG}" "${ARTIFACTORY_REGISTRY}/nixlbench:${TAG_NAME}"
-      docker push "${ARTIFACTORY_REGISTRY}/nixlbench:${TAG_NAME}"
+      # Prepare Artifactory API and image metadata
+      ARTIFACTORY_API="https://${ARTIFACTORY_HOST}/artifactory/api/storage/${ARTIFACTORY_REPO_PATH}"
+      IMAGE_PROPERTIES="NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${UCX_VERSION};arch=${arch};"
+      IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};"
+      IMAGE_PROPERTIES+="BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
+      IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
 
-      echo "Final tag: ${TAG_NAME}"
+      # Function to tag, push, and set properties
+      tag_push_set_properties() {
+        local target_tag="$1"
+        echo "Creating tag: ${target_tag}"
+        docker tag "${LOCAL_TAG}" "${ARTIFACTORY_REGISTRY}:${target_tag}"
+        docker push "${ARTIFACTORY_REGISTRY}:${target_tag}"
+        curl -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
+          "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
+      }
+
+      # Always create standard tag: base-nixl-version-ucx-version-arch[-suffix]
+      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${CLEAN_NIXL}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+      tag_push_set_properties "${TAG_NAME}"
+
+      # Check if latest tag should be updated
+      if [[ "${UPDATE_LATEST}" == "true" ]]; then
+        tag_push_set_properties "${BASE_IMAGE_TAG}-${arch}-latest"
+      fi
