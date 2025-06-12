@@ -4689,6 +4689,126 @@ This Agreement and any exhibits incorporated into this Agreement constitute the 
 (v. September 3, 2019)
 
 ```
+## NVIDIA DOCA - 3.0.0
 
+- **Repository URL**: https://developer.nvidia.com/doca-downloads
+- **License URL**: https://docs.nvidia.com/doca/sdk/doca+eula/index.html
+- **License name**: NVIDIA DOCA EULA
+### License Text:
+```
+This NVIDIA DOCA License agreement (“Agreement) is a legal agreement between you and Mellanox Technologies, Ltd. ("NVIDIA") and governs the use of the NVIDIA DOCA software and related materials provided under this Agreement (“SOFTWARE”).
+
+This Agreement can be accepted only by an adult of legal age of majority in the country in which the SOFTWARE is used. If you are entering this Agreement on behalf of a company or other legal entity, you represent that you have legal authority and “you” will mean the entity you represent.
+
+By using the SOFTWARE, you affirm that you have reached the legal age of majority, you accept the terms of this Agreement, and you take legal and financial responsibility for the actions of your permitted users.
+
+You agree to use the SOFTWARE only for purposes that are permitted by (a) this Agreement, and (b) any applicable law, regulation or generally accepted practices or guidelines in the relevant jurisdictions.
+
+1. License. Subject to the terms of this Agreement, NVIDIA hereby grants you a non-exclusive, non-transferable license, without the right to sublicense (except as expressly provided in this Agreement) to:
+
+Install and use the SOFTWARE,
+
+Modify and create derivative works of sample or reference source code delivered in the SOFTWARE (“Derivatives”),
+
+Use the provided SOFTWARE to develop your own implementation of the API, provided that such implementation does not modify NVIDIA’s APIs, and
+
+Distribute the following portions of the SOFTWARE as incorporated in object code format into a software application, subject to the distribution requirements indicated in Section 2 of this Agreement: API headers, drivers, libraries and sample applications.
+
+BlueField SNAP software and materials, if delivered to you under this Agreement, are licensed only for use in BlueField DPUs and SuperNICs (“Networking Platform”), Per Networking Platform. “Per Networking Platform” license means a license that allows concurrent authorized users to use the SOFTWARE in a single BlueField Networking Platform under the license, and in some cases the SKU or documentation will indicate the maximum number of concurrent authorized users or virtual machines per Networking Platform. Notwithstanding contrary terms in Section 1 above, you may not use or copy BlueField SNAP software without the necessary licenses.
+
+2. Distribution Requirements. These are the distribution requirements for you to exercise the grants above:
+
+An application must have material additional functionality, beyond the included portions of the SOFTWARE.
+
+The distributable portions of the Software shall only be accessed by your application.
+
+The following notice shall be included in distributed modifications and derivative works of source code: “This software contains source code provided by Mellanox Technologies Ltd.”
+
+Unless you have a separate agreement in writing with NVIDIA , any developer tools provided under this Agreement are delivered for your internal use only.
+
+You agree to distribute the SOFTWARE subject to the terms at least as protective as the terms of this Agreement, including (without limitation) terms relating to the license grant, license restrictions and protection of NVIDIA’s intellectual property rights. Additionally, you agree that you will protect the privacy, security and legal rights of your application users.
+
+You agree to notify NVIDIA in writing of any known or suspected distribution or use of the SOFTWARE not in compliance with the requirements of this Agreement, and to enforce the terms of your agreements with respect to the distributed portions of the SOFTWARE.
+
+3. Authorized Users. You may allow employees and contractors of your entity or of your subsidiary(ies) to access and use the SOFTWARE from your secure network to perform work on your behalf. If you are an academic institution you may allow users enrolled or employed by the academic institution to access and use the SOFTWARE from your secure network. You are responsible for the compliance with the terms of this Agreement by your authorized users. Any act or omission that if committed by you would constitute a breach of this Agreement will be deemed to constitute a breach of this Agreement if committed by your authorized users.
+
+4. Limitations. Your license to use the Software and Derivatives is restricted as stated in this Section 4 (“License Restrictions”). You will cooperate with NVIDIA and, upon NVIDIA’s written request, you will confirm in writing and provide reasonably requested information to verify your compliance with the terms of this Agreement.
+
+The SOFTWARE is licensed for you to develop applications only for their use in systems with NVIDIA DPUs, NVIDIA SuperNICs or NVIDIA adapter products or related NVIDIA adapter products. Except as provided in this Agreement, you may not modify, reverse engineer, decompile or disassemble, or remove copyright or other proprietary notices from any portion of the SOFTWARE or copies of the SOFTWARE.
+
+You may not distribute or disclose to third parties the output of the SOFTWARE where the output reveals functionality or performance data pertinent to NVIDIA hardware or software products, the results of benchmarking, competitive analysis, regression or performance data relating to the SOFTWARE without the prior written permission from NVIDIA .
+
+Except as expressly provided in this Agreement, you may not copy, sell, rent, sublicense, transfer, distribute or otherwise make available to others (except as stated in Section 3 (“Authorized Users”), modify, or create derivative works of any portion of the SOFTWARE or Derivates. For clarity, unless you have an agreement with NVIDIA for this purpose you may not distribute or sublicense the SOFTWARE as a stand-alone product.
+
+Unless you have an agreement with NVIDIA for this purpose, you may not indicate that an application created with the SOFTWARE is sponsored or endorsed by NVIDIA.
+
+You may not bypass, disable, or circumvent any technical limitation, encryption, security, digital rights management or authentication mechanism in the SOFTWARE.
+
+You may not use the SOFTWARE or Derivatives in any manner that would cause them to become subject to an open source software license subject to the terms in the Section 8 below (“Components Under Other Licenses”).
+
+You may not replace any NVIDIA software components in the Software that are governed by this Agreement with other software that implements NVIDIA APIs.
+
+You may not reverse engineer, decompile or disassemble any portion of the output generated using Software elements for the purpose of translating such output artifacts to target a non-NVIDIA platform.
+
+You may not use the SOFTWARE in or with any system or application where the use or failure of such system or application developed or deployed with SOFTWARE could result in injury, death or catastrophic damage (“Mission Critical Applications”). NVIDIA will not be liable to you or any third party, in whole or in part, for any claims or damages arising from uses in Mission Critical Applications.
+
+You agree to defend, indemnify and hold harmless NVIDIA and its affiliates, and their respective employees, contractors, agents, officers and directors, from and against any and all claims, damages, obligations, losses, liabilities, costs or debt, fines, restitutions and expenses (including but not limited to attorney’s fees and costs incident to establishing the right of indemnification) arising out of or related to your use of the SOFTWARE outside of the scope of this Agreement, or not in compliance with its terms.
+
+5. Confidentiality. You agree that you will not use, nor authorize others to use, NVIDIA Confidential Information, except as necessary for the performance of this Agreement, and that you will not disclose NVIDIA Confidential Information to any third party, except to permitted users under this Agreement that have a need to know such Confidential Information for the purpose of this Agreement, provided that each such recipient is subject to a written agreement that includes confidentiality obligations consistent with these terms. You will protect the NVIDIA Confidential Information with at least the same degree of care that you use to protect your own similar confidential and proprietary information, but no less than a reasonable degree of care. “Confidential Information” means the Software including its features and functionality, output, and any results of benchmarking or other competitive analysis or regression or performance data relating to the Software.
+
+6. Updates NVIDIA may, at its option, make available patches, workarounds or other updates to this SOFTWARE. Unless the updates are provided with their separate governing terms, they are deemed part of the SOFTWARE licensed to you as provided in this Agreement. You agree that the form and content of the SOFTWARE that NVIDIA provides may change without prior notice to you.
+
+7. Pre-Release Versions. SOFTWARE versions identified as alpha, beta, preview, early access or otherwise as pre-release may not be fully functional, may contain errors or design flaws, and may have reduced or different security, privacy, availability, and reliability standards relative to commercial versions of NVIDIA software and materials. You may use a pre-release SOFTWARE version at your own risk, understanding that these versions are not intended for use in production or business-critical systems. NVIDIA may choose not to make available a commercial version of any pre-release SOFTWARE. NVIDIA may also choose to abandon development and terminate the availability of a pre-release SOFTWARE at any time without liability.
+
+8. Components Under Other Licenses. The Software may include or be distributed with components provided with separate legal notices or terms that accompany the components, such as open source software licenses and other license. The components are subject to the applicable other licenses, including any proprietary notices, disclaimers, requirements and extended use rights; except that this Agreement will prevail regarding the use of third-party open source software, unless a third-party open source software license requires its license terms to prevail. Open source software license means any software, data or documentation subject to any license identified as an open source license by the Open Source Initiative (http://opensource.org), Free Software Foundation (http://www.fsf.org) or other similar open source organization or listed by the Software Package Data Exchange (SPDX) Workgroup under the Linux Foundation (http://www.spdx.org).
+
+9. Ownership.
+
+9.1 NVIDIA Ownership. The Software, including all intellectual property rights, is and will remain the sole and exclusive property of NVIDIA or its licensors. Except as expressly granted in this Agreement, (i) NVIDIA reserves all rights, interests and remedies in connection with the Software and (ii) no other license or right is granted to you by implication, estoppel or otherwise.
+
+9.2 Your Ownership. Subject to the rights of NVIDIA and its suppliers in the SOFTWARE, which continue to be licensed as stated in this Agreement, even when incorporated in your products or services and the extent permitted by applicable law, as between you and NVIDIA, you hold all rights, title and interest in and to your applications and your Derivatives you develop as permitted in this Agreement including their respective intellectual property rights.
+
+10. Feedback. You may, but are not obligated to, provide suggestions, requests, fixes, modifications, enhancements or other feedback regarding or in connection with your use of the Software (collectively, “Feedback”). Feedback, even if designated as confidential by you, will not create any confidentiality obligation for NVIDIA or its affiliates. If you provide Feedback, you hereby grant NVIDIA , its affiliates and its designees a non-exclusive, perpetual, irrevocable, sublicensable, worldwide, royalty-free, fully paid-up and transferable license, under your intellectual property rights, to publicly perform, publicly display, reproduce, use, make, have made, sell, offer for sale, distribute (through multiple tiers of distribution), import, create derivative works of and otherwise commercialize and exploit the Feedback at NVIDIA’s discretion. You will not give Feedback (i) that you have reason to believe is subject to any restriction that impairs the exercise of the grant stated in this section, such as third-party intellectual property rights or (ii) subject to license terms which seek to require any product incorporating or developed using such Feedback, or other intellectual property of NVIDIA or its affiliates, to be licensed to or otherwise shared with any third party.
+
+11. DISCLAIMER OF WARRANTIES. THE SOFTWARE IS PROVIDED by NVIDIA AS-IS and with all faults. TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW NVIDIA AND ITS AFFILIATES EXPRESSLY DISCLAIM ALL WARRANTIES and Representations, WHETHER EXPRESS, IMPLIED OR STATUTORY, INCLUDING without limitation, WARRANTIES OF TITLE, MERCHANTABILITY, NON-INFRINGEMENT, OR FITNESS FOR A PARTICULAR PURPOSE. Without limiting the foregoing, NVIDIA DOES NOT WARRANT THAT THE SOFTWARE WILL MEET YOUR REQUIREMENTS; THAT ANY DEFECTS OR ERRORS WILL BE CORRECTED; THAT ANY CERTAIN CONTENT WILL BE AVAILABLE; OR THAT THE SOFTWARE IS FREE OF VIRUSES OR OTHER HARMFUL COMPONENTS. NO INFORMATION OR ADVICE GIVEN BY NVIDIA WILL IN ANY WAY INCREASE THE SCOPE OF ANY WARRANTY EXPRESSLY PROVIDED IN THIS AGREEMENT.
+
+12. LIMITATIONS OF LIABILITY.
+
+12.1 Disclaimers. TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, in no event will NVIDIA AND ITS AFFILIATES BE LIABLE FOR ANY (I) Indirect, SPECIAL, INCIDENTAL, PUNITIVE OR CONSEQUENTIAL DAMAGES, OR (II) Damages for the (A) COSTS OF PROCURING SUBSTITUTE PRODUCTS or (B) LOSS of PROFITS, Revenues, USE, DATA OR GOODWILL ARISING OUT OF OR related to This Agreement WHETHER BASED UPON BREACH OF CONTRACT, TORT (INCLUDING NEGLIGENCE), Strict LIABILITY OR otherwise AND EVEN IF NVIDIA HAS PREVIOUSLY BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES and even if a Party’s remedies fail their essential purpose.
+
+12.2 Damages Cap. Additionally, to the maximum extent permitted by applicable law, NVIDIA’S AND ITS AFFILIATES TOTAL CUMULATIVE Aggregate LIABILITY for any and all liabilities, obligations or claims ARISING OUT OF THIS Agreement will not EXCEED US$10.00.
+
+13. Your Privacy: Collection and Use of Information.
+
+13.1 Privacy Policy. Please review the NVIDIA Privacy Policy, located at https://www.nvidia.com/en-us/about-nvidia/privacy-policy, which explains NVIDIA’s policy for collecting and using data, as well as visit the NVIDIA Privacy Center, located at https://www.nvidia.com/en-us/privacy-center, to manage your consent and privacy preferences.
+
+13.2 Collection Purposes. NVIDIA may collect certain personal information, such as your name and email address or those of your authorized users, and other information necessary to authenticate and enable you or your authorized users’ access to the Software. Where appropriate you will disclose to, and obtain any necessary consent from, your authorized users to allow NVIDIA to collect such information.
+
+13.3 Third Party Privacy Practices. The Software may contain links to third party websites and services. NVIDIA encourages you to review the privacy statements on those sites and services that you choose to visit to understand how they may collect, use and share your data. NVIDIA is not responsible for the privacy statements or practices of third-party sites or services.
+
+14. Termination. This Agreement will terminate automatically without notice from NVIDIA if you fail to comply with any of the terms in this Agreement or if you commence or participate in any legal proceeding against NVIDIA with respect to the SOFTWARE. Additionally, NVIDIA may terminate this Agreement with prior written notice to you, if NVIDIA decides to no longer provide the SOFTWARE in a country or, in NVIDIA’s sole discretion, the continued use of it is no longer commercially viable or creates liabilities for NVIDIA . Upon any termination of this Agreement, you must stop using and destroy all copies of the SOFTWARE. Upon written request, you will certify in writing that you have complied with your commitments under this section. Your prior distributions in accordance with this Agreement are not affected by the termination of this Agreement. All provisions of this Agreement will survive termination, except for the license granted to you.
+
+15. Governing Law and Jurisdiction. This Agreement will be governed in all respects by the laws of the United States and of the State of Delaware, without regard to the conflicts of laws principles or the United Nations Convention on Contracts for the International Sale of Goods. The state or federal courts residing in Santa Clara County, California shall have exclusive jurisdiction over any dispute or claim arising out of this Agreement and the parties irrevocably consent to personal jurisdiction in those courts; except that, either party may apply for injunctive remedies or an equivalent type of urgent legal relief in any jurisdiction.
+
+16. General.
+
+16.1 No Assignment. This Agreement and your rights and obligations thereunder may not be assigned by you by any means or operation of law without NVIDIA’s prior written consent and any attempt to do so is null and void. NVIDIA may assign, delegate, or transfer its rights and obligations under this Agreement by any means or operation of law.
+
+16.2 Trade and Compliance. You agree to comply with all applicable export, import, trade and economic sanctions laws and regulations, including U.S. Export Administration Regulations and Office of Foreign Assets Control regulations. Any violation of such laws by you will void any warranty for the associated products and technologies. You confirm (a) your understanding that export or reexport of certain NVIDIA products or technologies may require a license or other approval from appropriate authorities and (b) that you will not export or reexport any products or technology, directly or indirectly, without first obtaining any required license or other approval from appropriate authorities, (i) to any countries that are subject to any U.S. or local export restrictions (currently including, but not necessarily limited to, Belarus, Cuba, Iran, North Korea, Russia, Syria, the Region of Crimea, Donetsk People’s Republic Region and Luhansk People’s Republic Region); (ii) to any end user who you know or have reason to know will utilize them in the design, development or production of nuclear, chemical or biological weapons, missiles, rocket systems, unmanned air vehicles capable of a maximum range of at least 300 kilometers, regardless of payload, or intended for military end-use, or any weapons of mass destruction; (iii) to any end-user who has been prohibited from participating in the U.S. or local export transactions by any governing authority; or (iv) to any known military or military-intelligence end-user or for any known military or military-intelligence end-use in accordance with U.S. trade compliance laws and regulations. Use of the Software under this Agreement must be consistent with NVIDIA’s pdf (nvidia.com).
+
+16.3. Government Rights. The SOFTWARE, documentation and technology (“Protected Items”) are “Commercial products” as this term is defined at 48 C.F.R. 2.101, consisting of “commercial computer software” and “commercial computer software documentation” as such terms are used in, respectively, 48 C.F.R. 12.212 and 48 C.F.R. 227.7202 & 252.227-7014(a)(1). Before any Protected Items are supplied to the U.S. Government, you will (i) inform the U.S. Government in writing that the Protected Items are and must be treated as commercial computer software and commercial computer software documentation developed at private expense; (ii) inform the U.S. Government that the Protected Items are provided subject to the terms of the Agreement; and (iii) mark the Protected Items as commercial computer software and commercial computer software documentation developed at private expense. In no event will you permit the U.S. Government to acquire rights in Protected Items beyond those specified in 48 C.F.R. 52.227-19(b)(1)-(2) or 252.227-7013(c) except as expressly approved by NVIDIA in writing.
+
+16.4. Notices. Please direct your legal notices or other correspondence to NVIDIA Corporation, 2788 San Tomas Expressway, Santa Clara, California 95051, United States of America, Attention: Legal Department with a copy emailed to legalnotices@nvidia.com. If NVIDIA needs to contact you about the Software, you consent to receive the notices by email and agree that such notices will satisfy any legal communication requirements.
+
+16.5 Force Majeure. Neither party will be liable during any period where an event or circumstance prevents or delays that party from performing its obligations under this Agreement and that event or circumstance: (i) is not within the reasonable control of that party and is not the result of that party’s negligence, and (ii) cannot be overcome or avoided by that party using reasonably diligent efforts.
+
+16.6 Severability and Amendment. If a court of competent jurisdiction rules that a provision of this Agreement is unenforceable, that provision will be deemed modified to the extent necessary to make it enforceable and the remainder of this Agreement will continue in full force and effect. Any amendment to this Agreement must be in writing and signed by authorized representatives of both parties.
+
+16.7 Construction. The headings in the Agreement are included solely for convenience and are not intended to affect the meaning or interpretation of the Agreement. As required by the context of the Agreement, the singular of a term includes the plural and vice versa.
+
+16.8. Entire Agreement. Regarding the subject matter of this Agreement, the parties agree that (i) this Agreement constitutes the entire and exclusive agreement between the parties and supersedes all prior or contemporaneous communications and (ii) and any additional or different terms or conditions contained in purchase orders, order acknowledgements, invoices or otherwise are null and void.
+
+17. Licensing. If the distribution terms in this Agreement are not suitable for your organization, or for any questions regarding this Agreement, please contact NVIDIA at DOCA_License@nvidia.com .
+```
 ---
 This file was automatically generated.
