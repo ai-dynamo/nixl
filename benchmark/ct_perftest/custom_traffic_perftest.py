@@ -83,6 +83,7 @@ class CTPerftest:
         ]
 
         dst_bufs_serdes = dist_utils.alltoall_obj(my_recv_bufs_serdes)
+
         dst_bufs_descs = [
             self.nixl_agent.deserialize_descs(serdes) for serdes in dst_bufs_serdes
         ]
@@ -134,20 +135,20 @@ class CTPerftest:
     ) -> Tuple[
         list[NixlHandle], list[Optional[NixlBuffer]], list[Optional[NixlBuffer]]
     ]:
+        """Timing everything in this function because it takes a lot of time"""
 
         send_bufs, recv_bufs = self._get_bufs(tp)
 
         log.debug(f"[Rank {self.my_rank}] Sharing recv buf descs")
         dst_bufs_descs = self._share_recv_buf_descs(recv_bufs)
+
         handles: list[NixlHandle] = []
         for other, buf in enumerate(send_bufs):
             if buf is None:
                 continue
 
-            log.debug(f"[Rank {self.my_rank}] Initializing xfer handle - Getting xfer desc for rank {other}")
             xfer_desc = self.nixl_agent.get_xfer_descs(buf)
 
-            log.debug(f"[Rank {self.my_rank}] Initializing xfer handle - init xfer with rank {other}")
             handle = self.nixl_agent.initialize_xfer(
                 "WRITE",
                 xfer_desc,

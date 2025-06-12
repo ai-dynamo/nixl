@@ -160,6 +160,7 @@ class SequentialCTPerftest(CTPerftest):
         s = time.time()
         log.info(f"[Rank {self.my_rank}] Preparing TPs")
         for i, tp in enumerate(self.traffic_patterns):
+            log.debug(f"[Rank {self.my_rank}] Preparing TP {i}/{len(self.traffic_patterns)}")
             handles, send_bufs, recv_bufs = self._prepare_tp(tp)
             tp_bufs.append((send_bufs, recv_bufs))
             tp_handles.append(handles)
