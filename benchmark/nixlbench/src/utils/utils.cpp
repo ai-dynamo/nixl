@@ -126,6 +126,7 @@ std::string xferBenchConfig::posix_filepath = "";
 bool xferBenchConfig::storage_enable_direct = false;
 std::string xferBenchConfig::output_format = "";
 std::string xferBenchConfig::output_json_file = "";
+std::vector<std::string> xferBenchConfig::warning_logs = {};
 
 int xferBenchConfig::loadFromFlags() {
     runtime_type = FLAGS_runtime_type;
@@ -238,15 +239,29 @@ int xferBenchConfig::loadFromFlags() {
     int partition = (num_threads * LARGE_BLOCK_SIZE_ITER_FACTOR);
     if (num_iter % partition) {
         num_iter += partition - (num_iter % partition);
-        std::cout << "WARNING: Adjusting num_iter to " << num_iter
-                  << " to allow equal distribution to " << num_threads << " threads"
-                  << std::endl;
+        if(xferBenchConfig::output_format != "json") {
+            std::cout << "WARNING: Adjusting num_iter to " << num_iter
+                      << " to allow equal distribution to " << num_threads << " threads"
+                      << std::endl;
+        }
+        else{
+            std::ostringstream oss;
+            oss << "Adjusting num_iter to " << num_iter << " to allow equal distribution to " << num_threads << " threads";
+            xferBenchConfig::warning_logs.push_back(oss.str());
+        }
     }
     if (warmup_iter % partition) {
         warmup_iter += partition - (warmup_iter % partition);
-        std::cout << "WARNING: Adjusting warmup_iter to " << warmup_iter
-                  << " to allow equal distribution to " << num_threads << " threads"
-                  << std::endl;
+        if(xferBenchConfig::output_format != "json") {
+            std::cout << "WARNING: Adjusting warmup_iter to " << warmup_iter
+                      << " to allow equal distribution to " << num_threads << " threads"
+                      << std::endl;
+        }
+        else{
+            std::ostringstream oss2;
+            oss2 << "Adjusting warmup_iter to " << warmup_iter << " to allow equal distribution to " << num_threads << " threads";
+            xferBenchConfig::warning_logs.push_back(oss2.str());
+        }
     }
     partition = (num_initiator_dev * num_threads);
     if (total_buffer_size % partition) {
@@ -584,6 +599,7 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     json final_json;
     final_json["configuration"] = xferBenchConfig::to_json();
     final_json["results"] = result;
+    final_json["warnings"] = xferBenchConfig::warning_logs;
 
     if (!xferBenchConfig::output_json_file.empty()) {
         std::ofstream out(xferBenchConfig::output_json_file, std::ios::app);
@@ -593,6 +609,7 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
         }
         out << final_json.dump() << std::endl;
     } else {
+        std::cout.clear();
         std::cout << final_json.dump() << std::endl;
     }
     return;

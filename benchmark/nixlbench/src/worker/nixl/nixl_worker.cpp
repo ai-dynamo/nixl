@@ -788,13 +788,13 @@ void xferBenchNixlWorker::poll(size_t block_size) {
 
 int xferBenchNixlWorker::synchronizeStart() {
     if (IS_PAIRWISE_AND_SG()) {
-    	std::cout << "Waiting for all processes to start... (expecting "
-    	          << rt->getSize() << " total: "
-		  << xferBenchConfig::num_initiator_dev << " initiators and "
-    	          << xferBenchConfig::num_target_dev << " targets)" << std::endl;
+        std::cout << "Waiting for all processes to start... (expecting "
+                  << rt->getSize() << " total: "
+                  << xferBenchConfig::num_initiator_dev << " initiators and "
+                  << xferBenchConfig::num_target_dev << " targets)" << std::endl;
     } else {
-    	std::cout << "Waiting for all processes to start... (expecting "
-    	          << rt->getSize() << " total" << std::endl;
+        std::cout << "Waiting for all processes to start... (expecting "
+                  << rt->getSize() << " total" << std::endl;
     }
     if (rt) {
         int ret = rt->barrier("start_barrier");

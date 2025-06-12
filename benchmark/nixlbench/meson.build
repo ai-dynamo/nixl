@@ -107,7 +107,7 @@ etcd_inc = etcd_inc_path
 nixl_inc = nixl_path + '/include'
 nvshmem_inc = nvshmem_inc_path
 
-inc_dir = include_directories('.', './src/', nixl_inc, 'include')
+inc_dir = include_directories('.', './src/', nixl_inc)
 
 nvshmem_available = false
 if nvshmem_lib_path != ''

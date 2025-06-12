@@ -91,8 +91,8 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
         exit(EXIT_FAILURE);
     }
     std::cout << "ETCD Runtime: Registered as rank " << my_rank
-	      << " item " << my_rank + 1 << " of "
-	      << global_size << std::endl;
+        << " item " << my_rank + 1 << " of "
+        << global_size << std::endl;
 }
 
 xferBenchEtcdRT::~xferBenchEtcdRT() {

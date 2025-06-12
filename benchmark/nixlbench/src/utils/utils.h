@@ -139,6 +139,7 @@ class xferBenchConfig {
         static std::string output_format;
         static std::string output_json_file;
         static std::string gpunetio_device_list;
+        static std::vector<std::string> warning_logs;
         static int loadFromFlags();
         static void printConfig();
         static std::vector<std::string> parseDeviceList();
