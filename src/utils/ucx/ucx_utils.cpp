@@ -350,6 +350,13 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
     std::terminate();
 }
 
+static const char* ucx_get_max_rma_rails()
+{
+    unsigned major_version, minor_version, release_number;
+    ucp_get_version(&major_version, &minor_version, &release_number);
+    return (major_version >= 1 && minor_version >= 20) ? "4" : "2";
+}
+
 nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                size_t req_size,
                                nixlUcxContext::req_cb_t init_cb,
@@ -409,12 +416,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     ucx_modify_config(ucp_config, "MAX_COMPONENT_MDS", "32");
     ucx_modify_config(ucp_config, "ADDRESS_VERSION", "v2");
     ucx_modify_config(ucp_config, "RNDV_THRESH", "inf");
-
-    // Set 4 RMA lanes for UCX 1.20 and above, and 2 otherwise
-    unsigned major_version, minor_version, release_number;
-    ucp_get_version(&major_version, &minor_version, &release_number);
-    ucx_modify_config(ucp_config, "MAX_RMA_RAILS",
-                      (major_version >= 1 && minor_version >= 20) ? "4" : "2");
+    ucx_modify_config(ucp_config, "MAX_RMA_RAILS", ucx_get_max_rma_rails());
 
     status = ucp_init(&ucp_params, ucp_config, &ctx);
     if (status != UCS_OK) {
