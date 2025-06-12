@@ -4728,7 +4728,7 @@ DEALINGS IN THE SOFTWARE.
 - **License URL**: https://github.com/microsoft/cpprestsdk/blob/v2.10.19/license.txt
 - **License name**: MIT
 ### License Text:
-```C++ REST SDK 
+```C++ REST SDK
 
 The MIT License (MIT)
 
@@ -5005,7 +5005,7 @@ standalone and requires a support library to be linked with it.  This
 support library is itself covered by the above license.
 ```
 
-## icu - 60.3 
+## icu - 60.3
 
 - **Repository URL**: https://github.com/unicode-org/icu
 - **License URL**: https://www.unicode.org/license.txt
@@ -5075,11 +5075,11 @@ M.I.T. makes no representations about the suitability of this software for any
 purpose.  It is provided "as is" without express or implied warranty.
 ```
 
-## gperftools - 2.7.0 
+## gperftools - 2.7.0
 
 - **Repository URL**: https://github.com/gperftools/gperftools
 - **License URL**: https://github.com/gperftools/gperftools/tree/gperftools-2.7?tab=License-1-ov-file
-- **License name**: BSD-3-Clause license 
+- **License name**: BSD-3-Clause license
 ### License Text:
 ```Copyright (c) 2005, Google Inc.
 All rights reserved.
