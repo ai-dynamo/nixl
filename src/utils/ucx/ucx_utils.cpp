@@ -50,6 +50,22 @@ nixl_status_t ucx_status_to_nixl(ucs_status_t status)
     }
 }
 
+void ucx_modify_config(ucp_config_t *config, std::string_view key,
+                       std::string_view value)
+{
+    const char *env_val = std::getenv(absl::StrFormat("UCX_%s", key.data()).c_str());
+    value = env_val ? env_val : value;
+
+    ucs_status_t status = ucp_config_modify(config, key.data(), value.data());
+    if (status != UCS_OK) {
+        NIXL_ERROR << "Failed to modify UCX config: " << key << "=" << value
+                   << ": " << ucs_status_string(status);
+    } else {
+        NIXL_DEBUG << "Applied UCX config from " << (env_val ? "env var" : "NIXL")
+                   << ": " << key << "=" << value;
+    }
+}
+
 static void err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status)
 {
     nixlUcxEp *ep = reinterpret_cast<nixlUcxEp*>(arg);
@@ -390,28 +406,13 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         ucp_config_modify(ucp_config, "NET_DEVICES", dev_str.c_str());
     }
 
-    status = ucp_config_modify(ucp_config, "UCX_MAX_COMPONENT_MDS", "32");
-    if (status != UCS_OK) {
-        NIXL_WARN << "Failed to modify UCX_MAX_COMPONENT_MDS: " << ucs_status_string(status);
-    }
+    ucx_modify_config(ucp_config, "MAX_COMPONENT_MDS", "32");
+    ucx_modify_config(ucp_config, "ADDRESS_VERSION", "v2");
+    ucx_modify_config(ucp_config, "RNDV_THRESH", "inf");
 
-    status = ucp_config_modify(ucp_config, "UCX_ADDRESS_VERSION", "v2");
-    if (status != UCS_OK) {
-        NIXL_WARN << "Failed to modify UCX_ADDRESS_VERSION: " << ucs_status_string(status);
-    }
-
-    // If MAX_RMA_RAILS is set explicitly, then don't overwrite it
-    // Otherwise, use 4 for UCX 1.20 and above, and 2 otherwise
-    const char *max_rma_rails = (std::getenv("UCX_MAX_RMA_RAILS") ||
-                                 std::getenv("UCX_MAX_RMA_LANES")) ? nullptr :
-                                    (UCP_API_MAJOR >= 1 && UCP_API_MINOR >= 20) ?
-                                        "4" : "2";
-    if (max_rma_rails) {
-        status = ucp_config_modify(ucp_config, "MAX_RMA_RAILS", max_rma_rails);
-        if (status != UCS_OK) {
-            NIXL_WARN << "Failed to modify MAX_RMA_RAILS: " << ucs_status_string(status);
-        }
-    }
+    // Set 4 RMA lanes for UCX 1.20 and above, and 2 otherwise
+    ucx_modify_config(ucp_config, "MAX_RMA_RAILS",
+                      (UCP_API_MAJOR >= 1 && UCP_API_MINOR >= 20) ? "4" : "2");
 
     status = ucp_init(&ucp_params, ucp_config, &ctx);
     if (status != UCS_OK) {
