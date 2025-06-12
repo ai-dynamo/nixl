@@ -390,9 +390,27 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         ucp_config_modify(ucp_config, "NET_DEVICES", dev_str.c_str());
     }
 
-    status = ucp_config_modify(ucp_config, "MAX_RMA_RAILS", "2");
+    status = ucp_config_modify(ucp_config, "UCX_MAX_COMPONENT_MDS", "32");
     if (status != UCS_OK) {
-        NIXL_WARN << "Failed to modify MAX_RMA_RAILS: " << ucs_status_string(status);
+        NIXL_WARN << "Failed to modify UCX_MAX_COMPONENT_MDS: " << ucs_status_string(status);
+    }
+
+    status = ucp_config_modify(ucp_config, "UCX_ADDRESS_VERSION", "v2");
+    if (status != UCS_OK) {
+        NIXL_WARN << "Failed to modify UCX_ADDRESS_VERSION: " << ucs_status_string(status);
+    }
+
+    // If MAX_RMA_RAILS is set explicitly, then don't overwrite it
+    // Otherwise, use 4 for UCX 1.20 and above, and 2 otherwise
+    const char *max_rma_rails = (std::getenv("UCX_MAX_RMA_RAILS") ||
+                                 std::getenv("UCX_MAX_RMA_LANES")) ? nullptr :
+                                    (UCP_API_MAJOR >= 1 && UCP_API_MINOR >= 20) ?
+                                        "4" : "2";
+    if (max_rma_rails) {
+        status = ucp_config_modify(ucp_config, "MAX_RMA_RAILS", max_rma_rails);
+        if (status != UCS_OK) {
+            NIXL_WARN << "Failed to modify MAX_RMA_RAILS: " << ucs_status_string(status);
+        }
     }
 
     status = ucp_init(&ucp_params, ucp_config, &ctx);
