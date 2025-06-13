@@ -31,24 +31,25 @@
 #include "backend/backend_engine.h"
 #include "taskflow.hpp"
 
+enum cufile_result_t {
+    CUFILE_SUCCESS = 0,
+    CUFILE_ERR_OP_FAILED = -1,
+    CUFILE_ERR_OP_UNKNOWN= -2,
+    CUFILE_ERR_OP_SHORT = -3,
+};
+
 class nixlGdsMtMetadata : public nixlBackendMD {
     public:
+        nixlGdsMtMetadata() : nixlBackendMD(true) { }
+        ~nixlGdsMtMetadata() { }
+
         gdsMtFileHandle handle;
         gdsMtMemBuf buf;
         nixl_mem_t type;
-
-        nixlGdsMtMetadata() : nixlBackendMD(true) { }
-        ~nixlGdsMtMetadata() { }
 };
 
 class GdsMtTransferRequestH {
     public:
-        void*           addr;
-        size_t          size;
-        size_t          file_offset;
-        CUfileHandle_t  fh;
-        CUfileOpcode_t  op;
-
         GdsMtTransferRequestH() {
             addr = nullptr;
             size = 0;
@@ -65,13 +66,12 @@ class GdsMtTransferRequestH {
             fh = handle;
             op = operation;
         }
-};
 
-enum cufile_result_t {
-    CUFILE_SUCCESS = 0,
-    CUFILE_ERR_OP_FAILED = -1,
-    CUFILE_ERR_OP_UNKNOWN= -2,
-    CUFILE_ERR_OP_SHORT = -3,
+        void*           addr;
+        size_t          size;
+        size_t          file_offset;
+        CUfileHandle_t  fh;
+        CUfileOpcode_t  op;
 };
 
 class nixlGdsMtBackendReqH : public nixlBackendReqH {
@@ -83,13 +83,6 @@ class nixlGdsMtBackendReqH : public nixlBackendReqH {
 };
 
 class nixlGdsMtEngine : public nixlBackendEngine {
-    private:
-        gdsMtUtil *gds_mt_utils;
-        std::unordered_map<int, gdsMtFileHandle> gds_mt_file_map;
-        size_t thread_count_;
-        static const size_t DEFAULT_THREAD_COUNT;
-        std::unique_ptr<tf::Executor> executor;
-
     public:
         nixlGdsMtEngine(const nixlBackendInitParams* init_params);
         ~nixlGdsMtEngine();
@@ -153,5 +146,12 @@ class nixlGdsMtEngine : public nixlBackendEngine {
 
         nixl_status_t checkXfer(nixlBackendReqH* handle) const override;
         nixl_status_t releaseReqH(nixlBackendReqH* handle) const override;
+
+    private:
+        gdsMtUtil *gds_mt_utils;
+        std::unordered_map<int, gdsMtFileHandle> gds_mt_file_map;
+        size_t thread_count_;
+        static const size_t DEFAULT_THREAD_COUNT;
+        std::unique_ptr<tf::Executor> executor;
 };
 #endif
