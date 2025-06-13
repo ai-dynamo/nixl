@@ -230,7 +230,7 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
             cu_fhandle = it->second->cu_fhandle;
         }
 
-        gds_mt_handle->request_list.emplace_back(base_addr, total_size, base_offset, cu_fhandle, 
+        gds_mt_handle->request_list.emplace_back(base_addr, total_size, base_offset, cu_fhandle,
             (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE);
     }
 

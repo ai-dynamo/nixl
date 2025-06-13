@@ -62,7 +62,7 @@ gdsMtMemBuf::~gdsMtMemBuf() {
 
 gdsMtFileHandle::gdsMtFileHandle(gdsMtUtil& util, int file_fd, size_t sz, const std::string& metaInfo)
     : fd(file_fd), size(sz), metadata(metaInfo) {
-    
+
     if (!util.isInitialized()) {
         NIXL_ERROR << "GDS_MT: gdsMtUtil not initialized";
         return;
