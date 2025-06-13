@@ -37,7 +37,6 @@ gdsMtUtil::~gdsMtUtil() {
 gdsMtMemBuf::gdsMtMemBuf(gdsMtUtil& util, void* ptr, size_t sz, int flags)
     : base(ptr), size(sz) {
 
-    // Check if driver is initialized before attempting registration
     if (!util.isInitialized()) {
         NIXL_ERROR << "GDS_MT: gdsMtUtil not initialized";
         return;
