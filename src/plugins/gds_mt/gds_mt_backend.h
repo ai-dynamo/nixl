@@ -151,7 +151,6 @@ class nixlGdsMtEngine : public nixlBackendEngine {
         gdsMtUtil *gds_mt_utils;
         std::unordered_map<int, gdsMtFileHandle> gds_mt_file_map;
         size_t thread_count_;
-        static const size_t DEFAULT_THREAD_COUNT;
         std::unique_ptr<tf::Executor> executor;
 };
 #endif

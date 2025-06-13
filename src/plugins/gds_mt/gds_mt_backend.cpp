@@ -22,7 +22,9 @@
 #include "gds_mt_backend.h"
 #include "common/str_tools.h"
 
-const size_t nixlGdsMtEngine::DEFAULT_THREAD_COUNT = std::thread::hardware_concurrency();
+namespace {
+    const size_t DEFAULT_THREAD_COUNT = std::thread::hardware_concurrency();
+}
 
 nixlGdsMtEngine::nixlGdsMtEngine(const nixlBackendInitParams* init_params)
     : nixlBackendEngine(init_params)
