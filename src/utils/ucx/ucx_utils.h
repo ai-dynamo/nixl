@@ -148,7 +148,6 @@ private:
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
     ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
-    mutable std::atomic<size_t> num_associated_workers = 0;
 public:
 
     using req_cb_t = void(void *request);
@@ -163,15 +162,6 @@ public:
     int memReg(void *addr, size_t size, nixlUcxMem &mem);
     [[nodiscard]] std::string packRkey(nixlUcxMem &mem);
     void memDereg(nixlUcxMem &mem);
-    size_t getNumAssociatedWorkers() const {
-        return num_associated_workers.load();
-    }
-    size_t incAssociatedWorkers() {
-        return num_associated_workers++;
-    }
-    size_t decAssociatedWorkers() {
-        return num_associated_workers--;
-    }
 
     friend class nixlUcxWorker;
 };
@@ -183,14 +173,14 @@ private:
     /* Local UCX stuff */
     const std::shared_ptr<nixlUcxContext> ctx;
     size_t workerId;
+    void *engine;
     const std::unique_ptr<ucp_worker, void(*)(ucp_worker*)> worker;
-    std::atomic<bool> associated = false;
 
     [[nodiscard]] static ucp_worker* createUcpWorker(nixlUcxContext&, bool);
 
   public:
     explicit nixlUcxWorker(const std::shared_ptr<nixlUcxContext> &_ctx,
-                           size_t _workerId, bool is_shared = false);
+                           size_t _workerId, bool is_shared = false, void *_eng = nullptr);
     nixlUcxWorker( nixlUcxWorker&& ) = delete;
     nixlUcxWorker( const nixlUcxWorker& ) = delete;
     void operator=( nixlUcxWorker&& ) = delete;
@@ -213,22 +203,12 @@ private:
     /* Worker access */
     [[nodiscard]] ucp_worker_h getWorker() const noexcept { return worker.get(); }
 
-    /* Thread to worker mapping */
-    bool associate() {
-        bool expected = false;
-        return associated.compare_exchange_strong(expected, true);
-    }
-    void disassociate() {
-        associated.store(false);
-    }
-    bool isAssociated() const {
-        return associated.load();
-    }
     size_t getWorkerId() const {
         return workerId;
     }
-    const std::shared_ptr<nixlUcxContext>& getCtx() const {
-        return ctx;
+
+    void *getEngine() const {
+        return engine;
     }
 };
 

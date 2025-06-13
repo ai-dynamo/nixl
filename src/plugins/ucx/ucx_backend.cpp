@@ -592,13 +592,18 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
                                           init_params->syncMode);
 
     for (unsigned int i = 0; i < numWorkers; i++)
-        uws.emplace_back(std::make_unique<nixlUcxWorker>(uc, i));
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(uc, i, false, this));
 
     for (unsigned int i = 0; i < numSharedWorkers; i++) {
-        uws.emplace_back(std::make_unique<nixlUcxWorker>(uc, i + numWorkers, true));
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(uc, i + numWorkers, true, this));
     }
 
     numDedicatedWorker = numWorkers;
+
+    // Initialize freeWorkers queue with dedicated workers
+    for (unsigned int i = 0; i < numWorkers; i++) {
+        freeWorkers.push(uws[i].get());
+    }
 
     const auto &uw = uws.back();
     workerAddr = uw->epAddr();
@@ -1293,13 +1298,12 @@ void nixlUcxEngine::threadMapDestructor(void *arg)
     /* When a thread exits, disassociate it from the worker,
      * so that the worker could be reused by another thread.
      */
-    worker->disassociate();
-    worker->getCtx()->decAssociatedWorkers();
+    nixlUcxEngine* engine = static_cast<nixlUcxEngine*>(worker->getEngine());
+    engine->pushFreeWorker(worker);
 }
 
 nixl_status_t nixlUcxEngine::initThreadMapping()
 {
-    nextWorkerId = 0;
     int err = pthread_key_create(&keyThreadToWorker, threadMapDestructor);
     if (err) {
         NIXL_ERROR << "Failed to create keyThreadToWorker, err:" << err;
@@ -1318,52 +1322,33 @@ nixl_status_t nixlUcxEngine::destroyThreadMapping()
     return NIXL_SUCCESS;
 }
 
-nixlUcxWorker *nixlUcxEngine::findAndAssociateDedicatedWorker() const
+nixlUcxWorker *nixlUcxEngine::getFreeDedicatedWorker() const
 {
-    for (size_t i = 0, cur = nextWorkerId; i < numDedicatedWorker; i++, cur++) {
-        if (cur >= numDedicatedWorker) {
-            cur = 0;
-        }
-        if (!uws[cur]->isAssociated()) {
-            if (uws[cur]->associate()) {
-                /*
-                 * nextWorkerId served as a hint for next thread
-                 * to learn where to start searching, in the worst
-                 * case, it still needs to search the whole list.
-                 */
-                nextWorkerId = cur + 1;
-                return uws[cur].get();
-            }
-        }
+    if (freeWorkers.size() == 0) {
+        return nullptr;
     }
-    return nullptr;
+
+    const std::lock_guard<std::mutex> lock(workersMutex);
+    nixlUcxWorker *worker = freeWorkers.front();
+    freeWorkers.pop();
+    return worker;
 }
 
 nixlUcxWorker *nixlUcxEngine::getDedicatedWorker() const
 {
-    nixlUcxWorker *p = static_cast<nixlUcxWorker *>(pthread_getspecific(keyThreadToWorker));
-    if (p != nullptr) {
-        return p;
+    nixlUcxWorker *worker = static_cast<nixlUcxWorker *>(pthread_getspecific(keyThreadToWorker));
+    if (worker != nullptr) {
+        return worker;
     }
 
-    if (uc->getNumAssociatedWorkers() == numDedicatedWorker) {
-        /*
-         * Do not have to search the worker list when all
-         * workers are already associated.
-         */
-        return nullptr;
-    }
-
-    nixlUcxWorker *worker = findAndAssociateDedicatedWorker();
+    worker = getFreeDedicatedWorker();
     if (worker != nullptr) {
         int err = pthread_setspecific(keyThreadToWorker, worker);
         if (err) {
-            NIXL_ERROR << "Failed to set keyThreadToWorker, workeriId:"
+            NIXL_ERROR << "Failed to set keyThreadToWorker, workerId:"
                 << worker->getWorkerId() << "err:" << err;
-            worker->disassociate();
             return nullptr;
         }
-        uc->incAssociatedWorkers();
     }
     return worker;
 }
@@ -1382,24 +1367,11 @@ nixlUcxWorker *nixlUcxEngine::getSharedWorker() const
 
 nixlUcxWorker *nixlUcxEngine::getWorkerWithPreference(bool prefer_shared) const
 {
-    nixlUcxWorker *worker;
-    if (prefer_shared) {
-        worker = getSharedWorker();
-    } else {
-        worker = getDedicatedWorker();
-    }
-
+    nixlUcxWorker *worker = prefer_shared ? getSharedWorker() : getDedicatedWorker();
     if (worker != nullptr) {
         return worker;
     }
 
-    // Get the other worker type when we could not get the prefer one.
-    if (!prefer_shared) {
-        // Use shared worker when we used up the dedicated worker.
-        return getSharedWorker();
-    }
-
-    // User may specify 0 shared workers, we will try to get a dedicated
-    // worker in this case
-    return getDedicatedWorker();
+    // If the preferred worker type is not available, get the other type
+    return prefer_shared ? getDedicatedWorker() : getSharedWorker();
 }

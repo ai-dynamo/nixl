@@ -459,8 +459,8 @@ ucp_worker* nixlUcxWorker::createUcpWorker(nixlUcxContext& ctx, bool is_shared)
 }
 
 nixlUcxWorker::nixlUcxWorker(const std::shared_ptr< nixlUcxContext >&_ctx,
-                             size_t _workerId, bool is_shared)
-    : ctx(_ctx), workerId(_workerId),
+                             size_t _workerId, bool is_shared, void *_eng)
+    : ctx(_ctx), workerId(_workerId), engine(_eng),
       worker(createUcpWorker(*ctx, is_shared), &ucp_worker_destroy)
 {}
 
