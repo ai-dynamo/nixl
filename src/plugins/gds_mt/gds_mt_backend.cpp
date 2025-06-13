@@ -74,18 +74,20 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
         case FILE_SEG: {
             auto it = gds_mt_file_map_.find(mem.devId);
             if (it != gds_mt_file_map_.end()) {
-                // no need to re-register
+                // Reuse existing registered handle
                 md->handle = it->second;
-                md->handle.size = mem.len;
-                md->handle.metadata = mem.metaInfo;
                 break;
             }
 
-            status = gds_mt_utils_->registerFileHandle(mem.devId, mem.len,
-                                                       mem.metaInfo, md->handle);
-            if (status == NIXL_SUCCESS) {
-                gds_mt_file_map_[mem.devId] = md->handle;
+            // Create and register new handle
+            md->handle = std::make_shared<gdsMtFileHandle>(*gds_mt_utils_, mem.devId, mem.len, mem.metaInfo);
+            if (!md->handle->isRegistered()) {
+                status = NIXL_ERR_BACKEND;
+                break;
             }
+
+            // Store in map for future reuse
+            gds_mt_file_map_[mem.devId] = md->handle;
             break;
         }
 
@@ -94,7 +96,8 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
             if (error_id != cudaSuccess) {
                 NIXL_ERROR << "GDS_MT: error: cudaSetDevice returned "
                            << cudaGetErrorString(error_id) << " for device ID " << mem.devId;
-                return NIXL_ERR_BACKEND;
+                status = NIXL_ERR_BACKEND;
+                break;
             }
             md->buf = std::make_unique<gdsMtMemBuf>(*gds_mt_utils_, (void *)mem.addr, mem.len, 0);
             if (!md->buf->isRegistered()) {
@@ -127,11 +130,11 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
 nixl_status_t nixlGdsMtEngine::deregisterMem (nixlBackendMD* meta)
 {
     std::unique_ptr<nixlGdsMtMetadata> md((nixlGdsMtMetadata*)meta);
-    if (md->type == FILE_SEG) {
-        gds_mt_utils_->deregisterFileHandle(md->handle);
-	    gds_mt_file_map_.erase(md->handle.fd);
+    if (md->type == FILE_SEG && md->handle) {
+        // Remove from map - shared_ptr will handle cleanup when last reference is gone
+        gds_mt_file_map_.erase(md->handle->fd);
     }
-    // No need to deregister buffer, it is handled automatically by gdsMtMemBuf destructor
+    // No need to deregister buffer either, it is handled automatically by gdsMtMemBuf destructor
     return NIXL_SUCCESS;
 }
 
@@ -194,7 +197,7 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
         void* base_addr;
         size_t total_size;
         size_t base_offset;
-        gdsMtFileHandle fh;
+        CUfileHandle_t cu_fhandle;
 
         // Get transfer parameters based on whether local is file or memory
         if (is_local_file) {
@@ -210,7 +213,7 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
                 NIXL_ERROR << "GDS_MT: error: file handle not found";
                 return NIXL_ERR_NOT_FOUND;
             }
-            fh = it->second;
+            cu_fhandle = it->second->cu_fhandle;
         } else {
             base_addr = (void*)local[i].addr;
             if (!base_addr) {
@@ -224,10 +227,10 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
                 NIXL_ERROR << "GDS_MT: error: file handle not found";
                 return NIXL_ERR_NOT_FOUND;
             }
-            fh = it->second;
+            cu_fhandle = it->second->cu_fhandle;
         }
 
-        gds_mt_handle->request_list.emplace_back(base_addr, total_size, base_offset, fh.cu_fhandle, 
+        gds_mt_handle->request_list.emplace_back(base_addr, total_size, base_offset, cu_fhandle, 
             (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE);
     }
 

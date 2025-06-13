@@ -48,11 +48,14 @@ gdsMtMemBuf::~gdsMtMemBuf() {
     }
 }
 
-nixl_status_t gdsMtUtil::registerFileHandle(int fd,
-                                            size_t size,
-                                            std::string metaInfo,
-                                            gdsMtFileHandle& gdsMtHandle)
-{
+gdsMtFileHandle::gdsMtFileHandle(gdsMtUtil& util, int file_fd, size_t sz, const std::string& metaInfo)
+    : fd(file_fd), size(sz), metadata(metaInfo) {
+    
+    if (!util.isInitialized()) {
+        NIXL_ERROR << "GDS_MT: gdsMtUtil not initialized";
+        return;
+    }
+
     CUfileError_t status;
     CUfileDescr_t descr;
     CUfileHandle_t handle;
@@ -64,15 +67,17 @@ nixl_status_t gdsMtUtil::registerFileHandle(int fd,
     status = cuFileHandleRegister(&handle, &descr);
     if (status.err != CU_FILE_SUCCESS) {
         NIXL_ERROR << "GDS_MT: file register error: error=" << status.err << ", fd=" << fd;
-        return NIXL_ERR_BACKEND;
+        return;
     }
 
-    gdsMtHandle.cu_fhandle = handle;
-    gdsMtHandle.fd = fd;
-    gdsMtHandle.size = size;
-    gdsMtHandle.metadata = metaInfo;
+    cu_fhandle = handle;
+    registered_ = true;
+}
 
-    return NIXL_SUCCESS;
+gdsMtFileHandle::~gdsMtFileHandle() {
+    if (registered_) {
+        cuFileHandleDeregister(cu_fhandle);
+    }
 }
 
 nixl_status_t gdsMtUtil::registerBufHandle(void *ptr,
@@ -86,11 +91,6 @@ nixl_status_t gdsMtUtil::registerBufHandle(void *ptr,
         NIXL_ERROR << "GDS_MT: warning: buffer registration failed - will use compat mode: error=" << status.err;
     }
     return NIXL_SUCCESS;
-}
-
-void gdsMtUtil::deregisterFileHandle(gdsMtFileHandle& handle)
-{
-    cuFileHandleDeregister(handle.cu_fhandle);
 }
 
 nixl_status_t gdsMtUtil::deregisterBufHandle(void *ptr)
