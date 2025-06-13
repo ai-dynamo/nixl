@@ -235,13 +235,8 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
             fh = it->second;
         }
 
-        GdsMtTransferRequestH req;
-        req.addr = (char*)base_addr;
-        req.size = total_size;
-        req.file_offset = base_offset;
-        req.fh = fh.cu_fhandle;
-        req.op = (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE;
-        gds_mt_handle->request_list.push_back(req);
+        gds_mt_handle->request_list.emplace_back(base_addr, total_size, base_offset, fh.cu_fhandle, 
+            (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE);
     }
 
     if (gds_mt_handle->request_list.empty()) {
