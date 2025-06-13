@@ -148,7 +148,7 @@ class nixlGdsMtEngine : public nixlBackendEngine {
         nixl_status_t releaseReqH(nixlBackendReqH* handle) const override;
 
     private:
-        gdsMtUtil *gds_mt_utils;
+        std::unique_ptr<gdsMtUtil> gds_mt_utils;
         std::unordered_map<int, gdsMtFileHandle> gds_mt_file_map;
         size_t thread_count_;
         std::unique_ptr<tf::Executor> executor;
