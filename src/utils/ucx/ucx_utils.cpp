@@ -350,13 +350,6 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
     std::terminate();
 }
 
-static const char* ucx_get_max_rma_rails()
-{
-    unsigned major_version, minor_version, release_number;
-    ucp_get_version(&major_version, &minor_version, &release_number);
-    return (major_version >= 1 && minor_version >= 20) ? "4" : "2";
-}
-
 nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                size_t req_size,
                                nixlUcxContext::req_cb_t init_cb,
@@ -413,10 +406,21 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         ucp_config_modify(ucp_config, "NET_DEVICES", dev_str.c_str());
     }
 
-    ucx_modify_config(ucp_config, "MAX_COMPONENT_MDS", "32");
+    unsigned major_version, minor_version, release_number;
+    ucp_get_version(&major_version, &minor_version, &release_number);
+
     ucx_modify_config(ucp_config, "ADDRESS_VERSION", "v2");
     ucx_modify_config(ucp_config, "RNDV_THRESH", "inf");
-    ucx_modify_config(ucp_config, "MAX_RMA_RAILS", ucx_get_max_rma_rails());
+
+    if (major_version >= 1 && minor_version >= 19) {
+        ucx_modify_config(ucp_config, "MAX_COMPONENT_MDS", "32");
+    }
+
+    if (major_version >= 1 && minor_version >= 20) {
+        ucx_modify_config(ucp_config, "MAX_RMA_RAILS", "4");
+    } else {
+        ucx_modify_config(ucp_config, "MAX_RMA_RAILS", "2");
+    }
 
     status = ucp_init(&ucp_params, ucp_config, &ctx);
     if (status != UCS_OK) {
