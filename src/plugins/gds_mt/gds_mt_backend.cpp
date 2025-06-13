@@ -96,19 +96,17 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
                            << cudaGetErrorString(error_id) << " for device ID " << mem.devId;
                 return NIXL_ERR_BACKEND;
             }
-            status = gds_mt_utils_->registerBufHandle((void *)mem.addr, mem.len, 0);
-            if (status == NIXL_SUCCESS) {
-                md->buf.base = (void *)mem.addr;
-                md->buf.size = mem.len;
+            md->buf = std::make_unique<gdsMtMemBuf>(*gds_mt_utils_, (void *)mem.addr, mem.len, 0);
+            if (!md->buf->isRegistered()) {
+                status = NIXL_ERR_BACKEND;
             }
             break;
         }
 
         case DRAM_SEG: {
-            status = gds_mt_utils_->registerBufHandle((void *)mem.addr, mem.len, 0);
-            if (status == NIXL_SUCCESS) {
-                md->buf.base = (void *)mem.addr;
-                md->buf.size = mem.len;
+            md->buf = std::make_unique<gdsMtMemBuf>(*gds_mt_utils_, (void *)mem.addr, mem.len, 0);
+            if (!md->buf->isRegistered()) {
+                status = NIXL_ERR_BACKEND;
             }
             break;
         }
@@ -132,9 +130,8 @@ nixl_status_t nixlGdsMtEngine::deregisterMem (nixlBackendMD* meta)
     if (md->type == FILE_SEG) {
         gds_mt_utils_->deregisterFileHandle(md->handle);
 	    gds_mt_file_map_.erase(md->handle.fd);
-    } else {
-        gds_mt_utils_->deregisterBufHandle(md->buf.base);
     }
+    // No need to deregister buffer, it is handled automatically by gdsMtMemBuf destructor
     return NIXL_SUCCESS;
 }
 
