@@ -22,9 +22,13 @@
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
 #include "common/str_tools.h"
+#include "common/nixl_time.h"
 
 namespace {
-    const size_t DEFAULT_THREAD_COUNT = std::thread::hardware_concurrency();
+    // Use half the hardware threads by default for better I/O performance
+    // Full hardware concurrency often leads to context switching overhead
+    // and resource contention for storage I/O workloads
+    const size_t DEFAULT_THREAD_COUNT = std::max(1u, std::thread::hardware_concurrency() / 2);
 }
 
 nixlGdsMtEngine::nixlGdsMtEngine(const nixlBackendInitParams* init_params)
@@ -275,7 +279,7 @@ nixl_status_t nixlGdsMtEngine::checkXfer(nixlBackendReqH* handle) const
     if (gds_mt_handle->request_list.empty()) {
         return NIXL_SUCCESS;
     }
-    if (gds_mt_handle->running_transfer.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+    if (gds_mt_handle->running_transfer.wait_for(nixlTime::seconds(0)) != std::future_status::ready) {
         return NIXL_IN_PROG;
     }
     gds_mt_handle->running_transfer.get();
