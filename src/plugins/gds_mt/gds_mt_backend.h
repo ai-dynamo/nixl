@@ -28,6 +28,7 @@
 #include <vector>
 #include <mutex>
 #include <memory>
+#include <atomic>
 #include "gds_mt_utils.h"
 #include "backend/backend_engine.h"
 #include "taskflow.hpp"
@@ -62,6 +63,9 @@ class nixlGdsMtBackendReqH : public nixlBackendReqH {
         std::vector<GdsMtTransferRequestH> request_list;
         tf::Taskflow taskflow;
         std::future<void> running_transfer;
+
+        // Only changes if an error actually occurs
+        std::atomic<nixl_status_t> overall_status{NIXL_SUCCESS};
 };
 
 class nixlGdsMtEngine : public nixlBackendEngine {
