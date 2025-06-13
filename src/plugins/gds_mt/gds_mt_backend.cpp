@@ -138,34 +138,29 @@ nixl_status_t nixlGdsMtEngine::deregisterMem (nixlBackendMD* meta)
     return NIXL_SUCCESS;
 }
 
-cufile_result_t runCuFileOp(GdsMtTransferRequestH* req) {
+void runCuFileOp(GdsMtTransferRequestH* req) {
     ssize_t nbytes = 0;
     if (req->op == CUFILE_READ) {
         nbytes = cuFileRead(req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
             perror("cuFileRead failed");
-            return CUFILE_ERR_OP_FAILED;
+            return;
         }
     } else if (req->op == CUFILE_WRITE) {
         nbytes = cuFileWrite(req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
             perror("cuFileWrite failed");
-            return CUFILE_ERR_OP_FAILED;
+            return;
         }
     } else {
-        return CUFILE_ERR_OP_UNKNOWN;
+        return;
     }
     if ((size_t)nbytes != req->size) {
         NIXL_ERROR << "GDS_MT: error: short "
                    << ((req->op == CUFILE_READ) ? "read: " : "write: ")
                    << nbytes << " out of " << req->size << "bytes - address=" << req->addr;
-        return CUFILE_ERR_OP_SHORT;
+        return;
     }
-    return CUFILE_SUCCESS;
-}
-
-void worker_thread(nixlGdsMtBackendReqH* gds_mt_handle, GdsMtTransferRequestH* req) {
-    (void) runCuFileOp(req);
 }
 
 nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
@@ -244,8 +239,8 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
     for (GdsMtTransferRequestH& req : gds_mt_handle->request_list) {
         GdsMtTransferRequestH* captured_req = &req;
-        gds_mt_handle->taskflow.emplace([gds_mt_handle_ptr = gds_mt_handle.get(), captured_req]() {
-            worker_thread(gds_mt_handle_ptr, captured_req);
+        gds_mt_handle->taskflow.emplace([captured_req]() {
+            runCuFileOp(captured_req);
         });
     }
 
