@@ -172,6 +172,30 @@ void runCuFileOp(GdsMtTransferRequestH* req, std::atomic<nixl_status_t>* overall
     }
 }
 
+// Helper function to extract transfer parameters and validate them
+nixl_status_t extractTransferParams(const nixlMetaDesc& mem_desc,
+                                   const nixlMetaDesc& file_desc,
+                                   const std::unordered_map<int, std::shared_ptr<gdsMtFileHandle>>& file_map,
+                                   void*& base_addr,
+                                   size_t& total_size,
+                                   size_t& base_offset,
+                                   CUfileHandle_t& cu_fhandle) {
+    base_addr = (void*)mem_desc.addr;
+    if (!base_addr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    total_size = mem_desc.len;
+    base_offset = (size_t)file_desc.addr;
+
+    auto it = file_map.find(file_desc.devId);
+    if (it == file_map.end()) {
+        NIXL_ERROR << "GDS_MT: error: file handle not found";
+        return NIXL_ERR_NOT_FOUND;
+    }
+    cu_fhandle = it->second->cu_fhandle;
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
                                          const nixl_meta_dlist_t &local,
                                          const nixl_meta_dlist_t &remote,
@@ -209,34 +233,17 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
         CUfileHandle_t cu_fhandle;
 
         // Get transfer parameters based on whether local is file or memory
+        nixl_status_t param_status;
         if (is_local_file) {
-            base_addr = (void*)remote[i].addr;
-            if (!base_addr) {
-                return NIXL_ERR_INVALID_PARAM;
-            }
-            total_size = remote[i].len;
-            base_offset = (size_t)local[i].addr;
-
-            auto it = gds_mt_file_map_.find(local[i].devId);
-            if (it == gds_mt_file_map_.end()) {
-                NIXL_ERROR << "GDS_MT: error: file handle not found";
-                return NIXL_ERR_NOT_FOUND;
-            }
-            cu_fhandle = it->second->cu_fhandle;
+            param_status = extractTransferParams(remote[i], local[i], gds_mt_file_map_,
+                                                base_addr, total_size, base_offset, cu_fhandle);
         } else {
-            base_addr = (void*)local[i].addr;
-            if (!base_addr) {
-                return NIXL_ERR_INVALID_PARAM;
-            }
-            total_size = local[i].len;
-            base_offset = (size_t)remote[i].addr;
+            param_status = extractTransferParams(local[i], remote[i], gds_mt_file_map_,
+                                                base_addr, total_size, base_offset, cu_fhandle);
+        }
 
-            auto it = gds_mt_file_map_.find(remote[i].devId);
-            if (it == gds_mt_file_map_.end()) {
-                NIXL_ERROR << "GDS_MT: error: file handle not found";
-                return NIXL_ERR_NOT_FOUND;
-            }
-            cu_fhandle = it->second->cu_fhandle;
+        if (param_status != NIXL_SUCCESS) {
+            return param_status;
         }
 
         gds_mt_handle->request_list.emplace_back(base_addr, total_size, base_offset, cu_fhandle,
