@@ -18,6 +18,7 @@
 #include <iostream>
 #include <cufile.h>
 #include <thread>
+#include <memory>
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
 #include "common/str_tools.h"
@@ -65,7 +66,7 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
                                            nixlBackendMD* &out)
 {
     nixl_status_t status = NIXL_SUCCESS;
-    nixlGdsMtMetadata *md = new nixlGdsMtMetadata();
+    auto md = std::make_unique<nixlGdsMtMetadata>();
     md->type = nixl_mem;
     cudaError_t error_id;
 
@@ -93,7 +94,6 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
             if (error_id != cudaSuccess) {
                 NIXL_ERROR << "GDS_MT: error: cudaSetDevice returned "
                            << cudaGetErrorString(error_id) << " for device ID " << mem.devId;
-                delete md;
                 return NIXL_ERR_BACKEND;
             }
             status = gds_mt_utils_->registerBufHandle((void *)mem.addr, mem.len, 0);
@@ -119,24 +119,22 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
     }
 
     if (status != NIXL_SUCCESS) {
-        delete md;
         return status;
     }
 
-    out = (nixlBackendMD*)md;
+    out = (nixlBackendMD*)md.release();
     return status;
 }
 
 nixl_status_t nixlGdsMtEngine::deregisterMem (nixlBackendMD* meta)
 {
-    nixlGdsMtMetadata *md = (nixlGdsMtMetadata *)meta;
+    std::unique_ptr<nixlGdsMtMetadata> md((nixlGdsMtMetadata*)meta);
     if (md->type == FILE_SEG) {
         gds_mt_utils_->deregisterFileHandle(md->handle);
 	    gds_mt_file_map_.erase(md->handle.fd);
     } else {
         gds_mt_utils_->deregisterBufHandle(md->buf.base);
     }
-    delete md;
     return NIXL_SUCCESS;
 }
 
@@ -177,7 +175,7 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
                                          nixlBackendReqH* &handle,
                                          const nixl_opt_b_args_t* opt_args) const
 {
-    nixlGdsMtBackendReqH* gds_mt_handle = new nixlGdsMtBackendReqH();
+    auto gds_mt_handle = std::make_unique<nixlGdsMtBackendReqH>();
     size_t buf_cnt = local.descCount();
     size_t file_cnt = remote.descCount();
 
@@ -185,13 +183,11 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
     if ((buf_cnt != file_cnt) ||
         ((operation != NIXL_READ) && (operation != NIXL_WRITE))) {
         NIXL_ERROR << "GDS_MT: error: incorrect count or operation selection";
-        delete gds_mt_handle;
         return NIXL_ERR_INVALID_PARAM;
     }
 
     if ((remote.getType() != FILE_SEG) && (local.getType() != FILE_SEG)) {
         NIXL_ERROR << "GDS_MT: error: backend only supports I/O between memory (DRAM/VRAM_SEG) and files (FILE_SEG)";
-        delete gds_mt_handle;
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -212,7 +208,6 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
         if (is_local_file) {
             base_addr = (void*)remote[i].addr;
             if (!base_addr) {
-                delete gds_mt_handle;
                 return NIXL_ERR_INVALID_PARAM;
             }
             total_size = remote[i].len;
@@ -221,14 +216,12 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
             auto it = gds_mt_file_map_.find(local[i].devId);
             if (it == gds_mt_file_map_.end()) {
                 NIXL_ERROR << "GDS_MT: error: file handle not found";
-                delete gds_mt_handle;
                 return NIXL_ERR_NOT_FOUND;
             }
             fh = it->second;
         } else {
             base_addr = (void*)local[i].addr;
             if (!base_addr) {
-                delete gds_mt_handle;
                 return NIXL_ERR_INVALID_PARAM;
             }
             total_size = local[i].len;
@@ -237,7 +230,6 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
             auto it = gds_mt_file_map_.find(remote[i].devId);
             if (it == gds_mt_file_map_.end()) {
                 NIXL_ERROR << "GDS_MT: error: file handle not found";
-                delete gds_mt_handle;
                 return NIXL_ERR_NOT_FOUND;
             }
             fh = it->second;
@@ -253,19 +245,18 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
     if (gds_mt_handle->request_list.empty()) {
-        delete gds_mt_handle;
         return NIXL_ERR_INVALID_PARAM;
     }
     for (GdsMtTransferRequestH& req : gds_mt_handle->request_list) {
         GdsMtTransferRequestH* captured_req = &req;
-        gds_mt_handle->taskflow.emplace([gds_mt_handle, captured_req]() {
-            worker_thread(gds_mt_handle, captured_req);
+        gds_mt_handle->taskflow.emplace([gds_mt_handle_ptr = gds_mt_handle.get(), captured_req]() {
+            worker_thread(gds_mt_handle_ptr, captured_req);
         });
     }
 
 
     gds_mt_handle->needs_prep = false;
-    handle = gds_mt_handle;
+    handle = gds_mt_handle.release();
     return NIXL_SUCCESS;
 }
 
@@ -306,9 +297,7 @@ nixl_status_t nixlGdsMtEngine::checkXfer(nixlBackendReqH* handle) const
 
 nixl_status_t nixlGdsMtEngine::releaseReqH(nixlBackendReqH* handle) const
 {
-    nixlGdsMtBackendReqH *gds_mt_handle = (nixlGdsMtBackendReqH *) handle;
-    delete gds_mt_handle;
-    gds_mt_handle = nullptr;
+    std::unique_ptr<nixlGdsMtBackendReqH> gds_mt_handle((nixlGdsMtBackendReqH*)handle);
     return NIXL_SUCCESS;
 }
 
