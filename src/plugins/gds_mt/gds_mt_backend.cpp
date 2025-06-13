@@ -250,7 +250,6 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
 
-    gds_mt_handle->needs_prep = false;
     handle = gds_mt_handle.release();
     return NIXL_SUCCESS;
 }
@@ -279,14 +278,12 @@ nixl_status_t nixlGdsMtEngine::checkXfer(nixlBackendReqH* handle) const
 {
     nixlGdsMtBackendReqH *gds_mt_handle = (nixlGdsMtBackendReqH *)handle;
     if (gds_mt_handle->request_list.empty()) {
-        gds_mt_handle->needs_prep = true;
         return NIXL_SUCCESS;
     }
     if (gds_mt_handle->running_transfer.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
         return NIXL_IN_PROG;
     }
     gds_mt_handle->running_transfer.get();
-    gds_mt_handle->needs_prep = true;
     return NIXL_SUCCESS;
 }
 

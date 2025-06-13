@@ -66,7 +66,6 @@ class GdsMtTransferRequestH {
 class nixlGdsMtBackendReqH : public nixlBackendReqH {
     public:
         std::vector<GdsMtTransferRequestH> request_list;
-        bool needs_prep{true};
         tf::Taskflow taskflow;
         std::future<void> running_transfer;
 };
