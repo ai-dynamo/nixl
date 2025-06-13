@@ -58,8 +58,8 @@ void ucx_modify_config(ucp_config_t *config, std::string_view key,
 
     ucs_status_t status = ucp_config_modify(config, key.data(), value.data());
     if (status != UCS_OK) {
-        NIXL_ERROR << "Failed to modify UCX config: " << key << "=" << value
-                   << ": " << ucs_status_string(status);
+        NIXL_WARN << "Failed to modify UCX config: " << key << "=" << value
+                  << ": " << ucs_status_string(status);
     } else {
         NIXL_DEBUG << "Applied UCX config from " << (env_val ? "env var" : "NIXL")
                    << ": " << key << "=" << value;
