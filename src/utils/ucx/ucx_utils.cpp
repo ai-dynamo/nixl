@@ -412,11 +412,12 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     ucx_modify_config(ucp_config, "ADDRESS_VERSION", "v2");
     ucx_modify_config(ucp_config, "RNDV_THRESH", "inf");
 
-    if (major_version >= 1 && minor_version >= 19) {
+    unsigned ucp_version = UCP_VERSION(major_version, minor_version);
+    if (ucp_version >= UCP_VERSION(1, 19)) {
         ucx_modify_config(ucp_config, "MAX_COMPONENT_MDS", "32");
     }
 
-    if (major_version >= 1 && minor_version >= 20) {
+    if (ucp_version >= UCP_VERSION(1, 20)) {
         ucx_modify_config(ucp_config, "MAX_RMA_RAILS", "4");
     } else {
         ucx_modify_config(ucp_config, "MAX_RMA_RAILS", "2");
