@@ -18,6 +18,7 @@
 #define NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_H
 
 #include <vector>
+#include <queue>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -106,6 +107,7 @@ class nixlUcxEngine
         std::shared_ptr<nixlUcxContext> uc;
         std::vector<std::unique_ptr<nixlUcxWorker>> uws;
         std::string workerAddr;
+        size_t numDedicatedWorker;
 
         /* Progress thread data */
         std::mutex pthrActiveLock;
@@ -133,6 +135,18 @@ class nixlUcxEngine
         std::unordered_map<std::string, ucx_connection_ptr_t,
                            std::hash<std::string>, strEqual> remoteConnMap;
 
+        // Thread to worker mapping
+        pthread_key_t keyThreadToWorker;
+        mutable std::queue<nixlUcxWorker *> freeWorkers;
+        mutable std::mutex workersMutex;
+
+        nixl_status_t initThreadMapping();
+        nixl_status_t destroyThreadMapping();
+        nixlUcxWorker *getDedicatedWorker() const;
+        nixlUcxWorker *getSharedWorker() const;
+        nixlUcxWorker *getWorkerWithPreference(bool prefer_shared) const;
+        nixlUcxWorker *getFreeDedicatedWorker() const;
+        static void threadMapDestructor(void *arg);
 
         void vramInitCtx();
         void vramFiniCtx();
@@ -251,12 +265,14 @@ class nixlUcxEngine
         nixl_status_t checkConn(const std::string &remote_agent);
         nixl_status_t endConn(const std::string &remote_agent);
 
-        const std::unique_ptr<nixlUcxWorker> &getWorker(size_t worker_id) const {
-            return uws[worker_id];
+        // Add worker back to the free workers queue
+        const void pushFreeWorker(nixlUcxWorker* worker) {
+            const std::lock_guard<std::mutex> lock(workersMutex);
+            freeWorkers.push(worker);
         }
 
-        size_t getWorkerId() const {
-            return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
+        const std::unique_ptr<nixlUcxWorker> &getWorker(size_t worker_id) const {
+            return uws[worker_id];
         }
 };
 
