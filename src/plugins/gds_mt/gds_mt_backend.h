@@ -31,13 +31,6 @@
 #include "backend/backend_engine.h"
 #include "taskflow.hpp"
 
-enum cufile_result_t {
-    CUFILE_SUCCESS = 0,
-    CUFILE_ERR_OP_FAILED = -1,
-    CUFILE_ERR_OP_UNKNOWN= -2,
-    CUFILE_ERR_OP_SHORT = -3,
-};
-
 class nixlGdsMtMetadata : public nixlBackendMD {
     public:
         nixlGdsMtMetadata() : nixlBackendMD(true) { }
