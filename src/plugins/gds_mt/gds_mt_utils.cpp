@@ -18,6 +18,22 @@
 #include "common/nixl_log.h"
 #include "gds_mt_utils.h"
 
+gdsMtUtil::gdsMtUtil() {
+    CUfileError_t err = cuFileDriverOpen();
+    if (err.err == CU_FILE_SUCCESS) {
+        driver_initialized_ = true;
+    } else {
+        NIXL_ERROR << "GDS_MT: error initializing GPU Direct Storage driver: error=" << err.err;
+        driver_initialized_ = false;
+    }
+}
+
+gdsMtUtil::~gdsMtUtil() {
+    if (driver_initialized_) {
+        cuFileDriverClose();
+    }
+}
+
 nixl_status_t gdsMtUtil::registerFileHandle(int fd,
                                             size_t size,
                                             std::string metaInfo,
@@ -56,23 +72,6 @@ nixl_status_t gdsMtUtil::registerBufHandle(void *ptr,
         NIXL_ERROR << "GDS_MT: warning: buffer registration failed - will use compat mode: error=" << status.err;
     }
     return NIXL_SUCCESS;
-}
-
-nixl_status_t gdsMtUtil::openGdsMtDriver()
-{
-    CUfileError_t err;
-
-    err = cuFileDriverOpen();
-    if (err.err != CU_FILE_SUCCESS) {
-        NIXL_ERROR << "GDS_MT: error initializing GPU Direct Storage driver: error=" << err.err;
-        return NIXL_ERR_BACKEND;
-    }
-    return NIXL_SUCCESS;
-}
-
-void gdsMtUtil::closeGdsMtDriver()
-{
-    cuFileDriverClose();
 }
 
 void gdsMtUtil::deregisterFileHandle(gdsMtFileHandle& handle)

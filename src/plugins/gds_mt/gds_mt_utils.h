@@ -38,15 +38,18 @@ class gdsMtMemBuf {
 
 class gdsMtUtil {
     public:
-        gdsMtUtil() {}
-        ~gdsMtUtil() {}
+        gdsMtUtil();
+        ~gdsMtUtil();
         nixl_status_t registerFileHandle(int fd, size_t size,
                                        std::string metaInfo,
                                        gdsMtFileHandle& handle);
         nixl_status_t registerBufHandle(void *ptr, size_t size, int flags);
         void deregisterFileHandle(gdsMtFileHandle& handle);
         nixl_status_t deregisterBufHandle(void *ptr);
-        nixl_status_t openGdsMtDriver();
-        void closeGdsMtDriver();
+
+        bool isInitialized() const { return driver_initialized_; }
+
+    private:
+        bool driver_initialized_{false};
 };
 #endif
