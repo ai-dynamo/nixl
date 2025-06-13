@@ -60,7 +60,6 @@ class gdsMtMemBuf {
         size_t size = 0;
 
     private:
-        gdsMtUtil& util_;
         bool registered_{false};
 };
 
@@ -68,8 +67,6 @@ class gdsMtUtil {
     public:
         gdsMtUtil();
         ~gdsMtUtil();
-        nixl_status_t registerBufHandle(void *ptr, size_t size, int flags);
-        nixl_status_t deregisterBufHandle(void *ptr);
 
         bool isInitialized() const { return driver_initialized_; }
 

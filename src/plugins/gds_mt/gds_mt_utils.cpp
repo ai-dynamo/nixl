@@ -35,16 +35,29 @@ gdsMtUtil::~gdsMtUtil() {
 }
 
 gdsMtMemBuf::gdsMtMemBuf(gdsMtUtil& util, void* ptr, size_t sz, int flags)
-    : base(ptr), size(sz), util_(util) {
-    nixl_status_t status = util_.registerBufHandle(ptr, sz, flags);
-    if (status == NIXL_SUCCESS) {
+    : base(ptr), size(sz) {
+
+    // Check if driver is initialized before attempting registration
+    if (!util.isInitialized()) {
+        NIXL_ERROR << "GDS_MT: gdsMtUtil not initialized";
+        return;
+    }
+
+    CUfileError_t status = cuFileBufRegister(ptr, sz, flags);
+    if (status.err != CU_FILE_SUCCESS) {
+        NIXL_ERROR << "GDS_MT: warning: buffer registration failed - will use compat mode: error=" << status.err;
+        // Note: We don't set registered_ = true, but this is not considered a fatal error
+    } else {
         registered_ = true;
     }
 }
 
 gdsMtMemBuf::~gdsMtMemBuf() {
     if (registered_) {
-        util_.deregisterBufHandle(base);
+        CUfileError_t status = cuFileBufDeregister(base);
+        if (status.err != CU_FILE_SUCCESS) {
+            NIXL_ERROR << "GDS_MT: error deregistering buffer: error=" << status.err << " ptr=" << base;
+        }
     }
 }
 
@@ -78,29 +91,4 @@ gdsMtFileHandle::~gdsMtFileHandle() {
     if (registered_) {
         cuFileHandleDeregister(cu_fhandle);
     }
-}
-
-nixl_status_t gdsMtUtil::registerBufHandle(void *ptr,
-                                           size_t size,
-                                           int flags)
-{
-    CUfileError_t status;
-
-    status = cuFileBufRegister(ptr, size, flags);
-    if (status.err != CU_FILE_SUCCESS) {
-        NIXL_ERROR << "GDS_MT: warning: buffer registration failed - will use compat mode: error=" << status.err;
-    }
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t gdsMtUtil::deregisterBufHandle(void *ptr)
-{
-    CUfileError_t status;
-
-    status = cuFileBufDeregister(ptr);
-    if (status.err != CU_FILE_SUCCESS) {
-        NIXL_ERROR << "GDS_MT: error deregistering buffer: error=" << status.err << " ptr=" << ptr;
-        return NIXL_ERR_BACKEND;
-    }
-    return NIXL_SUCCESS;
 }
