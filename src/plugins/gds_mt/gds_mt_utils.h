@@ -22,18 +22,34 @@
 #include <nixl.h>
 #include <cufile.h>
 
+// Forward declaration
+class gdsMtUtil;
+
 class gdsMtFileHandle {
     public:
-        int fd;
-        size_t size;
+        int fd = -1;
+        size_t size = 0;
         std::string metadata;
-        CUfileHandle_t cu_fhandle;
+        CUfileHandle_t cu_fhandle = nullptr;
 };
 
 class gdsMtMemBuf {
     public:
-        void *base;
-        size_t size;
+        gdsMtMemBuf(gdsMtUtil& util, void* ptr, size_t sz, int flags = 0);
+        ~gdsMtMemBuf();
+
+        // Disable copy/move
+        gdsMtMemBuf(const gdsMtMemBuf&) = delete;
+        gdsMtMemBuf& operator=(const gdsMtMemBuf&) = delete;
+
+        bool isRegistered() const { return registered_; }
+
+        void *base = nullptr;
+        size_t size = 0;
+
+    private:
+        gdsMtUtil& util_;
+        bool registered_{false};
 };
 
 class gdsMtUtil {

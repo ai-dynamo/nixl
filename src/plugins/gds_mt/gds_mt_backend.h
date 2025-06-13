@@ -27,6 +27,7 @@
 #include <list>
 #include <vector>
 #include <mutex>
+#include <memory>
 #include "gds_mt_utils.h"
 #include "backend/backend_engine.h"
 #include "taskflow.hpp"
@@ -37,7 +38,7 @@ class nixlGdsMtMetadata : public nixlBackendMD {
         ~nixlGdsMtMetadata() { }
 
         gdsMtFileHandle handle;
-        gdsMtMemBuf buf;
+        std::unique_ptr<gdsMtMemBuf> buf;
         nixl_mem_t type;
 };
 

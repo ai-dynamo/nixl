@@ -34,6 +34,20 @@ gdsMtUtil::~gdsMtUtil() {
     }
 }
 
+gdsMtMemBuf::gdsMtMemBuf(gdsMtUtil& util, void* ptr, size_t sz, int flags)
+    : base(ptr), size(sz), util_(util) {
+    nixl_status_t status = util_.registerBufHandle(ptr, sz, flags);
+    if (status == NIXL_SUCCESS) {
+        registered_ = true;
+    }
+}
+
+gdsMtMemBuf::~gdsMtMemBuf() {
+    if (registered_) {
+        util_.deregisterBufHandle(base);
+    }
+}
+
 nixl_status_t gdsMtUtil::registerFileHandle(int fd,
                                             size_t size,
                                             std::string metaInfo,
