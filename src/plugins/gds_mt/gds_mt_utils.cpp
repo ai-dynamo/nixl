@@ -19,11 +19,11 @@
 #include "gds_mt_utils.h"
 
 gdsMtUtil::gdsMtUtil() {
-    CUfileError_t err = cuFileDriverOpen();
-    if (err.err == CU_FILE_SUCCESS) {
+    const CUfileError_t status = cuFileDriverOpen();
+    if (status.err == CU_FILE_SUCCESS) {
         driver_initialized_ = true;
     } else {
-        NIXL_ERROR << "GDS_MT: error initializing GPU Direct Storage driver: error=" << err.err;
+        NIXL_ERROR << "GDS_MT: error initializing GPU Direct Storage driver: error=" << status.err;
         driver_initialized_ = false;
     }
 }
@@ -43,9 +43,9 @@ gdsMtMemBuf::gdsMtMemBuf(gdsMtUtil& util, void* ptr, size_t sz, int flags)
         return;
     }
 
-    CUfileError_t status = cuFileBufRegister(ptr, sz, flags);
+    const CUfileError_t status = cuFileBufRegister(ptr, sz, flags);
     if (status.err != CU_FILE_SUCCESS) {
-        NIXL_ERROR << "GDS_MT: warning: buffer registration failed - will use compat mode: error=" << status.err;
+        NIXL_WARN << "GDS_MT: warning: buffer registration failed - will use compat mode: error=" << status.err;
         // Note: We don't set registered_ = true, but this is not considered a fatal error
     } else {
         registered_ = true;
@@ -54,7 +54,7 @@ gdsMtMemBuf::gdsMtMemBuf(gdsMtUtil& util, void* ptr, size_t sz, int flags)
 
 gdsMtMemBuf::~gdsMtMemBuf() {
     if (registered_) {
-        CUfileError_t status = cuFileBufDeregister(base);
+        const CUfileError_t status = cuFileBufDeregister(base);
         if (status.err != CU_FILE_SUCCESS) {
             NIXL_ERROR << "GDS_MT: error deregistering buffer: error=" << status.err << " ptr=" << base;
         }
@@ -69,15 +69,12 @@ gdsMtFileHandle::gdsMtFileHandle(gdsMtUtil& util, int file_fd, size_t sz, const 
         return;
     }
 
-    CUfileError_t status;
-    CUfileDescr_t descr;
-    CUfileHandle_t handle;
-
-    descr = {};
+    CUfileDescr_t descr = {};
     descr.handle.fd = fd;
     descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
 
-    status = cuFileHandleRegister(&handle, &descr);
+    CUfileHandle_t handle;
+    const CUfileError_t status = cuFileHandleRegister(&handle, &descr);
     if (status.err != CU_FILE_SUCCESS) {
         NIXL_ERROR << "GDS_MT: file register error: error=" << status.err << ", fd=" << fd;
         return;
