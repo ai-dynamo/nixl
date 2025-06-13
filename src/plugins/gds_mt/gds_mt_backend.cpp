@@ -29,7 +29,7 @@ namespace {
 nixlGdsMtEngine::nixlGdsMtEngine(const nixlBackendInitParams* init_params)
     : nixlBackendEngine(init_params)
 {
-    gds_mt_utils = new gdsMtUtil();
+    gds_mt_utils = std::make_unique<gdsMtUtil>();
 
     thread_count_ = DEFAULT_THREAD_COUNT;
 
@@ -319,6 +319,5 @@ nixlGdsMtEngine::~nixlGdsMtEngine() {
 
     if (gds_mt_utils) {
         gds_mt_utils->closeGdsMtDriver();
-        delete gds_mt_utils;
     }
 }
