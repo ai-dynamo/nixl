@@ -50,28 +50,17 @@ class nixlGdsMtMetadata : public nixlBackendMD {
 
 class GdsMtTransferRequestH {
     public:
-        GdsMtTransferRequestH() {
-            addr = nullptr;
-            size = 0;
-            file_offset = 0;
-            fh = nullptr;
-            op = CUFILE_READ;
-        }
+        GdsMtTransferRequestH() = default;
 
-        GdsMtTransferRequestH(void* a, size_t s, size_t offset,
-                              CUfileHandle_t handle, CUfileOpcode_t operation) {
-            addr = a;
-            size = s;
-            file_offset = offset;
-            fh = handle;
-            op = operation;
-        }
+        GdsMtTransferRequestH(void* a, size_t s, size_t offset, CUfileHandle_t handle, CUfileOpcode_t operation)
+        : addr{a}, size{s}, file_offset{offset}, fh{handle}, op{operation}
+        {}
 
-        void*           addr;
-        size_t          size;
-        size_t          file_offset;
-        CUfileHandle_t  fh;
-        CUfileOpcode_t  op;
+        void*           addr = nullptr;
+        size_t          size = 0;
+        size_t          file_offset = 0;
+        CUfileHandle_t  fh = nullptr;
+        CUfileOpcode_t  op = CUFILE_READ;
 };
 
 class nixlGdsMtBackendReqH : public nixlBackendReqH {
