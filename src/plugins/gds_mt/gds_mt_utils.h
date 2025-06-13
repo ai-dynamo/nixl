@@ -27,10 +27,22 @@ class gdsMtUtil;
 
 class gdsMtFileHandle {
     public:
+        gdsMtFileHandle(gdsMtUtil& util, int fd, size_t sz, const std::string& metaInfo);
+        ~gdsMtFileHandle();
+
+        // Disable copy/move
+        gdsMtFileHandle(const gdsMtFileHandle&) = delete;
+        gdsMtFileHandle& operator=(const gdsMtFileHandle&) = delete;
+
+        bool isRegistered() const { return registered_; }
+
         int fd = -1;
         size_t size = 0;
         std::string metadata;
         CUfileHandle_t cu_fhandle = nullptr;
+
+    private:
+        bool registered_{false};
 };
 
 class gdsMtMemBuf {
@@ -56,11 +68,7 @@ class gdsMtUtil {
     public:
         gdsMtUtil();
         ~gdsMtUtil();
-        nixl_status_t registerFileHandle(int fd, size_t size,
-                                       std::string metaInfo,
-                                       gdsMtFileHandle& handle);
         nixl_status_t registerBufHandle(void *ptr, size_t size, int flags);
-        void deregisterFileHandle(gdsMtFileHandle& handle);
         nixl_status_t deregisterBufHandle(void *ptr);
 
         bool isInitialized() const { return driver_initialized_; }

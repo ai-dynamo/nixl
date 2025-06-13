@@ -37,7 +37,7 @@ class nixlGdsMtMetadata : public nixlBackendMD {
         nixlGdsMtMetadata() : nixlBackendMD(true) { }
         ~nixlGdsMtMetadata() { }
 
-        gdsMtFileHandle handle;
+        std::shared_ptr<gdsMtFileHandle> handle;
         std::unique_ptr<gdsMtMemBuf> buf;
         nixl_mem_t type;
 };
@@ -131,7 +131,7 @@ class nixlGdsMtEngine : public nixlBackendEngine {
 
     private:
         std::unique_ptr<gdsMtUtil> gds_mt_utils_;
-        std::unordered_map<int, gdsMtFileHandle> gds_mt_file_map_;
+        std::unordered_map<int, std::shared_ptr<gdsMtFileHandle>> gds_mt_file_map_;
         size_t thread_count_;
         std::unique_ptr<tf::Executor> executor_;
 };
