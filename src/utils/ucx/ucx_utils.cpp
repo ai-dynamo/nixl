@@ -50,6 +50,22 @@ nixl_status_t ucx_status_to_nixl(ucs_status_t status)
     }
 }
 
+void ucx_modify_config(ucp_config_t *config, std::string_view key,
+                       std::string_view value)
+{
+    const char *env_val = std::getenv(absl::StrFormat("UCX_%s", key.data()).c_str());
+    value = env_val ? env_val : value;
+
+    ucs_status_t status = ucp_config_modify(config, key.data(), value.data());
+    if (status != UCS_OK) {
+        NIXL_WARN << "Failed to modify UCX config: " << key << "=" << value
+                  << ": " << ucs_status_string(status);
+    } else {
+        NIXL_DEBUG << "Applied UCX config from " << (env_val ? "env var" : "NIXL")
+                   << ": " << key << "=" << value;
+    }
+}
+
 static void err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status)
 {
     nixlUcxEp *ep = reinterpret_cast<nixlUcxEp*>(arg);
@@ -390,9 +406,21 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         ucp_config_modify(ucp_config, "NET_DEVICES", dev_str.c_str());
     }
 
-    status = ucp_config_modify(ucp_config, "MAX_RMA_RAILS", "2");
-    if (status != UCS_OK) {
-        NIXL_WARN << "Failed to modify MAX_RMA_RAILS: " << ucs_status_string(status);
+    unsigned major_version, minor_version, release_number;
+    ucp_get_version(&major_version, &minor_version, &release_number);
+
+    ucx_modify_config(ucp_config, "ADDRESS_VERSION", "v2");
+    ucx_modify_config(ucp_config, "RNDV_THRESH", "inf");
+
+    unsigned ucp_version = UCP_VERSION(major_version, minor_version);
+    if (ucp_version >= UCP_VERSION(1, 19)) {
+        ucx_modify_config(ucp_config, "MAX_COMPONENT_MDS", "32");
+    }
+
+    if (ucp_version >= UCP_VERSION(1, 20)) {
+        ucx_modify_config(ucp_config, "MAX_RMA_RAILS", "4");
+    } else {
+        ucx_modify_config(ucp_config, "MAX_RMA_RAILS", "2");
     }
 
     status = ucp_init(&ucp_params, ucp_config, &ctx);
