@@ -142,27 +142,32 @@ nixl_status_t nixlGdsMtEngine::deregisterMem (nixlBackendMD* meta)
     return NIXL_SUCCESS;
 }
 
-void runCuFileOp(GdsMtTransferRequestH* req) {
+void runCuFileOp(GdsMtTransferRequestH* req, std::atomic<nixl_status_t>* overall_status) {
     ssize_t nbytes = 0;
     if (req->op == CUFILE_READ) {
         nbytes = cuFileRead(req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
-            perror("cuFileRead failed");
+            NIXL_ERROR << "GDS_MT: cuFileRead failed: " << strerror(errno);
+            overall_status->store(NIXL_ERR_BACKEND);
             return;
         }
     } else if (req->op == CUFILE_WRITE) {
         nbytes = cuFileWrite(req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
-            perror("cuFileWrite failed");
+            NIXL_ERROR << "GDS_MT: cuFileWrite failed: " << strerror(errno);
+            overall_status->store(NIXL_ERR_BACKEND);
             return;
         }
     } else {
+        overall_status->store(NIXL_ERR_INVALID_PARAM);
         return;
     }
+
     if ((size_t)nbytes != req->size) {
         NIXL_ERROR << "GDS_MT: error: short "
                    << ((req->op == CUFILE_READ) ? "read: " : "write: ")
-                   << nbytes << " out of " << req->size << "bytes - address=" << req->addr;
+                   << nbytes << " out of " << req->size << " bytes - address=" << req->addr;
+        overall_status->store(NIXL_ERR_BACKEND);
         return;
     }
 }
@@ -243,8 +248,8 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
     for (GdsMtTransferRequestH& req : gds_mt_handle->request_list) {
         GdsMtTransferRequestH* captured_req = &req;
-        gds_mt_handle->taskflow.emplace([captured_req]() {
-            runCuFileOp(captured_req);
+        gds_mt_handle->taskflow.emplace([captured_req, overall_status = &gds_mt_handle->overall_status]() {
+            runCuFileOp(captured_req, overall_status);
         });
     }
 
@@ -283,7 +288,7 @@ nixl_status_t nixlGdsMtEngine::checkXfer(nixlBackendReqH* handle) const
         return NIXL_IN_PROG;
     }
     gds_mt_handle->running_transfer.get();
-    return NIXL_SUCCESS;
+    return gds_mt_handle->overall_status.load();
 }
 
 nixl_status_t nixlGdsMtEngine::releaseReqH(nixlBackendReqH* handle) const
