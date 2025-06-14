@@ -45,8 +45,7 @@ class nixlAgent {
          * @param name A String name assigned to the Agent to initialize the class
          * @param cfg  Agent configuration of class type nixlAgentConfig
          */
-        nixlAgent (const std::string &name,
-                   const nixlAgentConfig &cfg);
+        nixlAgent (const std::string &name, const nixlAgentConfig &cfg);
         /**
          * @brief Destructor for nixlAgent object
          */
