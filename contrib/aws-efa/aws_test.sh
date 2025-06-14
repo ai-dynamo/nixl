@@ -83,6 +83,7 @@ JOB_ID=$(aws batch submit-job \
 
 # Function to wait for a specific job status
 wait_for_status() {
+    set +x
     local target_status="$1"
     local timeout="$2"
     local interval="$3"
@@ -91,15 +92,17 @@ wait_for_status() {
 
     while [ $SECONDS -lt $timeout ]; do
         status=$(aws batch describe-jobs --jobs "$JOB_ID" --query 'jobs[0].status' --output text)
-        echo "Current status: $status (${SECONDS}s elapsed)"
         if echo "$status" | grep -qE "$target_status"; then
-            echo "Reached status $status (completed in ${SECONDS}s)"
+            echo -e "\nReached status $status (completed in ${SECONDS}s)"
+            set -x
             return 0
         fi
+        printf "."
         sleep $interval
     done
 
-    echo "Timeout waiting for status $target_status after ${SECONDS}s. Final status: $status"
+    echo -e "\nTimeout waiting for status $target_status after ${SECONDS}s. Final status: $status"
+    set -x
     return 1
 }
 
@@ -117,8 +120,7 @@ kubectl -n ucx-ci-batch-nodes logs -f "$POD" || kubectl -n ucx-ci-batch-nodes lo
 
 # Check final job status
 echo "Waiting for job completion (timeout: 10m)..."
-exit_status=$(wait_for_status "SUCCEEDED|FAILED" 600 10)
-if [[ "$exit_status" =~ FAILED ]]; then
+if ! wait_for_status "SUCCEEDED" 600 10; then
     echo "Failure running NIXL tests"
     exit 1
 fi
