@@ -158,7 +158,7 @@ public:
     ~nixlUcxContext();
 
     /* Memory management */
-    int memReg(void *addr, size_t size, nixlUcxMem &mem);
+    int memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl_mem_type);
     [[nodiscard]] std::string packRkey(nixlUcxMem &mem);
     void memDereg(nixlUcxMem &mem);
 
