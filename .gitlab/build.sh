@@ -31,8 +31,15 @@ if [ -z "$UCX_INSTALL_DIR" ]; then
     UCX_INSTALL_DIR=$INSTALL_DIR
 fi
 
-apt-get -qq update
-apt-get -qq install -y curl \
+# For running as user - check if running as root, if not set sudo variable
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO=sudo
+else
+    SUDO=""
+fi
+
+$SUDO apt-get -qq update
+$SUDO apt-get -qq install -y curl \
                              libnuma-dev \
                              numactl \
                              autotools-dev \
@@ -85,7 +92,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
           --enable-mt && \
         make -j && \
         make -j install-strip && \
-        ldconfig \
+        $SUDO ldconfig \
 )
 
 export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
