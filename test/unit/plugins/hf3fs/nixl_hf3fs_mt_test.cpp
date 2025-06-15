@@ -38,8 +38,8 @@ namespace {
     constexpr int default_num_threads = 4;
     constexpr int default_transfers_per_thread = 10;
     constexpr size_t default_transfer_size = 1024 * 1024;  // 1MB
-    constexpr int default_write_iterations = 1;  // Default number of write iterations
-    constexpr int default_read_iterations = 1;   // Default number of read iterations
+    constexpr int default_write_iterations = 1;
+    constexpr int default_read_iterations = 1;
     constexpr char test_phrase[] = "NIXL HF3FS Multi-Thread Test Pattern 2025";
     constexpr char test_file_name[] = "mt_testfile";
     constexpr mode_t std_file_permissions = 0744;
@@ -134,6 +134,36 @@ namespace {
         // Remove the member variables that require non-default constructors
     };
 
+
+    void execute_transfer_iterations(nixlAgent& agent, nixlXferReqH* req, int iterations,
+                                   const std::string& operation_type, int thread_id) {
+        for (int iter = 0; iter < iterations; iter++) {
+            auto status = agent.postXferReq(req);
+            if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
+                throw std::runtime_error("Failed to post " + operation_type + " request (iter " +
+                                       std::to_string(iter) + "), err: " + nixlEnumStrings::statusStr(status));
+            }
+
+            // Wait for completion
+            status = agent.getXferStatus(req);
+            while (status == NIXL_IN_PROG) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                status = agent.getXferStatus(req);
+            }
+
+            if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
+                throw std::runtime_error("Failed to wait for " + operation_type + " completion (iter " +
+                                       std::to_string(iter) + "), err: " + nixlEnumStrings::statusStr(status));
+            }
+
+#if NIXL_3FS_VALIDATION_MODE
+            print_protected("thread_id: " + std::to_string(thread_id) +
+                          " " + operation_type + "_iter: " + std::to_string(iter) +
+                          " " + operation_type + " completed");
+#endif
+        }
+    }
+
     // Update worker functions to accept all parameters directly
     void worker_write_thread(int thread_id,
                            nixlAgent& agent,
@@ -150,32 +180,8 @@ namespace {
 #if NIXL_3FS_VALIDATION_MODE
             auto write_start = nixlTime::getUs();
 #endif
-            // Loop for the specified number of write iterations
-            for (int iter = 0; iter < write_iterations; iter++) {
-                auto status = agent.postXferReq(write_req);
-                if (status < 0) {
-                    throw std::runtime_error("Failed to post write request (iter " +
-                                           std::to_string(iter) + "), err: " + std::to_string(status));
-                }
+            execute_transfer_iterations(agent, write_req, write_iterations, "write", thread_id);
 
-                // Wait for write completion
-                status = agent.getXferStatus(write_req);
-                while (status == NIXL_IN_PROG) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    status = agent.getXferStatus(write_req);
-                }
-
-                if (status < 0) {
-                    throw std::runtime_error("Failed to wait for write completion (iter " +
-                                           std::to_string(iter) + "), err: " + std::to_string(status));
-                }
-
-#if NIXL_3FS_VALIDATION_MODE
-                print_protected("thread_id: " + std::to_string(thread_id) +
-                              " write_iter: " + std::to_string(iter) +
-                              " write completed");
-#endif
-            }
 #if NIXL_3FS_VALIDATION_MODE
             auto write_end = nixlTime::getUs();
             write_stats.add_transfer(transfer_size * num_transfers * write_iterations, write_end - write_start);
@@ -235,31 +241,7 @@ namespace {
 
             auto read_start = nixlTime::getUs();
 #endif
-            // Loop for the specified number of read iterations
-            for (int iter = 0; iter < read_iterations; iter++) {
-                auto status = agent.postXferReq(read_req);
-                if (status < 0) {
-                    throw std::runtime_error("Failed to post read request (iter " +
-                                           std::to_string(iter) + "), err: " + std::to_string(status));
-                }
-
-                // Wait for read completion
-                status = agent.getXferStatus(read_req);
-                while (status == NIXL_IN_PROG) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    status = agent.getXferStatus(read_req);
-                }
-
-                if (status < 0) {
-                    throw std::runtime_error("Failed to wait for read completion (iter " +
-                                           std::to_string(iter) + "), err: " + std::to_string(status));
-                }
-#if NIXL_3FS_VALIDATION_MODE
-                print_protected("thread_id: " + std::to_string(thread_id) +
-                              " read_iter: " + std::to_string(iter) +
-                              " read completed");
-#endif
-            }
+            execute_transfer_iterations(agent, read_req, read_iterations, "read", thread_id);
 
 #if NIXL_3FS_VALIDATION_MODE
             auto read_end = nixlTime::getUs();
