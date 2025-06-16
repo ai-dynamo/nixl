@@ -295,9 +295,4 @@ nixl_status_t nixlGdsMtEngine::releaseReqH(nixlBackendReqH* handle) const
     return NIXL_SUCCESS;
 }
 
-nixlGdsMtEngine::~nixlGdsMtEngine() {
-    // Note: The destructor of the TaskFlow executor runs wait_for_all() to
-    // wait for all submitted taskflows to complete and then notifies all worker
-    // threads to stop and join these threads.
-    // Note: The gds_mt_utils_ destructor automatically handles driver cleanup.
-}
+

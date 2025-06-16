@@ -71,7 +71,11 @@ class nixlGdsMtBackendReqH : public nixlBackendReqH {
 class nixlGdsMtEngine : public nixlBackendEngine {
     public:
         nixlGdsMtEngine(const nixlBackendInitParams* init_params);
-        ~nixlGdsMtEngine();
+        // Note: The destructor of the TaskFlow executor runs wait_for_all() to
+        // wait for all submitted taskflows to complete and then notifies all worker
+        // threads to stop and join these threads.
+        // Note: The gds_mt_utils_ destructor automatically handles driver cleanup.
+        ~nixlGdsMtEngine() = default;
 
         // Disable copy/move
         nixlGdsMtEngine(const nixlGdsMtEngine&) = delete;
