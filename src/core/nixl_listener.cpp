@@ -70,8 +70,7 @@ int connectToIP(std::string ip_addr, int port) {
     ret = select(ret_fd + 1, NULL, &write_fds, NULL, &tv);
     if (ret <= 0) {
         if (ret < 0) {
-            NIXL_ERROR << "select failed for ip_addr: " << ip_addr << " and port: " << port
-                       << " with error: " << nixl_strerror(errno);
+            NIXL_PERROR << "select failed for ip_addr: " << ip_addr << " and port: " << port;
         } else {
             NIXL_ERROR << "select timed out for ip_addr: " << ip_addr << " and port: " << port;
         }
@@ -83,8 +82,7 @@ int connectToIP(std::string ip_addr, int port) {
     int error = 0;
     socklen_t len = sizeof(error);
     if (getsockopt(ret_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
-        NIXL_ERROR << "getsockopt failed for ip_addr: " << ip_addr << " and port: " << port
-                   << " with error: " << nixl_strerror(error);
+        NIXL_PERROR << "getsockopt failed for ip_addr: " << ip_addr << " and port: " << port;
         close(ret_fd);
         return -1;
     }
