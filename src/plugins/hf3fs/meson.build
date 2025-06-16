@@ -20,8 +20,6 @@ threefs_dep = declare_dependency(
   link_args : ['-L' + hf3fs_lib_path, '-l' + hf3fs_lib_file],
   include_directories : include_directories(threefs_inc_path))
 
-# Get Abseil dependencies
-
 if 'HF3FS' in static_plugins
   hf3fs_backend_lib = static_library('HF3FS',
                     'hf3fs_utils.cpp', 'hf3fs_utils.h',
