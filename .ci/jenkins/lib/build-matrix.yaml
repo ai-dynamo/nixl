@@ -1,0 +1,80 @@
+# Build Matrix Configuration for NixL CI Pipeline
+#
+# This file defines the build matrix configuration for the NixL CI pipeline in Jenkins.
+# It specifies the build environment, resources, and test matrix for continuous integration.
+#
+# Key Components:
+# - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
+# - Docker Images: Specifies the container images used for different build stages
+#   - PyTorch images (24.10 and 25.02) for building and testing
+#   - Podman image for container builds
+# - Matrix Axes: Defines build variations (currently x86_64 architecture)
+# - Build Steps: Sequential steps for building, testing, and container creation
+#
+# When Modified:
+# - Adding/removing Docker images: Affects available build environments
+# - Modifying matrix axes: Changes build variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts build performance and resource allocation
+# - Adding/removing steps: Changes the build pipeline sequence
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+---
+job: nixl-ci-build
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 8Gi, cpu: 8000m}"
+  requests: "{memory: 8Gi, cpu: 8000m}"
+
+runs_on_dockers:
+  - { name: "pytorch-25.02-py3", url: "nvcr.io/nvidia/pytorch:25.02-py3" }
+  - { name: "pytorch-24.10-py3", url: "nvcr.io/nvidia/pytorch:24.10-py3" }
+  - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", category: 'tool', privileged: true }
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+      - aarch64
+
+env:
+  NIXL_INSTALL_DIR: /opt/nixl
+
+steps:
+  - name: Build
+    parallel: false
+    run: |
+      if [[ "${name}" == "pytorch-24.10-py3" ]]; then
+        # distro's meson version is too old project requires >= 0.64.0
+        pip3 install meson
+      fi
+      .gitlab/build.sh ${NIXL_INSTALL_DIR}
+
+  - name: Test CPP
+    parallel: false
+    run: |
+      .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
+
+  - name: Test Python
+    parallel: false
+    run: |
+      .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
+
+  - name: Build Docker Image
+    parallel: false
+    containerSelector: "{ name: 'podman.*' }"
+    run: |
+      # change storage driver to improve build performance
+      rm -f /etc/containers/storage.conf ; podman system reset -f || true
+      # symlink podman to docker - scripts works with docker commands
+      ln -sfT $(type -p podman) /usr/bin/docker
+      # install git for building container image
+      yum install -y git
+      contrib/build-container.sh --no-cache

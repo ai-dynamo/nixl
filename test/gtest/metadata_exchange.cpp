@@ -359,10 +359,16 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal)
     fetch_args.port = src.port;
 
     ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
-
     std::this_thread::sleep_for(sleep_time);
-
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+    nixl_opt_args_t invalidate_args;
+    invalidate_args.ipAddr = dst.ip;
+    invalidate_args.port = dst.port;
+
+    ASSERT_EQ(src.agent->invalidateLocalMD(&invalidate_args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(sleep_time);
+    ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketSendPartialLocal)
@@ -451,6 +457,36 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors)
 
     // Agent 1 has no backend
     ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+}
+
+TEST_F(MetadataExchangeTestFixture, LocalNonLocalMDExchange)
+{
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    nixlBackendH *backend;
+    nixl_status_t status;
+    std::string backend_name;
+    for (const auto& name : std::set<std::string>{"GDS", "POSIX"}) {
+        status = src.agent->createBackend(name, {}, backend);
+        if (status == NIXL_SUCCESS) {
+            backend_name = name;
+            break;
+        }
+    }
+
+    if (status != NIXL_SUCCESS) {
+        GTEST_SKIP() << "No local-only backend found";
+    }
+
+    ASSERT_EQ(NIXL_SUCCESS, dst.agent->createBackend(backend_name, {}, backend));
+
+    initAgentsDefault();
+
+    std::string meta, remote_name;
+    ASSERT_EQ(NIXL_SUCCESS, src.agent->getLocalMD(meta));
+    ASSERT_EQ(NIXL_SUCCESS, dst.agent->loadRemoteMD(meta, remote_name));
+    ASSERT_EQ("agent_0", remote_name);
 }
 
 } // namespace metadata_exchange

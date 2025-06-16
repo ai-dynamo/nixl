@@ -17,6 +17,12 @@ subdir('ucx')
 subdir('ucx_mo')
 subdir('posix')
 
+
+if cuda_dep.found() and doca_gpunetio_dep.found()
+    subdir('gpunetio')
+endif
+
+
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend
     subdir('cuda_gds')

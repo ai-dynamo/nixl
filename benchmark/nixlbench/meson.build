@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '0.2.0',
+project('nixlbench', 'CPP', version: '0.3.1',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -40,7 +40,14 @@ nvshmem_lib_path = get_option('nvshmem_lib_path')
 
 # Find required libraries
 # NIXL
-nixl_lib_path = nixl_path + '/lib/x86_64-linux-gnu'
+host_cpu_family = host_machine.cpu_family()
+host_system = host_machine.system().to_lower()
+
+if host_system != 'linux' or host_cpu_family not in ['x86_64', 'aarch64']
+    error('This build only supports Linux on x86_64 or aarch64 architectures.')
+endif
+
+nixl_lib_path = nixl_path + '/lib/' + host_cpu_family + '-linux-gnu'
 nixl_lib = cpp.find_library('nixl', dirs: [nixl_lib_path])
 nixl_build = cpp.find_library('nixl_build', dirs: [nixl_lib_path])
 nixl_serdes = cpp.find_library('serdes', dirs: [nixl_lib_path])
@@ -66,6 +73,15 @@ else
         include_directories : include_directories(cuda_inc_path))
     cuda_available = true
 endif
+
+cuda_fabric_available = false
+if cuda_available
+    if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC',
+                             args: cuda_inc_path != '' ? '-I' + cuda_inc_path : [])
+        cuda_fabric_available = true
+    endif
+endif
+
 
 # UCX
 ucx_dep = dependency('ucx')
@@ -111,6 +127,10 @@ if cuda_available
     add_project_arguments('-DHAVE_CUDA', language: 'cpp')
 endif
 
+if cuda_fabric_available
+    add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
+endif
+
 # Subprojects
 subdir('src/utils')
 subdir('src/runtime')
@@ -123,6 +143,7 @@ configure_file(
         'HAVE_ETCD': etcd_available ? '1' : '0',
         'HAVE_NVSHMEM': nvshmem_available ? '1' : '0',
         'HAVE_CUDA': cuda_available ? '1' : '0',
+        'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
     },
     install: true,
     install_dir: get_option('includedir') / 'nixlbench'

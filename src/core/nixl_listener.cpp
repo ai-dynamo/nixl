@@ -26,6 +26,7 @@
 #include <etcd/Watcher.hpp>
 #include <future>
 #endif // HAVE_ETCD
+#include <absl/strings/str_format.h>
 
 const std::string default_metadata_label = "metadata";
 
@@ -90,33 +91,86 @@ int connectToIP(std::string ip_addr, int port) {
     return ret_fd;
 }
 
-size_t sendCommMessage(int fd, std::string msg){
-    size_t bytes;
-    bytes = send(fd, msg.c_str(), msg.size(), 0);
-    if(bytes < 0) {
-        NIXL_ERROR << "Cannot send on socket to fd " << fd;
+void
+sendCommMessage(int fd, const std::string& msg) {
+    size_t size = msg.size();
+    constexpr size_t iov_size = 2;
+    struct iovec iov[iov_size] = {
+        {&size, sizeof(size)},
+        {const_cast<char*>(msg.data()), msg.size()}
+    };
+
+    for (size_t i = 0, offset = 0, sent = 0; i < iov_size;) {
+        auto bytes = send(fd, static_cast<char *>(iov[i].iov_base) + offset, iov[i].iov_len - offset, 0);
+        if (bytes < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue;
+            }
+
+            throw std::runtime_error(
+                    absl::StrFormat("sendCommMessage(fd=%d) %zu/%zu bytes failed, errno=%d",
+                                    fd,
+                                    sent,
+                                    size + sizeof(size),
+                                    errno));
+        }
+
+        offset += bytes;
+        sent += bytes;
+        if (offset == iov[i].iov_len) {
+            offset = 0;
+            ++i;
+        }
     }
-    return bytes;
 }
 
-ssize_t recvCommMessage(int fd, std::string &msg){
-    char buffer[16384];
-    ssize_t one_recv_bytes = 0;
-    ssize_t recv_bytes = 0;
-    msg = std::string("");
-
-    do {
-        one_recv_bytes = recv(fd, buffer, sizeof(buffer), 0);
-        if (one_recv_bytes == -1){
-            if(errno == EAGAIN || errno == EWOULDBLOCK) return recv_bytes;
-            NIXL_ERROR << "Cannot recv on socket fd " << fd;
-            return one_recv_bytes;
+bool
+recvCommMessageType(int fd, void *data, size_t size, bool force = false) {
+    for (size_t received = 0; received < size;) {
+        auto bytes = recv(fd, static_cast<char *>(data) + received, size - received, 0);
+        if (bytes > 0) {
+            received += bytes;
+            continue;
         }
-        msg.append(buffer, one_recv_bytes);
-        recv_bytes += one_recv_bytes;
-    } while(one_recv_bytes > 0);
+        if (bytes == 0 && received == 0 && !force) {
+            return false;
+        }
 
-    return recv_bytes;
+        if (bytes < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (!force && received == 0) {
+                    return false; // nothing to read yet
+                }
+
+                continue;
+            }
+        }
+
+        throw std::runtime_error(
+                absl::StrFormat("recvCommMessage(fd=%d) %zu/%zu bytes failed ret=%d errno=%d",
+                                fd,
+                                received,
+                                size,
+                                bytes,
+                                errno));
+    }
+
+    return true;
+}
+
+bool
+recvCommMessage(int fd, std::string &msg) {
+    size_t size;
+    if (!recvCommMessageType(fd, &size, sizeof(size))) {
+        return false;
+    }
+
+    msg.resize(size);
+    return recvCommMessageType(fd, msg.data(), size, true);
 }
 
 #if HAVE_ETCD
@@ -419,51 +473,35 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             const auto client = remoteSockets.find(req_sock);
             int client_fd;
 
-            switch(req_command) {
-                case SOCK_SEND:
-                {
-                    // not connected
-                    if(client == remoteSockets.end()) {
-                        int new_client = connectToIP(req_ip, req_port);
-                        if(new_client == -1) {
-                            NIXL_ERROR << "Listener thread could not connect to IP " << req_ip << " and port " << req_port;
-                            break;
-                        }
-                        remoteSockets[req_sock] = new_client;
-                        client_fd = new_client;
-                    } else {
-                        client_fd = client->second;
+            // not connected
+            if (req_command < SOCK_MAX) {
+                if (client == remoteSockets.end()) {
+                    int new_client = connectToIP(req_ip, req_port);
+                    if (new_client == -1) {
+                        NIXL_ERROR << "Listener thread could not connect to IP " << req_ip
+                                   << " and port " << req_port;
+                        continue;
                     }
-
-                    sendCommMessage(client_fd, std::string("NIXLCOMM:LOAD" + my_MD));
-                    break;
-                }
-                case SOCK_FETCH:
-                {
-                    if(client == remoteSockets.end()) {
-                        int new_client = connectToIP(req_ip, req_port);
-                        if(new_client == -1) {
-                            NIXL_ERROR << "Listener thread could not connect to IP " << req_ip;
-                            break;
-                        }
-                        remoteSockets[req_sock] = new_client;
-                        client_fd = new_client;
-                    } else
-                        client_fd = client->second;
-
-                    sendCommMessage(client_fd, std::string("NIXLCOMM:SEND"));
-                    break;
-                }
-                case SOCK_INVAL:
-                {
-                    if(client == remoteSockets.end()) {
-                        // improper usage
-                        throw std::runtime_error("invalidate on closed socket\n");
-                    }
+                    remoteSockets[req_sock] = new_client;
+                    client_fd = new_client;
+                } else {
                     client_fd = client->second;
-                    sendCommMessage(client_fd, std::string("NIXLCOMM:INVL") + name);
-                    break;
                 }
+            }
+
+            switch(req_command) {
+            case SOCK_SEND: {
+                sendCommMessage(client_fd, "NIXLCOMM:LOAD" + my_MD);
+                break;
+            }
+            case SOCK_FETCH: {
+                sendCommMessage(client_fd, "NIXLCOMM:SEND");
+                break;
+            }
+            case SOCK_INVAL: {
+                sendCommMessage(client_fd, "NIXLCOMM:INVL" + name);
+                break;
+            }
 #if HAVE_ETCD
                 // ETCD operations using existing methods
                 case ETCD_SEND:
@@ -543,9 +581,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             std::vector<std::string> command_list;
             nixl_status_t ret;
 
-            ssize_t recv_bytes = recvCommMessage(socket_iter->second, commands);
-
-            if(recv_bytes == 0 || recv_bytes == -1) {
+            if (!recvCommMessage(socket_iter->second, commands)) {
                 socket_iter++;
                 continue;
             }

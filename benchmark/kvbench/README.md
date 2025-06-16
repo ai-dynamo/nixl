@@ -33,7 +33,7 @@ A utility for generating NIXL Bench commands that test KVCache transfer across v
 
 ### Docker
 ```bash
-git clone https://github.com/cheese-head/nixl.git
+git clone https://github.com/ai-dynamo/nixl.git
 export NIXL_SRC=/path/to/nixl/
 cd nixl/benchmark/nixlbench/contrib
 ./build.sh --nixl $NIXL_SRC
@@ -41,7 +41,7 @@ cd nixl/benchmark/nixlbench/contrib
 
 ### Python
 ```bash
-git clone https://github.com/cheese-head/nixl.git
+git clone https://github.com/ai-dynamo/nixl.git
 cd nixl/benchmark/kvbench
 python3 -m venv venv
 source venv/bin/activate
@@ -137,6 +137,7 @@ These arguments are used by both `plan` and `profile` commands:
 | `--etcd-endpoints` | ETCD server URL for coordination (default: http://localhost:2379) |
 | `--storage_enable_direct` | Enable direct I/O for GDS operations |
 | `--gds_filepath` | File path for GDS operations |
+| `--enable_vmm` | Enable VMM memory allocation when DRAM is requested |
 
 ## Command Descriptions
 

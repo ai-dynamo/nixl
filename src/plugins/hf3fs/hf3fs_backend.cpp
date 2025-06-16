@@ -19,8 +19,8 @@
 #include <atomic>
 #include <errno.h>
 #include "hf3fs_backend.h"
+#include "hf3fs_log.h"
 #include "common/str_tools.h"
-#include "common/status.h"
 #include "common/nixl_log.h"
 
 #define NUM_CQES 1024
@@ -74,7 +74,7 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             status = hf3fs_utils->registerFileHandle(fd, &ret);
             if (status != NIXL_SUCCESS) {
                 delete md;
-                NIXL_LOG_AND_RETURN_IF_ERROR(status,
+                HF3FS_LOG_RETURN(status,
                     absl::StrFormat("Error - failed to register file handle %d", fd));
             }
             md->handle.fd = fd;
@@ -84,7 +84,7 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             break;
         case VRAM_SEG:
         default:
-            NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error - type not supported");
+            HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - type not supported");
     }
 
     out = (nixlBackendMD*) md;
@@ -99,7 +99,7 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     } else if (md->type == DRAM_SEG) {
         return NIXL_SUCCESS;
     } else {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error - type not supported");
+        HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - type not supported");
     }
     return NIXL_SUCCESS;
 }
@@ -154,12 +154,12 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         file_list = &remote;
         mem_list = &local;
     } else {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: No file descriptors");
+        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM, "Error: No file descriptors");
     }
 
     if ((buf_cnt != file_cnt) ||
         ((operation != NIXL_READ) && (operation != NIXL_WRITE)))  {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM,
+        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
             "Error: Count mismatch or invalid operation selection");
     }
 
@@ -170,7 +170,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
     auto status = hf3fs_utils->createIOR(&hf3fs_handle->ior, file_cnt, is_read);
     if (status != NIXL_SUCCESS) {
         delete hf3fs_handle;
-        NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to create IOR");
+        HF3FS_LOG_RETURN(status, "Error: Failed to create IOR");
     }
 
     for (int i = 0; i < file_cnt; i++) {
@@ -224,8 +224,7 @@ cleanup_handle:
     // Clean up previously created IOs in the list
     cleanupIOList(hf3fs_handle);
     delete hf3fs_handle;
-    NIXL_LOG_AND_RETURN_IF_ERROR(nixl_err, nixl_mesg);
-    return nixl_err;
+    HF3FS_LOG_RETURN(nixl_err, nixl_mesg);
 }
 
 nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
@@ -239,11 +238,11 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
     nixl_status_t        status;
 
     if (hf3fs_handle->io_list.empty()) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: empty io list");
+        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM, "Error: empty io list");
     }
 
     if (UINT_MAX - hf3fs_handle->num_ios < hf3fs_handle->io_list.size()) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_NOT_ALLOWED, "Error: more than UINT_MAX ios");
+        HF3FS_LOG_RETURN(NIXL_ERR_NOT_ALLOWED, "Error: more than UINT_MAX ios");
     }
 
     for (auto it = hf3fs_handle->io_list.begin(); it != hf3fs_handle->io_list.end(); ++it) {
@@ -251,13 +250,13 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         status = hf3fs_utils->prepIO(&hf3fs_handle->ior, &io->iov, io->iov.base,
                                      io->offset, io->size, io->fd, io->is_read, io);
         if (status != NIXL_SUCCESS) {
-            NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to prepare IO");
+            HF3FS_LOG_RETURN(status, "Error: Failed to prepare IO");
         }
     }
 
     status = hf3fs_utils->postIOR(&hf3fs_handle->ior);
     if (status != NIXL_SUCCESS) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(status, "Error: Failed to post IOR");
+        HF3FS_LOG_RETURN(status, "Error: Failed to post IOR");
     }
 
     // postXfer may be called multiple times, so we need to check if the thread is already running
@@ -265,7 +264,7 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         hf3fs_handle->io_status.thread = new std::thread(waitForIOsThread, hf3fs_handle,
                                                          hf3fs_utils);
         if (hf3fs_handle->io_status.thread == nullptr) {
-            NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_BACKEND, "Error: Failed to create io thread");
+            HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error: Failed to create io thread");
         }
     }
 
@@ -339,19 +338,19 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
 nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
 {
     if (handle == nullptr) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM, "Error: handle is null in checkXfer");
+        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM, "Error: handle is null in checkXfer");
     }
 
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
 
     // Check if IOR is initialized
     if (&hf3fs_handle->ior == nullptr) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM,
+        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
             "Error: IOR is not initialized in checkXfer");
     }
 
     if (hf3fs_handle->io_status.thread == nullptr) {
-        NIXL_LOG_AND_RETURN_IF_ERROR(NIXL_ERR_INVALID_PARAM,
+        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
             "Error: io thread is not initialized in checkXfer");
     }
 
@@ -359,7 +358,7 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
         nixl_status_t error_status = hf3fs_handle->io_status.error_status;
         std::string error_message = hf3fs_handle->io_status.error_message;
         cleanupIOThread(hf3fs_handle);
-        NIXL_LOG_AND_RETURN_IF_ERROR(error_status, error_message);
+        HF3FS_LOG_RETURN(error_status, error_message);
     }
 
     if (hf3fs_handle->completed_ios < hf3fs_handle->num_ios) {

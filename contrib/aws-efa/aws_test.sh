@@ -78,33 +78,37 @@ JOB_ID=$(aws batch submit-job \
     --job-definition "NIXL-Ubuntu-JD" \
     --job-queue ucx-nxil-jq \
     --eks-properties-override file://./aws_vars.json \
+    --retry-strategy '{"attempts":3}' \
     --query 'jobId' --output text)
 
 # Function to wait for a specific job status
 wait_for_status() {
+    set +x
     local target_status="$1"
-    local timeout=600
-    local interval=60
+    local timeout="$2"
+    local interval="$3"
     local status=""
     SECONDS=0
 
     while [ $SECONDS -lt $timeout ]; do
         status=$(aws batch describe-jobs --jobs "$JOB_ID" --query 'jobs[0].status' --output text)
-        echo "Current status: $status (${SECONDS}s elapsed)"
         if echo "$status" | grep -qE "$target_status"; then
-            echo "Reached status $status (completed in ${SECONDS}s)"
+            echo -e "\nReached status $status (completed in ${SECONDS}s)"
+            set -x
             return 0
         fi
+        printf "."
         sleep $interval
     done
 
-    echo "Timeout waiting for status $target_status after ${SECONDS}s. Final status: $status"
+    echo -e "\nTimeout waiting for status $target_status after ${SECONDS}s. Final status: $status"
+    set -x
     return 1
 }
 
 # Wait for the job to start running
-echo "Waiting for job to start running..."
-if ! wait_for_status "RUNNING"; then
+echo "Waiting for job to start running (timeout: 30m)..."
+if ! wait_for_status "RUNNING" 1800 10; then
     echo "Job failed to start"
     exit 1
 fi
@@ -112,12 +116,11 @@ fi
 # Stream logs from the pod
 POD=$(aws batch describe-jobs --jobs "$JOB_ID" --query 'jobs[0].eksProperties.podProperties.podName' --output text)
 echo "Streaming logs from pod: $POD"
-kubectl -n ucx-ci-batch-nodes logs -f "$POD"
+kubectl -n ucx-ci-batch-nodes logs -f "$POD" || kubectl -n ucx-ci-batch-nodes logs "$POD" --previous || true
 
 # Check final job status
-echo "Waiting for job completion..."
-exit_status=$(wait_for_status "SUCCEEDED|FAILED")
-if [[ "$exit_status" =~ FAILED ]]; then
+echo "Waiting for job completion (timeout: 10m)..."
+if ! wait_for_status "SUCCEEDED" 600 10; then
     echo "Failure running NIXL tests"
     exit 1
 fi
