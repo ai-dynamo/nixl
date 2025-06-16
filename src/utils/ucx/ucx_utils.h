@@ -211,4 +211,7 @@ private:
 
 [[nodiscard]] nixl_status_t ucx_status_to_nixl(ucs_status_t status);
 
+void ucx_modify_config(ucp_config_t *config, std::string_view key,
+                       std::string_view value);
+
 #endif
