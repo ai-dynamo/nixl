@@ -24,9 +24,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <future>
-#include <list>
 #include <vector>
-#include <mutex>
 #include <memory>
 #include <atomic>
 #include <string>
