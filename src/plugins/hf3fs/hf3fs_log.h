@@ -22,7 +22,7 @@
 
 #define HF3FS_LOG_RETURN(error_code, message) \
     do { \
-        NIXL_PERROR << absl::StrFormat("HF3FS error: %d - %s", (error_code), (message)); \
+        NIXL_ERROR << absl::StrFormat("HF3FS error: %d - %s", (error_code), (message)); \
         return error_code; \
     } while (0)
 
