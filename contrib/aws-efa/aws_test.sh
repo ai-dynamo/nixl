@@ -109,6 +109,7 @@ wait_for_status() {
 echo "Waiting for job to start running (timeout: 30m)..."
 if ! wait_for_status "RUNNING" 1800 10; then
     echo "Job failed to start"
+    aws batch describe-jobs --jobs "$JOB_ID" --query 'jobs[0].[status,statusReason]' --output table
     exit 1
 fi
 
