@@ -109,4 +109,17 @@
  */
 #define NIXL_ASSERT(condition) DCHECK(condition)
 
+/*-----------------------------------------------------------------------------*
+ * Helper Functions
+ *-----------------------------------------------------------------------------*/
+
+/*
+ * Get the error message for the given error number. Thread-safe.
+ * @param err: The error number.
+ * @return: The error message.
+ */
+inline std::string nixl_strerror(int err) {
+    return std::error_code(err, std::generic_category()).message();
+}
+
 #endif /* __NIXL_LOG_H */
