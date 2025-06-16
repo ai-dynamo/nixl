@@ -14,12 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <cassert>
 #include <iostream>
 #include <cufile.h>
 #include <thread>
 #include <memory>
 #include <stdexcept>
+#include <algorithm>
+#include <string>
+#include <exception>
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
 #include "common/str_tools.h"
@@ -72,11 +74,14 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
 
     switch (nixl_mem) {
         case FILE_SEG: {
+            std::lock_guard<std::mutex> lock(mutex_);
             auto it = gds_mt_file_map_.find(mem.devId);
             if (it != gds_mt_file_map_.end()) {
-                // Reuse existing registered handle
-                md->handle = it->second;
-                break;
+                // Reuse existing metadata and increment reference count
+                auto existing_md = it->second;
+                existing_md->ref_cnt++;
+                out = existing_md;
+                return NIXL_SUCCESS;
             }
 
             // Create and register new handle
@@ -86,9 +91,8 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
                 NIXL_ERROR << "GDS_MT: failed to create file handle: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
-
-            // Store in map for future reuse
-            gds_mt_file_map_[mem.devId] = md->handle;
+            md->ref_cnt = 1;
+            gds_mt_file_map_[mem.devId] = md.get();
             break;
         }
 
@@ -128,12 +132,30 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
 
 nixl_status_t nixlGdsMtEngine::deregisterMem (nixlBackendMD* meta)
 {
-    std::unique_ptr<nixlGdsMtMetadata> md((nixlGdsMtMetadata*)meta);
+    nixlGdsMtMetadata* md = (nixlGdsMtMetadata*)meta;
+
     if (md->type == FILE_SEG && md->handle) {
-        // Remove from map - shared_ptr will handle cleanup when last reference is gone
-        gds_mt_file_map_.erase(md->handle->fd);
+        std::lock_guard<std::mutex> lock(mutex_);
+        md->ref_cnt--;
+        if (md->ref_cnt > 0) {
+            // Still has references, don't delete yet
+            return NIXL_SUCCESS;
+        }
+
+        // Reference count reached zero, remove from file map
+        int devId = -1;
+        for (const auto& pair : gds_mt_file_map_) {
+            if (pair.second == md) {
+                devId = pair.first;
+                break;
+            }
+        }
+        if (devId != -1) {
+            gds_mt_file_map_.erase(devId);
+        }
     }
-    // No need to deregister buffer either, it is handled automatically by gdsMtMemBuf destructor
+    delete md;
+
     return NIXL_SUCCESS;
 }
 
@@ -170,7 +192,7 @@ void runCuFileOp(GdsMtTransferRequestH* req, std::atomic<nixl_status_t>* overall
 // Helper function to extract transfer parameters and validate them
 nixl_status_t extractTransferParams(const nixlMetaDesc& mem_desc,
                                    const nixlMetaDesc& file_desc,
-                                   const std::unordered_map<int, std::shared_ptr<gdsMtFileHandle>>& file_map,
+                                   const std::unordered_map<int, nixlGdsMtMetadata*>& file_map,
                                    void*& base_addr,
                                    size_t& total_size,
                                    size_t& base_offset,
@@ -184,10 +206,10 @@ nixl_status_t extractTransferParams(const nixlMetaDesc& mem_desc,
 
     auto it = file_map.find(file_desc.devId);
     if (it == file_map.end()) {
-        NIXL_ERROR << "GDS_MT: error: file handle not found";
+        NIXL_ERROR << "GDS_MT: error: file metadata not found";
         return NIXL_ERR_NOT_FOUND;
     }
-    cu_fhandle = it->second->cu_fhandle;
+    cu_fhandle = it->second->handle->cu_fhandle;
     return NIXL_SUCCESS;
 }
 
@@ -254,7 +276,6 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
             runCuFileOp(captured_req, overall_status);
         });
     }
-
 
     handle = gds_mt_handle.release();
     return NIXL_SUCCESS;

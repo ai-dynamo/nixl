@@ -29,6 +29,7 @@
 #include <atomic>
 #include <string>
 #include <unordered_map>
+#include <mutex>
 #include "gds_mt_utils.h"
 #include "backend/backend_engine.h"
 #include "taskflow/taskflow.hpp"
@@ -41,6 +42,7 @@ class nixlGdsMtMetadata : public nixlBackendMD {
         std::shared_ptr<gdsMtFileHandle> handle;
         std::unique_ptr<gdsMtMemBuf> buf;
         nixl_mem_t type;
+        int ref_cnt = 1;  // Reference count for shared file handles
 };
 
 class GdsMtTransferRequestH {
@@ -146,7 +148,8 @@ class nixlGdsMtEngine : public nixlBackendEngine {
 
     private:
         std::unique_ptr<gdsMtUtil> gds_mt_utils_;
-        std::unordered_map<int, std::shared_ptr<gdsMtFileHandle>> gds_mt_file_map_;
+        mutable std::mutex mutex_;  // Protects shared file map
+        std::unordered_map<int, nixlGdsMtMetadata*> gds_mt_file_map_;
         size_t thread_count_;
         std::unique_ptr<tf::Executor> executor_;
 };
