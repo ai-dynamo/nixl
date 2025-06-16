@@ -75,17 +75,19 @@ static std::vector<std::vector<xferBenchIOV>> createTransferDescLists(xferBenchW
     auto [count, stride] = getStrideScheme(worker, num_threads);
     std::vector<std::vector<xferBenchIOV>> xfer_lists;
 
-    //std::cout << "count:" << count << " stride:" << stride << std::endl;
     for (const auto &iov_list: iov_lists) {
         std::vector<xferBenchIOV> xfer_list;
 
         for (const auto &iov : iov_list) {
-            //std::cout << "   iov.addr:" << iov.addr << " iov.len:" << iov.len << std::endl;
             for (size_t i = 0; i < count; i++) {
                 size_t dev_offset = ((i * stride) % iov.len);
 
                 for (size_t j = 0; j < batch_size; j++) {
                     size_t block_offset = ((j * block_size) % iov.len);
+                    if (block_offset + block_size > iov.len) {
+                       // Prevent memory overflow when iov.len is not divisible by block_size
+                        block_offset = 0;
+                    }
                     xfer_list.push_back(xferBenchIOV((iov.addr + dev_offset) + block_offset,
                                                       block_size,
                                                       iov.devId));

@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <list>
+#include <unordered_set>
 #include <thread>
 #include "hf3fs_utils.h"
 #include "backend/backend_engine.h"
@@ -77,6 +78,7 @@ class nixlHf3fsBackendReqH : public nixlBackendReqH {
 class nixlHf3fsEngine : public nixlBackendEngine {
     private:
         hf3fsUtil                      *hf3fs_utils;
+        std::unordered_set<int>         hf3fs_file_set;
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
         void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;

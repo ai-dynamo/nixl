@@ -235,6 +235,12 @@ int xferBenchConfig::loadFromFlags() {
                   << std::endl;
         return -1;
     }
+    if (max_block_size > (total_buffer_size / num_threads)) {
+        std::cerr << "Incorrect buffer size configuration"
+                  << "max_block_size is > (total_buffer_size / num_threads)"
+                  << std::endl;
+        return -1;
+    }
 
     int partition = (num_threads * LARGE_BLOCK_SIZE_ITER_FACTOR);
     if (num_iter % partition) {
