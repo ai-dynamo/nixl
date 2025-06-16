@@ -359,7 +359,7 @@ void nixlPluginManager::registerStaticPlugin(const char* name, nixlStaticPluginC
 
     //Static Plugins are considered pre-loaded
     nixlBackendPlugin* plugin = info.createFunc();
-    NIXL_DEBUG << "Loading static plugin: " << name;
+    NIXL_INFO << "Loading static plugin: " << name;
     if (plugin) {
         // Register the loaded plugin
         auto plugin_handle = std::make_shared<const nixlPluginHandle>(nullptr, plugin);
