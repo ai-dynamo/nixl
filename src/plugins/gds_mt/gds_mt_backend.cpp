@@ -19,6 +19,7 @@
 #include <cufile.h>
 #include <thread>
 #include <memory>
+#include <stdexcept>
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
 #include "common/str_tools.h"
@@ -49,19 +50,15 @@ nixlGdsMtEngine::nixlGdsMtEngine(const nixlBackendInitParams* init_params)
                     thread_count_ = tcount;
                 }
             } catch (const std::exception& e) {
-                std::cerr << "Invalid thread_count parameter: " << e.what() << std::endl;
-                this->initErr = true;
-                return;
+                throw std::runtime_error("GDS_MT: Invalid thread_count parameter: " + std::string(e.what()));
             }
         }
     }
     executor_ = std::make_unique<tf::Executor>(thread_count_);
     NIXL_DEBUG << "GDS_MIT: thread count=" << thread_count_;
 
-    this->initErr = false;
     if (!gds_mt_utils_->isInitialized()) {
-        this->initErr = true;
-        return;
+        throw std::runtime_error("GDS_MT: failed to initialize GDS utilities");
     }
 }
 

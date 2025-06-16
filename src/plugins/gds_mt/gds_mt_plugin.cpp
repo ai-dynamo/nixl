@@ -17,13 +17,20 @@
 
 #include "backend/backend_plugin.h"
 #include "gds_mt_backend.h"
+#include "common/nixl_log.h"
+#include <exception>
 
 // Plugin version information
 static const char* PLUGIN_NAME = "GDS_MT";
 static const char* PLUGIN_VERSION = "0.1.0";
 
 static nixlBackendEngine* create_gds_mt_engine(const nixlBackendInitParams* init_params) {
-    return new nixlGdsMtEngine(init_params);
+    try {
+        return new nixlGdsMtEngine(init_params);
+    } catch (const std::exception& e) {
+        NIXL_ERROR << "GDS_MT: Failed to create engine: " << e.what();
+        return nullptr;
+    }
 }
 
 static void destroy_gds_mt_engine(nixlBackendEngine* engine) {
