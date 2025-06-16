@@ -34,7 +34,7 @@ bool nixlMetadataStream::setupStream() {
 
     socketFd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (socketFd == -1) {
-        NIXL_ERROR << "failed to create stream socket for listener";
+        NIXL_PERROR << "failed to create stream socket for listener";
         return false;
     }
 
@@ -70,21 +70,21 @@ void nixlMDStreamListener::setupListener() {
     int opt = 1;
     if (setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR,
                    &opt, sizeof(opt)) < 0) {
-        NIXL_ERROR << "setsockopt(REUSEADDR) failed while setting up listener for MD";
+        NIXL_PERROR << "setsockopt(REUSEADDR) failed while setting up listener for MD";
         closeStream();
         return;
     }
 
     if (bind(socketFd, (struct sockaddr*)&listenerAddr,
              sizeof(listenerAddr)) < 0) {
-        NIXL_ERROR << "Socket Bind failed while setting up listener for MD";
+        NIXL_PERROR << "Socket Bind failed while setting up listener for MD";
         closeStream();
         return;
     }
 
     if (listen(socketFd, 128) < 0) {
-        NIXL_ERROR << "Listening failed for stream Socket: "
-                   << socketFd;
+        NIXL_PERROR << "Listening failed for stream Socket: "
+                    << socketFd;
         closeStream();
         return;
     }

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <functional>
 #include <stdexcept>
+#include <iostream>
 #include "nixl.h"
 #include "nixl_descriptors.h"
 #include "mem_section.h"
@@ -409,8 +410,8 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
 
 template <class T>
 void nixlDescList<T>::print() const {
-    NIXL_INFO << "DescList of mem type " << type
-              << (sorted ? "sorted" : "unsorted");
+    std::cout << "DescList of mem type " << type << " "
+              << (sorted ? "sorted" : "unsorted") << std::endl;
     for (auto & elm : descs) {
         elm.print("");
     }

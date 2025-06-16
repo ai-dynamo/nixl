@@ -118,7 +118,7 @@
  * @param err: The error number.
  * @return: The error message.
  */
-inline std::string nixl_strerror(int err) {
+static inline std::string nixl_strerror(int err) {
     return std::error_code(err, std::generic_category()).message();
 }
 
