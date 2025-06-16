@@ -29,9 +29,11 @@
 #include <mutex>
 #include <memory>
 #include <atomic>
+#include <string>
+#include <unordered_map>
 #include "gds_mt_utils.h"
 #include "backend/backend_engine.h"
-#include "taskflow.hpp"
+#include "taskflow/taskflow.hpp"
 
 class nixlGdsMtMetadata : public nixlBackendMD {
     public:
