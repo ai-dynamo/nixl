@@ -270,12 +270,8 @@ nixl_status_t nixlGdsMtEngine::postXfer(const nixl_xfer_op_t &operation,
         NIXL_ERROR << "GDS_MT: error: empty request list for Xfer";
         return NIXL_ERR_INVALID_PARAM;
     }
-    if (gds_mt_handle->overall_status.load() != NIXL_SUCCESS) {
-        // Reset the overall status to NIXL_SUCCESS if it was not already
-        // This is to reset any errors that may have occurred in the previous
-        // transfer.
-        gds_mt_handle->overall_status.store(NIXL_SUCCESS);
-    }
+    // Reset the overall status to NIXL_SUCCESS for each new transfer
+    gds_mt_handle->overall_status.store(NIXL_SUCCESS);
     gds_mt_handle->running_transfer = executor_->run(gds_mt_handle->taskflow);
     return NIXL_IN_PROG;
 }

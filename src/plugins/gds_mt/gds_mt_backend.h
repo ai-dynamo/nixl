@@ -67,7 +67,7 @@ class nixlGdsMtBackendReqH : public nixlBackendReqH {
         std::future<void> running_transfer;
 
         // Only changes if an error actually occurs
-        std::atomic<nixl_status_t> overall_status{NIXL_SUCCESS};
+        std::atomic<nixl_status_t> overall_status;
 };
 
 class nixlGdsMtEngine : public nixlBackendEngine {
