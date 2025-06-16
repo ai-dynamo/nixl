@@ -39,9 +39,8 @@ if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
 endif
 
-disable_gds_mt_backend = get_option('disable_gds_mt_backend')
-if not disable_gds_mt_backend and 'GDS_MT' in static_plugins
-    nixl_lib_deps += [ gds_mt_backend_interface, cuda_dep ]
+if 'GDS_MT' in static_plugins
+    nixl_lib_deps += [ gds_mt_backend_interface, taskflow_proj, cuda_dep ]
 endif
 
 cc = meson.get_compiler('cpp')

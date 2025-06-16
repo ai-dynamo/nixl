@@ -26,8 +26,7 @@ if not disable_gds_backend and cuda_dep.found()
       subdir('cuda_gds')
 endif
 
-disable_gds_mt_backend = get_option('disable_gds_mt_backend')
-if not disable_gds_mt_backend and cuda_dep.found()
+if taskflow_proj.found() and cuda_dep.found()
       subdir('gds_mt')
 endif
 
