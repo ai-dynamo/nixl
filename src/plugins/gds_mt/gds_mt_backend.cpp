@@ -66,7 +66,6 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
                                            const nixl_mem_t &nixl_mem,
                                            nixlBackendMD* &out)
 {
-    nixl_status_t status = NIXL_SUCCESS;
     auto md = std::make_unique<nixlGdsMtMetadata>();
     md->type = nixl_mem;
     cudaError_t error_id;
@@ -83,8 +82,7 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
             // Create and register new handle
             md->handle = std::make_shared<gdsMtFileHandle>(*gds_mt_utils_, mem.devId, mem.len, mem.metaInfo);
             if (!md->handle->isRegistered()) {
-                status = NIXL_ERR_BACKEND;
-                break;
+                return NIXL_ERR_BACKEND;
             }
 
             // Store in map for future reuse
@@ -97,12 +95,11 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
             if (error_id != cudaSuccess) {
                 NIXL_ERROR << "GDS_MT: error: cudaSetDevice returned "
                            << cudaGetErrorString(error_id) << " for device ID " << mem.devId;
-                status = NIXL_ERR_BACKEND;
-                break;
+                return NIXL_ERR_BACKEND;
             }
             md->buf = std::make_unique<gdsMtMemBuf>(*gds_mt_utils_, (void *)mem.addr, mem.len, 0);
             if (!md->buf->isRegistered()) {
-                status = NIXL_ERR_BACKEND;
+                return NIXL_ERR_BACKEND;
             }
             break;
         }
@@ -110,22 +107,17 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
         case DRAM_SEG: {
             md->buf = std::make_unique<gdsMtMemBuf>(*gds_mt_utils_, (void *)mem.addr, mem.len, 0);
             if (!md->buf->isRegistered()) {
-                status = NIXL_ERR_BACKEND;
+                return NIXL_ERR_BACKEND;
             }
             break;
         }
 
         default:
-            status = NIXL_ERR_BACKEND;
-            break;
-    }
-
-    if (status != NIXL_SUCCESS) {
-        return status;
+            return NIXL_ERR_BACKEND;
     }
 
     out = (nixlBackendMD*)md.release();
-    return status;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlGdsMtEngine::deregisterMem (nixlBackendMD* meta)
