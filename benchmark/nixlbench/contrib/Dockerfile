@@ -115,10 +115,6 @@ COPY --from=nixlbench . /workspace/nixlbench
 
 WORKDIR /workspace/nixl
 
-# LD_LIBRARY_PATH is needed for auditwheel to find libcuda.so.1
-# Set incorrectly to `compat/lib` in cuda-dl-base image
-ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/usr/local/lib:$LD_LIBRARY_PATH
-
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
@@ -135,16 +131,6 @@ ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/$ARCH-linux-gnu/plugins
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
-
-# Create the wheel
-RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
-        uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
-    done
-RUN uv pip install auditwheel && \
-    uv run auditwheel repair /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
-
-RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
 
 WORKDIR /workspace/nixlbench
 
