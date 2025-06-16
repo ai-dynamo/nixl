@@ -111,7 +111,6 @@ get_options() {
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
-                WHL_PLATFORM=${WHL_BASE}_${ARCH}
                 shift
             else
                 missing_requirement $1
