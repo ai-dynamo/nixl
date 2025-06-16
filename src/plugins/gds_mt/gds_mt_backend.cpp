@@ -324,5 +324,3 @@ nixl_status_t nixlGdsMtEngine::releaseReqH(nixlBackendReqH* handle) const
     std::unique_ptr<nixlGdsMtBackendReqH> gds_mt_handle((nixlGdsMtBackendReqH*)handle);
     return NIXL_SUCCESS;
 }
-
-
