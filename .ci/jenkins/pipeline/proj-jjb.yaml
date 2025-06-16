@@ -49,24 +49,28 @@
             description: ""
     # Pipeline script that handles the build process
     dsl: |
-        @Library('blossom-github-lib@master')
+        @Library('blossom-github-lib@master')  // Use custom GitHub library
         import ipp.blossom.*
+        // Authenticate with GitHub using stored credentials
         withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
           githubHelper = GithubHelper.getInstance("${{GIT_PASSWORD}}", VARIABLE_FROM_POST)
         }}
+        // Update GitHub commit status
         githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher started", GitHubCommitState.PENDING)
         currentBuild.description = githubHelper.getBuildDescription()
         try {{
+            // Trigger the actual build job in parallel
             parallel build: {{
                 build job: 'nixl-ci-build', parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ]
             }},
-            failFast: false
+            failFast: false  // Continue even if some parallel jobs fail
 
             githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher successeded", GitHubCommitState.SUCCESS)
         }} catch(Exception ex) {{
+            // Handle build failures
             currentBuild.result = 'FAILURE'
             println ex
             githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher failed", GitHubCommitState.FAILURE)
@@ -201,7 +205,7 @@
       scm:
         - git:
             url: "{jjb_git}"
-            credentials-id: ""
+            credentials-id: "swx-jenkins_ssh_key"
             branches: ['$NIXL_VERSION']
             shallow-clone: false
             do-not-fetch-tags: false
