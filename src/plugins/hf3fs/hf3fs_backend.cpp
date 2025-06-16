@@ -68,8 +68,20 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             md->type = DRAM_SEG;
             status = NIXL_SUCCESS;
             break;
-        case FILE_SEG:
+        case FILE_SEG: {
             fd = mem.devId;
+
+            // if the same file is reused - no need to re-register
+            auto it = hf3fs_file_set.find(fd);
+            if (it != hf3fs_file_set.end()) {
+                md->handle.fd = *it;
+                md->handle.size = mem.len;
+                md->handle.metadata = mem.metaInfo;
+                md->type = nixl_mem;
+                status = NIXL_SUCCESS;
+                break;
+            }
+
             ret = 0;
             status = hf3fs_utils->registerFileHandle(fd, &ret);
             if (status != NIXL_SUCCESS) {
@@ -81,7 +93,10 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             md->handle.size = mem.len;
             md->handle.metadata = mem.metaInfo;
             md->type = nixl_mem;
+
+            hf3fs_file_set.insert(fd);
             break;
+        }
         case VRAM_SEG:
         default:
             HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - type not supported");
