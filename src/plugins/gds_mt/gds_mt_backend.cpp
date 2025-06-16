@@ -80,8 +80,10 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
             }
 
             // Create and register new handle
-            md->handle = std::make_shared<gdsMtFileHandle>(*gds_mt_utils_, mem.devId, mem.len, mem.metaInfo);
-            if (!md->handle->isRegistered()) {
+            try {
+                md->handle = std::make_shared<gdsMtFileHandle>(*gds_mt_utils_, mem.devId, mem.len, mem.metaInfo);
+            } catch (const std::exception& e) {
+                NIXL_ERROR << "GDS_MT: failed to create file handle: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
 
@@ -97,16 +99,20 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
                            << cudaGetErrorString(error_id) << " for device ID " << mem.devId;
                 return NIXL_ERR_BACKEND;
             }
-            md->buf = std::make_unique<gdsMtMemBuf>(*gds_mt_utils_, (void *)mem.addr, mem.len, 0);
-            if (!md->buf->isRegistered()) {
+            try {
+                md->buf = std::make_unique<gdsMtMemBuf>(*gds_mt_utils_, (void *)mem.addr, mem.len, 0);
+            } catch (const std::exception& e) {
+                NIXL_ERROR << "GDS_MT: failed to create VRAM buffer: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
             break;
         }
 
         case DRAM_SEG: {
-            md->buf = std::make_unique<gdsMtMemBuf>(*gds_mt_utils_, (void *)mem.addr, mem.len, 0);
-            if (!md->buf->isRegistered()) {
+            try {
+                md->buf = std::make_unique<gdsMtMemBuf>(*gds_mt_utils_, (void *)mem.addr, mem.len, 0);
+            } catch (const std::exception& e) {
+                NIXL_ERROR << "GDS_MT: failed to create DRAM buffer: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
             break;

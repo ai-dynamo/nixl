@@ -34,8 +34,6 @@ class gdsMtFileHandle {
         gdsMtFileHandle(const gdsMtFileHandle&) = delete;
         gdsMtFileHandle& operator=(const gdsMtFileHandle&) = delete;
 
-        bool isRegistered() const { return registered_; }
-
         int fd = -1;
         size_t size = 0;
         std::string metadata;
@@ -53,8 +51,6 @@ class gdsMtMemBuf {
         // Disable copy/move
         gdsMtMemBuf(const gdsMtMemBuf&) = delete;
         gdsMtMemBuf& operator=(const gdsMtMemBuf&) = delete;
-
-        bool isRegistered() const { return registered_; }
 
         void *base = nullptr;
         size_t size = 0;

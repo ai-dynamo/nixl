@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <iostream>
+#include <stdexcept>
 #include "common/nixl_log.h"
 #include "gds_mt_utils.h"
 
@@ -38,8 +39,7 @@ gdsMtMemBuf::gdsMtMemBuf(gdsMtUtil& util, void* ptr, size_t sz, int flags)
     : base(ptr), size(sz) {
 
     if (!util.isInitialized()) {
-        NIXL_ERROR << "GDS_MT: gdsMtUtil not initialized";
-        return;
+        throw std::runtime_error("GDS_MT: gdsMtUtil not initialized");
     }
 
     const CUfileError_t status = cuFileBufRegister(ptr, sz, flags);
@@ -64,8 +64,7 @@ gdsMtFileHandle::gdsMtFileHandle(gdsMtUtil& util, int file_fd, size_t sz, const 
     : fd(file_fd), size(sz), metadata(metaInfo) {
 
     if (!util.isInitialized()) {
-        NIXL_ERROR << "GDS_MT: gdsMtUtil not initialized";
-        return;
+        throw std::runtime_error("GDS_MT: gdsMtUtil not initialized");
     }
 
     CUfileDescr_t descr = {};
@@ -75,8 +74,7 @@ gdsMtFileHandle::gdsMtFileHandle(gdsMtUtil& util, int file_fd, size_t sz, const 
     CUfileHandle_t handle;
     const CUfileError_t status = cuFileHandleRegister(&handle, &descr);
     if (status.err != CU_FILE_SUCCESS) {
-        NIXL_ERROR << "GDS_MT: file register error: error=" << status.err << ", fd=" << fd;
-        return;
+        throw std::runtime_error("GDS_MT: file register error: error=" + std::to_string(status.err) + ", fd=" + std::to_string(fd));
     }
 
     cu_fhandle = handle;
