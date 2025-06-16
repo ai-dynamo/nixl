@@ -15,3 +15,6 @@ subprojects/taskflow-*
 
 # CuFile Logs
 cufile.log
+
+# clangd
+.cache/
