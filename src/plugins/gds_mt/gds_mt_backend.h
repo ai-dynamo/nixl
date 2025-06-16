@@ -60,6 +60,13 @@ class GdsMtTransferRequestH {
 
 class nixlGdsMtBackendReqH : public nixlBackendReqH {
     public:
+        // Ensure any running taskflow completes before destruction
+        ~nixlGdsMtBackendReqH() {
+            if (running_transfer.valid()) {
+                running_transfer.wait();
+            }
+        }
+
         std::vector<GdsMtTransferRequestH> request_list;
         tf::Taskflow taskflow;
         std::future<void> running_transfer;
