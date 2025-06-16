@@ -78,7 +78,6 @@ JOB_ID=$(aws batch submit-job \
     --job-definition "NIXL-Ubuntu-JD" \
     --job-queue ucx-nxil-jq \
     --eks-properties-override file://./aws_vars.json \
-    --retry-strategy '{"attempts":3}' \
     --query 'jobId' --output text)
 
 # Function to wait for a specific job status
