@@ -20,19 +20,13 @@
 #include <cassert>
 #include <stack>
 #include <optional>
+
 namespace gtest {
 
 class Logger {
 public:
-    Logger(const std::string &title = "INFO")
-    {
-        std::cout << "[ " << std::setw(8) << title << " ] ";
-    }
-
-    ~Logger()
-    {
-        std::cout << std::endl;
-    }
+    Logger(const std::string &title = "INFO");
+    ~Logger();
 
     template<typename T> Logger &operator<<(const T &value)
     {
@@ -43,53 +37,21 @@ public:
 
 class ScopedEnv {
 public:
-    void addVar(const std::string &name, const std::string &value)
-    {
-        m_vars.emplace(name, value);
-    }
+    void addVar(const std::string &name, const std::string &value);
 
 private:
     class Variable {
     public:
-        Variable(const std::string &name, const std::string &value)
-        : m_name(name)
-        {
-            const char* backup = getenv(name.c_str());
-
-            if (backup != nullptr) {
-                m_prev_value = backup;
-            }
-
-            setenv(name.c_str(), value.c_str(), 1);
-        }
-
-        Variable(Variable &&other)
-        : m_prev_value(std::move(other.m_prev_value)),
-          m_name(std::move(other.m_name))
-        {
-            // The moved-from object should be invalidated
-            assert(other.m_name.empty());
-        }
-
-        ~Variable()
-        {
-            if (m_name.empty()) {
-                return;
-            }
-
-            if (m_prev_value) {
-                setenv(m_name.c_str(), m_prev_value->c_str(), 1);
-            } else {
-                unsetenv(m_name.c_str());
-            }
-        }
+        Variable(const std::string &name, const std::string &value);
+        Variable(Variable &&other);
+        ~Variable();
 
         Variable(const Variable &other) = delete;
         Variable &operator=(const Variable &other) = delete;
 
     private:
-        std::optional<std::string> m_prev_value = std::nullopt;
-        std::string                m_name;
+        std::optional<std::string> m_prev_value;
+        std::string m_name;
     };
 
     std::stack<Variable> m_vars;
