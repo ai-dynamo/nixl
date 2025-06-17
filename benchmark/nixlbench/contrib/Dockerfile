@@ -24,20 +24,45 @@ ARG DEFAULT_PYTHON_VERSION="3.12"
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
 
 # Re-declare for use in this stage
+ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
     pybind11-dev \
+    libclang-dev \
     cmake \
     libgflags-dev \
     libgrpc-dev \
     libgrpc++-dev \
     libprotobuf-dev \
+    libaio-dev \
+    liburing-dev \
     protobuf-compiler-grpc \
     libcpprest-dev \
     etcd-server \
-    etcd-client
+    etcd-client \
+    autotools-dev \
+    automake \
+    libtool \
+    libz-dev \
+    flex \
+    libgtest-dev \
+    build-essential
+
+# Add Mellanox repository and install packages
+RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else echo "${ARCH}"; fi) && \
+    export PKG_CONFIG_PATH="/opt/mellanox/doca/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:/opt/mellanox/dpdk/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" && \
+    curl -fsSL https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/${ARCH_SUFFIX}/GPG-KEY-Mellanox.pub | \
+    gpg --dearmor | tee /usr/share/keyrings/mellanox-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/mellanox-archive-keyring.gpg] https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/${ARCH_SUFFIX} ./" | \
+    tee /etc/apt/sources.list.d/mellanox.list && \
+    DEBIAN_FRONTEND=noninteractive apt update -y && \
+    apt install -y --no-install-recommends \
+        mlnx-dpdk mlnx-dpdk-dev \
+        doca-sdk-common doca-sdk-dma doca-sdk-dpdk-bridge \
+        doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all \
+        doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 
 # --- Stage 2a: Represents using UCX from the base image ---
 FROM os_setup_stage AS ucx_upstream_image
