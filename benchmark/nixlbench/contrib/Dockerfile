@@ -90,8 +90,9 @@ COPY --from=nixlbench . /workspace/nixlbench
 
 WORKDIR /workspace/nixl
 
-# LD_LIBRARY_PATH is needed for auditwheel to find libcuda.so.1
-# Set incorrectly to `compat/lib` in cuda-dl-base image
+# This is only to find libcuda.so.1 correctly for build, removed once done
+RUN ln -sf "/usr/local/cuda/compat/lib.real" "/usr/local/cuda/compat/lib"
+ARG OLD_LD_PATH=${LD_LIBRARY_PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
@@ -120,6 +121,10 @@ RUN uv pip install auditwheel && \
     uv run auditwheel repair /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+
+# Remove the cuda setup
+RUN rm -f /usr/local/cuda/compat/lib
+ENV LD_LIBRARY_PATH=$OLD_LD_PATH
 
 WORKDIR /workspace/nixlbench
 
