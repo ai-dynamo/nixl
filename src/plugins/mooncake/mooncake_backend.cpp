@@ -257,9 +257,8 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
         request[index].target_id = segment_id;
     }
 
-    // TODO: submitTransfer could not be called multiple times for
-    // the same batch_id, it will fail when users call createXferReq
-    // once and reuse the handle and call postXferReq multiple times.
+    // TODO: submitTransfer will fail when the total number of requests exceeded the
+    // batch size set for this batch ID.
     int rc = submitTransfer(engine_, priv->batch_id, request, request_count);
     delete []request;
     if (rc) {
@@ -282,9 +281,9 @@ nixl_status_t nixlMooncakeEngine::checkXfer (nixlBackendReqH* handle) const
             return NIXL_IN_PROG;
     }
     if (!has_failed) {
-        // workaround the issue where submitTranfer could not be called
-        // multiple times with the same batch id. Free the batchID
-        // here and allocate a new batchID in postXfer.
+        // Each batch_id has the batch size, and cannot process more requests
+        // than the batch size. So, free the batch id here to workaround the issue
+        // where the same nixlBackendReqH could be used to post multiple transfer.
         freeBatchID(engine_, priv->batch_id);
         priv->batch_id = INVALID_BATCH;
     }
