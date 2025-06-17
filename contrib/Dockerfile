@@ -76,6 +76,11 @@ RUN wget --tries=3 --waitretry=5 \
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
+# This is only to find libcuda.so.1 correctly for build, removed once done
+RUN ln -sf "/usr/local/cuda/compat/lib.real" "/usr/local/cuda/compat/lib"
+ARG OLD_LD_PATH=${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/usr/local/lib:$LD_LIBRARY_PATH
+
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
@@ -136,11 +141,6 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 RUN cd src/bindings/rust && cargo build --release --locked
 
 # Create the wheel
-# This is only to facilitate the building of the wheels, removed once done
-RUN ln -sf "/usr/local/cuda/compat/lib.real" "/usr/local/cuda/compat/lib"
-ARG OLD_LD_PATH=${LD_LIBRARY_PATH}
-ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/usr/local/lib:$LD_LIBRARY_PATH
-
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
