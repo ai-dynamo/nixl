@@ -20,15 +20,12 @@ threefs_dep = declare_dependency(
   link_args : ['-L' + hf3fs_lib_path, '-l' + hf3fs_lib_file],
   include_directories : include_directories(threefs_inc_path))
 
-# Get Abseil dependencies
-absl_log_dep = dependency('absl_log', required: true)
-
 if 'HF3FS' in static_plugins
   hf3fs_backend_lib = static_library('HF3FS',
                     'hf3fs_utils.cpp', 'hf3fs_utils.h',
                     'hf3fs_backend.cpp', 'hf3fs_backend.h',
                     'hf3fs_plugin.cpp',
-                    dependencies: [nixl_infra, threefs_dep, absl_log_dep],
+                    dependencies: [nixl_infra, threefs_dep, nixl_common_dep],
                     include_directories: [nixl_inc_dirs, utils_inc_dirs],
                     install: false,
                     cpp_args : compile_flags,
@@ -38,7 +35,7 @@ else
                     'hf3fs_utils.cpp', 'hf3fs_utils.h',
                     'hf3fs_backend.cpp', 'hf3fs_backend.h',
                     'hf3fs_plugin.cpp',
-                    dependencies: [nixl_infra, threefs_dep, absl_log_dep],
+                    dependencies: [nixl_infra, threefs_dep, nixl_common_dep],
                     include_directories: [nixl_inc_dirs, utils_inc_dirs],
                     install: true,
                     cpp_args : ['-fPIC'],

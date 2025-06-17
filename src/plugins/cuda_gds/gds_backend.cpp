@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 #include <cassert>
-#include <iostream>
 #include <cufile.h>
 #include "gds_backend.h"
 #include "common/str_tools.h"
+#include "common/nixl_log.h"
 
 /** Setting the default values to check the batch limit */
 #define DEFAULT_BATCH_LIMIT 128
@@ -45,7 +45,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
             try {
                 batch_pool_size = std::stoi((*custom_params)["batch_pool_size"]);
             } catch (const std::exception& e) {
-                std::cerr << "Invalid batch_pool_size parameter: " << e.what() << std::endl;
+                NIXL_ERROR << "Invalid batch_pool_size parameter: " << e.what();
                 this->initErr = true;
                 return;
             }
@@ -56,7 +56,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
             try {
                 batch_limit = std::stoi((*custom_params)["batch_limit"]);
             } catch (const std::exception& e) {
-                std::cerr << "Invalid batch_limit parameter: " << e.what() << std::endl;
+                NIXL_ERROR << "Invalid batch_limit parameter: " << e.what();
                 this->initErr = true;
                 return;
             }
@@ -67,7 +67,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
             try {
                 max_request_size = std::stoul((*custom_params)["max_request_size"]);
             } catch (const std::exception& e) {
-                std::cerr << "Invalid max_request_size parameter: " << e.what() << std::endl;
+                NIXL_ERROR << "Invalid max_request_size parameter: " << e.what();
                 this->initErr = true;
                 return;
             }
@@ -118,8 +118,8 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
         case VRAM_SEG: {
             error_id = cudaSetDevice(mem.devId);
             if (error_id != cudaSuccess) {
-                std::cerr << "cudaSetDevice returned " << cudaGetErrorString(error_id)
-                          << " for device ID " << mem.devId << std::endl;
+                NIXL_ERROR << "cudaSetDevice returned " << cudaGetErrorString(error_id)
+                          << " for device ID " << mem.devId;
                 delete md;
                 return NIXL_ERR_BACKEND;
             }
@@ -181,13 +181,13 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
     // Basic validation
     if ((buf_cnt != file_cnt) ||
         ((operation != NIXL_READ) && (operation != NIXL_WRITE))) {
-        std::cerr << "Error in count or operation selection\n";
+        NIXL_ERROR << "Error in count or operation selection";
         delete gds_handle;
         return NIXL_ERR_INVALID_PARAM;
     }
 
     if ((remote.getType() != FILE_SEG) && (local.getType() != FILE_SEG)) {
-        std::cerr << "Only support I/O between memory (DRAM/VRAM) and file type\n";
+        NIXL_ERROR << "Only support I/O between memory (DRAM/VRAM) and file type";
         delete gds_handle;
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -217,7 +217,7 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
 
             auto it = gds_file_map.find(local[i].devId);
             if (it == gds_file_map.end()) {
-                std::cerr << "File handle not found\n";
+                NIXL_ERROR << "File handle not found";
                 delete gds_handle;
                 return NIXL_ERR_NOT_FOUND;
             }
@@ -233,7 +233,7 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
 
             auto it = gds_file_map.find(remote[i].devId);
             if (it == gds_file_map.end()) {
-                std::cerr << "File handle not found\n";
+                NIXL_ERROR << "File handle not found";
                 delete gds_handle;
                 return NIXL_ERR_NOT_FOUND;
             }
@@ -303,7 +303,7 @@ nixl_status_t nixlGdsEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // Validate request_list before proceeding
     if (gds_handle->request_list.empty()) {
-        std::cerr << "Empty request list" << std::endl;
+        NIXL_ERROR << "Empty request list";
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -338,7 +338,7 @@ nixl_status_t nixlGdsEngine::createAndSubmitBatch(const std::vector<GdsTransferR
 {
     nixlGdsIOBatch* batch = getBatchFromPool(batch_size);
     if (!batch) {
-        std::cerr << "GDS batch pool exhausted" << std::endl;
+        NIXL_ERROR << "GDS batch pool exhausted";
         return NIXL_ERR_BACKEND;
     }
 
