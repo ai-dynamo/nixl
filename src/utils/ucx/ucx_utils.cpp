@@ -190,7 +190,7 @@ nixl_status_t nixlUcxEp::disconnect_nb()
  * RKey management
  * =========================================== */
 
-nixl_status_t nixlUcxEp::rkeyImport(void* addr, const std::size_t size, nixlUcxRkey &rkey)
+nixl_status_t nixlUcxEp::rkeyImport(void* addr, const size_t size, nixlUcxRkey &rkey)
 {
     const ucs_status_t status = ucp_ep_rkey_unpack(eph, addr, &rkey.rkeyh);
     if (status != UCS_OK)
@@ -211,10 +211,10 @@ void nixlUcxEp::rkeyDestroy(const nixlUcxRkey &rkey)
  * Active message handling
  * =========================================== */
 
-nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
-                                void* hdr, std::size_t hdr_len,
-                                void* buffer, std::size_t len,
-                                std::uint32_t flags, nixlUcxReq &req)
+nixl_status_t nixlUcxEp::sendAm(const unsigned msg_id,
+                                void* hdr, const size_t hdr_len,
+                                void* buffer, const size_t len,
+                                const std::uint32_t flags, nixlUcxReq &req)
 {
     ucs_status_ptr_t request;
     ucp_request_param_t param = {0};
@@ -236,16 +236,16 @@ nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
  * Data transfer
  * =========================================== */
 
-nixl_status_t nixlUcxEp::read(std::uint64_t raddr, nixlUcxRkey &rk,
+nixl_status_t nixlUcxEp::read(const std::uint64_t raddr, nixlUcxRkey &rk,
                               void *laddr, nixlUcxMem &mem,
-                              std::size_t size, nixlUcxReq &req)
+                              const size_t size, nixlUcxReq &req)
 {
-    nixl_status_t status = checkTxState();
+    const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
     }
 
-    ucp_request_param_t param = {
+    const ucp_request_param_t param = {
         .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH |
                         UCP_OP_ATTR_FLAG_MULTI_SEND,
         .memh         = mem.memh,
@@ -262,8 +262,8 @@ nixl_status_t nixlUcxEp::read(std::uint64_t raddr, nixlUcxRkey &rk,
 }
 
 nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
-                               std::uint64_t raddr, nixlUcxRkey &rk,
-                               std::size_t size, nixlUcxReq &req)
+                               const std::uint64_t raddr, nixlUcxRkey &rk,
+                               const size_t size, nixlUcxReq &req)
 {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
@@ -286,7 +286,7 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
-nixl_status_t nixlUcxEp::estimateCost(std::size_t size,
+nixl_status_t nixlUcxEp::estimateCost(const size_t size,
                                       std::chrono::microseconds &duration,
                                       std::chrono::microseconds &err_margin,
                                       nixl_cost_t &method)
@@ -346,11 +346,11 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
     std::terminate();
 }
 
-nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
-                               std::size_t req_size,
+nixlUcxContext::nixlUcxContext(const std::vector<std::string>& devs,
+                               const size_t req_size,
                                nixlUcxContext::req_cb_t init_cb,
                                nixlUcxContext::req_cb_t fini_cb,
-                               bool prog_thread,
+                               const bool prog_thread,
                                ucp_err_handling_mode_t __err_handling_mode,
                                unsigned long num_workers,
                                nixl_thread_sync_t sync_mode)
@@ -497,7 +497,7 @@ std::string nixlUcxWorker::epAddr()
     return result;
 }
 
-absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, std::size_t size)
+absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, size_t size)
 {
     try {
         return std::make_unique<nixlUcxEp>(worker.get(), addr, ctx->err_handling_mode);
@@ -511,7 +511,7 @@ absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, st
  * =========================================== */
 
 
-int nixlUcxContext::memReg(void *addr, std::size_t size, nixlUcxMem &mem)
+int nixlUcxContext::memReg(void *addr, const size_t size, nixlUcxMem &mem)
 {
     //mem.uw = this;
     mem.base = addr;
@@ -538,7 +538,7 @@ int nixlUcxContext::memReg(void *addr, std::size_t size, nixlUcxMem &mem)
 std::string nixlUcxContext::packRkey(nixlUcxMem &mem)
 {
     void* rkey_buf;
-    std::size_t size;
+    size_t size;
 
     const ucs_status_t status = ucp_rkey_pack(ctx, mem.memh, &rkey_buf, &size);
     if (status != UCS_OK) {
