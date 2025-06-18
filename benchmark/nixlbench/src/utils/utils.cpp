@@ -86,40 +86,8 @@ DEFINE_bool(storage_enable_direct, false, "Enable direct I/O for storage operati
 DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
 		      communication (only used with nixl worker)");
 
-std::string xferBenchConfig::runtime_type = "";
-std::string xferBenchConfig::worker_type = "";
-std::string xferBenchConfig::backend = "";
-std::string xferBenchConfig::initiator_seg_type = "";
-std::string xferBenchConfig::target_seg_type = "";
-std::string xferBenchConfig::scheme = "";
-std::string xferBenchConfig::mode = "";
-std::string xferBenchConfig::op_type = "";
-bool xferBenchConfig::check_consistency = false;
-size_t xferBenchConfig::total_buffer_size = 0;
-int xferBenchConfig::num_initiator_dev = 0;
-int xferBenchConfig::num_target_dev = 0;
-size_t xferBenchConfig::start_block_size = 0;
-size_t xferBenchConfig::max_block_size = 0;
-size_t xferBenchConfig::start_batch_size = 0;
-size_t xferBenchConfig::max_batch_size = 0;
-int xferBenchConfig::num_iter = 0;
-int xferBenchConfig::warmup_iter = 0;
-int xferBenchConfig::num_threads = 0;
-bool xferBenchConfig::enable_pt = false;
-bool xferBenchConfig::enable_vmm = false;
-std::string xferBenchConfig::device_list = "";
-std::string xferBenchConfig::etcd_endpoints = "";
-std::string xferBenchConfig::gds_filepath = "";
-int xferBenchConfig::gds_batch_pool_size = 0;
-int xferBenchConfig::gds_batch_limit = 0;
-std::string xferBenchConfig::gpunetio_device_list = "";
-std::vector<std::string> devices = { };
-int xferBenchConfig::num_files = 0;
-std::string xferBenchConfig::posix_api_type = "";
-std::string xferBenchConfig::posix_filepath = "";
-bool xferBenchConfig::storage_enable_direct = false;
-
-int xferBenchConfig::loadFromFlags() {
+int XferBenchConfig::loadFromFlags()
+{
     runtime_type = FLAGS_runtime_type;
     worker_type = FLAGS_worker_type;
 
@@ -255,7 +223,8 @@ int xferBenchConfig::loadFromFlags() {
     return 0;
 }
 
-void xferBenchConfig::printConfig() {
+void XferBenchConfig::printConfig() const
+{
     std::cout << std::string(70, '*') << std::endl;
     std::cout << "NIXLBench Configuration" << std::endl;
     std::cout << std::string(70, '*') << std::endl;
@@ -345,25 +314,26 @@ void xferBenchConfig::printConfig() {
     std::cout << std::endl;
 }
 
-std::vector<std::string> xferBenchConfig::parseDeviceList() {
+std::vector<std::string> XferBenchConfig::parseDeviceList() const
+{
     std::vector<std::string> devices;
     std::string dev;
-    std::stringstream ss(xferBenchConfig::device_list);
+    std::stringstream ss(device_list);
 
     // TODO: Add support for other schemes
-    if (xferBenchConfig::scheme == XFERBENCH_SCHEME_PAIRWISE &&
-        xferBenchConfig::device_list != "all") {
-	    while (std::getline(ss, dev, ',')) {
+    if (scheme == XFERBENCH_SCHEME_PAIRWISE &&
+        device_list != "all") {
+        while (std::getline(ss, dev, ',')) {
             devices.push_back(dev);
-	    }
+        }
 
-	    if ((int)devices.size() != xferBenchConfig::num_initiator_dev ||
-            (int)devices.size() != xferBenchConfig::num_target_dev) {
-	    	std::cerr << "Incorrect device list " << xferBenchConfig::device_list
+        if ((int)devices.size() != num_initiator_dev ||
+            (int)devices.size() != num_target_dev) {
+            std::cerr << "Incorrect device list " << device_list
                       << " provided for pairwise scheme " << devices.size()
                       << "# devices" << std::endl;
-	    	return {};
-	    }
+            return {};
+        }
     } else {
         devices.push_back("all");
     }
@@ -412,11 +382,11 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
 
             len = iov.len;
 
-            if ((xferBenchConfig::backend == XFERBENCH_BACKEND_GDS) ||
-                (xferBenchConfig::backend == XFERBENCH_BACKEND_POSIX) ||
-                (xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO)) {
-                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
+            if ((xferBenchConfig.backend == XFERBENCH_BACKEND_GDS) ||
+                (xferBenchConfig.backend == XFERBENCH_BACKEND_POSIX) ||
+                (xferBenchConfig.backend == XFERBENCH_BACKEND_GPUNETIO)) {
+                if (xferBenchConfig.op_type == XFERBENCH_OP_READ) {
+                    if (xferBenchConfig.initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
 #if HAVE_CUDA
                         addr = calloc(1, len);
                         is_allocated = true;
@@ -430,7 +400,7 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                     } else {
                         addr = (void *)iov.addr;
                     }
-                } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
+                } else if (xferBenchConfig.op_type == XFERBENCH_OP_WRITE) {
                     addr = calloc(1, len);
                     is_allocated = true;
                     ssize_t rc = pread(iov.devId, addr, len, iov.addr);
@@ -443,10 +413,10 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             } else {
                 // This will be called on target process in case of write and
                 // on initiator process in case of read
-                if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
-                 xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_VRAM) ||
-                (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
-                 xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM)) {
+                if ((xferBenchConfig.op_type == XFERBENCH_OP_WRITE &&
+                 xferBenchConfig.target_seg_type == XFERBENCH_SEG_TYPE_VRAM) ||
+                (xferBenchConfig.op_type == XFERBENCH_OP_READ &&
+                 xferBenchConfig.initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM)) {
 #if HAVE_CUDA
                     addr = calloc(1, len);
                     is_allocated = true;
@@ -457,17 +427,17 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                               << std::endl;
                     exit(EXIT_FAILURE);
 #endif
-                } else if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
-                            xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_DRAM) ||
-                           (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
-                            xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_DRAM)) {
+                } else if ((xferBenchConfig.op_type == XFERBENCH_OP_WRITE &&
+                            xferBenchConfig.target_seg_type == XFERBENCH_SEG_TYPE_DRAM) ||
+                           (xferBenchConfig.op_type == XFERBENCH_OP_READ &&
+                            xferBenchConfig.initiator_seg_type == XFERBENCH_SEG_TYPE_DRAM)) {
                     addr = (void *)iov.addr;
                 }
             }
 
-            if("WRITE" == xferBenchConfig::op_type) {
+            if("WRITE" == xferBenchConfig.op_type) {
                 check_val = XFERBENCH_INITIATOR_BUFFER_ELEMENT;
-            } else if("READ" == xferBenchConfig::op_type) {
+            } else if("READ" == xferBenchConfig.op_type) {
                 check_val = XFERBENCH_TARGET_BUFFER_ELEMENT;
             }
 
@@ -511,7 +481,7 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     double avg_latency = 0, throughput = 0, throughput_gib = 0, throughput_gb = 0;
     double totalbw = 0;
 
-    int num_iter = xferBenchConfig::num_iter;
+    int num_iter = xferBenchConfig.num_iter;
 
     if (block_size > LARGE_BLOCK_SIZE) {
         num_iter /= LARGE_BLOCK_SIZE_ITER_FACTOR;
@@ -527,8 +497,8 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     total_data_transferred = ((block_size * batch_size) * num_iter); // In Bytes
     avg_latency = (total_duration / (num_iter * batch_size)); // In microsec
     if (IS_PAIRWISE_AND_MG()) {
-        total_data_transferred *= xferBenchConfig::num_initiator_dev; // In Bytes
-        avg_latency /= xferBenchConfig::num_initiator_dev; // In microsec
+        total_data_transferred *= xferBenchConfig.num_initiator_dev; // In Bytes
+        avg_latency /= xferBenchConfig.num_initiator_dev; // In microsec
     }
 
     throughput = (((double) total_data_transferred / (1024 * 1024)) /
