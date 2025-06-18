@@ -160,6 +160,8 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
         uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
     done
 RUN uv pip install auditwheel && \
-    uv run auditwheel repair /tmp/dist/nixl-*cp3*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
+    uv run auditwheel repair /tmp/dist/nixl-*cp3*.whl --exclude 'libcuda*' --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
+
+RUN /workspace/nixl/contrib/wheel_add_ucx_plugins.py --ucx-lib-dir /usr/lib64 /workspace/nixl/dist/*.whl
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
