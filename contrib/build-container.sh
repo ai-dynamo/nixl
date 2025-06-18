@@ -61,6 +61,14 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --wheel-base)
+            if [ "$2" ]; then
+                WHL_BASE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --os)
             if [ "$2" ]; then
                 OS=$2
@@ -80,6 +88,14 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --dockerfile)
+            if [ "$2" ]; then
+                DOCKER_FILE="$2"
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --python-versions)
             if [ "$2" ]; then
                 WHL_PYTHON_VERSIONS=$2
@@ -90,12 +106,11 @@ get_options() {
             ;;
         --ucx-upstream)
             # Master branch (v1.20) also containing EFA SRD support
-            UCX_REF=7ec95b95e524a87e81cac92f5ca8523e3966b16b
+            UCX_REF=9d2b88a1f67faf9876f267658bd077b379b8bb76
             ;;
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
-                WHL_PLATFORM=${WHL_BASE}_${ARCH}
                 shift
             else
                 missing_requirement $1
@@ -120,8 +135,10 @@ get_options() {
 
     if [[ $OS == "ubuntu22" ]]; then
         BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04
-        WHL_PLATFORM=manylinux_2_34_${ARCH}
+        WHL_BASE=${WHL_BASE:-manylinux_2_34}
     fi
+
+    WHL_PLATFORM=${WHL_BASE}_${ARCH}
 
     if [ -z "$TAG" ]; then
         TAG="--tag nixl:${VERSION}"
@@ -144,12 +161,14 @@ show_help() {
     echo "usage: build-container.sh"
     echo "  [--base base image]"
     echo "  [--base-image-tag base image tag]"
+    echo "  [--wheel-base base platform for wheel builds]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-upstream use ucx master branch]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
+    echo "  [--dockerfile path to a dockerfile to use]"
     exit 0
 }
 

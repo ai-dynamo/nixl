@@ -32,6 +32,7 @@ struct nixlBackendOptionalArgs {
     // During postXfer, user might ask for a notification if supported
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
+    nixl_blob_t customParam;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;

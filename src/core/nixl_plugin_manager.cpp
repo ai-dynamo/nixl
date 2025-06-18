@@ -19,13 +19,11 @@
 #include "nixl.h"
 #include "common/nixl_log.h"
 #include <dlfcn.h>
-#include <iostream>
 #include <filesystem>
 #include <dirent.h>
 #include <unistd.h>  // For access() and F_OK
 #include <cstdlib>  // For getenv
 #include <fstream>
-#include <iostream>
 #include <string>
 #include <map>
 
@@ -277,8 +275,8 @@ void nixlPluginManager::discoverPluginsFromDir(const std::string& dirpath) {
     std::error_code ec;
     std::filesystem::directory_iterator dir_iter(dir_path, ec);
     if (ec) {
-        std::cerr << "Error accessing directory(" << dir_path << "):"
-                  << ec.message() << std::endl;
+        NIXL_ERROR << "Error accessing directory(" << dir_path << "): "
+                   << ec.message();
         return;
     }
 
@@ -361,7 +359,7 @@ void nixlPluginManager::registerStaticPlugin(const char* name, nixlStaticPluginC
 
     //Static Plugins are considered pre-loaded
     nixlBackendPlugin* plugin = info.createFunc();
-    NIXL_DEBUG << "Loading static plugin: " << name << std::endl;
+    NIXL_INFO << "Loading static plugin: " << name;
     if (plugin) {
         // Register the loaded plugin
         auto plugin_handle = std::make_shared<const nixlPluginHandle>(nullptr, plugin);
@@ -395,4 +393,12 @@ void nixlPluginManager::registerBuiltinPlugins() {
         extern nixlBackendPlugin* createStaticPosixPlugin();
         registerStaticPlugin("POSIX", createStaticPosixPlugin);
 #endif // STATIC_PLUGIN_POSIX
+
+#ifdef STATIC_PLUGIN_GPUNETIO
+#ifndef DISABLE_GPUNETIO_BACKEND
+        extern nixlBackendPlugin* createStaticGpunetioPlugin();
+        registerStaticPlugin("GPUNETIO", createStaticGpunetioPlugin);
+#endif // DISABLE_GPUNETIO_BACKEND
+#endif // STATIC_PLUGIN_GPUNETIO
+
 }

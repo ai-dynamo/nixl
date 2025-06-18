@@ -718,8 +718,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                      remote_descs, backend, *handle->targetDescs);
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
-            // For Logging:
-            // std::cout << "Selected backend: " << backend->getType() << "\n";
+            NIXL_INFO << "Selected backend: " << backend->getType();
             handle->engine = backend;
             break;
         }
@@ -732,9 +731,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    if (extra_params && extra_params->hasNotif) {
-        opt_args.notifMsg = extra_params->notifMsg;
-        opt_args.hasNotif = true;
+    if (extra_params) {
+        if (extra_params->hasNotif) {
+            opt_args.notifMsg = extra_params->notifMsg;
+            opt_args.hasNotif = true;
+        }
+
+        if (extra_params->customParam.length() > 0)
+            opt_args.customParam = extra_params->customParam;
     }
 
     if (opt_args.hasNotif && (!handle->engine->supportsNotif())) {
