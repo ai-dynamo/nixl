@@ -161,6 +161,10 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
 
 # Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
 RUN uv pip install auditwheel && \
-    uv run auditwheel repair --exclude libcuda.so.1 /tmp/dist/nixl-*cp3*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
+    uv run auditwheel repair     \
+    --exclude libcuda.so.1       \
+    --exclude libssl.so.1.1      \
+    --exclude libcrypto.so.1.1   \
+    /tmp/dist/nixl-*cp3*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
