@@ -143,8 +143,7 @@ class nixlGdsMtEngine : public nixlBackendEngine {
         nixl_status_t releaseReqH(nixlBackendReqH* handle) const override;
 
     private:
-        std::unique_ptr<gdsMtUtil> gds_mt_utils_;
-        mutable std::mutex mutex_;  // Protects shared file map
+        gdsMtUtil gds_mt_utils_;
         std::unordered_map<int, nixlGdsMtMetadata*> gds_mt_file_map_;
         size_t thread_count_;
         std::unique_ptr<tf::Executor> executor_;

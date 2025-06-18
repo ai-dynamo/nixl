@@ -36,9 +36,8 @@ namespace {
 
 nixlGdsMtEngine::nixlGdsMtEngine(const nixlBackendInitParams* init_params)
     : nixlBackendEngine(init_params)
+    , gds_mt_utils_()
 {
-    gds_mt_utils_ = std::make_unique<gdsMtUtil>();
-
     thread_count_ = default_thread_count;
 
     // Read custom parameters if available
@@ -69,7 +68,6 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
 
     switch (nixl_mem) {
         case FILE_SEG: {
-            std::lock_guard<std::mutex> lock(mutex_);
             auto it = gds_mt_file_map_.find(mem.devId);
             if (it != gds_mt_file_map_.end()) {
                 // Reuse existing metadata and increment reference count
@@ -123,7 +121,6 @@ nixl_status_t nixlGdsMtEngine::deregisterMem (nixlBackendMD* meta)
     nixlGdsMtMetadata* md = (nixlGdsMtMetadata*)meta;
 
     if (md->type == FILE_SEG && md->handle) {
-        std::lock_guard<std::mutex> lock(mutex_);
         md->ref_cnt--;
         if (md->ref_cnt > 0) {
             // Still has references, don't delete yet
@@ -222,31 +219,28 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
     bool is_local_file = (local.getType() == FILE_SEG);
 
     // Create list of all transfer requests
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (size_t i = 0; i < buf_cnt; i++) {
-            void* base_addr;
-            size_t total_size;
-            size_t base_offset;
-            CUfileHandle_t cu_fhandle;
+    for (size_t i = 0; i < buf_cnt; i++) {
+        void* base_addr;
+        size_t total_size;
+        size_t base_offset;
+        CUfileHandle_t cu_fhandle;
 
-            // Get transfer parameters based on whether local is file or memory
-            nixl_status_t param_status;
-            if (is_local_file) {
-                param_status = extractTransferParams(remote[i], local[i], gds_mt_file_map_,
-                                                    base_addr, total_size, base_offset, cu_fhandle);
-            } else {
-                param_status = extractTransferParams(local[i], remote[i], gds_mt_file_map_,
-                                                    base_addr, total_size, base_offset, cu_fhandle);
-            }
-
-            if (param_status != NIXL_SUCCESS) {
-                return param_status;
-            }
-
-            gds_mt_handle->request_list.emplace_back(base_addr, total_size, base_offset, cu_fhandle,
-                (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE);
+        // Get transfer parameters based on whether local is file or memory
+        nixl_status_t param_status;
+        if (is_local_file) {
+            param_status = extractTransferParams(remote[i], local[i], gds_mt_file_map_,
+                                                base_addr, total_size, base_offset, cu_fhandle);
+        } else {
+            param_status = extractTransferParams(local[i], remote[i], gds_mt_file_map_,
+                                                base_addr, total_size, base_offset, cu_fhandle);
         }
+
+        if (param_status != NIXL_SUCCESS) {
+            return param_status;
+        }
+
+        gds_mt_handle->request_list.emplace_back(base_addr, total_size, base_offset, cu_fhandle,
+            (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE);
     }
 
     if (gds_mt_handle->request_list.empty()) {
