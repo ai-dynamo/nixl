@@ -17,6 +17,7 @@
 #ifndef __NIXL_LOG_H
 #define __NIXL_LOG_H
 
+#include <system_error>
 #include "absl/log/log.h"
 #include "absl/log/check.h"
 #include "absl/log/initialize.h"
@@ -34,8 +35,18 @@
  */
 #define NIXL_FATAL LOG(FATAL)
 
+/*
+ * Like NIXL_FATAL, but also prints the errno message.
+ */
+#define NIXL_PFATAL NIXL_FATAL.WithPerror()
+
 /* Logs messages unconditionally (maps to Abseil ERROR level) */
 #define NIXL_ERROR LOG(ERROR)
+
+/*
+ * Like NIXL_ERROR, but also prints the errno message.
+ */
+#define NIXL_PERROR NIXL_ERROR.WithPerror()
 
 /*
  * Logs messages unconditionally (maps to Abseil WARNING level)
@@ -43,9 +54,19 @@
 #define NIXL_WARN LOG(WARNING)
 
 /*
+ * Like NIXL_WARN, but also prints the errno message.
+ */
+#define NIXL_PWARN NIXL_WARN.WithPerror()
+
+/*
  * Logs messages unconditionally (maps to Abseil INFO level)
  */
 #define NIXL_INFO LOG(INFO)
+
+/*
+ * Like NIXL_INFO, but also prints the errno message.
+ */
+#define NIXL_PINFO NIXL_INFO.WithPerror()
 
 /*
  * Logs messages unconditionally (maps to Abseil verbosity level 1)
@@ -53,10 +74,20 @@
 #define NIXL_DEBUG VLOG(1)
 
 /*
+ * Like NIXL_DEBUG, but also prints the errno message.
+ */
+#define NIXL_PDEBUG NIXL_DEBUG.WithPerror()
+
+/*
  * Logs messages unconditionally (maps to Abseil verbosity level 2)
  * Stripped from release buids.
  */
 #define NIXL_TRACE DVLOG(2)
+
+/*
+ * Like NIXL_TRACE, but also prints the errno message.
+ */
+#define NIXL_PTRACE NIXL_TRACE.WithPerror()
 
 /*-----------------------------------------------------------------------------*
  * Assertion Macros
@@ -77,5 +108,18 @@
  *      NIXL_ASSERT(ptr != nullptr) << "Pointer must not be null";
  */
 #define NIXL_ASSERT(condition) DCHECK(condition)
+
+/*-----------------------------------------------------------------------------*
+ * Helper Functions
+ *-----------------------------------------------------------------------------*/
+
+/*
+ * Get the error message for the given error number. Thread-safe.
+ * @param err: The error number.
+ * @return: The error message.
+ */
+static inline std::string nixl_strerror(int err) {
+    return std::error_code(err, std::generic_category()).message();
+}
 
 #endif /* __NIXL_LOG_H */

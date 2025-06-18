@@ -76,7 +76,7 @@ nixl_status_t aioQueue::submit() {
                 }
                 return NIXL_ERR_BACKEND;
             }
-            NIXL_ERROR << "AIO submit failed: " << strerror(errno);
+            NIXL_PERROR << "AIO submit failed";
             return NIXL_ERR_BACKEND;
         }
 
@@ -99,7 +99,7 @@ nixl_status_t aioQueue::checkCompleted() {
         if (status == 0) {  // Operation completed
             ssize_t ret = aio_return(&aiocb);
             if (ret < 0 || ret != static_cast<ssize_t>(aiocb.aio_nbytes)) {
-                NIXL_ERROR << "AIO operation failed or incomplete: " << strerror(errno);
+                NIXL_PERROR << "AIO operation failed or incomplete";
                 return NIXL_ERR_BACKEND;
             }
             num_completed++;
@@ -108,7 +108,7 @@ nixl_status_t aioQueue::checkCompleted() {
         } else if (status == EINPROGRESS) {
             return NIXL_IN_PROG;  // At least one operation still in progress
         } else {
-            NIXL_ERROR << "AIO error: " << strerror(status);
+            NIXL_PERROR << "AIO error";
             return NIXL_ERR_BACKEND;
         }
     }

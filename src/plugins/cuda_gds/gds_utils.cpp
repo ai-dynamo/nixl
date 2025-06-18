@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <iostream>
 #include "gds_utils.h"
+#include "common/nixl_log.h"
 
 nixl_status_t gdsUtil::registerFileHandle(int fd,
                                           size_t size,
@@ -31,7 +31,7 @@ nixl_status_t gdsUtil::registerFileHandle(int fd,
 
     status = cuFileHandleRegister(&handle, &descr);
     if (status.err != CU_FILE_SUCCESS) {
-        std::cerr << "file register error:" << std::endl;
+        NIXL_ERROR << "file register error:";
         return NIXL_ERR_BACKEND;
     }
 
@@ -51,7 +51,7 @@ nixl_status_t gdsUtil::registerBufHandle(void *ptr,
 
     status = cuFileBufRegister(ptr, size, flags);
     if (status.err != CU_FILE_SUCCESS) {
-        std::cerr << "Warning: Buffer registration failed - will use compat mode\n";
+        NIXL_WARN << "Buffer registration failed - will use compat mode";
     }
     return NIXL_SUCCESS;
 }
@@ -62,7 +62,7 @@ nixl_status_t gdsUtil::openGdsDriver()
 
     err = cuFileDriverOpen();
     if (err.err != CU_FILE_SUCCESS) {
-        std::cerr << "Error initializing GPU Direct Storage driver\n";
+        NIXL_ERROR << "Error initializing GPU Direct Storage driver";
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
@@ -84,7 +84,7 @@ nixl_status_t gdsUtil::deregisterBufHandle(void *ptr)
 
     status = cuFileBufDeregister(ptr);
     if (status.err != CU_FILE_SUCCESS) {
-        std::cerr << "Error De-Registering Buffer\n";
+        NIXL_ERROR << "Error De-Registering Buffer";
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
@@ -100,7 +100,7 @@ nixlGdsIOBatch::nixlGdsIOBatch(unsigned int size)
 
     err = cuFileBatchIOSetUp(&batch_handle, size);
     if (err.err != 0) {
-        std::cerr << "Error in setting up Batch\n";
+        NIXL_ERROR << "Error in setting up Batch";
         init_err = err;
     }
 }
@@ -113,7 +113,7 @@ nixlGdsIOBatch::~nixlGdsIOBatch()
             delete[] io_batch_params;
             cuFileBatchIODestroy(batch_handle);
     } else {
-            std::cerr<<"Attempting to delete a batch before completion\n";
+            NIXL_ERROR << "Attempting to delete a batch before completion";
     }
 }
 
@@ -147,7 +147,7 @@ nixl_status_t nixlGdsIOBatch::cancelBatch()
 
     err = cuFileBatchIOCancel(batch_handle);
     if (err.err != 0) {
-        std::cerr << "Error in canceling batch\n";
+        NIXL_ERROR << "Error in canceling batch";
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
@@ -160,7 +160,7 @@ nixl_status_t nixlGdsIOBatch::submitBatch(int flags)
     err = cuFileBatchIOSubmit(batch_handle, batch_size,
                               io_batch_params, flags);
     if (err.err != 0) {
-        std::cerr << "Error in setting up Batch\n" << std::endl;
+        NIXL_ERROR << "Error in setting up Batch";
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
@@ -174,7 +174,7 @@ nixl_status_t nixlGdsIOBatch::checkStatus()
     errBatch = cuFileBatchIOGetStatus(batch_handle, nr, &nr,
                                       io_batch_events, NULL);
     if (errBatch.err != 0) {
-        std::cerr << "Error in IO Batch Get Status" << std::endl;
+        NIXL_ERROR << "Error in IO Batch Get Status";
         current_status = NIXL_ERR_BACKEND;
     }
 

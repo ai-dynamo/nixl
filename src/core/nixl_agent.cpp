@@ -718,8 +718,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                      remote_descs, backend, *handle->targetDescs);
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
-            // For Logging:
-            // std::cout << "Selected backend: " << backend->getType() << "\n";
+            NIXL_INFO << "Selected backend: " << backend->getType();
             handle->engine = backend;
             break;
         }
