@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <iostream>
 #include <stdexcept>
 #include "common/nixl_log.h"
 #include "gds_mt_utils.h"

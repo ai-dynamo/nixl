@@ -63,30 +63,43 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
                                            const nixl_mem_t &nixl_mem,
                                            nixlBackendMD* &out)
 {
-    auto md = std::make_unique<nixlGdsMtMetadata>();
-    md->type = nixl_mem;
-
     switch (nixl_mem) {
         case FILE_SEG: {
             auto it = gds_mt_file_map_.find(mem.devId);
+            std::shared_ptr<gdsMtFileHandle> handle;
+            
             if (it != gds_mt_file_map_.end()) {
-                // Reuse existing metadata and increment reference count
-                auto existing_md = it->second;
-                existing_md->ref_cnt++;
-                out = existing_md;
-                return NIXL_SUCCESS;
+                // Try to get existing handle
+                handle = it->second.lock();
+                if (handle) {
+                    // Create metadata with existing handle
+                    auto md = std::make_unique<nixlGdsMtMetadata>();
+                    md->type = nixl_mem;
+                    md->handle = handle;
+                    out = (nixlBackendMD*)md.release();
+                    return NIXL_SUCCESS;
+                }
+                // If weak_ptr expired, remove it from map
+                gds_mt_file_map_.erase(it);
             }
 
-            // Create and register new handle
+            // Create new handle
             try {
-                md->handle = std::make_shared<gdsMtFileHandle>(mem.devId);
+                handle = std::make_shared<gdsMtFileHandle>(mem.devId);
             } catch (const std::exception& e) {
                 NIXL_ERROR << "GDS_MT: failed to create file handle: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
-            md->ref_cnt = 1;
-            gds_mt_file_map_[mem.devId] = md.get();
-            break;
+            
+            // Store weak_ptr in map
+            gds_mt_file_map_[mem.devId] = handle;
+            
+            // Create metadata with new handle
+            auto md = std::make_unique<nixlGdsMtMetadata>();
+            md->type = nixl_mem;
+            md->handle = handle;
+            out = (nixlBackendMD*)md.release();
+            return NIXL_SUCCESS;
         }
 
         case VRAM_SEG: {
@@ -99,36 +112,33 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
             [[fallthrough]];
         }
         case DRAM_SEG: {
+            auto md = std::make_unique<nixlGdsMtMetadata>();
+            md->type = nixl_mem;
             try {
                 md->buf = std::make_unique<gdsMtMemBuf>((void *)mem.addr, mem.len, 0);
             } catch (const std::exception& e) {
                 NIXL_ERROR << "GDS_MT: failed to create memory buffer: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
-            break;
+            out = (nixlBackendMD*)md.release();
+            return NIXL_SUCCESS;
         }
 
         default:
             return NIXL_ERR_BACKEND;
     }
-
-    out = (nixlBackendMD*)md.release();
-    return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlGdsMtEngine::deregisterMem (nixlBackendMD* meta)
+nixl_status_t nixlGdsMtEngine::deregisterMem(nixlBackendMD* meta)
 {
     nixlGdsMtMetadata* md = (nixlGdsMtMetadata*)meta;
 
     if (md->type == FILE_SEG && md->handle) {
-        md->ref_cnt--;
-        if (md->ref_cnt > 0) {
-            // Still has references, don't delete yet
-            return NIXL_SUCCESS;
+        // Check if this is the last reference to the handle
+        if (md->handle.use_count() == 1) {
+            // Last reference, remove from map
+            gds_mt_file_map_.erase(md->handle->fd);
         }
-
-        // Reference count reached zero, remove from file map
-        gds_mt_file_map_.erase(md->handle->fd);
     }
     delete md;
 
@@ -168,7 +178,7 @@ void runCuFileOp(GdsMtTransferRequestH* req, std::atomic<nixl_status_t>* overall
 // Helper function to extract transfer parameters and validate them
 nixl_status_t extractTransferParams(const nixlMetaDesc& mem_desc,
                                    const nixlMetaDesc& file_desc,
-                                   const std::unordered_map<int, nixlGdsMtMetadata*>& file_map,
+                                   const std::unordered_map<int, std::weak_ptr<gdsMtFileHandle>>& file_map,
                                    void*& base_addr,
                                    size_t& total_size,
                                    size_t& base_offset,
@@ -185,7 +195,13 @@ nixl_status_t extractTransferParams(const nixlMetaDesc& mem_desc,
         NIXL_ERROR << "GDS_MT: error: file metadata not found";
         return NIXL_ERR_NOT_FOUND;
     }
-    cu_fhandle = it->second->handle->cu_fhandle;
+
+    auto handle = it->second.lock();
+    if (!handle) {
+        NIXL_ERROR << "GDS_MT: error: file handle has expired";
+        return NIXL_ERR_NOT_FOUND;
+    }
+    cu_fhandle = handle->cu_fhandle;
     return NIXL_SUCCESS;
 }
 

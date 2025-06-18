@@ -42,18 +42,17 @@ class nixlGdsMtMetadata : public nixlBackendMD {
         std::shared_ptr<gdsMtFileHandle> handle;
         std::unique_ptr<gdsMtMemBuf> buf;
         nixl_mem_t type;
-        int ref_cnt{1};  // Reference count for shared file handles
 };
 
 struct GdsMtTransferRequestH {
         GdsMtTransferRequestH(void* a, size_t s, size_t offset, CUfileHandle_t handle, CUfileOpcode_t operation) :
         addr{a}, size{s}, file_offset{offset}, fh{handle}, op{operation} {}
 
-        void*           addr{nullptr};
-        size_t          size{0};
-        size_t          file_offset{0};
-        CUfileHandle_t  fh{nullptr};
-        CUfileOpcode_t  op{CUFILE_READ};
+        void*           addr;
+        size_t          size;
+        size_t          file_offset;
+        CUfileHandle_t  fh;
+        CUfileOpcode_t  op;
 };
 
 class nixlGdsMtBackendReqH : public nixlBackendReqH {
@@ -144,7 +143,7 @@ class nixlGdsMtEngine : public nixlBackendEngine {
 
     private:
         gdsMtUtil gds_mt_utils_;
-        std::unordered_map<int, nixlGdsMtMetadata*> gds_mt_file_map_;
+        std::unordered_map<int, std::weak_ptr<gdsMtFileHandle>> gds_mt_file_map_;
         size_t thread_count_;
         std::unique_ptr<tf::Executor> executor_;
 };
