@@ -658,6 +658,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     NIXL_SHARED_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
     {
+       NIXL_ERROR << "Local: " << data->name << " No remote metadata for remote: " << remote_agent;
         delete backend_set;
         return NIXL_ERR_NOT_FOUND;
     }
@@ -678,6 +679,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             data->remoteSections[remote_agent]->queryBackends(
                                                 remote_descs.getType());
         if (!local_set || !remote_set) {
+            NIXL_ERROR << "Local: " << data->name << " No backends for local and remote: " << remote_agent;
             delete backend_set;
             return NIXL_ERR_NOT_FOUND;
         }
@@ -687,6 +689,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                 backend_set->insert(elm);
 
         if (backend_set->empty()) {
+            NIXL_ERROR << "Local: " << data->name << " No backends found at all for remote: " << remote_agent;
             delete backend_set;
             return NIXL_ERR_NOT_FOUND;
         }
@@ -719,7 +722,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
             // For Logging:
-            // std::cout << "Selected backend: " << backend->getType() << "\n";
+            std::cout << "Selected backend: " << backend->getType() << std::endl;
             handle->engine = backend;
             break;
         }
@@ -728,6 +731,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     delete backend_set;
 
     if (!handle->engine) {
+       NIXL_ERROR << "Local: " << data->name << " No engine found for remote: " << remote_agent;
         delete handle;
         return NIXL_ERR_NOT_FOUND;
     }
