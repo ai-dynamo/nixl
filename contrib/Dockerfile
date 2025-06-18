@@ -76,10 +76,7 @@ RUN wget --tries=3 --waitretry=5 \
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
-# This is only to find libcuda.so.1 correctly for build, removed once done
-RUN ln -sf "/usr/local/cuda/compat/lib.real" "/usr/local/cuda/compat/lib"
-ARG OLD_LD_PATH=${LD_LIBRARY_PATH}
-ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/usr/local/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
@@ -141,17 +138,16 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 RUN cd src/bindings/rust && cargo build --release --locked
 
 # Create the wheel
+# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
     done
+
+# Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
 RUN uv pip install auditwheel && \
-    uv run auditwheel repair /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
+    uv run auditwheel repair --exclude libcuda.so.1 /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
-
-# Remove the cuda setup
-RUN rm -f /usr/local/cuda/compat/lib
-ENV LD_LIBRARY_PATH=$OLD_LD_PATH
