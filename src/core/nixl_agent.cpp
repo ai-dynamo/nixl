@@ -328,6 +328,8 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     if (extra_params && extra_params->backends.size() > 0)
         delete backend_list;
 
+    NIXL_INFO << "Registering mem, count: " << count;
+
     if (count > 0)
         return NIXL_SUCCESS;
     else

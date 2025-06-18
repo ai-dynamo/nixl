@@ -174,6 +174,7 @@ nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
     for (i = 0; i < mem_elms.descCount(); ++i) {
         // TODO: For now trusting the user, but there can be a more checks mode
         //       where we find overlaps and split the memories or warn the user
+        std::cout << "Registering memory: addr : " << mem_elms[i].addr << " len " << mem_elms[i].len << " devid " << mem_elms[i].devId << std::endl;
         ret = backend->registerMem(mem_elms[i], nixl_mem, local_sec.metadataP);
         if (ret != NIXL_SUCCESS)
             break;
