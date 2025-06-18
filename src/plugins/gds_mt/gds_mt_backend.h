@@ -20,7 +20,9 @@
 
 #include <nixl.h>
 #include <nixl_types.h>
+#include <backend/backend_engine.h>
 #include <cuda_runtime.h>
+#include <cufile.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <future>
@@ -31,17 +33,30 @@
 #include <unordered_map>
 #include <mutex>
 #include "gds_mt_utils.h"
-#include "backend/backend_engine.h"
 #include "taskflow/taskflow.hpp"
 
 class nixlGdsMtMetadata : public nixlBackendMD {
     public:
-        nixlGdsMtMetadata() : nixlBackendMD(true) { }
+        // Constructor for file segment metadata
+        nixlGdsMtMetadata(std::shared_ptr<gdsMtFileHandle> file_handle) 
+            : nixlBackendMD(true)
+            , handle(std::move(file_handle))
+            , type(FILE_SEG) { }
+
+        // Constructor for memory segment metadata (DRAM/VRAM)
+        nixlGdsMtMetadata(void* addr, size_t len, int flags, nixl_mem_t mem_type) 
+            : nixlBackendMD(true)
+            , buf(std::make_unique<gdsMtMemBuf>(addr, len, flags))
+            , type(mem_type) { }
+
         ~nixlGdsMtMetadata() { }
 
+    private:
         std::shared_ptr<gdsMtFileHandle> handle;
         std::unique_ptr<gdsMtMemBuf> buf;
         nixl_mem_t type;
+
+        friend class nixlGdsMtEngine;  // Allow engine to access private members
 };
 
 struct GdsMtTransferRequestH {

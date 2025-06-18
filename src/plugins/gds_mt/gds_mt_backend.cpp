@@ -14,7 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <iostream>
+#include <nixl.h>
+#include <nixl_types.h>
+#include <backend/backend_engine.h>
+#include <cuda_runtime.h>
 #include <cufile.h>
 #include <thread>
 #include <memory>
@@ -22,6 +25,7 @@
 #include <algorithm>
 #include <string>
 #include <exception>
+#include <cstring>
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
 #include "common/str_tools.h"
@@ -73,9 +77,7 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
                 handle = it->second.lock();
                 if (handle) {
                     // Create metadata with existing handle
-                    auto md = std::make_unique<nixlGdsMtMetadata>();
-                    md->type = nixl_mem;
-                    md->handle = handle;
+                    auto md = std::make_unique<nixlGdsMtMetadata>(handle);
                     out = (nixlBackendMD*)md.release();
                     return NIXL_SUCCESS;
                 }
@@ -95,9 +97,7 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
             gds_mt_file_map_[mem.devId] = handle;
             
             // Create metadata with new handle
-            auto md = std::make_unique<nixlGdsMtMetadata>();
-            md->type = nixl_mem;
-            md->handle = handle;
+            auto md = std::make_unique<nixlGdsMtMetadata>(handle);
             out = (nixlBackendMD*)md.release();
             return NIXL_SUCCESS;
         }
@@ -112,16 +112,14 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
             [[fallthrough]];
         }
         case DRAM_SEG: {
-            auto md = std::make_unique<nixlGdsMtMetadata>();
-            md->type = nixl_mem;
             try {
-                md->buf = std::make_unique<gdsMtMemBuf>((void *)mem.addr, mem.len, 0);
+                auto md = std::make_unique<nixlGdsMtMetadata>((void *)mem.addr, mem.len, 0, nixl_mem);
+                out = (nixlBackendMD*)md.release();
+                return NIXL_SUCCESS;
             } catch (const std::exception& e) {
                 NIXL_ERROR << "GDS_MT: failed to create memory buffer: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
-            out = (nixlBackendMD*)md.release();
-            return NIXL_SUCCESS;
         }
 
         default:
