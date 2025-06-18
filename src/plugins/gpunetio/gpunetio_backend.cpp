@@ -1448,7 +1448,7 @@ nixlDocaEngine::getNotifs (notif_list_t &notif_list) {
                 recv_idx = notif.second->recv_pi.fetch_add (1);
                 num_msg--;
             } else {
-                std::cerr << "getNotifs error message at " << num_msg;
+                NIXL_ERROR << "getNotifs error message at " << num_msg;
                 break;
             }
         }
