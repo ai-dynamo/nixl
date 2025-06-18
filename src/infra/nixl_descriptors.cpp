@@ -15,14 +15,15 @@
  * limitations under the License.
  */
 #include <algorithm>
-#include <iostream>
 #include <functional>
 #include <stdexcept>
+#include <iostream>
 #include "nixl.h"
 #include "nixl_descriptors.h"
 #include "mem_section.h"
 #include "backend/backend_aux.h"
 #include "serdes/serdes.h"
+#include "common/nixl_log.h"
 
 /*** Class nixlBasicDesc implementation ***/
 
@@ -89,8 +90,8 @@ nixl_blob_t nixlBasicDesc::serialize() const {
 }
 
 void nixlBasicDesc::print(const std::string &suffix) const {
-    std::cout << "LOG: Desc (" << addr << ", " << len
-              << ") from devID " << devId << suffix << "\n";
+    NIXL_INFO << "Desc (" << addr << ", " << len
+              << ") from devID " << devId << suffix;
 }
 
 
@@ -409,10 +410,9 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
 
 template <class T>
 void nixlDescList<T>::print() const {
-    std::cout << "LOG: DescList of mem type " << type
-              << (sorted ? "sorted" : "unsorted") << "\n";
+    std::cout << "DescList of mem type " << type << " "
+              << (sorted ? "sorted" : "unsorted") << std::endl;
     for (auto & elm : descs) {
-        std::cout << "    ";
         elm.print("");
     }
 }
