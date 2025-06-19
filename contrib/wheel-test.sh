@@ -30,7 +30,13 @@ then
   pip install --upgrade pip
   pip install /wheel/nixl*cp312*.whl
   export UCX_PROTO_INFO=y
-  python /nixl/examples/python/nixl_api_example.py
+  python /nixl/examples/python/nixl_api_example.py | tee /tmp/nixl_api_example.log
+  if ! grep "/cuda" /tmp/nixl_api_example.log
+  then
+    echo "Test failed: CUDA not used in nixl_api_example.log"
+    exit 1
+  fi
+  echo "Test passed"
   exit 0
 fi
 
