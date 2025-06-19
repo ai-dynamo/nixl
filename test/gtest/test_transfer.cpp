@@ -40,7 +40,7 @@ class MemBuffer : std::shared_ptr<void> {
 public:
     MemBuffer(size_t size, nixl_mem_t mem_type = DRAM_SEG) :
         std::shared_ptr<void>(allocate(size, mem_type),
-                              [&mem_type](void *ptr) {
+                              [mem_type](void *ptr) {
                                   release(ptr, mem_type);
                               }),
         size(size)

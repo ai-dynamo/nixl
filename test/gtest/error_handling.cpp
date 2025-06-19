@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <gtest/gtest.h>
 #include <nixl_types.h>
+#include "common.h"
 #include "nixl.h"
 
 namespace gtest {
@@ -111,7 +112,6 @@ protected:
     };
 
     TestErrorHandling();
-    ~TestErrorHandling();
     template<TestType test_type, enum nixl_xfer_op_t op> void testXfer();
 
 private:
@@ -120,10 +120,10 @@ private:
     void exchangeMetaData();
     nixlXferReqH* postXfer(enum nixl_xfer_op_t op, bool target_failure);
 
-    std::pair<bool, std::string> m_plugin_dir_backup = {false, ""};
-    Agent                        m_Initiator;
-    Agent                        m_Target;
-    std::string                  m_backend_name;
+    ScopedEnv    m_env;
+    Agent        m_Initiator;
+    Agent        m_Target;
+    std::string  m_backend_name;
 };
 
 void TestErrorHandling::Agent::init(const std::string& name, const std::string& backend_name) {
@@ -209,32 +209,12 @@ bool TestErrorHandling::Agent::dataCmp(const TestErrorHandling::Agent& other) co
     return m_mem.m_data == other.m_mem.m_data;
 }
 
-TestErrorHandling::TestErrorHandling() {
-    m_backend_name = GetParam();
-    const char* plugin_dir_env = getenv("NIXL_PLUGIN_DIR");
-    m_plugin_dir_backup.first  = plugin_dir_env != nullptr;
-    if (m_plugin_dir_backup.first) {
-        m_plugin_dir_backup.second = plugin_dir_env;
-    }
-
-    // Set up test environment
-    // Load plugins from build directory
-    std::string plugin_dir = std::string(BUILD_DIR) + "/src/plugins/ucx";
-    setenv("NIXL_PLUGIN_DIR", plugin_dir.c_str(), 1);
-
-    std::cout << "set NIXL_PLUGIN_DIR: " << getenv("NIXL_PLUGIN_DIR")
-              << std::endl;
-}
-
-TestErrorHandling::~TestErrorHandling() {
-    if (m_plugin_dir_backup.first) {
-        setenv("NIXL_PLUGIN_DIR", m_plugin_dir_backup.second.c_str(), 1);
-        std::cout << "restore NIXL_PLUGIN_DIR: " << getenv("NIXL_PLUGIN_DIR")
-                  << std::endl;
-    } else {
-        std::cout << "unset NIXL_PLUGIN_DIR" << std::endl;
-        unsetenv("NIXL_PLUGIN_DIR");
-    }
+TestErrorHandling::TestErrorHandling() : m_backend_name(GetParam())
+{
+    m_env.addVar("UCX_RC_TIMEOUT", "100us");
+    m_env.addVar("UCX_RC_RETRY_COUNT", "4");
+    m_env.addVar("UCX_UD_TIMEOUT", "3s");
+    m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
 }
 
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>

@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 #include <cassert>
-#include <iostream>
 #include <cctype>
 #include <atomic>
 #include <errno.h>
@@ -33,7 +32,7 @@ nixlHf3fsEngine::nixlHf3fsEngine (const nixlBackendInitParams* init_params)
 
     this->initErr = false;
     if (hf3fs_utils->openHf3fsDriver() == NIXL_ERR_BACKEND) {
-        std::cerr << "Error opening HF3FS driver" << std::endl;
+        NIXL_ERROR << "Error opening HF3FS driver";
         this->initErr = true;
     }
 

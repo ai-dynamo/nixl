@@ -102,8 +102,8 @@ nixlDocaBarr::~nixlDocaBarr() {
 void
 nixlDocaEngineCheckCudaError (cudaError_t result, const char *message) {
     if (result != cudaSuccess) {
-        std::cerr << message << " (Error code: " << result << " - " << cudaGetErrorString (result)
-                  << ")" << std::endl;
+        NIXL_ERROR << message << " (Error code: " << result << " - " << cudaGetErrorString (result)
+                  << ")";
         exit (EXIT_FAILURE);
     }
 }
@@ -113,8 +113,8 @@ nixlDocaEngineCheckCuError (CUresult result, const char *message) {
     const char* pStr;
     cuGetErrorString (result, &pStr);
     if (result != CUDA_SUCCESS) {
-        std::cerr << message << " (Error code: " << result << " - " << pStr
-                  << ")" << std::endl;
+        NIXL_ERROR << message << " (Error code: " << result << " - " << pStr
+                  << ")";
         exit (EXIT_FAILURE);
     }
 }
