@@ -105,14 +105,14 @@ public:
     nixl_status_t sendAm(unsigned msg_id,
                          void* hdr, size_t hdr_len,
                          void* buffer, size_t len,
-                         std::uint32_t flags, nixlUcxReq &req);
+                         uint32_t flags, nixlUcxReq &req);
 
     /* Data access */
-    nixl_status_t read(std::uint64_t raddr, nixlUcxRkey &rk,
+    nixl_status_t read(uint64_t raddr, nixlUcxRkey &rk,
                        void *laddr, nixlUcxMem &mem,
                        size_t size, nixlUcxReq &req);
     nixl_status_t write(void *laddr, nixlUcxMem &mem,
-                        std::uint64_t raddr, nixlUcxRkey &rk,
+                        uint64_t raddr, nixlUcxRkey &rk,
                         size_t size, nixlUcxReq &req);
     nixl_status_t estimateCost(size_t size,
                                std::chrono::microseconds &duration,

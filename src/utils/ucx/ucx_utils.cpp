@@ -39,7 +39,6 @@ nixl_status_t ucx_status_to_nixl(const ucs_status_t status)
         return NIXL_IN_PROG;
     case UCS_ERR_NOT_CONNECTED:
     case UCS_ERR_CONNECTION_RESET:
-    case UCS_ERR_ENDPOINT_TIMEOUT:
         return NIXL_ERR_REMOTE_DISCONNECT;
     case UCS_ERR_INVALID_PARAM:
         return NIXL_ERR_INVALID_PARAM;
@@ -151,7 +150,6 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
                      ucp_err_handling_mode_t err_handling_mode)
 {
     ucp_ep_params_t ep_params;
-    nixl_status_t status;
 
     ep_params.field_mask      = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
                                 UCP_EP_PARAM_FIELD_ERR_HANDLER |
@@ -161,18 +159,18 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
     ep_params.err_handler.arg = reinterpret_cast<void*>(this);
     ep_params.address         = reinterpret_cast<ucp_address_t*>(addr);
 
-    status = ucx_status_to_nixl(ucp_ep_create(worker, &ep_params, &eph));
-    if (status == NIXL_SUCCESS)
-        setState(NIXL_UCX_EP_STATE_CONNECTED);
-    else
+    const nixl_status_t status = ucx_status_to_nixl(ucp_ep_create(worker, &ep_params, &eph));
+    if (status != NIXL_SUCCESS) {
         throw std::runtime_error("failed to create ep");
+    }
+    setState(NIXL_UCX_EP_STATE_CONNECTED);
 }
 
  nixlUcxEp::~nixlUcxEp()
  {
-     nixl_status_t status = disconnect_nb();
-     if (status)
+     if (const nixl_status_t status = disconnect_nb(); status) {
          NIXL_ERROR << "Failed to disconnect ep with status " << status;
+     }
  }
 
 /* ===========================================
@@ -181,7 +179,7 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
 
 nixl_status_t nixlUcxEp::disconnect_nb()
 {
-    nixl_status_t status = closeImpl(ucp_ep_close_flags_t(0));
+    const nixl_status_t status = closeImpl(ucp_ep_close_flags_t(0));
 
     // At step of disconnect we can ignore the remote disconnect error.
     return (status == NIXL_ERR_REMOTE_DISCONNECT) ? NIXL_SUCCESS : status;
@@ -215,15 +213,14 @@ void nixlUcxEp::rkeyDestroy(const nixlUcxRkey &rkey)
 nixl_status_t nixlUcxEp::sendAm(const unsigned msg_id,
                                 void* hdr, const size_t hdr_len,
                                 void* buffer, const size_t len,
-                                const std::uint32_t flags, nixlUcxReq &req)
+                                const uint32_t flags, nixlUcxReq &req)
 {
-    ucs_status_ptr_t request;
     ucp_request_param_t param = {0};
 
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
     param.flags         = flags;
 
-    request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
+    const ucs_status_ptr_t request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
 
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
@@ -237,12 +234,11 @@ nixl_status_t nixlUcxEp::sendAm(const unsigned msg_id,
  * Data transfer
  * =========================================== */
 
-nixl_status_t nixlUcxEp::read(const std::uint64_t raddr, nixlUcxRkey &rk,
+nixl_status_t nixlUcxEp::read(const uint64_t raddr, nixlUcxRkey &rk,
                               void *laddr, nixlUcxMem &mem,
                               const size_t size, nixlUcxReq &req)
 {
-    const nixl_status_t status = checkTxState();
-    if (status != NIXL_SUCCESS) {
+    if (const nixl_status_t status = checkTxState(); status != NIXL_SUCCESS) {
         return status;
     }
 
@@ -252,7 +248,7 @@ nixl_status_t nixlUcxEp::read(const std::uint64_t raddr, nixlUcxRkey &rk,
         .memh         = mem.memh,
     };
 
-    ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr,
+    const ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr,
                                            rk.rkeyh, &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
@@ -263,21 +259,20 @@ nixl_status_t nixlUcxEp::read(const std::uint64_t raddr, nixlUcxRkey &rk,
 }
 
 nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
-                               const std::uint64_t raddr, nixlUcxRkey &rk,
+                               const uint64_t raddr, nixlUcxRkey &rk,
                                const size_t size, nixlUcxReq &req)
 {
-    nixl_status_t status = checkTxState();
-    if (status != NIXL_SUCCESS) {
+    if (const nixl_status_t status = checkTxState(); status != NIXL_SUCCESS) {
         return status;
     }
 
-    ucp_request_param_t param = {
+    const ucp_request_param_t param = {
         .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH |
                         UCP_OP_ATTR_FLAG_MULTI_SEND,
         .memh         = mem.memh,
     };
 
-    ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr,
+    const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr,
                                            rk.rkeyh, &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
@@ -292,7 +287,7 @@ nixl_status_t nixlUcxEp::estimateCost(const size_t size,
                                       std::chrono::microseconds &err_margin,
                                       nixl_cost_t &method)
 {
-    ucp_ep_evaluate_perf_param_t params = {
+    const ucp_ep_evaluate_perf_param_t params = {
         .field_mask   = UCP_EP_PERF_PARAM_FIELD_MESSAGE_SIZE,
         .message_size = size,
     };
@@ -301,7 +296,7 @@ nixl_status_t nixlUcxEp::estimateCost(const size_t size,
         .field_mask = UCP_EP_PERF_ATTR_FIELD_ESTIMATED_TIME,
     };
 
-    ucs_status_t status = ucp_ep_evaluate_perf(this->eph, &params, &cost_result);
+    const ucs_status_t status = ucp_ep_evaluate_perf(this->eph, &params, &cost_result);
     if (status != UCS_OK) {
         NIXL_ERROR << "ucp_ep_evaluate_perf failed: " << ucs_status_string(status);
         return NIXL_ERR_BACKEND;
@@ -317,10 +312,9 @@ nixl_status_t nixlUcxEp::estimateCost(const size_t size,
 nixl_status_t nixlUcxEp::flushEp(nixlUcxReq &req)
 {
     ucp_request_param_t param;
-    ucs_status_ptr_t request;
-
     param.op_attr_mask = 0;
-    request = ucp_ep_flush_nbx(eph, &param);
+
+    const ucs_status_ptr_t request = ucp_ep_flush_nbx(eph, &param);
 
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
