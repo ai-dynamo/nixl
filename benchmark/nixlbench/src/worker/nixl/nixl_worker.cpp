@@ -16,6 +16,8 @@
  */
 
 #include "worker/nixl/nixl_worker.h"
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 #if HAVE_CUDA
 #include <cuda.h>
@@ -31,6 +33,7 @@
 #include <sys/time.h>
 #include <utils/serdes/serdes.h>
 #include <omp.h>
+
 
 #define ROUND_UP(value, granularity) ((((value) + (granularity) - 1) / (granularity)) * (granularity))
 
@@ -332,30 +335,26 @@ static std::vector<int> createFileFds(std::string name) {
     std::vector<int> fds;
     int flags = O_RDWR | O_CREAT;
     int num_files = xferBenchConfig::num_files;
-    std::string file_path, file_name_prefix;
+    std::string file_path, file_name_prefix, file_backend;
+
+    if (!xferBenchConfig::isStorageBackend()) {
+        std::cerr << "Unknown storage backend: " << xferBenchConfig::backend << std::endl;
+        exit(EXIT_FAILURE);
+    }
 
     if (xferBenchConfig::storage_enable_direct) {
         flags |= O_DIRECT;
     }
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_GDS) {
-        file_path = xferBenchConfig::gds_filepath != "" ?
-                    xferBenchConfig::gds_filepath :
-                    std::filesystem::current_path().string();
-        file_name_prefix = "/nixlbench_gds_test_file_";
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_POSIX) {
-        file_path = xferBenchConfig::posix_filepath != "" ?
-                    xferBenchConfig::posix_filepath :
-                    std::filesystem::current_path().string();
-        file_name_prefix = "/nixlbench_posix_test_file_";
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_HF3FS) {
-        file_path = xferBenchConfig::hf3fs_filepath != "" ?
-                    xferBenchConfig::hf3fs_filepath :
-                    std::filesystem::current_path().string();
-        file_name_prefix = "/nixlbench_hf3fs_test_file_";
-    } else {
-        std::cerr << "Unknown backend: " << xferBenchConfig::backend << std::endl;
-        exit(EXIT_FAILURE);
-    }
+
+    file_path = xferBenchConfig::filepath != "" ?
+                xferBenchConfig::filepath :
+                std::filesystem::current_path().string();
+    file_backend.resize(xferBenchConfig::backend.size());
+    std::transform(xferBenchConfig::backend.begin(),
+                   xferBenchConfig::backend.end(),
+                   file_backend.begin(),
+                   ::tolower);
+    file_name_prefix = "/nixlbench_" + file_backend + "_test_file_";
 
     for (int i = 0; i < num_files; i++) {
         std::string file_name = file_path + file_name_prefix + name + "_" + std::to_string(i);
@@ -438,9 +437,7 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
 
     opt_args.backends.push_back(backend_engine);
 
-    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
-        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
-        XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend) {
+    if (xferBenchConfig::isStorageBackend()) {
         remote_fds = createFileFds(getName());
         if (remote_fds.empty()) {
             std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
@@ -526,9 +523,7 @@ void xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>
                          "deregisterMem failed");
     }
 
-    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
-        XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
-        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+    if (xferBenchConfig::isStorageBackend()) {
         for (auto &iov_list: remote_iovs) {
             for (auto &iov: iov_list) {
                 cleanupBasicDescFile(iov);
@@ -544,9 +539,7 @@ void xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>
 int xferBenchNixlWorker::exchangeMetadata() {
     int meta_sz, ret = 0;
 
-    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
-        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
-        XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend) {
+    if (xferBenchConfig::isStorageBackend()) {
         return 0;
     }
 
@@ -600,10 +593,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
-    // Special case for GDS
-    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
-        XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
-        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+    if (xferBenchConfig::isStorageBackend()) {
         for (auto &iov_list: local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov: iov_list) {
@@ -687,9 +677,7 @@ static int execTransfer(nixlAgent *agent,
         nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
         nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
 
-        if ((XFERBENCH_BACKEND_GDS == xferBenchConfig::backend) ||
-            (XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend) ||
-            (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend)) {
+        if (xferBenchConfig::isStorageBackend()) {
             remote_desc = nixl_xfer_dlist_t(FILE_SEG);
         }
 
@@ -703,9 +691,7 @@ static int execTransfer(nixlAgent *agent,
         nixl_status_t rc;
         std::string target;
 
-        if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend) {
+        if (xferBenchConfig::isStorageBackend()) {
             target = "initiator";
         } else if (XFERBENCH_BACKEND_MOONCAKE == xferBenchConfig::backend) {
             params.hasNotif = false;

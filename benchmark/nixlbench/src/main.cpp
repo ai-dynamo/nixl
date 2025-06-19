@@ -141,9 +141,7 @@ static int processBatchSizes(xferBenchWorker &worker,
                     xferBenchUtils::checkConsistency(local_trans_lists);
                 } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
                     // Only storage backends support consistency check for write on initiator
-                    if ((xferBenchConfig::backend == XFERBENCH_BACKEND_GDS) ||
-                        (xferBenchConfig::backend == XFERBENCH_BACKEND_HF3FS) ||
-                        (xferBenchConfig::backend == XFERBENCH_BACKEND_POSIX)) {
+                    if (xferBenchConfig::isStorageBackend()) {
                         xferBenchUtils::checkConsistency(remote_trans_lists);
                     }
                 }
