@@ -23,6 +23,7 @@
 #include "mem_section.h"
 #include "backend/backend_aux.h"
 #include "serdes/serdes.h"
+#include "common/nixl_log.h"
 
 /*** Class nixlBasicDesc implementation ***/
 
