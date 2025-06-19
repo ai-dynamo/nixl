@@ -21,7 +21,6 @@
 
 #include <tuple>
 #include <iostream>
-#include <cassert>
 
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -188,9 +187,9 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_xfer_dlist_t new_list(mem, sorted, n);
                 // We assume that the Nx3 array matches the nixlBasicDesc layout so we can simply memcpy
                 std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
-                if (sorted && !new_list.verifySorted()) {
-                    throw std::invalid_argument("descs must be sorted when 'sorted' passed as True");
-                }
+
+                new_list.verifySorted();
+
                 return new_list;
             }), py::arg("type"), py::arg("descs").noconvert(), py::arg("sorted")=false)
         .def(py::init([](nixl_mem_t mem, py::list descs, bool sorted) {
@@ -205,9 +204,9 @@ PYBIND11_MODULE(_bindings, m) {
                     }
                     new_list[i] = nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint64_t>());
                 }
-                if (sorted && !new_list.verifySorted()) {
-                    throw std::invalid_argument("descs must be sorted when 'sorted' passed as True");
-                }
+
+                new_list.verifySorted();
+
                 return new_list;
             }), py::arg("type"), py::arg("descs").noconvert(), py::arg("sorted")=false)
         .def("getType", &nixl_xfer_dlist_t::getType)
@@ -277,9 +276,7 @@ PYBIND11_MODULE(_bindings, m) {
                     }
                 }
 
-                if (sorted && !new_list.verifySorted()) {
-                    throw std::invalid_argument("descs must be sorted when 'sorted' passed as True");
-                }
+                new_list.verifySorted();
 
                 return new_list;
         }))
@@ -295,10 +292,7 @@ PYBIND11_MODULE(_bindings, m) {
                     }
                     new_list[i] = nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint64_t>(), desc[3].cast<std::string>());
                 }
-
-                if (sorted && !new_list.verifySorted()) {
-                    throw std::invalid_argument("descs must be sorted when 'sorted' passed as True");
-                }
+                new_list.verifySorted();
 
                 return new_list;
             }), py::arg("type"), py::arg("descs"), py::arg("sorted")=false)
