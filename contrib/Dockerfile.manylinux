@@ -36,9 +36,6 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     gflags \
     glibc-headers \
     gcc-c++ \
-    grpc \
-    grpc-plugins \
-    grpc-devel \
     libaio \
     libaio-devel \
     libtool-ltdl \
@@ -59,7 +56,42 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     wget \
     zlib
 
+# Build OpenSSL 3.x
+RUN yum install -y perl-IPC-Cmd perl-Test-Simple perl-Data-Dumper
+RUN cd /tmp && \
+    wget -q https://www.openssl.org/source/openssl-3.0.16.tar.gz && \
+    tar -xzf openssl-3.0.16.tar.gz && \
+    cd openssl-3.0.16 && \
+    ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3 \
+        shared zlib linux-x86_64 && \
+    make -j$(nproc) && \
+    make install_sw && \
+    echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
+    ldconfig && \
+    rm -rf /tmp/openssl-3.0.16*
+
+# Set environment variables to use the new OpenSSL
+ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:$PKG_CONFIG_PATH"
+ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:$LD_LIBRARY_PATH"
+ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
+ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64"
+ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
+
 WORKDIR /workspace
+
+RUN git clone --recurse-submodules -b v1.73.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+    cd grpc && \
+    mkdir -p cmake/build && \
+    cd cmake/build && \
+    cmake -DgRPC_INSTALL=ON \
+    -DgRPC_BUILD_TESTS=OFF \
+    -DBUILD_SHARED_LIBS=ON \
+    -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DgRPC_SSL_PROVIDER=package ../.. && \
+    make -j$(nproc) && \
+    make install
 
 RUN git clone https://github.com/microsoft/cpprestsdk.git && \
     cd cpprestsdk && \
@@ -68,7 +100,7 @@ RUN git clone https://github.com/microsoft/cpprestsdk.git && \
     cmake .. -DCPPREST_EXCLUDE_WEBSOCKETS=ON  && \
     make -j$(nproc) && make install
 
-ENV LD_LIBRARY_PATH=/usr/local/lib64/:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
 
 RUN cd /workspace && \
     git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
@@ -161,7 +193,7 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
 
 # Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
 RUN uv pip install auditwheel && \
-    uv run auditwheel repair --exclude libcuda.so.1 /tmp/dist/nixl-*cp3*.whl --plat $WHL_PLATFORM --wheel-dir dist && \
+    uv run auditwheel repair --exclude libcuda.so.1 --exclude 'libssl*' --exclude 'libcrypto*' /tmp/dist/nixl-*cp3*.whl --plat $WHL_PLATFORM --wheel-dir dist && \
     contrib/wheel_add_ucx_plugins.py --ucx-lib-dir /usr/lib64 dist/*.whl
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
