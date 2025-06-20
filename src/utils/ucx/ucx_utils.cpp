@@ -516,7 +516,7 @@ absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, st
  * =========================================== */
 
 
-int nixlUcxContext::memReg(void *addr, std::size_t size, nixlUcxMem &mem)
+int nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl_mem_type)
 {
     //mem.uw = this;
     mem.base = addr;
@@ -530,10 +530,31 @@ int nixlUcxContext::memReg(void *addr, std::size_t size, nixlUcxMem &mem)
         .length  = mem.size,
     };
 
-    const ucs_status_t status = ucp_mem_map(ctx, &mem_params, &mem.memh);
+    ucs_status_t status = ucp_mem_map(ctx, &mem_params, &mem.memh);
     if (status != UCS_OK) {
         /* TODOL: MSW_NET_ERROR(priv->net, "failed to ucp_mem_map (%s)\n", ucs_status_string(status)); */
         return -1;
+    }
+
+    if (nixl_mem_type == nixl_mem_t::VRAM_SEG) {
+        try {
+            ucp_mem_attr_t attr;
+            attr.field_mask = UCP_MEM_ATTR_FIELD_MEM_TYPE;
+            status = ucp_mem_query(mem.memh, &attr);
+            if (status != UCS_OK) {
+                throw std::runtime_error(absl::StrFormat("Failed to ucp_mem_query: %s",
+                                         ucs_status_string(status)));
+            }
+
+            if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
+                throw std::runtime_error(absl::StrFormat("memory is detected as host "
+                    "check that UCX is configured with CUDA support", attr.mem_type));
+            }
+        } catch (const std::runtime_error& e) {
+            NIXL_ERROR << e.what();
+            ucp_mem_unmap(ctx, mem.memh);
+            return -1;
+        }
     }
 
     return 0;
