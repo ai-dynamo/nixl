@@ -35,28 +35,38 @@
 #include "gds_mt_utils.h"
 #include "taskflow/taskflow.hpp"
 
+struct FileSegData {
+    std::shared_ptr<gdsMtFileHandle> handle;
+};
+
+struct MemSegData {
+    std::unique_ptr<gdsMtMemBuf> buf;
+    MemSegData(void* addr, size_t size, int flags)
+        : buf(std::make_unique<gdsMtMemBuf>(addr, size, flags)) {}
+};
+
 class nixlGdsMtMetadata : public nixlBackendMD {
     public:
-        // Constructor for file segment metadata
-        nixlGdsMtMetadata(std::shared_ptr<gdsMtFileHandle> file_handle) 
+        explicit nixlGdsMtMetadata(std::shared_ptr<gdsMtFileHandle> file_handle) 
             : nixlBackendMD(true)
-            , handle(std::move(file_handle))
-            , type(FILE_SEG) { }
+            , data_(FileSegData{std::move(file_handle)}) {}
 
-        // Constructor for memory segment metadata (DRAM/VRAM)
-        nixlGdsMtMetadata(void* addr, size_t len, int flags, nixl_mem_t mem_type) 
+        nixlGdsMtMetadata(void* addr, size_t size, int flags)
             : nixlBackendMD(true)
-            , buf(std::make_unique<gdsMtMemBuf>(addr, len, flags))
-            , type(mem_type) { }
+            , data_(MemSegData{addr, size, flags}) {}
 
-        ~nixlGdsMtMetadata() { }
+        ~nixlGdsMtMetadata() = default;
+
+        nixlGdsMtMetadata(const nixlGdsMtMetadata&) = delete;
+        nixlGdsMtMetadata& operator=(const nixlGdsMtMetadata&) = delete;
+
+        nixlGdsMtMetadata(nixlGdsMtMetadata&&) = default;
+        nixlGdsMtMetadata& operator=(nixlGdsMtMetadata&&) = default;
 
     private:
-        std::shared_ptr<gdsMtFileHandle> handle;
-        std::unique_ptr<gdsMtMemBuf> buf;
-        nixl_mem_t type;
+        std::variant<FileSegData, MemSegData> data_;
 
-        friend class nixlGdsMtEngine;  // Allow engine to access private members
+        friend class nixlGdsMtEngine;
 };
 
 struct GdsMtTransferRequestH {
@@ -72,7 +82,6 @@ struct GdsMtTransferRequestH {
 
 class nixlGdsMtBackendReqH : public nixlBackendReqH {
     public:
-        // Ensure any running taskflow completes before destruction
         ~nixlGdsMtBackendReqH() {
             if (running_transfer.valid()) {
                 running_transfer.wait();
@@ -83,7 +92,6 @@ class nixlGdsMtBackendReqH : public nixlBackendReqH {
         tf::Taskflow taskflow;
         std::future<void> running_transfer;
 
-        // Only changes if an error actually occurs
         std::atomic<nixl_status_t> overall_status;
 };
 
@@ -93,10 +101,8 @@ class nixlGdsMtEngine : public nixlBackendEngine {
         // Note: The destructor of the TaskFlow executor runs wait_for_all() to
         // wait for all submitted taskflows to complete and then notifies all worker
         // threads to stop and join these threads.
-        // Note: The gds_mt_utils_ destructor automatically handles driver cleanup.
         ~nixlGdsMtEngine() = default;
 
-        // Disable copy/move
         nixlGdsMtEngine(const nixlGdsMtEngine&) = delete;
         nixlGdsMtEngine& operator=(const nixlGdsMtEngine&) = delete;
 

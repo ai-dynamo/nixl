@@ -32,9 +32,6 @@
 #include "common/nixl_time.h"
 
 namespace {
-    // Use half the hardware threads by default for better I/O performance
-    // Full hardware concurrency often leads to context switching overhead
-    // and resource contention for storage I/O workloads
     const size_t default_thread_count = std::max(1u, std::thread::hardware_concurrency() / 2);
 }
 
@@ -44,10 +41,8 @@ nixlGdsMtEngine::nixlGdsMtEngine(const nixlBackendInitParams* init_params)
 {
     thread_count_ = default_thread_count;
 
-    // Read custom parameters if available
     nixl_b_params_t* custom_params = init_params->customParams;
     if (custom_params) {
-        // Configure thread_count
         if (custom_params->count("thread_count") > 0) {
             try {
                 size_t tcount = std::stoul((*custom_params)["thread_count"]);
@@ -71,32 +66,22 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
         case FILE_SEG: {
             auto it = gds_mt_file_map_.find(mem.devId);
             std::shared_ptr<gdsMtFileHandle> handle;
-            
             if (it != gds_mt_file_map_.end()) {
-                // Try to get existing handle
                 handle = it->second.lock();
                 if (handle) {
-                    // Create metadata with existing handle
                     auto md = std::make_unique<nixlGdsMtMetadata>(handle);
                     out = (nixlBackendMD*)md.release();
                     return NIXL_SUCCESS;
                 }
-                // If weak_ptr expired, remove it from map
                 gds_mt_file_map_.erase(it);
             }
-
-            // Create new handle
             try {
                 handle = std::make_shared<gdsMtFileHandle>(mem.devId);
             } catch (const std::exception& e) {
                 NIXL_ERROR << "GDS_MT: failed to create file handle: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
-            
-            // Store weak_ptr in map
             gds_mt_file_map_[mem.devId] = handle;
-            
-            // Create metadata with new handle
             auto md = std::make_unique<nixlGdsMtMetadata>(handle);
             out = (nixlBackendMD*)md.release();
             return NIXL_SUCCESS;
@@ -113,7 +98,7 @@ nixl_status_t nixlGdsMtEngine::registerMem(const nixlBlobDesc &mem,
         }
         case DRAM_SEG: {
             try {
-                auto md = std::make_unique<nixlGdsMtMetadata>((void *)mem.addr, mem.len, 0, nixl_mem);
+                auto md = std::make_unique<nixlGdsMtMetadata>((void *)mem.addr, mem.len, 0);
                 out = (nixlBackendMD*)md.release();
                 return NIXL_SUCCESS;
             } catch (const std::exception& e) {
@@ -131,11 +116,9 @@ nixl_status_t nixlGdsMtEngine::deregisterMem(nixlBackendMD* meta)
 {
     nixlGdsMtMetadata* md = (nixlGdsMtMetadata*)meta;
 
-    if (md->type == FILE_SEG && md->handle) {
-        // Check if this is the last reference to the handle
-        if (md->handle.use_count() == 1) {
-            // Last reference, remove from map
-            gds_mt_file_map_.erase(md->handle->fd);
+    if (auto* file_data = std::get_if<FileSegData>(&md->data_)) {
+        if (file_data->handle && file_data->handle.use_count() == 1) {
+            gds_mt_file_map_.erase(file_data->handle->fd);
         }
     }
     delete md;
@@ -173,7 +156,6 @@ void runCuFileOp(GdsMtTransferRequestH* req, std::atomic<nixl_status_t>* overall
     }
 }
 
-// Helper function to extract transfer parameters and validate them
 nixl_status_t extractTransferParams(const nixlMetaDesc& mem_desc,
                                    const nixlMetaDesc& file_desc,
                                    const std::unordered_map<int, std::weak_ptr<gdsMtFileHandle>>& file_map,
@@ -203,18 +185,17 @@ nixl_status_t extractTransferParams(const nixlMetaDesc& mem_desc,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
-                                         const nixl_meta_dlist_t &local,
-                                         const nixl_meta_dlist_t &remote,
-                                         const std::string &remote_agent,
-                                         nixlBackendReqH* &handle,
-                                         const nixl_opt_b_args_t* opt_args) const
+nixl_status_t nixlGdsMtEngine::prepXfer(const nixl_xfer_op_t &operation,
+                                        const nixl_meta_dlist_t &local,
+                                        const nixl_meta_dlist_t &remote,
+                                        const std::string &remote_agent,
+                                        nixlBackendReqH* &handle,
+                                        const nixl_opt_b_args_t* opt_args) const
 {
     auto gds_mt_handle = std::make_unique<nixlGdsMtBackendReqH>();
     size_t buf_cnt = local.descCount();
     size_t file_cnt = remote.descCount();
 
-    // Basic validation
     if ((buf_cnt != file_cnt) ||
         ((operation != NIXL_READ) && (operation != NIXL_WRITE))) {
         NIXL_ERROR << "GDS_MT: error: incorrect count or operation selection";
@@ -226,20 +207,14 @@ nixl_status_t nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Clear any existing requests before populating
     gds_mt_handle->request_list.clear();
-
-    // Determine if local is the file segment
     bool is_local_file = (local.getType() == FILE_SEG);
-
-    // Create list of all transfer requests
     for (size_t i = 0; i < buf_cnt; i++) {
         void* base_addr;
         size_t total_size;
         size_t base_offset;
         CUfileHandle_t cu_fhandle;
 
-        // Get transfer parameters based on whether local is file or memory
         nixl_status_t param_status;
         if (is_local_file) {
             param_status = extractTransferParams(remote[i], local[i], gds_mt_file_map_,
@@ -287,7 +262,6 @@ nixl_status_t nixlGdsMtEngine::postXfer(const nixl_xfer_op_t &operation,
         NIXL_ERROR << "GDS_MT: error: empty request list for Xfer";
         return NIXL_ERR_INVALID_PARAM;
     }
-    // Reset the overall status to NIXL_SUCCESS for each new transfer
     gds_mt_handle->overall_status.store(NIXL_SUCCESS);
     gds_mt_handle->running_transfer = executor_->run(gds_mt_handle->taskflow);
     return NIXL_IN_PROG;
