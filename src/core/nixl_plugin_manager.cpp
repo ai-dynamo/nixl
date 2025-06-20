@@ -401,4 +401,8 @@ void nixlPluginManager::registerBuiltinPlugins() {
 #endif // DISABLE_GPUNETIO_BACKEND
 #endif // STATIC_PLUGIN_GPUNETIO
 
+#ifdef STATIC_PLUGIN_OBJ
+        extern nixlBackendPlugin *createStaticObjPlugin();
+        registerStaticPlugin ("OBJ", createStaticObjPlugin);
+#endif // STATIC_PLUGIN_OBJ
 }
