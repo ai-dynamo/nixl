@@ -21,7 +21,8 @@
 gdsMtUtil::gdsMtUtil() {
     const CUfileError_t status = cuFileDriverOpen();
     if (status.err != CU_FILE_SUCCESS) {
-        throw std::runtime_error("GDS_MT: error initializing GPU Direct Storage driver: error=" + std::to_string(status.err));
+        throw std::runtime_error ("GDS_MT: error initializing GPU Direct Storage driver: error=" +
+                                  std::to_string (status.err));
     }
 }
 
@@ -29,12 +30,12 @@ gdsMtUtil::~gdsMtUtil() {
     cuFileDriverClose();
 }
 
-gdsMtMemBuf::gdsMtMemBuf(void* ptr, size_t sz, int flags)
-    : base_(ptr) {
+gdsMtMemBuf::gdsMtMemBuf (void *ptr, size_t sz, int flags) : base_ (ptr) {
 
-    const CUfileError_t status = cuFileBufRegister(ptr, sz, flags);
+    const CUfileError_t status = cuFileBufRegister (ptr, sz, flags);
     if (status.err != CU_FILE_SUCCESS) {
-        NIXL_WARN << "GDS_MT: warning: buffer registration failed - will use compat mode: error=" << status.err;
+        NIXL_WARN << "GDS_MT: warning: buffer registration failed - will use compat mode: error="
+                  << status.err;
         // Note: We don't set registered_ = true, but this is not considered a fatal error
     } else {
         registered_ = true;
@@ -43,26 +44,27 @@ gdsMtMemBuf::gdsMtMemBuf(void* ptr, size_t sz, int flags)
 
 gdsMtMemBuf::~gdsMtMemBuf() {
     if (registered_) {
-        const CUfileError_t status = cuFileBufDeregister(base_);
+        const CUfileError_t status = cuFileBufDeregister (base_);
         if (status.err != CU_FILE_SUCCESS) {
-            NIXL_WARN << "GDS_MT: warning: deregistering buffer: error=" << status.err << " ptr=" << base_;
+            NIXL_WARN << "GDS_MT: warning: deregistering buffer: error=" << status.err
+                      << " ptr=" << base_;
         }
     }
 }
 
-gdsMtFileHandle::gdsMtFileHandle(int file_fd)
-    : fd(file_fd) {
+gdsMtFileHandle::gdsMtFileHandle (int file_fd) : fd (file_fd) {
 
     CUfileDescr_t descr = {};
     descr.handle.fd = fd;
     descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
 
-    const CUfileError_t status = cuFileHandleRegister(&cu_fhandle, &descr);
+    const CUfileError_t status = cuFileHandleRegister (&cu_fhandle, &descr);
     if (status.err != CU_FILE_SUCCESS) {
-        throw std::runtime_error("GDS_MT: file register error: error=" + std::to_string(status.err) + ", fd=" + std::to_string(fd));
+        throw std::runtime_error ("GDS_MT: file register error: error=" +
+                                  std::to_string (status.err) + ", fd=" + std::to_string (fd));
     }
 }
 
 gdsMtFileHandle::~gdsMtFileHandle() {
-    cuFileHandleDeregister(cu_fhandle);
+    cuFileHandleDeregister (cu_fhandle);
 }

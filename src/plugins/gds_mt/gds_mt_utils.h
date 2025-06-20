@@ -23,39 +23,41 @@
 #include <cufile.h>
 
 class gdsMtFileHandle {
-    public:
-        gdsMtFileHandle(int fd);
-        ~gdsMtFileHandle();
+public:
+    gdsMtFileHandle (int fd);
+    ~gdsMtFileHandle();
 
-        // Disable copy/move
-        gdsMtFileHandle(const gdsMtFileHandle&) = delete;
-        gdsMtFileHandle& operator=(const gdsMtFileHandle&) = delete;
-        gdsMtFileHandle(gdsMtFileHandle&&) = delete;
-        gdsMtFileHandle& operator=(gdsMtFileHandle&&) = delete;
+    gdsMtFileHandle (const gdsMtFileHandle &) = delete;
+    gdsMtFileHandle &
+    operator= (const gdsMtFileHandle &) = delete;
+    gdsMtFileHandle (gdsMtFileHandle &&) = delete;
+    gdsMtFileHandle &
+    operator= (gdsMtFileHandle &&) = delete;
 
-        int fd{-1};
-        CUfileHandle_t cu_fhandle{nullptr};
+    int fd{-1};
+    CUfileHandle_t cu_fhandle{nullptr};
 };
 
 class gdsMtMemBuf {
-    public:
-        gdsMtMemBuf(void* ptr, size_t sz, int flags = 0);
-        ~gdsMtMemBuf();
+public:
+    gdsMtMemBuf (void *ptr, size_t sz, int flags = 0);
+    ~gdsMtMemBuf();
 
-        // Disable copy/move
-        gdsMtMemBuf(const gdsMtMemBuf&) = delete;
-        gdsMtMemBuf& operator=(const gdsMtMemBuf&) = delete;
-        gdsMtMemBuf(gdsMtMemBuf&&) = delete;
-        gdsMtMemBuf& operator=(gdsMtMemBuf&&) = delete;
+    gdsMtMemBuf (const gdsMtMemBuf &) = delete;
+    gdsMtMemBuf &
+    operator= (const gdsMtMemBuf &) = delete;
+    gdsMtMemBuf (gdsMtMemBuf &&) = delete;
+    gdsMtMemBuf &
+    operator= (gdsMtMemBuf &&) = delete;
 
-    private:
-        void *base_{nullptr};
-        bool registered_{false};
+private:
+    void *base_{nullptr};
+    bool registered_{false};
 };
 
 class gdsMtUtil {
-    public:
-        gdsMtUtil();
-        ~gdsMtUtil();
+public:
+    gdsMtUtil();
+    ~gdsMtUtil();
 };
 #endif
