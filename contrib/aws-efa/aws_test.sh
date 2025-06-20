@@ -70,6 +70,16 @@ export AWS_CMD="${setup_cmd} && ${build_cmd} && ${test_cmd}"
 envsubst < aws_vars.template > aws_vars.json
 jq . aws_vars.json >/dev/null
 
+# Build tags JSON for AWS
+TAGS_JSON=$(jq -n '{
+    github_ref: env.GITHUB_REF,
+    github_repository: env.GITHUB_REPOSITORY,
+    github_run_number: env.GITHUB_RUN_NUMBER,
+    github_run_id: env.GITHUB_RUN_ID,
+    github_job_url: "\(env.GITHUB_SERVER_URL)/\(env.GITHUB_REPOSITORY)/actions/runs/\(env.GITHUB_RUN_ID)",
+    container_image: env.CONTAINER_IMAGE
+}')
+
 # Submit AWS job
 aws eks update-kubeconfig --name ucx-ci
 JOB_NAME="NIXL_${GITHUB_RUN_NUMBER:-$RANDOM}"
@@ -78,7 +88,7 @@ JOB_ID=$(aws batch submit-job \
     --job-definition "NIXL-Ubuntu-JD" \
     --job-queue ucx-nxil-jq \
     --eks-properties-override file://./aws_vars.json \
-    --retry-strategy '{"attempts":3}' \
+    --tags "$TAGS_JSON" \
     --query 'jobId' --output text)
 
 # Function to wait for a specific job status
@@ -110,6 +120,7 @@ wait_for_status() {
 echo "Waiting for job to start running (timeout: 30m)..."
 if ! wait_for_status "RUNNING" 1800 10; then
     echo "Job failed to start"
+    aws batch describe-jobs --jobs "$JOB_ID" --query 'jobs[0].[status,statusReason]' --output table
     exit 1
 fi
 
