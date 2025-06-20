@@ -21,4 +21,7 @@
 #define CONCAT_0(a, b) a ## b
 #define UNIQUE_NAME(name) CONCAT(name, __COUNTER__)
 
+void NVTXRangePush(const char* name);
+
+void NVTXRangePop();
 #endif /* UTIL_H */
