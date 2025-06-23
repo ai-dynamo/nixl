@@ -151,6 +151,7 @@ std::string memType2Str(nixl_mem_t mem_type)
 }
 
 
+
 #ifdef HAVE_CUDA
 
 static int cudaQueryAddr(void *address, bool &is_dev,
@@ -602,7 +603,7 @@ void test_inter_agent_transfer(bool p_thread, bool reuse_hndl,
     populateDescs(req_dst_descs, dst_dev_id, addr2, desc_cnt, desc_size, rmd1);
 
     nixl_xfer_op_t ops[] = {  NIXL_READ, NIXL_WRITE };
-    bool use_notifs[] = { false }; // Mooncake transfer engine doesn't support notifs
+    bool use_notifs[] = { mooncake1->supportsNotif() }; // Mooncake transfer engine doesn't support notifs
 
     for (size_t i = 0; i < sizeof(ops)/sizeof(ops[i]); i++) {
 
@@ -670,9 +671,13 @@ int main()
     }
 #endif
 
+    test_inter_agent_transfer (
+        thread_on[0], false, mooncake[0][0], DRAM_SEG, 0, mooncake[0][1], DRAM_SEG, 0);
+
     for(int i = 0; i < 2; i++) {
-        //Test local memory to local memory transfer
-        test_intra_agent_transfer(thread_on[i], mooncake[i][0], DRAM_SEG);
+        // Test local memory to local memory transfer
+        //  std::cout << "thread_on" <<i<<thread_on[i]<<endl;
+        //  test_intra_agent_transfer(thread_on[i], mooncake[i][0], DRAM_SEG);
 #ifdef HAVE_CUDA
         if (n_vram_dev > 0) {
             test_intra_agent_transfer(thread_on[i], mooncake[i][0], VRAM_SEG);
