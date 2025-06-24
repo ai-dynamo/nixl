@@ -169,10 +169,6 @@ nixlObjEngine::postXfer (const nixl_xfer_op_t &operation,
         const auto &local_desc = local[i];
         const auto &remote_desc = remote[i];
 
-        NIXL_ASSERT (local_desc.len == remote_desc.len)
-            << "Size mismatch for descriptor " << i << ": local=" << local_desc.len
-            << ", remote=" << remote_desc.len;
-
         auto obj_key_search = dev_id_to_obj_key_.find (remote_desc.devId);
         if (obj_key_search == dev_id_to_obj_key_.end()) {
             NIXL_ERROR << "No object key found for device ID: " << remote_desc.devId;

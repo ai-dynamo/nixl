@@ -19,9 +19,17 @@
 #include <optional>
 #include <string>
 #include <stdexcept>
+#include <cstdlib>
+#include <aws/s3/model/PutObjectRequest.h>
+#include <aws/s3/model/GetObjectRequest.h>
+#include <aws/s3/model/PutObjectResult.h>
+#include <aws/s3/model/GetObjectResult.h>
+#include <aws/core/http/Scheme.h>
+#include <aws/core/auth/AWSCredentials.h>
+#include <aws/core/client/ClientConfiguration.h>
+#include <aws/core/utils/Outcome.h>
 #include <aws/core/utils/stream/PreallocatedStreamBuf.h>
 #include <aws/core/utils/memory/stl/AWSStringStream.h>
-#include <aws/s3/model/GetObjectRequest.h>
 #include <absl/strings/str_format.h>
 #include "nixl_types.h"
 

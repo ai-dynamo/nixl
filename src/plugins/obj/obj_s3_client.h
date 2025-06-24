@@ -20,19 +20,10 @@
 
 #include <functional>
 #include <memory>
-#include <cstdint>
 #include <string_view>
-#include <cstdlib>
+#include <cstdint>
 #include <aws/s3/S3Client.h>
-#include <aws/s3/model/PutObjectRequest.h>
-#include <aws/s3/model/GetObjectRequest.h>
-#include <aws/s3/model/PutObjectResult.h>
-#include <aws/s3/model/GetObjectResult.h>
-#include <aws/core/utils/Outcome.h>
-#include <aws/core/client/ClientConfiguration.h>
-#include <aws/core/auth/AWSCredentials.h>
 #include <aws/core/utils/memory/stl/AWSString.h>
-#include <aws/core/http/Scheme.h>
 #include <aws/core/Aws.h>
 #include "nixl_types.h"
 

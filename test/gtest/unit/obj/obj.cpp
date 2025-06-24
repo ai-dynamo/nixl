@@ -129,15 +129,9 @@ protected:
         ASSERT_EQ (obj_engine_->registerMem (remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
 
         nixl_meta_dlist_t local_descs (DRAM_SEG);
-        nixl_meta_dlist_t remote_descs (OBJ_SEG, false);
+        nixl_meta_dlist_t remote_descs (OBJ_SEG);
 
         std::vector<char> test_buffer (1024);
-
-        if (operation == NIXL_WRITE) {
-            for (size_t i = 0; i < test_buffer.size(); ++i) {
-                test_buffer[i] = static_cast<char> ('X' + (i % 3));
-            }
-        }
 
         nixlMetaDesc local_meta_desc (
             reinterpret_cast<uintptr_t> (test_buffer.data()), test_buffer.size(), 1);
@@ -211,8 +205,8 @@ protected:
         ASSERT_EQ (obj_engine_->registerMem (remote_desc1, OBJ_SEG, remote_metadata1),
                    NIXL_SUCCESS);
 
-        nixl_meta_dlist_t local_descs (DRAM_SEG, false);
-        nixl_meta_dlist_t remote_descs (OBJ_SEG, false);
+        nixl_meta_dlist_t local_descs (DRAM_SEG);
+        nixl_meta_dlist_t remote_descs (OBJ_SEG);
 
         nixlMetaDesc local_meta_desc0 (reinterpret_cast<uintptr_t> (test_buffer0.data()),
                                        test_buffer0.size(),
@@ -275,8 +269,8 @@ protected:
         nixlBackendMD *remote_metadata = nullptr;
         ASSERT_EQ (obj_engine_->registerMem (remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
 
-        nixl_meta_dlist_t local_descs (DRAM_SEG, false);
-        nixl_meta_dlist_t remote_descs (OBJ_SEG, false);
+        nixl_meta_dlist_t local_descs (DRAM_SEG);
+        nixl_meta_dlist_t remote_descs (OBJ_SEG);
 
         nixlMetaDesc local_meta_desc (
             reinterpret_cast<uintptr_t> (test_buffer.data()), test_buffer.size(), local_desc.devId);
@@ -387,14 +381,10 @@ TEST_F (ObjTestFixture, CancelTransfer) {
     ASSERT_EQ (obj_engine_->registerMem (local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
     ASSERT_EQ (obj_engine_->registerMem (remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
 
-    nixl_meta_dlist_t local_descs (DRAM_SEG, false);
-    nixl_meta_dlist_t remote_descs (OBJ_SEG, false);
+    nixl_meta_dlist_t local_descs (DRAM_SEG);
+    nixl_meta_dlist_t remote_descs (OBJ_SEG);
 
     std::vector<char> test_buffer (1024);
-    for (size_t i = 0; i < test_buffer.size(); ++i) {
-        test_buffer[i] = static_cast<char> ('T' + (i % 3));
-    }
-
     nixlMetaDesc local_meta_desc (
         reinterpret_cast<uintptr_t> (test_buffer.data()), test_buffer.size(), 1);
     local_descs.addDesc (local_meta_desc);
@@ -448,8 +438,8 @@ TEST_F (ObjTestFixture, ReadFromOffset) {
     nixlBackendMD *remote_metadata = nullptr;
     ASSERT_EQ (obj_engine_->registerMem (remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
 
-    nixl_meta_dlist_t local_descs (DRAM_SEG, false);
-    nixl_meta_dlist_t remote_descs (OBJ_SEG, false);
+    nixl_meta_dlist_t local_descs (DRAM_SEG);
+    nixl_meta_dlist_t remote_descs (OBJ_SEG);
 
     const size_t offset = 256;
     const size_t length = 512;
