@@ -196,24 +196,26 @@ AwsS3Client::GetObjectAsync (std::string_view key,
                              size_t data_len,
                              size_t offset,
                              GetObjectCallback callback) {
-    Aws::S3::Model::GetObjectRequest request;
-    request.WithBucket (bucket_name_).WithKey (Aws::String (key));
+    auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf> (
+        "GetObjectStreamBuf", reinterpret_cast<unsigned char *> (data_ptr), data_len);
+    auto stream_factory = Aws::MakeShared<Aws::IOStreamFactory> (
+        "GetObjectStreamFactory", [preallocated_stream_buf]() -> Aws::IOStream * {
+            return new Aws::IOStream (preallocated_stream_buf.get()); // AWS SDK owns the stream
+        });
 
-    if (offset > 0)
-        request.SetRange (absl::StrFormat ("bytes=%d-%d", offset, offset + data_len - 1));
+    Aws::S3::Model::GetObjectRequest request;
+    request.WithBucket (bucket_name_)
+        .WithKey (Aws::String (key))
+        .WithRange (absl::StrFormat ("bytes=%d-%d", offset, offset + data_len - 1));
+    request.SetResponseStreamFactory (*stream_factory.get());
 
     s3_client_->GetObjectAsync (
         request,
-        [callback, data_ptr, data_len] (
+        [callback, stream_factory] (
             const Aws::S3::S3Client *client,
             const Aws::S3::Model::GetObjectRequest &req,
             const Aws::S3::Model::GetObjectOutcome &outcome,
             const std::shared_ptr<const Aws::Client::AsyncCallerContext> &context) {
-            if (outcome.IsSuccess()) {
-                auto &stream = outcome.GetResult().GetBody();
-                stream.seekg (0, std::ios::beg);
-                stream.read (reinterpret_cast<char *> (data_ptr), data_len);
-            }
             callback (outcome.IsSuccess());
         },
         nullptr);
