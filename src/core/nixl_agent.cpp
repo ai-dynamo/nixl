@@ -999,14 +999,10 @@ nixlAgent::genNotif(const std::string &remote_agent,
 
     bool localNotif = data->name == remote_agent;
     for (auto & eng: *backend_list) {
-        if (localNotif) {
-            if (eng->supportsLocal()) {
-                return eng->genNotif(remote_agent, msg);
-            }
-        } else {
-            if (data->remoteBackends[remote_agent].count(eng->getType()) != 0) {
-                return eng->genNotif(remote_agent, msg);
-            }
+        if ((localNotif && eng->supportsLocal()) ||
+            (!localNotif &&
+             data->remoteBackends[remote_agent].count(eng->getType()) != 0)) {
+            return eng->genNotif(remote_agent, msg);
         }
     }
 
