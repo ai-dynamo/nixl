@@ -312,6 +312,9 @@ bool nixlDescList<T>::verifySorted() {
 
     for (int i=0; i<size-1; ++i) {
         if (descs[i+1] < descs[i]) {
+            if (sorted) {
+                NIXL_WARN << "Descs are not sorted although sorted=True was passed, this may affect performance";
+            }
             sorted = false;
             return false;
         }
