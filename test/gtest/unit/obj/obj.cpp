@@ -128,7 +128,7 @@ protected:
         ASSERT_EQ (obj_engine_->registerMem (local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
         ASSERT_EQ (obj_engine_->registerMem (remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
 
-        nixl_meta_dlist_t local_descs (DRAM_SEG, false);
+        nixl_meta_dlist_t local_descs (DRAM_SEG);
         nixl_meta_dlist_t remote_descs (OBJ_SEG, false);
 
         std::vector<char> test_buffer (1024);
@@ -491,11 +491,11 @@ TEST_F (ObjTestFixture, AsyncWriteTransferWithControlledExecution) {
 }
 
 TEST_F (ObjTestFixture, MultiDescriptorWrite) {
-    testMultiDescriptorTransfer (NIXL_READ);
+    testMultiDescriptorTransfer (NIXL_WRITE);
 }
 
 TEST_F (ObjTestFixture, MultiDescriptorRead) {
-    testMultiDescriptorTransfer (NIXL_WRITE);
+    testMultiDescriptorTransfer (NIXL_READ);
 }
 
 TEST_F (ObjTestFixture, AsyncReadTransferFailureIsHandled) {
