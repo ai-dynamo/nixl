@@ -84,7 +84,9 @@ def create_wheel(wheel_path, temp_dir):
     """
     print(f"Creating wheel {wheel_path} from {temp_dir}")
     update_wheel_record_file(temp_dir)
-    with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zip_ref:
+    with zipfile.ZipFile(
+        wheel_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+    ) as zip_ref:
         for root, _, files in os.walk(temp_dir):
             for file in files:
                 abs_path = os.path.join(root, file)
