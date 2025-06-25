@@ -19,7 +19,7 @@
 #include <string>
 #include <cstring>
 #include <stdexcept>
-#include <type_traits>
+#include <algorithm>
 
 #include <nixl_types.h>
 
@@ -65,6 +65,43 @@ void ucx_modify_config(ucp_config_t *config, std::string_view key,
         NIXL_DEBUG << "Applied UCX config from " << (env_val ? "env var" : "NIXL")
                    << ": " << key << "=" << value;
     }
+}
+
+[[nodiscard]] std::string to_string(ucp_err_handling_mode_t t) noexcept
+{
+    switch(t) {
+        case UCP_ERR_HANDLING_MODE_NONE:
+            return "none";
+        case UCP_ERR_HANDLING_MODE_PEER:
+            return "peer";
+    }
+
+    return "invalid";
+}
+
+[[nodiscard]] ucp_err_handling_mode_t err_mode_from_string(const std::string &s)
+{
+    static std::vector<std::string> string_values;
+    if (string_values.empty()) {
+        for (const auto &mode : nixl_ucx_err_handling_modes) {
+            string_values.push_back(to_string(mode));
+        }
+    }
+
+    auto it = std::find(string_values.begin(), string_values.end(), s);
+    if (it == string_values.end()) {
+        std::string err_msg = "Invalid error handling mode: " + s +
+                              ". Valid values are: <";
+        for (const auto &mode : string_values) {
+            err_msg += mode + "|";
+        }
+
+        err_msg.pop_back();
+        err_msg += ">";
+        throw std::invalid_argument(err_msg);
+    }
+
+    return nixl_ucx_err_handling_modes[it - string_values.begin()];
 }
 
 static void err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status)
