@@ -562,10 +562,19 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 
     const auto err_handling_mode_it =
             custom_params->find("ucx_error_handling_mode");
-    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
-    if (err_handling_mode_it != custom_params->end() &&
-        (err_handling_mode_it->second == "peer")) {
-        err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+    if (err_handling_mode_it != custom_params->end()) {
+        if (err_handling_mode_it->second == "none") {
+            err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
+        } else if (err_handling_mode_it->second == "peer") {
+            err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+        } else {
+            NIXL_ERROR << "Invalid UCX error handling mode: "
+                       << err_handling_mode_it->second
+                       << ". Valid values are 'none' or 'peer'";
+            initErr = true;
+            return;
+        }
     }
 
     uc = std::make_shared<nixlUcxContext>(devs, sizeof(nixlUcxIntReq),
