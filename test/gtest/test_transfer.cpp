@@ -29,6 +29,7 @@
 #include <thread>
 #include <vector>
 #include <thread>
+#include <mutex>
 
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
@@ -339,6 +340,7 @@ protected:
                     nixl_mem_t dst_mem_type,
                     std::vector<MemBuffer> dst_buffers)
     {
+        std::mutex logger_mutex;
         std::vector<std::thread> threads;
         for (size_t thread = 0; thread < num_threads; ++thread) {
             threads.emplace_back([&, thread]() {
@@ -375,9 +377,12 @@ protected:
                 auto total_time = absl::ToDoubleSeconds(absl::Now() - start_time);
                 auto total_size = size * count * repeat;
                 auto bandwidth  = total_size / total_time / (1024 * 1024 * 1024);
-                Logger() << "Thread " << thread << ": " << size << "x" << count << "x" << repeat
-                         << "=" << total_size << " bytes in " << total_time << " seconds "
-                         << "(" << bandwidth << " GB/s)";
+                {
+                    const std::lock_guard<std::mutex> lock(logger_mutex);
+                    Logger() << "Thread " << thread << ": " << size << "x" << count << "x" << repeat
+                             << "=" << total_size << " bytes in " << total_time << " seconds "
+                             << "(" << bandwidth << " GB/s)";
+                }
 
                 status = from.releaseXferReq(xfer_req);
                 EXPECT_EQ(status, NIXL_SUCCESS);
