@@ -470,8 +470,8 @@ TEST_P(TestTransfer, SelfNotification) {
         GTEST_SKIP() << "UCX_MO does not support local communication";
     }
 
-    constexpr size_t repeat = 1;
-    constexpr size_t num_threads = 1;
+    constexpr size_t repeat = 100;
+    constexpr size_t num_threads = 4;
     doNotificationTest(
             getAgent(0), getAgentName(0), getAgent(0), getAgentName(0), repeat, num_threads);
 }
