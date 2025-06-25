@@ -154,6 +154,12 @@ public:
         addr(a), len(l), devId(d), padded_size(p), handle(h) {}
 };
 
+struct xferBenchTransferMetrics {
+    double total_duration;
+    double estimated_duration;
+    double estimation_error;
+};
+
 class xferBenchUtils {
     private:
         static xferBenchRT *rt;
@@ -166,7 +172,7 @@ class xferBenchUtils {
         static void checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
         static void printStatsHeader();
         static void printStats(bool is_target, size_t block_size, size_t batch_size,
-			                   double total_duration);
+                               const xferBenchTransferMetrics &metrics);
 };
 
 #endif // __UTILS_H
