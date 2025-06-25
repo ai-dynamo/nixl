@@ -1,9 +1,9 @@
-name: Run Pre-Commit Hooks
+name: Clang Format Check
 
-on: [push, pull_request]
+on: [pull_request]
 
 jobs:
-  pre-commit:
+  clang-format:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -13,8 +13,7 @@ jobs:
       id: modified-files
       run: echo "modified_files=$(git diff --name-only -r HEAD^1 HEAD | xargs)" >> $GITHUB_OUTPUT
     - uses: actions/setup-python@v3
-    - env:
-        SKIP: clang-format
+    - name: Run clang-format check
       uses: pre-commit/action@v3.0.0
       with:
-        extra_args: --files ${{ steps.modified-files.outputs.modified_files }}
+        extra_args: --show-diff-on-failure --files ${{ steps.modified-files.outputs.modified_files }} clang-format
