@@ -24,6 +24,8 @@
 #include <vector>
 #include <chrono>
 
+namespace {
+
 bool
 isValidPrepXferParams (const nixl_xfer_op_t &operation,
                        const nixl_meta_dlist_t &local,
@@ -90,6 +92,8 @@ public:
     uint64_t dev_id;
     std::string obj_key;
 };
+
+} // namespace
 
 // -----------------------------------------------------------------------------
 // Obj Engine Implementation
