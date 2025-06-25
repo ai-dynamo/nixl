@@ -457,7 +457,7 @@ void nixlUcxEngine::progressFunc()
 
                 status = uw->arm();
             } while (status == NIXL_IN_PROG);
-            NIXL_ASSERT (status == NIXL_SUCCESS);
+            NIXL_ASSERT (status == NIXL_SUCCESS) << ", status: " << status;
 
             if (made_progress && !wid)
                 notifProgress();
