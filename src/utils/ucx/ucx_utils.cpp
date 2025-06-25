@@ -14,14 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include "ucx_utils.h"
 
-#include <exception>
-#include <vector>
-#include <string>
+#include <algorithm>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
-#include <type_traits>
+#include <string>
+#include <vector>
 
 #include <nixl_types.h>
 
@@ -30,6 +31,19 @@
 #include "serdes/serdes.h"
 
 using namespace std;
+
+constexpr std::array<ucp_err_handling_mode_t, 2> nixl_ucx_err_handling_modes = {
+    UCP_ERR_HANDLING_MODE_NONE,
+    UCP_ERR_HANDLING_MODE_PEER,
+};
+
+[[nodiscard]] nixl_b_params_t
+get_ucx_backend_common_options() {
+    nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
+
+    params.emplace(nixl_ucx_err_handling_param_name, to_string(UCP_ERR_HANDLING_MODE_PEER));
+    return params;
+}
 
 nixl_status_t ucx_status_to_nixl(ucs_status_t status)
 {
@@ -52,8 +66,39 @@ nixl_status_t ucx_status_to_nixl(ucs_status_t status)
     }
 }
 
-static void err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status)
-{
+[[nodiscard]] std::string_view
+to_string(ucp_err_handling_mode_t t) {
+    switch (t) {
+    case UCP_ERR_HANDLING_MODE_NONE:
+        return "none";
+    case UCP_ERR_HANDLING_MODE_PEER:
+        return "peer";
+    default:
+        throw std::invalid_argument(std::to_string(t));
+    }
+}
+
+[[nodiscard]] ucp_err_handling_mode_t
+err_mode_from_string(const std::string_view &s) {
+    for (const auto &mode : nixl_ucx_err_handling_modes) {
+        if (to_string(mode) == s) {
+            return mode;
+        }
+    }
+
+    std::string err_msg =
+        "Invalid error handling mode: " + std::string(s) + ". Valid values are: <";
+    for (const auto &mode : nixl_ucx_err_handling_modes) {
+        err_msg += std::string(to_string(mode)) + "|";
+    }
+
+    err_msg.pop_back();
+    err_msg += ">";
+    throw std::invalid_argument(err_msg);
+}
+
+static void
+err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status) {
     nixlUcxEp *ep = reinterpret_cast<nixlUcxEp*>(arg);
     ep->err_cb(ucp_ep, status);
 }
