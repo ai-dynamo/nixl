@@ -42,7 +42,7 @@ class nixlMooncakeEngine : public nixlBackendEngine {
 
         bool supportsRemote () const { return true; }
         bool supportsLocal () const { return true; }
-        bool supportsNotif () const { return false; }
+        bool supportsNotif () const { return true; }
         bool supportsProgTh () const { return false; }
 
         nixl_mem_list_t getSupportedMems () const;
@@ -88,6 +88,8 @@ class nixlMooncakeEngine : public nixlBackendEngine {
 
         nixl_status_t checkXfer (nixlBackendReqH* handle) const;
         nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
+
+        nixl_status_t getNotifs(notif_list_t &notif_list);
 
     private:
         struct AgentInfo {
