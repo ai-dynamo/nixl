@@ -84,8 +84,11 @@ public:
 
 class nixlObjMetadata : public nixlBackendMD {
 public:
-    nixlObjMetadata(nixl_mem_t nixl_mem, uint64_t dev_id, std::string obj_key)
-        : nixlBackendMD (true), nixl_mem (nixl_mem), dev_id (dev_id), obj_key (obj_key) {}
+    nixlObjMetadata (nixl_mem_t nixl_mem, uint64_t dev_id, std::string obj_key)
+        : nixlBackendMD (true),
+          nixl_mem (nixl_mem),
+          dev_id (dev_id),
+          obj_key (obj_key) {}
     ~nixlObjMetadata() = default;
 
     nixl_mem_t nixl_mem;
@@ -124,13 +127,17 @@ nixl_status_t
 nixlObjEngine::registerMem (const nixlBlobDesc &mem,
                             const nixl_mem_t &nixl_mem,
                             nixlBackendMD *&out) {
-    if (nixl_mem != OBJ_SEG) return NIXL_SUCCESS;
+    auto supported_mems = getSupportedMems();
+    if (std::find (supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end())
+        return NIXL_ERR_NOT_SUPPORTED;
 
-    std::unique_ptr<nixlObjMetadata> obj_md = std::make_unique<nixlObjMetadata> (
-        nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string (mem.devId) : mem.metaInfo);
-    dev_id_to_obj_key_[mem.devId] = obj_md->obj_key;
+    if (nixl_mem == OBJ_SEG) {
+        std::unique_ptr<nixlObjMetadata> obj_md = std::make_unique<nixlObjMetadata> (
+            nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string (mem.devId) : mem.metaInfo);
+        dev_id_to_obj_key_[mem.devId] = obj_md->obj_key;
+        out = obj_md.release();
+    }
 
-    out = obj_md.release();
     return NIXL_SUCCESS;
 }
 
