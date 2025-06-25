@@ -273,7 +273,7 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
     };
 
     const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr,
-                                           rk.rkeyh, &param);
+                                                 rk.rkeyh, &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
         return NIXL_IN_PROG;
