@@ -14,12 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <exception>
-#include <vector>
-#include <string>
-#include <cstring>
-#include <stdexcept>
+
 #include <algorithm>
+#include <cstring>
+#include <exception>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 #include <nixl_types.h>
 
@@ -29,6 +30,17 @@
 #include "common/nixl_log.h"
 
 using namespace std;
+
+[[nodiscard]] nixl_b_params_t get_ucx_backend_common_options() {
+    nixl_b_params_t params = {
+        { "ucx_devices", "" },
+        { "num_workers", "1" }
+    };
+
+    params.emplace(nixl_ucx_err_handling_param_name,
+                   to_string(UCP_ERR_HANDLING_MODE_PEER));
+    return params;
+}
 
 nixl_status_t ucx_status_to_nixl(ucs_status_t status)
 {
@@ -84,14 +96,13 @@ void ucx_modify_config(ucp_config_t *config, std::string_view key,
     static std::vector<std::string> string_values;
     if (string_values.empty()) {
         for (const auto &mode : nixl_ucx_err_handling_modes) {
-            string_values.push_back(to_string(mode));
+            string_values.emplace_back(to_string(mode));
         }
     }
 
-    auto it = std::find(string_values.begin(), string_values.end(), s);
+    const auto it = find(string_values.begin(), string_values.end(), s);
     if (it == string_values.end()) {
-        std::string err_msg = "Invalid error handling mode: " + s +
-                              ". Valid values are: <";
+        std::string err_msg = "Invalid error handling mode: " + s + ". Valid values are: <";
         for (const auto &mode : string_values) {
             err_msg += mode + "|";
         }

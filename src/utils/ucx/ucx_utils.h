@@ -209,13 +209,7 @@ private:
     [[nodiscard]] ucp_worker_h getWorker() const noexcept { return worker.get(); }
 };
 
-[[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {
-    return {
-        { "ucx_devices", "" },
-        { "ucx_error_handling_mode", "peer" }, // or "none" to disable
-        { "num_workers", "1" }
-    };
-}
+[[nodiscard]] nixl_b_params_t get_ucx_backend_common_options();
 
 nixl_status_t ucx_status_to_nixl(ucs_status_t status);
 
