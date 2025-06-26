@@ -40,6 +40,11 @@ isValidPrepXferParams (const nixl_xfer_op_t &operation,
                        const nixl_meta_dlist_t &remote,
                        const std::string &remote_agent,
                        const std::string &local_agent) {
+    if (operation != NIXL_WRITE && operation != NIXL_READ) {
+        NIXL_ERROR << absl::StrFormat ("Error: Invalid operation type: %d", operation);
+        return false;
+    }
+
     if (remote_agent != local_agent) {
         NIXL_ERROR << absl::StrFormat (
             "Error: Remote agent must match the requesting agent (%s). Got %s",
@@ -210,7 +215,7 @@ nixlObjEngine::postXfer (const nixl_xfer_op_t &operation,
                                             status_promise->set_value (success ? NIXL_SUCCESS :
                                                                                  NIXL_ERR_BACKEND);
                                         });
-        else if (operation == NIXL_READ)
+        else
             s3_client_->GetObjectAsync (obj_key_search->second,
                                         data_ptr,
                                         data_len,
@@ -219,8 +224,6 @@ nixlObjEngine::postXfer (const nixl_xfer_op_t &operation,
                                             status_promise->set_value (success ? NIXL_SUCCESS :
                                                                                  NIXL_ERR_BACKEND);
                                         });
-        else
-            return NIXL_ERR_INVALID_PARAM;
     }
 
     return NIXL_IN_PROG;

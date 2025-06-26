@@ -174,15 +174,6 @@ protected:
 
         std::vector<char> test_buffer0 (1024);
         std::vector<char> test_buffer1 (1024);
-        if (operation == NIXL_WRITE) {
-            for (size_t i = 0; i < test_buffer0.size(); ++i) {
-                test_buffer0[i] = static_cast<char> ('X' + (i % 3));
-            }
-            for (size_t i = 0; i < test_buffer1.size(); ++i) {
-                test_buffer1[i] = static_cast<char> ('x' + (i % 3));
-            }
-        }
-
         nixlBlobDesc local_desc0, local_desc1;
         local_desc0.devId = 1;
         local_desc1.devId = 1;

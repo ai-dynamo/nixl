@@ -11,4 +11,4 @@ subprojects/packagecache/
 contrib/aws-efa/aws_vars.json
 
 # Asio
-subprojects/asio-1.30.2/
+subprojects/asio-*
