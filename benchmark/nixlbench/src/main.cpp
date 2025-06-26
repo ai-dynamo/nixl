@@ -85,7 +85,7 @@ static std::vector<std::vector<xferBenchIOV>> createTransferDescLists(xferBenchW
                 for (size_t j = 0; j < batch_size; j++) {
                     size_t block_offset = ((j * block_size) % iov.len);
                     if (block_offset + block_size > iov.len) {
-                       // Prevent memory overflow when iov.len is not divisible by block_size
+                        // Prevent memory overflow when iov.len is not divisible by block_size
                         block_offset = 0;
                     }
                     xfer_list.push_back(xferBenchIOV((iov.addr + dev_offset) + block_offset,

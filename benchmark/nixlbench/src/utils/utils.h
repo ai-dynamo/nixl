@@ -137,9 +137,11 @@ class xferBenchConfig {
 
         static int loadFromFlags();
         static void printConfig();
-        static void printOption(const std::string desc, const std::string value);
+        static void
+        printOption (const std::string desc, const std::string value);
         static std::vector<std::string> parseDeviceList();
-        static bool isStorageBackend();
+        static bool
+        isStorageBackend();
 };
 
 // Generic IOV descriptor class independent of NIXL

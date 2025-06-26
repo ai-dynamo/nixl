@@ -98,11 +98,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     if (0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_UCX) ||
         0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_UCX_MO) ||
-        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_GDS) ||
-        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_POSIX) ||
-        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_HF3FS) ||
         0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_GPUNETIO) ||
-        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_MOONCAKE)) {
+        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_MOONCAKE) ||
+        xferBenchConfig::isStorageBackend()) {
         backend_name = xferBenchConfig::backend;
     } else {
         std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
@@ -160,7 +158,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         backend_params["gpu_devices"] = xferBenchConfig::gpunetio_device_list;
     } else if (0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_MOONCAKE)) {
         std::cout << "Mooncake backend" << std::endl;
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
+    } else if (0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_HF3FS)) {
         // Using default param values for HF3FS backend
         std::cout << "HF3FS backend" << std::endl;
     } else {
@@ -331,34 +329,35 @@ std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescVram(size_t buffer
 }
 #endif /* HAVE_CUDA */
 
-static std::vector<int> createFileFds(std::string name) {
+static std::vector<int>
+createFileFds (std::string name) {
     std::vector<int> fds;
     int flags = O_RDWR | O_CREAT;
     int num_files = xferBenchConfig::num_files;
-    std::string file_path, file_name_prefix, file_backend;
 
     if (!xferBenchConfig::isStorageBackend()) {
         std::cerr << "Unknown storage backend: " << xferBenchConfig::backend << std::endl;
-        exit(EXIT_FAILURE);
+        exit (EXIT_FAILURE);
     }
 
     if (xferBenchConfig::storage_enable_direct) {
         flags |= O_DIRECT;
     }
 
-    file_path = xferBenchConfig::filepath != "" ?
-                xferBenchConfig::filepath :
-                std::filesystem::current_path().string();
-    file_backend.resize(xferBenchConfig::backend.size());
-    std::transform(xferBenchConfig::backend.begin(),
-                   xferBenchConfig::backend.end(),
-                   file_backend.begin(),
-                   ::tolower);
-    file_name_prefix = "/nixlbench_" + file_backend + "_test_file_";
+    const std::string file_path = xferBenchConfig::filepath != "" ?
+        xferBenchConfig::filepath :
+        std::filesystem::current_path().string();
+    std::string file_backend (xferBenchConfig::backend.size(), '0');
+    std::transform (xferBenchConfig::backend.begin(),
+                    xferBenchConfig::backend.end(),
+                    file_backend.begin(),
+                    ::tolower);
+    const std::string file_name_prefix = "/nixlbench_" + file_backend + "_test_file_";
 
     for (int i = 0; i < num_files; i++) {
         std::string file_name = file_path + file_name_prefix + name + "_" + std::to_string(i);
-        std::cout << "Creating " << " file: " << file_name << std::endl;
+        std::cout << "Creating "
+                  << " file: " << file_name << std::endl;
         int fd = open(file_name.c_str(), flags, 0744);
         if (fd < 0) {
             std::cerr << "Failed to open file: " << file_name << " with error: "
@@ -438,7 +437,7 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
     opt_args.backends.push_back(backend_engine);
 
     if (xferBenchConfig::isStorageBackend()) {
-        remote_fds = createFileFds(getName());
+        remote_fds = createFileFds (getName());
         if (remote_fds.empty()) {
             std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
             exit(EXIT_FAILURE);

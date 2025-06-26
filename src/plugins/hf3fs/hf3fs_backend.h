@@ -78,7 +78,7 @@ class nixlHf3fsBackendReqH : public nixlBackendReqH {
 class nixlHf3fsEngine : public nixlBackendEngine {
     private:
         hf3fsUtil                      *hf3fs_utils;
-        std::unordered_set<int>         hf3fs_file_set;
+        std::unordered_set<int> hf3fs_file_set;
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
         void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;

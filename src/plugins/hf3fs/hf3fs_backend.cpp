@@ -72,7 +72,7 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             fd = mem.devId;
 
             // if the same file is reused - no need to re-register
-            auto it = hf3fs_file_set.find(fd);
+            auto it = hf3fs_file_set.find (fd);
             if (it != hf3fs_file_set.end()) {
                 md->handle.fd = *it;
                 md->handle.size = mem.len;
@@ -94,7 +94,7 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             md->handle.metadata = mem.metaInfo;
             md->type = nixl_mem;
 
-            hf3fs_file_set.insert(fd);
+            hf3fs_file_set.insert (fd);
             break;
         }
         case VRAM_SEG:
