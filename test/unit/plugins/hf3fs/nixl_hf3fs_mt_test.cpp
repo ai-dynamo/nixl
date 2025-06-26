@@ -64,7 +64,7 @@ namespace {
 
     void print_protected(const std::string& message) {
         std::lock_guard<std::mutex> lock(cout_mutex);
-        absl::PrintF("%s\n", message);
+        absl::PrintF ("%s\n", message);
     }
 
     void fill_test_pattern(void* buffer, size_t size, int thread_id) {
@@ -136,59 +136,73 @@ namespace {
     };
 
 
-    void execute_transfer_iterations(nixlAgent& agent, nixlXferReqH* req, int iterations,
-                                   const std::string& operation_type, int thread_id) {
+    void
+    execute_transfer_iterations (nixlAgent &agent,
+                                 nixlXferReqH *req,
+                                 int iterations,
+                                 const std::string &operation_type,
+                                 int thread_id) {
         for (int iter = 0; iter < iterations; iter++) {
-            auto status = agent.postXferReq(req);
+            auto status = agent.postXferReq (req);
             if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
-                throw std::runtime_error("Failed to post " + operation_type + " request (iter " +
-                                       std::to_string(iter) + "), err: " + nixlEnumStrings::statusStr(status));
+                throw std::runtime_error ("Failed to post " + operation_type + " request (iter " +
+                                          std::to_string (iter) +
+                                          "), err: " + nixlEnumStrings::statusStr (status));
             }
 
             // Wait for completion
-            status = agent.getXferStatus(req);
+            status = agent.getXferStatus (req);
             while (status == NIXL_IN_PROG) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                status = agent.getXferStatus(req);
+                std::this_thread::sleep_for (std::chrono::milliseconds (1));
+                status = agent.getXferStatus (req);
             }
 
             if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
-                throw std::runtime_error("Failed to wait for " + operation_type + " completion (iter " +
-                                       std::to_string(iter) + "), err: " + nixlEnumStrings::statusStr(status));
+                throw std::runtime_error ("Failed to wait for " + operation_type +
+                                          " completion (iter " + std::to_string (iter) +
+                                          "), err: " + nixlEnumStrings::statusStr (status));
             }
 
 #if NIXL_3FS_VALIDATION_MODE
-            print_protected(absl::StrFormat("thread_id: %d %s_iter: %d %s completed",
-                          thread_id, operation_type, iter, operation_type));
+            print_protected (absl::StrFormat ("thread_id: %d %s_iter: %d %s completed",
+                                              thread_id,
+                                              operation_type,
+                                              iter,
+                                              operation_type));
 #endif
         }
     }
 
     // Update worker functions to accept all parameters directly
-    void worker_write_thread(int thread_id,
-                           nixlAgent& agent,
-                           const std::string& test_dir,
-                           size_t transfer_size,
-                           int num_transfers,
-                           int write_iterations,
-                           ThreadStats& write_stats,
-                           const nixl_reg_dlist_t& dram_list,
-                           const nixl_reg_dlist_t& file_list,
-                           size_t start_idx,
-                           nixlXferReqH* write_req) {
+    void
+    worker_write_thread (int thread_id,
+                         nixlAgent &agent,
+                         const std::string &test_dir,
+                         size_t transfer_size,
+                         int num_transfers,
+                         int write_iterations,
+                         ThreadStats &write_stats,
+                         const nixl_reg_dlist_t &dram_list,
+                         const nixl_reg_dlist_t &file_list,
+                         size_t start_idx,
+                         nixlXferReqH *write_req) {
         try {
 #if NIXL_3FS_VALIDATION_MODE
             auto write_start = nixlTime::getUs();
 #endif
-            execute_transfer_iterations(agent, write_req, write_iterations, "write", thread_id);
+            execute_transfer_iterations (agent, write_req, write_iterations, "write", thread_id);
 
 #if NIXL_3FS_VALIDATION_MODE
             auto write_end = nixlTime::getUs();
-            write_stats.add_transfer(transfer_size * num_transfers * write_iterations, write_end - write_start);
+            write_stats.add_transfer (transfer_size * num_transfers * write_iterations,
+                                      write_end - write_start);
 
-            print_protected(absl::StrFormat("thread_id: %d write data_size: %zu duration: %lld write_iterations: %d",
-                            thread_id, transfer_size * num_transfers * write_iterations,
-                            write_end - write_start, write_iterations));
+            print_protected (absl::StrFormat (
+                "thread_id: %d write data_size: %zu duration: %lld write_iterations: %d",
+                thread_id,
+                transfer_size * num_transfers * write_iterations,
+                write_end - write_start,
+                write_iterations));
 #endif
             total_completed_write_transfers += num_transfers * write_iterations;
 
@@ -201,9 +215,9 @@ namespace {
                     barrier_cv.notify_all();
                 }
             }
-
-        } catch (const std::exception& e) {
-            print_protected(absl::StrFormat("Thread %d write failed: %s", thread_id, e.what()));
+        }
+        catch (const std::exception &e) {
+            print_protected (absl::StrFormat ("Thread %d write failed: %s", thread_id, e.what()));
             total_failed_write_transfers += num_transfers * write_iterations;
             write_stats.failed_transfers += num_transfers * write_iterations;
 
@@ -219,17 +233,18 @@ namespace {
         }
     }
 
-    void worker_read_thread(int thread_id,
-                          nixlAgent& agent,
-                          const std::string& test_dir,
-                          size_t transfer_size,
-                          int num_transfers,
-                          int read_iterations,
-                          ThreadStats& read_stats,
-                          const nixl_reg_dlist_t& dram_list,
-                          const nixl_reg_dlist_t& file_list,
-                          size_t start_idx,
-                          nixlXferReqH* read_req) {
+    void
+    worker_read_thread (int thread_id,
+                        nixlAgent &agent,
+                        const std::string &test_dir,
+                        size_t transfer_size,
+                        int num_transfers,
+                        int read_iterations,
+                        ThreadStats &read_stats,
+                        const nixl_reg_dlist_t &dram_list,
+                        const nixl_reg_dlist_t &file_list,
+                        size_t start_idx,
+                        nixlXferReqH *read_req) {
         try {
 #if NIXL_3FS_VALIDATION_MODE
             // Clear DRAM buffers for this thread's range
@@ -240,14 +255,18 @@ namespace {
 
             auto read_start = nixlTime::getUs();
 #endif
-            execute_transfer_iterations(agent, read_req, read_iterations, "read", thread_id);
+            execute_transfer_iterations (agent, read_req, read_iterations, "read", thread_id);
 
 #if NIXL_3FS_VALIDATION_MODE
             auto read_end = nixlTime::getUs();
-            read_stats.add_transfer(transfer_size * num_transfers * read_iterations, read_end - read_start);
-            print_protected(absl::StrFormat("thread_id: %d read data_size: %zu duration: %lld read_iterations: %d",
-                            thread_id, transfer_size * num_transfers * read_iterations,
-                            read_end - read_start, read_iterations));
+            read_stats.add_transfer (transfer_size * num_transfers * read_iterations,
+                                     read_end - read_start);
+            print_protected (absl::StrFormat (
+                "thread_id: %d read data_size: %zu duration: %lld read_iterations: %d",
+                thread_id,
+                transfer_size * num_transfers * read_iterations,
+                read_end - read_start,
+                read_iterations));
 
             // Validate read data (only validate after the last iteration)
             for (int i = 0; i < num_transfers; i++) {
@@ -260,9 +279,8 @@ namespace {
 #endif
 
             total_completed_read_transfers += num_transfers * read_iterations;
-
         } catch (const std::exception& e) {
-            print_protected(absl::StrFormat("Thread %d read failed: %s", thread_id, e.what()));
+            print_protected (absl::StrFormat ("Thread %d read failed: %s", thread_id, e.what()));
             total_failed_read_transfers += num_transfers * read_iterations;
             read_stats.failed_transfers += num_transfers * read_iterations;
         }
@@ -280,7 +298,7 @@ int main(int argc, char *argv[]) {
 
     // Parse command line arguments
     int opt;
-    while ((opt = getopt(argc, argv, "t:n:s:w:r:d:h")) != -1) {
+    while ((opt = getopt (argc, argv, "t:n:s:w:r:d:h")) != -1) {
         switch (opt) {
             case 't':
                 num_threads = std::stoi(optarg);
@@ -292,23 +310,40 @@ int main(int argc, char *argv[]) {
                 transfer_size = std::stoul(optarg);
                 break;
             case 'w':
-                write_iterations = std::stoi(optarg);
+                write_iterations = std::stoi (optarg);
                 break;
             case 'r':
-                read_iterations = std::stoi(optarg);
+                read_iterations = std::stoi (optarg);
                 break;
             case 'd':
                 test_dir = optarg;
                 break;
             case 'h':
             default:
-                std::cout << absl::StrFormat("Usage: %s [-t num_threads] [-n transfers_per_thread] [-s transfer_size] [-w write_iterations] [-r read_iterations] [-d test_dir]", argv[0]) << std::endl;
-                std::cout << absl::StrFormat("  -t: Number of threads (default: %d)", default_num_threads) << std::endl;
-                std::cout << absl::StrFormat("  -n: Transfers per thread (default: %d)", default_transfers_per_thread) << std::endl;
-                std::cout << absl::StrFormat("  -s: Transfer size in bytes (default: %zu)", default_transfer_size) << std::endl;
-                std::cout << absl::StrFormat("  -w: Number of write iterations (default: %d)", default_write_iterations) << std::endl;
-                std::cout << absl::StrFormat("  -r: Number of read iterations (default: %d)", default_read_iterations) << std::endl;
-                std::cout << absl::StrFormat("  -d: Test directory (default: %s)", default_test_files_dir_path) << std::endl;
+                std::cout << absl::StrFormat (
+                                 "Usage: %s [-t num_threads] [-n transfers_per_thread] [-s "
+                                 "transfer_size] [-w write_iterations] [-r read_iterations] [-d "
+                                 "test_dir]",
+                                 argv[0])
+                          << std::endl;
+                std::cout << absl::StrFormat ("  -t: Number of threads (default: %d)",
+                                              default_num_threads)
+                          << std::endl;
+                std::cout << absl::StrFormat ("  -n: Transfers per thread (default: %d)",
+                                              default_transfers_per_thread)
+                          << std::endl;
+                std::cout << absl::StrFormat ("  -s: Transfer size in bytes (default: %zu)",
+                                              default_transfer_size)
+                          << std::endl;
+                std::cout << absl::StrFormat ("  -w: Number of write iterations (default: %d)",
+                                              default_write_iterations)
+                          << std::endl;
+                std::cout << absl::StrFormat ("  -r: Number of read iterations (default: %d)",
+                                              default_read_iterations)
+                          << std::endl;
+                std::cout << absl::StrFormat ("  -d: Test directory (default: %s)",
+                                              default_test_files_dir_path)
+                          << std::endl;
                 return (opt == 'h') ? 0 : 1;
         }
     }
@@ -317,7 +352,7 @@ int main(int argc, char *argv[]) {
     try {
         std::filesystem::create_directories(test_dir);
     } catch (const std::exception& e) {
-        std::cerr << absl::StrFormat("Failed to create test directory: %s", e.what()) << std::endl;
+        std::cerr << absl::StrFormat ("Failed to create test directory: %s", e.what()) << std::endl;
         return 1;
     }
 
@@ -330,7 +365,7 @@ int main(int argc, char *argv[]) {
     nixlBackendH* hf3fs = nullptr;
     nixl_status_t ret = agent.createBackend("HF3FS", params, hf3fs);
     if (ret != NIXL_SUCCESS) {
-        std::cerr << absl::StrFormat("Error creating HF3FS backend: %d", ret) << std::endl;
+        std::cerr << absl::StrFormat ("Error creating HF3FS backend: %d", ret) << std::endl;
         return 1;
     }
 
@@ -431,7 +466,8 @@ int main(int argc, char *argv[]) {
         nixlXferReqH* req = nullptr;
         if (agent.createXferReq(NIXL_WRITE, write_dram_lists.back(), write_file_lists.back(),
                               "HF3FSMultiThreadTester", req) != NIXL_SUCCESS) {
-            std::cerr << absl::StrFormat("Failed to create write request for thread %d", i) << std::endl;
+            std::cerr << absl::StrFormat ("Failed to create write request for thread %d", i)
+                      << std::endl;
             return 1;
         }
 
@@ -464,7 +500,8 @@ int main(int argc, char *argv[]) {
         nixlXferReqH* req = nullptr;
         if (agent.createXferReq(NIXL_READ, read_dram_lists.back(), read_file_lists.back(),
                               "HF3FSMultiThreadTester", req) != NIXL_SUCCESS) {
-            std::cerr << absl::StrFormat("Failed to create read request for thread %d", i) << std::endl;
+            std::cerr << absl::StrFormat ("Failed to create read request for thread %d", i)
+                      << std::endl;
             return 1;
         }
 
@@ -473,19 +510,29 @@ int main(int argc, char *argv[]) {
 
     // Stage 1: Write Operation
     std::cout << "\n=== STAGE 1: WRITE OPERATIONS ===" << std::endl;
-    std::cout << absl::StrFormat("Running %d write iterations per thread", write_iterations) << std::endl;
+    std::cout << absl::StrFormat ("Running %d write iterations per thread", write_iterations)
+              << std::endl;
     std::vector<std::thread> write_threads;
     std::vector<ThreadStats> thread_write_stats(num_threads);
-    size_t total_write_bytes = num_threads * transfers_per_thread * transfer_size * write_iterations;
+    size_t total_write_bytes =
+        num_threads * transfers_per_thread * transfer_size * write_iterations;
 
     auto write_start_time = nixlTime::getUs();
 
     for (int i = 0; i < num_threads; i++) {
         size_t start_idx = i * transfers_per_thread;
-        write_threads.emplace_back(worker_write_thread, i, std::ref(agent), test_dir, transfer_size,
-                                 transfers_per_thread, write_iterations, std::ref(thread_write_stats[i]),
-                                 std::ref(dram_list), std::ref(file_list), start_idx,
-                                 write_requests[i]);
+        write_threads.emplace_back (worker_write_thread,
+                                    i,
+                                    std::ref (agent),
+                                    test_dir,
+                                    transfer_size,
+                                    transfers_per_thread,
+                                    write_iterations,
+                                    std::ref (thread_write_stats[i]),
+                                    std::ref (dram_list),
+                                    std::ref (file_list),
+                                    start_idx,
+                                    write_requests[i]);
     }
 
     // Wait for all write threads to complete
@@ -505,15 +552,22 @@ int main(int argc, char *argv[]) {
 
     // Print write results
     std::cout << "\nWrite Test Results:" << std::endl;
-    std::cout << absl::StrFormat("Total transfers completed: %d", total_completed_write_transfers.load()) << std::endl;
-    std::cout << absl::StrFormat("Total transfers failed: %d", total_failed_write_transfers.load()) << std::endl;
-    std::cout << absl::StrFormat("Write duration: %.6f seconds", write_duration_seconds) << std::endl;
-    std::cout << absl::StrFormat("Total data transferred: %.2f GB", ((double)total_write_bytes / gb_size)) << std::endl;
-    std::cout << absl::StrFormat("Write throughput: %.2f GB/s", write_total_gbps) << std::endl;
+    std::cout << absl::StrFormat ("Total transfers completed: %d",
+                                  total_completed_write_transfers.load())
+              << std::endl;
+    std::cout << absl::StrFormat ("Total transfers failed: %d", total_failed_write_transfers.load())
+              << std::endl;
+    std::cout << absl::StrFormat ("Write duration: %.6f seconds", write_duration_seconds)
+              << std::endl;
+    std::cout << absl::StrFormat ("Total data transferred: %.2f GB",
+                                  ((double)total_write_bytes / gb_size))
+              << std::endl;
+    std::cout << absl::StrFormat ("Write throughput: %.2f GB/s", write_total_gbps) << std::endl;
 
     // Stage 2: Read Operation
     std::cout << "\n=== STAGE 2: READ OPERATIONS ===" << std::endl;
-    std::cout << absl::StrFormat("Running %d read iterations per thread", read_iterations) << std::endl;
+    std::cout << absl::StrFormat ("Running %d read iterations per thread", read_iterations)
+              << std::endl;
     std::vector<std::thread> read_threads;
     std::vector<ThreadStats> thread_read_stats(num_threads);
     size_t total_read_bytes = num_threads * transfers_per_thread * transfer_size * read_iterations;
@@ -522,10 +576,18 @@ int main(int argc, char *argv[]) {
 
     for (int i = 0; i < num_threads; i++) {
         size_t start_idx = i * transfers_per_thread;
-        read_threads.emplace_back(worker_read_thread, i, std::ref(agent), test_dir, transfer_size,
-                                transfers_per_thread, read_iterations, std::ref(thread_read_stats[i]),
-                                std::ref(dram_list), std::ref(file_list), start_idx,
-                                read_requests[i]);
+        read_threads.emplace_back (worker_read_thread,
+                                   i,
+                                   std::ref (agent),
+                                   test_dir,
+                                   transfer_size,
+                                   transfers_per_thread,
+                                   read_iterations,
+                                   std::ref (thread_read_stats[i]),
+                                   std::ref (dram_list),
+                                   std::ref (file_list),
+                                   start_idx,
+                                   read_requests[i]);
     }
 
     // Wait for all read threads to complete
@@ -545,11 +607,17 @@ int main(int argc, char *argv[]) {
 
     // Print read results
     std::cout << "\nRead Test Results:" << std::endl;
-    std::cout << absl::StrFormat("Total transfers completed: %d", total_completed_read_transfers.load()) << std::endl;
-    std::cout << absl::StrFormat("Total transfers failed: %d", total_failed_read_transfers.load()) << std::endl;
-    std::cout << absl::StrFormat("Read duration: %.6f seconds", read_duration_seconds) << std::endl;
-    std::cout << absl::StrFormat("Total data transferred: %.2f GB", ((double)total_read_bytes / gb_size)) << std::endl;
-    std::cout << absl::StrFormat("Read throughput: %.2f GB/s", read_total_gbps) << std::endl;
+    std::cout << absl::StrFormat ("Total transfers completed: %d",
+                                  total_completed_read_transfers.load())
+              << std::endl;
+    std::cout << absl::StrFormat ("Total transfers failed: %d", total_failed_read_transfers.load())
+              << std::endl;
+    std::cout << absl::StrFormat ("Read duration: %.6f seconds", read_duration_seconds)
+              << std::endl;
+    std::cout << absl::StrFormat ("Total data transferred: %.2f GB",
+                                  ((double)total_read_bytes / gb_size))
+              << std::endl;
+    std::cout << absl::StrFormat ("Read throughput: %.2f GB/s", read_total_gbps) << std::endl;
 
     // Deregister memory
     agent.deregisterMem(file_list);
@@ -563,15 +631,20 @@ int main(int argc, char *argv[]) {
     double total_read_thoughput = 0.0;
 
     for (size_t i = 0; i < thread_write_stats.size(); i++) {
-        std::cout << absl::StrFormat("  Thread %zu: read %.2f MB/s write %.2f MB/s", i,
-            thread_read_stats[i].get_throughput_mbps(),
-            thread_write_stats[i].get_throughput_mbps()) << std::endl;
+        std::cout << absl::StrFormat ("  Thread %zu: read %.2f MB/s write %.2f MB/s",
+                                      i,
+                                      thread_read_stats[i].get_throughput_mbps(),
+                                      thread_write_stats[i].get_throughput_mbps())
+                  << std::endl;
         total_write_thoughput += thread_write_stats[i].get_throughput_mbps();
         total_read_thoughput += thread_read_stats[i].get_throughput_mbps();
     }
 
-    std::cout << absl::StrFormat("\nAggregate Per-thread throughput: read %.2f MB/s write %.2f MB/s",
-        total_read_thoughput, total_write_thoughput) << std::endl;
+    std::cout << absl::StrFormat (
+                     "\nAggregate Per-thread throughput: read %.2f MB/s write %.2f MB/s",
+                     total_read_thoughput,
+                     total_write_thoughput)
+              << std::endl;
 #endif
 
     int total_failed_transfers = total_failed_write_transfers + total_failed_read_transfers;
