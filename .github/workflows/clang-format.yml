@@ -1,0 +1,16 @@
+name: Clang Format Check
+
+on: [pull_request]
+
+jobs:
+  clang-format:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 100
+    - name: Check clang-format on changed lines
+      run: |
+        git fetch --no-tags origin "${{ github.base_ref }}"
+        git diff -U0 origin/${{ github.base_ref }}...HEAD |
+          clang-format-diff-18 -p1 -style=file

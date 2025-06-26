@@ -38,14 +38,16 @@ repos:
         args: ["--max-line-length=88", "--select=C,E,F,W,B,B950", "--extend-ignore=E203,E501,W503"]
         types_or: [python, cython]
 
+# Disabled, as C files are not checked by the pre-commit framework.
+# A separate workflow with a per-line check is implemented instead using `git clang-format`
 # See: https://clang.llvm.org/docs/ClangFormat.html#vim-integration for integrating clang-formatting.
-  - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v16.0.5
-    hooks:
-      - id: clang-format
-        types_or: [c, c++, cuda, proto, textproto, java]
-        args: ["-fallback-style=none", "-style=file", "-i"]
-        files: \.(cpp|h|cc|c|cxx|hpp)$
+#  - repo: https://github.com/pre-commit/mirrors-clang-format
+#    rev: v16.0.5
+#    hooks:
+#      - id: clang-format
+#        types_or: [c, c++, cuda, proto, textproto, java]
+#        args: ["-fallback-style=none", "-style=file", "-i"]
+#        files: \.(cpp|h|cc|c|cxx|hpp|cu|cuh)$
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.2.4
