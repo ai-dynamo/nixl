@@ -27,7 +27,7 @@
 
 // Forward declarations
 class nixlBackendEngine;
-struct nixlBackendInitParams;
+class nixlBackendInitParams;
 
 /**
  * This class represents a NIXL plugin and is used to create plugin instances. nixlPluginHandle

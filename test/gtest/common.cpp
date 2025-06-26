@@ -45,6 +45,11 @@ void ScopedEnv::addVar(const std::string &name, const std::string &value)
     m_vars.emplace(name, value);
 }
 
+void
+ScopedEnv::popVar() {
+    m_vars.pop();
+}
+
 ScopedEnv::Variable::Variable(const std::string &name, const std::string &value)
     : m_name(name)
 {

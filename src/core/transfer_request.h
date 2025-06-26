@@ -17,6 +17,15 @@
 #ifndef __TRANSFER_REQUEST_H_
 #define __TRANSFER_REQUEST_H_
 
+#include <chrono>
+#include <string>
+#include <unordered_map>
+#include <memory>
+
+#include "nixl_types.h"
+#include "backend_engine.h"
+#include "telemetry.h"
+
 constexpr auto min_chrono_time = std::chrono::time_point<std::chrono::high_resolution_clock>::min();
 using chrono_point_t = std::chrono::high_resolution_clock::time_point;
 
@@ -54,7 +63,7 @@ class nixlXferReqH {
         }
 
         void
-        updateRequestStats(const std::string &dbg_msg_type);
+        updateRequestStats(std::shared_ptr<nixlTelemetry> telemetry);
 
         friend class nixlAgent;
 };

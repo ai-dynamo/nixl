@@ -28,3 +28,9 @@ if etcd_dep.found()
                link_with: [serdes_lib],
                install: true)
 endif
+
+telemetry_reader_example = executable('telemetry_reader_example',
+           'telemetry_reader_example.cpp',
+           dependencies: [nixl_dep, nixl_common_deps],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
+           install: true)
