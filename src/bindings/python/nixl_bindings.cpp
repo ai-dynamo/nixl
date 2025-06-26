@@ -21,7 +21,6 @@
 
 #include <tuple>
 #include <iostream>
-#include <cassert>
 
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -135,7 +134,7 @@ PYBIND11_MODULE(_bindings, m) {
         .value("DRAM_SEG", DRAM_SEG)
         .value("VRAM_SEG", VRAM_SEG)
         .value("BLK_SEG", BLK_SEG)
-        .value("OBJ_SEG", BLK_SEG)
+        .value("OBJ_SEG", OBJ_SEG)
         .value("FILE_SEG", FILE_SEG)
         .export_values();
 
@@ -188,7 +187,9 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_xfer_dlist_t new_list(mem, sorted, n);
                 // We assume that the Nx3 array matches the nixlBasicDesc layout so we can simply memcpy
                 std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
-                assert(!sorted || new_list.verifySorted());
+
+                new_list.verifySorted();
+
                 return new_list;
             }), py::arg("type"), py::arg("descs").noconvert(), py::arg("sorted")=false)
         .def(py::init([](nixl_mem_t mem, py::list descs, bool sorted) {
@@ -203,7 +204,9 @@ PYBIND11_MODULE(_bindings, m) {
                     }
                     new_list[i] = nixlBasicDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint64_t>());
                 }
-                assert(!sorted || new_list.verifySorted());
+
+                new_list.verifySorted();
+
                 return new_list;
             }), py::arg("type"), py::arg("descs").noconvert(), py::arg("sorted")=false)
         .def("getType", &nixl_xfer_dlist_t::getType)
@@ -272,6 +275,9 @@ PYBIND11_MODULE(_bindings, m) {
                         new_list[i] = nixlBlobDesc(buffer(i, 0), buffer(i, 1), buffer(i, 2), "");
                     }
                 }
+
+                new_list.verifySorted();
+
                 return new_list;
         }))
         .def(py::init([](nixl_mem_t mem, py::list descs, bool sorted) {
@@ -286,7 +292,8 @@ PYBIND11_MODULE(_bindings, m) {
                     }
                     new_list[i] = nixlBlobDesc(desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint64_t>(), desc[3].cast<std::string>());
                 }
-                assert(!sorted || new_list.verifySorted());
+                new_list.verifySorted();
+
                 return new_list;
             }), py::arg("type"), py::arg("descs"), py::arg("sorted")=false)
         .def("getType", &nixl_reg_dlist_t::getType)
