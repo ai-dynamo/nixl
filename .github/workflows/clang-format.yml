@@ -8,9 +8,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        fetch-depth: 100
+        fetch-depth: 2
     - name: Check clang-format on changed lines
       run: |
-        git fetch --no-tags origin "${{ github.base_ref }}"
-        git diff -U0 origin/${{ github.base_ref }}...HEAD |
-          clang-format-diff-18 -p1 -style=file
+        git diff -U0 -r HEAD^1 HEAD | clang-format-diff-18 -p1 -style=file
