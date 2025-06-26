@@ -93,12 +93,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     agent->getAvailPlugins(plugins);
 
-    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)){
+    if (0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_UCX) ||
+        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_UCX_MO) ||
+        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_GDS) ||
+        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_POSIX) ||
+        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_GPUNETIO) ||
+        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_MOONCAKE)) {
         backend_name = xferBenchConfig::backend;
     } else {
         std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
@@ -154,7 +154,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device " << xferBenchConfig::gpunetio_device_list << std::endl;
         backend_params["network_devices"] = devices[0];
         backend_params["gpu_devices"] = xferBenchConfig::gpunetio_device_list;
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
+    } else if (0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_MOONCAKE)) {
         std::cout << "Mooncake backend" << std::endl;
     } else {
         std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
@@ -784,14 +784,14 @@ void xferBenchNixlWorker::poll(size_t block_size) {
 
     /* Ensure warmup is done*/
     do {
-        status = agent->getNotifs(notifs);
-    } while (status == NIXL_SUCCESS && skip != int(notifs["initiator"].size()));
+        status = agent->getNotifs (notifs);
+    } while (status == NIXL_SUCCESS && skip != int (notifs["initiator"].size()));
     synchronize();
 
     /* Polling for actual iterations*/
     do {
-        status = agent->getNotifs(notifs);
-    } while (status == NIXL_SUCCESS && total_iter != int(notifs["initiator"].size()));
+        status = agent->getNotifs (notifs);
+    } while (status == NIXL_SUCCESS && total_iter != int (notifs["initiator"].size()));
     synchronize();
 }
 

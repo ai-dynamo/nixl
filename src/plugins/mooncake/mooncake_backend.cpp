@@ -205,13 +205,13 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
     size_t request_count;
 };
 
-nixl_status_t nixlMooncakeEngine::prepXfer (const nixl_xfer_op_t &operation,
-                                            const nixl_meta_dlist_t &local,
-                                            const nixl_meta_dlist_t &remote,
-                                            const std::string &remote_agent,
-                                            nixlBackendReqH* &handle,
-                                            const nixl_opt_b_args_t* opt_args) const
-{
+nixl_status_t
+nixlMooncakeEngine::prepXfer (const nixl_xfer_op_t &operation,
+                              const nixl_meta_dlist_t &local,
+                              const nixl_meta_dlist_t &remote,
+                              const std::string &remote_agent,
+                              nixlBackendReqH *&handle,
+                              const nixl_opt_b_args_t *opt_args) const {
     auto priv = new nixlMooncakeBackendReqH();
     priv->batch_id = INVALID_BATCH;
     handle = priv;
@@ -238,9 +238,9 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
 
     const static size_t kMaxRequestCount = 1024;
     if (priv->batch_id == INVALID_BATCH) {
-        uint64_t batch_id = allocateBatchID(engine_, kMaxRequestCount);
+        uint64_t batch_id = allocateBatchID (engine_, kMaxRequestCount);
         if (batch_id == INVALID_BATCH) {
-             return NIXL_ERR_BACKEND;
+            return NIXL_ERR_BACKEND;
         }
         priv->batch_id = batch_id;
         priv->request_count = 0;
@@ -284,7 +284,7 @@ nixl_status_t nixlMooncakeEngine::checkXfer (nixlBackendReqH* handle) const
         // Each batch_id has the batch size, and cannot process more requests
         // than the batch size. So, free the batch id here to workaround the issue
         // where the same nixlBackendReqH could be used to post multiple transfer.
-        freeBatchID(engine_, priv->batch_id);
+        freeBatchID (engine_, priv->batch_id);
         priv->batch_id = INVALID_BATCH;
     }
     return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
@@ -294,7 +294,7 @@ nixl_status_t nixlMooncakeEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     auto priv = (nixlMooncakeBackendReqH *) handle;
     if (priv->batch_id != INVALID_BATCH) {
-        freeBatchID(engine_, priv->batch_id);
+        freeBatchID (engine_, priv->batch_id);
     }
     delete priv;
     return NIXL_SUCCESS;
