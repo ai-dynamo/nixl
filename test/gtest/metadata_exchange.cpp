@@ -531,7 +531,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote)
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    auto sleep_time = std::chrono::seconds(1);
+    auto sleep_time = std::chrono::seconds(3);
     nixl_blob_t md;
 
     ASSERT_EQ(src.agent->sendLocalMD(), NIXL_SUCCESS);
@@ -562,7 +562,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemote)
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    auto sleep_time = std::chrono::seconds(1);
+    auto sleep_time = std::chrono::seconds(3);
     nixl_blob_t md;
 
     nixl_opt_args_t send_args;
@@ -653,7 +653,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
 
     src.initDefault();
 
-    auto sleep_time = std::chrono::seconds(1);
+    auto sleep_time = std::chrono::seconds(3);
     nixl_blob_t md;
     nixl_opt_args_t send_args;
 
