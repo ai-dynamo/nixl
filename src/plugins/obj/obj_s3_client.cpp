@@ -84,7 +84,7 @@ createAWSCredentials (nixl_b_params_t *custom_params) {
 }
 
 bool
-getUserVirtualAddressing (nixl_b_params_t *custom_params) {
+getUseVirtualAddressing (nixl_b_params_t *custom_params) {
     if (!custom_params) return false;
 
     auto virtual_addressing_it = custom_params->find ("use_virtual_addressing");
@@ -135,7 +135,7 @@ AwsS3Client::AwsS3Client (nixl_b_params_t *custom_params,
     if (executor) config.executor = executor;
 
     auto credentials_opt = ::createAWSCredentials (custom_params);
-    bool use_virtual_addressing = ::getUserVirtualAddressing (custom_params);
+    bool use_virtual_addressing = ::getUseVirtualAddressing (custom_params);
     bucket_name_ = Aws::String (::getBucketName (custom_params));
 
     if (credentials_opt.has_value())
@@ -211,11 +211,11 @@ AwsS3Client::GetObjectAsync (std::string_view key,
 
     s3_client_->GetObjectAsync (
         request,
-        [callback, stream_factory] (
-            const Aws::S3::S3Client *client,
-            const Aws::S3::Model::GetObjectRequest &req,
-            const Aws::S3::Model::GetObjectOutcome &outcome,
-            const std::shared_ptr<const Aws::Client::AsyncCallerContext> &context) {
+        [callback,
+         stream_factory] (const Aws::S3::S3Client *client,
+                          const Aws::S3::Model::GetObjectRequest &req,
+                          const Aws::S3::Model::GetObjectOutcome &outcome,
+                          const std::shared_ptr<const Aws::Client::AsyncCallerContext> &context) {
             callback (outcome.IsSuccess());
         },
         nullptr);

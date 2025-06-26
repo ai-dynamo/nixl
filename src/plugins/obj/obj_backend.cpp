@@ -23,8 +23,16 @@
 #include <future>
 #include <vector>
 #include <chrono>
+#include <algorithm>
 
 namespace {
+
+std::size_t
+getNumThreads (nixl_b_params_t *custom_params) {
+    return custom_params && custom_params->count ("num_threads") > 0 ?
+        std::stoul (custom_params->at ("num_threads")) :
+        std::max (1u, std::thread::hardware_concurrency() / 2);
+}
 
 bool
 isValidPrepXferParams (const nixl_xfer_op_t &operation,
@@ -77,7 +85,6 @@ public:
                 return NIXL_IN_PROG;
             }
         }
-
         return NIXL_SUCCESS;
     }
 };
@@ -104,7 +111,8 @@ public:
 
 nixlObjEngine::nixlObjEngine (const nixlBackendInitParams *init_params)
     : nixlBackendEngine (init_params),
-      executor_ (std::make_shared<AsioThreadPoolExecutor> (std::thread::hardware_concurrency())),
+      executor_ (
+          std::make_shared<AsioThreadPoolExecutor> (getNumThreads (init_params->customParams))),
       s3_client_ (std::make_shared<AwsS3Client> (init_params->customParams, executor_)) {
     NIXL_INFO << "Object storage backend initialized with S3 client wrapper";
 }
@@ -115,7 +123,6 @@ nixlObjEngine::nixlObjEngine (const nixlBackendInitParams *init_params,
       executor_ (std::make_shared<AsioThreadPoolExecutor> (std::thread::hardware_concurrency())),
       s3_client_ (s3_client) {
     s3_client_->setExecutor (executor_);
-
     NIXL_INFO << "Object storage backend initialized with injected S3 client";
 }
 
@@ -182,7 +189,8 @@ nixlObjEngine::postXfer (const nixl_xfer_op_t &operation,
 
         auto obj_key_search = dev_id_to_obj_key_.find (remote_desc.devId);
         if (obj_key_search == dev_id_to_obj_key_.end()) {
-            NIXL_ERROR << "No object key found for device ID: " << remote_desc.devId;
+            NIXL_ERROR << "The object segment key " << remote_desc.devId
+                       << " is not registered with the backend";
             return NIXL_ERR_INVALID_PARAM;
         }
 
