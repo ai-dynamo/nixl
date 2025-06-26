@@ -33,6 +33,8 @@ if [ -z ${latest_tag} ]; then
     echo "No git release tag found, setting to unknown version: ${latest_tag}"
 fi
 
+ENABLE_TELEMETRY="false"
+
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
 BASE_IMAGE_TAG=25.03-cuda12.8-devel-ubuntu24.04
 ARCH=$(uname -m)
@@ -120,6 +122,14 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --enable-telemetry)
+            if [ "$2" ]; then
+                ENABLE_TELEMETRY=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --)
             shift
             break
@@ -162,6 +172,7 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
+    echo "Enable Telemetry: ${ENABLE_TELEMETRY}"
 }
 
 show_help() {
@@ -175,6 +186,7 @@ show_help() {
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--tag tag for image]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
+    echo "  [--enable-telemetry [true|false] to enable/disable telemetry, default false]"
     exit 0
 }
 
@@ -193,6 +205,7 @@ BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BAS
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
+BUILD_ARGS+=" --build-arg ENABLE_TELEMETRY=$ENABLE_TELEMETRY"
 
 show_build_options
 

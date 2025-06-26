@@ -106,6 +106,7 @@ ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
+ARG ENABLE_TELEMETRY="true"
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
@@ -138,11 +139,12 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl && \
+    uv run meson setup build/ --prefix=/usr/local/nixl -Denable_telemetry=${ENABLE_TELEMETRY} && \
     cd build && \
     ninja && \
     ninja install
 
+RUN cp build/examples/cpp/telemetry_reader_example /usr/local/bin
 ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/$ARCH-linux-gnu/plugins
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \

@@ -21,6 +21,7 @@
 #include "mem_section.h"
 #include "stream/metadata_stream.h"
 #include "sync.h"
+#include "telemetry.h"
 
 #if HAVE_ETCD
 #include <etcd/SyncClient.hpp>
@@ -62,7 +63,6 @@ class nixlAgentData {
         std::string     name;
         nixlAgentConfig config;
         nixlLock        lock;
-        bool telemetryEnabled = false;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
@@ -93,7 +93,7 @@ class nixlAgentData {
         std::mutex                         commLock;
         bool                               commThreadStop;
         bool                               useEtcd;
-
+        std::shared_ptr<nixlTelemetry> telemetry_;
         void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
