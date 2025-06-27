@@ -168,7 +168,8 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
 
  nixlUcxEp::~nixlUcxEp()
  {
-     if (const nixl_status_t status = disconnect_nb(); status) {
+     const nixl_status_t status = disconnect_nb();
+     if (status != NIXL_SUCCESS) {
          NIXL_ERROR << "Failed to disconnect ep with status " << status;
      }
  }
@@ -238,7 +239,8 @@ nixl_status_t nixlUcxEp::read(const uint64_t raddr, nixlUcxRkey &rk,
                               void *laddr, nixlUcxMem &mem,
                               const size_t size, nixlUcxReq &req)
 {
-    if (const nixl_status_t status = checkTxState(); status != NIXL_SUCCESS) {
+    const nixl_status_t status = checkTxState();
+    if (status != NIXL_SUCCESS) {
         return status;
     }
 
