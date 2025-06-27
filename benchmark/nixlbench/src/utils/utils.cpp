@@ -301,6 +301,30 @@ xferBenchConfig::loadFromFlags() {
         return -1;
     }
 
+    if (XFERBENCH_BACKEND_GDS == backend ||
+        XFERBENCH_BACKEND_POSIX == backend) {
+        if (scheme != XFERBENCH_SCHEME_TP && scheme != XFERBENCH_SCHEME_PAIRWISE) {
+            std::cerr << "Storage backend only supports pairwise and tp scheme, ["
+                      << scheme << "] is not supported." << std::endl;
+            return -1;
+        }
+        if (scheme != XFERBENCH_SCHEME_TP && num_files % num_threads != 0) {
+            std::cerr << "Storage backend with scheme to assign whole file to"
+                      << " a thread must have num_files(" << num_files
+                      << ") divisible by num_threads(" << num_threads
+                      << ")"
+                      << std::endl;
+            return -1;
+        }
+        if (max_block_size * max_batch_size * num_files > total_buffer_size) {
+            std::cerr << "Incorrect buffer size configuration"
+                      << " max_block_size * max_batch_size * num_files >"
+                      << " total_buffer_size"
+                      << std::endl;
+            return -1;
+        }
+    }
+
     if (large_blk_iter_ftr == 0 || large_blk_iter_ftr > num_iter) {
         std::cerr << "iter_factor must not be 0 and must be lower than num_iter" << std::endl;
         return -1;
@@ -616,6 +640,8 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     double totalbw = 0;
 
     int num_iter = xferBenchConfig::num_iter;
+    int num_files = xferBenchConfig::num_files;
+    int num_threads = xferBenchConfig::num_threads;
 
     if (block_size > LARGE_BLOCK_SIZE) {
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
@@ -633,6 +659,14 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     if (IS_PAIRWISE_AND_MG()) {
         total_data_transferred *= xferBenchConfig::num_initiator_dev; // In Bytes
         avg_latency /= xferBenchConfig::num_initiator_dev; // In microsec
+    }
+    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
+        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+        if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
+            total_data_transferred *= num_files * num_threads;
+        } else {
+            total_data_transferred *= num_files;
+        }
     }
 
     throughput = (((double) total_data_transferred / (1024 * 1024)) /

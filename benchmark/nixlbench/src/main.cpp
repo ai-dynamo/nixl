@@ -37,28 +37,40 @@ static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int nu
     initiator_device = xferBenchConfig::num_initiator_dev;
     target_device = xferBenchConfig::num_target_dev;
 
-    // Default value
-    count = 1;
-    buffer_size = xferBenchConfig::total_buffer_size / (initiator_device * num_threads);
+    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
+        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+        if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
+            // Every threads will read/write a block of every files
+            count = xferBenchConfig::num_files;
+        } else {
+            // Each file will assign to 1 thread only
+            count = xferBenchConfig::num_files / num_threads;
+        }
+        buffer_size = xferBenchConfig::total_buffer_size / num_threads;
+    } else {
+        // Default value
+        count = 1;
+        buffer_size = xferBenchConfig::total_buffer_size / (initiator_device * num_threads);
 
-    // TODO: add macro for schemes
-    // Maybe, we can squeze ONE_TO_MANY and MANY_TO_ONE into TP scheme
-    if (XFERBENCH_SCHEME_ONE_TO_MANY == xferBenchConfig::scheme) {
-        if (worker.isInitiator()) {
-            count = target_device;
-        }
-    } else if (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme) {
-        if (worker.isTarget()) {
-            count = initiator_device;
-        }
-    } else if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
-        if (worker.isInitiator()) {
-            if (initiator_device < target_device) {
-                count = target_device / initiator_device;
+        // TODO: add macro for schemes
+        // Maybe, we can squeze ONE_TO_MANY and MANY_TO_ONE into TP scheme
+        if (XFERBENCH_SCHEME_ONE_TO_MANY == xferBenchConfig::scheme) {
+            if (worker.isInitiator()) {
+                count = target_device;
             }
-        } else if (worker.isTarget()) {
-            if (target_device < initiator_device) {
-                count = initiator_device / target_device;
+        } else if (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme) {
+            if (worker.isTarget()) {
+                count = initiator_device;
+            }
+        } else if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
+            if (worker.isInitiator()) {
+                if (initiator_device < target_device) {
+                    count = target_device / initiator_device;
+                }
+            } else if (worker.isTarget()) {
+                if (target_device < initiator_device) {
+                    count = initiator_device / target_device;
+                }
             }
         }
     }
