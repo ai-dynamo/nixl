@@ -45,13 +45,11 @@ isValidPrepXferParams (const nixl_xfer_op_t &operation,
         return false;
     }
 
-    if (remote_agent != local_agent) {
-        NIXL_ERROR << absl::StrFormat (
-            "Error: Remote agent must match the requesting agent (%s). Got %s",
+    if (remote_agent != local_agent)
+        NIXL_WARN << absl::StrFormat (
+            "Warning: Remote agent doesn't match the requesting agent (%s). Got %s",
             local_agent,
             remote_agent);
-        return false;
-    }
 
     if (local.getType() != DRAM_SEG) {
         NIXL_ERROR << absl::StrFormat ("Error: Local memory type must be DRAM_SEG, got %d",
@@ -122,6 +120,7 @@ nixlObjEngine::nixlObjEngine (const nixlBackendInitParams *init_params)
     NIXL_INFO << "Object storage backend initialized with S3 client wrapper";
 }
 
+// Used for testing to inject a mock S3 client dependency
 nixlObjEngine::nixlObjEngine (const nixlBackendInitParams *init_params,
                               std::shared_ptr<IS3Client> s3_client)
     : nixlBackendEngine (init_params),
@@ -206,6 +205,8 @@ nixlObjEngine::postXfer (const nixl_xfer_op_t &operation,
         size_t data_len = local_desc.len;
         size_t offset = remote_desc.addr;
 
+        // S3 client interface signals completion via a callback, but NIXL API polls request handle
+        // for the status code. Use future/promise pair to bridge the gap.
         if (operation == NIXL_WRITE)
             s3_client_->PutObjectAsync (obj_key_search->second,
                                         data_ptr,
