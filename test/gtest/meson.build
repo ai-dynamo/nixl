@@ -22,6 +22,7 @@ if not gtest_dep.found()
     subdir_done()
 endif
 
+subdir('unit')
 subdir('mocks')
 
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
