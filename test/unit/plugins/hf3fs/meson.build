@@ -13,12 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Get Abseil dependencies
+absl_log_dep = dependency('absl_log', required: true)
+
 nixl_hf3fs_app = executable('nixl_hf3fs_test', 'nixl_hf3fs_test.cpp',
                           dependencies: [nixl_dep, nixl_infra],
                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
                           install: true)
 
 nixl_hf3fs_mt_app = executable('nixl_hf3fs_mt_test', 'nixl_hf3fs_mt_test.cpp',
-                          dependencies: [nixl_dep, nixl_infra],
+                          dependencies: [nixl_dep, nixl_infra, absl_log_dep],
                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
                           install: true)
