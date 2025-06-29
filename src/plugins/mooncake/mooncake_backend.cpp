@@ -42,6 +42,13 @@ std::vector<std::string> findLocalIpAddresses() {
                 continue;
             }
 
+            // Check if interface is UP and RUNNING
+            if (!(ifa->ifa_flags & IFF_UP) || !(ifa->ifa_flags & IFF_RUNNING)) {
+                LOG(INFO) << "Skipping interface " << ifa->ifa_name
+                          << " (not UP or not RUNNING)";
+                continue;
+            }
+
             char host[NI_MAXHOST];
             if (getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in), host,
                             NI_MAXHOST, nullptr, 0, NI_NUMERICHOST) == 0) {
