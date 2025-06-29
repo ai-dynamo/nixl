@@ -29,5 +29,6 @@ py.extension_module('_bindings',
 py.extension_module('_utils',
            'nixl_utils.cpp',
            subdir: ('nixl'),
-           dependencies: [pybind_dep],
+           dependencies: [pybind_dep, file_utils_dep],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
            install: true)
