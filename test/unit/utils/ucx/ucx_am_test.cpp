@@ -66,8 +66,8 @@ int main()
     };
 
     nixlUcxWorker w[2] = {
-        nixlUcxWorker(c[0]),
-        nixlUcxWorker(c[1])
+        nixlUcxWorker(c[0], 0),
+        nixlUcxWorker(c[1], 1)
     };
     std::unique_ptr<nixlUcxEp> ep[2];
     nixlUcxReq req;
