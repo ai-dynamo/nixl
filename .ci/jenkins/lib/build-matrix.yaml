@@ -43,6 +43,9 @@ matrix:
     arch:
       - x86_64
       - aarch64
+    container_type:
+      - ubuntu
+      - manylinux
 
 env:
   NIXL_INSTALL_DIR: /opt/nixl
@@ -71,10 +74,23 @@ steps:
     parallel: false
     containerSelector: "{ name: 'podman.*' }"
     run: |
+      if [[ "${container_type}" == "manylinux" ]]; then
+        echo "Skipping manylinux container build"
+        exit 0
+      fi
+
       # change storage driver to improve build performance
       rm -f /etc/containers/storage.conf ; podman system reset -f || true
       # symlink podman to docker - scripts works with docker commands
       ln -sfT $(type -p podman) /usr/bin/docker
       # install git for building container image
       yum install -y git
-      contrib/build-container.sh --no-cache
+
+      # Select dockerfile based on container_type
+      if [[ "${container_type}" == "manylinux" ]]; then
+        DOCKERFILE_ARG="--dockerfile contrib/Dockerfile.manylinux"
+      else
+        DOCKERFILE_ARG=""
+      fi
+
+      contrib/build-container.sh --no-cache $DOCKERFILE_ARG
