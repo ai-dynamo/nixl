@@ -13,12 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import yaml  # type: ignore
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -121,7 +128,7 @@ class ModelConfig:
                     config_dict = yaml.safe_load(f)
                 config = config.update(config_dict)
             else:
-                print(f"Warning: Config file not found: {path}")
+                logger.warning("Config file not found: %s", path)
 
         return config
 

@@ -19,10 +19,17 @@ import argparse
 import base64
 import csv
 import hashlib
+import logging
 import os
 import shutil
 import tempfile
 import zipfile
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 def extract_wheel(wheel_path):
@@ -32,7 +39,7 @@ def extract_wheel(wheel_path):
         Path to the temporary directory. The caller is responsible for cleaning up the directory.
     """
     temp_dir = tempfile.mkdtemp()
-    print(f"Extracting wheel {wheel_path} to {temp_dir}")
+    logger.info("Extracting wheel %s to %s", wheel_path, temp_dir)
     with zipfile.ZipFile(wheel_path, "r") as zip_ref:
         zip_ref.extractall(temp_dir)
     return temp_dir
@@ -82,7 +89,7 @@ def create_wheel(wheel_path, temp_dir):
     """
     Create a wheel from a temporary directory.
     """
-    print(f"Creating wheel {wheel_path} from {temp_dir}")
+    logger.info("Creating wheel %s from %s", wheel_path, temp_dir)
     update_wheel_record_file(temp_dir)
     with zipfile.ZipFile(
         wheel_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
@@ -175,12 +182,12 @@ def add_ucx_plugins(wheel_path, ucx_sys_lib_dir):
     pkg_plugins_dir = os.path.join(pkg_libs_dir, "ucx")
     if os.path.exists(pkg_plugins_dir):
         shutil.rmtree(pkg_plugins_dir)
-    print(f"Copying UCX plugins from {sys_plugins_dir} to {pkg_plugins_dir}")
+    logger.info("Copying UCX plugins from %s to %s", sys_plugins_dir, pkg_plugins_dir)
     shutil.copytree(sys_plugins_dir, pkg_plugins_dir)
 
     # Patch all libs to load UCX deps from parent directory
     for fname in os.listdir(pkg_plugins_dir):
-        print(f"Patching {fname}")
+        logger.debug("Patching %s", fname)
         fpath = os.path.join(pkg_plugins_dir, fname)
         if os.path.isfile(fpath) and ".so" in fname:
             rpath = os.popen(f"patchelf --print-rpath {fpath}").read().strip()
@@ -188,7 +195,7 @@ def add_ucx_plugins(wheel_path, ucx_sys_lib_dir):
                 rpath = "$ORIGIN/..:$ORIGIN"
             else:
                 rpath = "$ORIGIN/..:$ORIGIN:" + rpath
-            print(f"Setting rpath for {fpath} to {rpath}")
+            logger.debug("Setting rpath for %s to %s", fpath, rpath)
             ret = os.system(f"patchelf --set-rpath '{rpath}' {fpath}")
             if ret != 0:
                 raise RuntimeError(f"Failed to set rpath for {fpath}")
@@ -198,7 +205,9 @@ def add_ucx_plugins(wheel_path, ucx_sys_lib_dir):
                 base_name = libname.split(".")[0]
                 if base_name in name_map:
                     packaged_name = name_map[base_name]
-                    print(f"Replacing {libname} with {packaged_name} in {fpath}")
+                    logger.debug(
+                        "Replacing %s with %s in %s", libname, packaged_name, fpath
+                    )
                     ret = os.system(
                         f"patchelf --replace-needed {libname} {packaged_name} {fpath}"
                     )
@@ -207,7 +216,7 @@ def add_ucx_plugins(wheel_path, ucx_sys_lib_dir):
                             f"Failed to replace {libname} with {packaged_name} in {fpath}"
                         )
             # Check that there is no breakage introduced in the patched lib
-            print(f"Checking that {fpath} loads")
+            logger.debug("Checking that %s loads", fpath)
             original_deps = get_lib_deps(os.path.join(sys_plugins_dir, fname))
             for libname, libpath in get_lib_deps(fpath).items():
                 if libpath is None:
@@ -219,7 +228,7 @@ def add_ucx_plugins(wheel_path, ucx_sys_lib_dir):
 
     create_wheel(wheel_path, temp_dir)
     shutil.rmtree(temp_dir)
-    print(f"Added UCX plugins to wheel: {wheel_path}")
+    logger.info("Added UCX plugins to wheel: %s", wheel_path)
 
 
 def main():

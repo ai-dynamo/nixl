@@ -15,10 +15,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import time
 
 import nixl._utils as nixl_utils
 from nixl._api import nixl_agent
+
+logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     desc_count = 24 * 64 * 1024
@@ -35,7 +38,8 @@ if __name__ == "__main__":
 
     assert descs.descCount() == desc_count
 
-    print(
-        "Time per desc add in us:", (1000000.0 * (end_time - start_time)) / desc_count
+    logger.info(
+        "Time per desc add in us: %f",
+        (1000000.0 * (end_time - start_time)) / desc_count,
     )
     nixl_utils.free_passthru(addr)

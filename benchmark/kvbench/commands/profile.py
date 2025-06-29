@@ -14,12 +14,16 @@
 # limitations under the License.
 
 import argparse
+import logging
 
 from commands.args import add_cli_args, add_common_args, add_nixl_bench_args
 from commands.nixlbench import NIXLBench
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
 from models.utils import get_batch_size, override_yaml_args
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class Command:
@@ -71,7 +75,7 @@ class Command:
             int: -1 if required arguments are missing, otherwise None.
         """
         if not args.model or not args.model_config:
-            print("Error: --model and --model_config are required")
+            logger.error("--model and --model_config are required")
             return -1
 
         if args.model:
@@ -95,11 +99,11 @@ class Command:
         nixl_bench.configure_segment_type(args.backend, args.source, args.destination)
         separator = "=" * 80
 
-        print(f"Model Config: {args.model_config}")
-        print(f"ISL: {model_config.runtime.isl} tokens")
-        print(f"Page Size: {model_config.system.page_size}")
-        print(f"Requests: {model_config.runtime.num_requests}")
-        print(f"TP: {model_config.model.tp_size}")
-        print(f"PP: {model_config.model.pp_size}")
-        print(separator)
+        logger.info("Model Config: %s", args.model_config)
+        logger.info("ISL: %s tokens", model_config.runtime.isl)
+        logger.info("Page Size: %s", model_config.system.page_size)
+        logger.info("Requests: %s", model_config.runtime.num_requests)
+        logger.info("TP: %s", model_config.model.tp_size)
+        logger.info("PP: %s", model_config.model.pp_size)
+        logger.info(separator)
         nixl_bench.profile()

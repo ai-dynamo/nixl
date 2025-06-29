@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import pickle
 from typing import Optional, Union
 
@@ -20,6 +21,12 @@ import numpy as np
 import torch
 
 import nixl._bindings as nixlBind
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 DEFAULT_COMM_PORT = nixlBind.DEFAULT_COMM_PORT
 
@@ -76,7 +83,7 @@ class nixl_agent:
     ):
         if nixl_conf and instantiate_all:
             instantiate_all = False
-            print(
+            logger.warning(
                 "Ignoring instantiate_all based on the provided config in agent creation."
             )
         if not nixl_conf:
@@ -105,7 +112,7 @@ class nixl_agent:
 
         self.plugin_list = self.agent.getAvailPlugins()
         if len(self.plugin_list) == 0:
-            print("No plugins available, cannot start transfers!")
+            logger.error("No plugins available, cannot start transfers!")
             raise RuntimeError("No plugins available for NIXL, cannot start transfers!")
 
         self.plugin_b_options: dict[str, dict[str, str]] = {}
@@ -125,10 +132,9 @@ class nixl_agent:
             for bknd in nixl_conf.backends:
                 # TODO: populate init from nixl_conf when added
                 if bknd not in self.plugin_list:
-                    print(
-                        "Skipping backend registration",
+                    logger.warning(
+                        "Skipping backend registration %s due to the missing plugin.",
                         bknd,
-                        "due to the missing plugin.",
                     )
                 else:
                     self.create_backend(bknd, init)
@@ -147,7 +153,7 @@ class nixl_agent:
             "READ": nixlBind.NIXL_READ,
         }
 
-        print("Initialized NIXL agent:", agent_name)
+        logger.info("Initialized NIXL agent: %s", agent_name)
 
     """
     @brief Get the list of available plugins.
@@ -169,7 +175,9 @@ class nixl_agent:
         if backend in self.plugin_mem_types:
             return self.plugin_mem_types[backend]
         else:
-            print("Plugin", backend, "is not available to get its supported mem types.")
+            logger.warning(
+                "Plugin %s is not available to get its supported mem types.", backend
+            )
             return []
 
     """
@@ -184,7 +192,7 @@ class nixl_agent:
         if backend in self.plugin_b_options:
             return self.plugin_b_options[backend]
         else:
-            print("Plugin", backend, "is not available to get its parameters.")
+            logger.warning("Plugin %s is not available to get its parameters.", backend)
             return {}
 
     """
@@ -201,8 +209,8 @@ class nixl_agent:
         if backend in self.backend_mems:
             return self.backend_mems[backend]
         else:
-            print(
-                "Backend", backend, "not instantiated to get its supported mem types."
+            logger.warning(
+                "Backend %s not instantiated to get its supported mem types.", backend
             )
             return []
 
@@ -220,7 +228,9 @@ class nixl_agent:
         if backend in self.backend_options:
             return self.backend_options[backend]
         else:
-            print("Backend", backend, "not instantiated to get its parameters.")
+            logger.warning(
+                "Backend %s not instantiated to get its parameters.", backend
+            )
             return {}
 
     """
@@ -238,7 +248,7 @@ class nixl_agent:
         )
         self.backend_mems[backend] = mem_types
         self.backend_options[backend] = backend_options
-        print("Backend", backend, "was instantiated")
+        logger.info("Backend %s was instantiated", backend)
 
     """
     @brief Register memory regions, optionally with specified backends.
@@ -771,7 +781,7 @@ class nixl_agent:
         if isinstance(descs, nixlBind.nixlXferDList):
             return descs
         elif isinstance(descs, nixlBind.nixlRegDList):
-            print("RegList type detected for transfer, please use XferList")
+            logger.error("RegList type detected for transfer, please use XferList")
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
@@ -779,10 +789,10 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                print("Please specify a mem type if not using Tensors")
+                logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                print("3-tuple list needed for transfer")
+                logger.error("3-tuple list needed for transfer")
                 new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
@@ -790,10 +800,10 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                print("Please specify a mem type if not using Tensors")
+                logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                print(
+                logger.error(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
                 new_descs = None
@@ -858,7 +868,7 @@ class nixl_agent:
         if isinstance(descs, nixlBind.nixlRegDList):
             return descs
         elif isinstance(descs, nixlBind.nixlXferDList):
-            print("XferList type detected for registration, please use RegList")
+            logger.error("XferList type detected for registration, please use RegList")
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 4:
@@ -866,10 +876,10 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                print("Please specify a mem type if not using Tensors")
+                logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                print("4-tuple list needed for registration")
+                logger.error("4-tuple list needed for registration")
                 new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
@@ -877,10 +887,10 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                print("Please specify a mem type if not using Tensors")
+                logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                print(
+                logger.error(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
                 new_descs = None

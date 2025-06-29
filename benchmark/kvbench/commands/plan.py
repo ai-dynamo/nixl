@@ -18,6 +18,7 @@ import csv
 import glob
 import io
 import json
+import logging
 import os
 
 from commands.args import (
@@ -30,6 +31,9 @@ from commands.nixlbench import NIXLBench
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
 from models.utils import get_batch_size, override_yaml_args
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class Command:
@@ -83,11 +87,11 @@ class Command:
             int: -1 if required arguments are missing, otherwise None.
         """
         if not args.model:
-            print("Error: --model is required")
+            logger.error("--model is required")
             return -1
 
         if not args.model_config and not args.model_configs:
-            print("Error: either --model_config or --model_configs is required")
+            logger.error("either --model_config or --model_configs is required")
             return -1
 
         # Load model architecture
@@ -103,11 +107,11 @@ class Command:
             # Expand glob patterns into list of files
             expanded_files = glob.glob(args.model_configs)
             if not expanded_files:
-                print(f"Warning: No files matched the pattern: {args.model_configs}")
+                logger.warning("No files matched the pattern: %s", args.model_configs)
             config_files.extend(expanded_files)
 
         if not config_files:
-            print("Error: No valid model config files specified")
+            logger.error("No valid model config files specified")
             return -1
 
         # Filter out duplicate paths
@@ -122,7 +126,7 @@ class Command:
         for config_file in config_files:
             # Skip if file doesn't exist
             if not os.path.exists(config_file):
-                print(f"Warning: Config file not found: {config_file}")
+                logger.warning("Config file not found: %s", config_file)
                 continue
 
             try:
@@ -177,22 +181,22 @@ class Command:
 
                     all_plans.append(plan_data)
                 else:
-                    print(separator)
-                    print(f"Model Config: {config_file}")
-                    print(f"ISL: {model_config.runtime.isl} tokens")
-                    print(f"Page Size: {model_config.system.page_size}")
-                    print(f"Requests: {model_config.runtime.num_requests}")
-                    print(f"TP: {model_config.model.tp_size}")
-                    print(f"PP: {model_config.model.pp_size}")
-                    print(separator)
-                    print(plan)
-                    print()
+                    logger.info(separator)
+                    logger.info("Model Config: %s", config_file)
+                    logger.info("ISL: %s tokens", model_config.runtime.isl)
+                    logger.info("Page Size: %s", model_config.system.page_size)
+                    logger.info("Requests: %s", model_config.runtime.num_requests)
+                    logger.info("TP: %s", model_config.model.tp_size)
+                    logger.info("PP: %s", model_config.model.pp_size)
+                    logger.info(separator)
+                    logger.info(plan)
+                    logger.info("")
             except Exception as e:
-                print(f"Error processing config file {config_file}: {str(e)}")
+                logger.error("Error processing config file %s: %s", config_file, str(e))
 
         # For JSON format, output all plans as an array
         if args.format == "json" and all_plans:
-            print(json.dumps(all_plans, indent=2))
+            logger.info(json.dumps(all_plans, indent=2))
         # For CSV format, output all plans as CSV
         elif args.format == "csv" and all_plans:
             # Get all unique keys from all plans
@@ -209,6 +213,6 @@ class Command:
                 writer.writerow(plan)
 
             # Print CSV output
-            print(output.getvalue())
+            logger.info(output.getvalue())
 
         return 0

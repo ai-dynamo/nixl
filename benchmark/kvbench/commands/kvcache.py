@@ -14,11 +14,15 @@
 # limitations under the License.
 
 import argparse
+import logging
 
 from commands.args import add_cli_args, add_common_args
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
 from models.utils import get_batch_size, override_yaml_args
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class Command:
@@ -70,7 +74,7 @@ class Command:
             int: -1 if required arguments are missing, otherwise None.
         """
         if not args.model or not args.model_config:
-            print("Error: --model and --model_config are required")
+            logger.error("--model and --model_config are required")
             return -1
 
         # Load model architecture
@@ -98,7 +102,9 @@ class Command:
         max_width = max(len(label) for label in labels)
         io_size = model.get_io_size(model_config.system.page_size)
         batch_size = get_batch_size(model, model_config, io_size)
-        print(f"{'Model':{max_width}}: {model.model}")
-        print(f"{'Input Sequence Length':{max_width}}: {model_config.runtime.isl}")
-        print(f"{'Batch Size':{max_width}}: {batch_size}")
-        print(f"{'IO Size':{max_width}}: {format_bytes(io_size)}")
+        logger.info("%s: %s", "Model".ljust(max_width), model.model)
+        logger.info(
+            "%s: %s", "Input Sequence Length".ljust(max_width), model_config.runtime.isl
+        )
+        logger.info("%s: %s", "Batch Size".ljust(max_width), batch_size)
+        logger.info("%s: %s", "IO Size".ljust(max_width), format_bytes(io_size))

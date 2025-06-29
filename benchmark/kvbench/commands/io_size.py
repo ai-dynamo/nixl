@@ -14,10 +14,14 @@
 # limitations under the License.
 
 import argparse
+import logging
 
 from commands.args import add_common_args
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class Command:
@@ -60,7 +64,7 @@ class Command:
         displays the information in a formatted output.
         """
         if not args.model or not args.model_config:
-            print("Error: --model and --model_config are required")
+            logger.error("--model and --model_config are required")
             return -1
 
         # Load model architecture
@@ -72,4 +76,4 @@ class Command:
         # Set model_config on the model instance using the new method
         model.set_model_config(model_config)
         io_size = model.get_io_size()
-        print(f"IO Size per GPU: {io_size}")
+        logger.debug("IO Size per GPU: %s", io_size)
