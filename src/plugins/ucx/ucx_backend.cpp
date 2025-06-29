@@ -827,7 +827,7 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
     }
 
     // TODO: Add nixl_mem check?
-    const int ret = uc->memReg((void*) mem.addr, mem.len, priv->mem);
+    const int ret = uc->memReg((void*) mem.addr, mem.len, priv->mem, nixl_mem);
     if (ret) {
         return NIXL_ERR_BACKEND;
     }
