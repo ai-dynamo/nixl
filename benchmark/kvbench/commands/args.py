@@ -153,3 +153,8 @@ def add_nixl_bench_args(subparser: argparse.ArgumentParser):
     subparser.add_argument(
         "--gds_filepath", type=str, help="(File path for GDS operations"
     )
+    subparser.add_argument(
+        "--enable_vmm",
+        action="store_true",
+        help="Enable VMM memory allocation when DRAM is requested",
+    )

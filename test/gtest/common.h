@@ -17,26 +17,44 @@
 
 #include <iostream>
 #include <iomanip>
+#include <cassert>
+#include <stack>
+#include <optional>
 
 namespace gtest {
 
 class Logger {
 public:
-    Logger(const std::string &title = "INFO")
-    {
-        std::cout << "[ " << std::setw(8) << title << " ] ";
-    }
-
-    ~Logger()
-    {
-        std::cout << std::endl;
-    }
+    Logger(const std::string &title = "INFO");
+    ~Logger();
 
     template<typename T> Logger &operator<<(const T &value)
     {
         std::cout << value;
         return *this;
     }
+};
+
+class ScopedEnv {
+public:
+    void addVar(const std::string &name, const std::string &value);
+
+private:
+    class Variable {
+    public:
+        Variable(const std::string &name, const std::string &value);
+        Variable(Variable &&other);
+        ~Variable();
+
+        Variable(const Variable &other) = delete;
+        Variable &operator=(const Variable &other) = delete;
+
+    private:
+        std::optional<std::string> m_prev_value;
+        std::string m_name;
+    };
+
+    std::stack<Variable> m_vars;
 };
 
 } // namespace gtest

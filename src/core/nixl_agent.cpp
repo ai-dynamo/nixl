@@ -719,8 +719,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                      remote_descs, backend, *handle->targetDescs);
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
-            // For Logging:
-            // std::cout << "Selected backend: " << backend->getType() << "\n";
+            NIXL_INFO << "Selected backend: " << backend->getType();
             handle->engine = backend;
             break;
         }
@@ -733,9 +732,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    if (extra_params && extra_params->hasNotif) {
-        opt_args.notifMsg = extra_params->notifMsg;
-        opt_args.hasNotif = true;
+    if (extra_params) {
+        if (extra_params->hasNotif) {
+            opt_args.notifMsg = extra_params->notifMsg;
+            opt_args.hasNotif = true;
+        }
+
+        if (extra_params->customParam.length() > 0)
+            opt_args.customParam = extra_params->customParam;
     }
 
     if (opt_args.hasNotif && (!handle->engine->supportsNotif())) {
@@ -977,41 +981,35 @@ nixlAgent::genNotif(const std::string &remote_agent,
                     const nixl_blob_t &msg,
                     const nixl_opt_args_t* extra_params) const {
 
-    nixlBackendEngine* backend = nullptr;
-    backend_list_t*    backend_list;
+    backend_list_t backend_list_value;
+    backend_list_t* backend_list;
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    if (!extra_params || extra_params->backends.size() == 0) {
+    if (!extra_params || extra_params->backends.empty()) {
         backend_list = &data->notifEngines;
         if (backend_list->empty())
             return NIXL_ERR_BACKEND;
     } else {
-        backend_list = new backend_list_t();
-        for (auto & elm : extra_params->backends)
+        backend_list = &backend_list_value;
+        for (auto &elm : extra_params->backends)
             if (elm->engine->supportsNotif())
                 backend_list->push_back(elm->engine);
 
         if (backend_list->empty()) {
-            delete backend_list;
             return NIXL_ERR_BACKEND;
         }
     }
 
+    bool localNotif = data->name == remote_agent;
     for (auto & eng: *backend_list) {
-        if (data->remoteBackends[remote_agent].count(
-                                 eng->getType()) != 0) {
-            backend = eng;
-            break;
+        if ((localNotif && eng->supportsLocal()) ||
+            (!localNotif &&
+             data->remoteBackends[remote_agent].count(eng->getType()) != 0)) {
+            return eng->genNotif(remote_agent, msg);
         }
     }
 
-    if (extra_params && extra_params->backends.size() > 0)
-        delete backend_list;
-
-    if (backend)
-        return backend->genNotif(remote_agent, msg);
-    else
-        return NIXL_ERR_NOT_FOUND;
+    return NIXL_ERR_NOT_FOUND;
 }
 
 nixl_status_t

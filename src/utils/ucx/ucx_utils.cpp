@@ -30,7 +30,7 @@
 
 using namespace std;
 
-static nixl_status_t ucx_status_to_nixl(ucs_status_t status)
+nixl_status_t ucx_status_to_nixl(ucs_status_t status)
 {
     if (status == UCS_OK) {
         return NIXL_SUCCESS;
@@ -41,12 +41,29 @@ static nixl_status_t ucx_status_to_nixl(ucs_status_t status)
         return NIXL_IN_PROG;
     case UCS_ERR_NOT_CONNECTED:
     case UCS_ERR_CONNECTION_RESET:
+    case UCS_ERR_ENDPOINT_TIMEOUT:
         return NIXL_ERR_REMOTE_DISCONNECT;
     case UCS_ERR_INVALID_PARAM:
         return NIXL_ERR_INVALID_PARAM;
     default:
         NIXL_WARN << "Unexpected UCX error: " << ucs_status_string(status);
         return NIXL_ERR_BACKEND;
+    }
+}
+
+void ucx_modify_config(ucp_config_t *config, std::string_view key,
+                       std::string_view value)
+{
+    const char *env_val = std::getenv(absl::StrFormat("UCX_%s", key.data()).c_str());
+    value = env_val ? env_val : value;
+
+    ucs_status_t status = ucp_config_modify(config, key.data(), value.data());
+    if (status != UCS_OK) {
+        NIXL_WARN << "Failed to modify UCX config: " << key << "=" << value
+                  << ": " << ucs_status_string(status);
+    } else {
+        NIXL_DEBUG << "Applied UCX config from " << (env_val ? "env var" : "NIXL")
+                   << ": " << key << "=" << value;
     }
 }
 
@@ -390,9 +407,21 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         ucp_config_modify(ucp_config, "NET_DEVICES", dev_str.c_str());
     }
 
-    status = ucp_config_modify(ucp_config, "MAX_RMA_RAILS", "2");
-    if (status != UCS_OK) {
-        NIXL_WARN << "Failed to modify MAX_RMA_RAILS: " << ucs_status_string(status);
+    unsigned major_version, minor_version, release_number;
+    ucp_get_version(&major_version, &minor_version, &release_number);
+
+    ucx_modify_config(ucp_config, "ADDRESS_VERSION", "v2");
+    ucx_modify_config(ucp_config, "RNDV_THRESH", "inf");
+
+    unsigned ucp_version = UCP_VERSION(major_version, minor_version);
+    if (ucp_version >= UCP_VERSION(1, 19)) {
+        ucx_modify_config(ucp_config, "MAX_COMPONENT_MDS", "32");
+    }
+
+    if (ucp_version >= UCP_VERSION(1, 20)) {
+        ucx_modify_config(ucp_config, "MAX_RMA_RAILS", "4");
+    } else {
+        ucx_modify_config(ucp_config, "MAX_RMA_RAILS", "2");
     }
 
     status = ucp_init(&ucp_params, ucp_config, &ctx);
@@ -487,7 +516,7 @@ absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, st
  * =========================================== */
 
 
-int nixlUcxContext::memReg(void *addr, std::size_t size, nixlUcxMem &mem)
+int nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl_mem_type)
 {
     //mem.uw = this;
     mem.base = addr;
@@ -501,15 +530,33 @@ int nixlUcxContext::memReg(void *addr, std::size_t size, nixlUcxMem &mem)
         .length  = mem.size,
     };
 
-    const ucs_status_t status = ucp_mem_map(ctx, &mem_params, &mem.memh);
+    ucs_status_t status = ucp_mem_map(ctx, &mem_params, &mem.memh);
     if (status != UCS_OK) {
         /* TODOL: MSW_NET_ERROR(priv->net, "failed to ucp_mem_map (%s)\n", ucs_status_string(status)); */
         return -1;
     }
 
+    if (nixl_mem_type == nixl_mem_t::VRAM_SEG) {
+        ucp_mem_attr_t attr;
+        attr.field_mask = UCP_MEM_ATTR_FIELD_MEM_TYPE;
+        status = ucp_mem_query(mem.memh, &attr);
+        if (status != UCS_OK) {
+            NIXL_ERROR << absl::StrFormat("Failed to ucp_mem_query: %s",
+                                          ucs_status_string(status));
+            ucp_mem_unmap(ctx, mem.memh);
+            return -1;
+        }
+
+        if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
+            NIXL_ERROR << "memory is detected as host, check that UCX is configured"
+                          " with CUDA support";
+            ucp_mem_unmap(ctx, mem.memh);
+            return -1;
+        }
+    }
+
     return 0;
 }
-
 
 std::string nixlUcxContext::packRkey(nixlUcxMem &mem)
 {

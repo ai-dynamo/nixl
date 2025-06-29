@@ -1699,4 +1699,20 @@ nixl_capi_notif_map_get_notif(
   }
 }
 
+nixl_capi_status_t
+nixl_capi_notif_map_clear(nixl_capi_notif_map_t map)
+{
+  if (!map) {
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
+  }
+
+  try {
+    map->notif_map.clear();
+    return NIXL_CAPI_SUCCESS;
+  }
+  catch (const std::exception& e) {
+    return NIXL_CAPI_ERROR_BACKEND;
+  }
+}
+
 }  // extern "C"

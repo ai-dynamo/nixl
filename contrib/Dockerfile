@@ -20,6 +20,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_REF="v1.19.x"
 
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
@@ -42,7 +43,9 @@ RUN apt-get update -y && \
     libtool \
     libz-dev \
     flex \
-    build-essential
+    libgtest-dev \
+    build-essential \
+    libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
@@ -52,6 +55,10 @@ WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
 	cd etcd-cpp-apiv3 && mkdir build && cd build && \
 	cmake .. && make -j$(nproc) && make install
+RUN git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+    mkdir aws_sdk_build && cd aws_sdk_build && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    make -j$(nproc) && make install
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -74,14 +81,26 @@ RUN wget --tries=3 --waitretry=5 \
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
-# LD_LIBRARY_PATH is needed for auditwheel to find libcuda.so.1
-# Set incorrectly to `compat/lib` in cuda-dl-base image
-ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/usr/local/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
     uv pip install --upgrade meson pybind11 patchelf
+
+    # Add Mellanox repository and install packages
+RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else echo "${ARCH}"; fi) && \
+    export PKG_CONFIG_PATH="/opt/mellanox/doca/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:/opt/mellanox/dpdk/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" && \
+    curl -fsSL https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/${ARCH_SUFFIX}/GPG-KEY-Mellanox.pub | \
+    gpg --dearmor | tee /usr/share/keyrings/mellanox-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/mellanox-archive-keyring.gpg] https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/${ARCH_SUFFIX} ./" | \
+    tee /etc/apt/sources.list.d/mellanox.list && \
+    DEBIAN_FRONTEND=noninteractive apt update -y && \
+    apt install -y --no-install-recommends \
+        mlnx-dpdk mlnx-dpdk-dev \
+        doca-sdk-common doca-sdk-dma doca-sdk-dpdk-bridge \
+        doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all \
+        doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
@@ -89,7 +108,7 @@ RUN rm -rf /opt/hpcx/ucx
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && 			     \
-     git checkout v1.19.x &&	     \
+     git checkout $UCX_REF &&        \
      ./autogen.sh && ./configure     \
          --enable-shared             \
          --disable-static            \
@@ -107,6 +126,7 @@ RUN cd /usr/local/src && \
      make -j install-strip &&        \
      ldconfig
 
+
 RUN rm -rf build && \
     mkdir build && \
     uv run meson setup build/ --prefix=/usr/local/nixl && \
@@ -123,13 +143,16 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 RUN cd src/bindings/rust && cargo build --release --locked
 
 # Create the wheel
+# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
     done
+
+# Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
 RUN uv pip install auditwheel && \
-    uv run auditwheel repair /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
+    uv run auditwheel repair --exclude libcuda.so.1 /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl

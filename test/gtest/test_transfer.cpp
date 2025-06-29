@@ -29,6 +29,7 @@
 #include <thread>
 #include <vector>
 #include <thread>
+#include <mutex>
 
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
@@ -40,7 +41,7 @@ class MemBuffer : std::shared_ptr<void> {
 public:
     MemBuffer(size_t size, nixl_mem_t mem_type = DRAM_SEG) :
         std::shared_ptr<void>(allocate(size, mem_type),
-                              [&mem_type](void *ptr) {
+                              [mem_type](void *ptr) {
                                   release(ptr, mem_type);
                               }),
         size(size)
@@ -339,6 +340,7 @@ protected:
                     nixl_mem_t dst_mem_type,
                     std::vector<MemBuffer> dst_buffers)
     {
+        std::mutex logger_mutex;
         std::vector<std::thread> threads;
         for (size_t thread = 0; thread < num_threads; ++thread) {
             threads.emplace_back([&, thread]() {
@@ -375,9 +377,12 @@ protected:
                 auto total_time = absl::ToDoubleSeconds(absl::Now() - start_time);
                 auto total_size = size * count * repeat;
                 auto bandwidth  = total_size / total_time / (1024 * 1024 * 1024);
-                Logger() << "Thread " << thread << ": " << size << "x" << count << "x" << repeat
-                         << "=" << total_size << " bytes in " << total_time << " seconds "
-                         << "(" << bandwidth << " GB/s)";
+                {
+                    const std::lock_guard<std::mutex> lock(logger_mutex);
+                    Logger() << "Thread " << thread << ": " << size << "x" << count << "x" << repeat
+                             << "=" << total_size << " bytes in " << total_time << " seconds "
+                             << "(" << bandwidth << " GB/s)";
+                }
 
                 status = from.releaseXferReq(xfer_req);
                 EXPECT_EQ(status, NIXL_SUCCESS);
@@ -462,6 +467,18 @@ TEST_P(TestTransfer, NotificationOnly) {
     constexpr size_t num_threads = 4;
     doNotificationTest(
             getAgent(0), getAgentName(0), getAgent(1), getAgentName(1), repeat, num_threads);
+}
+
+TEST_P(TestTransfer, SelfNotification) {
+    // UCX_MO does not support local communication
+    if (getBackendName() == "UCX_MO") {
+        GTEST_SKIP() << "UCX_MO does not support local communication";
+    }
+
+    constexpr size_t repeat = 100;
+    constexpr size_t num_threads = 4;
+    doNotificationTest(
+            getAgent(0), getAgentName(0), getAgent(0), getAgentName(0), repeat, num_threads);
 }
 
 TEST_P(TestTransfer, ListenerCommSize) {

@@ -10,6 +10,14 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /LICENSE @ai-dynamo/Devops
 /SECURITY.md @ai-dynamo/Devops
 
+# Bindings
+/src/bindings/rust @roiedanino @gleon99
+
 # UCX Plugins
 /src/plugins/ucx* @brminich @yosefe @gleon99
 /src/utils/ucx @brminich @yosefe @gleon99
+
+# Storage Plugins
+/src/plugins/posix @w1ldptr @barneuman @etoledano
+/src/plugins/hf3fs @w1ldptr @barneuman @etoledano
+/src/plugins/cuda_gds @w1ldptr @barneuman @etoledano
