@@ -14,4 +14,6 @@
 # limitations under the License.
 
 subdir('python')
-subdir('rust')
+if get_option('enable_rust_bindings')
+  subdir('rust')
+endif
