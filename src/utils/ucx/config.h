@@ -47,9 +47,6 @@ private:
     [[nodiscard]] static ucp_config_t *
     readUcpConfig();
 
-    void
-    modifyUcpConfig (std::string_view key, std::string_view value) const;
-
     const std::unique_ptr<ucp_config_t, void (*) (ucp_config_t *)> config_{readUcpConfig(),
                                                                            &ucp_config_release};
 };
