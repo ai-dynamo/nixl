@@ -26,6 +26,9 @@ readme = "README.md"
 links = "nixl"
 build = "build.rs"
 
+[features]
+stub-api = []
+
 [dependencies]
 thiserror = { version = "2" }
 tracing = { version = "0.1" }
