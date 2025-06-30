@@ -875,19 +875,12 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
     std::vector<char> addr(size);
     nixlSerDes::_stringToBytes(addr.data(), blob, size);
 
-    bool error = false;
     for (size_t wid = 0; wid < uws.size(); wid++) {
-        nixlUcxRkey rkey;
-        error = md->conn->getEp(wid)->rkeyImport(addr.data(), size, rkey);
-        if (error)
-            // TODO: error out. Should we indicate which desc failed or unroll everything prior
-            break;
-        md->rkeys.push_back(rkey);
-    }
-    if (error) {
-        for (size_t wid = 0; wid < md->rkeys.size(); wid++)
-            md->conn->getEp(wid)->rkeyDestroy(md->rkeys[wid]);
-        return NIXL_ERR_BACKEND;
+        auto rkey = std::make_unique<nixl::ucx::rkey>(*md->conn->getEp(wid), addr.data());
+        if (rkey->getRkey() == nullptr) {
+            return NIXL_ERR_BACKEND;
+        }
+        md->addRkey(std::move(rkey));
     }
 
     output = (nixlBackendMD*) md.release();
@@ -917,9 +910,6 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
 nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
 
     nixlUcxPublicMetadata *md = (nixlUcxPublicMetadata*) input; //typecast?
-
-    for (size_t wid = 0; wid < md->rkeys.size(); wid++)
-        md->conn->getEp(wid)->rkeyDestroy(md->rkeys[wid]);
     delete md;
 
     return NIXL_SUCCESS;
