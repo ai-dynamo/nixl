@@ -376,7 +376,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         ucp_params.field_mask |= UCP_PARAM_FIELD_REQUEST_CLEANUP;
     }
 
-    nixl::ucx::Config config;
+    nixl::ucx::config config;
 
     /* If requested, restrict the set of network devices */
     if (devs.size()) {

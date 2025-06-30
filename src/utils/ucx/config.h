@@ -26,9 +26,9 @@ extern "C" {
 }
 
 namespace nixl::ucx {
-class Config {
+class config {
 public:
-    Config() = default;
+    config() = default;
 
     [[nodiscard]] ucp_config_t *
     getUcpConfig() const noexcept {
