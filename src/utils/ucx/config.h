@@ -31,13 +31,6 @@ namespace ucx {
     public:
         Config();
 
-        Config (const Config &) = delete;
-        Config &
-        operator= (const Config &) = delete;
-        Config (Config &&) = delete;
-        Config &
-        operator= (Config &&) = delete;
-
         [[nodiscard]] ucp_config_t *
         getUcpConfig() const noexcept {
             return config_.get();
