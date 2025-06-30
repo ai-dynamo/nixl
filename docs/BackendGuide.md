@@ -56,14 +56,14 @@ Based on the first 4 methods (supports*), the required methods to be implemented
 
 ### Connection Management:
 
-* connect(): Initiates connection to a remote agent. 
+* connect(): Initiates connection to a remote agent.
 * disconnect(): Terminates connection with a remote agent
 * getConnInfo(): Provides connection information in form of a serialized byte array for remote agents
 * loadRemoteConnInfo(): Loads connection information (byte array) received from a remote agent
 
-Some backends require a self connection for loopback, so connect and disconnect is always required, as a backend either supports local or remote communication, or both. However, getConnInfo and loadRemoteConnInfo are required only if supportsRemote is set. 
+Some backends require a self connection for loopback, so connect and disconnect is always required, as a backend either supports local or remote communication, or both. However, getConnInfo and loadRemoteConnInfo are required only if supportsRemote is set.
 
-Note that loadRemoteConnInfo does not initiate the connection, if the user wants to pre-establish the connection before the first transfer, there will be a call to the connect method. Another option when connect is called is when the backend has supportsLocal and a connection to the agent itself is called right after instantiation. During the time of the first transfer to an agent, if the connection was not pre-established, the backend should make the connection, either in prepXfer() or postXfer(). 
+Note that loadRemoteConnInfo does not initiate the connection, if the user wants to pre-establish the connection before the first transfer, there will be a call to the connect method. Another option when connect is called is when the backend has supportsLocal and a connection to the agent itself is called right after instantiation. During the time of the first transfer to an agent, if the connection was not pre-established, the backend should make the connection, either in prepXfer() or postXfer().
 
 ### Memory Management:
 
@@ -79,7 +79,7 @@ Each backend inherits from nixlBackendMD base class to store any metadata requir
 * loadLocalMD(): Loads local memory metadata, directly from local metadata object
 * unloadMD(): Releases resources for remote identifier metadata object
 
-Similar to registration, each backend can make a class that inherits from nixlBackendMD to store remote identifiers in a deserialized form from the byte array, achieved by loadRemoteMD. For case of local transfers, the serialization/deserialization part is skipped, so loadLocalMD generates a pointer to an object for the remote identifier, or can output the input pointer for the registered memory. 
+Similar to registration, each backend can make a class that inherits from nixlBackendMD to store remote identifiers in a deserialized form from the byte array, achieved by loadRemoteMD. For case of local transfers, the serialization/deserialization part is skipped, so loadLocalMD generates a pointer to an object for the remote identifier, or can output the input pointer for the registered memory.
 
 getPublicData and loadRemoteMD are required if backend supportsRemote, and loadLocalMD is required if backend supportsLocal, and unloadMD is required in all cases to release the deserialized remote identifier object.
 
@@ -93,7 +93,7 @@ getPublicData and loadRemoteMD are required if backend supportsRemote, and loadL
 
 Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotifications, no such notification will be asked.
 
-Note that any transfer request will be prepped only once, but can be posted multiple times, as long as it gets to DONE state before getting reposted. There is no ordering guarantee across transfer requests, and no locking mechanism for any specific memory region; the user is in charge of not corrupting the memory by having two simultaneous transfers to the same location. 
+Note that any transfer request will be prepped only once, but can be posted multiple times, as long as it gets to DONE state before getting reposted. There is no ordering guarantee across transfer requests, and no locking mechanism for any specific memory region; the user is in charge of not corrupting the memory by having two simultaneous transfers to the same location.
 
 ### Notification Handling:
 
@@ -102,7 +102,7 @@ Note that any transfer request will be prepped only once, but can be posted mult
 
 Note that getNotif does not know which agent it should look for to receive the notification. So there should be a method to extract the agent name from the notification received, corresponding to a transfer. genNotif generates a notification which is not bound to any transfers, and does not provide any ordering guarantees. If a backend does not set supportsNotifications, these two methods are not needed.
 
-### Progress Thread: 
+### Progress Thread:
 
 * progress(): Makes progress on transfers and notifications.
 
@@ -112,7 +112,7 @@ If a backend requires a progress call, such as UCX, to proceed with the transfer
 
 A key underlying abstraction for NIXL library is a descriptor list, that is made of a memory space (host/GPU/block/File/Obj-Store) and a list of descriptors. There are 2 types of descriptors used for the SB API.
 
-*For transfers: (addr, len, devID, metadata), where metadata is a pointer to an nixlBackendMD object relevant to the registered memory that this descriptor falls within. 
+*For transfers: (addr, len, devID, metadata), where metadata is a pointer to an nixlBackendMD object relevant to the registered memory that this descriptor falls within.
 *For registration, (addr, len, devID, str) where str is an optional byte-array for extra information. The table below shows the meaning of devID for different memory spaces, as well as optional meaning for File and Object-Store.
 
 ![NIXL SB API](figures/nixl_desc_table.png)
@@ -143,4 +143,4 @@ Moreover, the GDS plugin does not require a local connection to itself, so it re
 * prepXfer
 * postXfer
 * checkXfer
-* releaseReqH. 
+* releaseReqH.
