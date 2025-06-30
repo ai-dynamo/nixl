@@ -24,7 +24,7 @@
 
 namespace nixl::ucx {
 void
-Config::modify (std::string_view key, std::string_view value) const{
+Config::modify (std::string_view key, std::string_view value) const {
     const char *env_val = std::getenv (absl::StrFormat ("UCX_%s", key.data()).c_str());
     if (env_val) {
         NIXL_DEBUG << "UCX env var has already been set: " << key << "=" << env_val;
