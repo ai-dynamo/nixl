@@ -38,17 +38,6 @@ repos:
         args: ["--max-line-length=88", "--select=C,E,F,W,B,B950", "--extend-ignore=E203,E501,W503"]
         types_or: [python, cython]
 
-# Removed to allow clang format to proceed and PRs to pass pre-commit and CI.
-# Once Clang format checker is enabled in CI, conformance will be mandatory.
-# See: https://clang.llvm.org/docs/ClangFormat.html#vim-integration for integrating clang-formatting.
-#  - repo: https://github.com/pre-commit/mirrors-clang-format
-#    rev: v16.0.5
-#    hooks:
-#      - id: clang-format
-#        types_or: [c, c++, cuda, proto, textproto, java]
-#        args: ["-fallback-style=none", "-style=file", "-i"]
-#        files: \.(cpp|h|cc|c)$
-
   - repo: https://github.com/codespell-project/codespell
     rev: v2.2.4
     hooks:

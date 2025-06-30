@@ -13,31 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[package]
-name = "nixl-sys"
-version = "0.3.1"
-edition = "2021"
-description = "Low-level bindings to the nixl library"
-license = "Apache-2.0"
-homepage = "https://github.com/ai-dynamo/nixl"
-repository = "https://github.com/ai-dynamo/nixl.git"
-authors = ["NIXL Developers <nixl-developers@nvidia.com>"]
-readme = "README.md"
-links = "nixl"
-build = "build.rs"
-
-[features]
-stub-api = []
-
-[dependencies]
-thiserror = { version = "2" }
-tracing = { version = "0.1" }
-serde = { version = "1", features = ["derive"] }
-
-libc = "0.2"
-
-[build-dependencies]
-bindgen = "0.71"
-cc = { version = "1.2.23", features = ["parallel"] }
-pkg-config = "0.3"
-os_info = "3.11"
+obj_unit_test_dep = declare_dependency(
+    sources: [
+        'obj.cpp',
+    ],
+    include_directories: [
+        nixl_inc_dirs,
+        '../../../../src/plugins/obj',
+    ],
+    dependencies: [
+        aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true),
+        dependency('asio', required: true),
+    ],
+    link_with: obj_backend_lib,
+)
