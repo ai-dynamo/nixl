@@ -33,32 +33,30 @@ isUcxEnvVarSet (std::string_view key) {
 }
 } // namespace
 
-namespace nixl {
-namespace ucx {
-    void
-    Config::modify (std::string_view key, std::string_view value, bool force) {
-        if (!force && isUcxEnvVarSet (key)) return;
+namespace nixl::ucx {
+void
+Config::modify (std::string_view key, std::string_view value, bool force) {
+    if (!force && isUcxEnvVarSet (key)) return;
 
-        const auto status = ucp_config_modify (config_.get(), key.data(), value.data());
-        if (status != UCS_OK) {
-            NIXL_WARN << "Failed to modify UCX config: " << key << "=" << value << ": "
-                      << ucs_status_string (status);
-        } else {
-            NIXL_DEBUG << "Modified UCX config: " << key << "=" << value;
-        }
+    const auto status = ucp_config_modify (config_.get(), key.data(), value.data());
+    if (status != UCS_OK) {
+        NIXL_WARN << "Failed to modify UCX config: " << key << "=" << value << ": "
+                  << ucs_status_string (status);
+    } else {
+        NIXL_DEBUG << "Modified UCX config: " << key << "=" << value;
     }
+}
 
-    ucp_config_t *
-    Config::readUcpConfig() {
-        ucp_config_t *config = nullptr;
-        const auto status = ucp_config_read (NULL, NULL, &config);
-        if (status != UCS_OK) {
-            const auto err_str =
-                std::string ("Failed to create UCX config: ") + ucs_status_string (status);
-            NIXL_ERROR << err_str;
-            throw std::runtime_error (err_str);
-        }
-        return config;
+ucp_config_t *
+Config::readUcpConfig() {
+    ucp_config_t *config = nullptr;
+    const auto status = ucp_config_read (NULL, NULL, &config);
+    if (status != UCS_OK) {
+        const auto err_str =
+            std::string ("Failed to create UCX config: ") + ucs_status_string (status);
+        NIXL_ERROR << err_str;
+        throw std::runtime_error (err_str);
     }
-} // namespace ucx
-} // namespace nixl
+    return config;
+}
+} // namespace nixl::ucx

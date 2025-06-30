@@ -381,12 +381,11 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     /* If requested, restrict the set of network devices */
     if (devs.size()) {
         /* TODO: check if this is the best way */
-        string dev_str;
-        unsigned int i;
-        for (i = 0; i < devs.size() - 1; i++) {
-            dev_str = dev_str + devs[i] + ":1,";
+        std::string dev_str;
+        for (const auto& dev : devs) {
+            dev_str += dev + ":1,";
         }
-        dev_str = dev_str + devs[i] + ":1";
+        dev_str.pop_back(); // to remove odd comma after the last device
         config.modify ("NET_DEVICES", dev_str.c_str(), true);
     }
 

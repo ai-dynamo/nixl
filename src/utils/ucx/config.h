@@ -25,28 +25,26 @@ extern "C" {
 #include <ucp/api/ucp.h>
 }
 
-namespace nixl {
-namespace ucx {
-    class Config {
-    public:
-        Config() = default;
+namespace nixl::ucx {
+class Config {
+public:
+    Config() = default;
 
-        [[nodiscard]] ucp_config_t *
-        getUcpConfig() const noexcept {
-            return config_.get();
-        }
+    [[nodiscard]] ucp_config_t *
+    getUcpConfig() const noexcept {
+        return config_.get();
+    }
 
-        void
-        modify (std::string_view name, std::string_view value, bool force = false);
+    void
+    modify (std::string_view name, std::string_view value, bool force = false);
 
-    private:
-        [[nodiscard]] static ucp_config_t *
-        readUcpConfig();
+private:
+    [[nodiscard]] static ucp_config_t *
+    readUcpConfig();
 
-        const std::unique_ptr<ucp_config_t, void (*) (ucp_config_t *)> config_{readUcpConfig(),
-                                                                               &ucp_config_release};
-    };
-} // namespace ucx
-} // namespace nixl
+    const std::unique_ptr<ucp_config_t, void (*) (ucp_config_t *)> config_{readUcpConfig(),
+                                                                           &ucp_config_release};
+};
+} // namespace nixl::ucx
 
 #endif
