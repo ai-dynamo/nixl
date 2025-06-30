@@ -84,7 +84,8 @@ class TestErrorHandling : public testing::TestWithParam<std::string> {
     public:
         void init(const std::string& name, const std::string& backend_name);
         void destroy();
-        void disconnect();
+        void
+        disconnect();
         void fillRegList(nixl_xfer_dlist_t& dlist, nixlBasicDesc& desc) const;
         std::string getLocalMD() const;
         void loadRemoteMD(const std::string& remote_name);
@@ -99,7 +100,7 @@ class TestErrorHandling : public testing::TestWithParam<std::string> {
         bool dataCmp(const Agent& other) const;
 
     private:
-        std::string                m_name;
+        std::string m_name;
         nixlBackendH*              m_backend = nullptr;
         std::unique_ptr<nixlAgent> m_priv    = nullptr;
         std::string                m_MetaRemote;
@@ -130,7 +131,7 @@ private:
 };
 
 void TestErrorHandling::Agent::init(const std::string& name, const std::string& backend_name) {
-    m_name    = name;
+    m_name = name;
     m_priv    = std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
     // At the moment, only UCX backend is tested for error handling support.
     m_backend = nixl::createUcxBackend(*m_priv, backend_name);
@@ -147,14 +148,14 @@ void TestErrorHandling::Agent::destroy() {
     m_priv.reset();
 }
 
-void TestErrorHandling::Agent::disconnect() {
-    ASSERT_FALSE(m_MetaRemote.empty());
+void
+TestErrorHandling::Agent::disconnect() {
+    ASSERT_FALSE (m_MetaRemote.empty());
 
-    nixl_status_t status = m_priv->invalidateRemoteMD(m_MetaRemote);
-    ASSERT_EQ(NIXL_SUCCESS, status)
-            << "Agent " << m_name
-            << " failed to invalidate remote metadata, status: "
-            << nixlEnumStrings::statusStr(status);
+    nixl_status_t status = m_priv->invalidateRemoteMD (m_MetaRemote);
+    ASSERT_EQ (NIXL_SUCCESS, status)
+        << "Agent " << m_name
+        << " failed to invalidate remote metadata, status: " << nixlEnumStrings::statusStr (status);
 
     m_MetaRemote.clear();
 }
@@ -171,8 +172,8 @@ std::string TestErrorHandling::Agent::getLocalMD() const {
 }
 
 void TestErrorHandling::Agent::loadRemoteMD(const std::string& remote_name) {
-    EXPECT_EQ(NIXL_SUCCESS, m_priv->loadRemoteMD(remote_name, m_MetaRemote))
-            << "Agent " << m_name << " failed to load remote metadata";
+    EXPECT_EQ (NIXL_SUCCESS, m_priv->loadRemoteMD (remote_name, m_MetaRemote))
+        << "Agent " << m_name << " failed to load remote metadata";
 }
 
 nixl_status_t
@@ -237,9 +238,9 @@ TestErrorHandling::TestErrorHandling() : m_backend_name(GetParam())
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
 void TestErrorHandling::testXfer() {
     std::string initiator_name = "initiator";
-    std::string target_name    = "target";
-    m_Initiator.init(initiator_name, m_backend_name);
-    m_Target.init(target_name, m_backend_name);
+    std::string target_name = "target";
+    m_Initiator.init (initiator_name, m_backend_name);
+    m_Target.init (target_name, m_backend_name);
 
     exchangeMetaData();
 
@@ -251,7 +252,7 @@ void TestErrorHandling::testXfer() {
             EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, status);
             if (test_type == TestType::XFER_FAIL_RESTORE) {
                 m_Initiator.disconnect();
-                m_Target.init(target_name, m_backend_name);
+                m_Target.init (target_name, m_backend_name);
                 exchangeMetaData();
             }
         } else {
@@ -284,17 +285,22 @@ bool TestErrorHandling::isFailure(size_t iter) {
     case TestType::BASIC_XFER:            return false;
     case TestType::LOAD_REMOTE_THEN_FAIL: return iter == 0;
     case TestType::XFER_THEN_FAIL:
-    case TestType::XFER_FAIL_RESTORE:     return iter == 1;
+    case TestType::XFER_FAIL_RESTORE:
+        return iter == 1;
     }
 }
 
 template<TestErrorHandling::TestType test_type>
-size_t TestErrorHandling::numIter() {
+size_t
+TestErrorHandling::numIter() {
     switch (test_type) {
-    case TestType::BASIC_XFER:            return 1;
-    case TestType::LOAD_REMOTE_THEN_FAIL: return 1;
-    case TestType::XFER_THEN_FAIL:        return 2;
-    case TestType::XFER_FAIL_RESTORE:     return 3;
+    case TestType::BASIC_XFER:
+    case TestType::LOAD_REMOTE_THEN_FAIL:
+        return 1;
+    case TestType::XFER_THEN_FAIL:
+        return 2;
+    case TestType::XFER_FAIL_RESTORE:
+        return 3;
     }
 }
 
@@ -356,7 +362,7 @@ TEST_P(TestErrorHandling, XferThenFail) {
     testXfer<TestType::XFER_THEN_FAIL, NIXL_READ>();
 }
 
-TEST_P(TestErrorHandling, XferFailRestore) {
+TEST_P (TestErrorHandling, XferFailRestore) {
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_WRITE>();
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_READ>();
 }
