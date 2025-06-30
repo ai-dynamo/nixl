@@ -382,11 +382,11 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     if (devs.size()) {
         /* TODO: check if this is the best way */
         std::string dev_str;
-        for (const auto& dev : devs) {
+        for (const auto &dev : devs) {
             dev_str += dev + ":1,";
         }
         dev_str.pop_back(); // to remove odd comma after the last device
-        config.modify ("NET_DEVICES", dev_str.c_str(), true);
+        config.modifyAlways ("NET_DEVICES", dev_str.c_str());
     }
 
     unsigned major_version, minor_version, release_number;

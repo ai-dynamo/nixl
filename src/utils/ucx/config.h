@@ -35,12 +35,20 @@ public:
         return config_.get();
     }
 
+    // Modify the config if it is not already set via environment variable
     void
-    modify (std::string_view name, std::string_view value, bool force = false);
+    modify (std::string_view key, std::string_view value);
+
+    // Modify the config always
+    void
+    modifyAlways (std::string_view key, std::string_view value);
 
 private:
     [[nodiscard]] static ucp_config_t *
     readUcpConfig();
+
+    void
+    modifyUcpConfig (std::string_view key, std::string_view value);
 
     const std::unique_ptr<ucp_config_t, void (*) (ucp_config_t *)> config_{readUcpConfig(),
                                                                            &ucp_config_release};
