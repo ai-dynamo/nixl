@@ -24,7 +24,7 @@
 
 namespace {
 [[nodiscard]] bool
-isEnvVarSet (std::string_view key) {
+isUcxEnvVarSet (std::string_view key) {
     const char *env_val = std::getenv (absl::StrFormat ("UCX_%s", key.data()).c_str());
     if (!env_val) return false;
 
@@ -37,7 +37,7 @@ namespace nixl {
 namespace ucx {
     void
     Config::modify (std::string_view key, std::string_view value, bool force) {
-        if (!force && isEnvVarSet (key)) return;
+        if (!force && isUcxEnvVarSet (key)) return;
 
         const auto status = ucp_config_modify (config_.get(), key.data(), value.data());
         if (status != UCS_OK) {
