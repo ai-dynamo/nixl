@@ -69,7 +69,8 @@ static nixlBackendPlugin plugin = {
 
 #ifdef STATIC_PLUGIN_MOONCAKE
 
-nixlBackendPlugin* createStaticMooncakePlugin() {
+nixlBackendPlugin *
+createStaticMooncakePlugin() {
     return &plugin; // Return the static plugin instance
 }
 
