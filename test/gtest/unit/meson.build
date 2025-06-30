@@ -13,31 +13,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[package]
-name = "nixl-sys"
-version = "0.3.1"
-edition = "2021"
-description = "Low-level bindings to the nixl library"
-license = "Apache-2.0"
-homepage = "https://github.com/ai-dynamo/nixl"
-repository = "https://github.com/ai-dynamo/nixl.git"
-authors = ["NIXL Developers <nixl-developers@nvidia.com>"]
-readme = "README.md"
-links = "nixl"
-build = "build.rs"
+unit_test_deps = [
+    nixl_dep,
+    gtest_dep,
+]
 
-[features]
-stub-api = []
+aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
+if aws_s3.found()
+    subdir('obj')
+    unit_test_deps += [obj_unit_test_dep]
+endif
 
-[dependencies]
-thiserror = { version = "2" }
-tracing = { version = "0.1" }
-serde = { version = "1", features = ["derive"] }
+unit_test_exe = executable('unit',
+    sources : [
+        'main.cpp',
+    ],
+    cpp_args : cpp_args,
+    dependencies : unit_test_deps,
+    include_directories: [
+        nixl_inc_dirs,
+        utils_inc_dirs,
+    ],
+    link_with: [nixl_build_lib],
+    install : true
+)
 
-libc = "0.2"
-
-[build-dependencies]
-bindgen = "0.71"
-cc = { version = "1.2.23", features = ["parallel"] }
-pkg-config = "0.3"
-os_info = "3.11"
+test('unit', unit_test_exe)

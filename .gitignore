@@ -18,3 +18,6 @@ cufile.log
 
 # clangd
 .cache/
+
+# Asio
+subprojects/asio-*
