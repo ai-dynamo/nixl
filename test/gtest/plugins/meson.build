@@ -22,20 +22,13 @@ if not gtest_dep.found()
     subdir_done()
 endif
 
-subdir('unit')
-subdir('mocks')
-subdir('plugins')
-
-plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
-
-cpp_flags = []
-
 if cuda_dep.found()
-    cpp_flags += '-DHAVE_CUDA'
     cuda_dependencies = [cuda_dep]
 else
     cuda_dependencies = []
 endif
+
+cpp_flags = []
 
 if get_option('test_all_plugins')
   cpp_flags+='-DTEST_ALL_PLUGINS'
@@ -44,16 +37,16 @@ endif
 # for loading plugins from build directory
 cpp_flags += '-DBUILD_DIR="' + meson.project_build_root() + '"'
 
-test_exe = executable('gtest',
-    sources : ['main.cpp', 'plugin_manager.cpp', 'error_handling.cpp', 'test_transfer.cpp', 'metadata_exchange.cpp', 'common.cpp'],
-    include_directories: [nixl_inc_dirs, utils_inc_dirs],
+plugins_test_exe = executable('ucx_plugins_gtest',
+    sources : ['../main.cpp', 'ucx_plugin.cpp', 'plugin_test.cpp'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, ucx_inc_dirs, '.'],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, cuda_dep, gtest_dep, absl_strings_dep, absl_time_dep],
-    link_with: [nixl_build_lib],
+    dependencies : [nixl_dep, cuda_dep, gtest_dep, absl_strings_dep, absl_time_dep, ucx_backend_interface, ucx_dep],
+    link_with: [nixl_build_lib, ucx_backend_lib],
     install : true
 )
 
-test('gtest', test_exe, args: [plugin_dirs_arg])
+test('plugins_gtest', plugins_test_exe)
 
 if get_option('b_sanitize').split(',').contains('thread')
     test_env = environment()
