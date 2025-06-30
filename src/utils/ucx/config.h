@@ -29,7 +29,7 @@ namespace nixl {
 namespace ucx {
     class Config {
     public:
-        Config();
+        Config() = default;
 
         [[nodiscard]] ucp_config_t *
         getUcpConfig() const noexcept {
@@ -43,7 +43,8 @@ namespace ucx {
         [[nodiscard]] static ucp_config_t *
         readUcpConfig();
 
-        const std::unique_ptr<ucp_config_t, void (*) (ucp_config_t *)> config_;
+        const std::unique_ptr<ucp_config_t, void (*) (ucp_config_t *)> config_{readUcpConfig(),
+                                                                               &ucp_config_release};
     };
 } // namespace ucx
 } // namespace nixl

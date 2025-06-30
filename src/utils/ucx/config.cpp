@@ -22,27 +22,29 @@
 
 #include "common/nixl_log.h"
 
+namespace {
+[[nodiscard]] bool
+isEnvVarSet (std::string_view key) {
+    const char *env_val = std::getenv (absl::StrFormat ("UCX_%s", key.data()).c_str());
+    if (!env_val) return false;
+
+    NIXL_DEBUG << "UCX env var has already been set: " << key << "=" << env_val;
+    return true;
+}
+} // namespace
+
 namespace nixl {
 namespace ucx {
-    Config::Config() : config_ (readUcpConfig(), &ucp_config_release) {}
-
     void
     Config::modify (std::string_view key, std::string_view value, bool force) {
-        const char *env_val;
-        if (force) {
-            env_val = nullptr;
-        } else {
-            env_val = std::getenv (absl::StrFormat ("UCX_%s", key.data()).c_str());
-        }
+        if (!force && isEnvVarSet (key)) return;
 
-        value = env_val ? env_val : value;
         const auto status = ucp_config_modify (config_.get(), key.data(), value.data());
         if (status != UCS_OK) {
             NIXL_WARN << "Failed to modify UCX config: " << key << "=" << value << ": "
                       << ucs_status_string (status);
         } else {
-            NIXL_DEBUG << "Applied UCX config from " << (env_val ? "env var" : "NIXL") << ": "
-                       << key << "=" << value;
+            NIXL_DEBUG << "Modified UCX config: " << key << "=" << value;
         }
     }
 
