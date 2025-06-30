@@ -24,7 +24,7 @@
 
 namespace nixl::ucx {
 void
-Config::modify (std::string_view key, std::string_view value) {
+Config::modify (std::string_view key, std::string_view value) const{
     const char *env_val = std::getenv (absl::StrFormat ("UCX_%s", key.data()).c_str());
     if (env_val) {
         NIXL_DEBUG << "UCX env var has already been set: " << key << "=" << env_val;
@@ -34,7 +34,7 @@ Config::modify (std::string_view key, std::string_view value) {
 }
 
 void
-Config::modifyAlways (std::string_view key, std::string_view value) {
+Config::modifyAlways (std::string_view key, std::string_view value) const {
     modifyUcpConfig (key, value);
 }
 
@@ -52,7 +52,7 @@ Config::readUcpConfig() {
 }
 
 void
-Config::modifyUcpConfig (std::string_view key, std::string_view value) {
+Config::modifyUcpConfig (std::string_view key, std::string_view value) const {
     const auto status = ucp_config_modify (config_.get(), key.data(), value.data());
     if (status != UCS_OK) {
         NIXL_WARN << "Failed to modify UCX config: " << key << "=" << value << ": "
