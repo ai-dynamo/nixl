@@ -152,7 +152,7 @@ void
 TestErrorHandling::Agent::disconnect() {
     ASSERT_FALSE (m_MetaRemote.empty());
 
-    nixl_status_t status = m_priv->invalidateRemoteMD (m_MetaRemote);
+    const nixl_status_t status = m_priv->invalidateRemoteMD (m_MetaRemote);
     ASSERT_EQ (NIXL_SUCCESS, status)
         << "Agent " << m_name
         << " failed to invalidate remote metadata, status: " << nixlEnumStrings::statusStr (status);
@@ -237,8 +237,8 @@ TestErrorHandling::TestErrorHandling() : m_backend_name(GetParam())
 
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
 void TestErrorHandling::testXfer() {
-    std::string initiator_name = "initiator";
-    std::string target_name = "target";
+    const std::string initiator_name = "initiator";
+    const std::string target_name = "target";
     m_Initiator.init (initiator_name, m_backend_name);
     m_Target.init (target_name, m_backend_name);
 
