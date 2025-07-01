@@ -145,7 +145,7 @@ Moreover, the GDS plugin does not require a local connection to itself, so it re
 * checkXfer
 * releaseReqH.
 
-# NIXL Agent usage of Plugin manager and SB APIs 
+# NIXL Agent usage of Plugin manager and SB APIs
 
 In this section we will overview interactions with the NIXL agent from the user point of view, and how they map to the plugin manager and the SB APIs provided by each plugin.
 
@@ -155,17 +155,17 @@ During this step, some of the configurations are shared among the backend plugin
 
 ### Create transfer backends:
 
-When user asks for a specific backend for its name, alongside a list of parameters in the form of key-value pairs, NIXL agent will instantiate an instance of that backend plugin through the plugin manager and calls its **initializer** (constructor) method in SB API with the initialization parameters. This includes both the parameters set by the agent during its creation, as well as the parameters passed by the user to this method. Note that there could be errors in such instantiation, and the failure is reported to the user. 
+When user asks for a specific backend for its name, alongside a list of parameters in the form of key-value pairs, NIXL agent will instantiate an instance of that backend plugin through the plugin manager and calls its **initializer** (constructor) method in SB API with the initialization parameters. This includes both the parameters set by the agent during its creation, as well as the parameters passed by the user to this method. Note that there could be errors in such instantiation, and the failure is reported to the user.
 
 In this step, if the plugin supports talking to remote agents, the required connection data for other agents to talk to it is acquired through **getConnInfo** in SB API. And/or if it supports within node transfers, a **connection** call to itself is called, as some backends might require that.
 
-### Make connections (optional): 
+### Make connections (optional):
 
 When a connection is requested to an remote agent, which is possible if the remote agent’s metadata is already loaded, the local Agent would look for common backend plugins between itself and the remote agent, and for each of them initiate a connect by using the **connect** API in SB API of such backends.
 
 ### Register (Degister) memory with NIXL:
 
-The agent will receive a list of allocated memories and desired backend from the user, and then will give only one element at a time to the specified backend. Note that backends usually require to register the memories they will access during transfers, and based on that registration keep some metadata for that memory region. For instance, in case of UCX, per each contiguous region of memory, it will produce some local metadata for that region. Agent will give only a single contiguous region of memory to the **register** call in SB API, and in return gets a key (a pointer) to the metadata that backend created for this memory region. Later on, during transfer, the agent will give the same key back to the backend, so backends do not need to do any bookkeeping of such metadata. 
+The agent will receive a list of allocated memories and desired backend from the user, and then will give only one element at a time to the specified backend. Note that backends usually require to register the memories they will access during transfers, and based on that registration keep some metadata for that memory region. For instance, in case of UCX, per each contiguous region of memory, it will produce some local metadata for that region. Agent will give only a single contiguous region of memory to the **register** call in SB API, and in return gets a key (a pointer) to the metadata that backend created for this memory region. Later on, during transfer, the agent will give the same key back to the backend, so backends do not need to do any bookkeeping of such metadata.
 
 If a backend supports within-agent transfers, it might require a different metadata per each registered memory if that memory is the target of an operation, versus the memory that operation is initiated from. Therefore, at this stage the **loadLocalMD** method in SB API is called per each registered memory to acquire such metadata, and the backend returns the key (pointer) to the new metadata object. Similarly, the agent will do the bookkeeping and give the proper metadata during transfer time. Note that the metadata objects can be the same, and therefore both keys point to the same metadata.
 
@@ -177,17 +177,17 @@ As mentioned earlier, through this API, the serialized form of required informat
 
 ### Load remote agent metadata:
 
-When metadata of a remote agent is received in a serialized format, agent will parse the information and deserialize it. Per each connection info of each backend, if such backend is available locally, it will call **loadRemoteConnInfo** in SB API of that backend with the connection info of its counterpart in the remote agent, so later the local backend can communicate with the remote backend. Furthermore, per each piece of registered memory of a remote backend that has a counterpart available locally, its registered memory information alongside the serialized remote identifier information is given to the local backend engine through **loadRemoteMD** in SB API, which will generate a metadata object and return its key (pointer), similar to a target metadata object explained in register memory for local transfers. Similarly during the time of transfer, the agent will provide the proper metadata object key. 
+When metadata of a remote agent is received in a serialized format, agent will parse the information and deserialize it. Per each connection info of each backend, if such backend is available locally, it will call **loadRemoteConnInfo** in SB API of that backend with the connection info of its counterpart in the remote agent, so later the local backend can communicate with the remote backend. Furthermore, per each piece of registered memory of a remote backend that has a counterpart available locally, its registered memory information alongside the serialized remote identifier information is given to the local backend engine through **loadRemoteMD** in SB API, which will generate a metadata object and return its key (pointer), similar to a target metadata object explained in register memory for local transfers. Similarly during the time of transfer, the agent will provide the proper metadata object key.
 
 Note that after this step, if there was at least one backend in common between the two agents, there can be transfers between the two agents.
 
 ### Invalidate remote agent metadata
 
-Agent will determine which backends were common during the time of loading remote metadata of that specific agent, and call **disconnect** in SB API to that agent for such backends. Also, for each of the remote identifiers stored for that remote agent for the corresponding common backends, it will call the **unloadMD** in SB API to release the resources. 
+Agent will determine which backends were common during the time of loading remote metadata of that specific agent, and call **disconnect** in SB API to that agent for such backends. Also, for each of the remote identifiers stored for that remote agent for the corresponding common backends, it will call the **unloadMD** in SB API to release the resources.
 
 Note that after this step, the local agent cannot initiate transfers to the remote agent anymore, until its metadata is reloaded again. Through these two methods the dynamicity requirement of NIXL agents are achieved.
 
-Regarding marginal updates, they only require some extra bookkeeping within the agent, and central KV service mode is just the interface between the agent and central metadata server, and does not change how the SB APIs are used. 
+Regarding marginal updates, they only require some extra bookkeeping within the agent, and central KV service mode is just the interface between the agent and central metadata server, and does not change how the SB APIs are used.
 
 ### Create transfer request:
 
@@ -199,11 +199,11 @@ In addition to finding the best backend, this API does several checks, such as t
 
 A post transfer is called on a prepared transfer handle. Already the transfer backend is determined, and all the required metadata keys (pointers) are attached to the request. So a single call to **postXferReq** in SB API for the corresponding backend is the main goal of this function. This call will result in a backend engine specific transfer handle, which later the agent can use to ask for the transfer status. Note that this method can be called on the same agent transfer handle after the transfer is done, and it is up to the backend to create a new transfer handle each time a new transfer is started, or reuse the old one. Also if there is a transfer in progress, and a post is submitted for that, it will cause an error and potentially abort the transfer.
 
-Note that inside a transfer, a backend might provide methods for network resiliency or optimizations, such as load balancing different transfers, within the same descriptor list of a single transfer, or across different transfers. This is handled and implemented by the backend plugin. 
+Note that inside a transfer, a backend might provide methods for network resiliency or optimizations, such as load balancing different transfers, within the same descriptor list of a single transfer, or across different transfers. This is handled and implemented by the backend plugin.
 
 ### Get transfer status:
 
-The agent will call the backend specific transfer handle that is stored within the agent transfer handle, and check the status of the transfer. This is achieved through a call to **checkXfer** in the SB API. Internal to the backend, they can call the **progress** method in SB API, if that’s necessary to get the latest status of the transfers. If the agent is run in progress thread mode, the agent will call that periodically, and therefore reduce the load on this internal call. 
+The agent will call the backend specific transfer handle that is stored within the agent transfer handle, and check the status of the transfer. This is achieved through a call to **checkXfer** in the SB API. Internal to the backend, they can call the **progress** method in SB API, if that’s necessary to get the latest status of the transfers. If the agent is run in progress thread mode, the agent will call that periodically, and therefore reduce the load on this internal call.
 
 ### Invalidate transfer request:
 
@@ -211,7 +211,7 @@ The agent will call the **releaseReqH** from the SB API on the backend specific 
 
 ### Get notifications:
 
-The agent will iterate over all the backends that support notification, and call their **getNotifs** from the SB API, which will return a list of notifications received from each remote node between the previous call to this method and this time. Then the agent will merge the results from all such backends, and append them to the map that the user has provided. Similar to get transfer status, Internal to the backend, they can call the **progress** method in SB API, if that’s necessary to get the latest notifications received from the transfers initiated by the other agents towards them. If the agent is run in progress thread mode, the agent will call that periodically, and therefore reduce the load on this internal call. 
+The agent will iterate over all the backends that support notification, and call their **getNotifs** from the SB API, which will return a list of notifications received from each remote node between the previous call to this method and this time. Then the agent will merge the results from all such backends, and append them to the map that the user has provided. Similar to get transfer status, Internal to the backend, they can call the **progress** method in SB API, if that’s necessary to get the latest notifications received from the transfers initiated by the other agents towards them. If the agent is run in progress thread mode, the agent will call that periodically, and therefore reduce the load on this internal call.
 
 ### Generate notification:
 
