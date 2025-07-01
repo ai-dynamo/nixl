@@ -130,7 +130,7 @@ nixlGdsMtBackendReqH::~nixlGdsMtBackendReqH() {
 nixlGdsMtEngine::nixlGdsMtEngine (const nixlBackendInitParams *init_params)
     : nixlBackendEngine (init_params),
       gds_mt_utils_(),
-      thread_count_ (get_thread_count (init_params)),
+      thread_count_ (getThreadCount (init_params)),
       executor_ (std::make_unique<tf::Executor> (thread_count_)) {
     NIXL_DEBUG << "GDS_MIT: thread count=" << thread_count_;
 }
