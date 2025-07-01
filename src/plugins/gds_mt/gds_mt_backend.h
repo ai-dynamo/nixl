@@ -33,7 +33,9 @@
 #include "taskflow/taskflow.hpp"
 
 // Forward declarations
-namespace tf { class Executor; }
+namespace tf {
+class Executor;
+}
 struct gdsMtFileHandle;
 
 struct FileSegData {
@@ -72,10 +74,12 @@ public:
     ~nixlGdsMtMetadata() = default;
 
     nixlGdsMtMetadata (const nixlGdsMtMetadata &) = delete;
-    nixlGdsMtMetadata &operator= (const nixlGdsMtMetadata &) = delete;
+    nixlGdsMtMetadata &
+    operator= (const nixlGdsMtMetadata &) = delete;
 
     nixlGdsMtMetadata (nixlGdsMtMetadata &&) = default;
-    nixlGdsMtMetadata &operator= (nixlGdsMtMetadata &&) = default;
+    nixlGdsMtMetadata &
+    operator= (nixlGdsMtMetadata &&) = default;
 
     std::variant<FileSegData, MemSegData> data_;
 };
