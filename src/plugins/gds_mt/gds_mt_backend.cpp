@@ -36,7 +36,7 @@ namespace {
 const size_t default_thread_count = std::max (1u, std::thread::hardware_concurrency() / 2);
 
 size_t
-get_thread_count (const nixlBackendInitParams *init_params) {
+getThreadCount (const nixlBackendInitParams *init_params) {
     size_t thread_count = default_thread_count;
 
     nixl_b_params_t *custom_params = init_params->customParams;
