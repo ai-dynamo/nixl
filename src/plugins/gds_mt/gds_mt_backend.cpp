@@ -26,6 +26,7 @@
 #include <string>
 #include <exception>
 #include <cstring>
+#include <variant>
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
 #include "common/str_tools.h"
@@ -33,20 +34,17 @@
 
 namespace {
 const size_t default_thread_count = std::max (1u, std::thread::hardware_concurrency() / 2);
-}
 
-nixlGdsMtEngine::nixlGdsMtEngine (const nixlBackendInitParams *init_params)
-    : nixlBackendEngine (init_params),
-      gds_mt_utils_() {
-    thread_count_ = default_thread_count;
-
+size_t get_thread_count(const nixlBackendInitParams *init_params) {
+    size_t thread_count = default_thread_count;
+    
     nixl_b_params_t *custom_params = init_params->customParams;
     if (custom_params) {
         if (custom_params->count ("thread_count") > 0) {
             try {
                 size_t tcount = std::stoul ((*custom_params)["thread_count"]);
                 if (tcount != 0) {
-                    thread_count_ = tcount;
+                    thread_count = tcount;
                 }
             }
             catch (const std::exception &e) {
@@ -55,82 +53,10 @@ nixlGdsMtEngine::nixlGdsMtEngine (const nixlBackendInitParams *init_params)
             }
         }
     }
-    executor_ = std::make_unique<tf::Executor> (thread_count_);
-    NIXL_DEBUG << "GDS_MIT: thread count=" << thread_count_;
+    return thread_count;
 }
 
-nixl_status_t
-nixlGdsMtEngine::registerMem (const nixlBlobDesc &mem,
-                              const nixl_mem_t &nixl_mem,
-                              nixlBackendMD *&out) {
-    switch (nixl_mem) {
-    case FILE_SEG: {
-        auto it = gds_mt_file_map_.find (mem.devId);
-        std::shared_ptr<gdsMtFileHandle> handle;
-        if (it != gds_mt_file_map_.end()) {
-            handle = it->second.lock();
-            if (handle) {
-                auto md = std::make_unique<nixlGdsMtMetadata> (handle);
-                out = (nixlBackendMD *)md.release();
-                return NIXL_SUCCESS;
-            }
-            gds_mt_file_map_.erase (it);
-        }
-        try {
-            handle = std::make_shared<gdsMtFileHandle> (mem.devId);
-        }
-        catch (const std::exception &e) {
-            NIXL_ERROR << "GDS_MT: failed to create file handle: " << e.what();
-            return NIXL_ERR_BACKEND;
-        }
-        gds_mt_file_map_[mem.devId] = handle;
-        auto md = std::make_unique<nixlGdsMtMetadata> (handle);
-        out = (nixlBackendMD *)md.release();
-        return NIXL_SUCCESS;
-    }
-
-    case VRAM_SEG: {
-        const cudaError_t error_id = cudaSetDevice (mem.devId);
-        if (error_id != cudaSuccess) {
-            NIXL_ERROR << "GDS_MT: error: cudaSetDevice returned " << cudaGetErrorString (error_id)
-                       << " for device ID " << mem.devId;
-            return NIXL_ERR_BACKEND;
-        }
-        [[fallthrough]];
-    }
-    case DRAM_SEG: {
-        try {
-            auto md = std::make_unique<nixlGdsMtMetadata> ((void *)mem.addr, mem.len, 0);
-            out = (nixlBackendMD *)md.release();
-            return NIXL_SUCCESS;
-        }
-        catch (const std::exception &e) {
-            NIXL_ERROR << "GDS_MT: failed to create memory buffer: " << e.what();
-            return NIXL_ERR_BACKEND;
-        }
-    }
-
-    default:
-        return NIXL_ERR_BACKEND;
-    }
-}
-
-nixl_status_t
-nixlGdsMtEngine::deregisterMem (nixlBackendMD *meta) {
-    nixlGdsMtMetadata *md = (nixlGdsMtMetadata *)meta;
-
-    if (auto *file_data = std::get_if<FileSegData> (&md->data_)) {
-        if (file_data->handle && file_data->handle.use_count() == 1) {
-            gds_mt_file_map_.erase (file_data->handle->fd);
-        }
-    }
-    delete md;
-
-    return NIXL_SUCCESS;
-}
-
-void
-runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_status) {
+void runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_status) {
     ssize_t nbytes = 0;
     if (req->op == CUFILE_READ) {
         nbytes = cuFileRead (req->fh, req->addr, req->size, req->file_offset, 0);
@@ -159,18 +85,14 @@ runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_sta
     }
 }
 
-nixl_status_t
-extractTransferParams (const nixlMetaDesc &mem_desc,
-                       const nixlMetaDesc &file_desc,
-                       const std::unordered_map<int, std::weak_ptr<gdsMtFileHandle>> &file_map,
-                       void *&base_addr,
-                       size_t &total_size,
-                       size_t &base_offset,
-                       CUfileHandle_t &cu_fhandle) {
+nixl_status_t extractTransferParams (const nixlMetaDesc &mem_desc,
+                                     const nixlMetaDesc &file_desc,
+                                     const std::unordered_map<int, std::weak_ptr<gdsMtFileHandle>> &file_map,
+                                     void *&base_addr,
+                                     size_t &total_size,
+                                     size_t &base_offset,
+                                     CUfileHandle_t &cu_fhandle) {
     base_addr = (void *)mem_desc.addr;
-    if (!base_addr) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
     total_size = mem_desc.len;
     base_offset = (size_t)file_desc.addr;
 
@@ -181,11 +103,105 @@ extractTransferParams (const nixlMetaDesc &mem_desc,
     }
 
     auto handle = it->second.lock();
-    if (!handle) {
-        NIXL_ERROR << "GDS_MT: error: file handle has expired";
-        return NIXL_ERR_NOT_FOUND;
-    }
+    NIXL_ASSERT(handle);
     cu_fhandle = handle->cu_fhandle;
+    return NIXL_SUCCESS;
+}
+}
+
+// Implementation of interface classes
+nixlGdsMtMetadata::nixlGdsMtMetadata (std::shared_ptr<gdsMtFileHandle> file_handle)
+    : nixlBackendMD (true),
+      data_ (FileSegData{std::move (file_handle)}) {}
+
+nixlGdsMtMetadata::nixlGdsMtMetadata (void *addr, size_t size, int flags)
+    : nixlBackendMD (true),
+      data_ (MemSegData{addr, size, flags}) {}
+
+nixlGdsMtBackendReqH::~nixlGdsMtBackendReqH() {
+    if (running_transfer.valid()) {
+        running_transfer.wait();
+    }
+}
+
+nixlGdsMtEngine::nixlGdsMtEngine (const nixlBackendInitParams *init_params)
+    : nixlBackendEngine (init_params),
+      gds_mt_utils_(),
+      thread_count_(get_thread_count(init_params)),
+      executor_(std::make_unique<tf::Executor>(thread_count_)) {
+    NIXL_DEBUG << "GDS_MIT: thread count=" << thread_count_;
+}
+
+nixl_status_t
+nixlGdsMtEngine::registerMem (const nixlBlobDesc &mem,
+                              const nixl_mem_t &nixl_mem,
+                              nixlBackendMD *&out) {
+    switch (nixl_mem) {
+    case FILE_SEG: {
+        auto it = gds_mt_file_map_.find (mem.devId);
+        std::shared_ptr<gdsMtFileHandle> handle;
+        if (it != gds_mt_file_map_.end()) {
+            handle = it->second.lock();
+            if (handle) {
+                out = new nixlGdsMtMetadata(handle);
+                return NIXL_SUCCESS;
+            }
+            gds_mt_file_map_.erase (it);
+        }
+        try {
+            handle = std::make_shared<gdsMtFileHandle> (mem.devId);
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << "GDS_MT: failed to create file handle: " << e.what();
+            return NIXL_ERR_BACKEND;
+        }
+        gds_mt_file_map_[mem.devId] = handle;
+        out = new nixlGdsMtMetadata(handle);
+        return NIXL_SUCCESS;
+    }
+
+    case VRAM_SEG: {
+        const cudaError_t error_id = cudaSetDevice (mem.devId);
+        if (error_id != cudaSuccess) {
+            NIXL_ERROR << "GDS_MT: error: cudaSetDevice returned " << cudaGetErrorString (error_id)
+                       << " for device ID " << mem.devId;
+            return NIXL_ERR_BACKEND;
+        }
+        [[fallthrough]];
+    }
+
+    case DRAM_SEG: {
+        try {
+            out = new nixlGdsMtMetadata((void *)mem.addr, mem.len, 0);
+            return NIXL_SUCCESS;
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << "GDS_MT: failed to create memory buffer: " << e.what();
+            return NIXL_ERR_BACKEND;
+        }
+    }
+
+    default:
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+nixl_status_t
+nixlGdsMtEngine::deregisterMem (nixlBackendMD *meta) {
+    std::unique_ptr<nixlGdsMtMetadata> md((nixlGdsMtMetadata *)meta);
+
+    if (auto *file_data = std::get_if<FileSegData> (&md->data_)) {
+        if (file_data->handle) {
+            int key = file_data->handle->fd;
+            md.reset(); // Release metadata first
+            
+            auto it = gds_mt_file_map_.find(key);
+            if (it != gds_mt_file_map_.end() && it->second.expired()) {
+                gds_mt_file_map_.erase(it);
+            }
+        }
+    }
+
     return NIXL_SUCCESS;
 }
 
@@ -273,14 +289,7 @@ nixlGdsMtEngine::postXfer (const nixl_xfer_op_t &operation,
                            nixlBackendReqH *&handle,
                            const nixl_opt_b_args_t *opt_args) const {
     nixlGdsMtBackendReqH *gds_mt_handle = (nixlGdsMtBackendReqH *)handle;
-    if (!gds_mt_handle) {
-        NIXL_ERROR << "GDS_MT: error: invalid handle";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    if (gds_mt_handle->request_list.empty()) {
-        NIXL_ERROR << "GDS_MT: error: empty request list for Xfer";
-        return NIXL_ERR_INVALID_PARAM;
-    }
+
     gds_mt_handle->overall_status.store (NIXL_SUCCESS);
     gds_mt_handle->running_transfer = executor_->run (gds_mt_handle->taskflow);
     return NIXL_IN_PROG;
@@ -289,9 +298,6 @@ nixlGdsMtEngine::postXfer (const nixl_xfer_op_t &operation,
 nixl_status_t
 nixlGdsMtEngine::checkXfer (nixlBackendReqH *handle) const {
     nixlGdsMtBackendReqH *gds_mt_handle = (nixlGdsMtBackendReqH *)handle;
-    if (gds_mt_handle->request_list.empty()) {
-        return NIXL_SUCCESS;
-    }
     if (gds_mt_handle->running_transfer.wait_for (nixlTime::seconds (0)) !=
         std::future_status::ready) {
         return NIXL_IN_PROG;

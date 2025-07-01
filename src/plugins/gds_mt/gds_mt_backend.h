@@ -21,19 +21,20 @@
 #include <nixl.h>
 #include <nixl_types.h>
 #include <backend/backend_engine.h>
-#include <cuda_runtime.h>
-#include <cufile.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <future>
-#include <vector>
 #include <memory>
-#include <atomic>
 #include <string>
 #include <unordered_map>
-#include <mutex>
+#include <variant>
+#include <vector>
+#include <future>
+#include <atomic>
+#include <cufile.h>
 #include "gds_mt_utils.h"
 #include "taskflow/taskflow.hpp"
+
+// Forward declarations
+namespace tf { class Executor; }
+struct gdsMtFileHandle;
 
 struct FileSegData {
     std::shared_ptr<gdsMtFileHandle> handle;
@@ -43,32 +44,6 @@ struct MemSegData {
     std::unique_ptr<gdsMtMemBuf> buf;
     MemSegData (void *addr, size_t size, int flags)
         : buf (std::make_unique<gdsMtMemBuf> (addr, size, flags)) {}
-};
-
-class nixlGdsMtMetadata : public nixlBackendMD {
-public:
-    explicit nixlGdsMtMetadata (std::shared_ptr<gdsMtFileHandle> file_handle)
-        : nixlBackendMD (true),
-          data_ (FileSegData{std::move (file_handle)}) {}
-
-    nixlGdsMtMetadata (void *addr, size_t size, int flags)
-        : nixlBackendMD (true),
-          data_ (MemSegData{addr, size, flags}) {}
-
-    ~nixlGdsMtMetadata() = default;
-
-    nixlGdsMtMetadata (const nixlGdsMtMetadata &) = delete;
-    nixlGdsMtMetadata &
-    operator= (const nixlGdsMtMetadata &) = delete;
-
-    nixlGdsMtMetadata (nixlGdsMtMetadata &&) = default;
-    nixlGdsMtMetadata &
-    operator= (nixlGdsMtMetadata &&) = default;
-
-private:
-    std::variant<FileSegData, MemSegData> data_;
-
-    friend class nixlGdsMtEngine;
 };
 
 struct GdsMtTransferRequestH {
@@ -90,18 +65,28 @@ struct GdsMtTransferRequestH {
     CUfileOpcode_t op;
 };
 
+class nixlGdsMtMetadata : public nixlBackendMD {
+public:
+    explicit nixlGdsMtMetadata (std::shared_ptr<gdsMtFileHandle> file_handle);
+    nixlGdsMtMetadata (void *addr, size_t size, int flags);
+    ~nixlGdsMtMetadata() = default;
+
+    nixlGdsMtMetadata (const nixlGdsMtMetadata &) = delete;
+    nixlGdsMtMetadata &operator= (const nixlGdsMtMetadata &) = delete;
+
+    nixlGdsMtMetadata (nixlGdsMtMetadata &&) = default;
+    nixlGdsMtMetadata &operator= (nixlGdsMtMetadata &&) = default;
+
+    std::variant<FileSegData, MemSegData> data_;
+};
+
 class nixlGdsMtBackendReqH : public nixlBackendReqH {
 public:
-    ~nixlGdsMtBackendReqH() {
-        if (running_transfer.valid()) {
-            running_transfer.wait();
-        }
-    }
+    ~nixlGdsMtBackendReqH();
 
     std::vector<GdsMtTransferRequestH> request_list;
     tf::Taskflow taskflow;
     std::future<void> running_transfer;
-
     std::atomic<nixl_status_t> overall_status;
 };
 
