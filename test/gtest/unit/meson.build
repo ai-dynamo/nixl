@@ -13,16 +13,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = [ ucx_dep, nixl_common_dep, serdes_interface ]
+unit_test_deps = [
+    nixl_dep,
+    gtest_dep,
+]
 
-if cuda_dep.found()
-    ucx_utils_dep += [ cuda_dep ]
+aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
+if aws_s3.found()
+    subdir('obj')
+    unit_test_deps += [obj_unit_test_dep]
 endif
 
-ucx_utils_inc_dirs = include_directories('.')
+unit_test_exe = executable('unit',
+    sources : [
+        'main.cpp',
+    ],
+    cpp_args : cpp_args,
+    dependencies : unit_test_deps,
+    include_directories: [
+        nixl_inc_dirs,
+        utils_inc_dirs,
+    ],
+    link_with: [nixl_build_lib],
+    install : true
+)
 
-ucx_utils_lib = library('ucx_utils',
-           'ucx_utils.cpp', 'ucx_utils.h', 'config.h', 'config.cpp',
-           dependencies: ucx_utils_dep,
-           include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-           install: true)
+test('unit', unit_test_exe)

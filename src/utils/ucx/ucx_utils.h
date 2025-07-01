@@ -160,7 +160,7 @@ public:
     ~nixlUcxContext();
 
     /* Memory management */
-    int memReg(void *addr, size_t size, nixlUcxMem &mem);
+    int memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl_mem_type);
     [[nodiscard]] std::string packRkey(nixlUcxMem &mem);
     void memDereg(nixlUcxMem &mem);
 
@@ -218,8 +218,5 @@ private:
 }
 
 nixl_status_t ucx_status_to_nixl(ucs_status_t status);
-
-void ucx_modify_config(ucp_config_t *config, std::string_view key,
-                       std::string_view value);
 
 #endif

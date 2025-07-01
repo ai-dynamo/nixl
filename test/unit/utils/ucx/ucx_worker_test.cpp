@@ -113,14 +113,17 @@ int main()
     nixl_status_t ret;
     size_t buf_size = 128 * 1024 * 1024; /* Use large buffer to ensure non-inline transfer */
     size_t i;
+    nixl_mem_t nixl_mem_type;
 
 #ifdef USE_VRAM
     checkCudaError(cudaSetDevice(gpu_id), "Failed to set device");
     checkCudaError(cudaMalloc(&buffer[0], buf_size), "Failed to allocate CUDA buffer 0");
     checkCudaError(cudaMalloc(&buffer[1], buf_size), "Failed to allocate CUDA buffer 1");
+    nixl_mem_type = VRAM_SEG;
 #else
     buffer[0] = (uint8_t*) calloc(1, buf_size);
     buffer[1] = (uint8_t*) calloc(1, buf_size);
+    nixl_mem_type = DRAM_SEG;
 #endif
     chk_buffer = (uint8_t*) calloc(1, buf_size);
 
@@ -133,7 +136,7 @@ int main()
         auto result = w[!i].connect((void*)addr.data(), addr.size());
         assert(result.ok());
         ep[!i] = std::move(*result);
-        assert (0 == c[i].memReg (buffer[i], buf_size, mem[i]));
+        assert (0 == c[i].memReg (buffer[i], buf_size, mem[i], nixl_mem_type));
         std::string rkey_tmp = c[i].packRkey (mem[i]);
         assert(!rkey_tmp.empty());
         assert(0 == ep[!i]->rkeyImport(rkey_tmp.data(), rkey_tmp.size(), rkey[!i]));
