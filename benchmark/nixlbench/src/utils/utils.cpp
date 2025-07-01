@@ -301,26 +301,22 @@ xferBenchConfig::loadFromFlags() {
         return -1;
     }
 
-    if (XFERBENCH_BACKEND_GDS == backend ||
-        XFERBENCH_BACKEND_POSIX == backend) {
+    if (XFERBENCH_BACKEND_GDS == backend || XFERBENCH_BACKEND_POSIX == backend) {
         if (scheme != XFERBENCH_SCHEME_TP && scheme != XFERBENCH_SCHEME_PAIRWISE) {
-            std::cerr << "Storage backend only supports pairwise and tp scheme, ["
-                      << scheme << "] is not supported." << std::endl;
+            std::cerr << "Storage backend only supports pairwise and tp scheme, [" << scheme
+                      << "] is not supported." << std::endl;
             return -1;
         }
         if (scheme != XFERBENCH_SCHEME_TP && num_files % num_threads != 0) {
             std::cerr << "Storage backend with scheme to assign whole file to"
                       << " a thread must have num_files(" << num_files
-                      << ") divisible by num_threads(" << num_threads
-                      << ")"
-                      << std::endl;
+                      << ") divisible by num_threads(" << num_threads << ")" << std::endl;
             return -1;
         }
         if (scheme == XFERBENCH_SCHEME_PAIRWISE &&
             max_block_size * max_batch_size * num_files > total_buffer_size) {
             std::cerr << "Incorrect buffer size configuration for pairwise scheme"
-                      << " max_block_size * max_batch_size * num_files >"
-                      << " total_buffer_size"
+                      << " max_block_size * max_batch_size * num_files >" << " total_buffer_size"
                       << std::endl;
             return -1;
         }
@@ -328,8 +324,7 @@ xferBenchConfig::loadFromFlags() {
             max_block_size * max_batch_size * num_files * num_threads > total_buffer_size) {
             std::cerr << "Incorrect buffer size configuration for tp scheme"
                       << " max_block_size * max_batch_size * num_files * num_threads >"
-                      << " total_buffer_size"
-                      << std::endl;
+                      << " total_buffer_size" << std::endl;
             return -1;
         }
     }

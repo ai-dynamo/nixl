@@ -436,8 +436,9 @@ createFileFds(std::string name) {
     return fds;
 }
 
-std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd) {
-    auto ret = std::optional<xferBenchIOV>(std::in_place, (uintptr_t)0, buffer_size, fd);
+std::optional<xferBenchIOV>
+xferBenchNixlWorker::initBasicDescFile (size_t buffer_size, int fd) {
+    auto ret = std::optional<xferBenchIOV> (std::in_place, (uintptr_t)0, buffer_size, fd);
     // Fill up with data
     void *buf;
     AllocationType type = AllocationType::MALLOC;
@@ -453,7 +454,7 @@ std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescFile(size_t buffer
 
     // File is always initialized with XFERBENCH_TARGET_BUFFER_ELEMENT
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
-    int rc = pwrite(fd, buf, buffer_size, 0);
+    int rc = pwrite (fd, buf, buffer_size, 0);
     if (rc < 0) {
         std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
                   << std::endl;
@@ -570,15 +571,14 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
         size_t file_size = xferBenchConfig::total_buffer_size / num_files;
         for (size_t f = 0; f < num_files; f++) {
             std::optional<xferBenchIOV> basic_desc;
-            basic_desc = initBasicDescFile(file_size, remote_fds[f]);
+            basic_desc = initBasicDescFile (file_size, remote_fds[f]);
             if (basic_desc) {
-                remote_iovs.push_back(basic_desc.value());
+                remote_iovs.push_back (basic_desc.value());
             }
         }
-        nixl_reg_dlist_t desc_list(FILE_SEG);
-        iovListToNixlRegDlist(remote_iovs, desc_list);
-        CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args),
-                    "registerMem failed");
+        nixl_reg_dlist_t desc_list (FILE_SEG);
+        iovListToNixlRegDlist (remote_iovs, desc_list);
+        CHECK_NIXL_ERROR (agent->registerMem (desc_list, &opt_args), "registerMem failed");
 
         num_devices = 1;
     } else {
@@ -663,12 +663,11 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
         }
     } else if (xferBenchConfig::isStorageBackend()) {
         for (auto &iov: remote_iovs) {
-            cleanupBasicDescFile(iov);
+            cleanupBasicDescFile (iov);
         }
-        nixl_reg_dlist_t desc_list(FILE_SEG);
-        iovListToNixlRegDlist(remote_iovs, desc_list);
-        CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args),
-                         "deregisterMem failed");
+        nixl_reg_dlist_t desc_list (FILE_SEG);
+        iovListToNixlRegDlist (remote_iovs, desc_list);
+        CHECK_NIXL_ERROR (agent->deregisterMem (desc_list, &opt_args), "deregisterMem failed");
     }
 }
 
