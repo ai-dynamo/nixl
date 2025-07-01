@@ -1,0 +1,85 @@
+# Build Matrix Configuration for NixL CI Pipeline
+#
+# This file defines the build matrix configuration for the NixL CI pipeline in Jenkins.
+# It specifies the build environment, resources, and test matrix for continuous integration.
+#
+# Key Components:
+# - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
+# - Docker Images: Specifies the container images used for different build stages
+#   - PyTorch images (24.10 and 25.02) for building and testing
+#   - Podman image for container builds
+# - Matrix Configuration: Defines build variations using simple scalar values (ci-demo compatible)
+#   - Ubuntu builds: Uses contrib/Dockerfile with minimal arguments
+#   - Manylinux builds: Uses contrib/Dockerfile.manylinux with complete AlmaLinux and manylinux settings
+# - Build Steps: Sequential steps for building, testing, and container creation
+#
+# When Modified:
+# - Adding/removing Docker images: Affects available build environments
+# - Modifying matrix axes: Changes build variations (use simple scalar values for ci-demo compatibility)
+# - Build step logic: Update conditional logic for new build configurations
+# - Adjusting resource limits: Impacts build performance and resource allocation
+# - Adding/removing steps: Changes the build pipeline sequence
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+---
+job: nixl-ci-build
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+taskName: 'build-${arch}-${axis_index}'
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 24Gi, cpu: 8000m}"
+  requests: "{memory: 18Gi, cpu: 8000m}"
+
+credentials:
+  - credentialsId: svc-nixl-gitlab-token
+    usernameVariable: GITLAB_USERNAME
+    passwordVariable: GITLAB_TOKEN
+
+runs_on_dockers:
+  - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", privileged: true }
+
+matrix:
+  axes:
+    flags:
+      - "--dockerfile contrib/Dockerfile"
+      - "--dockerfile contrib/Dockerfile.manylinux --base-image gitlab-master.nvidia.com:5005/dl/dgx/cuda --base-image-tag 12.8-devel-manylinux--25.03 --wheel-base manylinux_2_28 --python-versions '3.9,3.10,3.11,3.12' --os ubuntu24"
+    arch:
+      - x86_64
+      # - aarch64   # Manylinux Dockerfile hardcoded for x86_64 - OpenSSL conf uses linux-x86_64
+
+steps:
+  - name: Setup
+    parallel: false
+    credentialsId: svc-nixl-gitlab-token
+    run: |
+      # change storage driver to improve build performance
+      rm -f /etc/containers/storage.conf ; podman system reset -f || true
+      # symlink podman to docker - scripts works with docker commands
+      ln -sfT $(type -p podman) /usr/bin/docker
+      # install git for building container image
+      yum install -y git
+      # Authenticate with GitLab registry
+      echo "$GITLAB_TOKEN" | docker login gitlab-master.nvidia.com:5005 --username "$GITLAB_USERNAME" --password-stdin
+
+  - name: Print Build Flags
+    parallel: false
+    run: |
+      echo "Build flags: ${flags}"
+
+  - name: Build Docker Image
+    parallel: false
+    run: |
+      echo "DEBUG: nproc $(nproc)"
+      # Use moderate parallelism with increased memory
+      export MAKEFLAGS="-j6"
+
+      # Execute build with matrix arguments
+      eval "contrib/build-container.sh ${flags}"
