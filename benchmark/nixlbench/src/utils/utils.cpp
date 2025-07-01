@@ -316,9 +316,18 @@ xferBenchConfig::loadFromFlags() {
                       << std::endl;
             return -1;
         }
-        if (max_block_size * max_batch_size * num_files > total_buffer_size) {
-            std::cerr << "Incorrect buffer size configuration"
+        if (scheme == XFERBENCH_SCHEME_PAIRWISE &&
+            max_block_size * max_batch_size * num_files > total_buffer_size) {
+            std::cerr << "Incorrect buffer size configuration for pairwise scheme"
                       << " max_block_size * max_batch_size * num_files >"
+                      << " total_buffer_size"
+                      << std::endl;
+            return -1;
+        }
+        if (scheme == XFERBENCH_SCHEME_TP &&
+            max_block_size * max_batch_size * num_files * num_threads > total_buffer_size) {
+            std::cerr << "Incorrect buffer size configuration for tp scheme"
+                      << " max_block_size * max_batch_size * num_files * num_threads >"
                       << " total_buffer_size"
                       << std::endl;
             return -1;
@@ -663,9 +672,9 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
         XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
         if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
-            total_data_transferred *= num_files * num_threads;
-        } else {
             total_data_transferred *= num_files;
+        } else {
+            total_data_transferred *= (num_files / num_threads);
         }
     }
 
