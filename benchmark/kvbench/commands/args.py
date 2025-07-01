@@ -17,7 +17,9 @@ import argparse
 
 
 def add_common_args(subparser: argparse.ArgumentParser):
-    subparser.add_argument("--model", type=str, help="Model name (e.g., 'llama3.1-8b')")
+    subparser.add_argument(
+        "--model", type=str, help="Path to a model architecture YAML file"
+    )
     subparser.add_argument(
         "--model_config", type=str, help="Path to a single model config YAML file"
     )
@@ -146,15 +148,41 @@ def add_nixl_bench_args(subparser: argparse.ArgumentParser):
     )
     subparser.add_argument(
         "--storage_enable_direct",
-        type=bool,
+        action="store_true",
         help="Enable direct I/O for storage operations (only used with POSIX backend)",
-        default=False,
     )
     subparser.add_argument(
         "--gds_filepath", type=str, help="(File path for GDS operations"
-    )
+    ),
     subparser.add_argument(
         "--enable_vmm",
         action="store_true",
         help="Enable VMM memory allocation when DRAM is requested",
+    ),
+    subparser.add_argument(
+        "--gds_batch_pool_size",
+        type=int,
+        default=32,
+        help="Batch pool size for GDS operations (default: 32, only used with GDS backend)",
+    )
+    subparser.add_argument(
+        "--gds_batch_limit",
+        type=int,
+        default=128,
+        help="Batch limit for GDS operations (default: 128, only used with GDS backend)",
+    )
+    subparser.add_argument(
+        "--posix_filepath",
+        type=str,
+        help="POSIX filepath (default: '')",
+    )
+    subparser.add_argument(
+        "--posix_api_type",
+        type=str,
+        help="POSIX API type [AIO, O_DIRECT] (default: AIO)",
+    )
+    subparser.add_argument(
+        "--num_files",
+        type=int,
+        help="Number of files (default: 1)",
     )
