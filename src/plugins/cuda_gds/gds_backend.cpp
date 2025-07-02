@@ -24,8 +24,8 @@
 #define DEFAULT_BATCH_LIMIT 128
 /** Setting the max request size to 16 MB */
 #define DEFAULT_MAX_REQUEST_SIZE (16 * 1024 * 1024)  // 16MB
-/** Create a batch pool of size 32 */
-#define DEFAULT_BATCH_POOL_SIZE 32
+/** Create a batch pool of size 16 */
+#define DEFAULT_BATCH_POOL_SIZE 16
 
 nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
     : nixlBackendEngine(init_params)
