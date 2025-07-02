@@ -13,16 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = [ ucx_dep, nixl_common_dep, serdes_interface ]
+project('taskflow', 'cpp', version: '3.10.0')
 
-if cuda_dep.found()
-    ucx_utils_dep += [ cuda_dep ]
-endif
+# Taskflow is a header-only library
+taskflow_inc = include_directories('.')
 
-ucx_utils_inc_dirs = include_directories('.')
-
-ucx_utils_lib = library('ucx_utils',
-           'ucx_utils.cpp', 'ucx_utils.h', 'config.h', 'config.cpp',
-           dependencies: ucx_utils_dep,
-           include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-           install: true)
+taskflow_dep = declare_dependency(
+  include_directories: taskflow_inc,
+  version: meson.project_version()
+)

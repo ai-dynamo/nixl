@@ -13,16 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = [ ucx_dep, nixl_common_dep, serdes_interface ]
-
 if cuda_dep.found()
-    ucx_utils_dep += [ cuda_dep ]
+    cuda_dependencies = [cuda_dep]
+    cpp_args = '-DUSE_VRAM'
+else
+    cuda_dependencies = []
+    cpp_args = '-UUSE_VRAM'
 endif
 
-ucx_utils_inc_dirs = include_directories('.')
-
-ucx_utils_lib = library('ucx_utils',
-           'ucx_utils.cpp', 'ucx_utils.h', 'config.h', 'config.cpp',
-           dependencies: ucx_utils_dep,
-           include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-           install: true)
+nixl_gds_mt_app = executable('nixl_gds_mt_test', 'nixl_gds_mt_test.cpp',
+                             dependencies: [nixl_dep, nixl_infra, cuda_dep],
+                             include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                             install: true)
