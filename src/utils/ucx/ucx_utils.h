@@ -201,7 +201,6 @@ public:
     getEfd (int &fd);
 
 private:
-    /* Local UCX stuff */
     const std::unique_ptr<ucp_worker, void (*) (ucp_worker *)> worker;
     ucp_err_handling_mode_t err_handling_mode_;
 
