@@ -63,7 +63,7 @@ RUN cd /tmp && \
     tar -xzf openssl-3.0.16.tar.gz && \
     cd openssl-3.0.16 && \
     ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3 \
-        shared zlib linux-x86_64 && \
+        shared zlib linux-${ARCH} && \
     make -j$(nproc) && \
     make install_sw && \
     echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
@@ -115,8 +115,13 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     RUST_VERSION=1.86.0 \
     RUSTARCH=${ARCH}-unknown-linux-gnu
 
-RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" && \
-    echo "a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f *rustup-init" | sha256sum -c - && \
+RUN case "$ARCH" in \
+      x86_64) RUSTUP_HASH="a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f" ;; \
+      aarch64) RUSTUP_HASH="c64b33db2c6b9385817ec0e49a84bcfe018ed6e328fe755c3c809580cc70ce7a" ;; \
+      *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
+    esac && \
+    wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" -O rustup-init && \
+    echo "$RUSTUP_HASH *rustup-init" | sha256sum -c - && \
     chmod +x rustup-init && \
     ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
     rm rustup-init && \
@@ -139,7 +144,7 @@ RUN cd /workspace && \
     cd gdrcopy/packages && \
     CUDA=/usr/local/cuda ./build-rpm-packages.sh && \
     rpm -Uvh gdrcopy-kmod-2.5-1dkms.el8.noarch.rpm && \
-    rpm -Uvh gdrcopy-2.5-1.el8.x86_64.rpm && \
+    rpm -Uvh gdrcopy-2.5-1.el8.${ARCH}.rpm && \
     rpm -Uvh gdrcopy-devel-2.5-1.el8.noarch.rpm
 
 RUN cd /usr/local/src && \
