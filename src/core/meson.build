@@ -42,6 +42,10 @@ if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
 endif
 
+if 'GDS_MT' in static_plugins
+    nixl_lib_deps += [ gds_mt_backend_interface, taskflow_proj, cuda_dep ]
+endif
+
 cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
 disable_mooncake_backend = get_option('disable_mooncake_backend')
