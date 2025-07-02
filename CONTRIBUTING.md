@@ -120,7 +120,7 @@ All code must adhere to the style guide in `docs/CodeStyle.md` and be formatted 
 
 1. **Follow the existing code style** in the file/module you're modifying
 2. **Use descriptive names** for variables, functions, and classes
-3. **Document complex logic** with clear comments
+3. **Document complex logic** with clear comments, but avoid redundant self-explanatory comments that don't add value
 4. **Prefer clarity over cleverness**
 
 ### Error Handling
