@@ -353,8 +353,7 @@ createFileFds (std::string name) {
 
     for (int i = 0; i < num_files; i++) {
         std::string file_name = file_path + file_name_prefix + name + "_" + std::to_string(i);
-        std::cout << "Creating "
-                  << " file: " << file_name << std::endl;
+        std::cout << "Creating " << " file: " << file_name << std::endl;
         int fd = open(file_name.c_str(), flags, 0744);
         if (fd < 0) {
             std::cerr << "Failed to open file: " << file_name << " with error: "
