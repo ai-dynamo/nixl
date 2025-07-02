@@ -138,7 +138,7 @@ class xferBenchConfig {
         static int loadFromFlags();
         static void printConfig();
         static void
-        printOption (const std::string& desc, const std::string& value);
+        printOption (const std::string &desc, const std::string &value);
         static std::vector<std::string> parseDeviceList();
         static bool
         isStorageBackend();
