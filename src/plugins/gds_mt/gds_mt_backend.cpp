@@ -27,13 +27,76 @@
 #include <exception>
 #include <cstring>
 #include <variant>
+#include <future>
+#include <atomic>
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
-#include "common/str_tools.h"
-#include "common/nixl_time.h"
+#include "taskflow/taskflow.hpp"
 
 namespace {
 const size_t default_thread_count = std::max (1u, std::thread::hardware_concurrency() / 2);
+
+struct FileSegData {
+    std::shared_ptr<gdsMtFileHandle> handle;
+};
+
+struct MemSegData {
+    std::unique_ptr<gdsMtMemBuf> buf;
+    MemSegData (void *addr, size_t size, int flags)
+        : buf (std::make_unique<gdsMtMemBuf> (addr, size, flags)) {}
+};
+
+struct GdsMtTransferRequestH {
+    GdsMtTransferRequestH (void *a,
+                           size_t s,
+                           size_t offset,
+                           CUfileHandle_t handle,
+                           CUfileOpcode_t operation)
+        : addr{a},
+          size{s},
+          file_offset{offset},
+          fh{handle},
+          op{operation} {}
+
+    void *addr;
+    size_t size;
+    size_t file_offset;
+    CUfileHandle_t fh;
+    CUfileOpcode_t op;
+};
+
+class nixlGdsMtMetadata : public nixlBackendMD {
+public:
+    explicit nixlGdsMtMetadata (std::shared_ptr<gdsMtFileHandle> file_handle)
+        : nixlBackendMD (true),
+          data_ (FileSegData{std::move (file_handle)}) {}
+
+    explicit nixlGdsMtMetadata (void *addr, size_t size, int flags)
+        : nixlBackendMD (true),
+          data_ (MemSegData{addr, size, flags}) {}
+
+    ~nixlGdsMtMetadata() = default;
+
+    nixlGdsMtMetadata (const nixlGdsMtMetadata &) = delete;
+    nixlGdsMtMetadata &
+    operator= (const nixlGdsMtMetadata &) = delete;
+
+    nixlGdsMtMetadata (nixlGdsMtMetadata &&) = default;
+    nixlGdsMtMetadata &
+    operator= (nixlGdsMtMetadata &&) = default;
+
+    std::variant<FileSegData, MemSegData> data_;
+};
+
+class nixlGdsMtBackendReqH : public nixlBackendReqH {
+public:
+    ~nixlGdsMtBackendReqH();
+
+    std::vector<GdsMtTransferRequestH> request_list;
+    tf::Taskflow taskflow;
+    std::future<void> running_transfer;
+    std::atomic<nixl_status_t> overall_status;
+};
 
 size_t
 getThreadCount (const nixlBackendInitParams *init_params) {
@@ -111,15 +174,6 @@ extractTransferParams (const nixlMetaDesc &mem_desc,
     return NIXL_SUCCESS;
 }
 } // namespace
-
-// Implementation of interface classes
-nixlGdsMtMetadata::nixlGdsMtMetadata (std::shared_ptr<gdsMtFileHandle> file_handle)
-    : nixlBackendMD (true),
-      data_ (FileSegData{std::move (file_handle)}) {}
-
-nixlGdsMtMetadata::nixlGdsMtMetadata (void *addr, size_t size, int flags)
-    : nixlBackendMD (true),
-      data_ (MemSegData{addr, size, flags}) {}
 
 nixlGdsMtBackendReqH::~nixlGdsMtBackendReqH() {
     if (running_transfer.valid()) {

@@ -13,12 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if cuda_dep.found()
-    cuda_dependencies = [cuda_dep]
-    cpp_args = '-DUSE_VRAM'
-else
-    cuda_dependencies = []
-    cpp_args = '-UUSE_VRAM'
+if cuda_dep.found() == false
+    subdir_done()
 endif
 
 nixl_gds_mt_app = executable('nixl_gds_mt_test', 'nixl_gds_mt_test.cpp',
