@@ -54,7 +54,9 @@ DEFINE_uint64(max_block_size, 64 * (1 << 20), "Max size of block \
 DEFINE_uint64(start_batch_size, 1, "Starting size of batch (Default: 1)");
 DEFINE_uint64(max_batch_size, 1, "Max size of batch (starts from 1)");
 DEFINE_int32(num_iter, 1000, "Max iterations");
-DEFINE_int32(large_block_iter_factor, 1, "factor to reduce test iteration when testing large block size(>1MB)");
+DEFINE_int32 (large_block_iter_factor,
+              1,
+              "factor to reduce test iteration when testing large block size(>1MB)");
 DEFINE_int32(warmup_iter, 100, "Number of warmup iterations before timing");
 DEFINE_int32 (
     num_threads,
