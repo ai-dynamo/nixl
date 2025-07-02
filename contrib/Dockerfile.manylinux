@@ -58,28 +58,24 @@ RUN yum groupinstall -y 'Development Tools' &&  \
 
 # Build OpenSSL 3.x
 RUN yum install -y perl-IPC-Cmd perl-Test-Simple perl-Data-Dumper
-RUN case "$ARCH" in \
-        x86_64) OPENSSL_TARGET="linux-x86_64" ;; \
-        aarch64) OPENSSL_TARGET="linux-aarch64" ;; \
-        *) echo "Unsupported architecture for OpenSSL: $ARCH" && exit 1 ;; \
-    esac && \
-    echo "Building OpenSSL for target: $OPENSSL_TARGET" && \
-    cd /tmp && \
+RUN cd /tmp && \
     wget -q https://www.openssl.org/source/openssl-3.0.16.tar.gz && \
     tar -xzf openssl-3.0.16.tar.gz && \
     cd openssl-3.0.16 && \
     ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3 \
-        shared zlib $OPENSSL_TARGET && \
+        shared zlib linux-$ARCH && \
     make -j$(nproc) && \
     make install_sw && \
     echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
+    echo "/usr/local/openssl3/lib" >> /etc/ld.so.conf.d/openssl3.conf && \
     ldconfig && \
     rm -rf /tmp/openssl-3.0.16*
 
-ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:$PKG_CONFIG_PATH"
-ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:$LD_LIBRARY_PATH"
+# Set environment variables to use the new OpenSSL
+ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:/usr/local/openssl3/lib/pkgconfig:$PKG_CONFIG_PATH"
+ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:/usr/local/openssl3/lib:$LD_LIBRARY_PATH"
 ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
-ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64"
+ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64:/usr/local/openssl3/lib"
 ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
 
 WORKDIR /workspace
@@ -117,10 +113,19 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH \
-    RUST_VERSION=1.86.0
+    RUST_VERSION=1.86.0 \
+    RUSTARCH=${ARCH}-unknown-linux-gnu
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
-    -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION && \
+RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" && \
+    chmod +x rustup-init && \
+    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
+    case "$ARCH" in \
+        aarch64) RUSTUP_SHA256="c64b33db2c6b9385817ec0e49a84bcfe018ed6e328fe755c3c809580cc70ce7a" ;; \
+        x86_64) RUSTUP_SHA256="a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f" ;; \
+        *) echo "Unsupported architecture for Rust: $ARCH" && exit 1 ;; \
+    esac && \
+    echo "$RUSTUP_SHA256 *rustup-init" | sha256sum -c - && \
+    rm rustup-init && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
@@ -179,25 +184,22 @@ ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/:$LD_LIBRARY_PATH
 ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/plugins:$LD_LIBRARY_PATH
 ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib64/plugins
 
-RUN LIB_ARCH="$ARCH-linux-gnu" && \
-    echo "/usr/local/nixl/lib/$LIB_ARCH" > /etc/ld.so.conf.d/nixl.conf && \
-    echo "/usr/local/nixl/lib/$LIB_ARCH/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
+RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-# Create the wheel with architecture detection
+# Create the wheel
+# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
-ARG WHL_PLATFORM
-RUN DETECTED_PLATFORM="manylinux_2_28_$ARCH" && \
-    WHL_PLATFORM=${WHL_PLATFORM:-$DETECTED_PLATFORM} && \
-    echo "Building wheels for platform: $WHL_PLATFORM" && \
-    IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
+ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
+RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
-    done && \
-    UCX_LIBDIR="/usr/lib64" && \
-    echo "Using UCX library directory: $UCX_LIBDIR" && \
-    uv pip install auditwheel && \
+    done
+
+# Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
+RUN uv pip install auditwheel && \
     uv run auditwheel repair --exclude libcuda.so.1 --exclude 'libssl*' --exclude 'libcrypto*' /tmp/dist/nixl-*cp3*.whl --plat $WHL_PLATFORM --wheel-dir dist && \
-    contrib/wheel_add_ucx_plugins.py --ucx-lib-dir $UCX_LIBDIR dist/*.whl
+    contrib/wheel_add_ucx_plugins.py --ucx-lib-dir /usr/lib64 dist/*.whl
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
