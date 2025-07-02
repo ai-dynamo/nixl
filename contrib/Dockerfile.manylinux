@@ -63,8 +63,7 @@ RUN case "$ARCH" in \
         aarch64) OPENSSL_TARGET="linux-aarch64" ;; \
         *) echo "Unsupported architecture for OpenSSL: $ARCH" && exit 1 ;; \
     esac && \
-    OPENSSL_LIBDIR="lib64" && \
-    echo "Building OpenSSL for target: $OPENSSL_TARGET, lib dir: $OPENSSL_LIBDIR" && \
+    echo "Building OpenSSL for target: $OPENSSL_TARGET" && \
     cd /tmp && \
     wget -q https://www.openssl.org/source/openssl-3.0.16.tar.gz && \
     tar -xzf openssl-3.0.16.tar.gz && \
@@ -73,14 +72,14 @@ RUN case "$ARCH" in \
         shared zlib $OPENSSL_TARGET && \
     make -j$(nproc) && \
     make install_sw && \
-    echo "/usr/local/openssl3/$OPENSSL_LIBDIR" > /etc/ld.so.conf.d/openssl3.conf && \
+    echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
     ldconfig && \
     rm -rf /tmp/openssl-3.0.16*
 
-ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:/usr/local/openssl3/lib/pkgconfig:$PKG_CONFIG_PATH"
-ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:/usr/local/openssl3/lib:$LD_LIBRARY_PATH"
+ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:$PKG_CONFIG_PATH"
+ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:$LD_LIBRARY_PATH"
 ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
-ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64:/usr/local/openssl3/lib"
+ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64"
 ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
 
 WORKDIR /workspace
@@ -140,14 +139,8 @@ RUN cd /workspace && \
     git clone https://github.com/NVIDIA/gdrcopy.git && \
     cd gdrcopy/packages && \
     CUDA=/usr/local/cuda ./build-rpm-packages.sh && \
-    case "$ARCH" in \
-        x86_64) GDRCOPY_ARCH="x86_64" ;; \
-        aarch64) GDRCOPY_ARCH="aarch64" ;; \
-        *) echo "Unsupported architecture for gdrcopy: $ARCH" && exit 1 ;; \
-    esac && \
-    echo "Installing gdrcopy for architecture: $GDRCOPY_ARCH" && \
     rpm -Uvh gdrcopy-kmod-2.5-1dkms.el8.noarch.rpm && \
-    rpm -Uvh gdrcopy-2.5-1.el8.$GDRCOPY_ARCH.rpm && \
+    rpm -Uvh gdrcopy-2.5-1.el8.$ARCH.rpm && \
     rpm -Uvh gdrcopy-devel-2.5-1.el8.noarch.rpm
 
 RUN cd /usr/local/src && \
@@ -173,12 +166,10 @@ RUN cd /usr/local/src && \
 
 COPY . /workspace/nixl
 
-RUN CUDA_LIBDIR="lib64" && \
-    echo "Using CUDA library directory: $CUDA_LIBDIR" && \
-    rm -rf build && \
+RUN rm -rf build && \
     mkdir build && \
     uv run meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
-    -Dcudapath_lib="/usr/local/cuda/$CUDA_LIBDIR" \
+    -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" && \
     cd build && \
     ninja && \
@@ -188,11 +179,7 @@ ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/:$LD_LIBRARY_PATH
 ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/plugins:$LD_LIBRARY_PATH
 ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib64/plugins
 
-RUN case "$ARCH" in \
-        x86_64) LIB_ARCH="x86_64-linux-gnu" ;; \
-        aarch64) LIB_ARCH="aarch64-linux-gnu" ;; \
-        *) LIB_ARCH="$ARCH-linux-gnu" ;; \
-    esac && \
+RUN LIB_ARCH="$ARCH-linux-gnu" && \
     echo "/usr/local/nixl/lib/$LIB_ARCH" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$LIB_ARCH/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
@@ -200,12 +187,7 @@ RUN case "$ARCH" in \
 # Create the wheel with architecture detection
 ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
 ARG WHL_PLATFORM
-# Auto-detect wheel platform if not provided
-RUN case "$ARCH" in \
-        x86_64) DETECTED_PLATFORM="manylinux_2_28_x86_64" ;; \
-        aarch64) DETECTED_PLATFORM="manylinux_2_28_aarch64" ;; \
-        *) echo "Unsupported architecture for wheel: $ARCH" && exit 1 ;; \
-    esac && \
+RUN DETECTED_PLATFORM="manylinux_2_28_$ARCH" && \
     WHL_PLATFORM=${WHL_PLATFORM:-$DETECTED_PLATFORM} && \
     echo "Building wheels for platform: $WHL_PLATFORM" && \
     IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
