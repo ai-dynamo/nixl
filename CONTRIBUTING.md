@@ -77,7 +77,7 @@ All C++ code must be formatted using the provided `.clang-format` configuration:
 clang-format -i path/to/file.cpp
 
 # Format all changed files
-git diff --name-only HEAD | grep -E '\.(cpp|h|hpp|cc|cxx)$' | xargs clang-format -i
+git diff --name-only HEAD | grep -E '\.(cpp|h|hpp|cc|cxx|cu|cuh)$' | xargs clang-format -i
 ```
 
 ### Pre-commit Hooks
@@ -88,8 +88,6 @@ The project uses pre-commit hooks for Python code quality. Install them with:
 pip install pre-commit
 pre-commit install
 ```
-
-Note: C++ formatting via clang-format in pre-commit is currently optional but recommended.
 
 ## Code Standards
 
@@ -112,7 +110,7 @@ NIXL is a modern C++17 project. We adhere to the [C++ Core Guidelines](https://i
 
 2. **Fallback to Abseil**: When STL lacks required functionality
    - String formatting: `absl::StrFormat`
-   - Error handling: `absl::StatusOr` for operations that return values with potential errors
+   - Error handling: `absl::StatusOr` for data-path operations that return values with potential errors
    - High-performance containers: `absl::flat_hash_map` when needed
    - Logging utilities (integrated with NIXL logging)
 
@@ -137,7 +135,21 @@ All code must adhere to the style guide in `docs/CodeStyle.md` and be formatted 
    - Avoid exceptions in hot paths
 
 3. **Logging**: Use NIXL logging macros
-   - `NIXL_ERROR`, `NIXL_WARN`, `NIXL_INFO`, `NIXL_DEBUG`
+   - `NIXL_ERROR`: Critical errors that prevent normal operation
+     - System failures, resource exhaustion, unrecoverable errors
+     - Failed operations that cannot continue
+   - `NIXL_WARN`: Warning conditions that don't prevent operation but indicate problems
+     - Deprecated API usage, performance degradation, recoverable errors
+     - Fallback behavior, suboptimal configurations
+   - `NIXL_INFO`: Informational messages about normal operation
+     - Initialization complete, configuration loaded, major state changes
+     - Connection established/closed, module lifecycle events
+   - `NIXL_DEBUG`: Detailed debugging information for development
+     - Function entry/exit, intermediate values, algorithm decisions
+     - Variable states, decision branches, detailed flow information
+   - `NIXL_TRACE`: Very detailed trace information for deep debugging
+     - Per-packet processing, memory allocations, lock acquisitions
+     - Low-level operations, fine-grained timing, verbose diagnostics
 
 ## Contributing Process
 
