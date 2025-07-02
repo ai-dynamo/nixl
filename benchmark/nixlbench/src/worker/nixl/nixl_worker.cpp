@@ -741,8 +741,8 @@ std::variant<double, int> xferBenchNixlWorker::transfer(size_t block_size,
 
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
-        skip /= LARGE_BLOCK_SIZE_ITER_FACTOR;
-        num_iter /= LARGE_BLOCK_SIZE_ITER_FACTOR;
+        skip /= xferBenchConfig::large_block_iter_factor;
+        num_iter /= xferBenchConfig::large_block_iter_factor;
     }
 
     ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads);
@@ -774,8 +774,11 @@ void xferBenchNixlWorker::poll(size_t block_size) {
     num_iter = xferBenchConfig::num_iter;
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
-        skip /= LARGE_BLOCK_SIZE_ITER_FACTOR;
-        num_iter /= LARGE_BLOCK_SIZE_ITER_FACTOR;
+        skip /= xferBenchConfig::large_block_iter_factor;
+        if (skip < MIN_WARMUP_ITERS) {
+            skip = MIN_WARMUP_ITERS;
+        }
+        num_iter /= xferBenchConfig::large_block_iter_factor;
     }
     total_iter = skip + num_iter;
 
