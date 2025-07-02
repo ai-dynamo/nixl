@@ -193,7 +193,7 @@ nixl_status_t nixlPosixBackendReqH::checkXfer() {
 }
 
 nixl_status_t nixlPosixBackendReqH::postXfer() {
-    return queue->submit();
+    return queue->submit (local, remote);
 }
 
 // -----------------------------------------------------------------------------

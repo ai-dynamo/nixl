@@ -42,7 +42,8 @@ class aioQueue : public nixlPosixQueue {
     public:
         aioQueue(int num_entries, nixl_xfer_op_t operation);
         ~aioQueue();
-        nixl_status_t submit() override;
+        nixl_status_t
+        submit (const nixl_meta_dlist_t &, const nixl_meta_dlist_t &) override;
         nixl_status_t checkCompleted() override;
         nixl_status_t prepIO(int fd, void* buf, size_t len, off_t offset) override;
 };

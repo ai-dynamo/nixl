@@ -47,7 +47,8 @@ class UringQueue : public nixlPosixQueue {
     public:
         UringQueue(int num_entries, const struct io_uring_params& params, nixl_xfer_op_t operation);
         ~UringQueue();
-        nixl_status_t submit() override;
+        nixl_status_t
+        submit (const nixl_meta_dlist_t &local, const nixl_meta_dlist_t &remote) override;
         nixl_status_t checkCompleted() override;
         nixl_status_t prepIO(int fd, void* buf, size_t len, off_t offset) override;
 };

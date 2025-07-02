@@ -28,8 +28,10 @@
 namespace {
     // Log completion percentage at regular intervals (every log_percent_step percent)
     void logOnPercentStep(unsigned int completed, unsigned int total) {
-        constexpr unsigned int log_percent_step = 10;
-        static_assert(log_percent_step >= 1 && log_percent_step <= 100, "log_percent_step must be in [1, 100]");
+        constexpr unsigned int default_log_percent_step = 10;
+        static_assert (default_log_percent_step >= 1 && default_log_percent_step <= 100,
+                       "log_percent_step must be in [1, 100]");
+        unsigned int log_percent_step = total < 10 ? 1 : default_log_percent_step;
 
         if (total == 0) {
             NIXL_ERROR << "Tried to log completion percentage with total == 0";
@@ -91,17 +93,34 @@ UringQueue::~UringQueue() {
     io_uring_queue_exit(&uring);
 }
 
-nixl_status_t UringQueue::submit() {
+nixl_status_t
+UringQueue::submit (const nixl_meta_dlist_t &local, const nixl_meta_dlist_t &remote) {
+    for (auto [local_it, remote_it] = std::make_pair (local.begin(), remote.begin());
+         local_it != local.end() && remote_it != remote.end();
+         ++local_it, ++remote_it) {
+        int fd = remote_it->devId;
+        void *buf = reinterpret_cast<void *> (local_it->addr);
+        size_t len = local_it->len;
+        off_t offset = remote_it->addr;
+
+        struct io_uring_sqe *sqe = io_uring_get_sqe (&uring);
+        if (!sqe) {
+            NIXL_ERROR << "Failed to get io_uring submission queue entry";
+            return NIXL_ERR_BACKEND;
+        }
+        prep_op (sqe, fd, buf, len, offset);
+    }
+
     int ret = io_uring_submit(&uring);
     if (ret != num_entries) {
         if (ret < 0) {
             NIXL_ERROR << absl::StrFormat("io_uring submit failed: %s", nixl_strerror(-ret));
-        }
-        else {
+        } else {
             NIXL_ERROR << absl::StrFormat("io_uring submit failed. Partial submission: %d/%d", num_entries, ret);
         }
         return NIXL_ERR_BACKEND;
     }
+    num_completed = 0;
     return NIXL_IN_PROG;
 }
 
@@ -135,12 +154,5 @@ nixl_status_t UringQueue::checkCompleted() {
 }
 
 nixl_status_t UringQueue::prepIO(int fd, void* buf, size_t len, off_t offset) {
-    struct io_uring_sqe *sqe = io_uring_get_sqe(&uring);
-    if (!sqe) {
-        NIXL_ERROR << "Failed to get io_uring submission queue entry";
-        return NIXL_ERR_BACKEND;
-    }
-
-    prep_op(sqe, fd, buf, len, offset);
     return NIXL_SUCCESS;
 }
