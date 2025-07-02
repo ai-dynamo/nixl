@@ -347,9 +347,9 @@ createFileFds (std::string name) {
     const std::string file_path = xferBenchConfig::filepath != "" ?
         xferBenchConfig::filepath :
         std::filesystem::current_path().string();
-    std::string file_backend (xferBenchConfig::backend.size(), '0');
-    std::transform (xferBenchConfig::backend.begin(),
-                    xferBenchConfig::backend.end(),
+    std::string file_backend = xferBenchConfig::backend;
+    std::transform (file_backend.begin(),
+                    file_backend.end(),
                     file_backend.begin(),
                     ::tolower);
     const std::string file_name_prefix = "/nixlbench_" + file_backend + "_test_file_";

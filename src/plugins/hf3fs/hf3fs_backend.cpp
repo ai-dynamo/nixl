@@ -110,6 +110,7 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
 {
     nixlHf3fsMetadata *md = (nixlHf3fsMetadata *)meta;
     if (md->type == FILE_SEG) {
+        hf3fs_file_set.erase (md->handle.fd);
         hf3fs_utils->deregisterFileHandle(md->handle.fd);
     } else if (md->type == DRAM_SEG) {
         return NIXL_SUCCESS;
