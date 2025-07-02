@@ -44,6 +44,7 @@ if get_option('buildtype') == 'release'
   add_global_arguments(abseil_flags, language: 'cpp')
 endif
 abseil_proj = subproject('abseil-cpp')
+taskflow_proj = dependency('taskflow', fallback: ['taskflow', 'taskflow_dep'])
 
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
@@ -125,7 +126,6 @@ endif
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
-
 
 # Configure NDEBUG for release builds
 if get_option('buildtype') == 'release'
