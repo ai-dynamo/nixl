@@ -1,0 +1,71 @@
+# NIXL GPU Test Environment Dockerfile
+#
+# This Dockerfile creates a GPU-enabled test environment for NIXL (NVIDIA I/O eXchange Layer)
+# development and testing. It provides a containerized environment with:
+#
+# - NVIDIA PyTorch base image with CUDA support
+# - Non-root user setup for security
+# - Sudo access for package installation and system configuration
+# - Optimized for CI/CD pipeline testing
+#
+# Usage:
+#   docker build -f .ci/dockerfiles/Dockerfile.gpu_test -t nixl-gpu-test .
+#   docker run --gpus all --privileged -it nixl-gpu-test
+#
+# Build arguments:
+#   BASE_IMAGE: Base NVIDIA PyTorch image (default: nvcr.io/nvidia/pytorch:25.02-py3)
+#   _UID: User ID for the non-root user (default: 148069)
+#   _GID: Group ID for the user (default: 30)
+#   _LOGIN: Username (default: svc-nixl)
+#   _GROUP: Group name (default: hardware)
+#   _HOME: Home directory path (default: /home/svc-nixl)
+#
+
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.02-py3
+
+FROM ${BASE_IMAGE}
+
+# Build arguments
+ARG _UID=148069
+ARG _GID=30
+ARG _LOGIN=svc-nixl
+ARG _GROUP=hardware
+ARG _HOME=/home/$_LOGIN
+
+# Labels for documentation
+LABEL maintainer="NVIDIA NIXL Team"
+LABEL description="GPU test environment for NIXL development"
+LABEL version="1.0"
+
+# Update package list and install required packages in one layer
+RUN apt-get update && \
+    apt-get install -y sudo \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create group and user in one RUN command to reduce layers
+RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \
+        groupadd -g "${_GID}" "${_GROUP}"; \
+    fi && \
+    useradd -u "${_UID}" -g "${_GID}" -m -s /bin/bash "${_LOGIN}" && \
+    mkdir -p "${_HOME}" && \
+    chown -R "${_UID}":"${_GID}" "${_HOME}"
+
+# Configure sudo access
+RUN mkdir -p /etc/sudoers.d && \
+    echo "${_LOGIN} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${_LOGIN} && \
+    chmod 440 /etc/sudoers.d/${_LOGIN} && \
+    chown root:root /etc/sudoers.d/${_LOGIN}
+
+# Set working directory
+WORKDIR ${_HOME}
+
+# Switch to non-root user
+USER ${_LOGIN}
+
+# Set environment variables
+ENV HOME=${_HOME}
+ENV USER=${_LOGIN}
+
+# Default command
+CMD ["/bin/bash"]
