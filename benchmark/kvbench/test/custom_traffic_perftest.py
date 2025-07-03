@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import time
 from test.traffic_pattern import TrafficPattern
 from typing import Literal, Optional, Tuple
@@ -24,8 +23,9 @@ from runtime.etcd_rt import etcd_dist_utils as dist_rt
 from tabulate import tabulate
 
 from nixl._api import nixl_agent
+from nixl.logging import get_logger
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 class NixlHandle:
@@ -377,7 +377,9 @@ class CTPerftest:
                     total_size_gb,
                 ]
             ]
-            print(tabulate(data, headers=headers, floatfmt=".6f"))
+            log.info(
+                f"Performance metrics:\n{tabulate(data, headers=headers, floatfmt='.6f')}"
+            )
 
         if verify_buffers:
             self._verify_tp(self.traffic_pattern, recv_bufs, print_recv_buffers)

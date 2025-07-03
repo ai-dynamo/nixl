@@ -57,6 +57,10 @@ import numpy as np
 import yaml
 from tqdm import tqdm
 
+from nixl.logging import get_logger
+
+log = get_logger(__name__)
+
 
 @dataclass
 class ModelConfig:
@@ -190,7 +194,7 @@ def gen_batches(
             curr_mem = 0
     if curr:
         batches.append(Batch(user_requests=curr))
-        print(f"Last batch is incomplete, his size is {len(curr)}")
+        log.warning(f"Last batch is incomplete, his size is {len(curr)}")
 
     return batches
 
@@ -389,11 +393,11 @@ def main(
 
         decode_workers = reordered
 
-    print(f"Prefill workers: {prefill_workers}")
-    print(f"Decode workers: {decode_workers}")
+    log.info(f"Prefill workers: {prefill_workers}")
+    log.info(f"Decode workers: {decode_workers}")
 
     batches = gen_batches(num_user_requests, task_config, model_config)
-    print(f"Generated {len(batches)} batches")
+    log.info(f"Generated {len(batches)} batches")
     matrices = gen_matrices_and_compute_time(
         batches,
         prefill_workers,
@@ -406,7 +410,7 @@ def main(
     # Save matrices and metadata to files
     results_dir = results_dir or Path(f"matrices_{world_size}ranks")
     results_dir = Path(results_dir)
-    print(f"Saving {len(matrices)} matrices to {results_dir}")
+    log.info(f"Saving {len(matrices)} matrices to {results_dir}")
     results_dir.mkdir(parents=True, exist_ok=True)
 
     metadata: dict[str, Any] = {
@@ -435,7 +439,7 @@ def main(
     metadata_path = results_dir / "metadata.yaml"
     with open(metadata_path, "w") as f:
         yaml.dump(metadata, f)
-        print(f"Saved metadata to {metadata_path}")
+        log.info(f"Saved metadata to {metadata_path}")
 
 
 if __name__ == "__main__":
