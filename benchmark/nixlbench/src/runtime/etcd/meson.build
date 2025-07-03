@@ -24,3 +24,18 @@ etcd_rt_lib = static_library('etcd_rt',
   dependencies: [etcd_dep],
   install: true,
 )
+
+# Python bindings
+python = import('python').find_installation('python3', required: false)
+pybind11_dep = dependency('pybind11', required: false)
+
+if python.found() and pybind11_dep.found()
+  py_mod = python.extension_module('etcd_runtime',
+    'python_bindings.cpp',
+    include_directories: inc_dir,
+    dependencies: [etcd_dep, pybind11_dep],
+    link_with: etcd_rt_lib,
+    install: true,
+    subdir: 'nixlbench'
+  )
+endif
