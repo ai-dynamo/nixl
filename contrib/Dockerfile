@@ -121,7 +121,9 @@ RUN cd /usr/local/src && \
          --with-dm                   \
          --with-gdrcopy=/usr/local   \
          --with-efa                  \
-         --enable-mt &&              \
+         --enable-mt                 \
+         --enable-debug              \
+         --enable-compiler-opt=0 &&  \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig

@@ -434,6 +434,8 @@ TEST_P(TestTransfer, RandomSizes)
     for (const auto &[size, count, repeat, num_threads] : test_cases) {
         std::vector<MemBuffer> src_buffers, dst_buffers;
 
+        std::cout << "size: " << size << ", count: " << count << ", repeat: " << repeat << ", num_threads: " << num_threads << std::endl;
+
         createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
         createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
 
