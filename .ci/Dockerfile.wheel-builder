@@ -1,0 +1,102 @@
+# NixL Wheel Builder Environment
+# This Dockerfile creates a pre-built environment with all C++ dependencies
+# for building Python wheels. It stops before UCX installation since
+# NixL provides its own UCX.
+
+FROM harbor.mellanox.com/ucx/cuda:12.8-devel-manylinux--25.03
+
+# Install system packages
+RUN yum groupinstall -y 'Development Tools' && \
+    dnf install -y almalinux-release-synergy && \
+    dnf config-manager --set-enabled powertools && \
+    dnf install -y \
+        boost \
+        boost-devel \
+        cmake \
+        git \
+        ninja-build \
+        python3 \
+        python3-devel \
+        python3-pip \
+        pkg-config \
+        curl \
+        wget \
+        which \
+        zlib-devel && \
+    dnf clean all
+
+# Build OpenSSL 3.x
+RUN yum install -y perl-IPC-Cmd perl-Test-Simple perl-Data-Dumper
+RUN cd /tmp && \
+    wget -q https://www.openssl.org/source/openssl-3.0.16.tar.gz && \
+    tar -xzf openssl-3.0.16.tar.gz && \
+    cd openssl-3.0.16 && \
+    ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3 \
+        shared zlib linux-x86_64 && \
+    make -j4 && \
+    make install_sw && \
+    echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
+    ldconfig && \
+    rm -rf /tmp/openssl-3.0.16*
+
+# Set environment variables to use the new OpenSSL
+ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:$PKG_CONFIG_PATH"
+ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:$LD_LIBRARY_PATH"
+ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
+ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64"
+ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
+
+# Build gRPC with OpenSSL 3
+WORKDIR /workspace
+
+RUN git clone --recurse-submodules -b v1.73.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+    cd grpc && \
+    mkdir -p cmake/build && \
+    cd cmake/build && \
+    cmake -DgRPC_INSTALL=ON \
+        -DgRPC_BUILD_TESTS=OFF \
+        -DgRPC_ABSL_PROVIDER=module \
+        -DgRPC_CARES_PROVIDER=module \
+        -DgRPC_PROTOBUF_PROVIDER=module \
+        -DgRPC_RE2_PROVIDER=module \
+        -DgRPC_ZLIB_PROVIDER=module \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DgRPC_SSL_PROVIDER=package ../.. && \
+    make -j4 && \
+    make install
+
+RUN git clone https://github.com/microsoft/cpprestsdk.git && \
+    cd cpprestsdk && \
+    mkdir build && cd build && \
+    git submodule update --init && \
+    cmake .. -DCPPREST_EXCLUDE_WEBSOCKETS=ON && \
+    make -j4 && make install
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
+
+RUN cd /workspace && \
+    git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+    cd etcd-cpp-apiv3 && mkdir build && cd build && \
+    cmake .. && make -j4 && make install
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Install Rust for meson
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH \
+    RUST_VERSION=1.86.0 \
+    RUSTARCH=x86_64-unknown-linux-gnu
+
+RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" && \
+    echo "a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f *rustup-init" | sha256sum -c - && \
+    chmod +x rustup-init && \
+    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
+    rm rustup-init && \
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+# Set working directory
+WORKDIR /workspace

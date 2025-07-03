@@ -1,0 +1,94 @@
+# Wheel Build Matrix Configuration for NixL CI Pipeline
+#
+# This file defines the wheel building matrix using ci-demo framework.
+# It builds and caches the wheel-builder image, then uses it to build wheels
+# for different Python versions and platforms.
+
+---
+job: nixl-wheel-build
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+taskName: "wheel-${python_version}-${platform}-${arch}"
+
+# Registry configuration for caching built images
+registry_host: harbor.mellanox.com
+registry_path: /swx-storage/nixl-wheels
+registry_auth: swx-infra_harbor_credentials
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 24Gi, cpu: 8000m}"
+  requests: "{memory: 18Gi, cpu: 8000m}"
+
+# ci-demo will automatically build the wheel-builder image from Dockerfile
+runs_on_dockers:
+  - {file: '.ci/Dockerfile.wheel-builder', name: 'nixl-wheel-builder', tag: 'latest', arch: 'x86_64'}
+
+env:
+  # Conservative parallelism for wheel building
+  MAKEFLAGS: "-j4"
+
+matrix:
+  axes:
+    # Python versions to build wheels for
+    python_version:
+      - "3.9"
+      # - "3.10"
+      # - "3.11"
+      # - "3.12"
+
+    # Wheel platforms
+    platform:
+      - "manylinux_2_28"
+
+    # Architecture (enable aarch64 later)
+    arch:
+      - x86_64
+
+steps:
+  - name: Setup Environment
+    run: |
+      echo "Building wheel for Python ${python_version} on ${platform}_${arch}"
+      df -h .
+      rm -rf build/ dist/ *.egg-info/ .venv-*
+
+  - name: Build NixL
+    run: |
+      # Setup Python environment
+      uv venv .venv --python ${python_version}
+      source .venv/bin/activate
+      uv pip install meson-python pybind11 patchelf auditwheel pyyaml pytest
+
+  - name: Create Wheel
+    run: |
+      source .venv/bin/activate
+
+      # Build wheel (this handles meson build internally)
+      uv build --wheel --out-dir dist --python ${python_version}
+
+      # Show results
+      ls -la dist/
+
+  - name: Test Wheel
+    run: |
+      # Test in clean environment
+      uv venv .venv-test --python ${python_version}
+      source .venv-test/bin/activate
+
+      # Install and test wheel
+      WHEEL=$(ls dist/nixl-*.whl | head -1)
+      uv pip install "$WHEEL"
+      python -c "import nixl; print(f'NixL {nixl.__version__} imported successfully')"
+
+  - name: Archive Artifacts
+    run: |
+      # Create artifact directory
+      mkdir -p "artifacts-py${python_version}-${platform}"
+      cp dist/*.whl "artifacts-py${python_version}-${platform}/"
+
+archiveArtifacts: "artifacts-*/*"
