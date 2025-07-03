@@ -16,6 +16,7 @@
  */
 
 #include <iostream>
+#include <chrono>
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
@@ -538,6 +539,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     nixl_meta_dlist_t* local_descs  = local_side->descs.at(backend);
     nixl_meta_dlist_t* remote_descs = remote_side->descs.at(backend);
+    uint64_t totalBytes = 0;
 
     if ((desc_count == 0) || (remote_indices.size() == 0) ||
         (desc_count != (int) remote_indices.size()))
@@ -553,6 +555,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         if ((*local_descs )[local_indices [i]].len !=
             (*remote_descs)[remote_indices[i]].len)
             return NIXL_ERR_INVALID_PARAM;
+        else
+            totalBytes += (*local_descs)[local_indices[i]].len;
     }
 
     if (extra_params && extra_params->hasNotif) {
@@ -620,12 +624,13 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         handle->targetDescs->resize(j);
     }
 
-    handle->engine      = backend;
+    handle->engine = backend;
     handle->remoteAgent = remote_side->remoteAgent;
-    handle->notifMsg    = opt_args.notifMsg;
-    handle->hasNotif    = opt_args.hasNotif;
-    handle->backendOp   = operation;
-    handle->status      = NIXL_ERR_NOT_POSTED;
+    handle->notifMsg = opt_args.notifMsg;
+    handle->hasNotif = opt_args.hasNotif;
+    handle->backendOp = operation;
+    handle->status = NIXL_ERR_NOT_POSTED;
+    handle->totalBytes = totalBytes;
 
     ret = handle->engine->prepXfer (handle->backendOp,
                                     *handle->initiatorDescs,
@@ -663,11 +668,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     // Check the correspondence between descriptor lists
+    uint64_t totalBytes = 0;
     if (local_descs.descCount() != remote_descs.descCount())
         return NIXL_ERR_INVALID_PARAM;
     for (int i=0; i<local_descs.descCount(); ++i)
         if (local_descs[i].len != remote_descs[i].len)
             return NIXL_ERR_INVALID_PARAM;
+        else
+            totalBytes += local_descs[i].len;
 
     if (!extra_params || extra_params->backends.size() == 0) {
         // Finding backends that support the corresponding memories
@@ -747,10 +755,11 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     handle->remoteAgent = remote_agent;
-    handle->backendOp   = operation;
-    handle->status      = NIXL_ERR_NOT_POSTED;
-    handle->notifMsg    = opt_args.notifMsg;
-    handle->hasNotif    = opt_args.hasNotif;
+    handle->backendOp = operation;
+    handle->status = NIXL_ERR_NOT_POSTED;
+    handle->notifMsg = opt_args.notifMsg;
+    handle->hasNotif = opt_args.hasNotif;
+    handle->totalBytes = totalBytes;
 
     ret1 = handle->engine->prepXfer (handle->backendOp,
                                      *handle->initiatorDescs,
@@ -811,6 +820,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (!req_hndl)
         return NIXL_ERR_INVALID_PARAM;
 
+    // The initial checks should be fast if post succeeds, including them in the overall time
+    req_hndl->startTime = std::chrono::high_resolution_clock::now();
+
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // Check if the remote was invalidated before post/repost
     if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
@@ -860,6 +872,18 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                       req_hndl->backendHandle,
                                       &opt_args);
     req_hndl->status = ret;
+
+    if (req_hndl->status == NIXL_SUCCESS) {
+        req_hndl->endTime = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::micro> xfer_time =
+            req_hndl->endTime - req_hndl->startTime;
+        NIXL_DEBUG << "Xfer with " << req_hndl->initiatorDescs->descCount()
+                   << " descs of total size: " << req_hndl->totalBytes << " took "
+                   << xfer_time.count() << "us";
+    }
+
+    // If post time is important for debugging, we can add a DEBUG print here by getting
+    // the current time minus req_hndl->startTime, but not to be included in req_hndl.
     return ret;
 }
 
@@ -876,6 +900,15 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         }
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
+    }
+
+    if (req_hndl->status == NIXL_SUCCESS) {
+        req_hndl->endTime = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::micro> xfer_time =
+            req_hndl->endTime - req_hndl->startTime;
+        NIXL_DEBUG << "Xfer with " << req_hndl->initiatorDescs->descCount()
+                   << " descs of total size: " << req_hndl->totalBytes << " took "
+                   << xfer_time.count() << "us";
     }
 
     return req_hndl->status;
