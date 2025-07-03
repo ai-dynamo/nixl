@@ -662,7 +662,7 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
     } else if (xferBenchConfig::isStorageBackend()) {
-        for (auto &iov: remote_iovs) {
+        for (auto &iov : remote_iovs) {
             cleanupBasicDescFile (iov);
         }
         nixl_reg_dlist_t desc_list (FILE_SEG);
