@@ -20,6 +20,10 @@ if gds_path != ''
     cufile_dep = declare_dependency(
         link_args: ['-L' + gds_lib_path, '-lcufile'],
         include_directories: include_directories(gds_inc_path))
+else
+    # Create a dummy dependency that does nothing
+    cufile_dep = declare_dependency()
+    subdir_done()
 endif
 
 if 'GDS_MT' in static_plugins
