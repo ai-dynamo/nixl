@@ -19,10 +19,15 @@ subdir('ucx')
 subdir('ucx_mo')
 
 subdir('posix')  # Always try to build POSIX backend, it will handle its own dependencies
+subdir('obj')  # Always try to build Obj backend, it will handle its own dependencies
 
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and cuda_dep.found()
       subdir('cuda_gds')
+endif
+
+if taskflow_proj.found() and cuda_dep.found()
+      subdir('gds_mt')
 endif
 
 cc = meson.get_compiler('cpp')

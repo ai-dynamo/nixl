@@ -64,38 +64,25 @@ fn get_arch() -> String {
     }
 }
 
-fn main() {
+fn build_nixl(cc_builder: &mut cc::Build) {
     let nixl_root_path =
         env::var("NIXL_PREFIX").unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
     let nixl_include_path = format!("{}/include", nixl_root_path);
 
-    let arch = get_arch();
-    let nixl_lib_path = get_lib_path(&nixl_root_path, &arch);
-
-    // Check if etcd is enabled via environment variable
-    let etcd_enabled = env::var("HAVE_ETCD").map(|v| v != "0").unwrap_or(false);
-
-    // Tell cargo to look for shared libraries in the specified directories
-    println!("cargo:rustc-link-search={}", nixl_lib_path);
-
-    // Build the C++ wrapper
-    let mut cc_builder = cc::Build::new();
     cc_builder
-        .cpp(true)
-        .compiler("g++") // Ensure we're using the C++ compiler
         .file("wrapper.cpp")
-        .flag("-std=c++17")
-        .flag("-fPIC")
         .include(&nixl_include_path)
         .include("../../api/cpp")
         .include("../../infra")
-        .include("../../core")
-        // Change ABI flag if necessary to match your precompiled libraries:
-        //    .flag("-D_GLIBCXX_USE_CXX11_ABI=0")
-        .flag("-Wno-unused-parameter")
-        .flag("-Wno-unused-variable");
+        .include("../../core");
 
-    // Define HAVE_ETCD if etcd is enabled
+    let arch = get_arch();
+    let nixl_lib_path = get_lib_path(&nixl_root_path, &arch);
+
+    println!("cargo:rustc-link-search={}", nixl_lib_path);
+
+    let etcd_enabled = env::var("HAVE_ETCD").map(|v| v != "0").unwrap_or(false);
+
     if etcd_enabled {
         cc_builder.define("HAVE_ETCD", "1");
     }
@@ -124,6 +111,38 @@ fn main() {
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=wrapper.cpp");
     println!("cargo:rerun-if-env-changed=HAVE_ETCD");
+}
+
+fn build_stubs(cc_builder: &mut cc::Build) {
+    println!("cargo:warning=Building with stub API - NIXL functions will abort if called");
+
+    cc_builder.file("stubs.cpp");
+
+    cc_builder.compile("nixl_stubs");
+
+    // Link against C++ standard library only
+    println!("cargo:rustc-link-lib=dylib=stdc++");
+
+    // Tell cargo to invalidate the built crate whenever the stubs change
+    println!("cargo:rerun-if-changed=stubs.cpp");
+    println!("cargo:rerun-if-changed=wrapper.h");
+}
+
+fn run_build(use_stub_api: bool) {
+    let mut cc_builder = cc::Build::new();
+    cc_builder
+        .cpp(true)
+        .compiler("g++")
+        .flag("-std=c++17")
+        .flag("-fPIC")
+        .flag("-Wno-unused-parameter")
+        .flag("-Wno-unused-variable");
+
+    if !use_stub_api {
+        build_nixl(&mut cc_builder);
+    } else {
+        build_stubs(&mut cc_builder);
+    }
 
     // Get the output path for bindings
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -135,4 +154,11 @@ fn main() {
         .expect("Unable to generate bindings")
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
+}
+
+fn main() {
+    // Check if we're building with stub API
+    let use_stub_api = cfg!(feature = "stub-api");
+
+    run_build(use_stub_api);
 }

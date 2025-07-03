@@ -30,25 +30,28 @@
 // ETCD Runtime implementation
 xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int size,
                                  int *terminate_input) {
-
-    std::string use_etcd_ep = ETCD_EP_DEFAULT;
-
-    // Parse command line arguments to get ETCD endpoints
-    if (!etcd_endpoints.empty()) {
-        use_etcd_ep = etcd_endpoints;
-    }
-
-    namespace_prefix = "xferbench/"; // Namespace for XFER benchmark
-    barrier_gen = 0;
+    // Store parameters for later use in setup
+    stored_etcd_endpoints = etcd_endpoints.empty() ? ETCD_EP_DEFAULT : etcd_endpoints;
+    global_size = size;
     terminate = terminate_input;
 
+    // Initialize other members
+    namespace_prefix = "xferbench/"; // Namespace for XFER benchmark
+    barrier_gen = 0;
+    my_rank = -1; // Will be set in setup()
+
+    // Client will be initialized in setup()
+}
+
+int
+xferBenchEtcdRT::setup() {
     // Connect to ETCD
     try {
-        std::cout << "Connecting to ETCD at " << use_etcd_ep << std::endl;
-        client = std::make_unique<etcd::Client>(use_etcd_ep);
+        std::cout << "Connecting to ETCD at " << stored_etcd_endpoints << std::endl;
+        client = std::make_unique<etcd::Client> (stored_etcd_endpoints);
     } catch (const std::exception& e) {
         std::cerr << "Failed to connect to ETCD: " << e.what() << std::endl;
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     // Registration process - get a unique rank
@@ -58,7 +61,7 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
     auto lock_response = client->lock(lock_key).get();
     if (lock_response.error_code() != 0) {
         std::cerr << "Failed to acquire lock: " << lock_response.error_message() << std::endl;
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     // Get the current size - number of processes that have registered
@@ -68,9 +71,6 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
     } else {
         my_rank = 0;
     }
-
-    // Set the global size to the sum of initiator and target devices
-    global_size = size;
 
     // Update registration information
     client->put(makeKey("size"), std::to_string(my_rank + 1)).get();
@@ -88,11 +88,15 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
                   << " is greater than or equal to global size "
                   << global_size << std::endl;
         client->rmdir(makeKey(""), true).get();
-        exit(EXIT_FAILURE);
+        return -1;
     }
     std::cout << "ETCD Runtime: Registered as rank " << my_rank
         << " item " << my_rank + 1 << " of "
         << global_size << std::endl;
+
+	      << " item " << my_rank + 1 << " of "
+	      << global_size << std::endl;
+    return 0;
 }
 
 xferBenchEtcdRT::~xferBenchEtcdRT() {
