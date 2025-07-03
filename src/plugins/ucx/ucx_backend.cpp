@@ -577,7 +577,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
                                           init_params->syncMode);
 
     for (unsigned int i = 0; i < numWorkers; i++)
-        uws.emplace_back(std::make_unique<nixlUcxWorker> (*uc, err_handling_mode));
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
 
     const auto &uw = uws.front();
     workerAddr = uw->epAddr();
