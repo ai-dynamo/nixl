@@ -408,6 +408,6 @@ void nixlPluginManager::registerBuiltinPlugins() {
 
 #ifdef STATIC_PLUGIN_MOONCAKE
         extern nixlBackendPlugin *createStaticMooncakePlugin();
-        registerStaticPlugin ("MOONCAKE", createStaticMooncakePlugin);
+        registerStaticPlugin("MOONCAKE", createStaticMooncakePlugin);
 #endif // STATIC_PLUGIN_MOONCAKE
 }
