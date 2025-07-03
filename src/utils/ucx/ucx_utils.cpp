@@ -610,15 +610,19 @@ void nixlUcxWorker::reqCancel(nixlUcxReq req)
 }
 
 nixl_status_t
-nixlUcxWorker::arm() {
-    return ucx_status_to_nixl (ucp_worker_arm (worker.get()));
+nixlUcxWorker::arm() const noexcept {
+    return ucx_status_to_nixl(ucp_worker_arm(worker.get()));
 }
 
-nixl_status_t
-nixlUcxWorker::getEfd (int &fd) {
-    const auto status = ucp_worker_get_efd (worker.get(), &fd);
+int
+nixlUcxWorker::getEfd() const {
+    int fd;
+    const auto status = ucp_worker_get_efd(worker.get(), &fd);
     if (status != UCS_OK) {
-        NIXL_ERROR << "Couldn't obtain fd for a worker, status: " << ucs_status_string (status);
+        const auto err_str =
+            std::string("Couldn't obtain fd for a worker: ") + ucs_status_string(status);
+        NIXL_ERROR << err_str;
+        throw std::runtime_error(err_str);
     }
-    return ucx_status_to_nixl (status);
+    return fd;
 }

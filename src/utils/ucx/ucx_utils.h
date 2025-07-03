@@ -194,11 +194,11 @@ public:
     void reqRelease(nixlUcxReq req);
     void reqCancel(nixlUcxReq req);
 
-    nixl_status_t
-    arm();
+    [[nodiscard]] nixl_status_t
+    arm() const noexcept;
 
-    nixl_status_t
-    getEfd (int &fd);
+    [[nodiscard]] int
+    getEfd() const;
 
 private:
     const std::unique_ptr<ucp_worker, void (*) (ucp_worker *)> worker;

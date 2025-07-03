@@ -457,7 +457,7 @@ void nixlUcxEngine::progressFunc()
 
                 status = uw->arm();
             } while (status == NIXL_IN_PROG);
-            NIXL_ASSERT (status == NIXL_SUCCESS) << ", status: " << status;
+            NIXL_ASSERT(status == NIXL_SUCCESS) << ", status: " << status;
 
             if (made_progress && !wid)
                 notifProgress();
@@ -568,16 +568,16 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
     }
 
-    uc = std::make_unique<nixlUcxContext> (devs,
-                                           sizeof (nixlUcxIntReq),
-                                           _internalRequestInit,
-                                           _internalRequestFini,
-                                           pthrOn,
-                                           numWorkers,
-                                           init_params->syncMode);
+    uc = std::make_unique<nixlUcxContext>(devs,
+                                          sizeof(nixlUcxIntReq),
+                                          _internalRequestInit,
+                                          _internalRequestFini,
+                                          pthrOn,
+                                          numWorkers,
+                                          init_params->syncMode);
 
     for (unsigned int i = 0; i < numWorkers; i++)
-        uws.emplace_back (std::make_unique<nixlUcxWorker> (*uc, err_handling_mode));
+        uws.emplace_back(std::make_unique<nixlUcxWorker> (*uc, err_handling_mode));
 
     const auto &uw = uws.front();
     workerAddr = uw->epAddr();
@@ -590,13 +590,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 
     if (pthrOn) {
         for (auto &uw: uws) {
-            int fd;
-            if (uw->getEfd (fd) != NIXL_SUCCESS) {
-                initErr = true;
-                return;
-            }
-
-            pollFds.push_back({fd, POLLIN, 0});
+            pollFds.push_back({uw->getEfd(), POLLIN, 0});
         }
         pollFds.push_back({pthrControlPipe[0], POLLIN, 0});
     }
