@@ -47,7 +47,8 @@ aioQueue::~aioQueue() {
     }
 }
 
-nixl_status_t aioQueue::submit() {
+nixl_status_t
+aioQueue::submit (const nixl_meta_dlist_t &, const nixl_meta_dlist_t &) {
     // Submit all I/Os at once
     for (auto& aiocb : aiocbs) {
         if (aiocb.aio_fildes == 0 || aiocb.aio_nbytes == 0) continue;
@@ -83,6 +84,7 @@ nixl_status_t aioQueue::submit() {
         num_submitted++;
     }
 
+    num_completed = 0;
     return NIXL_IN_PROG;
 }
 
