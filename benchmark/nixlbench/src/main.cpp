@@ -37,8 +37,7 @@ static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int nu
     initiator_device = xferBenchConfig::num_initiator_dev;
     target_device = xferBenchConfig::num_target_dev;
 
-    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
-        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+    if (xferBenchConfig::isStorageBackend()) {
         if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
             // Every threads will read/write a block of every files
             count = xferBenchConfig::num_files;

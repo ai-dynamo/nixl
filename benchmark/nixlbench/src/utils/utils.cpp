@@ -301,7 +301,7 @@ xferBenchConfig::loadFromFlags() {
         return -1;
     }
 
-    if (XFERBENCH_BACKEND_GDS == backend || XFERBENCH_BACKEND_POSIX == backend) {
+    if (isStorageBackend()) {
         if (scheme != XFERBENCH_SCHEME_TP && scheme != XFERBENCH_SCHEME_PAIRWISE) {
             std::cerr << "Storage backend only supports pairwise and tp scheme, [" << scheme
                       << "] is not supported." << std::endl;
@@ -664,8 +664,7 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
         total_data_transferred *= xferBenchConfig::num_initiator_dev; // In Bytes
         avg_latency /= xferBenchConfig::num_initiator_dev; // In microsec
     }
-    if (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
-        XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+    if (xferBenchConfig::isStorageBackend()) {
         if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
             total_data_transferred *= num_files;
         } else {
