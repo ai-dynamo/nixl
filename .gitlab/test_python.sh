@@ -19,9 +19,10 @@ set -x
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
+UCX_INSTALL_DIR=$2
 
-if [ -z "$INSTALL_DIR" ]; then
-    echo "Usage: $0 <install_dir>"
+if [ -z "$INSTALL_DIR" ] || [ -z "$UCX_INSTALL_DIR" ]; then
+    echo "Usage: $0 <install_dir> <ucx_install_dir>"
     exit 1
 fi
 
@@ -35,7 +36,7 @@ export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/lo
 export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
+export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:${UCX_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 
 pip3 install --break-system-packages .
