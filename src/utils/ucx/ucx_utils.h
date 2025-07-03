@@ -154,7 +154,8 @@ public:
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
                    bool prog_thread, ucp_err_handling_mode_t err_handling_mode,
-                   unsigned long num_workers, nixl_thread_sync_t sync_mode);
+                   unsigned long num_workers,
+                   nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     /* Memory management */
@@ -171,13 +172,15 @@ class nixlUcxWorker {
 private:
     /* Local UCX stuff */
     const std::shared_ptr<nixlUcxContext> ctx;
+    size_t workerId;
+    void *engine;
     const std::unique_ptr<ucp_worker, void(*)(ucp_worker*)> worker;
 
-    [[nodiscard]] static ucp_worker* createUcpWorker(nixlUcxContext&);
+    [[nodiscard]] static ucp_worker* createUcpWorker(nixlUcxContext&, bool);
 
   public:
-    explicit nixlUcxWorker(const std::shared_ptr<nixlUcxContext> &_ctx);
-
+    explicit nixlUcxWorker(const std::shared_ptr<nixlUcxContext> &_ctx,
+                           size_t _workerId, bool is_shared = false, void *_eng = nullptr);
     nixlUcxWorker( nixlUcxWorker&& ) = delete;
     nixlUcxWorker( const nixlUcxWorker& ) = delete;
     void operator=( nixlUcxWorker&& ) = delete;
@@ -199,13 +202,22 @@ private:
 
     /* Worker access */
     [[nodiscard]] ucp_worker_h getWorker() const noexcept { return worker.get(); }
+
+    size_t getWorkerId() const {
+        return workerId;
+    }
+
+    void *getEngine() const {
+        return engine;
+    }
 };
 
 [[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {
     return {
         { "ucx_devices", "" },
         { "ucx_error_handling_mode", "none" }, // or "peer"
-        { "num_workers", "1" }
+        { "num_workers", "0" },
+        { "num_shared_workers", "1" }
     };
 }
 
