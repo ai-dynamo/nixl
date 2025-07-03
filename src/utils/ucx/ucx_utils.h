@@ -150,13 +150,13 @@ private:
 public:
 
     using req_cb_t = void(void *request);
-    nixlUcxContext (std::vector<std::string> devices,
-                    size_t req_size,
-                    req_cb_t init_cb,
-                    req_cb_t fini_cb,
-                    bool prog_thread,
-                    unsigned long num_workers,
-                    nixl_thread_sync_t sync_mode);
+    nixlUcxContext(std::vector<std::string> devices,
+                   size_t req_size,
+                   req_cb_t init_cb,
+                   req_cb_t fini_cb,
+                   bool prog_thread,
+                   unsigned long num_workers,
+                   nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     /* Memory management */
@@ -171,7 +171,7 @@ public:
 
 class nixlUcxWorker {
 public:
-    explicit nixlUcxWorker (
+    explicit nixlUcxWorker(
         const nixlUcxContext &,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
 
@@ -201,11 +201,11 @@ public:
     getEfd() const;
 
 private:
-    const std::unique_ptr<ucp_worker, void (*) (ucp_worker *)> worker;
-    ucp_err_handling_mode_t err_handling_mode_;
-
     [[nodiscard]] static ucp_worker *
-    createUcpWorker (const nixlUcxContext &);
+    createUcpWorker(const nixlUcxContext &);
+
+    const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
+    ucp_err_handling_mode_t err_handling_mode_;
 };
 
 [[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {

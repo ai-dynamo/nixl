@@ -448,7 +448,7 @@ namespace
 }  // namespace
 
 ucp_worker *
-nixlUcxWorker::createUcpWorker (const nixlUcxContext &ctx) {
+nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
     ucp_worker* worker = nullptr;
     const nixlUcpWorkerParams params(ctx.mt_type);
     const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
@@ -461,9 +461,9 @@ nixlUcxWorker::createUcpWorker (const nixlUcxContext &ctx) {
     return worker;
 }
 
-nixlUcxWorker::nixlUcxWorker (const nixlUcxContext &ctx, ucp_err_handling_mode_t err_handling_mode)
-    : worker (createUcpWorker (ctx), &ucp_worker_destroy),
-      err_handling_mode_ (err_handling_mode) {}
+nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx, ucp_err_handling_mode_t err_handling_mode)
+    : worker(createUcpWorker(ctx), &ucp_worker_destroy),
+      err_handling_mode_(err_handling_mode) {}
 
 std::string nixlUcxWorker::epAddr()
 {
@@ -483,7 +483,7 @@ std::string nixlUcxWorker::epAddr()
 absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, std::size_t size)
 {
     try {
-        return std::make_unique<nixlUcxEp> (worker.get(), addr, err_handling_mode_);
+        return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_);
     } catch (const std::exception &e) {
         return absl::UnavailableError(e.what());
     }
