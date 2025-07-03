@@ -115,20 +115,6 @@ class nixlBackendEngine {
                                         const nixl_opt_b_args_t* opt_args=nullptr
                                        ) const = 0;
 
-        // Estimate the cost (duration) of a transfer operation.
-        virtual nixl_status_t estimateXferCost(const nixl_xfer_op_t &operation,
-                                               const nixl_meta_dlist_t &local,
-                                               const nixl_meta_dlist_t &remote,
-                                               const std::string &remote_agent,
-                                               nixlBackendReqH* const &handle,
-                                               std::chrono::microseconds &duration,
-                                               std::chrono::microseconds &err_margin,
-                                               nixl_cost_t &method,
-                                               const nixl_opt_args_t* extra_params = nullptr) const
-        {
-            return NIXL_ERR_NOT_SUPPORTED;
-        }
-
         // Posting a request, which completes the async handle creation and posts it
         virtual nixl_status_t postXfer (const nixl_xfer_op_t &operation,
                                         const nixl_meta_dlist_t &local,
@@ -198,5 +184,28 @@ class nixlBackendEngine {
 
         // Force backend engine worker to progress.
         virtual int progress() { return 0; }
+
+
+        // *** Optional virtual methods that is goo to be implemented by any backend *** //
+
+        // Query information about a list of memory/storage
+        virtual nixl_status_t
+        queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> *&resp) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        // Estimate the cost (duration) of a transfer operation.
+        virtual nixl_status_t
+        estimateXferCost(const nixl_xfer_op_t &operation,
+                         const nixl_meta_dlist_t &local,
+                         const nixl_meta_dlist_t &remote,
+                         const std::string &remote_agent,
+                         nixlBackendReqH *const &handle,
+                         std::chrono::microseconds &duration,
+                         std::chrono::microseconds &err_margin,
+                         nixl_cost_t &method,
+                         const nixl_opt_args_t *extra_params = nullptr) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
 };
 #endif
