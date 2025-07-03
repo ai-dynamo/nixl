@@ -25,6 +25,21 @@ The bindings can be built using Cargo, Rust's package manager:
 cargo build
 ```
 
+### Building with Stubs (No NIXL Library Required)
+
+You can compile the bindings using stub implementations that don't require the actual NIXL library to be installed. This is useful for:
+- Development environments where NIXL isn't available
+- CI/CD pipelines
+- Building documentation
+
+```bash
+# Build with stub API
+cargo build --features stub-api
+```
+
+**Important**: When using stubs, any attempt to actually call NIXL functions at runtime will print an error message and abort the program.
+- The stubs are only meant for compilation, not execution.
+
 ### Environment Variables
 
 - `NIXL_PREFIX`: Path to the NIXL installation (default: `/opt/nvidia/nvda_nixl`)
@@ -46,3 +61,5 @@ Note that multithreading is disabled because NIXL might deadlock.
 ```bash
 cargo test -- --test-threads=1
 ```
+
+**Note**: Tests cannot be run with the `stub-api` feature as they require actual NIXL functionality.

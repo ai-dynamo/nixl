@@ -17,7 +17,7 @@
 #include "wrapper.h"
 
 #include <cstdlib>
-#include <cstdio>
+#include <iostream>
 
 // NOTE: The original includes from nixl.h, nixl_types.h, cstring, exception, etc. are removed here.
 // The original blank lines around includes are also implicitly handled by this replacement.
@@ -41,7 +41,7 @@ struct nixl_capi_notif_map_s { /* empty */ };
 nixl_capi_status_t
 nixl_capi_stub_abort()
 {
-  printf("nixl error: detected use of the NIXL C API's stub; please update the LD_LIBRARY_PATH to include the nixl library\n");
+  std::cerr << "nixl error: detected use of the NIXL C API's stub; if you want to use NIXL, don't use the stub-api feature.\n";
   std::abort();
   return NIXL_CAPI_ERROR_EXCEPTION;
 }
@@ -243,7 +243,7 @@ nixl_capi_get_backend_params(
 
 // Transfer descriptor list functions
 nixl_capi_status_t
-nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t* dlist)
+nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t* dlist, bool sorted)
 {
   return nixl_capi_stub_abort();
 }
@@ -286,7 +286,7 @@ nixl_capi_xfer_dlist_resize(nixl_capi_xfer_dlist_t dlist, size_t new_size)
 
 // Registration descriptor list functions
 nixl_capi_status_t
-nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist)
+nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist, bool sorted)
 {
   return nixl_capi_stub_abort();
 }

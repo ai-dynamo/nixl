@@ -63,18 +63,19 @@ RUN cd /tmp && \
     tar -xzf openssl-3.0.16.tar.gz && \
     cd openssl-3.0.16 && \
     ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3 \
-        shared zlib linux-x86_64 && \
+        shared zlib linux-$ARCH && \
     make -j$(nproc) && \
     make install_sw && \
     echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
+    echo "/usr/local/openssl3/lib" >> /etc/ld.so.conf.d/openssl3.conf && \
     ldconfig && \
     rm -rf /tmp/openssl-3.0.16*
 
 # Set environment variables to use the new OpenSSL
-ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:$PKG_CONFIG_PATH"
-ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:$LD_LIBRARY_PATH"
+ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:/usr/local/openssl3/lib/pkgconfig:$PKG_CONFIG_PATH"
+ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:/usr/local/openssl3/lib:$LD_LIBRARY_PATH"
 ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
-ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64"
+ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64:/usr/local/openssl3/lib"
 ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
 
 WORKDIR /workspace
@@ -116,9 +117,14 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     RUSTARCH=${ARCH}-unknown-linux-gnu
 
 RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" && \
-    echo "a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f *rustup-init" | sha256sum -c - && \
     chmod +x rustup-init && \
     ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
+    case "$ARCH" in \
+        aarch64) RUSTUP_SHA256="c64b33db2c6b9385817ec0e49a84bcfe018ed6e328fe755c3c809580cc70ce7a" ;; \
+        x86_64) RUSTUP_SHA256="a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f" ;; \
+        *) echo "Unsupported architecture for Rust: $ARCH" && exit 1 ;; \
+    esac && \
+    echo "$RUSTUP_SHA256 *rustup-init" | sha256sum -c - && \
     rm rustup-init && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
@@ -139,7 +145,7 @@ RUN cd /workspace && \
     cd gdrcopy/packages && \
     CUDA=/usr/local/cuda ./build-rpm-packages.sh && \
     rpm -Uvh gdrcopy-kmod-2.5-1dkms.el8.noarch.rpm && \
-    rpm -Uvh gdrcopy-2.5-1.el8.x86_64.rpm && \
+    rpm -Uvh gdrcopy-2.5-1.el8.$ARCH.rpm && \
     rpm -Uvh gdrcopy-devel-2.5-1.el8.noarch.rpm
 
 RUN cd /usr/local/src && \

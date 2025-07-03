@@ -15,7 +15,7 @@
 
 [package]
 name = "nixl-sys"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "Low-level bindings to the nixl library"
 license = "Apache-2.0"
@@ -25,6 +25,9 @@ authors = ["NIXL Developers <nixl-developers@nvidia.com>"]
 readme = "README.md"
 links = "nixl"
 build = "build.rs"
+
+[features]
+stub-api = []
 
 [dependencies]
 thiserror = { version = "2" }
