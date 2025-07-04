@@ -17,6 +17,8 @@ repos:
     rev: v1.14.1
     hooks:
       - id: mypy
+        args: [--ignore-missing-imports]
+        additional_dependencies: [types-PyYAML, types-tabulate]
         files: \.py$
 
   - repo: https://github.com/timothycrosley/isort
