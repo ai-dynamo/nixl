@@ -26,7 +26,7 @@ rkey::rkey(const nixlUcxEp &ep, const void *rkey_buffer) noexcept
 
 ucp_rkey *
 rkey::unpackUcpRkey(const nixlUcxEp &ep, const void *rkey_buffer) noexcept {
-    ucp_rkey *rkey = nullptr;
+    ucp_rkey_h rkey = nullptr;
     const auto status = ucp_ep_rkey_unpack(ep.getEp(), rkey_buffer, &rkey);
     if (status != UCS_OK) {
         NIXL_ERROR << "Failed to unpack UCX RKEY: " << ucs_status_string(status);
