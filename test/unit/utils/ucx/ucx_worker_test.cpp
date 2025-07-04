@@ -21,7 +21,7 @@
 #include <iostream>
 
 #include "ucx/ucx_utils.h"
-
+#include "ucx/rkey.h"
 //TODO: meson conditional build for CUDA
 //#define USE_VRAM
 
@@ -104,7 +104,7 @@ int main()
     };
     std::unique_ptr<nixlUcxEp> ep[2];
     nixlUcxMem mem[2];
-    nixlUcxRkey rkey[2];
+    std::unique_ptr<nixl::ucx::rkey> rkey[2];
     nixlUcxReq req;
     uint8_t *buffer[2];
     uint8_t *chk_buffer;
@@ -137,7 +137,8 @@ int main()
         assert(0 == c[i]->memReg(buffer[i], buf_size, mem[i], nixl_mem_type));
         std::string rkey_tmp = c[i]->packRkey(mem[i]);
         assert(!rkey_tmp.empty());
-        assert(0 == ep[!i]->rkeyImport(rkey_tmp.data(), rkey_tmp.size(), rkey[!i]));
+        rkey[!i] = std::make_unique<nixl::ucx::rkey>(*ep[!i], rkey_tmp.data());
+        assert(rkey[!i]->getRkey() != nullptr);
     }
 
     /* =========================================
@@ -153,7 +154,7 @@ int main()
 #endif
 
     // Write request
-    ret = ep[0]->write(buffer[0], mem[0], (uint64_t) buffer[1], rkey[0], buf_size/2, req);
+    ret = ep[0]->write(buffer[0], mem[0], (uint64_t)buffer[1], *rkey[0], buf_size / 2, req);
     completeRequest(w, std::string("WRITE"), false, ret, req);
 
     // Flush to ensure that all data is in-place
@@ -188,7 +189,7 @@ int main()
 #endif
 
     // Read request
-    ret = ep[0]->read((uint64_t) buffer[1], rkey[0], buffer[0], mem[0], buf_size, req);
+    ret = ep[0]->read((uint64_t)buffer[1], *rkey[0], buffer[0], mem[0], buf_size, req);
     completeRequest(w, std::string("READ"), false, ret, req);
 
     // Flush to ensure that all data is in-place
@@ -210,7 +211,6 @@ int main()
 
     /* Test shutdown */
     for(i = 0; i < 2; i++) {
-        ep[i]->rkeyDestroy(rkey[i]);
         c[i]->memDereg(mem[i]);
         assert(ep[i].release());
     }

@@ -34,6 +34,7 @@
 
 // Local includes
 #include "common/nixl_time.h"
+#include "ucx/rkey.h"
 #include "ucx/ucx_utils.h"
 #include "common/list_elem.h"
 
@@ -73,20 +74,23 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
 
 // A public metadata has to implement put, and only has the remote metadata
 class nixlUcxPublicMetadata : public nixlBackendMD {
-    private:
-        std::vector<nixlUcxRkey> rkeys;
-    public:
-        ucx_connection_ptr_t conn;
+public:
+    nixlUcxPublicMetadata() : nixlBackendMD(false) {}
 
-        nixlUcxPublicMetadata() : nixlBackendMD(false) {}
+    [[nodiscard]] const nixl::ucx::rkey &
+    getRkey(size_t id) const {
+        return *rkeys_[id];
+    }
 
-        ~nixlUcxPublicMetadata() = default;
+    void
+    addRkey(std::unique_ptr<nixl::ucx::rkey> rkey) {
+        rkeys_.emplace_back(std::move(rkey));
+    }
 
-        [[nodiscard]] nixlUcxRkey& getRkey(size_t id) noexcept {
-            return rkeys[id];
-        }
+    ucx_connection_ptr_t conn;
 
-    friend class nixlUcxEngine;
+private:
+    std::vector<std::unique_ptr<nixl::ucx::rkey>> rkeys_;
 };
 
 // Forward declaration of CUDA context
