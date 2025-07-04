@@ -34,6 +34,11 @@ class nixlXferReqH {
         nixl_xfer_op_t     backendOp;
         nixl_status_t      status;
 
+        // Telemetry info
+        uint64_t totalBytes;
+        std::chrono::high_resolution_clock::time_point startTime;
+        std::chrono::high_resolution_clock::time_point endTime;
+
     public:
         inline nixlXferReqH() { }
 
