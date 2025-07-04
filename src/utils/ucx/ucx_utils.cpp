@@ -29,8 +29,8 @@
 #include "config.h"
 #include "serdes/serdes.h"
 
-nixl_status_t ucx_status_to_nixl(const ucs_status_t status)
-{
+nixl_status_t
+ucx_status_to_nixl(const ucs_status_t status) {
     if (status == UCS_OK) {
         return NIXL_SUCCESS;
     }
@@ -144,8 +144,8 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
     ep_params.err_handler.arg = reinterpret_cast<void*>(this);
     ep_params.address         = reinterpret_cast<ucp_address_t*>(addr);
 
-    const nixl_status_t status = ucx_status_to_nixl(ucp_ep_create(worker, &ep_params, &eph));
-    if (status != NIXL_SUCCESS) {
+    const auto status = ucp_ep_create(worker, &ep_params, &eph);
+    if (status != UCS_OK) {
         throw std::runtime_error("failed to create ep");
     }
     setState(NIXL_UCX_EP_STATE_CONNECTED);
@@ -175,8 +175,8 @@ nixl_status_t nixlUcxEp::disconnect_nb()
  * RKey management
  * =========================================== */
 
-nixl_status_t nixlUcxEp::rkeyImport(void* addr, const size_t size, nixlUcxRkey &rkey)
-{
+nixl_status_t
+nixlUcxEp::rkeyImport(void *addr, const size_t size, nixlUcxRkey &rkey) {
     const ucs_status_t status = ucp_ep_rkey_unpack(eph, addr, &rkey.rkeyh);
     if (status != UCS_OK)
     {
@@ -187,8 +187,8 @@ nixl_status_t nixlUcxEp::rkeyImport(void* addr, const size_t size, nixlUcxRkey &
     return NIXL_SUCCESS;
 }
 
-void nixlUcxEp::rkeyDestroy(const nixlUcxRkey &rkey)
-{
+void
+nixlUcxEp::rkeyDestroy(const nixlUcxRkey &rkey) {
     ucp_rkey_destroy(rkey.rkeyh);
 }
 
@@ -196,17 +196,21 @@ void nixlUcxEp::rkeyDestroy(const nixlUcxRkey &rkey)
  * Active message handling
  * =========================================== */
 
-nixl_status_t nixlUcxEp::sendAm(const unsigned msg_id,
-                                void* hdr, const size_t hdr_len,
-                                void* buffer, const size_t len,
-                                const uint32_t flags, nixlUcxReq &req)
-{
+nixl_status_t
+nixlUcxEp::sendAm(const unsigned msg_id,
+                  void *hdr,
+                  const size_t hdr_len,
+                  void *buffer,
+                  const size_t len,
+                  const uint32_t flags,
+                  nixlUcxReq &req) {
     ucp_request_param_t param = {0};
 
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
     param.flags         = flags;
 
-    const ucs_status_ptr_t request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
+    const ucs_status_ptr_t request =
+        ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
 
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
@@ -220,23 +224,24 @@ nixl_status_t nixlUcxEp::sendAm(const unsigned msg_id,
  * Data transfer
  * =========================================== */
 
-nixl_status_t nixlUcxEp::read(const uint64_t raddr, nixlUcxRkey &rk,
-                              void *laddr, nixlUcxMem &mem,
-                              const size_t size, nixlUcxReq &req)
-{
+nixl_status_t
+nixlUcxEp::read(const uint64_t raddr,
+                nixlUcxRkey &rk,
+                void *laddr,
+                nixlUcxMem &mem,
+                const size_t size,
+                nixlUcxReq &req) {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
     }
 
     const ucp_request_param_t param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH |
-                        UCP_OP_ATTR_FLAG_MULTI_SEND,
-        .memh         = mem.memh,
+        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND,
+        .memh = mem.memh,
     };
 
-    const ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr,
-                                           rk.rkeyh, &param);
+    const ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rk.rkeyh, &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
         return NIXL_IN_PROG;
@@ -245,22 +250,23 @@ nixl_status_t nixlUcxEp::read(const uint64_t raddr, nixlUcxRkey &rk,
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
-nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
-                               const uint64_t raddr, nixlUcxRkey &rk,
-                               const size_t size, nixlUcxReq &req)
-{
+nixl_status_t
+nixlUcxEp::write(void *laddr,
+                 nixlUcxMem &mem,
+                 const uint64_t raddr,
+                 nixlUcxRkey &rk,
+                 const size_t size,
+                 nixlUcxReq &req) {
     if (const nixl_status_t status = checkTxState(); status != NIXL_SUCCESS) {
         return status;
     }
 
     const ucp_request_param_t param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH |
-                        UCP_OP_ATTR_FLAG_MULTI_SEND,
-        .memh         = mem.memh,
+        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND,
+        .memh = mem.memh,
     };
 
-    const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr,
-                                                 rk.rkeyh, &param);
+    const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rk.rkeyh, &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
         return NIXL_IN_PROG;
@@ -269,13 +275,13 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
-nixl_status_t nixlUcxEp::estimateCost(const size_t size,
-                                      std::chrono::microseconds &duration,
-                                      std::chrono::microseconds &err_margin,
-                                      nixl_cost_t &method)
-{
+nixl_status_t
+nixlUcxEp::estimateCost(const size_t size,
+                        std::chrono::microseconds &duration,
+                        std::chrono::microseconds &err_margin,
+                        nixl_cost_t &method) {
     const ucp_ep_evaluate_perf_param_t params = {
-        .field_mask   = UCP_EP_PERF_PARAM_FIELD_MESSAGE_SIZE,
+        .field_mask = UCP_EP_PERF_PARAM_FIELD_MESSAGE_SIZE,
         .message_size = size,
     };
 
@@ -328,15 +334,14 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
     std::terminate();
 }
 
-nixlUcxContext::nixlUcxContext(const std::vector<std::string>& devs,
+nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                const size_t req_size,
                                nixlUcxContext::req_cb_t init_cb,
                                nixlUcxContext::req_cb_t fini_cb,
                                const bool prog_thread,
                                ucp_err_handling_mode_t __err_handling_mode,
                                unsigned long num_workers,
-                               nixl_thread_sync_t sync_mode)
-{
+                               nixl_thread_sync_t sync_mode) {
     ucp_params_t ucp_params;
 
     // With strict synchronization model nixlAgent serializes access to backends, with more
@@ -474,8 +479,8 @@ std::string nixlUcxWorker::epAddr()
     return result;
 }
 
-absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, size_t size)
-{
+absl::StatusOr<std::unique_ptr<nixlUcxEp>>
+nixlUcxWorker::connect(void *addr, size_t size) {
     try {
         return std::make_unique<nixlUcxEp>(worker.get(), addr, ctx->err_handling_mode);
     } catch (const std::exception &e) {
@@ -487,8 +492,8 @@ absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, si
  * Memory management
  * =========================================== */
 
-int nixlUcxContext::memReg(void *addr, const size_t size, nixlUcxMem &mem, nixl_mem_t nixl_mem_type)
-{
+int
+nixlUcxContext::memReg(void *addr, const size_t size, nixlUcxMem &mem, nixl_mem_t nixl_mem_type) {
     //mem.uw = this;
     mem.base = addr;
     mem.size = size;
