@@ -299,3 +299,20 @@ nixl_status_t nixlMooncakeEngine::getNotifs(notif_list_t &notif_list){
     free(notify_msgs);
     return NIXL_SUCCESS;
 }
+
+nixl_status_t nixlMooncakeEngine::genNotif(const std::string &remote_agent, const std::string &msg) const
+{
+    int segment_id;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto agent = connected_agents_.find(remote_agent);
+        if (agent == connected_agents_.end())
+            return NIXL_ERR_INVALID_PARAM;
+        segment_id = agent->second.segment_id;
+    }
+    notify_msg_t notify_msg;
+    notify_msg.name = const_cast<char*>(local_agent_name_.c_str());
+    notify_msg.msg = const_cast<char*>(msg.c_str());
+    int ret = genNotifyInEngine(engine_, segment_id, notify_msg);
+    return nixl_status_t(ret);
+}

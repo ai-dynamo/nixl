@@ -581,6 +581,18 @@ void test_inter_agent_transfer(bool p_thread, bool reuse_hndl,
 
     std::cout << "Synchronous handshake complete\n";
 
+    std::string test_str("test");
+    mooncake1->genNotif(agent2, test_str);
+    int ret_gen = 0;
+    notif_list_t target_notif_gen;
+    while(ret_gen == 0){
+        int ret3_gen = mooncake2->getNotifs(target_notif_gen);
+        ret_gen = target_notif_gen.size();
+        assert(ret3_gen == NIXL_SUCCESS);
+    }
+    assert(target_notif_gen.front().second == test_str);
+    cout << "\t\tGenNotify Data verification success!" << flush;
+
     // Number of transfer descriptors
     int desc_cnt = 64;
     // Size of a single descriptor
@@ -603,7 +615,7 @@ void test_inter_agent_transfer(bool p_thread, bool reuse_hndl,
     populateDescs(req_dst_descs, dst_dev_id, addr2, desc_cnt, desc_size, rmd1);
 
     nixl_xfer_op_t ops[] = {  NIXL_READ, NIXL_WRITE };
-    bool use_notifs[] = { mooncake1->supportsNotif() }; // Mooncake transfer engine doesn't support notifs
+    bool use_notifs[] = { mooncake1->supportsNotif() }; 
 
     for (size_t i = 0; i < sizeof(ops)/sizeof(ops[i]); i++) {
 
@@ -670,7 +682,6 @@ int main()
         dev_ids[0] = 0;
     }
 #endif
-
     test_inter_agent_transfer (
         thread_on[0], false, mooncake[0][0], DRAM_SEG, 0, mooncake[0][1], DRAM_SEG, 0);
 

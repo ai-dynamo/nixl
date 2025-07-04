@@ -90,6 +90,7 @@ class nixlMooncakeEngine : public nixlBackendEngine {
         nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
 
         nixl_status_t getNotifs(notif_list_t &notif_list);
+        nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
     private:
         struct AgentInfo {
