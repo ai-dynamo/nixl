@@ -24,7 +24,7 @@ namespace nixl::ucx {
 rkey::rkey(const nixlUcxEp &ep, const void *rkey_buffer) noexcept
     : rkey_{unpackUcpRkey(ep, rkey_buffer), &ucp_rkey_destroy} {}
 
-ucp_rkey *
+ucp_rkey_h
 rkey::unpackUcpRkey(const nixlUcxEp &ep, const void *rkey_buffer) noexcept {
     ucp_rkey_h rkey = nullptr;
     const auto status = ucp_ep_rkey_unpack(ep.getEp(), rkey_buffer, &rkey);

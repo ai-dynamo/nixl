@@ -38,10 +38,10 @@ public:
     }
 
 private:
-    [[nodiscard]] static ucp_rkey *
+    [[nodiscard]] static ucp_rkey_h
     unpackUcpRkey(const nixlUcxEp &, const void *rkey_buffer) noexcept;
 
-    const std::unique_ptr<ucp_rkey, void (*)(ucp_rkey *)> rkey_;
+    const std::unique_ptr<ucp_rkey, void (*)(ucp_rkey_h)> rkey_;
 };
 } // namespace nixl::ucx
 #endif
