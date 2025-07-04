@@ -35,6 +35,8 @@ enum class nixl_ucx_mt_t {
     WORKER
 };
 
+constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
+
 template<typename Enum>
 [[nodiscard]] constexpr auto enumToInteger(const Enum e) noexcept
 {
@@ -201,14 +203,15 @@ private:
     [[nodiscard]] ucp_worker_h getWorker() const noexcept { return worker.get(); }
 };
 
-[[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {
-    return {
-        { "ucx_devices", "" },
-        { "ucx_error_handling_mode", "none" }, // or "peer"
-        { "num_workers", "1" }
-    };
-}
+[[nodiscard]] nixl_b_params_t
+get_ucx_backend_common_options();
 
 nixl_status_t ucx_status_to_nixl(ucs_status_t status);
+
+[[nodiscard]] std::string_view
+to_string(ucp_err_handling_mode_t t);
+
+[[nodiscard]] ucp_err_handling_mode_t
+err_mode_from_string(const std::string_view &s);
 
 #endif
