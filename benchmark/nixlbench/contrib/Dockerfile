@@ -80,12 +80,11 @@ RUN echo "INFO: Starting custom UCX build..." && \
         libnuma-dev librdmacm-dev ibverbs-providers libibverbs-dev rdma-core \
         ibverbs-utils libibumad-dev && \
     echo "INFO: Removing pre-existing UCX installations..." && \
-    rm -rf /usr/local/ucx /opt/hpcx/ucx && \
+    rm -rf /usr/lib/ucx /opt/hpcx/ucx && \
     cd /workspace/ucx && \
     ./autogen.sh && \
     echo "INFO: Building UCX..." && \
-    ./contrib/configure-release --prefix=/usr/local/ucx \
-                                --with-cuda=/usr/local/cuda \
+    ./contrib/configure-release --with-cuda=/usr/local/cuda \
                                 --enable-mt \
                                 --without-go && \
     make -j$(nproc) && \
