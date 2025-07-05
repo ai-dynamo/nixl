@@ -90,7 +90,7 @@ RUN echo "INFO: Starting custom UCX build..." && \
     make -j$(nproc) && \
     make install && \
     cd / && \
-    echo "INFO: Finished building and installing UCX to /usr/local/ucx."
+    echo "INFO: Finished building and installing UCX."
 
 # --- Stage 3: UCX Image Selection ---
 # This stage selects the correct UCX image based on the UCX argument
