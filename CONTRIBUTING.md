@@ -70,7 +70,7 @@ ninja -C build test
 
 ### Setting Up clang-format
 
-All C++ code must be formatted using the provided `.clang-format` configuration:
+All C++ code must be formatted using the provided `.clang-format` configuration. Code formatting will be automatically checked for conformance in CI, and improperly formatted code will be rejected:
 
 ```bash
 # Format a single file
