@@ -33,7 +33,7 @@ public:
     rkey(const nixlUcxEp &, const void *rkey_buffer);
 
     [[nodiscard]] ucp_rkey_h
-    getRkey() const noexcept {
+    get() const noexcept {
         return rkey_.get();
     }
 

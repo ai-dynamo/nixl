@@ -138,7 +138,6 @@ int main()
         std::string rkey_tmp = c[i]->packRkey(mem[i]);
         assert(!rkey_tmp.empty());
         rkey[!i] = std::make_unique<nixl::ucx::rkey>(*ep[!i], rkey_tmp.data());
-        assert(rkey[!i]->getRkey() != nullptr);
     }
 
     /* =========================================

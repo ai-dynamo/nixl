@@ -222,7 +222,7 @@ nixlUcxEp::read(uint64_t raddr,
         .memh         = mem.memh,
     };
 
-    ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey.getRkey(), &param);
+    ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
         return NIXL_IN_PROG;
@@ -249,7 +249,7 @@ nixlUcxEp::write(void *laddr,
         .memh         = mem.memh,
     };
 
-    ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.getRkey(), &param);
+    ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
         return NIXL_IN_PROG;
