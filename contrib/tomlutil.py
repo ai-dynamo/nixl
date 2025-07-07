@@ -21,6 +21,7 @@ import tomlkit
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--wheel-name", type=str, help="Set the project name")
+parser.add_argument("--build-id", type=str, help="Add build ID to version as local identifier")
 parser.add_argument("file", type=str, help="The toml file to modify")
 args = parser.parse_args()
 
@@ -35,6 +36,14 @@ if args.wheel_name:
     # name = "<wheel_name>"
     # ```
     doc["project"]["name"] = args.wheel_name
+
+if args.build_id:
+    # Add build ID to version as local identifier (PEP 440 compliant)
+    # Example: 0.7.1 -> 0.7.1+build.68
+    current_version = doc["project"]["version"]
+    # Remove any existing local version identifier
+    base_version = current_version.split('+')[0]
+    doc["project"]["version"] = f"{base_version}+build.{args.build_id}"
 
 with open(args.file, "w") as f:
     f.write(tomlkit.dumps(doc))
