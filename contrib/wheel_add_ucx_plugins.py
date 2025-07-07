@@ -197,7 +197,7 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
     for fname in name_map.values():
         fpath = os.path.join(pkg_libs_dir, fname)
         rpath = os.popen(f"patchelf --print-rpath {fpath}").read().strip()
-        if '$ORIGIN' in rpath.split(":"):
+        if "$ORIGIN" in rpath.split(":"):
             continue
         if not rpath:
             rpath = "$ORIGIN"
@@ -274,9 +274,9 @@ def main():
         "wheel", type=str, nargs="+", help="Path to one or more wheel files"
     )
     args = parser.parse_args()
-    if '$ARCH' in args.nixl_plugins_dir:
+    if "$ARCH" in args.nixl_plugins_dir:
         arch = os.getenv("ARCH", os.uname().machine)
-        args.nixl_plugins_dir = args.nixl_plugins_dir.replace('$ARCH', arch)
+        args.nixl_plugins_dir = args.nixl_plugins_dir.replace("$ARCH", arch)
 
     for wheel_path in args.wheel:
         add_plugins(wheel_path, args.ucx_plugins_dir, "ucx")
