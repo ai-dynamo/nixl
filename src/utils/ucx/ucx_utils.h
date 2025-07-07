@@ -98,8 +98,10 @@ public:
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
     /* Rkey */
-    [[nodiscard]] nixl_status_t rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey);
-    void rkeyDestroy(const nixlUcxRkey &rkey);
+    [[nodiscard]] nixl_status_t
+    rkeyImport(void *addr, size_t size, nixlUcxRkey &rkey);
+    void
+    rkeyDestroy(const nixlUcxRkey &rkey);
 
     /* Active message handling */
     nixl_status_t sendAm(unsigned msg_id,
@@ -151,10 +153,14 @@ private:
 public:
 
     using req_cb_t = void(void *request);
-    nixlUcxContext(const std::vector<std::string>& devices,
-                   size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
-                   bool prog_thread, ucp_err_handling_mode_t err_handling_mode,
-                   unsigned long num_workers, nixl_thread_sync_t sync_mode);
+    nixlUcxContext(const std::vector<std::string> &devices,
+                   size_t req_size,
+                   req_cb_t init_cb,
+                   req_cb_t fini_cb,
+                   bool prog_thread,
+                   ucp_err_handling_mode_t err_handling_mode,
+                   unsigned long num_workers,
+                   nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     /* Memory management */
@@ -209,6 +215,7 @@ private:
     };
 }
 
-[[nodiscard]] nixl_status_t ucx_status_to_nixl(ucs_status_t status);
+[[nodiscard]] nixl_status_t
+ucx_status_to_nixl(ucs_status_t status);
 
 #endif
