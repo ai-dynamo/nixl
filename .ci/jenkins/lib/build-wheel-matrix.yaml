@@ -1,0 +1,100 @@
+# Build Matrix Configuration for NixL CI Pipeline
+#
+# This file defines the build matrix configuration for the NixL CI pipeline in Jenkins.
+# It specifies the build environment, resources, and test matrix for continuous integration.
+#
+# Key Components:
+# - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
+# - Docker Images: Specifies the container images used for different build stages
+#   - PyTorch images (24.10 and 25.02) for building and testing
+#   - Podman image for container builds
+# - Matrix Axes: Defines build variations (currently x86_64 architecture)
+# - Build Steps: Sequential steps for building, testing, and container creation
+#
+# When Modified:
+# - Adding/removing Docker images: Affects available build environments
+# - Modifying matrix axes: Changes build variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts build performance and resource allocation
+# - Adding/removing steps: Changes the build pipeline sequence
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+---
+job: nixl-ci-build-wheel
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+# registry_host: urm.nvidia.com/sw-nbu-swx-nixl-docker-local
+# registry_path: /ci
+# registry_auth: svc-nixl-artifactory-token
+
+registry_host: harbor.mellanox.com
+registry_path: /swx-infra/nixl
+registry_auth: swx-infra_harbor_credentials
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: '{memory: 10Gi, cpu: 10000m}'
+  requests: '{memory: 10Gi, cpu: 10000m}'
+
+runs_on_dockers:
+  - {
+      file: '.ci/dockerfiles/Dockerfile.manylinux',
+      name: 'manylinux_2_28',
+      uri: 'ci/$arch/$name',
+      tag: '20250701',
+      build_args: '--no-cache --build-arg NPROC=10 --build-arg ARCH=$arch --build-arg BASE_IMAGE=harbor.mellanox.com/ucx/cuda --build-arg BASE_IMAGE_TAG=12.8-devel-manylinux--25.03'
+    }
+
+matrix:
+  axes:
+    python_version:
+      - "3.9"
+      - "3.10"
+      - "3.11"
+      - "3.12"
+    arch:
+      - x86_64
+
+env:
+  VIRTUAL_ENV: $WORKSPACE/.venv
+
+steps:
+  - name: Prepare
+    parallel: false
+    run: |
+      uv venv $VIRTUAL_ENV --python $python_version
+      uv pip install --upgrade meson pybind11 patchelf
+
+  - name: Build Nixl
+    parallel: false
+    run: |
+      mkdir build
+      uv run meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
+        -Dcudapath_lib="/usr/local/cuda/lib64" -Dcudapath_inc="/usr/local/cuda/include"
+      ninja -C build
+      ninja -C build install
+
+  - name: Build Wheel
+    parallel: false
+    run: |
+      export LD_LIBRARY_PATH=/usr/local/nixl/lib64/:/usr/local/nixl/lib64/plugins:$LD_LIBRARY_PATH
+      export NIXL_PLUGIN_DIR=/usr/local/nixl/lib64/plugins
+      echo "/usr/local/nixl/lib/$arch-linux-gnu" > /etc/ld.so.conf.d/nixl.conf
+      echo "/usr/local/nixl/lib/$arch-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf
+      ldconfig
+      uv build --wheel --out-dir /tmp/dist --python $python_version
+      uv pip install auditwheel
+      uv run auditwheel repair --exclude libcuda.so.1 --exclude 'libssl*' --exclude 'libcrypto*' /tmp/dist/nixl-*cp3*.whl --plat "${name}_${arch}" --wheel-dir dist
+      contrib/wheel_add_ucx_plugins.py --ucx-lib-dir /usr/local dist/*.whl
+
+  - name: Test Wheel
+    parallel: false
+    run: |
+      uv pip install dist/nixl-*cp"${python_version//./}"*.whl
+
+taskName: '${name}/${arch}/${python_version}/${axis_index}'
