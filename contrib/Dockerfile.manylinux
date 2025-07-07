@@ -16,11 +16,12 @@
 
 ARG BASE_IMAGE
 ARG BASE_IMAGE_TAG
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} as base
 
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG ARCH="x86_64"
 ARG UCX_REF="v1.19.x"
+ARG NPROC=8
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
@@ -64,7 +65,7 @@ RUN cd /tmp && \
     cd openssl-3.0.16 && \
     ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3 \
         shared zlib linux-$ARCH && \
-    make -j$(nproc) && \
+    make -j${NPROC} && \
     make install_sw && \
     echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
     echo "/usr/local/openssl3/lib" >> /etc/ld.so.conf.d/openssl3.conf && \
@@ -91,7 +92,7 @@ RUN git clone --recurse-submodules -b v1.73.0 --depth 1 --shallow-submodules htt
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr/local \
     -DgRPC_SSL_PROVIDER=package ../.. && \
-    make -j$(nproc) && \
+    make -j${NPROC} && \
     make install
 
 RUN git clone https://github.com/microsoft/cpprestsdk.git && \
@@ -99,14 +100,14 @@ RUN git clone https://github.com/microsoft/cpprestsdk.git && \
     mkdir build && cd build && \
     git submodule update --init && \
     cmake .. -DCPPREST_EXCLUDE_WEBSOCKETS=ON  && \
-    make -j$(nproc) && make install
+    make -j${NPROC} && make install
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
 
 RUN cd /workspace && \
     git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
 	cd etcd-cpp-apiv3 && mkdir build && cd build && \
-	cmake .. && make -j$(nproc) && make install
+	cmake .. && make -j${NPROC} && make install
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -131,11 +132,6 @@ RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV CUDA_PATH=/usr/local/cuda
-
-WORKDIR /workspace/nixl
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    uv pip install --upgrade meson pybind11 patchelf
 
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
@@ -169,7 +165,19 @@ RUN cd /usr/local/src && \
      make -j install-strip &&        \
      ldconfig
 
+# default image build from base image
+FROM base
+
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG ARCH="x86_64"
+
 COPY . /workspace/nixl
+
+WORKDIR /workspace/nixl
+
+ENV VIRTUAL_ENV=/workspace/nixl/.venv
+RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
+    uv pip install --upgrade meson pybind11 patchelf
 
 RUN rm -rf build && \
     mkdir build && \
