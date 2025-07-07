@@ -525,10 +525,8 @@ nixlUcxContext::memReg(void *addr, const size_t size, nixlUcxMem &mem, nixl_mem_
         }
 
         if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
-            NIXL_ERROR << "memory is detected as host, check that UCX is configured"
-                          " with CUDA support";
-            ucp_mem_unmap(ctx, mem.memh);
-            return -1;
+            NIXL_WARN << "memory is detected as host, check that UCX is configured"
+                         " with CUDA support";
         }
     }
 
