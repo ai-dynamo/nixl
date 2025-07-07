@@ -25,8 +25,15 @@
 #include <list>
 #include <unordered_set>
 #include <thread>
+#include <boost/uuid/uuid.hpp>
 #include "hf3fs_utils.h"
 #include "backend/backend_engine.h"
+
+class nixlHf3fsShmException : public std::runtime_error {
+public:
+    nixlHf3fsShmException(const std::string& message)
+        : std::runtime_error(message) {}
+};
 
 class nixlHf3fsMetadata : public nixlBackendMD {
     public:
@@ -37,16 +44,27 @@ class nixlHf3fsMetadata : public nixlBackendMD {
         ~nixlHf3fsMetadata() { }
 };
 
+class nixlHf3fsShmMetadata : public nixlBackendMD {
+    public:
+        std::string shm_name;
+        std::string shm_path;
+        void* mapped_addr;
+        size_t mapped_size;
+
+        nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil& utils);
+        ~nixlHf3fsShmMetadata();
+};
+
 class nixlHf3fsIO {
     public:
         hf3fs_iov iov;
         int fd;
-        void* orig_addr;  // Original memory address for copying after read
+        void* addr;       // Start address to read from/write to
         size_t size;      // Size of the buffer
         bool is_read;     // Whether this is a read operation
         size_t offset;    // Offset in the file
 
-        nixlHf3fsIO() : fd(-1), orig_addr(nullptr), size(0), is_read(false) {}
+        nixlHf3fsIO() : fd(-1), addr(nullptr), size(0), is_read(false) {}
         ~nixlHf3fsIO() {}
 };
 
@@ -63,15 +81,22 @@ class nixlH3fsThreadStatus {
 };
 
 class nixlHf3fsBackendReqH : public nixlBackendReqH {
+    private:
+        std::unordered_set<size_t> block_sizes;
+        std::string link_path;
     public:
-       std::list<nixlHf3fsIO *> io_list;
-       hf3fs_ior ior;
-       uint32_t completed_ios;  // Number of completed IOs
-       uint32_t num_ios;        // Number of submitted IOs
-       nixlH3fsThreadStatus io_status;
+        std::list<nixlHf3fsIO *> io_list;
+        hf3fs_ior ior;
+        uint32_t completed_ios;  // Number of completed IOs
+        uint32_t num_ios;        // Number of submitted IOs
+        nixlH3fsThreadStatus io_status;
+        boost::uuids::uuid uuid;
 
-       nixlHf3fsBackendReqH() : completed_ios(0), num_ios(0) {}
-       ~nixlHf3fsBackendReqH() {}
+        nixlHf3fsBackendReqH(std::string &mount_point);
+        ~nixlHf3fsBackendReqH() {}
+
+        nixl_status_t createSymlinkToShm(size_t block_size, const std::string &shm_path);
+        nixl_status_t removeSymlinkToShm(size_t block_size);
 };
 
 
@@ -83,6 +108,8 @@ class nixlHf3fsEngine : public nixlBackendEngine {
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
         void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;
         static void waitForIOsThread(void* handle, void *utils);
+        nixl_status_t createShmSymlink(const uint8_t *id, size_t block_size, const std::string &shm_path) const;
+        nixl_status_t removeShmSymlink(const uint8_t *id, size_t block_size) const;
     public:
         nixlHf3fsEngine(const nixlBackendInitParams* init_params);
         ~nixlHf3fsEngine();
