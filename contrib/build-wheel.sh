@@ -83,7 +83,17 @@ if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
     exit 1
 fi
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
-./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
+
+# Modify pyproject.toml with package name and optional build ID
+if [ -n "$CI_BUILD_NUMBER" ]; then
+    echo "Adding build ID ${CI_BUILD_NUMBER} to version"
+    ./contrib/tomlutil.py --wheel-name $PKG_NAME --build-id "$CI_BUILD_NUMBER" pyproject.toml
+else
+    ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
+fi
+
+# Control number of parallel jobs for ninja (used by meson-python)
+# Set both NINJA env var and meson compile args for maximum compatibility
 uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
 
 # Bundle libraries
