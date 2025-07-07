@@ -83,8 +83,8 @@ public:
     }
 
     void
-    addRkey(std::unique_ptr<nixl::ucx::rkey> rkey) {
-        rkeys_.emplace_back(std::move(rkey));
+    addRkey(const nixlUcxEp &ep, const void *rkey_buffer) {
+        rkeys_.emplace_back(std::make_unique<nixl::ucx::rkey>(ep, rkey_buffer));
     }
 
     ucx_connection_ptr_t conn;

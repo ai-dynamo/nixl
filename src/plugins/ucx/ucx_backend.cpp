@@ -861,31 +861,33 @@ nixl_status_t
 nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
                                  const std::string &agent,
                                  nixlBackendMD* &output) {
-    auto md = std::make_unique<nixlUcxPublicMetadata>();
-    size_t size = blob.size();
+    try {
+        auto md = std::make_unique<nixlUcxPublicMetadata>();
+        size_t size = blob.size();
 
-    auto search = remoteConnMap.find(agent);
+        auto search = remoteConnMap.find(agent);
 
-    if(search == remoteConnMap.end()) {
-        //TODO: err: remote connection not found
-        return NIXL_ERR_NOT_FOUND;
-    }
-    md->conn = search->second;
-
-    std::vector<char> addr(size);
-    nixlSerDes::_stringToBytes(addr.data(), blob, size);
-
-    for (size_t wid = 0; wid < uws.size(); wid++) {
-        auto rkey = std::make_unique<nixl::ucx::rkey>(*md->conn->getEp(wid), addr.data());
-        if (rkey->getRkey() == nullptr) {
-            return NIXL_ERR_BACKEND;
+        if (search == remoteConnMap.end()) {
+            // TODO: err: remote connection not found
+            return NIXL_ERR_NOT_FOUND;
         }
-        md->addRkey(std::move(rkey));
+        md->conn = search->second;
+
+        std::vector<char> addr(size);
+        nixlSerDes::_stringToBytes(addr.data(), blob, size);
+
+        for (size_t wid = 0; wid < uws.size(); wid++) {
+            md->addRkey(*md->conn->getEp(wid), addr.data());
+        }
+
+        output = (nixlBackendMD *)md.release();
+
+        return NIXL_SUCCESS;
     }
-
-    output = (nixlBackendMD*) md.release();
-
-    return NIXL_SUCCESS;
+    catch (const std::runtime_error &e) {
+        NIXL_ERROR << e.what();
+        return NIXL_ERR_BACKEND;
+    }
 }
 
 nixl_status_t

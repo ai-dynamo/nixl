@@ -30,7 +30,7 @@ namespace nixl::ucx {
 class rkey {
 public:
     rkey() = delete;
-    rkey(const nixlUcxEp &, const void *rkey_buffer) noexcept;
+    rkey(const nixlUcxEp &, const void *rkey_buffer);
 
     [[nodiscard]] ucp_rkey_h
     getRkey() const noexcept {
@@ -39,7 +39,7 @@ public:
 
 private:
     [[nodiscard]] static ucp_rkey_h
-    unpackUcpRkey(const nixlUcxEp &, const void *rkey_buffer) noexcept;
+    unpackUcpRkey(const nixlUcxEp &, const void *rkey_buffer);
 
     const std::unique_ptr<ucp_rkey, void (*)(ucp_rkey_h)> rkey_;
 };

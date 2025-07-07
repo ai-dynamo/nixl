@@ -21,16 +21,16 @@
 #include "ucx_utils.h"
 
 namespace nixl::ucx {
-rkey::rkey(const nixlUcxEp &ep, const void *rkey_buffer) noexcept
+rkey::rkey(const nixlUcxEp &ep, const void *rkey_buffer)
     : rkey_{unpackUcpRkey(ep, rkey_buffer), &ucp_rkey_destroy} {}
 
 ucp_rkey_h
-rkey::unpackUcpRkey(const nixlUcxEp &ep, const void *rkey_buffer) noexcept {
+rkey::unpackUcpRkey(const nixlUcxEp &ep, const void *rkey_buffer) {
     ucp_rkey_h rkey = nullptr;
     const auto status = ucp_ep_rkey_unpack(ep.getEp(), rkey_buffer, &rkey);
     if (status != UCS_OK) {
-        NIXL_ERROR << "Failed to unpack UCX RKEY: " << ucs_status_string(status);
-        return nullptr;
+        throw std::runtime_error(std::string("Failed to unpack UCX rkey: ") +
+                                 ucs_status_string(status));
     }
     return rkey;
 }
