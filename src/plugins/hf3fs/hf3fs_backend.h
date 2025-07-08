@@ -48,8 +48,10 @@ class nixlHf3fsShmMetadata : public nixlBackendMD {
     public:
         std::string shm_name;
         std::string shm_path;
+        std::string link_path;
         void* mapped_addr;
         size_t mapped_size;
+        boost::uuids::uuid uuid;
 
         nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil& utils);
         ~nixlHf3fsShmMetadata();
@@ -81,22 +83,15 @@ class nixlH3fsThreadStatus {
 };
 
 class nixlHf3fsBackendReqH : public nixlBackendReqH {
-    private:
-        std::unordered_set<size_t> block_sizes;
-        std::string link_path;
     public:
         std::list<nixlHf3fsIO *> io_list;
         hf3fs_ior ior;
         uint32_t completed_ios;  // Number of completed IOs
         uint32_t num_ios;        // Number of submitted IOs
         nixlH3fsThreadStatus io_status;
-        boost::uuids::uuid uuid;
 
-        nixlHf3fsBackendReqH(std::string &mount_point);
+        nixlHf3fsBackendReqH() : completed_ios(0), num_ios(0) {}
         ~nixlHf3fsBackendReqH() {}
-
-        nixl_status_t createSymlinkToShm(size_t block_size, const std::string &shm_path);
-        nixl_status_t removeSymlinkToShm(size_t block_size);
 };
 
 
