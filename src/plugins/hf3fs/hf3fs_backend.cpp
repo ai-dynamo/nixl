@@ -90,6 +90,7 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
                 md->handle.metadata = mem.metaInfo;
                 md->type = nixl_mem;
                 status = NIXL_SUCCESS;
+                out = (nixlBackendMD*) md;
                 break;
             }
 
