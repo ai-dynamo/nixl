@@ -135,7 +135,6 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
 void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle) const
 {
     for (auto prev_io : handle->io_list) {
-        handle->removeSymlinkToShm(prev_io->size);
         delete prev_io;
     }
 
@@ -191,7 +190,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
             "Error: Count mismatch or invalid operation selection");
     }
 
-    hf3fs_handle = new nixlHf3fsBackendReqH(hf3fs_utils->mount_point);
+    hf3fs_handle = new nixlHf3fsBackendReqH();
 
     bool is_read = (operation == NIXL_READ);
 
@@ -216,15 +215,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
             goto cleanup_handle;
         }
 
-        status = hf3fs_handle->createSymlinkToShm(size, shm_md->shm_path);
-        if (status != NIXL_SUCCESS) {
-            delete io;
-            nixl_err = status;
-            nixl_mesg = "Error: Failed to create symlink";
-            goto cleanup_handle;
-        }
-
-        status = hf3fs_utils->wrapIOV(&io->iov, shm_md->mapped_addr, shm_md->mapped_size, size, hf3fs_handle->uuid.data);
+        status = hf3fs_utils->wrapIOV(&io->iov, shm_md->mapped_addr, shm_md->mapped_size, size, shm_md->uuid.data);
         if (status != NIXL_SUCCESS) {
             delete io;
             nixl_err = status;
@@ -414,7 +405,7 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
 
     // Generate UUID for shared memory name
     boost::uuids::random_generator uuidGenerator;
-    boost::uuids::uuid uuid = uuidGenerator();
+    uuid = uuidGenerator();
 
     // Create shared memory name using UUID (POSIX shared memory names start with /)
     shm_name = "/nixl_hf3fs." + boost::uuids::to_string(uuid);
@@ -460,66 +451,36 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
     mapped_size = len;
     shm_path = "/dev/shm" + shm_name;
 
+    link_path = absl::StrFormat("%s/3fs-virt/iovs/%s",
+        utils.mount_point,
+        boost::uuids::to_string(uuid));
+    if (symlink(shm_path.c_str(), link_path.c_str()) == -1) {
+        NIXL_ERROR << "Failed to create symlink: " << strerror(errno);
+        munmap(mapped_addr, mapped_size);
+        close(shm_fd);
+        shm_unlink(shm_name.c_str());
+        throw nixlHf3fsShmException("Failed to create symlink " + std::string(strerror(errno)));
+    }
+
     // Close the file descriptor as it's no longer needed after mmap
     close(shm_fd);
 
     NIXL_INFO << "Created POSIX shared memory: " << shm_name << " with size: " << len;
 }
 
-nixlHf3fsShmMetadata::~nixlHf3fsShmMetadata() {
-    if (mapped_addr != nullptr) {
-        // Unmap shared memory
-        if (munmap(mapped_addr, mapped_size) == -1) {
-            NIXL_ERROR << "Failed to unmap shared memory: " << strerror(errno);
-        }
-        mapped_addr = nullptr;
+nixlHf3fsShmMetadata::~nixlHf3fsShmMetadata()
+{
+    if (unlink(link_path.c_str()) && errno != ENOENT) {
+        NIXL_ERROR << "Failed to remove symlink: " << strerror(errno);
     }
 
-    // Remove the shared memory object
-    if (!shm_name.empty()) {
-        if (shm_unlink(shm_name.c_str()) == -1) {
-            NIXL_ERROR << "Failed to unlink shared memory: " << strerror(errno);
-        }
+    if (munmap(mapped_addr, mapped_size) == -1) {
+        NIXL_ERROR << "Failed to unmap shared memory: " << strerror(errno);
+    }
+
+    if (shm_unlink(shm_name.c_str()) == -1) {
+        NIXL_ERROR << "Failed to unlink shared memory: " << strerror(errno);
     }
 
     NIXL_INFO << "Cleaned up POSIX shared memory: " << shm_name;
-}
-
-nixlHf3fsBackendReqH::nixlHf3fsBackendReqH(std::string &mount_point) : completed_ios(0), num_ios(0) {
-    boost::uuids::random_generator uuidGenerator;
-    uuid = uuidGenerator();
-    link_path = absl::StrFormat("%s/3fs-virt/iovs/%s",
-                                mount_point,
-                                boost::uuids::to_string(uuid));
-}
-
-nixl_status_t nixlHf3fsBackendReqH::createSymlinkToShm(size_t block_size, const std::string &shm_path)
-{
-    if (block_sizes.find(block_size) != block_sizes.end()) {
-        return NIXL_SUCCESS;
-    }
-
-    // Create the symlink
-    if (symlink(shm_path.c_str(), link_path.c_str()) == -1) {
-        HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Failed to create symlink: " + std::string(strerror(errno)));
-        return NIXL_ERR_BACKEND;
-    }
-    block_sizes.insert(block_size);
-
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t nixlHf3fsBackendReqH::removeSymlinkToShm(size_t block_size)
-{
-    if (block_sizes.find(block_size) == block_sizes.end()) {
-        return NIXL_SUCCESS;
-    }
-
-    // Remove the symlink
-    if (std::filesystem::remove(link_path) == false) {
-        HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Failed to remove symlink: " + std::string(strerror(errno)));
-    }
-    block_sizes.erase(block_size);
-
-    return NIXL_SUCCESS;
 }
