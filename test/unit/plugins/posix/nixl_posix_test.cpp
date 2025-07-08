@@ -578,30 +578,30 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
 
     print_segment_title (phase_title ("1st Memory to File Transfer"));
 
-    nixlXferReqH *treq = nullptr;
-    nixl_status_t status = agent.createXferReq (
-        NIXL_WRITE, dram_for_posix_xfer, file_for_posix_xfer, "POSIXRepostTester", treq);
+    nixlXferReqH *treq_write = nullptr;
+    nixl_status_t status = agent.createXferReq(
+        NIXL_WRITE, dram_for_posix_xfer, file_for_posix_xfer, "POSIXRepostTester", treq_write);
     if (status != NIXL_SUCCESS) {
         std::cerr << "Failed to create write transfer request - status: "
                   << nixlEnumStrings::statusStr (status) << std::endl;
         return 1;
     }
 
-    status = agent.postXferReq (treq);
+    status = agent.postXferReq(treq_write);
     if (status < 0) {
         std::cerr << "Failed to post write transfer request - status: "
                   << nixlEnumStrings::statusStr (status) << std::endl;
-        agent.releaseXferReq (treq);
+        agent.releaseXferReq(treq_write);
         return 1;
     }
 
     // Wait for transfer to complete
     do {
-        status = agent.getXferStatus (treq);
+        status = agent.getXferStatus(treq_write);
         if (status < 0) {
             std::cerr << "Error during write transfer - status: "
                       << nixlEnumStrings::statusStr (status) << std::endl;
-            agent.releaseXferReq (treq);
+            agent.releaseXferReq(treq_write);
             return 1;
         }
     } while (status == NIXL_IN_PROG);
@@ -615,29 +615,30 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
 
     print_segment_title (phase_title ("1st Read From File to Memory"));
 
-    status = agent.createXferReq (
-        NIXL_READ, dram_for_posix_xfer, file_for_posix_xfer, "POSIXRepostTester", treq);
+    nixlXferReqH *treq_read = nullptr;
+    status = agent.createXferReq(
+        NIXL_READ, dram_for_posix_xfer, file_for_posix_xfer, "POSIXRepostTester", treq_read);
     if (status != NIXL_SUCCESS) {
         std::cerr << "Failed to create read transfer request - status: "
                   << nixlEnumStrings::statusStr (status) << std::endl;
         return 1;
     }
 
-    status = agent.postXferReq (treq);
+    status = agent.postXferReq(treq_read);
     if (status < 0) {
         std::cerr << "Failed to post read transfer request - status: "
                   << nixlEnumStrings::statusStr (status) << std::endl;
-        agent.releaseXferReq (treq);
+        agent.releaseXferReq(treq_read);
         return 1;
     }
 
     // Wait for transfer to complete
     do {
-        status = agent.getXferStatus (treq);
+        status = agent.getXferStatus(treq_read);
         if (status < 0) {
             std::cerr << "Error during read transfer - status: "
                       << nixlEnumStrings::statusStr (status) << std::endl;
-            agent.releaseXferReq (treq);
+            agent.releaseXferReq(treq_read);
             return 1;
         }
     } while (status == NIXL_IN_PROG);
@@ -662,58 +663,42 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
         fill_test_pattern ((void *)dram_buf[i].addr, repost_test_phrase_2, transfer_size);
     }
 
-    status = agent.createXferReq (
-        NIXL_WRITE, dram_for_posix_xfer, file_for_posix_xfer, "POSIXRepostTester", treq);
-    if (status != NIXL_SUCCESS) {
-        std::cerr << "Failed to create write transfer request - status: "
-                  << nixlEnumStrings::statusStr (status) << std::endl;
-        return 1;
-    }
-
-    status = agent.postXferReq (treq);
+    status = agent.postXferReq(treq_write);
     if (status < 0) {
         std::cerr << "Failed to post write transfer request - status: "
                   << nixlEnumStrings::statusStr (status) << std::endl;
-        agent.releaseXferReq (treq);
+        agent.releaseXferReq(treq_write);
         return 1;
     }
 
     // Wait for transfer to complete
     do {
-        status = agent.getXferStatus (treq);
+        status = agent.getXferStatus(treq_write);
         if (status < 0) {
             std::cerr << "Error during write transfer - status: "
                       << nixlEnumStrings::statusStr (status) << std::endl;
-            agent.releaseXferReq (treq);
+            agent.releaseXferReq(treq_write);
             return 1;
         }
     } while (status == NIXL_IN_PROG);
 
     print_segment_title (phase_title ("2nd Read From File to Memory"));
 
-    status = agent.createXferReq (
-        NIXL_READ, dram_for_posix_xfer, file_for_posix_xfer, "POSIXRepostTester", treq);
-    if (status != NIXL_SUCCESS) {
-        std::cerr << "Failed to create read transfer request - status: "
-                  << nixlEnumStrings::statusStr (status) << std::endl;
-        return 1;
-    }
-
-    status = agent.postXferReq (treq);
+    status = agent.postXferReq(treq_read);
     if (status < 0) {
         std::cerr << "Failed to post read transfer request - status: "
                   << nixlEnumStrings::statusStr (status) << std::endl;
-        agent.releaseXferReq (treq);
+        agent.releaseXferReq(treq_read);
         return 1;
     }
 
     // Wait for transfer to complete
     do {
-        status = agent.getXferStatus (treq);
+        status = agent.getXferStatus(treq_read);
         if (status < 0) {
             std::cerr << "Error during read transfer - status: "
                       << nixlEnumStrings::statusStr (status) << std::endl;
-            agent.releaseXferReq (treq);
+            agent.releaseXferReq(treq_read);
             return 1;
         }
     } while (status == NIXL_IN_PROG);
@@ -736,6 +721,8 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
 
     agent.deregisterMem (file_for_posix);
     agent.deregisterMem (dram_for_posix);
+    agent.releaseXferReq(treq_write);
+    agent.releaseXferReq(treq_read);
 
     return 0;
 }
