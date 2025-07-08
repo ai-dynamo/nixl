@@ -516,7 +516,7 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *mooncake, nixl_
     populateDescs(req_dst_descs, 0, addr2, desc_cnt, desc_size, rmd2);
 
     nixl_xfer_op_t ops[] = {  NIXL_READ, NIXL_WRITE };
-    bool use_notifs[] = { false }; // Mooncake transfer engine doesn't support notifs
+    bool use_notifs[] = { true }; 
 
     for (size_t i = 0; i < sizeof(ops)/sizeof(ops[i]); i++) {
 
