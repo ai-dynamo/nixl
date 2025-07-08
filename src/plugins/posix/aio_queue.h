@@ -29,6 +29,7 @@ class aioQueue : public nixlPosixQueue {
     private:
         std::vector<struct aiocb> aiocbs;  // Array of AIO control blocks
         int num_entries;                   // Total number of entries expected
+        std::vector<bool> completed; // Track completed I/Os
         int num_completed;                 // Number of completed operations
         int num_submitted;                 // Track number of submitted I/Os
         nixl_xfer_op_t operation;          // Whether this is a read operation
