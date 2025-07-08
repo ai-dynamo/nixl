@@ -7070,7 +7070,7 @@ SUCH DAMAGE.
 - **License URL**: https://github.com/taskflow/taskflow/blob/master/LICENSE
 - **License name**: MIT
 ### License Text:
-```TASKFLOW MIT LICENSE 
+```TASKFLOW MIT LICENSE
 
 Copyright (c) 2018-2025 Dr. Tsung-Wei Huang
 
