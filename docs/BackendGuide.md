@@ -115,7 +115,13 @@ A key underlying abstraction for NIXL library is a descriptor list, that is made
 *For transfers: (addr, len, devID, metadata), where metadata is a pointer to an nixlBackendMD object relevant to the registered memory that this descriptor falls within.
 *For registration, (addr, len, devID, str) where str is an optional byte-array for extra information. The table below shows the meaning of devID for different memory spaces, as well as optional meaning for File and Object-Store.
 
-![NIXL SB API](figures/nixl_desc_table.png)
+| mem type | addr   | len  | devID         | str (byte-array)           |
+| -------- | ------ | ---- | ------------- | -------------------------- |
+| DRAM     |        |      | 0 (or region) |        -                   |
+| VRAM     |        |      | GPU ID        |        -                   |
+| BLK      |        |      | Vol ID        |        -                   |
+| FILE     | offset | Or 0 | fd            | Path + (access mode)       |
+| DRAM     | offset | Or 0 | key           | Extended key (+ bucket ID) |
 
 ## Plugin Manager API
 
