@@ -80,18 +80,17 @@ RUN echo "INFO: Starting custom UCX build..." && \
         libnuma-dev librdmacm-dev ibverbs-providers libibverbs-dev rdma-core \
         ibverbs-utils libibumad-dev && \
     echo "INFO: Removing pre-existing UCX installations..." && \
-    rm -rf /usr/local/ucx /opt/hpcx/ucx && \
+    rm -rf /usr/lib/ucx /opt/hpcx/ucx && \
     cd /workspace/ucx && \
     ./autogen.sh && \
     echo "INFO: Building UCX..." && \
-    ./contrib/configure-release --prefix=/usr/local/ucx \
-                                --with-cuda=/usr/local/cuda \
+    ./contrib/configure-release --with-cuda=/usr/local/cuda \
                                 --enable-mt \
                                 --without-go && \
     make -j$(nproc) && \
     make install && \
     cd / && \
-    echo "INFO: Finished building and installing UCX to /usr/local/ucx."
+    echo "INFO: Finished building and installing UCX."
 
 # --- Stage 3: UCX Image Selection ---
 # This stage selects the correct UCX image based on the UCX argument
