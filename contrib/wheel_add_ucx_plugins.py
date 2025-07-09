@@ -102,14 +102,15 @@ def get_repaired_lib_name_map(libs_dir):
     (like "libboost_atomic-fb1368c6.so.1.66.0").
     """
     name_map = {}
-    for fname in os.listdir(libs_dir):
+    for fname in sorted(os.listdir(libs_dir)):
         if (
             os.path.isfile(os.path.join(libs_dir, fname))
             and ".so" in fname
             and "-" in fname
         ):
-            base_name = fname.split("-")[0].replace("_", ".")
+            base_name = fname.split("-")[0]
             name_map[base_name] = fname
+            print(f"Found already bundled lib: {base_name} -> {fname}")
     return name_map
 
 
@@ -156,11 +157,31 @@ def get_lib_deps(lib_path):
     return ret
 
 
-def add_ucx_plugins(wheel_path, ucx_sys_lib_dir):
+def copytree(src, dst):
     """
-    Adds the UCX plugins from the system to the wheel.
-    The plugins are copied to the wheel's nixl.libs/ucx directory.
-    The plugins are patched to load their dependencies from the parent directory.
+    Copy a tree of files from @src directory to @dst directory.
+    Similar to shutil.copytree, but returns a list of all files copied.
+    Returns:
+        List of files copied.
+    """
+    copied_files = []
+    for root, dirs, files in os.walk(src):
+        rel_path = os.path.relpath(root, src)
+        dst_dir = os.path.join(dst, rel_path)
+        os.makedirs(dst_dir, exist_ok=True)
+        for file in files:
+            src_file = os.path.join(root, file)
+            dst_file = os.path.join(dst_dir, file)
+            shutil.copy2(src_file, dst_file)
+            copied_files.append(dst_file)
+    return copied_files
+
+
+def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
+    """
+    Adds the plugins from @sys_dir to the wheel.
+    The plugins are copied to a subdirectory @install_dir relative to the wheel's nixl.libs.
+    The plugins are patched to load their dependencies from the wheel.
     The wheel file is then recreated.
     """
     temp_dir = extract_wheel(wheel_path)
@@ -169,17 +190,30 @@ def add_ucx_plugins(wheel_path, ucx_sys_lib_dir):
     if not os.path.exists(pkg_libs_dir):
         raise FileNotFoundError(f"nixl.libs directory not found in wheel: {wheel_path}")
 
+    print("Listing existing libs:")
     name_map = get_repaired_lib_name_map(pkg_libs_dir)
 
-    sys_plugins_dir = os.path.join(ucx_sys_lib_dir, "ucx")
-    pkg_plugins_dir = os.path.join(pkg_libs_dir, "ucx")
-    if os.path.exists(pkg_plugins_dir):
-        shutil.rmtree(pkg_plugins_dir)
-    print(f"Copying UCX plugins from {sys_plugins_dir} to {pkg_plugins_dir}")
-    shutil.copytree(sys_plugins_dir, pkg_plugins_dir)
+    # Ensure that all of them in name_map have RPATH set to $ORIGIN
+    for fname in name_map.values():
+        fpath = os.path.join(pkg_libs_dir, fname)
+        rpath = os.popen(f"patchelf --print-rpath {fpath}").read().strip()
+        if "$ORIGIN" in rpath.split(":"):
+            continue
+        if not rpath:
+            rpath = "$ORIGIN"
+        else:
+            rpath = "$ORIGIN:" + rpath
+        print(f"Setting rpath for {fpath} to {rpath}")
+        ret = os.system(f"patchelf --set-rpath '{rpath}' {fpath}")
+        if ret != 0:
+            raise RuntimeError(f"Failed to set rpath for {fpath}")
 
-    # Patch all libs to load UCX deps from parent directory
-    for fname in os.listdir(pkg_plugins_dir):
+    pkg_plugins_dir = os.path.join(pkg_libs_dir, install_dirname)
+    print(f"Copying plugins from {sys_plugins_dir} to {pkg_plugins_dir}")
+    copied_files = copytree(sys_plugins_dir, pkg_plugins_dir)
+
+    # Patch all libs to load plugin deps from the wheel
+    for fname in copied_files:
         print(f"Patching {fname}")
         fpath = os.path.join(pkg_plugins_dir, fname)
         if os.path.isfile(fpath) and ".so" in fname:
@@ -219,24 +253,34 @@ def add_ucx_plugins(wheel_path, ucx_sys_lib_dir):
 
     create_wheel(wheel_path, temp_dir)
     shutil.rmtree(temp_dir)
-    print(f"Added UCX plugins to wheel: {wheel_path}")
+    print(f"Added plugins to wheel: {wheel_path}")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--ucx-lib-dir",
+        "--ucx-plugins-dir",
         type=str,
-        help="Path to the UCX lib directory",
-        default="/usr/lib64",
+        help="Path to the UCX plugins directory",
+        default="/usr/lib64/ucx",
+    )
+    parser.add_argument(
+        "--nixl-plugins-dir",
+        type=str,
+        help="Path to the NIXL plugins directory",
+        default="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins",
     )
     parser.add_argument(
         "wheel", type=str, nargs="+", help="Path to one or more wheel files"
     )
     args = parser.parse_args()
+    if "$ARCH" in args.nixl_plugins_dir:
+        arch = os.getenv("ARCH", os.uname().machine)
+        args.nixl_plugins_dir = args.nixl_plugins_dir.replace("$ARCH", arch)
 
     for wheel_path in args.wheel:
-        add_ucx_plugins(wheel_path, args.ucx_lib_dir)
+        add_plugins(wheel_path, args.ucx_plugins_dir, "ucx")
+        add_plugins(wheel_path, args.nixl_plugins_dir, "nixl")
 
 
 if __name__ == "__main__":
