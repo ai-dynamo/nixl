@@ -12,6 +12,11 @@
 // Requires pipeline-github-lib plugin to load library from github
 @Library('github.com/Mellanox/ci-demo@stable_media')  // External library for matrix build functionality
 
+// Load Blossom GitHub library
+// This library provides functionality for interacting with GitHub
+// It is used to update the commit status and upload logs
+@Library('blossom-github-lib@master')
+
 // Initialize the build matrix
 // The matrix class handles the parallel execution of different build configurations
 // It manages the build environment, test execution, and result reporting
