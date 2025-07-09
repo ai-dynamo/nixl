@@ -855,38 +855,33 @@ nixl_status_t
 nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
                                  const std::string &agent,
                                  nixlBackendMD* &output) {
-    auto md = std::make_unique<nixlUcxPublicMetadata>();
-    size_t size = blob.size();
+    try {
+        auto md = std::make_unique<nixlUcxPublicMetadata>();
+        size_t size = blob.size();
 
-    auto search = remoteConnMap.find(agent);
+        auto search = remoteConnMap.find(agent);
 
-    if(search == remoteConnMap.end()) {
-        //TODO: err: remote connection not found
-        return NIXL_ERR_NOT_FOUND;
+        if (search == remoteConnMap.end()) {
+            // TODO: err: remote connection not found
+            return NIXL_ERR_NOT_FOUND;
+        }
+        md->conn = search->second;
+
+        std::vector<char> addr(size);
+        nixlSerDes::_stringToBytes(addr.data(), blob, size);
+
+        for (size_t wid = 0; wid < uws.size(); wid++) {
+            md->addRkey(*md->conn->getEp(wid), addr.data());
+        }
+
+        output = (nixlBackendMD *)md.release();
+
+        return NIXL_SUCCESS;
     }
-    md->conn = search->second;
-
-    std::vector<char> addr(size);
-    nixlSerDes::_stringToBytes(addr.data(), blob, size);
-
-    bool error = false;
-    for (size_t wid = 0; wid < uws.size(); wid++) {
-        nixlUcxRkey rkey;
-        error = md->conn->getEp(wid)->rkeyImport(addr.data(), size, rkey);
-        if (error)
-            // TODO: error out. Should we indicate which desc failed or unroll everything prior
-            break;
-        md->rkeys.push_back(rkey);
-    }
-    if (error) {
-        for (size_t wid = 0; wid < md->rkeys.size(); wid++)
-            md->conn->getEp(wid)->rkeyDestroy(md->rkeys[wid]);
+    catch (const std::runtime_error &e) {
+        NIXL_ERROR << e.what();
         return NIXL_ERR_BACKEND;
     }
-
-    output = (nixlBackendMD*) md.release();
-
-    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -911,9 +906,6 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
 nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
 
     nixlUcxPublicMetadata *md = (nixlUcxPublicMetadata*) input; //typecast?
-
-    for (size_t wid = 0; wid < md->rkeys.size(); wid++)
-        md->conn->getEp(wid)->rkeyDestroy(md->rkeys[wid]);
     delete md;
 
     return NIXL_SUCCESS;
