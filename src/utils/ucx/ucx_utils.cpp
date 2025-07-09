@@ -14,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "ucx_utils.h"
+
 #include <exception>
 #include <vector>
 #include <string>
@@ -23,10 +25,10 @@
 
 #include <nixl_types.h>
 
-#include "serdes/serdes.h"
-
-#include "ucx_utils.h"
 #include "common/nixl_log.h"
+#include "config.h"
+#include "serdes/serdes.h"
+#include "rkey.h"
 
 using namespace std;
 
@@ -48,22 +50,6 @@ nixl_status_t ucx_status_to_nixl(ucs_status_t status)
     default:
         NIXL_WARN << "Unexpected UCX error: " << ucs_status_string(status);
         return NIXL_ERR_BACKEND;
-    }
-}
-
-void ucx_modify_config(ucp_config_t *config, std::string_view key,
-                       std::string_view value)
-{
-    const char *env_val = std::getenv(absl::StrFormat("UCX_%s", key.data()).c_str());
-    value = env_val ? env_val : value;
-
-    ucs_status_t status = ucp_config_modify(config, key.data(), value.data());
-    if (status != UCS_OK) {
-        NIXL_WARN << "Failed to modify UCX config: " << key << "=" << value
-                  << ": " << ucs_status_string(status);
-    } else {
-        NIXL_DEBUG << "Applied UCX config from " << (env_val ? "env var" : "NIXL")
-                   << ": " << key << "=" << value;
     }
 }
 
@@ -190,29 +176,6 @@ nixl_status_t nixlUcxEp::disconnect_nb()
 }
 
 /* ===========================================
- * RKey management
- * =========================================== */
-
-int nixlUcxEp::rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey)
-{
-    ucs_status_t status;
-
-    status = ucp_ep_rkey_unpack(eph, addr, &rkey.rkeyh);
-    if (status != UCS_OK)
-    {
-        /* TODO: MSW_NET_ERROR(priv->net, "unable to unpack key!\n"); */
-        return -1;
-    }
-
-    return 0;
-}
-
-void nixlUcxEp::rkeyDestroy(nixlUcxRkey &rkey)
-{
-    ucp_rkey_destroy(rkey.rkeyh);
-}
-
-/* ===========================================
  * Active message handling
  * =========================================== */
 
@@ -241,10 +204,13 @@ nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
  * Data transfer
  * =========================================== */
 
-nixl_status_t nixlUcxEp::read(uint64_t raddr, nixlUcxRkey &rk,
-                              void *laddr, nixlUcxMem &mem,
-                              size_t size, nixlUcxReq &req)
-{
+nixl_status_t
+nixlUcxEp::read(uint64_t raddr,
+                const nixl::ucx::rkey &rkey,
+                void *laddr,
+                nixlUcxMem &mem,
+                size_t size,
+                nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
@@ -256,8 +222,7 @@ nixl_status_t nixlUcxEp::read(uint64_t raddr, nixlUcxRkey &rk,
         .memh         = mem.memh,
     };
 
-    ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr,
-                                           rk.rkeyh, &param);
+    ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
         return NIXL_IN_PROG;
@@ -266,10 +231,13 @@ nixl_status_t nixlUcxEp::read(uint64_t raddr, nixlUcxRkey &rk,
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
-nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
-                               uint64_t raddr, nixlUcxRkey &rk,
-                               size_t size, nixlUcxReq &req)
-{
+nixl_status_t
+nixlUcxEp::write(void *laddr,
+                 nixlUcxMem &mem,
+                 uint64_t raddr,
+                 const nixl::ucx::rkey &rkey,
+                 size_t size,
+                 nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
@@ -281,8 +249,7 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
         .memh         = mem.memh,
     };
 
-    ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr,
-                                           rk.rkeyh, &param);
+    ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
         return NIXL_IN_PROG;
@@ -361,8 +328,6 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                nixl_thread_sync_t sync_mode)
 {
     ucp_params_t ucp_params;
-    ucp_config_t *ucp_config;
-    ucs_status_t status = UCS_OK;
 
     // With strict synchronization model nixlAgent serializes access to backends, with more
     // permissive models backends need to account for concurrent access and ensure their internal
@@ -393,44 +358,41 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         ucp_params.field_mask |= UCP_PARAM_FIELD_REQUEST_CLEANUP;
     }
 
-    ucp_config_read(NULL, NULL, &ucp_config);
+    nixl::ucx::config config;
 
     /* If requested, restrict the set of network devices */
     if (devs.size()) {
         /* TODO: check if this is the best way */
-        string dev_str = "";
-        unsigned int i;
-        for(i=0; i < devs.size() - 1; i++) {
-            dev_str = dev_str + devs[i] + ":1,";
+        std::string devs_str;
+        for (const auto &dev : devs) {
+            devs_str += dev + ":1,";
         }
-        dev_str = dev_str + devs[i] + ":1";
-        ucp_config_modify(ucp_config, "NET_DEVICES", dev_str.c_str());
+        devs_str.pop_back(); // to remove odd comma after the last device
+        config.modifyAlways ("NET_DEVICES", devs_str.c_str());
     }
 
     unsigned major_version, minor_version, release_number;
     ucp_get_version(&major_version, &minor_version, &release_number);
 
-    ucx_modify_config(ucp_config, "ADDRESS_VERSION", "v2");
-    ucx_modify_config(ucp_config, "RNDV_THRESH", "inf");
+    config.modify ("ADDRESS_VERSION", "v2");
+    config.modify ("RNDV_THRESH", "inf");
 
     unsigned ucp_version = UCP_VERSION(major_version, minor_version);
     if (ucp_version >= UCP_VERSION(1, 19)) {
-        ucx_modify_config(ucp_config, "MAX_COMPONENT_MDS", "32");
+        config.modify ("MAX_COMPONENT_MDS", "32");
     }
 
     if (ucp_version >= UCP_VERSION(1, 20)) {
-        ucx_modify_config(ucp_config, "MAX_RMA_RAILS", "4");
+        config.modify ("MAX_RMA_RAILS", "4");
     } else {
-        ucx_modify_config(ucp_config, "MAX_RMA_RAILS", "2");
+        config.modify ("MAX_RMA_RAILS", "2");
     }
 
-    status = ucp_init(&ucp_params, ucp_config, &ctx);
+    const auto status = ucp_init (&ucp_params, config.getUcpConfig(), &ctx);
     if (status != UCS_OK) {
-        /* TODO: proper cleanup */
-        // TODO: MSW_NET_ERROR(priv->net, "failed to ucp_init(%s)\n", ucs_status_string(status));
-        return;
+        throw std::runtime_error ("Failed to create UCX context: " +
+                                  std::string (ucs_status_string (status)));
     }
-    ucp_config_release(ucp_config);
 }
 
 nixlUcxContext::~nixlUcxContext()
@@ -548,10 +510,8 @@ int nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t 
         }
 
         if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
-            NIXL_ERROR << "memory is detected as host, check that UCX is configured"
-                          " with CUDA support";
-            ucp_mem_unmap(ctx, mem.memh);
-            return -1;
+            NIXL_WARN << "memory is detected as host, check that UCX is configured"
+                         " with CUDA support";
         }
     }
 

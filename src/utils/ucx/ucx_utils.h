@@ -57,7 +57,9 @@ template<typename Enum>
 
 using nixlUcxReq = void*;
 
-class nixlUcxRkey;
+namespace nixl::ucx {
+class rkey;
+}
 class nixlUcxMem;
 
 class nixlUcxEp {
@@ -97,10 +99,6 @@ public:
     nixlUcxEp(const nixlUcxEp&) = delete;
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
-    /* Rkey */
-    int rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey);
-    void rkeyDestroy(nixlUcxRkey &rkey);
-
     /* Active message handling */
     nixl_status_t sendAm(unsigned msg_id,
                          void* hdr, size_t hdr_len,
@@ -108,17 +106,30 @@ public:
                          uint32_t flags, nixlUcxReq &req);
 
     /* Data access */
-    nixl_status_t read(uint64_t raddr, nixlUcxRkey &rk,
-                       void *laddr, nixlUcxMem &mem,
-                       size_t size, nixlUcxReq &req);
-    nixl_status_t write(void *laddr, nixlUcxMem &mem,
-                        uint64_t raddr, nixlUcxRkey &rk,
-                        size_t size, nixlUcxReq &req);
+    [[nodiscard]] nixl_status_t
+    read(uint64_t raddr,
+         const nixl::ucx::rkey &rkey,
+         void *laddr,
+         nixlUcxMem &mem,
+         size_t size,
+         nixlUcxReq &req);
+    [[nodiscard]] nixl_status_t
+    write(void *laddr,
+          nixlUcxMem &mem,
+          uint64_t raddr,
+          const nixl::ucx::rkey &rkey,
+          size_t size,
+          nixlUcxReq &req);
     nixl_status_t estimateCost(size_t size,
                                std::chrono::microseconds &duration,
                                std::chrono::microseconds &err_margin,
                                nixl_cost_t &method);
     nixl_status_t flushEp(nixlUcxReq &req);
+
+    [[nodiscard]] ucp_ep_h
+    getEp() const noexcept {
+        return eph;
+    }
 };
 
 class nixlUcxMem {
@@ -129,16 +140,6 @@ private:
 public:
     friend class nixlUcxWorker;
     friend class nixlUcxContext;
-    friend class nixlUcxEp;
-};
-
-class nixlUcxRkey {
-private:
-    ucp_rkey_h rkeyh;
-
-public:
-
-    friend class nixlUcxWorker;
     friend class nixlUcxEp;
 };
 
@@ -210,8 +211,5 @@ private:
 }
 
 nixl_status_t ucx_status_to_nixl(ucs_status_t status);
-
-void ucx_modify_config(ucp_config_t *config, std::string_view key,
-                       std::string_view value);
 
 #endif
