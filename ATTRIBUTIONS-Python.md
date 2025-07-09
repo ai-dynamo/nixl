@@ -31708,7 +31708,8 @@ License: `Apache-2.0 license`
 License: `MPL-2.0 AND MIT`
 
   - `LICENSE`:
-````tqdm` is a product of collaborative work.
+```
+`tqdm` is a product of collaborative work.
 Unless otherwise stated, all authors (see commit logs) retain copyright
 for their respective work, and release the work under the MIT licence
 (text below).
