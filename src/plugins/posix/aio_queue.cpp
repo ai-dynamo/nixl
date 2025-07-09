@@ -24,7 +24,12 @@
 #include <stdexcept>
 
 aioQueue::aioQueue(int num_entries, nixl_xfer_op_t operation)
-    : aiocbs(num_entries), num_entries(num_entries), num_completed(0), num_submitted(0), operation(operation) {
+    : aiocbs(num_entries),
+      num_entries(num_entries),
+      completed(num_entries),
+      num_completed(0),
+      num_submitted(0),
+      operation(operation) {
     if (num_entries <= 0) {
         throw std::runtime_error("Invalid number of entries for AIO queue");
     }
@@ -49,10 +54,10 @@ aioQueue::~aioQueue() {
 
 nixl_status_t
 aioQueue::submit (const nixl_meta_dlist_t &, const nixl_meta_dlist_t &) {
+    num_submitted = 0;
     // Submit all I/Os at once
     for (auto& aiocb : aiocbs) {
         if (aiocb.aio_fildes == 0 || aiocb.aio_nbytes == 0) continue;
-
         // Check if file descriptor is valid
         if (aiocb.aio_fildes < 0) {
             NIXL_ERROR << "Invalid file descriptor in AIO request";
@@ -84,6 +89,7 @@ aioQueue::submit (const nixl_meta_dlist_t &, const nixl_meta_dlist_t &) {
         num_submitted++;
     }
 
+    completed.assign(num_entries, false);
     num_completed = 0;
     return NIXL_IN_PROG;
 }
@@ -93,20 +99,19 @@ nixl_status_t aioQueue::checkCompleted() {
         return NIXL_SUCCESS;
 
     // Check all submitted I/Os
-    for (auto& aiocb : aiocbs) {
-        if (aiocb.aio_fildes == 0 || aiocb.aio_nbytes == 0)
-            continue;  // Skip unused control blocks
+    for (int i = 0; i < num_entries; i++) {
+        if (completed[i] || aiocbs[i].aio_fildes == 0 || aiocbs[i].aio_nbytes == 0)
+            continue; // Skip completed I/Os
 
-        int status = aio_error(&aiocb);
+        int status = aio_error(&aiocbs[i]);
         if (status == 0) {  // Operation completed
-            ssize_t ret = aio_return(&aiocb);
-            if (ret < 0 || ret != static_cast<ssize_t>(aiocb.aio_nbytes)) {
+            ssize_t ret = aio_return(&aiocbs[i]);
+            if (ret < 0 || ret != static_cast<ssize_t>(aiocbs[i].aio_nbytes)) {
                 NIXL_PERROR << "AIO operation failed or incomplete";
                 return NIXL_ERR_BACKEND;
             }
             num_completed++;
-            aiocb.aio_fildes = 0;  // Mark as completed
-            aiocb.aio_nbytes = 0;
+            completed[i] = true;
         } else if (status == EINPROGRESS) {
             return NIXL_IN_PROG;  // At least one operation still in progress
         } else {
@@ -115,7 +120,7 @@ nixl_status_t aioQueue::checkCompleted() {
         }
     }
 
-    return (num_completed == num_entries) ? NIXL_SUCCESS : NIXL_IN_PROG;
+    return (num_completed == num_submitted) ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
 nixl_status_t aioQueue::prepIO(int fd, void* buf, size_t len, off_t offset) {
