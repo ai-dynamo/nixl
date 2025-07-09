@@ -148,11 +148,21 @@ int main(int argc, char *argv[])
     std::string test_files_dir_path = default_test_files_dir_path;
     nixlTime::us_t wait_time = default_wait_time;
     int max_waits = default_max_waits;
+    bool filled_after_mem_register = false;
 
     // getopt argument parsing
     int opt;
-    while ((opt = getopt(argc, argv, "hn:s:d:w:m:")) != -1) {
+    while ((opt = getopt(argc, argv, "hn:s:d:w:m:l:")) != -1) {
         switch (opt) {
+            case 'l':
+                if (strcmp(optarg, "before") == 0) {
+                    filled_after_mem_register = false;
+                } else if (strcmp(optarg, "after") == 0) {
+                    filled_after_mem_register = true;
+                } else {
+                    std::cerr << "Invalid value for -l (filled_timing): " << optarg << std::endl;
+                }
+                break;
             case 'n':
                 try {
                     num_transfers = std::stoi(optarg);
@@ -194,9 +204,10 @@ int main(int argc, char *argv[])
                 std::cout << "  -n num_transfers      Number of transfers (default: " << default_num_transfers << ")" << std::endl;
                 std::cout << "  -s transfer_size      Size of each transfer in bytes (default: " << default_transfer_size << ")" << std::endl;
                 std::cout << "  -d test_files_dir_path Directory for test files (default: " << default_test_files_dir_path << ")" << std::endl;
-                std::cout << "                       Note: This directory must exist and be writable by the current user." << std::endl;
+                std::cout << "                        Note: This directory must exist and be writable by the current user." << std::endl;
                 std::cout << "  -w wait_time          Wait time in microseconds (default: " << default_wait_time << ")" << std::endl;
                 std::cout << "  -m max_waits          Maximum number of waits (default: " << default_max_waits << ")" << std::endl;
+                std::cout << "  -l                    Filled memory before or after memory register with NIXL: [before, after]" << std::endl;
                 std::cout << "  -h                    Show this help message" << std::endl;
                 return (opt == 'h') ? 0 : 1;
         }
@@ -297,13 +308,16 @@ int main(int argc, char *argv[])
     print_segment_title(phase_title("Allocating and initializing buffers"));
 
     for (int i = 0; i < num_transfers; i++) {
-        void* ptr = malloc(transfer_size);
+        void* ptr = aligned_alloc(page_size, transfer_size); //malloc(transfer_size);
         if (!ptr) {
             std::cerr << "DRAM allocation failed" << std::endl;
             return 1;
         }
         dram_addr.emplace_back(ptr);
-        fill_test_pattern(dram_addr.back().get(), transfer_size);
+        if (!filled_after_mem_register) {
+            std::cout << "before" << std::endl;
+            fill_test_pattern(dram_addr.back().get(), transfer_size);
+        }
 
         // Create and open test file
         std::string name = generate_timestamped_filename(test_file_name);
@@ -370,6 +384,13 @@ int main(int argc, char *argv[])
         return 1;
     }
     printProgress(float(++i) / 2);
+
+    if (filled_after_mem_register) {
+        std::cout << "after" << std::endl;
+        for (i = 0; i < num_transfers; ++i) {
+            fill_test_pattern(dram_addr[i].get(), transfer_size);
+        }
+    }
 
     print_segment_title(phase_title("Memory to File Transfer (Write Test)"));
 
