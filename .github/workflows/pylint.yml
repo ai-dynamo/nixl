@@ -1,0 +1,48 @@
+name: Pylint
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v3
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pylint
+    - name: Get changed Python files
+      id: changed-files
+      run: |
+        # Get changed Python files (only added, copied, modified, renamed, type-changed)
+        CHANGED_FILES=$(git diff --name-only -r HEAD^1 HEAD | grep -E '\.py$' | tr '\n' ' ')
+
+        # Count files for debugging
+        FILE_COUNT=$(echo "$CHANGED_FILES" | wc -w)
+
+        echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+        echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
+
+        echo "Found $FILE_COUNT changed Python files:"
+        if [ -n "$CHANGED_FILES" ]; then
+          echo "$CHANGED_FILES" | tr ' ' '\n'
+        else
+          echo "No Python files changed"
+        fi
+    - name: Analysing the code with pylint
+      run: |
+        if [ -n "${{ steps.changed-files.outputs.changed_files }}" ]; then
+          echo "Running pylint on ${{ steps.changed-files.outputs.file_count }} files..."
+          pylint ${{ steps.changed-files.outputs.changed_files }}
+        else
+          echo "No Python files changed in this PR"
+        fi
