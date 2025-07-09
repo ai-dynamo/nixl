@@ -71,19 +71,19 @@ public:
     nixlObjBackendReqH() = default;
     ~nixlObjBackendReqH() = default;
 
-    std::vector<std::future<nixl_status_t>> status_futures_;
+    std::vector<std::future<nixl_status_t>> statusFutures_;
 
     nixl_status_t
     getOverallStatus() {
-        while (!status_futures_.empty()) {
-            if (status_futures_.back().wait_for (std::chrono::seconds (0)) ==
+        while (!statusFutures_.empty()) {
+            if (statusFutures_.back().wait_for (std::chrono::seconds (0)) ==
                 std::future_status::ready) {
-                auto current_status = status_futures_.back().get();
+                auto current_status = statusFutures_.back().get();
                 if (current_status != NIXL_SUCCESS) {
-                    status_futures_.clear();
+                    statusFutures_.clear();
                     return current_status;
                 }
-                status_futures_.pop_back();
+                statusFutures_.pop_back();
             } else {
                 return NIXL_IN_PROG;
             }
@@ -96,14 +96,14 @@ class nixlObjMetadata : public nixlBackendMD {
 public:
     nixlObjMetadata (nixl_mem_t nixl_mem, uint64_t dev_id, std::string obj_key)
         : nixlBackendMD (true),
-          nixl_mem (nixl_mem),
-          dev_id (dev_id),
-          obj_key (obj_key) {}
+          nixlMem (nixl_mem),
+          devId (dev_id),
+          objKey (obj_key) {}
     ~nixlObjMetadata() = default;
 
-    nixl_mem_t nixl_mem;
-    uint64_t dev_id;
-    std::string obj_key;
+    nixl_mem_t nixlMem;
+    uint64_t devId;
+    std::string objKey;
 };
 
 } // namespace
@@ -116,7 +116,7 @@ nixlObjEngine::nixlObjEngine (const nixlBackendInitParams *init_params)
     : nixlBackendEngine (init_params),
       executor_ (
           std::make_shared<AsioThreadPoolExecutor> (getNumThreads (init_params->customParams))),
-      s3_client_ (std::make_shared<AwsS3Client> (init_params->customParams, executor_)) {
+      s3Client_ (std::make_shared<AwsS3Client> (init_params->customParams, executor_)) {
     NIXL_INFO << "Object storage backend initialized with S3 client wrapper";
 }
 
@@ -125,8 +125,8 @@ nixlObjEngine::nixlObjEngine (const nixlBackendInitParams *init_params,
                               std::shared_ptr<IS3Client> s3_client)
     : nixlBackendEngine (init_params),
       executor_ (std::make_shared<AsioThreadPoolExecutor> (std::thread::hardware_concurrency())),
-      s3_client_ (s3_client) {
-    s3_client_->setExecutor (executor_);
+      s3Client_ (s3_client) {
+    s3Client_->setExecutor (executor_);
     NIXL_INFO << "Object storage backend initialized with injected S3 client";
 }
 
@@ -145,7 +145,7 @@ nixlObjEngine::registerMem (const nixlBlobDesc &mem,
     if (nixl_mem == OBJ_SEG) {
         std::unique_ptr<nixlObjMetadata> obj_md = std::make_unique<nixlObjMetadata> (
             nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string (mem.devId) : mem.metaInfo);
-        dev_id_to_obj_key_[mem.devId] = obj_md->obj_key;
+        devIdToObjKey_[mem.devId] = obj_md->objKey;
         out = obj_md.release();
     }
 
@@ -157,7 +157,7 @@ nixlObjEngine::deregisterMem (nixlBackendMD *meta) {
     nixlObjMetadata *obj_md = static_cast<nixlObjMetadata *> (meta);
     if (obj_md) {
         std::unique_ptr<nixlObjMetadata> obj_md_ptr = std::unique_ptr<nixlObjMetadata> (obj_md);
-        dev_id_to_obj_key_.erase (obj_md->dev_id);
+        devIdToObjKey_.erase (obj_md->devId);
     }
 
     return NIXL_SUCCESS;
@@ -191,15 +191,15 @@ nixlObjEngine::postXfer (const nixl_xfer_op_t &operation,
         const auto &local_desc = local[i];
         const auto &remote_desc = remote[i];
 
-        auto obj_key_search = dev_id_to_obj_key_.find (remote_desc.devId);
-        if (obj_key_search == dev_id_to_obj_key_.end()) {
+        auto obj_key_search = devIdToObjKey_.find (remote_desc.devId);
+        if (obj_key_search == devIdToObjKey_.end()) {
             NIXL_ERROR << "The object segment key " << remote_desc.devId
                        << " is not registered with the backend";
             return NIXL_ERR_INVALID_PARAM;
         }
 
         auto status_promise = std::make_shared<std::promise<nixl_status_t>>();
-        req_h->status_futures_.push_back (status_promise->get_future());
+        req_h->statusFutures_.push_back (status_promise->get_future());
 
         uintptr_t data_ptr = local_desc.addr;
         size_t data_len = local_desc.len;
@@ -208,7 +208,7 @@ nixlObjEngine::postXfer (const nixl_xfer_op_t &operation,
         // S3 client interface signals completion via a callback, but NIXL API polls request handle
         // for the status code. Use future/promise pair to bridge the gap.
         if (operation == NIXL_WRITE)
-            s3_client_->PutObjectAsync (obj_key_search->second,
+            s3Client_->PutObjectAsync (obj_key_search->second,
                                         data_ptr,
                                         data_len,
                                         offset,
@@ -217,7 +217,7 @@ nixlObjEngine::postXfer (const nixl_xfer_op_t &operation,
                                                                                  NIXL_ERR_BACKEND);
                                         });
         else
-            s3_client_->GetObjectAsync (obj_key_search->second,
+            s3Client_->GetObjectAsync (obj_key_search->second,
                                         data_ptr,
                                         data_len,
                                         offset,

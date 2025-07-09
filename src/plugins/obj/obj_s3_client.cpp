@@ -121,7 +121,7 @@ getBucketName (nixl_b_params_t *custom_params) {
 
 AwsS3Client::AwsS3Client (nixl_b_params_t *custom_params,
                           std::shared_ptr<Aws::Utils::Threading::Executor> executor)
-    : aws_options_ (
+    : awsOptions_ (
           []() {
               auto *opts = new Aws::SDKOptions();
               Aws::InitAPI (*opts);
@@ -136,16 +136,16 @@ AwsS3Client::AwsS3Client (nixl_b_params_t *custom_params,
 
     auto credentials_opt = ::createAWSCredentials (custom_params);
     bool use_virtual_addressing = ::getUseVirtualAddressing (custom_params);
-    bucket_name_ = Aws::String (::getBucketName (custom_params));
+    bucketName_ = Aws::String (::getBucketName (custom_params));
 
     if (credentials_opt.has_value())
-        s3_client_ = std::make_unique<Aws::S3::S3Client> (
+        s3Client_ = std::make_unique<Aws::S3::S3Client> (
             credentials_opt.value(),
             config,
             Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::RequestDependent,
             use_virtual_addressing);
     else
-        s3_client_ = std::make_unique<Aws::S3::S3Client> (
+        s3Client_ = std::make_unique<Aws::S3::S3Client> (
             config,
             Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::RequestDependent,
             use_virtual_addressing);
@@ -170,7 +170,7 @@ AwsS3Client::PutObjectAsync (std::string_view key,
     }
 
     Aws::S3::Model::PutObjectRequest request;
-    request.WithBucket (bucket_name_).WithKey (Aws::String (key));
+    request.WithBucket (bucketName_).WithKey (Aws::String (key));
 
     auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf> (
         "PutObjectStreamBuf", reinterpret_cast<unsigned char *> (data_ptr), data_len);
@@ -178,7 +178,7 @@ AwsS3Client::PutObjectAsync (std::string_view key,
         Aws::MakeShared<Aws::IOStream> ("PutObjectInputStream", preallocated_stream_buf.get());
     request.SetBody (data_stream);
 
-    s3_client_->PutObjectAsync (
+    s3Client_->PutObjectAsync (
         request,
         [callback, preallocated_stream_buf, data_stream] (
             const Aws::S3::S3Client *client,
@@ -204,12 +204,12 @@ AwsS3Client::GetObjectAsync (std::string_view key,
         });
 
     Aws::S3::Model::GetObjectRequest request;
-    request.WithBucket (bucket_name_)
+    request.WithBucket (bucketName_)
         .WithKey (Aws::String (key))
         .WithRange (absl::StrFormat ("bytes=%d-%d", offset, offset + data_len - 1));
     request.SetResponseStreamFactory (*stream_factory.get());
 
-    s3_client_->GetObjectAsync (
+    s3Client_->GetObjectAsync (
         request,
         [callback,
          stream_factory] (const Aws::S3::S3Client *client,

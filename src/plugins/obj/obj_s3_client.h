@@ -107,9 +107,9 @@ public:
                     GetObjectCallback callback) override;
 
 private:
-    std::unique_ptr<Aws::SDKOptions, std::function<void (Aws::SDKOptions *)>> aws_options_;
-    std::unique_ptr<Aws::S3::S3Client> s3_client_;
-    Aws::String bucket_name_;
+    std::unique_ptr<Aws::SDKOptions, std::function<void (Aws::SDKOptions *)>> awsOptions_;
+    std::unique_ptr<Aws::S3::S3Client> s3Client_;
+    Aws::String bucketName_;
 };
 
 #endif // OBJ_S3_CLIENT_H
