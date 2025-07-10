@@ -55,7 +55,6 @@ matrix:
       - "3.12"
     arch:
       - x86_64
-      - aarch64
 
 env:
   VIRTUAL_ENV: $WORKSPACE/.venv
