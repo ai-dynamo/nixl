@@ -22,17 +22,17 @@
 #include <unistd.h>
 
 static xferBenchRT *createRT(int *terminate) {
-    if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
+    if (XFERBENCH_RT_ETCD == xfer_bench_config.runtime_type) {
         int total = 2;
-        if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
-            total = xferBenchConfig::num_initiator_dev +
-                xferBenchConfig::num_target_dev;
+        if (XFERBENCH_MODE_SG == xfer_bench_config.mode) {
+            total = xfer_bench_config.num_initiator_dev + xfer_bench_config.num_target_dev;
         }
-        if (xferBenchConfig::isStorageBackend()) {
+
+        if (xfer_bench_config.isStorageBackend()) {
             total = 1;
         }
         xferBenchEtcdRT *etcd_rt =
-            new xferBenchEtcdRT (xferBenchConfig::etcd_endpoints, total, terminate);
+            new xferBenchEtcdRT(xfer_bench_config.etcd_endpoints, total, terminate);
         if (etcd_rt->setup() != 0) {
             std::cerr << "Failed to setup ETCD runtime" << std::endl;
             delete etcd_rt;
@@ -41,7 +41,7 @@ static xferBenchRT *createRT(int *terminate) {
         return etcd_rt;
     }
 
-    std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << std::endl;
+    std::cerr << "Invalid runtime: " << xfer_bench_config.runtime_type << std::endl;
     exit(EXIT_FAILURE);
 }
 
@@ -60,13 +60,13 @@ xferBenchWorker::xferBenchWorker(int *argc, char ***argv) {
 
     int rank = rt->getRank();
 
-    if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
-        if (rank >= 0 && rank < xferBenchConfig::num_initiator_dev) {
+    if (XFERBENCH_MODE_SG == xfer_bench_config.mode) {
+        if (rank >= 0 && rank < xfer_bench_config.num_initiator_dev) {
             name = "initiator";
         } else {
             name = "target";
         }
-    } else if (XFERBENCH_MODE_MG == xferBenchConfig::mode) {
+    } else if (XFERBENCH_MODE_MG == xfer_bench_config.mode) {
         if (0 == rank) {
             name = "initiator";
         } else {
