@@ -20,9 +20,6 @@ import json
 import logging
 import os
 from pathlib import Path
-from test.custom_traffic_perftest import CTPerftest
-from test.sequential_custom_traffic_perftest import SequentialCTPerftest
-from test.traffic_pattern import TrafficPattern
 
 import click
 import numpy as np
@@ -32,6 +29,7 @@ from commands.nixlbench import NIXLBench
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
 from models.utils import get_batch_size, override_yaml_args
+from tabulate import tabulate
 
 
 def parse_size(nbytes: str) -> int:
@@ -280,54 +278,33 @@ def kvcache_command(model, model_config, **kwargs):
         return f"{round(size / 1024 ** power, 2)} {['B', 'KB', 'MB', 'GB', 'TB'][int(power)]}"
 
     labels = [
-        "KV Cache Size Per Token",
-        "IO Size",
-        "Batch Size",
         "Model",
-        "Input Sequence Length",
+        "ISL",
+        "Num Requests",
+        "Batch Size",
+        "IO Size",
+        "TP",
+        "PP",
+        "Page Size",
+        "Access",
     ]
-    max_width = max(len(label) for label in labels)
-    io_size = model_arch.get_io_size(model_configuration.system.page_size)
-    batch_size = get_batch_size(model_arch, model_configuration, io_size)
-    click.echo(f"{'Model':{max_width}}: {model_arch.model}")
-    click.echo(
-        f"{'Input Sequence Length':{max_width}}: {model_configuration.runtime.isl}"
-    )
-    click.echo(f"{'Batch Size':{max_width}}: {batch_size}")
-    click.echo(f"{'IO Size':{max_width}}: {format_bytes(io_size)}")
-
-
-@cli.command("io-size")
-@common_args
-@cli_args
-def io_size_command(model, model_config, **kwargs):
-    """Display IO size information"""
-    if not model or not model_config:
-        click.echo("Error: --model and --model_config are required")
-        return
-
-    # Load model architecture
-    model_arch = BaseModelArch.from_yaml(model, None)
-
-    # Load model configuration
-    model_configuration = ModelConfig.from_yaml(model_config)
-    override_yaml_args(model_configuration, type("Args", (), kwargs)())
-    model_arch.set_model_config(model_configuration)
-
-    from math import floor, log
-
-    def format_bytes(size):
-        power = 0 if size <= 0 else floor(log(size, 1024))
-        return f"{round(size / 1024 ** power, 2)} {['B', 'KB', 'MB', 'GB', 'TB'][int(power)]}"
-
     io_size = model_arch.get_io_size(model_configuration.system.page_size)
     batch_size = get_batch_size(model_arch, model_configuration, io_size)
 
-    click.echo(f"Model: {model_arch.model}")
-    click.echo(f"Page Size: {format_bytes(model_configuration.system.page_size)}")
-    click.echo(f"Input Sequence Length: {model_configuration.runtime.isl}")
-    click.echo(f"Batch Size: {batch_size}")
-    click.echo(f"IO Size: {format_bytes(io_size)}")
+    data = [
+        [
+            model_arch.model_name,
+            model_configuration.runtime.isl,
+            model_configuration.runtime.num_requests,
+            batch_size,
+            format_bytes(io_size),
+            model_configuration.model.tp_size,
+            model_configuration.model.pp_size,
+            model_configuration.system.page_size,
+            model_configuration.system.access_pattern,
+        ]
+    ]
+    click.echo(tabulate(data, headers=labels, floatfmt=".6f"))
 
 
 @cli.command("sequential-ct-perftest")
@@ -352,6 +329,9 @@ def sequential_ct_perftest(
     config_file, verify_buffers, print_recv_buffers, json_output_path
 ):
     """Run sequential custom traffic performance test using patterns defined in YAML config"""
+    from test.sequential_custom_traffic_perftest import SequentialCTPerftest
+    from test.traffic_pattern import TrafficPattern
+
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
 
@@ -402,6 +382,9 @@ def sequential_ct_perftest(
 )
 def ct_perftest(config_file, verify_buffers, print_recv_buffers):
     """Run custom traffic performance test using patterns defined in YAML config"""
+    from test.custom_traffic_perftest import CTPerftest
+    from test.traffic_pattern import TrafficPattern
+
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
 

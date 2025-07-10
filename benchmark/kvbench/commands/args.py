@@ -18,9 +18,9 @@ import click
 
 def common_args(func):
     """Decorator for common model arguments"""
-    func = click.option("--model", type=str, help="Model name (e.g., 'llama3.1-8b')")(
-        func
-    )
+    func = click.option(
+        "--model", type=str, help="Path to a model architecture YAML file"
+    )(func)
     func = click.option(
         "--model_config", type=str, help="Path to a single model config YAML file"
     )(func)
@@ -70,7 +70,9 @@ def nixl_bench_args(func):
         help="Destination of the nixl descriptors [file, memory, gpu] (default: memory)",
     )(func)
     func = click.option(
-        "--backend", type=str, help="Communication backend [UCX, UCX_MO] (default: UCX)"
+        "--backend",
+        type=str,
+        help="Communication backend [POSIX, GDS] (default: POSIX)",
     )(func)
     func = click.option(
         "--worker_type",
@@ -156,11 +158,16 @@ def nixl_bench_args(func):
     func = click.option(
         "--storage_enable_direct",
         type=bool,
-        help="Enable direct I/O for storage operations (only used with POSIX backend)",
+        help="Enable direct I/O for storage operations",
         default=False,
     )(func)
     func = click.option(
-        "--gds_filepath", type=str, help="File path for GDS operations"
+        "--filepath", type=str, help="File path for storage operations"
+    )(func)
+    func = click.option(
+        "--posix_api_type",
+        type=str,
+        help="API type for POSIX operations [AIO, URING] (only used with POSIX backend",
     )(func)
     func = click.option(
         "--enable-vmm",
