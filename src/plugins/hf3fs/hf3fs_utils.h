@@ -42,7 +42,7 @@ public:
     nixl_status_t openHf3fsDriver();
     void closeHf3fsDriver();
     nixl_status_t createIOR(struct hf3fs_ior *ior, int num_ios, bool is_read);
-    nixl_status_t createIOV(struct hf3fs_iov *iov, void *addr, size_t size, size_t block_size);
+    nixl_status_t createIOV(struct hf3fs_iov *iov, size_t size, size_t block_size);
     nixl_status_t wrapIOV(struct hf3fs_iov *iov, void *addr, size_t size, size_t block_size, const uint8_t* id);
     void destroyIOV(struct hf3fs_iov *iov);
     nixl_status_t destroyIOR(struct hf3fs_ior *ior);

@@ -35,16 +35,35 @@ public:
         : std::runtime_error(message) {}
 };
 
+enum nixlHf3fsMemType {
+    NIXL_HF3FS_MEM_TYPE_FILE = 0,
+    NIXL_HF3FS_MEM_TYPE_REG_MEM = 1,
+    NIXL_HF3FS_MEM_TYPE_SH_MEM = 2,
+};
+
 class nixlHf3fsMetadata : public nixlBackendMD {
     public:
-        hf3fsFileHandle  handle;
-        nixl_mem_t     type;
+        nixlHf3fsMemType type;
 
-        nixlHf3fsMetadata() : nixlBackendMD(true) { }
+        nixlHf3fsMetadata(nixlHf3fsMemType type) : nixlBackendMD(true), type(type) { }
         ~nixlHf3fsMetadata() { }
 };
 
-class nixlHf3fsShmMetadata : public nixlBackendMD {
+class nixlHf3fsFileMetadata : public nixlHf3fsMetadata {
+    public:
+        hf3fsFileHandle  handle;
+
+        nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) { }
+        ~nixlHf3fsFileMetadata() { }
+};
+
+class nixlHf3fsRegMemMetadata : public nixlHf3fsMetadata {
+    public:
+        nixlHf3fsRegMemMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_REG_MEM) { }
+        ~nixlHf3fsRegMemMetadata() { }
+};
+
+class nixlHf3fsShmMetadata : public nixlHf3fsMetadata {
     public:
         std::string shm_name;
         std::string shm_path;
@@ -65,6 +84,7 @@ class nixlHf3fsIO {
         size_t size;      // Size of the buffer
         bool is_read;     // Whether this is a read operation
         size_t offset;    // Offset in the file
+        nixlHf3fsMemType mem_type;
 
         nixlHf3fsIO() : fd(-1), addr(nullptr), size(0), is_read(false) {}
         ~nixlHf3fsIO() {}
@@ -97,14 +117,13 @@ class nixlHf3fsBackendReqH : public nixlBackendReqH {
 
 class nixlHf3fsEngine : public nixlBackendEngine {
     private:
-        hf3fsUtil                      *hf3fs_utils;
+        hf3fsUtil *hf3fs_utils;
         std::unordered_set<int> hf3fs_file_set;
+        long page_size;
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
         void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;
         static void waitForIOsThread(void* handle, void *utils);
-        nixl_status_t createShmSymlink(const uint8_t *id, size_t block_size, const std::string &shm_path) const;
-        nixl_status_t removeShmSymlink(const uint8_t *id, size_t block_size) const;
     public:
         nixlHf3fsEngine(const nixlBackendInitParams* init_params);
         ~nixlHf3fsEngine();
