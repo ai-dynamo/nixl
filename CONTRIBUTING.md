@@ -30,7 +30,7 @@ Welcome to NIXL! This document provides guidelines for contributing to our moder
 6. [Testing Requirements](#testing-requirements)
 7. [Documentation Standards](#documentation-standards)
 8. [Pull Request Guidelines](#pull-request-guidelines)
-9. [Contribution Rules](#contribution-rules)
+9. [Miscelaneous](#miscelaneous)
 10. [Developer Certificate of Origin](#developer-certificate-of-origin)
 
 ## Getting Started
@@ -70,14 +70,23 @@ ninja -C build test
 
 ### Setting Up clang-format
 
-All C++ code must be formatted using the provided `.clang-format` configuration. Code formatting will be automatically checked for conformance in CI, and improperly formatted code will be rejected:
+All new C++ code must be formatted using the provided `.clang-format` configuration. Code formatting will be automatically checked for conformance in CI, and improperly formatted code will be rejected:
 
 ```bash
-# Format a single file
-clang-format -i path/to/file.cpp
+# Format only changed lines in staged files (recommended)
+git clang-format
 
-# Format all changed files
-git diff --name-only HEAD | grep -E '\.(cpp|h|hpp|cc|cxx|cu|cuh)$' | xargs clang-format -i
+# Format only changed lines between commits
+git clang-format HEAD~1
+
+# Format only changed lines in specific files
+git clang-format --diff path/to/file.cpp
+
+# Alternative: Use clang-format-diff to format only changed lines
+git diff -U0 --no-color HEAD^ | clang-format-diff -p1 -i
+
+# Or format only unstaged changes
+git diff -U0 --no-color | clang-format-diff -p1 -i
 ```
 
 ### Pre-commit Hooks
@@ -113,6 +122,11 @@ NIXL is a modern C++17 project. We adhere to the [C++ Core Guidelines](https://i
    - Error handling: `absl::StatusOr` for data-path operations that return values with potential errors
    - High-performance containers: `absl::flat_hash_map` when needed
    - Logging utilities (integrated with NIXL logging)
+
+3. **⚠️ WARNING: Never expose Abseil in public APIs**
+   - Keep Abseil types internal to implementation files
+   - Plugin and agent public APIs must only use STL types
+   - Convert between Abseil and STL types at API boundaries
 
 ### Code Style
 
