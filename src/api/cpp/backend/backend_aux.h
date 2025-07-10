@@ -25,14 +25,15 @@
 
 // Might be removed to be decided by backend, or changed to high
 // level direction or so.
-typedef std::vector<std::pair<std::string, std::string>> notif_list_t;
+using notifList = std::vector<std::pair<std::string, std::string>>;
+using notif_list_t = notifList;
 
 
 struct nixlBackendOptionalArgs {
     // During postXfer, user might ask for a notification if supported
-    nixl_blob_t notifMsg;
-    bool        hasNotif = false;
-    nixl_blob_t customParam;
+    nixlBlob notifMsg;
+    bool hasNotif = false;
+    nixlBlob customParam;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
@@ -44,14 +45,14 @@ using nixl_opt_b_args_t = nixlBackendOptionalArgs;
 // from the user, we should make nixlBackendEngine/nixlAgent friend classes.
 class nixlBackendInitParams {
     public:
-        std::string       localAgent;
+        std::string localAgent;
 
-        nixl_backend_t    type;
-        nixl_b_params_t*  customParams;
+        nixlBackend type;
+        nixlBParams *customParams;
 
-        bool              enableProgTh;
-        nixlTime::us_t    pthrDelay;
-        nixl_thread_sync_t syncMode;
+        bool enableProgTh;
+        nixlTime::us_t pthrDelay;
+        nixlThreadSync syncMode;
 };
 
 // Pure virtual class to have a common pointer type
@@ -110,6 +111,7 @@ class nixlMetaDesc : public nixlBasicDesc {
         }
 };
 
-typedef nixlDescList<nixlMetaDesc> nixl_meta_dlist_t;
+using nixlMetaDlist = nixlDescList<nixlMetaDesc>;
+using nixl_meta_dlist_t = nixlMetaDlist;
 
 #endif

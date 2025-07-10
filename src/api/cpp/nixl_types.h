@@ -32,23 +32,31 @@ class nixlAgentData;
 /*** NIXL memory type, operation and status enums ***/
 
 /**
- * @enum   nixl_mem_t
+ * @enum   nixlMemType
  * @brief  An enumeration of segment types for NIXL
  *         FILE_SEG must be last
  */
-enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
+enum nixlMemType { DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG };
+/**
+ * @deprecated Use nixlMemType instead
+ */
+using nixl_mem_t = nixlMemType;
 
 /**
- * @enum   nixl_xfer_op_t
+ * @enum   nixlXferOp
  * @brief  An enumeration of different transfer types for NIXL
  */
-enum nixl_xfer_op_t {NIXL_READ, NIXL_WRITE};
+enum nixlXferOp { NIXL_READ, NIXL_WRITE };
+/**
+ * @deprecated Use nixlXferOp instead
+ */
+using nixl_xfer_op_t = nixlXferOp;
 
 /**
- * @enum   nixl_status_t
+ * @enum   nixlStatus
  * @brief  An enumeration of status values and error codes for NIXL
  */
-enum nixl_status_t {
+enum nixlStatus {
     NIXL_IN_PROG = 1,
     NIXL_SUCCESS = 0,
     NIXL_ERR_NOT_POSTED = -1,
@@ -62,17 +70,25 @@ enum nixl_status_t {
     NIXL_ERR_NOT_SUPPORTED = -9,
     NIXL_ERR_REMOTE_DISCONNECT = -10
 };
+/**
+ * @deprecated Use nixlStatus instead
+ */
+using nixl_status_t = nixlStatus;
 
 /**
- * @enum nixl_thread_sync_t
+ * @enum nixlThreadSync
  * @brief An enumeration of supported synchronization modes for NIXL
  */
-enum class nixl_thread_sync_t {
+enum class nixlThreadSync {
     NIXL_THREAD_SYNC_NONE,
     NIXL_THREAD_SYNC_STRICT,
     NIXL_THREAD_SYNC_RW,
     NIXL_THREAD_SYNC_DEFAULT = NIXL_THREAD_SYNC_NONE,
 };
+/**
+ * @deprecated Use nixlThreadSync instead
+ */
+using nixl_thread_sync_t = nixlThreadSync;
 
 /**
  * @namespace nixlEnumStrings
@@ -80,43 +96,66 @@ enum class nixl_thread_sync_t {
  *            of different enums
  */
 namespace nixlEnumStrings {
-    std::string memTypeStr(const nixl_mem_t &mem);
-    std::string xferOpStr (const nixl_xfer_op_t &op);
-    std::string statusStr (const nixl_status_t &status);
-}
+std::string
+memTypeStr(const nixlMemType &mem);
+std::string
+xferOpStr(const nixlXferOp &op);
+std::string
+statusStr(const nixlStatus &status);
+} // namespace nixlEnumStrings
 
 
-/*** NIXL typedefs and defines used in the API ***/
+/*** NIXL aliases and constant expressions used in the API ***/
 
 /**
- * @brief A typedef for a std::string to identify nixl backends
+ * @brief An alias for a std::string to identify nixl backends
  */
-using nixl_backend_t = std::string;
+using nixlBackend = std::string;
+/**
+ * @deprecated Use nixlBackend instead
+ */
+using nixl_backend_t = nixlBackend;
 
 /**
- * @brief A typedef for a std::string as nixl blob
+ * @brief An alias for a std::string as nixl blob
  *        std::string supports \0 natively, so it can be looked as a void* of data,
  *        with specified length. Giving it a new name to be clear in the API and
  *        preventing users to think it's a string and call c_str().
  */
-using nixl_blob_t = std::string;
+using nixlBlob = std::string;
+/**
+ * @deprecated Use nixlBlob instead
+ */
+using nixl_blob_t = nixlBlob;
 
 /**
- * @brief A typedef for a std::vector<nixl_mem_t> to create nixl_mem_list_t objects.
+ * @brief An alias for a std::vector<nixlMemType> to create nixlMemList objects.
  */
-using nixl_mem_list_t = std::vector<nixl_mem_t>;
+using nixlMemList = std::vector<nixlMemType>;
+/**
+ * @deprecated Use nixlMemList instead
+ */
+using nixl_mem_list_t = nixlMemList;
 
 /**
- * @brief A typedef for a  std::unordered_map<std::string, std::string>
- *        to hold nixl_b_params_t .
+ * @brief An alias for a std::unordered_map<std::string, std::string>
+ *        to hold nixlBParams
  */
-using nixl_b_params_t = std::unordered_map<std::string, std::string>;
+using nixlBParams = std::unordered_map<std::string, std::string>;
+/**
+ * @deprecated Use nixlBParams instead
+ */
+using nixl_b_params_t = nixlBParams;
 
 /**
- * @brief A typedef for a  std::unordered_map<std::string, std::vector<nixl_blob_t>>
- *        to hold nixl_notifs_t (nixl notifications)
+ * @brief An alias for a  std::unordered_map<std::string, std::vector<nixlBlob>>
+ *        to hold nixlNotifs (nixl notifications)
  */
-using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
+using nixlNotifs = std::unordered_map<std::string, std::vector<nixlBlob>>;
+/**
+ * @deprecated Use nixlNotifs instead
+ */
+using nixl_notifs_t = nixlNotifs;
 
 /**
  * @brief A constant to define the default communication port.
@@ -137,12 +176,16 @@ extern const std::string default_partial_metadata_label;
 
 
 /**
- * @enum nixl_cost_t
+ * @enum nixlCost
  * @brief An enumeration of cost types for transfer cost estimation.
  */
-enum class nixl_cost_t {
+enum class nixlCost {
     ANALYTICAL_BACKEND = 0, // Analytical backend cost estimate
 };
+/**
+ * @deprecated Use nixlCost instead
+ */
+using nixl_cost_t = nixlCost;
 
 /**
  * @struct nixlAgentOptionalArgs
@@ -160,7 +203,7 @@ struct nixlAgentOptionalArgs {
      * @var notifMsg A message to be used in createXferReq / makeXferReq / postXferReq,
      *               if a notification message is desired
      */
-    nixl_blob_t notifMsg;
+    nixlBlob notifMsg;
 
     /**
      * @var hasNotif boolean value to indicate that a notification is provided, or to
@@ -205,11 +248,10 @@ struct nixlAgentOptionalArgs {
     /**
      * @var Backend custom parameter
      */
-    nixl_blob_t customParam;
+    nixlBlob customParam;
 };
 /**
- * @brief A typedef for a nixlAgentOptionalArgs
- *        for providing extra optional arguments
+ * @deprecated Use nixlAgentOptionalArgs directly instead
  */
 using nixl_opt_args_t = nixlAgentOptionalArgs;
 

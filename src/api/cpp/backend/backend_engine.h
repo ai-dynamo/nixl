@@ -27,28 +27,30 @@
 class nixlBackendEngine {
     private:
         // Members that cannot be modified by a child backend and parent bookkeep
-        nixl_backend_t  backendType;
-        nixl_b_params_t customParams;
+        nixlBackend backendType;
+        nixlBParams customParams;
 
     protected:
         // Members that can be accessed by the child (localAgent cannot be modified)
         bool              initErr = false;
         const std::string localAgent;
 
-        [[nodiscard]] nixl_status_t setInitParam(const std::string &key, const std::string &value) {
-	    if (customParams.try_emplace(key,value).second) {
+        [[nodiscard]] nixlStatus
+        setInitParam(const std::string &key, const std::string &value) {
+            if (customParams.try_emplace(key, value).second) {
                 return NIXL_SUCCESS;
             }
-	    return NIXL_ERR_NOT_ALLOWED;
+            return NIXL_ERR_NOT_ALLOWED;
         }
 
-        [[nodiscard]] nixl_status_t getInitParam(const std::string &key, std::string &value) const {
-	    const auto iter = customParams.find(key);
+        [[nodiscard]] nixlStatus
+        getInitParam(const std::string &key, std::string &value) const {
+            const auto iter = customParams.find(key);
             if (iter != customParams.end()) {
                 value = iter->second;
                 return NIXL_SUCCESS;
-	    }
-	    return NIXL_ERR_INVALID_PARAM;
+            }
+            return NIXL_ERR_INVALID_PARAM;
         }
 
     public:
@@ -67,8 +69,14 @@ class nixlBackendEngine {
         virtual ~nixlBackendEngine() = default;
 
         bool getInitErr() const noexcept { return initErr; }
-        const nixl_backend_t& getType() const noexcept { return backendType; }
-        const nixl_b_params_t& getCustomParams() const noexcept { return customParams; }
+        const nixlBackend &
+        getType() const noexcept {
+            return backendType;
+        }
+        const nixlBParams &
+        getCustomParams() const noexcept {
+            return customParams;
+        }
 
         // The support function determine which methods are necessary by the child backend, and
         // if they're called by mistake, they will return error if not implemented by backend.
@@ -86,90 +94,98 @@ class nixlBackendEngine {
         // Determines if a backend supports progress thread.
         virtual bool supportsProgTh() const = 0;
 
-        virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
+        virtual nixlMemList
+        getSupportedMems() const = 0; // TODO: Return by const-reference and mark noexcept?
 
 
         // *** Pure virtual methods that need to be implemented by any backend *** //
 
         // Register and deregister local memory
-        virtual nixl_status_t registerMem (const nixlBlobDesc &mem,
-                                           const nixl_mem_t &nixl_mem,
-                                           nixlBackendMD* &out) = 0;
-        virtual nixl_status_t deregisterMem (nixlBackendMD* meta) = 0;
+        virtual nixlStatus
+        registerMem(const nixlBlobDesc &mem, const nixlMemType &nixl_mem, nixlBackendMD *&out) = 0;
+        virtual nixlStatus
+        deregisterMem(nixlBackendMD *meta) = 0;
 
         // Make connection to a remote node identified by the name into loaded conn infos
         // Child might just return 0, if making proactive connections are not necessary.
         // An agent might need to connect to itself for local operations.
-        virtual nixl_status_t connect(const std::string &remote_agent) = 0;
-        virtual nixl_status_t disconnect(const std::string &remote_agent) = 0;
+        virtual nixlStatus
+        connect(const std::string &remote_agent) = 0;
+        virtual nixlStatus
+        disconnect(const std::string &remote_agent) = 0;
 
         // Remove loaded local or remtoe metadata for target
-        virtual nixl_status_t unloadMD (nixlBackendMD* input) = 0;
+        virtual nixlStatus
+        unloadMD(nixlBackendMD *input) = 0;
 
         // Preparing a request, which populates the async handle as desired
-        virtual nixl_status_t prepXfer (const nixl_xfer_op_t &operation,
-                                        const nixl_meta_dlist_t &local,
-                                        const nixl_meta_dlist_t &remote,
-                                        const std::string &remote_agent,
-                                        nixlBackendReqH* &handle,
-                                        const nixl_opt_b_args_t* opt_args=nullptr
-                                       ) const = 0;
+        virtual nixlStatus
+        prepXfer(const nixlXferOp &operation,
+                 const nixlMetaDlist &local,
+                 const nixlMetaDlist &remote,
+                 const std::string &remote_agent,
+                 nixlBackendReqH *&handle,
+                 const nixlBackendOptionalArgs *opt_args = nullptr) const = 0;
 
         // Estimate the cost (duration) of a transfer operation.
-        virtual nixl_status_t estimateXferCost(const nixl_xfer_op_t &operation,
-                                               const nixl_meta_dlist_t &local,
-                                               const nixl_meta_dlist_t &remote,
-                                               const std::string &remote_agent,
-                                               nixlBackendReqH* const &handle,
-                                               std::chrono::microseconds &duration,
-                                               std::chrono::microseconds &err_margin,
-                                               nixl_cost_t &method,
-                                               const nixl_opt_args_t* extra_params = nullptr) const
-        {
+        virtual nixlStatus
+        estimateXferCost(const nixlXferOp &operation,
+                         const nixlMetaDlist &local,
+                         const nixlMetaDlist &remote,
+                         const std::string &remote_agent,
+                         nixlBackendReqH *const &handle,
+                         std::chrono::microseconds &duration,
+                         std::chrono::microseconds &err_margin,
+                         nixlCost &method,
+                         const nixlAgentOptionalArgs *extra_params = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 
         // Posting a request, which completes the async handle creation and posts it
-        virtual nixl_status_t postXfer (const nixl_xfer_op_t &operation,
-                                        const nixl_meta_dlist_t &local,
-                                        const nixl_meta_dlist_t &remote,
-                                        const std::string &remote_agent,
-                                        nixlBackendReqH* &handle,
-                                        const nixl_opt_b_args_t* opt_args=nullptr
-                                       ) const = 0;
+        virtual nixlStatus
+        postXfer(const nixlXferOp &operation,
+                 const nixlMetaDlist &local,
+                 const nixlMetaDlist &remote,
+                 const std::string &remote_agent,
+                 nixlBackendReqH *&handle,
+                 const nixlBackendOptionalArgs *opt_args = nullptr) const = 0;
 
         // Use a handle to progress backend engine and see if a transfer is completed or not
-        virtual nixl_status_t checkXfer(nixlBackendReqH* handle) const = 0;
+        virtual nixlStatus
+        checkXfer(nixlBackendReqH *handle) const = 0;
 
         //Backend aborts the transfer if necessary, and destructs the relevant objects
-        virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
+        virtual nixlStatus
+        releaseReqH(nixlBackendReqH *handle) const = 0;
 
 
         // *** Needs to be implemented if supportsRemote() is true *** //
 
         // Gets serialized form of public metadata
-        virtual nixl_status_t getPublicData (const nixlBackendMD* meta,
-                                             std::string &str) const {
+        virtual nixlStatus
+        getPublicData(const nixlBackendMD *meta, std::string &str) const {
             return NIXL_ERR_BACKEND;
         };
 
         // Provide the required connection info for remote nodes, should be non-empty
-        virtual nixl_status_t getConnInfo(std::string &str) const {
+        virtual nixlStatus
+        getConnInfo(std::string &str) const {
             return NIXL_ERR_BACKEND;
         }
 
         // Deserialize from string the connection info for a remote node, if supported
         // The generated data should be deleted in nixlBackendEngine destructor
-        virtual nixl_status_t loadRemoteConnInfo (const std::string &remote_agent,
-                                                  const std::string &remote_conn_info) {
+        virtual nixlStatus
+        loadRemoteConnInfo(const std::string &remote_agent, const std::string &remote_conn_info) {
             return NIXL_ERR_BACKEND;
         }
 
         // Load remtoe metadata, if supported.
-        virtual nixl_status_t loadRemoteMD (const nixlBlobDesc &input,
-                                            const nixl_mem_t &nixl_mem,
-                                            const std::string &remote_agent,
-                                            nixlBackendMD* &output) {
+        virtual nixlStatus
+        loadRemoteMD(const nixlBlobDesc &input,
+                     const nixlMemType &nixl_mem,
+                     const std::string &remote_agent,
+                     nixlBackendMD *&output) {
             return NIXL_ERR_BACKEND;
         }
 
@@ -177,8 +193,8 @@ class nixlBackendEngine {
         // *** Needs to be implemented if supportsLocal() is true *** //
 
         // Provide the target metadata necessary for local operations, if supported
-        virtual nixl_status_t loadLocalMD (nixlBackendMD* input,
-                                           nixlBackendMD* &output) {
+        virtual nixlStatus
+        loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
             return NIXL_ERR_BACKEND;
         }
 
@@ -186,10 +202,14 @@ class nixlBackendEngine {
         // *** Needs to be implemented if supportsNotif() is true *** //
 
         // Populate an empty received notif list. Elements are released within backend then.
-        virtual nixl_status_t getNotifs(notif_list_t &notif_list) { return NIXL_ERR_BACKEND; }
+        virtual nixlStatus
+        getNotifs(notifList &notif_list) {
+            return NIXL_ERR_BACKEND;
+        }
 
         // Generates a standalone notification, not bound to a transfer.
-        virtual nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const {
+        virtual nixlStatus
+        genNotif(const std::string &remote_agent, const std::string &msg) const {
             return NIXL_ERR_BACKEND;
         }
 
