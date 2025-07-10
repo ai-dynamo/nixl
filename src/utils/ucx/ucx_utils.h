@@ -57,7 +57,9 @@ template<typename Enum>
 
 using nixlUcxReq = void*;
 
-class nixlUcxRkey;
+namespace nixl::ucx {
+class rkey;
+}
 class nixlUcxMem;
 
 class nixlUcxEp {
@@ -97,10 +99,6 @@ public:
     nixlUcxEp(const nixlUcxEp&) = delete;
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
-    /* Rkey */
-    int rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey);
-    void rkeyDestroy(nixlUcxRkey &rkey);
-
     /* Active message handling */
     nixl_status_t sendAm(unsigned msg_id,
                          void* hdr, size_t hdr_len,
@@ -108,17 +106,30 @@ public:
                          uint32_t flags, nixlUcxReq &req);
 
     /* Data access */
-    nixl_status_t read(uint64_t raddr, nixlUcxRkey &rk,
-                       void *laddr, nixlUcxMem &mem,
-                       size_t size, nixlUcxReq &req);
-    nixl_status_t write(void *laddr, nixlUcxMem &mem,
-                        uint64_t raddr, nixlUcxRkey &rk,
-                        size_t size, nixlUcxReq &req);
+    [[nodiscard]] nixl_status_t
+    read(uint64_t raddr,
+         const nixl::ucx::rkey &rkey,
+         void *laddr,
+         nixlUcxMem &mem,
+         size_t size,
+         nixlUcxReq &req);
+    [[nodiscard]] nixl_status_t
+    write(void *laddr,
+          nixlUcxMem &mem,
+          uint64_t raddr,
+          const nixl::ucx::rkey &rkey,
+          size_t size,
+          nixlUcxReq &req);
     nixl_status_t estimateCost(size_t size,
                                std::chrono::microseconds &duration,
                                std::chrono::microseconds &err_margin,
                                nixl_cost_t &method);
     nixl_status_t flushEp(nixlUcxReq &req);
+
+    [[nodiscard]] ucp_ep_h
+    getEp() const noexcept {
+        return eph;
+    }
 };
 
 class nixlUcxMem {
@@ -132,29 +143,21 @@ public:
     friend class nixlUcxEp;
 };
 
-class nixlUcxRkey {
-private:
-    ucp_rkey_h rkeyh;
-
-public:
-
-    friend class nixlUcxWorker;
-    friend class nixlUcxEp;
-};
-
 class nixlUcxContext {
 private:
     /* Local UCX stuff */
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
-    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
 public:
 
     using req_cb_t = void(void *request);
     nixlUcxContext(std::vector<std::string> devices,
-                   size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
-                   bool prog_thread, ucp_err_handling_mode_t err_handling_mode,
-                   unsigned long num_workers, nixl_thread_sync_t sync_mode);
+                   size_t req_size,
+                   req_cb_t init_cb,
+                   req_cb_t fini_cb,
+                   bool prog_thread,
+                   unsigned long num_workers,
+                   nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     /* Memory management */
@@ -168,15 +171,10 @@ public:
 [[nodiscard]] bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t) noexcept;
 
 class nixlUcxWorker {
-private:
-    /* Local UCX stuff */
-    const std::shared_ptr<nixlUcxContext> ctx;
-    const std::unique_ptr<ucp_worker, void(*)(ucp_worker*)> worker;
-
-    [[nodiscard]] static ucp_worker* createUcpWorker(nixlUcxContext&);
-
-  public:
-    explicit nixlUcxWorker(const std::shared_ptr<nixlUcxContext> &_ctx);
+public:
+    explicit nixlUcxWorker(
+        const nixlUcxContext &,
+        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
 
     nixlUcxWorker( nixlUcxWorker&& ) = delete;
     nixlUcxWorker( const nixlUcxWorker& ) = delete;
@@ -197,8 +195,18 @@ private:
     void reqRelease(nixlUcxReq req);
     void reqCancel(nixlUcxReq req);
 
-    /* Worker access */
-    [[nodiscard]] ucp_worker_h getWorker() const noexcept { return worker.get(); }
+    [[nodiscard]] nixl_status_t
+    arm() const noexcept;
+
+    [[nodiscard]] int
+    getEfd() const;
+
+private:
+    [[nodiscard]] static ucp_worker *
+    createUcpWorker(const nixlUcxContext &);
+
+    const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
+    ucp_err_handling_mode_t err_handling_mode_;
 };
 
 [[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {

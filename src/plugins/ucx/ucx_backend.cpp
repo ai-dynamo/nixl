@@ -449,15 +449,15 @@ void nixlUcxEngine::progressFunc()
             pollFds[wid].revents = 0;
 
             bool made_progress = false;
-            ucs_status_t status = UCS_INPROGRESS;
+            nixl_status_t status;
             const auto &uw = uws[wid];
             do {
                 while (uw->progress())
                     made_progress = true;
 
-                status = ucp_worker_arm(uw->getWorker());
-            } while (status == UCS_ERR_BUSY);
-            NIXL_ASSERT(status == UCS_OK);
+                status = uw->arm();
+            } while (status == NIXL_IN_PROG);
+            NIXL_ASSERT(status == NIXL_SUCCESS) << ", status: " << status;
 
             if (made_progress && !wid)
                 notifProgress();
@@ -568,14 +568,16 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
     }
 
-    uc = std::make_shared<nixlUcxContext>(devs, sizeof(nixlUcxIntReq),
+    uc = std::make_unique<nixlUcxContext>(devs,
+                                          sizeof(nixlUcxIntReq),
                                           _internalRequestInit,
                                           _internalRequestFini,
                                           pthrOn,
-                                          err_handling_mode, numWorkers, init_params->syncMode);
+                                          numWorkers,
+                                          init_params->syncMode);
 
     for (unsigned int i = 0; i < numWorkers; i++)
-        uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
 
     const auto &uw = uws.front();
     workerAddr = uw->epAddr();
@@ -588,15 +590,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 
     if (pthrOn) {
         for (auto &uw: uws) {
-            int fd;
-            ucs_status_t ret = ucp_worker_get_efd(uw->getWorker(), &fd);
-            if (ret != UCS_OK) {
-                NIXL_ERROR << "Couldn't obtain fd for a worker, status: " << ucs_status_string(ret);
-                initErr = true;
-                return;
-            }
-
-            pollFds.push_back({fd, POLLIN, 0});
+            pollFds.push_back({uw->getEfd(), POLLIN, 0});
         }
         pollFds.push_back({pthrControlPipe[0], POLLIN, 0});
     }
@@ -861,38 +855,33 @@ nixl_status_t
 nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
                                  const std::string &agent,
                                  nixlBackendMD* &output) {
-    auto md = std::make_unique<nixlUcxPublicMetadata>();
-    size_t size = blob.size();
+    try {
+        auto md = std::make_unique<nixlUcxPublicMetadata>();
+        size_t size = blob.size();
 
-    auto search = remoteConnMap.find(agent);
+        auto search = remoteConnMap.find(agent);
 
-    if(search == remoteConnMap.end()) {
-        //TODO: err: remote connection not found
-        return NIXL_ERR_NOT_FOUND;
+        if (search == remoteConnMap.end()) {
+            // TODO: err: remote connection not found
+            return NIXL_ERR_NOT_FOUND;
+        }
+        md->conn = search->second;
+
+        std::vector<char> addr(size);
+        nixlSerDes::_stringToBytes(addr.data(), blob, size);
+
+        for (size_t wid = 0; wid < uws.size(); wid++) {
+            md->addRkey(*md->conn->getEp(wid), addr.data());
+        }
+
+        output = (nixlBackendMD *)md.release();
+
+        return NIXL_SUCCESS;
     }
-    md->conn = search->second;
-
-    std::vector<char> addr(size);
-    nixlSerDes::_stringToBytes(addr.data(), blob, size);
-
-    bool error = false;
-    for (size_t wid = 0; wid < uws.size(); wid++) {
-        nixlUcxRkey rkey;
-        error = md->conn->getEp(wid)->rkeyImport(addr.data(), size, rkey);
-        if (error)
-            // TODO: error out. Should we indicate which desc failed or unroll everything prior
-            break;
-        md->rkeys.push_back(rkey);
-    }
-    if (error) {
-        for (size_t wid = 0; wid < md->rkeys.size(); wid++)
-            md->conn->getEp(wid)->rkeyDestroy(md->rkeys[wid]);
+    catch (const std::runtime_error &e) {
+        NIXL_ERROR << e.what();
         return NIXL_ERR_BACKEND;
     }
-
-    output = (nixlBackendMD*) md.release();
-
-    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -917,9 +906,6 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
 nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
 
     nixlUcxPublicMetadata *md = (nixlUcxPublicMetadata*) input; //typecast?
-
-    for (size_t wid = 0; wid < md->rkeys.size(); wid++)
-        md->conn->getEp(wid)->rkeyDestroy(md->rkeys[wid]);
     delete md;
 
     return NIXL_SUCCESS;

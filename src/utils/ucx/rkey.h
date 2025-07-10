@@ -15,37 +15,33 @@
  * limitations under the License.
  */
 
-#ifndef OBJ_EXECUTOR_H
-#define OBJ_EXECUTOR_H
+#ifndef NIXL_SRC_UTILS_UCX_RKEY_H
+#define NIXL_SRC_UTILS_UCX_RKEY_H
 
-#include <aws/core/utils/threading/Executor.h>
-#include <asio.hpp>
-#include <functional>
+#include <memory>
 
-class AsioThreadPoolExecutor : public Aws::Utils::Threading::Executor {
+extern "C" {
+#include <ucp/api/ucp.h>
+}
+
+class nixlUcxEp;
+
+namespace nixl::ucx {
+class rkey {
 public:
-    explicit AsioThreadPoolExecutor(std::size_t num_threads) : pool_(num_threads) {}
+    rkey() = delete;
+    rkey(const nixlUcxEp &, const void *rkey_buffer);
 
-    void
-    WaitUntilStopped() override {
-        pool_.stop();
-        pool_.join();
-    }
-
-    void
-    WaitUntilIdle() {
-        pool_.wait();
-    }
-
-protected:
-    bool
-    SubmitToThread(std::function<void()> &&task) override {
-        asio::post(pool_, std::move(task));
-        return true;
+    [[nodiscard]] ucp_rkey_h
+    get() const noexcept {
+        return rkey_.get();
     }
 
 private:
-    asio::thread_pool pool_;
-};
+    [[nodiscard]] static ucp_rkey_h
+    unpackUcpRkey(const nixlUcxEp &, const void *rkey_buffer);
 
-#endif // OBJ_EXECUTOR_H
+    const std::unique_ptr<ucp_rkey, void (*)(ucp_rkey_h)> rkey_;
+};
+} // namespace nixl::ucx
+#endif

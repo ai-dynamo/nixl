@@ -15,37 +15,23 @@
  * limitations under the License.
  */
 
-#ifndef OBJ_EXECUTOR_H
-#define OBJ_EXECUTOR_H
+#include "rkey.h"
 
-#include <aws/core/utils/threading/Executor.h>
-#include <asio.hpp>
-#include <functional>
+#include "common/nixl_log.h"
+#include "ucx_utils.h"
 
-class AsioThreadPoolExecutor : public Aws::Utils::Threading::Executor {
-public:
-    explicit AsioThreadPoolExecutor(std::size_t num_threads) : pool_(num_threads) {}
+namespace nixl::ucx {
+rkey::rkey(const nixlUcxEp &ep, const void *rkey_buffer)
+    : rkey_{unpackUcpRkey(ep, rkey_buffer), &ucp_rkey_destroy} {}
 
-    void
-    WaitUntilStopped() override {
-        pool_.stop();
-        pool_.join();
+ucp_rkey_h
+rkey::unpackUcpRkey(const nixlUcxEp &ep, const void *rkey_buffer) {
+    ucp_rkey_h rkey = nullptr;
+    const auto status = ucp_ep_rkey_unpack(ep.getEp(), rkey_buffer, &rkey);
+    if (status != UCS_OK) {
+        throw std::runtime_error(std::string("Failed to unpack UCX rkey: ") +
+                                 ucs_status_string(status));
     }
-
-    void
-    WaitUntilIdle() {
-        pool_.wait();
-    }
-
-protected:
-    bool
-    SubmitToThread(std::function<void()> &&task) override {
-        asio::post(pool_, std::move(task));
-        return true;
-    }
-
-private:
-    asio::thread_pool pool_;
-};
-
-#endif // OBJ_EXECUTOR_H
+    return rkey;
+}
+} // namespace nixl::ucx

@@ -9,10 +9,14 @@ jobs:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 2
+    - name: Install clang-format-19
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format-19
     - name: Check clang-format on changed lines
       run: |
         echo "### Modified C/C++ files:"
         git diff --name-only -r HEAD^1 HEAD | grep -E '\.(cpp|h|cc|c|cxx|hpp|cu|cuh)$' || echo "(none)"
         echo "### clang-format-diff output:"
         git diff -U0 -r HEAD^1 HEAD | \
-          clang-format-diff-18 -p1 -style=file -v
+          clang-format-diff-19 -p1 -style=file -v
