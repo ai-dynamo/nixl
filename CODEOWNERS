@@ -21,3 +21,7 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /src/plugins/posix @w1ldptr @barneuman @etoledano
 /src/plugins/hf3fs @w1ldptr @barneuman @etoledano
 /src/plugins/cuda_gds @w1ldptr @barneuman @etoledano
+/src/plugins/obj @w1ldptr @barneuman @etoledano
+
+# Benchmarks
+/benchmark/nixlbench @aranadive @ovidiusm @brminich

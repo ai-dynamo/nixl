@@ -24,6 +24,10 @@
 #include "plugin_manager.h"
 #include "common/nixl_log.h"
 
+static const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
+    {"GDS", "GDS_MT"},
+};
+
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
     static std::array<std::string, FILE_SEG+1> nixl_mem_str = {
@@ -207,6 +211,20 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     // Registering same type of backend is not supported, unlikely and prob error
     if (data->backendEngines.count(type)!=0)
         return NIXL_ERR_INVALID_PARAM;
+
+    // Check if the plugin is in an illegal combination with another plugin backend already created
+    for (const auto &combination : illegal_plugin_combinations) {
+        if (std::find(combination.begin(), combination.end(), type) != combination.end()) {
+            for (const auto &plugin_name : combination) {
+                if (plugin_name != type &&
+                    data->backendEngines.find(plugin_name) != data->backendEngines.end()) {
+                    NIXL_ERROR << "Plugin backend " << type << " is in illegal combination with "
+                               << plugin_name;
+                    return NIXL_ERR_NOT_ALLOWED;
+                }
+            }
+        }
+    }
 
     init_params.localAgent   = data->name;
     init_params.type         = type;
