@@ -25,28 +25,67 @@
 #include <list>
 #include <unordered_set>
 #include <thread>
+#include <boost/uuid/uuid.hpp>
 #include "hf3fs_utils.h"
 #include "backend/backend_engine.h"
 
+class nixlHf3fsShmException : public std::runtime_error {
+public:
+    nixlHf3fsShmException(const std::string &message) : std::runtime_error(message) {}
+};
+
+enum nixlHf3fsMemType {
+    NIXL_HF3FS_MEM_TYPE_FILE = 0,
+    NIXL_HF3FS_MEM_TYPE_REG_MEM = 1,
+    NIXL_HF3FS_MEM_TYPE_SH_MEM = 2,
+};
+
 class nixlHf3fsMetadata : public nixlBackendMD {
     public:
-        hf3fsFileHandle  handle;
-        nixl_mem_t     type;
+        nixlHf3fsMemType type;
 
-        nixlHf3fsMetadata() : nixlBackendMD(true) { }
+        nixlHf3fsMetadata(nixlHf3fsMemType type) : nixlBackendMD(true), type(type) {}
         ~nixlHf3fsMetadata() { }
+};
+
+class nixlHf3fsFileMetadata : public nixlHf3fsMetadata {
+public:
+    hf3fsFileHandle handle;
+
+    nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) {}
+    ~nixlHf3fsFileMetadata() {}
+};
+
+class nixlHf3fsRegMemMetadata : public nixlHf3fsMetadata {
+public:
+    nixlHf3fsRegMemMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_REG_MEM) {}
+    ~nixlHf3fsRegMemMetadata() {}
+};
+
+class nixlHf3fsShmMetadata : public nixlHf3fsMetadata {
+public:
+    std::string shm_name;
+    std::string shm_path;
+    std::string link_path;
+    void *mapped_addr;
+    size_t mapped_size;
+    boost::uuids::uuid uuid;
+
+    nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil &utils);
+    ~nixlHf3fsShmMetadata();
 };
 
 class nixlHf3fsIO {
     public:
         hf3fs_iov iov;
         int fd;
-        void* orig_addr;  // Original memory address for copying after read
+        void *addr; // Start address to read from/write to
         size_t size;      // Size of the buffer
         bool is_read;     // Whether this is a read operation
         size_t offset;    // Offset in the file
+        nixlHf3fsMemType mem_type;
 
-        nixlHf3fsIO() : fd(-1), orig_addr(nullptr), size(0), is_read(false) {}
+        nixlHf3fsIO() : fd(-1), addr(nullptr), size(0), is_read(false) {}
         ~nixlHf3fsIO() {}
 };
 
@@ -64,21 +103,22 @@ class nixlH3fsThreadStatus {
 
 class nixlHf3fsBackendReqH : public nixlBackendReqH {
     public:
-       std::list<nixlHf3fsIO *> io_list;
-       hf3fs_ior ior;
-       uint32_t completed_ios;  // Number of completed IOs
-       uint32_t num_ios;        // Number of submitted IOs
-       nixlH3fsThreadStatus io_status;
+        std::list<nixlHf3fsIO *> io_list;
+        hf3fs_ior ior;
+        uint32_t completed_ios; // Number of completed IOs
+        uint32_t num_ios; // Number of submitted IOs
+        nixlH3fsThreadStatus io_status;
 
-       nixlHf3fsBackendReqH() : completed_ios(0), num_ios(0) {}
-       ~nixlHf3fsBackendReqH() {}
+        nixlHf3fsBackendReqH() : completed_ios(0), num_ios(0) {}
+        ~nixlHf3fsBackendReqH() {}
 };
 
 
 class nixlHf3fsEngine : public nixlBackendEngine {
     private:
-        hf3fsUtil                      *hf3fs_utils;
+        hf3fsUtil *hf3fs_utils;
         std::unordered_set<int> hf3fs_file_set;
+        long page_size;
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
         void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;

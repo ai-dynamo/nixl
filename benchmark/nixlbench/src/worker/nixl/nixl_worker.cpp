@@ -212,7 +212,7 @@ static void iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list,
 std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     void *addr;
 
-    addr = calloc(1, buffer_size);
+    addr = aligned_alloc(4096, buffer_size);
     if (!addr) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
         return std::nullopt;
