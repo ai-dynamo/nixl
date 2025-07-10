@@ -560,12 +560,20 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (num_workers_iter == custom_params->end() || !absl::SimpleAtoi(num_workers_iter->second, &numWorkers))
         numWorkers = 1;
 
+    ucp_err_handling_mode_t err_handling_mode;
     const auto err_handling_mode_it =
-            custom_params->find("ucx_error_handling_mode");
-    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
-    if (err_handling_mode_it != custom_params->end() &&
-        (err_handling_mode_it->second == "peer")) {
+        custom_params->find(std::string(nixl_ucx_err_handling_param_name));
+    if (err_handling_mode_it == custom_params->end()) {
         err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+    } else {
+        try {
+            err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
+        }
+        catch (const std::invalid_argument &e) {
+            NIXL_ERROR << e.what();
+            initErr = true;
+            return;
+        }
     }
 
     uc = std::make_unique<nixlUcxContext>(devs,
