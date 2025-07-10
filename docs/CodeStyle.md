@@ -19,8 +19,8 @@ limitations under the License.
 
 ## Naming Conventions
 
-* **Lower camel case** (e.g., `myVariable`): Data types, Classes, Class Members, Member functions
-* **Snake case** (e.g., `my_variable`): function arguments, local variables
+* **Lower camel case** (e.g., `myVariable`): Classes, Class Members, Member functions
+* **Snake case** (e.g., `my_variable`): function arguments, local variables, Data types
 
 ## Class Design
 
