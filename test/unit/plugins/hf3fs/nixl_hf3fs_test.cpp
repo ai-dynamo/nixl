@@ -154,62 +154,78 @@ int main(int argc, char *argv[])
     int opt;
     while ((opt = getopt(argc, argv, "hn:s:d:w:m:l:")) != -1) {
         switch (opt) {
-            case 'l':
-                if (strcmp(optarg, "before") == 0) {
-                    filled_after_mem_register = false;
-                } else if (strcmp(optarg, "after") == 0) {
-                    filled_after_mem_register = true;
-                } else {
-                    std::cerr << "Invalid value for -l (filled_timing): " << optarg << std::endl;
-                }
-                break;
-            case 'n':
-                try {
-                    num_transfers = std::stoi(optarg);
-                } catch (...) {
-                    std::cerr << "Invalid value for -n (num_transfers): " << optarg << std::endl;
-                    return 1;
-                }
-                break;
-            case 's':
-                try {
-                    transfer_size = std::stoul(optarg);
-                } catch (...) {
-                    std::cerr << "Invalid value for -s (transfer_size): " << optarg << std::endl;
-                    return 1;
-                }
-                break;
-            case 'd':
-                test_files_dir_path = optarg;
-                break;
-            case 'w':
-                try {
-                    wait_time = static_cast<nixlTime::us_t>(std::stoul(optarg));
-                } catch (...) {
-                    std::cerr << "Invalid value for -w (wait_time): " << optarg << std::endl;
-                    return 1;
-                }
-                break;
-            case 'm':
-                try {
-                    max_waits = std::stoi(optarg);
-                } catch (...) {
-                    std::cerr << "Invalid value for -m (max_waits): " << optarg << std::endl;
-                    return 1;
-                }
-                break;
-            case 'h':
-            default:
-                std::cout << "Usage: " << argv[0] << " [-n num_transfers] [-s transfer_size] [-d test_files_dir_path] [-w wait_time] [-m max_waits]" << std::endl;
-                std::cout << "  -n num_transfers      Number of transfers (default: " << default_num_transfers << ")" << std::endl;
-                std::cout << "  -s transfer_size      Size of each transfer in bytes (default: " << default_transfer_size << ")" << std::endl;
-                std::cout << "  -d test_files_dir_path Directory for test files (default: " << default_test_files_dir_path << ")" << std::endl;
-                std::cout << "                        Note: This directory must exist and be writable by the current user." << std::endl;
-                std::cout << "  -w wait_time          Wait time in microseconds (default: " << default_wait_time << ")" << std::endl;
-                std::cout << "  -m max_waits          Maximum number of waits (default: " << default_max_waits << ")" << std::endl;
-                std::cout << "  -l                    Filled memory before or after memory register with NIXL: [before, after]" << std::endl;
-                std::cout << "  -h                    Show this help message" << std::endl;
-                return (opt == 'h') ? 0 : 1;
+        case 'l':
+            if (strcmp(optarg, "before") == 0) {
+                filled_after_mem_register = false;
+            } else if (strcmp(optarg, "after") == 0) {
+                filled_after_mem_register = true;
+            } else {
+                std::cerr << "Invalid value for -l (filled_timing): " << optarg << std::endl;
+            }
+            break;
+        case 'n':
+            try {
+                num_transfers = std::stoi(optarg);
+            }
+            catch (...) {
+                std::cerr << "Invalid value for -n (num_transfers): " << optarg << std::endl;
+                return 1;
+            }
+            break;
+        case 's':
+            try {
+                transfer_size = std::stoul(optarg);
+            }
+            catch (...) {
+                std::cerr << "Invalid value for -s (transfer_size): " << optarg << std::endl;
+                return 1;
+            }
+            break;
+        case 'd':
+            test_files_dir_path = optarg;
+            break;
+        case 'w':
+            try {
+                wait_time = static_cast<nixlTime::us_t>(std::stoul(optarg));
+            }
+            catch (...) {
+                std::cerr << "Invalid value for -w (wait_time): " << optarg << std::endl;
+                return 1;
+            }
+            break;
+        case 'm':
+            try {
+                max_waits = std::stoi(optarg);
+            }
+            catch (...) {
+                std::cerr << "Invalid value for -m (max_waits): " << optarg << std::endl;
+                return 1;
+            }
+            break;
+        case 'h':
+        default:
+            std::cout << "Usage: " << argv[0]
+                      << " [-n num_transfers] [-s transfer_size] [-d test_files_dir_path] [-w "
+                         "wait_time] [-m max_waits]"
+                      << std::endl;
+            std::cout << "  -n num_transfers      Number of transfers (default: "
+                      << default_num_transfers << ")" << std::endl;
+            std::cout << "  -s transfer_size      Size of each transfer in bytes (default: "
+                      << default_transfer_size << ")" << std::endl;
+            std::cout << "  -d test_files_dir_path Directory for test files (default: "
+                      << default_test_files_dir_path << ")" << std::endl;
+            std::cout << "                        Note: This directory must exist and be writable "
+                         "by the current user."
+                      << std::endl;
+            std::cout << "  -w wait_time          Wait time in microseconds (default: "
+                      << default_wait_time << ")" << std::endl;
+            std::cout << "  -m max_waits          Maximum number of waits (default: "
+                      << default_max_waits << ")" << std::endl;
+            std::cout << "  -l                    Filled memory before or after memory register "
+                         "with NIXL: [before, after]"
+                      << std::endl;
+            std::cout << "  -h                    Show this help message" << std::endl;
+            return (opt == 'h') ? 0 : 1;
         }
     }
 
@@ -308,7 +324,7 @@ int main(int argc, char *argv[])
     print_segment_title(phase_title("Allocating and initializing buffers"));
 
     for (int i = 0; i < num_transfers; i++) {
-        void* ptr = aligned_alloc(page_size, transfer_size); //malloc(transfer_size);
+        void *ptr = aligned_alloc(page_size, transfer_size); // malloc(transfer_size);
         if (!ptr) {
             std::cerr << "DRAM allocation failed" << std::endl;
             return 1;
