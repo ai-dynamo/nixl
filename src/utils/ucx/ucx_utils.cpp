@@ -495,7 +495,9 @@ nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx, bool is_shared) {
     return worker;
 }
 
-nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx, ucp_err_handling_mode_t err_handling_mode, bool is_shared)
+nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
+                             ucp_err_handling_mode_t err_handling_mode,
+                             bool is_shared)
     : worker(createUcpWorker(ctx, is_shared), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode) {}
 
