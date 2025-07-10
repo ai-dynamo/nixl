@@ -41,24 +41,24 @@ steps:
   - name: Get Environment Info
     parallel: false
     run: |
-      set +e
+      set +ex
       # print kernel version
-      echo "Kernel Version: $(uname -r)"
+      uname -r
       # print ofed info
-      echo "OFED Info: $(ofed_info -s)"
+      ofed_info -s
       # print nvidia drivers info
-      echo "NVIDIA Drivers: $(lsmod | grep nvidia_peermem)"
-      echo "NVIDIA Drivers: $(lsmod | grep gdrdrv)"
-      echo "NVIDIA Drivers: $(lsmod | grep nvidia_fs)"
+      lsmod | grep nvidia_peermem
+      lsmod | grep gdrdrv
+      lsmod | grep nvidia_fs
       # print nvidia-smi
-      echo "NVIDIA-SMI: $(nvidia-smi)"
-      echo "NVIDIA-SMI Topo: $(nvidia-smi topo -m)"
+      nvidia-smi
+      nvidia-smi topo -m
       # print MPS info
-      echo "MPS: $(pgrep -a mps)"
+      pgrep -a mps
       # print compute mode
-      echo "Compute Mode: $(nvidia-smi -q | grep -i "compute mode")"
+      nvidia-smi -q | grep -i "compute mode"
       # check rdma status
-      echo "RDMA Status: $(ibv_devinfo)"
+      ibv_devinfo
       #ib_write_bw
 
 
