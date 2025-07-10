@@ -197,6 +197,9 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
         uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
     done
 
+# Creates the nixl package
+RUN uv pip install .
+
 # Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
 RUN uv pip install auditwheel && \
     uv run auditwheel repair --exclude libcuda.so.1 --exclude 'libssl*' --exclude 'libcrypto*' /tmp/dist/nixl-*cp3*.whl --plat $WHL_PLATFORM --wheel-dir dist && \

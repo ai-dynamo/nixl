@@ -16,7 +16,6 @@
 """Sequential is different from multi in that every rank processes only one TP at a time, but they can process different ones"""
 
 import json
-import logging
 import time
 from collections import defaultdict
 from itertools import chain
@@ -29,8 +28,9 @@ from runtime.etcd_rt import etcd_dist_utils as dist_rt
 from tabulate import tabulate
 
 from nixl._api import nixl_agent
+from nixl.logging import get_logger
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 class SequentialCTPerftest(CTPerftest):
@@ -316,9 +316,8 @@ class SequentialCTPerftest(CTPerftest):
                     ]
                     for i, tp in enumerate(self.traffic_patterns)
                 ]
-                print(
-                    f"Iteration {iter_ix + 1}/{self.n_iters}\n",
-                    tabulate(data, headers=headers, floatfmt=".3f"),
+                log.info(
+                    f"Iteration {iter_ix + 1}/{self.n_iters}\n{tabulate(data, headers=headers, floatfmt='.3f')}"
                 )
 
             if verify_buffers:
