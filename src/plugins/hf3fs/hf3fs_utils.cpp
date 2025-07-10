@@ -49,8 +49,12 @@ void hf3fsUtil::deregisterFileHandle(int fd)
     hf3fs_dereg_fd(fd);
 }
 
-nixl_status_t hf3fsUtil::wrapIOV(struct hf3fs_iov *iov, void *addr, size_t size, size_t block_size, const uint8_t* id)
-{
+nixl_status_t
+hf3fsUtil::wrapIOV(struct hf3fs_iov *iov,
+                   void *addr,
+                   size_t size,
+                   size_t block_size,
+                   const uint8_t *id) {
     auto ret = hf3fs_iovwrap(iov, addr, id, this->mount_point.c_str(), size, block_size, -1);
 
     if (ret < 0) {
@@ -74,8 +78,8 @@ nixl_status_t hf3fsUtil::createIOR(struct hf3fs_ior *ior, int num_ios, bool is_r
     return NIXL_SUCCESS;
 }
 
-nixl_status_t hf3fsUtil::createIOV(struct hf3fs_iov *iov, size_t size, size_t block_size)
-{
+nixl_status_t
+hf3fsUtil::createIOV(struct hf3fs_iov *iov, size_t size, size_t block_size) {
     auto ret = hf3fs_iovcreate(iov, this->mount_point.c_str(), size, block_size, -1);
     if (ret < 0) {
         HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,

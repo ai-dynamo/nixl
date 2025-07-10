@@ -31,8 +31,7 @@
 
 class nixlHf3fsShmException : public std::runtime_error {
 public:
-    nixlHf3fsShmException(const std::string& message)
-        : std::runtime_error(message) {}
+    nixlHf3fsShmException(const std::string &message) : std::runtime_error(message) {}
 };
 
 enum nixlHf3fsMemType {
@@ -45,42 +44,42 @@ class nixlHf3fsMetadata : public nixlBackendMD {
     public:
         nixlHf3fsMemType type;
 
-        nixlHf3fsMetadata(nixlHf3fsMemType type) : nixlBackendMD(true), type(type) { }
+        nixlHf3fsMetadata(nixlHf3fsMemType type) : nixlBackendMD(true), type(type) {}
         ~nixlHf3fsMetadata() { }
 };
 
 class nixlHf3fsFileMetadata : public nixlHf3fsMetadata {
-    public:
-        hf3fsFileHandle  handle;
+public:
+    hf3fsFileHandle handle;
 
-        nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) { }
-        ~nixlHf3fsFileMetadata() { }
+    nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) {}
+    ~nixlHf3fsFileMetadata() {}
 };
 
 class nixlHf3fsRegMemMetadata : public nixlHf3fsMetadata {
-    public:
-        nixlHf3fsRegMemMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_REG_MEM) { }
-        ~nixlHf3fsRegMemMetadata() { }
+public:
+    nixlHf3fsRegMemMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_REG_MEM) {}
+    ~nixlHf3fsRegMemMetadata() {}
 };
 
 class nixlHf3fsShmMetadata : public nixlHf3fsMetadata {
-    public:
-        std::string shm_name;
-        std::string shm_path;
-        std::string link_path;
-        void* mapped_addr;
-        size_t mapped_size;
-        boost::uuids::uuid uuid;
+public:
+    std::string shm_name;
+    std::string shm_path;
+    std::string link_path;
+    void *mapped_addr;
+    size_t mapped_size;
+    boost::uuids::uuid uuid;
 
-        nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil& utils);
-        ~nixlHf3fsShmMetadata();
+    nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil &utils);
+    ~nixlHf3fsShmMetadata();
 };
 
 class nixlHf3fsIO {
     public:
         hf3fs_iov iov;
         int fd;
-        void* addr;       // Start address to read from/write to
+        void *addr; // Start address to read from/write to
         size_t size;      // Size of the buffer
         bool is_read;     // Whether this is a read operation
         size_t offset;    // Offset in the file
@@ -106,8 +105,8 @@ class nixlHf3fsBackendReqH : public nixlBackendReqH {
     public:
         std::list<nixlHf3fsIO *> io_list;
         hf3fs_ior ior;
-        uint32_t completed_ios;  // Number of completed IOs
-        uint32_t num_ios;        // Number of submitted IOs
+        uint32_t completed_ios; // Number of completed IOs
+        uint32_t num_ios; // Number of submitted IOs
         nixlH3fsThreadStatus io_status;
 
         nixlHf3fsBackendReqH() : completed_ios(0), num_ios(0) {}

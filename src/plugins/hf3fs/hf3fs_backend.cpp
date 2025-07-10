@@ -70,24 +70,29 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
     nixl_status_t status = NIXL_SUCCESS;
 
     switch (nixl_mem) {
-        case DRAM_SEG: {
-            // mmap requires the memory to be aligned to the page size
-            // and the length to be a multiple of the page size
-            if (page_size == 0 || (mem.addr % page_size == 0 && mem.len % page_size == 0)) {
-                try {
-                    nixlHf3fsShmMetadata *md = new nixlHf3fsShmMetadata((uint8_t*)mem.addr, mem.len, *hf3fs_utils);
-                    out = (nixlBackendMD*) md;
-                    NIXL_DEBUG << "HF3FS: Registered shared memory(addr: " << std::hex << mem.addr << ", len: " << mem.len << ")";
-                    break;
-                } catch (const nixlHf3fsShmException &e) {
-                    NIXL_DEBUG << "HF3FS: Failed to register shared memory(addr: " << std::hex << mem.addr << ", len: " << mem.len << "): " << e.what();
-                    // fall back to using regular memory
-                }
+    case DRAM_SEG: {
+        // mmap requires the memory to be aligned to the page size
+        // and the length to be a multiple of the page size
+        if (page_size == 0 || (mem.addr % page_size == 0 && mem.len % page_size == 0)) {
+            try {
+                nixlHf3fsShmMetadata *md =
+                    new nixlHf3fsShmMetadata((uint8_t *)mem.addr, mem.len, *hf3fs_utils);
+                out = (nixlBackendMD *)md;
+                NIXL_DEBUG << "HF3FS: Registered shared memory(addr: " << std::hex << mem.addr
+                           << ", len: " << mem.len << ")";
+                break;
             }
-            out = new nixlHf3fsRegMemMetadata();
-            NIXL_DEBUG << "HF3FS: Registered regular memory(addr: " << std::hex << mem.addr << ", len: " << mem.len << ")";
-            break;
+            catch (const nixlHf3fsShmException &e) {
+                NIXL_DEBUG << "HF3FS: Failed to register shared memory(addr: " << std::hex
+                           << mem.addr << ", len: " << mem.len << "): " << e.what();
+                // fall back to using regular memory
+            }
         }
+        out = new nixlHf3fsRegMemMetadata();
+        NIXL_DEBUG << "HF3FS: Registered regular memory(addr: " << std::hex << mem.addr
+                   << ", len: " << mem.len << ")";
+        break;
+    }
         case FILE_SEG: {
             int fd = mem.devId;
 
@@ -97,17 +102,17 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
                 int ret = 0;
                 status = hf3fs_utils->registerFileHandle(fd, &ret);
                 if (status != NIXL_SUCCESS) {
-                    HF3FS_LOG_RETURN(status,
-                        absl::StrFormat("Error - failed to register file handle %d", fd));
+                    HF3FS_LOG_RETURN(
+                        status, absl::StrFormat("Error - failed to register file handle %d", fd));
                 }
-                hf3fs_file_set.insert (fd);
+                hf3fs_file_set.insert(fd);
             }
 
             nixlHf3fsFileMetadata *md = new nixlHf3fsFileMetadata();
             md->handle.fd = fd;
             md->handle.size = mem.len;
             md->handle.metadata = mem.metaInfo;
-            out = (nixlBackendMD*) md;
+            out = (nixlBackendMD *)md;
             break;
         }
         case VRAM_SEG:
@@ -123,7 +128,7 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     nixlHf3fsMetadata *md = (nixlHf3fsMetadata *)meta;
     if (md->type == NIXL_HF3FS_MEM_TYPE_FILE) {
         nixlHf3fsFileMetadata *file_md = (nixlHf3fsFileMetadata *)md;
-        hf3fs_file_set.erase (file_md->handle.fd);
+        hf3fs_file_set.erase(file_md->handle.fd);
         hf3fs_utils->deregisterFileHandle(file_md->handle.fd);
     } else if (md->type != NIXL_HF3FS_MEM_TYPE_SH_MEM && md->type != NIXL_HF3FS_MEM_TYPE_REG_MEM) {
         HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - invalid metadata type");
@@ -208,7 +213,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         addr = (void*) (*mem_list)[i].addr;
         size = (*mem_list)[i].len;
         offset = (size_t) (*file_list)[i].addr;  // Offset in file
-        auto mem_md = (nixlHf3fsMetadata *) (*mem_list)[i].metadataP;
+        auto mem_md = (nixlHf3fsMetadata *)(*mem_list)[i].metadataP;
 
         nixlHf3fsIO *io = new nixlHf3fsIO();
         if (io == nullptr) {
@@ -218,8 +223,9 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         }
 
         if (mem_md->type == NIXL_HF3FS_MEM_TYPE_SH_MEM) {
-            nixlHf3fsShmMetadata *shm_md = (nixlHf3fsShmMetadata *) mem_md;
-            status = hf3fs_utils->wrapIOV(&io->iov, shm_md->mapped_addr, shm_md->mapped_size, size, shm_md->uuid.data);
+            nixlHf3fsShmMetadata *shm_md = (nixlHf3fsShmMetadata *)mem_md;
+            status = hf3fs_utils->wrapIOV(
+                &io->iov, shm_md->mapped_addr, shm_md->mapped_size, size, shm_md->uuid.data);
             if (status != NIXL_SUCCESS) {
                 delete io;
                 nixl_err = status;
@@ -237,7 +243,8 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
 
             // For WRITE operations, copy data from source buffer to IOV buffer
             // For READ operations, we don't need to copy data now - we'll copy after read completes
-            // TODO: Should the data copy in postXfer? User could still modify the data after prepXfer
+            // TODO: Should the data copy in postXfer? User could still modify the data after
+            // prepXfer
             if (!is_read) {
                 memcpy(io->iov.base, addr, size);
             }
@@ -284,8 +291,8 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         nixlHf3fsIO* io = *it;
         void *addr = (io->mem_type == NIXL_HF3FS_MEM_TYPE_REG_MEM) ? io->iov.base : io->addr;
 
-        status = hf3fs_utils->prepIO(&hf3fs_handle->ior, &io->iov, addr,
-                                     io->offset, io->size, io->fd, io->is_read, io);
+        status = hf3fs_utils->prepIO(
+            &hf3fs_handle->ior, &io->iov, addr, io->offset, io->size, io->fd, io->is_read, io);
         if (status != NIXL_SUCCESS) {
             HF3FS_LOG_RETURN(status, "Error: Failed to prepare IO");
         }
@@ -442,7 +449,8 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
     int shm_fd = shm_open(shm_name.c_str(), O_CREAT | O_RDWR, 0666);
     if (shm_fd == -1) {
         NIXL_ERROR << "Failed to create POSIX shared memory: " << strerror(errno);
-        throw nixlHf3fsShmException("Failed to create POSIX shared memory: " + std::string(strerror(errno)));
+        throw nixlHf3fsShmException("Failed to create POSIX shared memory: " +
+                                    std::string(strerror(errno)));
     }
 
     // Set the size of the shared memory object
@@ -450,7 +458,8 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
         NIXL_ERROR << "Failed to set shared memory size: " << strerror(errno);
         close(shm_fd);
         shm_unlink(shm_name.c_str());
-        throw nixlHf3fsShmException("Failed to set shared memory size: " + std::string(strerror(errno)));
+        throw nixlHf3fsShmException("Failed to set shared memory size: " +
+                                    std::string(strerror(errno)));
     }
 
     /**
@@ -465,7 +474,8 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
         NIXL_ERROR << "Failed to write to shared memory: " << strerror(errno);
         close(shm_fd);
         shm_unlink(shm_name.c_str());
-        throw nixlHf3fsShmException("Failed to write to shared memory: " + std::string(strerror(errno)));
+        throw nixlHf3fsShmException("Failed to write to shared memory: " +
+                                    std::string(strerror(errno)));
     }
 
     mapped_addr = mmap(addr, len, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, shm_fd, 0);
@@ -479,9 +489,8 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
     mapped_size = len;
     shm_path = "/dev/shm" + shm_name;
 
-    link_path = absl::StrFormat("%s/3fs-virt/iovs/%s",
-        utils.mount_point,
-        boost::uuids::to_string(uuid));
+    link_path =
+        absl::StrFormat("%s/3fs-virt/iovs/%s", utils.mount_point, boost::uuids::to_string(uuid));
     if (symlink(shm_path.c_str(), link_path.c_str()) == -1) {
         NIXL_ERROR << "Failed to create symlink: " << strerror(errno);
         munmap(mapped_addr, mapped_size);
@@ -496,8 +505,7 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
     NIXL_INFO << "Created POSIX shared memory: " << shm_name << " with size: " << len;
 }
 
-nixlHf3fsShmMetadata::~nixlHf3fsShmMetadata()
-{
+nixlHf3fsShmMetadata::~nixlHf3fsShmMetadata() {
     if (unlink(link_path.c_str()) && errno != ENOENT) {
         NIXL_ERROR << "Failed to remove symlink: " << strerror(errno);
     }
