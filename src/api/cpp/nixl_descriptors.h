@@ -59,7 +59,7 @@ class nixlBasicDesc {
          *
          * @param str   Serialized Descriptor
          */
-        nixlBasicDesc(const nixl_blob_t &str); // deserializer
+        nixlBasicDesc(const nixlBlob &str); // deserializer
         /**
          * @brief Copy constructor for nixlBasicDesc
          *
@@ -113,7 +113,8 @@ class nixlBasicDesc {
         /**
          * @brief Serialize descriptor into a blob
          */
-        nixl_blob_t serialize() const;
+        nixlBlob
+        serialize() const;
         /**
          * @brief Print descriptor for debugging
          *
@@ -130,7 +131,7 @@ class nixlBasicDesc {
 class nixlBlobDesc : public nixlBasicDesc {
     public:
         /** @var blob for metadata information */
-        nixl_blob_t metaInfo;
+        nixlBlob metaInfo;
 
         /** @var Reuse parent constructor without the metadata */
         using nixlBasicDesc::nixlBasicDesc;
@@ -143,21 +144,23 @@ class nixlBlobDesc : public nixlBasicDesc {
          * @param devID     deviceID/BlockID/fileID
          * @param meta_info Metadata blob
          */
-         nixlBlobDesc(const uintptr_t &addr, const size_t &len,
-                      const uint64_t &dev_id, const nixl_blob_t &meta_info);
+        nixlBlobDesc(const uintptr_t &addr,
+                     const size_t &len,
+                     const uint64_t &dev_id,
+                     const nixlBlob &meta_info);
         /**
          * @brief Constructor for nixlBlobDesc from nixlBasicDesc and metadata blob
          *
          * @param desc      nixlBasicDesc object
          * @param meta_info Metadata blob
          */
-        nixlBlobDesc(const nixlBasicDesc &desc, const nixl_blob_t &meta_info);
+        nixlBlobDesc(const nixlBasicDesc &desc, const nixlBlob &meta_info);
         /**
          * @brief Deserializer constructor for nixlBlobDesc with serialized blob
          *
          * @param str   Serialized blob from another nixlBlobDesc
          */
-        nixlBlobDesc(const nixl_blob_t &str);
+        nixlBlobDesc(const nixlBlob &str);
         /**
          * @brief Operator overloading (==) to compare nixlBlobDesc objects
          *
@@ -169,7 +172,8 @@ class nixlBlobDesc : public nixlBasicDesc {
         /**
          * @brief Serialize nixlBlobDesc to a blob
          */
-        nixl_blob_t serialize() const;
+        nixlBlob
+        serialize() const;
         /**
          * @brief Print nixlBlobDesc for debugging purpose
          *
@@ -187,7 +191,7 @@ template<class T>
 class nixlDescList {
     private:
         /** @var NIXL memory type */
-        nixl_mem_t     type;
+        nixlMemType type;
         /** @var Flag for if list should be kept sorted
          *       Comparison is done based on nixlBasicDesc (<) operator which
          *       has comparison order of devID, then addr, then len.
@@ -204,9 +208,7 @@ class nixlDescList {
          * @param sorted       Flag to set sorted option (default = false)
          * @param init_size    initial size for descriptor list (default = 0)
          */
-        nixlDescList(const nixl_mem_t &type,
-                     const bool &sorted=false,
-                     const int &init_size=0);
+        nixlDescList(const nixlMemType &type, const bool &sorted = false, const int &init_size = 0);
         /**
          * @brief Deserializer constructor for nixlDescList from nixlSerDes object
          *        which serializes/deserializes our classes into/from blobs
@@ -234,7 +236,10 @@ class nixlDescList {
         /**
          * @brief      Get NIXL memory type for this DescList
          */
-        inline nixl_mem_t getType() const { return type; }
+        nixlMemType
+        getType() const {
+            return type;
+        }
         /**
          * @brief get sorted flag
          */
@@ -326,23 +331,32 @@ class nixlDescList {
         /**
          * @brief Serialize a descriptor list with nixlSerDes class
          * @param serializer nixlSerDes object to serialize nixlDescList
-         * @return nixl_status_t Error code if serialize was not successful
+         * @return nixlStatus Error code if serialize was not successful
          */
-        nixl_status_t serialize(nixlSerDes* serializer) const;
+        nixlStatus
+        serialize(nixlSerDes *serializer) const;
         /**
          * @brief Print the descriptor list for debugging
          */
         void print() const;
 };
 /**
- * @brief A typedef for a nixlDescList<nixlBasicDesc>
+ * @brief An alias for a nixlDescList<nixlBasicDesc>
  *        used for creating transfer descriptor lists
  */
-using nixl_xfer_dlist_t = nixlDescList<nixlBasicDesc>;
+using nixlXferDlist = nixlDescList<nixlBasicDesc>;
 /**
- * @brief A typedef for a nixlDescList<nixlBlobDesc>
+ * @deprecated Use nixlXferDlist instead
+ */
+using nixl_xfer_dlist_t = nixlXferDlist;
+/**
+ * @brief An alias for a nixlDescList<nixlBlobDesc>
  *        used for creating registratoin descriptor lists
  */
-using nixl_reg_dlist_t = nixlDescList<nixlBlobDesc>;
+using nixlRegDlist = nixlDescList<nixlBlobDesc>;
+/**
+ * @deprecated Use nixlRegDlist instead
+ */
+using nixl_reg_dlist_t = nixlRegDlist;
 
 #endif

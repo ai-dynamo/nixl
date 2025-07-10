@@ -84,10 +84,11 @@ class TestErrorHandling : public testing::TestWithParam<std::string> {
         void fillRegList(nixl_xfer_dlist_t& dlist, nixlBasicDesc& desc) const;
         std::string getLocalMD() const;
         void loadRemoteMD(const std::string& remote_name);
-        nixl_status_t createXferReq(const nixl_xfer_op_t& op,
-                                    nixl_xfer_dlist_t& sReq_descs,
-                                    nixl_xfer_dlist_t& rReq_descs,
-                                    nixlXferReqH*& req_handle) const;
+        nixl_status_t
+        createXferReq(const nixlXferOp &op,
+                      nixl_xfer_dlist_t &sReq_descs,
+                      nixl_xfer_dlist_t &rReq_descs,
+                      nixlXferReqH *&req_handle) const;
         nixl_status_t postXferReq(nixlXferReqH* req_handle) const;
         nixl_status_t waitForCompletion(nixlXferReqH* req_handle);
         nixl_status_t waitForNotif(const std::string& expectedNotif);
@@ -109,13 +110,16 @@ protected:
     };
 
     TestErrorHandling();
-    template<TestType test_type, enum nixl_xfer_op_t op> void testXfer();
+    template<TestType test_type, nixlXferOp op>
+    void
+    testXfer();
 
 private:
     template<TestType test_type> bool isFailure(size_t iter);
     template<TestType test_type> size_t numIter();
     void exchangeMetaData();
-    nixlXferReqH* postXfer(enum nixl_xfer_op_t op, bool target_failure);
+    nixlXferReqH *
+    postXfer(nixlXferOp op, bool target_failure);
 
     ScopedEnv    m_env;
     Agent        m_Initiator;
@@ -156,10 +160,10 @@ void TestErrorHandling::Agent::loadRemoteMD(const std::string& remote_name) {
 }
 
 nixl_status_t
-TestErrorHandling::Agent::createXferReq(const nixl_xfer_op_t& op,
-                                     nixl_xfer_dlist_t& sReq_descs,
-                                     nixl_xfer_dlist_t& rReq_descs,
-                                     nixlXferReqH*& req_handle) const {
+TestErrorHandling::Agent::createXferReq(const nixlXferOp &op,
+                                        nixl_xfer_dlist_t &sReq_descs,
+                                        nixl_xfer_dlist_t &rReq_descs,
+                                        nixlXferReqH *&req_handle) const {
     nixl_opt_args_t extra_params = { .backends = {m_backend} };
     extra_params.notifMsg        = "notification";
     extra_params.hasNotif        = true;
@@ -214,8 +218,9 @@ TestErrorHandling::TestErrorHandling() : m_backend_name(GetParam())
     m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
 }
 
-template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
-void TestErrorHandling::testXfer() {
+template<TestErrorHandling::TestType test_type, nixlXferOp op>
+void
+TestErrorHandling::testXfer() {
     m_Initiator.init("initiator", m_backend_name);
     m_Target.init("target", m_backend_name);
 
@@ -268,8 +273,8 @@ void TestErrorHandling::exchangeMetaData() {
     m_Target.loadRemoteMD(m_Initiator.getLocalMD());
 }
 
-nixlXferReqH*
-TestErrorHandling::postXfer(enum nixl_xfer_op_t op, bool target_failure) {
+nixlXferReqH *
+TestErrorHandling::postXfer(nixlXferOp op, bool target_failure) {
     EXPECT_TRUE(op == NIXL_WRITE || op == NIXL_READ);
 
     nixlBasicDesc sReq_src;

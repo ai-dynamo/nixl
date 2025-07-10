@@ -41,10 +41,10 @@ public:
     const char* (*get_plugin_version)();
 
     // Function to get backend options
-    nixl_b_params_t (*get_backend_options)();
+    nixlBParams (*get_backend_options)();
 
     // Function to get supported backend mem types
-    nixl_mem_list_t (*get_backend_mems)();
+    nixlMemList (*get_backend_mems)();
 };
 
 // Macro to define exported C functions for the plugin
