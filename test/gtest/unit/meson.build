@@ -24,6 +24,9 @@ if aws_s3.found()
     unit_test_deps += [obj_unit_test_dep]
 endif
 
+subdir('agent')
+unit_test_deps += [agent_unit_test_dep]
+
 unit_test_exe = executable('unit',
     sources : [
         'main.cpp',
