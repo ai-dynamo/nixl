@@ -27,10 +27,6 @@ failFast: false
 
 timeout_minutes: 240
 
-# registry_host: urm.nvidia.com/sw-nbu-swx-nixl-docker-local
-# registry_path: /ci
-# registry_auth: svc-nixl-artifactory-token
-
 registry_host: harbor.mellanox.com
 registry_path: /swx-infra/nixl
 registry_auth: swx-infra_harbor_credentials
@@ -43,7 +39,7 @@ kubernetes:
 
 runs_on_dockers:
   - {
-      file: '.ci/dockerfiles/Dockerfile.manylinux',
+      file: '.ci/dockerfiles/Dockerfile.manylinux-base',
       name: 'manylinux_2_28',
       uri: 'ci/$arch/$name',
       tag: '20250701',
@@ -59,6 +55,7 @@ matrix:
       - "3.12"
     arch:
       - x86_64
+      - aarch64
 
 env:
   VIRTUAL_ENV: $WORKSPACE/.venv
