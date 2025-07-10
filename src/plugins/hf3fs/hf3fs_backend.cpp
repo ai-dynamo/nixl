@@ -133,6 +133,7 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     } else if (md->type != NIXL_HF3FS_MEM_TYPE_SH_MEM && md->type != NIXL_HF3FS_MEM_TYPE_REG_MEM) {
         HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - invalid metadata type");
     }
+    delete md;
     return NIXL_SUCCESS;
 }
 
