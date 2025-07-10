@@ -33,6 +33,7 @@
  */
 class nixlAgent {
     private:
+        void updateRequestStats(const nixlXferReqH* req_hndl) const;
         /** @var  data  The members in agent class wrapped into single nixlAgentData member. */
         std::unique_ptr<nixlAgentData> data;
 
