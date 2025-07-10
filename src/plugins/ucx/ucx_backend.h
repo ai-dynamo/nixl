@@ -107,7 +107,7 @@ class nixlUcxEngine
     : public nixlBackendEngine {
     private:
         /* UCX data */
-        std::shared_ptr<nixlUcxContext> uc;
+        std::unique_ptr<nixlUcxContext> uc;
         std::vector<std::unique_ptr<nixlUcxWorker>> uws;
         std::string workerAddr;
 
