@@ -26,6 +26,7 @@
 #include <fstream>
 #include <string>
 #include <map>
+#include <dlfcn.h>
 
 using lock_guard = const std::lock_guard<std::mutex>;
 
@@ -170,6 +171,16 @@ void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
     }
 }
 
+static std::string getDefaultPluginDir() {
+    Dl_info info;
+    int ret = dladdr(reinterpret_cast<void*>(&getDefaultPluginDir), &info);
+    if (ret != 0) {
+        NIXL_ERROR << "Failed to get plugin directory from dladdr";
+        return "";
+    }
+    return std::filesystem::path(info.dli_fname).parent_path().string() + "/plugins";
+}
+
 // PluginManager implementation
 nixlPluginManager::nixlPluginManager() {
     // Force levels right before logging
@@ -187,6 +198,13 @@ nixlPluginManager::nixlPluginManager() {
         NIXL_DEBUG << "Loading plugins from directory: " << plugin_dir;
         plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);  // Insert at the beginning for priority
         discoverPluginsFromDir(plugin_dir);
+    } else {
+        std::string plugin_dir = getDefaultPluginDir();
+        if (!plugin_dir.empty()) {
+            NIXL_DEBUG << "Loading plugins from default path: " << plugin_dir;
+            plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);
+            discoverPluginsFromDir(plugin_dir);
+        }
     }
 
     registerBuiltinPlugins();
