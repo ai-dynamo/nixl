@@ -525,30 +525,29 @@ void nixlUcxEngine::progressThreadRestart()
  * Constructor/Destructor
 *****************************************/
 
-nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
-: nixlBackendEngine (init_params) {
+nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
+    : nixlBackendEngine(init_params),
+      pthrControlPipe{0, 0} {
     unsigned long numWorkers;
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
 
     if (init_params->enableProgTh) {
-        pthrOn = true;
         if (!nixlUcxMtLevelIsSupported(nixl_ucx_mt_t::WORKER)) {
-            NIXL_ERROR << "UCX library does not support multi-threading";
-            this->initErr = true;
-            return;
+            throw std::invalid_argument("UCX library does not support multi-threading");
         }
+
         if (pipe(pthrControlPipe) < 0) {
-            NIXL_PERROR << "Couldn't create progress thread control pipe";
-            this->initErr = true;
-            return;
+            throw std::runtime_error("Couldn't create progress thread control pipe");
         }
 
         // This will ensure that the resulting delay is at least 1ms and fits into int in order for
         // it to be compatible with poll()
         pthrDelay = std::chrono::ceil<std::chrono::milliseconds>(
             std::chrono::microseconds(init_params->pthrDelay < std::numeric_limits<int>::max() ?
-                                      init_params->pthrDelay : std::numeric_limits<int>::max()));
+                                          init_params->pthrDelay :
+                                          std::numeric_limits<int>::max()));
+        pthrOn = true;
     } else {
         pthrOn = false;
     }
@@ -566,14 +565,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (err_handling_mode_it == custom_params->end()) {
         err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
     } else {
-        try {
-            err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
-        }
-        catch (const std::invalid_argument &e) {
-            NIXL_ERROR << e.what();
-            initErr = true;
-            return;
-        }
+        err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
     }
 
     uc = std::make_unique<nixlUcxContext>(devs,
@@ -584,16 +576,13 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
                                           numWorkers,
                                           init_params->syncMode);
 
-    for (unsigned int i = 0; i < numWorkers; i++)
-        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
-
-    const auto &uw = uws.front();
-    workerAddr = uw->epAddr();
-
-    if (workerAddr.empty()) {
-        NIXL_ERROR << "Failed to get UCX worker address";
-        initErr = true;
-        return;
+    for (unsigned int i = 0; i < numWorkers; i++) {
+        auto uw = std::make_unique<nixlUcxWorker>(*uc, err_handling_mode);
+        auto addr = uw->epAddr();
+        uws.push_back(std::move(uw));
+        if (i == 0) {
+            workerAddr = addr;
+        }
     }
 
     if (pthrOn) {
@@ -603,6 +592,9 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
         pollFds.push_back({pthrControlPipe[0], POLLIN, 0});
     }
 
+    // TODO: in case of UCX error handling is enabled, we can clean up AM based connections error
+    //       handling, if user requested disabled error handling, we dont care about it.
+    auto &uw = uws.front();
     uw->regAmCallback(CONN_CHECK, connectionCheckAmCb, this);
     uw->regAmCallback(DISCONNECT, connectionTermAmCb, this);
     uw->regAmCallback(NOTIF_STR, notifAmCb, this);
@@ -628,20 +620,21 @@ nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
 }
 
 // Through parent destructor the unregister will be called.
-nixlUcxEngine::~nixlUcxEngine () {
-    // per registered memory deregisters it, which removes the corresponding metadata too
-    // parent destructor takes care of the desc list
-    // For remote metadata, they should be removed here
-    if (this->initErr) {
-        // Nothing to do
-        return;
-    }
+nixlUcxEngine::~nixlUcxEngine() {
+    // initErr is not used in this class and should be removed
+    NIXL_ASSERT(!this->initErr);
 
     progressThreadStop();
     if (pthrOn) {
-        close(pthrControlPipe[0]);
-        close(pthrControlPipe[1]);
+        if (pthrControlPipe[0] != 0) {
+            close(pthrControlPipe[0]);
+        }
+
+        if (pthrControlPipe[1] != 0) {
+            close(pthrControlPipe[1]);
+        }
     }
+
     vramFiniCtx();
 }
 
