@@ -234,6 +234,34 @@ int xferBenchConfig::loadFromFlags() {
         return -1;
     }
 
+    if (isStorageBackend()) {
+        if (scheme != XFERBENCH_SCHEME_TP && scheme != XFERBENCH_SCHEME_PAIRWISE) {
+            std::cerr << "Storage backend only supports pairwise and tp scheme, [" << scheme
+                      << "] is not supported." << std::endl;
+            return -1;
+        }
+        if (scheme != XFERBENCH_SCHEME_TP && num_files % num_threads != 0) {
+            std::cerr << "Storage backend with scheme to assign whole file to"
+                      << " a thread must have num_files(" << num_files
+                      << ") divisible by num_threads(" << num_threads << ")" << std::endl;
+            return -1;
+        }
+        if (scheme == XFERBENCH_SCHEME_PAIRWISE &&
+            max_block_size * max_batch_size * num_files > total_buffer_size) {
+            std::cerr << "Incorrect buffer size configuration for pairwise scheme"
+                      << " max_block_size * max_batch_size * num_files >" << " total_buffer_size"
+                      << std::endl;
+            return -1;
+        }
+        if (scheme == XFERBENCH_SCHEME_TP &&
+            max_block_size * max_batch_size * num_files * num_threads > total_buffer_size) {
+            std::cerr << "Incorrect buffer size configuration for tp scheme"
+                      << " max_block_size * max_batch_size * num_files * num_threads >"
+                      << " total_buffer_size" << std::endl;
+            return -1;
+        }
+    }
+
     int partition = (num_threads * LARGE_BLOCK_SIZE_ITER_FACTOR);
     if (num_iter % partition) {
         num_iter += partition - (num_iter % partition);
@@ -502,6 +530,8 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     double totalbw = 0;
 
     int num_iter = xferBenchConfig::num_iter;
+    int num_files = xferBenchConfig::num_files;
+    int num_threads = xferBenchConfig::num_threads;
 
     if (block_size > LARGE_BLOCK_SIZE) {
         num_iter /= LARGE_BLOCK_SIZE_ITER_FACTOR;
@@ -519,6 +549,13 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     if (IS_PAIRWISE_AND_MG()) {
         total_data_transferred *= xferBenchConfig::num_initiator_dev; // In Bytes
         avg_latency /= xferBenchConfig::num_initiator_dev; // In microsec
+    }
+    if (xferBenchConfig::isStorageBackend()) {
+        if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
+            total_data_transferred *= num_files;
+        } else {
+            total_data_transferred *= (num_files / num_threads);
+        }
     }
 
     throughput = (((double) total_data_transferred / (1024 * 1024)) /
