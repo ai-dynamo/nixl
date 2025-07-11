@@ -144,7 +144,7 @@ RUN cd src/bindings/rust && cargo build --release --locked
 RUN ./contrib/build-wheel.sh \
     --python-version $DEFAULT_PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
-    --ucx-plugins-dir /usr/lib64/ucx \
+    --ucx-plugins-dir /usr/lib/ucx \
     --nixl-plugins-dir /usr/local/nixl/lib/$ARCH-linux-gnu/plugins \
     --output-dir /workspace/nixl/dist
 
