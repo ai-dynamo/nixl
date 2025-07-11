@@ -36,17 +36,21 @@ class NIXLBench:
         enable_pt=False,
         etcd_endpoints="http://localhost:2379",
         storage_enable_direct=False,
-        gds_filepath="",
+        filepath="",
+        gds_batch_pool_size=32,
+        gds_batch_limit=128,
         initiator_seg_type="DRAM",
         enable_vmm=False,
         max_batch_size=None,
         max_block_size=None,
         mode="SG",
+        num_files=1,
         num_initiator_dev=1,
         num_iter=1000,
         num_target_dev=1,
         num_threads=1,
         op_type="WRITE",
+        posix_api_type="AIO",
         runtime_type="ETCD",
         scheme="pairwise",
         start_batch_size=None,
@@ -68,17 +72,21 @@ class NIXLBench:
             enable_pt (bool, optional): Whether to enable peer-to-peer transfer. Defaults to False.
             etcd_endpoints (str, optional): ETCD endpoints for runtime. Defaults to "http://localhost:2379".
             storage_enable_direct (bool, optional): Whether to enable direct I/O for storage operations. Defaults to False.
-            gds_filepath (str, optional): Path for GDS file. Defaults to "".
-            enable_vmm (bool, optional): Whether to use VMM memory allocation. Defaults to False.
+            filepath (str, optional): Path for GDS and POSIX operations. Defaults to "".
+            gds_batch_pool_size (int, optional): Batch pool size for GDS operations. Defaults to 32.
+            gds_batch_limit (int, optional): Batch limit for GDS operations. Defaults to 128.
             initiator_seg_type (str, optional): Type of initiator segment. Defaults to "DRAM".
+            enable_vmm (bool, optional): Whether to use VMM memory allocation. Defaults to False.
             max_batch_size (int, optional): Maximum batch size for testing. Defaults to model_config value.
             max_block_size (int, optional): Maximum block size for testing. Defaults to tp_size * isl.
             mode (str, optional): Benchmarking mode. Defaults to "SG".
+            num_files (int, optional): Number of files. Defaults to 1.
             num_initiator_dev (int, optional): Number of initiator devices. Defaults to 1.
             num_iter (int, optional): Number of iterations. Defaults to 1000.
             num_target_dev (int, optional): Number of target devices. Defaults to 1.
             num_threads (int, optional): Number of threads. Defaults to 1.
             op_type (str, optional): Operation type. Defaults to "WRITE".
+            posix_api_type (str, optional): POSIX API type. Defaults to "AIO".
             runtime_type (str, optional): Runtime type. Defaults to "ETCD".
             scheme (str, optional): Communication scheme. Defaults to "pairwise".
             start_batch_size (int, optional): Starting batch size. Defaults to 1.
@@ -96,17 +104,21 @@ class NIXLBench:
         self.enable_pt = enable_pt
         self.etcd_endpoints = etcd_endpoints
         self.storage_enable_direct = storage_enable_direct
-        self.gds_filepath = gds_filepath
+        self.filepath = filepath
         self.enable_vmm = enable_vmm
+        self.gds_batch_pool_size = gds_batch_pool_size
+        self.gds_batch_limit = gds_batch_limit
         self.initiator_seg_type = initiator_seg_type
         self.max_batch_size = max_batch_size
         self.max_block_size = max_block_size
         self.mode = mode
+        self.num_files = num_files
         self.num_initiator_dev = num_initiator_dev
         self.num_iter = num_iter
         self.num_target_dev = num_target_dev
         self.num_threads = num_threads
         self.op_type = op_type
+        self.posix_api_type = posix_api_type
         self.runtime_type = runtime_type
         self.scheme = scheme
         self.start_batch_size = start_batch_size
@@ -121,24 +133,53 @@ class NIXLBench:
         self.start_block_size = io_size
         self.max_block_size = io_size
 
-    def configure_segment_type(self, backend: str, source: str, destination: str):
-        if backend == "GDS":
-            if source == "file":
-                # this is a READ from GDS to GPU
-                self.op_type = "READ"
-                self.target_seg_type = "VRAM"
-            elif source == "gpu":
-                # this is a WRITE from GPU to GDS
-                self.op_type = "WRITE"
-                self.target_seg_type = "VRAM"
+    def _configure_gds(self, source: str, destination: str):
+        if source == "file":
+            # this is a READ from GDS to GPU
+            self.op_type = "READ"
+            self.target_seg_type = "VRAM"
+        elif source == "gpu":
+            # this is a WRITE from GPU to GDS
+            self.op_type = "WRITE"
+            self.target_seg_type = "VRAM"
+        else:
+            raise ValueError(f"Invalid source for GDS: {source}")
 
-            elif source == "memory":
-                # this is a WRITE from memory to GDS
-                self.op_type = "WRITE"
-                self.initiator_seg_type = "DRAM"
-                self.target_seg_type = "DRAM"
+    def _configure_posix(self, source: str, destination: str):
+        if source == "file":
+            self.op_type = "READ"
+            self.target_seg_type = "DRAM"
+        elif source == "memory":
+            self.op_type = "WRITE"
+            self.initiator_seg_type = "DRAM"
+        else:
+            raise ValueError(f"Invalid source for POSIX: {source}")
+
+    def configure_segment_type(self, backend: str, source: str, destination: str):
+        if backend.lower() == "gds":
+            self._configure_gds(source, destination)
+        elif backend.lower() == "posix":
+            self._configure_posix(source, destination)
         else:
             raise ValueError(f"Invalid backend: {backend}")
+
+        # if backend == "GDS" or backend == "POSIX":
+        #     if source == "file":
+        #         # this is a READ from GDS to GPU
+        #         self.op_type = "READ"
+        #         self.target_seg_type = "VRAM"
+        #     elif source == "gpu":
+        #         # this is a WRITE from GPU to GDS
+        #         self.op_type = "WRITE"
+        #         self.target_seg_type = "VRAM"
+
+        #     elif source == "memory":
+        #         # this is a WRITE from memory to GDS
+        #         self.op_type = "WRITE"
+        #         self.initiator_seg_type = "DRAM"
+        #         self.target_seg_type = "DRAM"
+        # else:
+        #     raise ValueError(f"Invalid backend: {backend}")
 
     def configure_scheme(self, scheme: str = "pairwise", direction: str = "isl"):
         """
@@ -154,6 +195,10 @@ class NIXLBench:
                 self.num_target_dev = 1
 
     def set_batch_size(self, batch_size: int):
+        """
+        Set the batch size for benchmarking.
+        """
+
         self.start_batch_size = batch_size
         self.max_batch_size = batch_size
 
@@ -184,17 +229,21 @@ class NIXLBench:
             "enable_pt": self.enable_pt,
             "etcd_endpoints": self.etcd_endpoints,
             "storage_enable_direct": self.storage_enable_direct,
-            "gds_filepath": self.gds_filepath,
+            "filepath": self.filepath,
             "enable_vmm": self.enable_vmm,
+            "gds_batch_pool_size": self.gds_batch_pool_size,
+            "gds_batch_limit": self.gds_batch_limit,
             "initiator_seg_type": self.initiator_seg_type,
             "max_batch_size": self.max_batch_size,
             "max_block_size": self.max_block_size,
             "mode": self.mode,
+            "num_files": self.num_files,
             "num_initiator_dev": self.num_initiator_dev,
             "num_iter": self.num_iter,
             "num_target_dev": self.num_target_dev,
             "num_threads": self.num_threads,
             "op_type": self.op_type,
+            "posix_api_type": self.posix_api_type,
             "runtime_type": self.runtime_type,
             "scheme": self.scheme,
             "start_batch_size": self.start_batch_size,
@@ -223,17 +272,21 @@ class NIXLBench:
             "enable_pt": False,
             "etcd_endpoints": "http://localhost:2379",
             "storage_enable_direct": False,
-            "gds_filepath": "",
+            "filepath": "",
             "enable_vmm": False,
+            "gds_batch_pool_size": 32,
+            "gds_batch_limit": 128,
             "initiator_seg_type": "DRAM",
             "max_batch_size": 1,  # ios per gpu
             "max_block_size": 67108864,  # io size
             "mode": "SG",
+            "num_files": 1,
             "num_initiator_dev": 1,
             "num_iter": 1000,
             "num_target_dev": 1,
             "num_threads": 1,
             "op_type": "WRITE",
+            "posix_api_type": "AIO",
             "runtime_type": "ETCD",
             "scheme": "pairwise",
             "start_batch_size": 1,

@@ -27,8 +27,8 @@
 
 class nixlObjEngine : public nixlBackendEngine {
 public:
-    nixlObjEngine (const nixlBackendInitParams *init_params);
-    nixlObjEngine (const nixlBackendInitParams *init_params, std::shared_ptr<IS3Client> s3_client);
+    nixlObjEngine(const nixlBackendInitParams *init_params);
+    nixlObjEngine(const nixlBackendInitParams *init_params, std::shared_ptr<IS3Client> s3_client);
     virtual ~nixlObjEngine();
 
     bool
@@ -57,57 +57,57 @@ public:
     }
 
     nixl_status_t
-    registerMem (const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
+    registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
 
     nixl_status_t
-    deregisterMem (nixlBackendMD *meta) override;
+    deregisterMem(nixlBackendMD *meta) override;
 
     nixl_status_t
-    connect (const std::string &remote_agent) override {
+    connect(const std::string &remote_agent) override {
         return NIXL_SUCCESS;
     }
 
     nixl_status_t
-    disconnect (const std::string &remote_agent) override {
+    disconnect(const std::string &remote_agent) override {
         return NIXL_SUCCESS;
     }
 
     nixl_status_t
-    unloadMD (nixlBackendMD *input) override {
+    unloadMD(nixlBackendMD *input) override {
         return NIXL_SUCCESS;
     }
 
     nixl_status_t
-    prepXfer (const nixl_xfer_op_t &operation,
-              const nixl_meta_dlist_t &local,
-              const nixl_meta_dlist_t &remote,
-              const std::string &remote_agent,
-              nixlBackendReqH *&handle,
-              const nixl_opt_b_args_t *opt_args = nullptr) const override;
+    prepXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
     nixl_status_t
-    postXfer (const nixl_xfer_op_t &operation,
-              const nixl_meta_dlist_t &local,
-              const nixl_meta_dlist_t &remote,
-              const std::string &remote_agent,
-              nixlBackendReqH *&handle,
-              const nixl_opt_b_args_t *opt_args = nullptr) const override;
+    postXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
     nixl_status_t
-    checkXfer (nixlBackendReqH *handle) const override;
+    checkXfer(nixlBackendReqH *handle) const override;
     nixl_status_t
-    releaseReqH (nixlBackendReqH *handle) const override;
+    releaseReqH(nixlBackendReqH *handle) const override;
 
     nixl_status_t
-    loadLocalMD (nixlBackendMD *input, nixlBackendMD *&output) override {
+    loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override {
         output = input;
         return NIXL_SUCCESS;
     }
 
 private:
     std::shared_ptr<AsioThreadPoolExecutor> executor_;
-    std::shared_ptr<IS3Client> s3_client_;
-    std::unordered_map<uint64_t, std::string> dev_id_to_obj_key_;
+    std::shared_ptr<IS3Client> s3Client_;
+    std::unordered_map<uint64_t, std::string> devIdToObjKey_;
 };
 
 #endif // OBJ_BACKEND_H

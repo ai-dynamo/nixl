@@ -449,15 +449,15 @@ void nixlUcxEngine::progressFunc()
             pollFds[wid].revents = 0;
 
             bool made_progress = false;
-            ucs_status_t status = UCS_INPROGRESS;
+            nixl_status_t status;
             const auto &uw = uws[wid];
             do {
                 while (uw->progress())
                     made_progress = true;
 
-                status = ucp_worker_arm(uw->getWorker());
-            } while (status == UCS_ERR_BUSY);
-            NIXL_ASSERT(status == UCS_OK);
+                status = uw->arm();
+            } while (status == NIXL_IN_PROG);
+            NIXL_ASSERT(status == NIXL_SUCCESS) << ", status: " << status;
 
             if (made_progress && !wid)
                 notifProgress();
@@ -560,22 +560,32 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (num_workers_iter == custom_params->end() || !absl::SimpleAtoi(num_workers_iter->second, &numWorkers))
         numWorkers = 1;
 
+    ucp_err_handling_mode_t err_handling_mode;
     const auto err_handling_mode_it =
-            custom_params->find("ucx_error_handling_mode");
-    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
-    if (err_handling_mode_it != custom_params->end() &&
-        (err_handling_mode_it->second == "peer")) {
+        custom_params->find(std::string(nixl_ucx_err_handling_param_name));
+    if (err_handling_mode_it == custom_params->end()) {
         err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+    } else {
+        try {
+            err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
+        }
+        catch (const std::invalid_argument &e) {
+            NIXL_ERROR << e.what();
+            initErr = true;
+            return;
+        }
     }
 
-    uc = std::make_shared<nixlUcxContext>(devs, sizeof(nixlUcxIntReq),
+    uc = std::make_unique<nixlUcxContext>(devs,
+                                          sizeof(nixlUcxIntReq),
                                           _internalRequestInit,
                                           _internalRequestFini,
                                           pthrOn,
-                                          err_handling_mode, numWorkers, init_params->syncMode);
+                                          numWorkers,
+                                          init_params->syncMode);
 
     for (unsigned int i = 0; i < numWorkers; i++)
-        uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
 
     const auto &uw = uws.front();
     workerAddr = uw->epAddr();
@@ -588,15 +598,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
 
     if (pthrOn) {
         for (auto &uw: uws) {
-            int fd;
-            ucs_status_t ret = ucp_worker_get_efd(uw->getWorker(), &fd);
-            if (ret != UCS_OK) {
-                NIXL_ERROR << "Couldn't obtain fd for a worker, status: " << ucs_status_string(ret);
-                initErr = true;
-                return;
-            }
-
-            pollFds.push_back({fd, POLLIN, 0});
+            pollFds.push_back({uw->getEfd(), POLLIN, 0});
         }
         pollFds.push_back({pthrControlPipe[0], POLLIN, 0});
     }

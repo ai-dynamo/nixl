@@ -35,6 +35,8 @@ enum class nixl_ucx_mt_t {
     WORKER
 };
 
+constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
+
 template<typename Enum>
 [[nodiscard]] constexpr auto enumToInteger(const Enum e) noexcept
 {
@@ -148,14 +150,16 @@ private:
     /* Local UCX stuff */
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
-    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
 public:
 
     using req_cb_t = void(void *request);
     nixlUcxContext(std::vector<std::string> devices,
-                   size_t req_size, req_cb_t init_cb, req_cb_t fini_cb,
-                   bool prog_thread, ucp_err_handling_mode_t err_handling_mode,
-                   unsigned long num_workers, nixl_thread_sync_t sync_mode);
+                   size_t req_size,
+                   req_cb_t init_cb,
+                   req_cb_t fini_cb,
+                   bool prog_thread,
+                   unsigned long num_workers,
+                   nixl_thread_sync_t sync_mode);
     ~nixlUcxContext();
 
     /* Memory management */
@@ -169,15 +173,10 @@ public:
 [[nodiscard]] bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t) noexcept;
 
 class nixlUcxWorker {
-private:
-    /* Local UCX stuff */
-    const std::shared_ptr<nixlUcxContext> ctx;
-    const std::unique_ptr<ucp_worker, void(*)(ucp_worker*)> worker;
-
-    [[nodiscard]] static ucp_worker* createUcpWorker(nixlUcxContext&);
-
-  public:
-    explicit nixlUcxWorker(const std::shared_ptr<nixlUcxContext> &_ctx);
+public:
+    explicit nixlUcxWorker(
+        const nixlUcxContext &,
+        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
 
     nixlUcxWorker( nixlUcxWorker&& ) = delete;
     nixlUcxWorker( const nixlUcxWorker& ) = delete;
@@ -198,18 +197,29 @@ private:
     void reqRelease(nixlUcxReq req);
     void reqCancel(nixlUcxReq req);
 
-    /* Worker access */
-    [[nodiscard]] ucp_worker_h getWorker() const noexcept { return worker.get(); }
+    [[nodiscard]] nixl_status_t
+    arm() const noexcept;
+
+    [[nodiscard]] int
+    getEfd() const;
+
+private:
+    [[nodiscard]] static ucp_worker *
+    createUcpWorker(const nixlUcxContext &);
+
+    const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
+    ucp_err_handling_mode_t err_handling_mode_;
 };
 
-[[nodiscard]] static inline nixl_b_params_t get_ucx_backend_common_options() {
-    return {
-        { "ucx_devices", "" },
-        { "ucx_error_handling_mode", "none" }, // or "peer"
-        { "num_workers", "1" }
-    };
-}
+[[nodiscard]] nixl_b_params_t
+get_ucx_backend_common_options();
 
 nixl_status_t ucx_status_to_nixl(ucs_status_t status);
+
+[[nodiscard]] std::string_view
+ucx_err_mode_to_string(ucp_err_handling_mode_t t);
+
+[[nodiscard]] ucp_err_handling_mode_t
+ucx_err_mode_from_string(std::string_view s);
 
 #endif

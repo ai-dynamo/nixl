@@ -69,12 +69,11 @@ Options:
   --help                Show this message and exit.
 
 Commands:
-  ct-perftest            Run custom traffic performance test using patterns...
-  io-size                Display IO size information
-  kvcache                Display kvcache information
-  plan                   Display the recommended configuration for nixlbench
-  profile                Run nixlbench
-  sequential-ct-perftest Run sequential custom traffic performance test...
+  ct-perftest             Run custom traffic performance test using...
+  kvcache                 Display kvcache information
+  plan                    Display the recommended configuration for...
+  profile                 Run nixlbench
+  sequential-ct-perftest  Run sequential custom traffic performance test...
 ```
 
 ## Command Line Arguments
@@ -141,8 +140,8 @@ These arguments are used by both `plan` and `profile` commands:
 | `--device_list` | Comma-separated device names (default: all) |
 | `--runtime_type` | Type of runtime to use [ETCD] (default: ETCD) |
 | `--etcd-endpoints` | ETCD server URL for coordination (default: http://localhost:2379) |
-| `--storage_enable_direct` | Enable direct I/O for GDS operations |
-| `--gds_filepath` | File path for GDS operations |
+| `--storage_enable_direct` | Enable direct I/O for storage operations |
+| `--filepath` | File path for storage operations |
 | `--enable_vmm` | Enable VMM memory allocation when DRAM is requested |
 
 ### CTP Command Arguments
@@ -165,7 +164,7 @@ Specific to CTP (Custom Traffic Performance) commands:
 The `plan` command generates and displays recommended `nixlbench` command configurations based on your model architecture and parameters. It helps you prepare optimal benchmark settings without running the benchmark itself.
 
 ```bash
-python main.py plan --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
+python main.py plan --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml" --backend POSIX
 ```
 
 #### Profile Command
@@ -173,7 +172,7 @@ python main.py plan --model ./examples/model_deepseek_r1.yaml --model_config "./
 The `profile` command actually runs the benchmark with the specified configuration using `nixlbench`, collecting performance data across various KV cache operations and access patterns.
 
 ```bash
-python main.py profile --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
+python main.py profile --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml" --backend POSIX
 ```
 
 #### KVCache Command
@@ -181,24 +180,10 @@ python main.py profile --model ./examples/model_deepseek_r1.yaml --model_config 
 The `kvcache` command analyzes and displays detailed information about the KV cache for a specified model configuration, including model type, sequence lengths, batch sizes, and I/O sizes.
 
 ```bash
-python main.py kvcache --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
-Model                  : DEEPSEEK_R1
-Input Sequence Length  : 10000
-Batch Size             : 298
-IO Size                : 1.12 MB
-```
-
-#### IO-Size Command
-
-The `io-size` command displays information about the I/O size requirements for a specified model configuration, helping you understand memory usage and data transfer needs.
-
-```bash
-python main.py io-size --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
-Model: DEEPSEEK_R1
-Page Size: 256.0 B
-Input Sequence Length: 10000
-Batch Size: 298
-IO Size: 1.12 MB
+python main.py kvcache --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml" --isl 10000 --page_size 512
+Model          ISL    Num Requests    Batch Size  IO Size      TP    PP    Page Size  Access
+-----------  -----  --------------  ------------  ---------  ----  ----  -----------  --------
+DEEPSEEK_R1  10000              10          1490  2.25 MB       1     8          512  block
 ```
 
 ### CTP Commands
