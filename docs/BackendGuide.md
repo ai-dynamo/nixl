@@ -44,16 +44,19 @@ For a backend to be compatible with NIXL, it must implement several key SB API m
 * Constructor: A key/value set of parameters alongside Agent name is passed to the backend.
 * Destructor: Release the remaining resources.
 
+The key/value parameters are a map of strings to byte arrays that are passed from the Agent. These can be whatever the backend needs as its initialization parameters. See the `get_backend_options` plugin API for more detail on how to specify these. 
+
 ### Capability Indicators:
 
 * supportsLocal(): Indicates if the backend supports transfers within a node
 * supportsRemote(): Indicates if the backend supports transfers across nodes
 * supportsNotif(): Indicates if the backend supports notifications
-* supportsProgressThread(): Indicates if the backend requires calls to a progress method, potentially in a separate thread
+* supportsProgressThread(): Indicates if the backend requires calls to a progress method, in case of central progress thread.
 * getSupportedMems(): Indicates memory types supported by the backend
 
-Based on the first 4 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend should have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn’t need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional. supportsProgressThread is optional for both cases.
+Based on the first 4 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend should have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn’t need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional. supportsProgressThread is optional for both cases. Additionally, a backend that supportsRemote must also support supportNotifs.
 
+Note that supportProgressThread is an indicator whether a backend can support progress thread, but does not indicate a need or lack of need for a progress thread. During init params set to a backend, enablement of progress thread is set, and if a backend cannot work without progress thread while the parameter is set to use, or vice versa, the backend creation would fail. This flag is useful for the NIXL agent in case of running in Multi-threaded mode to know which backends to check if such init parameter was passed to them. Also in future there might be a mode with a central progress method that calls progress of backends that set this flag. However, the timeline for that feature is not clear since there is a potential for contention across different backend progress threads and its benefits need to be studied.
 ### Connection Management:
 
 * connect(): Initiates connection to a remote agent.
@@ -89,7 +92,7 @@ getPublicData and loadRemoteMD are required if backend supportsRemote, and loadL
 * estimateXferCost: Given the same info as prepXfer, as well as the transfer request output from prepXfer, the backend can estimate the time of transfer, with noise margin and method of estimation. This is optional.
 * postXfer(): Posts a transfer request, meaning the backend should start the transfer. This call is asynchronous, meaning it should not wait to finish the transfer. If the transfer is really small, it’s fine to return DONE right after this call.
 * checkXfer(): Checks the status of a transfer request.
-* releaseReqH(): Releases a transfer request handle.
+* releaseReqH(): Releases a transfer request handle. Note that if you have extended the nixlBackendReqH to track request state as described above, that the NIXL agent may release that handle at a number of error cases. Because of this, this function should handle proper cancelling and teardown of requests. 
 
 Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotifications, no such notification will be asked.
 
