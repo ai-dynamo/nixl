@@ -171,9 +171,10 @@ void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
     }
 }
 
-static std::string getDefaultPluginDir() {
+static std::string
+getDefaultPluginDir() {
     Dl_info info;
-    int ret = dladdr(reinterpret_cast<void*>(&getDefaultPluginDir), &info);
+    int ret = dladdr(reinterpret_cast<void *>(&getDefaultPluginDir), &info);
     if (ret != 0) {
         NIXL_ERROR << "Failed to get plugin directory from dladdr";
         return "";
@@ -196,7 +197,8 @@ nixlPluginManager::nixlPluginManager() {
     const char* plugin_dir = getenv("NIXL_PLUGIN_DIR");
     if (plugin_dir) {
         NIXL_DEBUG << "Loading plugins from directory: " << plugin_dir;
-        plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);  // Insert at the beginning for priority
+        plugin_dirs_.insert(plugin_dirs_.begin(),
+                            plugin_dir); // Insert at the beginning for priority
         discoverPluginsFromDir(plugin_dir);
     } else {
         std::string plugin_dir = getDefaultPluginDir();
