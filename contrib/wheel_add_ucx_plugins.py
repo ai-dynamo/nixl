@@ -211,6 +211,8 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
     pkg_plugins_dir = os.path.join(pkg_libs_dir, install_dirname)
     print(f"Copying plugins from {sys_plugins_dir} to {pkg_plugins_dir}")
     copied_files = copytree(sys_plugins_dir, pkg_plugins_dir)
+    if not copied_files:
+        raise RuntimeError(f"No plugins found in {sys_plugins_dir}")
 
     # Patch all libs to load plugin deps from the wheel
     for fname in copied_files:
