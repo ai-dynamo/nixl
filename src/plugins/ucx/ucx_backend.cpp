@@ -19,7 +19,6 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
-
 #include <optional>
 #include <limits>
 #include <string.h>
@@ -42,6 +41,10 @@ namespace {
         }
     }
 }
+
+// Static member definitions
+std::unordered_set<nixlUcxEngine *> nixlUcxEngine::engineSet;
+std::mutex nixlUcxEngine::engineSetMutex;
 
 /****************************************
  * CUDA related code
@@ -639,6 +642,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
     m_cudaPrimaryCtx = std::make_shared<nixlUcxCudaDevicePrimaryCtx>();
     vramInitCtx();
     progressThreadStart();
+
+    nixlUcxEngine::addEngine(this);
 }
 
 nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
@@ -649,7 +654,17 @@ nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
 }
 
 // Through parent destructor the unregister will be called.
-nixlUcxEngine::~nixlUcxEngine() {
+nixlUcxEngine::~nixlUcxEngine () {
+    // per registered memory deregisters it, which removes the corresponding metadata too
+    // parent destructor takes care of the desc list
+    // For remote metadata, they should be removed here
+    if (this->initErr) {
+        // Nothing to do
+        return;
+    }
+
+    nixlUcxEngine::removeEngine(this);
+
     progressThreadStop();
     if (pthrOn) {
         for (const auto pthr_control_pipe : pthrControlPipe) {
@@ -1272,22 +1287,32 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
 
 void
 nixlUcxEngine::threadMapDestructor(void *arg) {
-    auto worker_info = static_cast<nixlUcxWorkerInfo *>(arg);
+    auto engine = static_cast<nixlUcxEngine *>(arg);
+
+    std::lock_guard<std::mutex> lock(nixlUcxEngine::engineSetMutex);
+    if (!nixlUcxEngine::isEngineExist(engine)) {
+        NIXL_DEBUG << "Engine not found in threadMapDestructor, engine:" << engine;
+        return;
+    }
 
     /* When a thread exits, disassociate it from the worker,
      * so that the worker could be reused by another thread.
      */
-    worker_info->engine->pushFreeWorker(worker_info->workerId);
-
-    // TODO: memory leak if engine obj is destroy before thread exit?
-    delete worker_info;
+    engine->pushFreeWorker(reinterpret_cast<size_t>(pthread_getspecific(engine->pKeyWorkerId)));
 }
 
 nixl_status_t
 nixlUcxEngine::initThreadMapping() {
-    int err = pthread_key_create(&keyThreadToWorker, threadMapDestructor);
+    int err = pthread_key_create(&pKeyEngine, threadMapDestructor);
     if (err) {
-        NIXL_ERROR << "Failed to create keyThreadToWorker, err:" << err;
+        NIXL_ERROR << "Failed to create pKeyEngine, err:" << err;
+        return NIXL_ERR_BACKEND;
+    }
+
+    err = pthread_key_create(&pKeyWorkerId, NULL);
+    if (err) {
+        NIXL_ERROR << "Failed to create pKeyWorkerId, err:" << err;
+        pthread_key_delete(pKeyEngine);
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
@@ -1295,9 +1320,14 @@ nixlUcxEngine::initThreadMapping() {
 
 void
 nixlUcxEngine::destroyThreadMapping() {
-    int err = pthread_key_delete(keyThreadToWorker);
+    int err = pthread_key_delete(pKeyEngine);
     if (err) {
-        NIXL_WARN << "Failed to delete keyThreadToWorker, err:" << err;
+        NIXL_WARN << "Failed to delete pKeyEngine, err:" << err;
+    }
+
+    err = pthread_key_delete(pKeyWorkerId);
+    if (err) {
+        NIXL_WARN << "Failed to delete pKeyWorkerId, err:" << err;
     }
 }
 
@@ -1315,9 +1345,9 @@ nixlUcxEngine::getFreeDedicatedWorkerId(size_t &worker_id) const {
 
 nixl_status_t
 nixlUcxEngine::getDedicatedWorkerId(size_t &worker_id) const {
-    auto worker_info = static_cast<nixlUcxWorkerInfo *>(pthread_getspecific(keyThreadToWorker));
-    if (worker_info != nullptr) {
-        worker_id = worker_info->workerId;
+    auto engine = static_cast<nixlUcxEngine *>(pthread_getspecific(pKeyEngine));
+    if (engine != nullptr) {
+        worker_id = reinterpret_cast<size_t>(pthread_getspecific(pKeyWorkerId));
         return NIXL_SUCCESS;
     }
 
@@ -1326,18 +1356,16 @@ nixlUcxEngine::getDedicatedWorkerId(size_t &worker_id) const {
         return status;
     }
 
-    worker_info = new nixlUcxWorkerInfo(this, worker_id);
-    if (worker_info == nullptr) {
+    int err = pthread_setspecific(pKeyWorkerId, reinterpret_cast<void *>(worker_id));
+    if (err) {
         pushFreeWorker(worker_id);
-        NIXL_ERROR << "Failed to allocate nixlUcxWorkerInfo";
+        NIXL_ERROR << "Failed to set pKeyWorkerId, workerId:" << worker_id << "err:" << err;
         return NIXL_ERR_BACKEND;
     }
-
-    int err = pthread_setspecific(keyThreadToWorker, worker_info);
+    err = pthread_setspecific(pKeyEngine, this);
     if (err) {
-        delete worker_info;
         pushFreeWorker(worker_id);
-        NIXL_ERROR << "Failed to set keyThreadToWorker, workerId:" << worker_id << "err:" << err;
+        NIXL_ERROR << "Failed to set pKeyEngine, workerId:" << worker_id << "err:" << err;
         return NIXL_ERR_BACKEND;
     }
 
