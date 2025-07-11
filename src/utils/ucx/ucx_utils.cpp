@@ -483,11 +483,10 @@ nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
     const nixlUcpWorkerParams params(ctx.mt_type);
     const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
     if(status != UCS_OK) {
-        const auto err_str = std::string("Failed to create UCX worker: ") +
-                             ucs_status_string(status);
-        NIXL_ERROR << err_str;
-        throw std::runtime_error(err_str);  // worker is nullptr -- no leak
+        throw std::runtime_error(std::string("Failed to create UCX worker: ") +
+                                 ucs_status_string(status));
     }
+
     return worker;
 }
 
@@ -502,9 +501,10 @@ std::string nixlUcxWorker::epAddr()
     wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS;
     const ucs_status_t status = ucp_worker_query(worker.get(), &wattr);
     if (UCS_OK != status) {
-        NIXL_WARN << "Unable to query UCX endpoint address";
-        return {};
+        throw std::runtime_error(std::string("Unable to query UCX worker address: ") +
+                                 ucs_status_string(status));
     }
+
     const std::string result = nixlSerDes::_bytesToString(wattr.address, wattr.address_length);
     ucp_worker_release_address(worker.get(), wattr.address);
     return result;
