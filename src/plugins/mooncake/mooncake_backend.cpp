@@ -23,6 +23,7 @@
 #include <net/if.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 std::vector<std::string> findLocalIpAddresses() {
     std::vector<std::string> ips;
@@ -256,10 +257,15 @@ nixl_status_t nixlMooncakeEngine::postXfer (const nixl_xfer_op_t &operation,
         request[index].length = local[index].len;
         request[index].target_id = segment_id;
     }
-
-    // TODO: submitTransfer will fail when the total number of requests exceeded the
-    // batch size set for this batch ID.
-    int rc = submitTransfer(engine_, priv->batch_id, request, request_count);
+    int rc = 0;
+    if (opt_args->hasNotif){
+        notify_msg_t notify_msg;
+        notify_msg.name = const_cast<char*>(local_agent_name_.c_str());
+        notify_msg.msg = const_cast<char*>(opt_args->notifMsg.c_str());
+        rc = submitTransferWithNotify (engine_, priv->batch_id, request, request_count, notify_msg);
+    }else {
+        rc = submitTransfer(engine_, priv->batch_id, request, request_count);
+    }
     delete []request;
     if (rc) {
         return NIXL_ERR_BACKEND;
@@ -298,4 +304,33 @@ nixl_status_t nixlMooncakeEngine::releaseReqH(nixlBackendReqH* handle) const
     }
     delete priv;
     return NIXL_SUCCESS;
+}
+
+nixl_status_t nixlMooncakeEngine::getNotifs(notif_list_t &notif_list){
+    if (notif_list.size()!=0)
+        return NIXL_ERR_INVALID_PARAM;
+    int size = 0;
+    notify_msg_t* notify_msgs = getNotifsFromEngine(engine_, &size);
+    for(int i = 0;i < size;i++){
+        notif_list.push_back(std::make_pair(notify_msgs[i].name,notify_msgs[i].msg));
+    }
+    free(notify_msgs);
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t nixlMooncakeEngine::genNotif(const std::string &remote_agent, const std::string &msg) const
+{
+    int segment_id;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto agent = connected_agents_.find(remote_agent);
+        if (agent == connected_agents_.end())
+            return NIXL_ERR_INVALID_PARAM;
+        segment_id = agent->second.segment_id;
+    }
+    notify_msg_t notify_msg;
+    notify_msg.name = const_cast<char*>(local_agent_name_.c_str());
+    notify_msg.msg = const_cast<char*>(msg.c_str());
+    int ret = genNotifyInEngine(engine_, segment_id, notify_msg);
+    return nixl_status_t(ret);
 }
