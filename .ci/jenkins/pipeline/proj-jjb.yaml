@@ -215,6 +215,71 @@
               tracking: true
               parent-credentials: true
       script-path: "{jjb_jenkinsfile}"
+# Template for the containers build job that handles multi-dockerfile builds
+- job-template:
+    name: "{jjb_proj}-build-test"  # Will be expanded to 'nixl-ci-build-test'
+    project-type: pipeline
+    folder: "{jjb_folder}"
+    disabled: false
+    properties:
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 50
+            num-to-keep: 20
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-build-test
+    description: Test job for multi-dockerfile matrix builds - Do NOT edit through Web GUI !
+    concurrent: true
+    sandbox: true
+    # Build job parameters
+    parameters:
+        - string:
+            name: "sha1"
+            default: "{jjb_branch}"    # Default to 'main' branch
+            description: "Commit to be checked, usually set by PR"
+        - string:
+            name: "githubData"
+            default: ""
+            description: "Variables from post"
+        - string:
+            name: "conf_file"
+            default: ".ci/jenkins/lib/build-wheel-matrix.yaml"  # Build matrix configuration
+            description: "Job config file"
+        - bool:
+            name: "build_dockers"
+            default: false
+            description: "Force rebuild docker containers"
+        - string:
+            name: "DEBUG"
+            default: 0
+            description: "Enable debug prints and traces, valid values are 0-9"
+        - string:
+            name: "UCX_VERSION"
+            default: "v1.19.x"
+            description: "UCX version to build (tag like v1.19.0, branch name, or commit hash)"
+    # SCM configuration for the test build job
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                credentials-id: ''
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                # Configure refspec to handle branches, PRs, and tags
+                refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                # Handle git submodules
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
@@ -223,10 +288,12 @@
     jjb_proj: 'nixl-ci'           # Project prefix for job names
     jjb_git: 'git@github.com:ai-dynamo/nixl.git'  # Repository URL
     jjb_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile'  # Main pipeline definition
+    jjb_folder: 'NIXL'            # Jenkins folder for organization
     jjb_branch: 'main'            # Default branch
     jjb_gh_url: 'https://github.com/ai-dynamo/nixl'  # GitHub web URL
     jobs:
-        - "{jjb_proj}-dispatcher"  # Create dispatcher job
-        - "{jjb_proj}-build"       # Create build job
-        - "{jjb_proj}-nixlbench-container-build"  # Create NIXLBench container build job
+        # - "{jjb_proj}-nixlbench-container-build"  # Create NIXLBench container build job
         # - "{jjb_proj}-test"      # Test job template (commented out)
+        # - "{jjb_proj}-dispatcher"  # Create dispatcher job
+        # - "{jjb_proj}-build"       # Create build job
+        - "{jjb_proj}-build-test"  # Create test job for multi-dockerfile builds

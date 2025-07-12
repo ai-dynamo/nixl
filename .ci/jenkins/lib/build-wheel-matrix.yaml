@@ -1,0 +1,153 @@
+# Wheel Build Matrix Configuration for NixL CI Pipeline
+#
+# This file defines the wheel building matrix using ci-demo framework.
+# It builds and caches the wheel-builder image, then uses it to build wheels
+# for different Python versions and platforms.
+
+---
+job: nixl-wheel-build
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+taskName: "wheel-${python_version}-${platform}-${arch}-ucx-${UCX_VERSION}/${axis_index}"
+
+# Registry configuration for caching built images
+registry_host: urm.nvidia.com
+registry_path: /sw-nbu-swx-nixl-docker-local/base
+registry_auth: svc-nixl-artifactory-token
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 24Gi, cpu: 8000m}"
+  requests: "{memory: 18Gi, cpu: 8000m}"
+
+# ci-demo will automatically build the wheel-builder image from Dockerfile if needed
+runs_on_dockers:
+  - {file: '.ci/dockerfiles/Dockerfile.wheel-builder', name: 'nixl-wheel-builder', tag: 'ucx-${UCX_VERSION}', arch: 'x86_64', build_args: '--build-arg ARCH=x86_64 --build-arg UCX_REF=${UCX_VERSION} --build-arg NPROC=10'}
+  - {file: '.ci/dockerfiles/Dockerfile.wheel-builder', name: 'nixl-wheel-builder', tag: 'ucx-${UCX_VERSION}', arch: 'aarch64', build_args: '--build-arg ARCH=aarch64 --build-arg UCX_REF=${UCX_VERSION} --build-arg NPROC=10'}
+
+credentials:
+  - credentialsId: 'svc-nixl-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USERNAME'
+    passwordVariable: 'ARTIFACTORY_PASSWORD'
+
+env:
+  MAIL_FROM: jenkins@nvidia.com
+  # Conservative parallelism for wheel building
+  MAKEFLAGS: "-j4"
+  # Artifactory configuration
+  ARTIFACTORY_HOST: "urm.nvidia.com"
+  ARTIFACTORY_REPO_PATH: "sw-nbu-swx-nixl-docker-local/base"
+
+matrix:
+  axes:
+    # Python versions to build wheels for
+    python_version:
+      - "3.9"
+      - "3.10"
+      - "3.11"
+      - "3.12"
+
+    # Wheel platforms
+    platform:
+      - "manylinux_2_28"
+
+    # Architecture
+    arch:
+      - x86_64
+      - aarch64
+
+steps:
+  - name: Setup Environment
+    run: |
+      echo "Building wheel for Python ${python_version} on ${platform}_${arch}"
+      df -h .
+      rm -rf build/ dist/ *.egg-info/
+
+  - name: Build and Create Wheel
+    run: |
+      # Build wheel (build tools are pre-installed in Docker image)
+      uv build --wheel --out-dir /tmp/dist --python ${python_version}
+
+      # Repair wheel with proper exclusions
+      uv run auditwheel repair \
+        --exclude libcuda.so.1 \
+        --exclude 'libssl*' \
+        --exclude 'libcrypto*' \
+        /tmp/dist/nixl-*cp3*.whl \
+        --plat "${platform}_${arch}" \
+        --wheel-dir dist
+
+      # Add UCX plugins to wheel
+      contrib/wheel_add_ucx_plugins.py --ucx-lib-dir /usr/local/lib64 dist/*.whl
+
+      echo "Final wheels created:"
+      ls -la dist/
+
+  - name: Test Wheel
+    run: |
+      # Test wheel installation
+      WHEEL=$(ls dist/nixl-*.whl | head -1)
+      uv pip install --system "$WHEEL"
+
+      # Basic import test to verify the wheel works
+      python -c "import nixl; print('NixL import successful')"
+
+      # Show wheel info for debugging
+      echo "Wheel info:"
+      uv pip show nixl
+
+  - name: Archive Artifacts
+    run: |
+      # Create structured artifact directory
+      ARTIFACT_DIR="artifacts-py${python_version}-${platform}-${arch}"
+      mkdir -p "$ARTIFACT_DIR"
+
+      # Copy wheel with descriptive naming
+      cp dist/*.whl "$ARTIFACT_DIR/"
+
+      # Create build info file for traceability
+      cat > "$ARTIFACT_DIR/build-info.txt" << EOF
+      Build timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+      Python version: ${python_version}
+      Platform: ${platform}
+      Architecture: ${arch}
+      UCX version: ${UCX_VERSION}
+      Build node: ${NODE_NAME:-unknown}
+      Build number: ${BUILD_NUMBER:-unknown}
+      EOF
+
+      echo "Artifacts created in $ARTIFACT_DIR:"
+      ls -la "$ARTIFACT_DIR/"
+
+archiveArtifacts: "artifacts-*/**"
+
+pipeline_stop:
+  shell: action
+  module: groovy
+  run: |
+    if (params.MAIL_TO) {
+        def jobStatus = currentBuild.result ?: 'SUCCESS'
+        def statusColor = jobStatus == 'SUCCESS' ? 'green' : 'red'
+
+        def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
+
+        mail(
+            from: env.MAIL_FROM,
+            to: params.MAIL_TO,
+            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
+            mimeType: 'text/html',
+            body: """
+                <p>Started by: <b>${userName}</b></p>
+                <p>Status: <span style="color: ${statusColor};"><b>${jobStatus}</b></span></p>
+                <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
+                <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+                <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
+                <p>Matrix Config: Python ${python_version}, Platform ${platform}, Architecture ${arch}</p>
+            """
+        )
+    }
