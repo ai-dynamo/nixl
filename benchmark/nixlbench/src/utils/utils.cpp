@@ -26,6 +26,9 @@
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
+#include "nlohmann/json.hpp"
+using json = nlohmann::json;
+#include <fstream>
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
@@ -63,6 +66,7 @@ DEFINE_int32 (
     " (Default: 1)");
 DEFINE_int32(num_initiator_dev, 1, "Number of device in initiator process");
 DEFINE_int32(num_target_dev, 1, "Number of device in target process");
+
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 DEFINE_bool(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 
@@ -83,6 +87,13 @@ DEFINE_string(device_list, "all", "Comma-separated device name to use for \
 DEFINE_string(etcd_endpoints, "http://localhost:2379", "ETCD server endpoints for communication");
 
 // POSIX options - only used when backend is POSIX
+
+DEFINE_string(posix_api_type, XFERBENCH_POSIX_API_AIO, "API type for POSIX operations [AIO, URING] (only used with POSIX backend)");
+DEFINE_string(posix_filepath, "", "File path for POSIX operations (only used with POSIX backend)");
+DEFINE_bool(storage_enable_direct, false, "Enable direct I/O for storage operations (only used with POSIX backend)");
+DEFINE_string(output_format, "text", "Output format for benchmark results [text, json]");
+DEFINE_string(output_json_file, "", "Path to write JSON result output (optional)");
+=======
 DEFINE_string (posix_api_type,
                XFERBENCH_POSIX_API_AIO,
                "API type for POSIX operations [AIO, URING] (only used with POSIX backend)");
@@ -122,10 +133,14 @@ int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::filepath = "";
 bool xferBenchConfig::storage_enable_direct = false;
+std::string xferBenchConfig::output_format = "";
+std::string xferBenchConfig::output_json_file = "";
+std::vector<std::string> xferBenchConfig::warning_logs = {};
 
 int xferBenchConfig::loadFromFlags() {
     runtime_type = FLAGS_runtime_type;
     worker_type = FLAGS_worker_type;
+    output_json_file = FLAGS_output_json_file;
 
     // Only load NIXL-specific configurations if using NIXL worker
     if (worker_type == XFERBENCH_WORKER_NIXL) {
@@ -145,6 +160,8 @@ int xferBenchConfig::loadFromFlags() {
             gds_batch_pool_size = FLAGS_gds_batch_pool_size;
             gds_batch_limit = FLAGS_gds_batch_limit;
             storage_enable_direct = FLAGS_storage_enable_direct;
+            gds_batch_pool_size = FLAGS_gds_batch_pool_size;
+            gds_batch_limit = FLAGS_gds_batch_limit;
         }
 
         // Load POSIX-specific configurations if backend is POSIX
@@ -237,15 +254,29 @@ int xferBenchConfig::loadFromFlags() {
     int partition = (num_threads * LARGE_BLOCK_SIZE_ITER_FACTOR);
     if (num_iter % partition) {
         num_iter += partition - (num_iter % partition);
-        std::cout << "WARNING: Adjusting num_iter to " << num_iter
-                  << " to allow equal distribution to " << num_threads << " threads"
-                  << std::endl;
+        if(xferBenchConfig::output_format != "json") {
+            std::cout << "WARNING: Adjusting num_iter to " << num_iter
+                      << " to allow equal distribution to " << num_threads << " threads"
+                      << std::endl;
+        }
+        else{
+            std::ostringstream oss;
+            oss << "Adjusting num_iter to " << num_iter << " to allow equal distribution to " << num_threads << " threads";
+            xferBenchConfig::warning_logs.push_back(oss.str());
+        }
     }
     if (warmup_iter % partition) {
         warmup_iter += partition - (warmup_iter % partition);
-        std::cout << "WARNING: Adjusting warmup_iter to " << warmup_iter
-                  << " to allow equal distribution to " << num_threads << " threads"
-                  << std::endl;
+        if(xferBenchConfig::output_format != "json") {
+            std::cout << "WARNING: Adjusting warmup_iter to " << warmup_iter
+                      << " to allow equal distribution to " << num_threads << " threads"
+                      << std::endl;
+        }
+        else{
+            std::ostringstream oss2;
+            oss2 << "Adjusting warmup_iter to " << warmup_iter << " to allow equal distribution to " << num_threads << " threads";
+            xferBenchConfig::warning_logs.push_back(oss2.str());
+        }
     }
     partition = (num_initiator_dev * num_threads);
     if (total_buffer_size % partition) {
@@ -271,6 +302,9 @@ xferBenchConfig::printOption (const std::string &desc, const std::string &value)
 }
 
 void xferBenchConfig::printConfig() {
+    if (xferBenchConfig::output_format == "json") {
+        return;
+    }
     std::cout << std::string(70, '*') << std::endl;
     std::cout << "NIXLBench Configuration" << std::endl;
     std::cout << std::string(70, '*') << std::endl;
@@ -474,6 +508,9 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
 }
 
 void xferBenchUtils::printStatsHeader() {
+    if (xferBenchConfig::output_format == "json") {
+        return;
+    }
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         std::cout << std::left << std::setw(20) << "Block Size (B)"
                   << std::setw(15) << "Batch Size"
@@ -538,6 +575,40 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     }
 
     // Tabulate print with fixed width for each string
+    if (IS_PAIRWISE_AND_SG() && rt->getRank() != 0) {
+        return;
+    }
+
+    if (xferBenchConfig::output_format == "json") {
+    json result;
+    result["block_size"] = block_size;
+    result["batch_size"] = batch_size;
+    result["avg_latency_us"] = avg_latency;
+    result["throughput_mib"] = throughput;
+    result["throughput_gib"] = throughput_gib;
+    result["throughput_gb"] = throughput_gb;
+    if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
+        result["aggregate_bw_gb"] = totalbw;
+        result["network_util_percent"] = (totalbw / (rt->getSize()/2 * MAXBW))*100;
+    }
+    json final_json;
+    final_json["configuration"] = xferBenchConfig::to_json();
+    final_json["results"] = result;
+    final_json["warnings"] = xferBenchConfig::warning_logs;
+
+    if (!xferBenchConfig::output_json_file.empty()) {
+        std::ofstream out(xferBenchConfig::output_json_file, std::ios::app);
+        if (!out) {
+            std::cerr << "Failed to open JSON output file: " << xferBenchConfig::output_json_file << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        out << final_json.dump() << std::endl;
+    } else {
+        std::cout.clear();
+        std::cout << final_json.dump() << std::endl;
+    }
+    return;
+}
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         std::cout << std::left << std::setw(20) << block_size
                   << std::setw(15) << batch_size
@@ -557,4 +628,51 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
                   << std::setw(15) << throughput_gb
                   << std::endl;
     }
+}
+
+json xferBenchConfig::to_json() {
+    json configJson;
+
+    configJson["runtime"] = {
+        {"type", runtime_type},
+        {"etcd_endpoints", etcd_endpoints}
+    };
+
+    configJson["worker"] = {
+        {"type", worker_type},
+        {"num_threads", num_threads}
+    };
+
+    configJson["storage"] = {
+        {"backend", backend},
+        {"enable_pt", enable_pt},
+        {"device_list", device_list},
+        {"total_buffer_size", total_buffer_size},
+        {"posix_api_type", posix_api_type},
+        {"posix_filepath", posix_filepath},
+        {"storage_enable_direct", storage_enable_direct},
+        {"num_files", num_files}
+    };
+
+    configJson["memory"] = {
+        {"initiator_seg_type", initiator_seg_type},
+        {"target_seg_type", target_seg_type},
+        {"num_initiator_dev", num_initiator_dev},
+        {"num_target_dev", num_target_dev}
+    };
+
+    configJson["workload"] = {
+        {"scheme", scheme},
+        {"mode", mode},
+        {"op_type", op_type},
+        {"check_consistency", check_consistency},
+        {"start_block_size", start_block_size},
+        {"max_block_size", max_block_size},
+        {"start_batch_size", start_batch_size},
+        {"max_batch_size", max_batch_size},
+        {"num_iter", num_iter},
+        {"warmup_iter", warmup_iter}
+    };
+
+    return configJson;
 }

@@ -91,9 +91,11 @@ xferBenchEtcdRT::setup() {
         return -1;
     }
     std::cout << "ETCD Runtime: Registered as rank " << my_rank
+        << " item " << my_rank + 1 << " of "
+        << global_size << std::endl;
+
 	      << " item " << my_rank + 1 << " of "
 	      << global_size << std::endl;
-
     return 0;
 }
 

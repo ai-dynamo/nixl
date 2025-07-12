@@ -29,6 +29,9 @@
 #include <unistd.h>
 #include <memory>
 #include <csignal>
+#include "nlohmann/json.hpp"
+using json = nlohmann::json;
+DECLARE_string(output_format);
 
 static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int num_threads) {
     int initiator_device, target_device;
@@ -178,6 +181,12 @@ static std::unique_ptr<xferBenchWorker> createWorker(int *argc, char ***argv) {
 
 int main(int argc, char *argv[]) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
+
+    xferBenchConfig::output_format = FLAGS_output_format;
+
+    if (xferBenchConfig::output_format == "json") {
+        std::cout.setstate(std::ios_base::failbit);
+    }
 
     int ret = xferBenchConfig::loadFromFlags();
     if (0 != ret) {
