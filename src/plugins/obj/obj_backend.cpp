@@ -146,6 +146,8 @@ nixlObjEngine::registerMem(const nixlBlobDesc &mem,
             nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo);
         devIdToObjKey_[mem.devId] = obj_md->objKey;
         out = obj_md.release();
+    } else {
+        out = nullptr;
     }
 
     return NIXL_SUCCESS;
