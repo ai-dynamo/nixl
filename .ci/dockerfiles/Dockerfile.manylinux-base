@@ -1,0 +1,211 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+ARG BASE_IMAGE
+ARG BASE_IMAGE_TAG
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+
+ARG ARCH="x86_64"
+ARG GRPC_VERSION=1.73.0
+ARG CPPRESTSDK_VERSION=2.10.19
+ARG OPENSSL_VERSION=3.0.16
+ARG GDRCOPY_VERSION=2.5
+ARG UCX_REF="v1.19.x"
+ARG NPROC=8
+
+RUN yum groupinstall -y 'Development Tools' &&  \
+    dnf install -y almalinux-release-synergy && \
+    dnf config-manager --set-enabled powertools && \
+    dnf install -y \
+    boost \
+    boost-devel \
+    clang-devel \
+    cmake \
+    distribution-gpg-keys-copr \
+    dkms \
+    flex \
+    gcc-c++ \
+    gflags \
+    glibc-headers \
+    libaio \
+    libaio-devel \
+    libibmad \
+    libibmad-devel \
+    libibverbs \
+    libibverbs-devel \
+    librdmacm-devel \
+    libtool-ltdl \
+    ninja-build \
+    numactl-devel \
+    openssl \
+    openssl-devel \
+    protobuf-c-devel \
+    protobuf-compiler \
+    protobuf-devel \
+    rdma-core \
+    rdma-core-devel \
+    wget \
+    zlib && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+# Install dependencies for OpenSSL 3.x
+RUN yum install -y perl-IPC-Cmd perl-Test-Simple perl-Data-Dumper && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+# Build OpenSSL 3.x
+RUN cd /tmp && \
+    wget -q https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz && \
+    tar -xzf openssl-${OPENSSL_VERSION}.tar.gz && \
+    cd openssl-${OPENSSL_VERSION} && \
+    ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3 \
+    shared zlib linux-x86_64 && \
+    make -j${NPROC} && \
+    make install_sw && \
+    echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
+    ldconfig && \
+    rm -rf /tmp/openssl-${OPENSSL_VERSION}* && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+# Set environment variables to use the new OpenSSL
+ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:$PKG_CONFIG_PATH"
+ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:$LD_LIBRARY_PATH"
+ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
+ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64"
+ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
+
+RUN cd /tmp && \
+    git clone --recurse-submodules -b v${GRPC_VERSION} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+    cd grpc && \
+    mkdir -p cmake/build && \
+    cd cmake/build && \
+    cmake -DgRPC_INSTALL=ON \
+    -DgRPC_BUILD_TESTS=OFF \
+    -DBUILD_SHARED_LIBS=ON \
+    -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DgRPC_SSL_PROVIDER=package ../.. && \
+    make -j${NPROC} && \
+    make install && \
+    cd - && \
+    rm -rf /tmp/grpc* && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+RUN cd /tmp && git clone https://github.com/microsoft/cpprestsdk.git && \
+    cd cpprestsdk && \
+    git checkout v${CPPRESTSDK_VERSION} && \
+    mkdir build && cd build && \
+    git submodule update --init && \
+    cmake .. -DCPPREST_EXCLUDE_WEBSOCKETS=ON  && \
+    make -j${NPROC} && make install && \
+    cd - && \
+    rm -rf /tmp/cpprestsdk* && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
+
+RUN cd /tmp && \
+    git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+    cd etcd-cpp-apiv3 && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make -j${NPROC} && \
+    make install && \
+    cd - && \
+    rm -rf /tmp/etcd-cpp-apiv3* && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH \
+    RUST_VERSION=1.86.0 \
+    RUSTARCH=${ARCH}-unknown-linux-gnu
+
+RUN cd /tmp && wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" && \
+    echo "a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f *rustup-init" | sha256sum -c - && \
+    chmod +x rustup-init && \
+    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
+    rm rustup-init && \
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME && \
+    cd - && \
+    rm -rf /tmp/rustup* && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+ENV CUDA_PATH=/usr/local/cuda
+
+# Install gdrcopy
+RUN cd /tmp && \
+    git clone https://github.com/NVIDIA/gdrcopy.git && \
+    cd gdrcopy/packages && \
+    git checkout v${GDRCOPY_VERSION} && \
+    CUDA=/usr/local/cuda ./build-rpm-packages.sh && \
+    rpm -Uvh gdrcopy-kmod-${GDRCOPY_VERSION}-1dkms.el8.noarch.rpm && \
+    rpm -Uvh gdrcopy-${GDRCOPY_VERSION}-1.el8.x86_64.rpm && \
+    rpm -Uvh gdrcopy-devel-${GDRCOPY_VERSION}-1.el8.noarch.rpm && \
+    cd - && \
+    rm -rf /tmp/gdrcopy* && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+# Install ucx
+RUN rm -rf /usr/lib/ucx && \
+    rm -rf /opt/hpcx/ucx && \
+    cd /tmp && \
+    git clone https://github.com/openucx/ucx.git && \
+    cd ucx && \
+    git checkout $UCX_REF && \
+    ./autogen.sh && \
+    ./configure \
+        --prefix=/usr/local/ucx     \
+        --enable-shared             \
+        --disable-static            \
+        --disable-doxygen-doc       \
+        --enable-optimizations      \
+        --enable-cma                \
+        --enable-devel-headers      \
+        --with-cuda=/usr/local/cuda \
+        --with-verbs                \
+        --with-dm                   \
+        --with-gdrcopy=/usr/local   \
+        --with-efa                  \
+        --enable-mt &&              \
+    make -j${NPROC} && \
+    make install-strip && \
+    ldconfig && \
+    echo "/usr/local/ucx/lib" > /etc/ld.so.conf.d/ucx.conf && \
+    rm -rf /tmp/ucx* && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+LABEL org.opencontainers.image.source=https://github.com/NVIDIA/nixl
+LABEL org.opencontainers.image.description="NIXL is a library for NVIDIA InfiniBand X."
+LABEL org.opencontainers.image.licenses=Apache-2.0
+LABEL org.opencontainers.image.authors="NVIDIA CORPORATION"
+LABEL org.opencontainers.image.vendor="NVIDIA CORPORATION"
+LABEL org.opencontainers.image.title="NIXL"
+LABEL org.opencontainers.image.version="${BASE_IMAGE_TAG}"
+LABEL org.opencontainers.image.url="https://github.com/NVIDIA/nixl"
+LABEL org.opencontainers.image.documentation="https://github.com/NVIDIA/nixl"
