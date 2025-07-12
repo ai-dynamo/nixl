@@ -21,6 +21,8 @@ set -x
 # and second argument being the UCX installation directory.
 INSTALL_DIR=$1
 UCX_INSTALL_DIR=$2
+# UCX_VERSION is the version of UCX to build override default with env variable.
+UCX_VERSION=${UCX_VERSION:-v1.18.0}
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -31,8 +33,15 @@ if [ -z "$UCX_INSTALL_DIR" ]; then
     UCX_INSTALL_DIR=$INSTALL_DIR
 fi
 
-apt-get -qq update
-apt-get -qq install -y curl \
+# For running as user - check if running as root, if not set sudo variable
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO=sudo
+else
+    SUDO=""
+fi
+
+$SUDO apt-get -qq update
+$SUDO apt-get -qq install -y curl \
                              libnuma-dev \
                              numactl \
                              autotools-dev \
@@ -69,12 +78,12 @@ apt-get -qq install -y curl \
                              libibmad-dev \
                              doxygen
 
-curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
+curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
   ./autogen.sh && \
   ./configure \
-          --prefix=${UCX_INSTALL_DIR} \
+          --prefix="${UCX_INSTALL_DIR}" \
           --enable-shared \
           --disable-static \
           --disable-doxygen-doc \
@@ -86,7 +95,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
           --enable-mt && \
         make -j && \
         make -j install-strip && \
-        ldconfig \
+        $SUDO ldconfig \
 )
 
 export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
