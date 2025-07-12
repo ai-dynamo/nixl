@@ -22,7 +22,7 @@
 static const char* PLUGIN_NAME = "Mooncake";
 static const char* PLUGIN_VERSION = "0.1.0";
 
-// Function to create a new UCX backend engine instance
+// Function to create a new Mooncake backend engine instance
 static nixlBackendEngine* create_mooncake_engine(const nixlBackendInitParams* init_params) {
     return new nixlMooncakeEngine(init_params);
 }
@@ -67,9 +67,10 @@ static nixlBackendPlugin plugin = {
     get_backend_mems
 };
 
-#ifdef STATIC_PLUGIN_UCX
+#ifdef STATIC_PLUGIN_MOONCAKE
 
-nixlBackendPlugin* createStaticUcxPlugin() {
+nixlBackendPlugin *
+createStaticMooncakePlugin() {
     return &plugin; // Return the static plugin instance
 }
 
