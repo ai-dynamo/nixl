@@ -98,51 +98,55 @@
 #define XFERBENCH_WORKER_NIXL     "nixl"
 #define XFERBENCH_WORKER_NVSHMEM  "nvshmem"
 
-#define IS_PAIRWISE_AND_SG() (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
-                              XFERBENCH_MODE_SG == xferBenchConfig::mode)
-#define IS_PAIRWISE_AND_MG() (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
-                              XFERBENCH_MODE_MG == xferBenchConfig::mode)
-class xferBenchConfig {
-    public:
-        static std::string runtime_type;
-        static std::string worker_type;
-        static std::string backend;
-        static std::string initiator_seg_type;
-        static std::string target_seg_type;
-        static std::string scheme;
-        static std::string mode;
-        static std::string op_type;
-        static bool check_consistency;
-        static size_t total_buffer_size;
-        static int num_initiator_dev;
-        static int num_target_dev;
-        static size_t start_block_size;
-        static size_t max_block_size;
-        static size_t start_batch_size;
-        static size_t max_batch_size;
-        static int num_iter;
-        static int warmup_iter;
-        static int num_threads;
-        static bool enable_pt;
-        static std::string device_list;
-        static std::string etcd_endpoints;
-        static std::string filepath;
-        static bool enable_vmm;
-        static int num_files;
-        static std::string posix_api_type;
-        static bool storage_enable_direct;
-        static int gds_batch_pool_size;
-        static int gds_batch_limit;
-        static std::string gpunetio_device_list;
+#define IS_PAIRWISE_AND_SG()                                  \
+    (XFERBENCH_SCHEME_PAIRWISE == xfer_bench_config.scheme && \
+     XFERBENCH_MODE_SG == xfer_bench_config.mode)
+#define IS_PAIRWISE_AND_MG()                                  \
+    (XFERBENCH_SCHEME_PAIRWISE == xfer_bench_config.scheme && \
+     XFERBENCH_MODE_MG == xfer_bench_config.mode)
+struct xferBenchConfig {
+    std::string runtime_type;
+    std::string worker_type;
+    std::string backend;
+    std::string initiator_seg_type;
+    std::string target_seg_type;
+    std::string scheme;
+    std::string mode;
+    std::string op_type;
+    bool check_consistency{false};
+    size_t total_buffer_size{0};
+    int num_initiator_dev{0};
+    int num_target_dev{0};
+    size_t start_block_size{0};
+    size_t max_block_size{0};
+    size_t start_batch_size{0};
+    size_t max_batch_size{0};
+    int num_iter{0};
+    int warmup_iter{0};
+    int num_threads{0};
+    bool enable_pt{false};
+    std::string device_list;
+    std::string etcd_endpoints;
+    std::string filepath;
+    bool enable_vmm{false};
+    int num_files{0};
+    std::string posix_api_type;
+    bool storage_enable_direct{false};
+    int gds_batch_pool_size{0};
+    int gds_batch_limit{0};
+    std::string gpunetio_device_list;
 
-        static int loadFromFlags();
-        static void printConfig();
-        static void
-        printOption (const std::string &desc, const std::string &value);
-        static std::vector<std::string> parseDeviceList();
-        static bool
-        isStorageBackend();
+    int
+    loadFromFlags();
+    void
+    printConfig() const;
+    std::vector<std::string>
+    parseDeviceList() const;
+    bool
+    isStorageBackend() const;
 };
+
+extern xferBenchConfig xfer_bench_config;
 
 // Generic IOV descriptor class independent of NIXL
 class xferBenchIOV {
