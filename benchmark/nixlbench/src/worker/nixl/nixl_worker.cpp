@@ -35,49 +35,47 @@
 #include <omp.h>
 
 
-#define ROUND_UP(value, granularity) ((((value) + (granularity) - 1) / (granularity)) * (granularity))
+#define ROUND_UP(value, granularity) \
+    ((((value) + (granularity) - 1) / (granularity)) * (granularity))
 
 static uintptr_t gds_running_ptr = 0x0;
 static std::vector<std::vector<xferBenchIOV>> gds_remote_iovs;
 static std::vector<std::vector<xferBenchIOV>> storage_remote_iovs;
 
-#define CHECK_NIXL_ERROR(result, message)                                         \
-    do {                                                                          \
-        if (0 != result) {                                                        \
-            std::cerr << "NIXL: " << message << " (Error code: " << result        \
-                      << ")" << std::endl;                                        \
-            exit(EXIT_FAILURE);                                                   \
-        }                                                                         \
-    } while(0)
+#define CHECK_NIXL_ERROR(result, message)                                                       \
+    do {                                                                                        \
+        if (0 != result) {                                                                      \
+            std::cerr << "NIXL: " << message << " (Error code: " << result << ")" << std::endl; \
+            exit(EXIT_FAILURE);                                                                 \
+        }                                                                                       \
+    } while (0)
 
 #if HAVE_CUDA
-    #define HANDLE_VRAM_SEGMENT(_seg_type)                                        \
-        _seg_type = VRAM_SEG;
+#define HANDLE_VRAM_SEGMENT(_seg_type) _seg_type = VRAM_SEG;
 #else
-    #define HANDLE_VRAM_SEGMENT(_seg_type)                                        \
-        std::cerr << "VRAM segment type not supported without CUDA" << std::endl; \
-        std::exit(EXIT_FAILURE);
+#define HANDLE_VRAM_SEGMENT(_seg_type)                                        \
+    std::cerr << "VRAM segment type not supported without CUDA" << std::endl; \
+    std::exit(EXIT_FAILURE);
 #endif
 
-#define GET_SEG_TYPE(is_initiator)                                                \
-    ({                                                                            \
-        std::string _seg_type_str = ((is_initiator) ?                             \
-                                     xferBenchConfig::initiator_seg_type :        \
-                                     xferBenchConfig::target_seg_type);           \
-        nixl_mem_t _seg_type;                                                     \
-        if (0 == _seg_type_str.compare("DRAM")) {                                 \
-            _seg_type = DRAM_SEG;                                                 \
-        } else if (0 == _seg_type_str.compare("VRAM")) {                          \
-            HANDLE_VRAM_SEGMENT(_seg_type);                                       \
-        } else {                                                                  \
-            std::cerr << "Invalid segment type: "                                 \
-                        << _seg_type_str << std::endl;                            \
-            exit(EXIT_FAILURE);                                                   \
-        }                                                                         \
-        _seg_type;                                                                \
+#define GET_SEG_TYPE(is_initiator)                                                          \
+    ({                                                                                      \
+        std::string _seg_type_str = ((is_initiator) ? xferBenchConfig::initiator_seg_type : \
+                                                      xferBenchConfig::target_seg_type);    \
+        nixl_mem_t _seg_type;                                                               \
+        if (0 == _seg_type_str.compare("DRAM")) {                                           \
+            _seg_type = DRAM_SEG;                                                           \
+        } else if (0 == _seg_type_str.compare("VRAM")) {                                    \
+            HANDLE_VRAM_SEGMENT(_seg_type);                                                 \
+        } else {                                                                            \
+            std::cerr << "Invalid segment type: " << _seg_type_str << std::endl;            \
+            exit(EXIT_FAILURE);                                                             \
+        }                                                                                   \
+        _seg_type;                                                                          \
     })
 
-xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices) : xferBenchWorker(argc, argv) {
+xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices)
+    : xferBenchWorker(argc, argv) {
     seg_type = GET_SEG_TYPE(isInitiator());
 
     int rank;
@@ -96,10 +94,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     agent->getAvailPlugins(plugins);
 
-    if (0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_UCX_MO) ||
-        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_GPUNETIO) ||
-        0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_MOONCAKE) ||
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
         xferBenchConfig::isStorageBackend()) {
         backend_name = xferBenchConfig::backend;
     } else {
@@ -110,7 +108,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     agent->getPluginParams(backend_name, mems, backend_params);
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)){
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
         // No need to set device_list if all is specified
         // fallback to backend preference
         if (devices[0] != "all" && devices.size() >= 1) {
@@ -128,13 +126,13 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         }
 
         if (gethostname(hostname, 256)) {
-           std::cerr << "Failed to get hostname" << std::endl;
-           exit(EXIT_FAILURE);
+            std::cerr << "Failed to get hostname" << std::endl;
+            exit(EXIT_FAILURE);
         }
 
-        std::cout << "Init nixl worker, dev " << (("all" == devices[0]) ? "all" : backend_params["device_list"])
-                  << " rank " << rank << ", type " << name << ", hostname "
-                  << hostname << std::endl;
+        std::cout << "Init nixl worker, dev "
+                  << (("all" == devices[0]) ? "all" : backend_params["device_list"]) << " rank "
+                  << rank << ", type " << name << ", hostname " << hostname << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)) {
         // Using default param values for GDS backend
         std::cout << "GDS backend" << std::endl;
@@ -151,14 +149,16 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             backend_params["use_aio"] = false;
             backend_params["use_uring"] = true;
         }
-        std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type << std::endl;
+        std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
+                  << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
-        std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device " << xferBenchConfig::gpunetio_device_list << std::endl;
+        std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
+                  << xferBenchConfig::gpunetio_device_list << std::endl;
         backend_params["network_devices"] = devices[0];
         backend_params["gpu_devices"] = xferBenchConfig::gpunetio_device_list;
-    } else if (0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_MOONCAKE)) {
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
         std::cout << "Mooncake backend" << std::endl;
-    } else if (0 == xferBenchConfig::backend.compare (XFERBENCH_BACKEND_HF3FS)) {
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
         // Using default param values for HF3FS backend
         std::cout << "HF3FS backend" << std::endl;
     } else {
@@ -177,8 +177,8 @@ xferBenchNixlWorker::~xferBenchNixlWorker() {
 }
 
 // Convert vector of xferBenchIOV to nixl_reg_dlist_t
-static void iovListToNixlRegDlist(const std::vector<xferBenchIOV> &iov_list,
-                                 nixl_reg_dlist_t &dlist) {
+static void
+iovListToNixlRegDlist(const std::vector<xferBenchIOV> &iov_list, nixl_reg_dlist_t &dlist) {
     nixlBlobDesc desc;
     for (const auto &iov : iov_list) {
         desc.addr = iov.addr;
@@ -189,7 +189,8 @@ static void iovListToNixlRegDlist(const std::vector<xferBenchIOV> &iov_list,
 }
 
 // Convert nixl_xfer_dlist_t to vector of xferBenchIOV
-static std::vector<xferBenchIOV> nixlXferDlistToIOVList(const nixl_xfer_dlist_t &dlist) {
+static std::vector<xferBenchIOV>
+nixlXferDlistToIOVList(const nixl_xfer_dlist_t &dlist) {
     std::vector<xferBenchIOV> iov_list;
     for (const auto &desc : dlist) {
         iov_list.emplace_back(desc.addr, desc.len, desc.devId);
@@ -198,8 +199,8 @@ static std::vector<xferBenchIOV> nixlXferDlistToIOVList(const nixl_xfer_dlist_t 
 }
 
 // Convert vector of xferBenchIOV to nixl_xfer_dlist_t
-static void iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list,
-                                  nixl_xfer_dlist_t &dlist) {
+static void
+iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list, nixl_xfer_dlist_t &dlist) {
     nixlBasicDesc desc;
     for (const auto &iov : iov_list) {
         desc.addr = iov.addr;
@@ -209,7 +210,8 @@ static void iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list,
     }
 }
 
-std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
+std::optional<xferBenchIOV>
+xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     void *addr;
 
     addr = calloc(1, buffer_size);
@@ -230,18 +232,16 @@ std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescDram(size_t buffer
 
 #if HAVE_CUDA
 static std::optional<xferBenchIOV>
-getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value)
-{
+getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value) {
     void *addr;
     CHECK_CUDA_ERROR(cudaMalloc(&addr, buffer_size), "Failed to allocate CUDA buffer");
-    CHECK_CUDA_ERROR(cudaMemset(addr, memset_value, buffer_size), "Failed to set device memory" );
+    CHECK_CUDA_ERROR(cudaMemset(addr, memset_value, buffer_size), "Failed to set device memory");
 
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
 
 static std::optional<xferBenchIOV>
-getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value)
-{
+getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
 #if HAVE_CUDA_FABRIC
     CUdeviceptr addr = 0;
     CUmemAllocationProp prop = {};
@@ -255,9 +255,9 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value)
 
     // Get the allocation granularity
     size_t granularity = 0;
-    CHECK_CUDA_DRIVER_ERROR(cuMemGetAllocationGranularity(&granularity,
-                            &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM),
-                            "Failed to get allocation granularity");
+    CHECK_CUDA_DRIVER_ERROR(
+        cuMemGetAllocationGranularity(&granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM),
+        "Failed to get allocation granularity");
     std::cout << "Granularity: " << granularity << std::endl;
 
     size_t padded_size = ROUND_UP(buffer_size, granularity);
@@ -266,31 +266,27 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value)
                             "Failed to create allocation");
 
     // Reserve the memory address
-    CHECK_CUDA_DRIVER_ERROR(cuMemAddressReserve(&addr, padded_size,
-                                                granularity, 0, 0),
+    CHECK_CUDA_DRIVER_ERROR(cuMemAddressReserve(&addr, padded_size, granularity, 0, 0),
                             "Failed to reserve address");
 
     // Map the memory
-    CHECK_CUDA_DRIVER_ERROR(cuMemMap(addr, padded_size, 0, handle, 0),
-                            "Failed to map memory");
+    CHECK_CUDA_DRIVER_ERROR(cuMemMap(addr, padded_size, 0, handle, 0), "Failed to map memory");
 
-    std::cout << "Address: " << std::hex << std::showbase << addr
-              << " Buffer size: " << std::dec << buffer_size
-              << " Padded size: " << std::dec << padded_size << std::endl;
+    std::cout << "Address: " << std::hex << std::showbase << addr << " Buffer size: " << std::dec
+              << buffer_size << " Padded size: " << std::dec << padded_size << std::endl;
 
     // Set the memory access rights
     access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
     access.location.id = devid;
     access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-    CHECK_CUDA_DRIVER_ERROR(cuMemSetAccess(addr, buffer_size, &access, 1),
-                            "Failed to set access");
+    CHECK_CUDA_DRIVER_ERROR(cuMemSetAccess(addr, buffer_size, &access, 1), "Failed to set access");
 
     // Set memory content based on role
     CHECK_CUDA_DRIVER_ERROR(cuMemsetD8(addr, memset_value, buffer_size),
                             "Failed to set VMM device memory");
 
-    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size,
-                                       devid, padded_size, handle);
+    return std::optional<xferBenchIOV>(
+        std::in_place, (uintptr_t)addr, buffer_size, devid, padded_size, handle);
 
 #else
     std::cerr << "CUDA_FABRIC is not supported" << std::endl;
@@ -298,12 +294,11 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value)
 #endif /* HAVE_CUDA_FABRIC */
 }
 
-static std::optional<xferBenchIOV> getVramDesc(int devid, size_t buffer_size,
-                                               bool isInit)
-{
+static std::optional<xferBenchIOV>
+getVramDesc(int devid, size_t buffer_size, bool isInit) {
     CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
-    uint8_t memset_value = isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT :
-                                    XFERBENCH_TARGET_BUFFER_ELEMENT;
+    uint8_t memset_value =
+        isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
 
     if (xferBenchConfig::enable_vmm) {
         return getVramDescCudaVmm(devid, buffer_size, memset_value);
@@ -312,7 +307,8 @@ static std::optional<xferBenchIOV> getVramDesc(int devid, size_t buffer_size,
     }
 }
 
-std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
+std::optional<xferBenchIOV>
+xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
     if (IS_PAIRWISE_AND_SG()) {
         int devid = rt->getRank();
 
@@ -330,14 +326,14 @@ std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescVram(size_t buffer
 #endif /* HAVE_CUDA */
 
 static std::vector<int>
-createFileFds (std::string name) {
+createFileFds(std::string name) {
     std::vector<int> fds;
     int flags = O_RDWR | O_CREAT;
     int num_files = xferBenchConfig::num_files;
 
     if (!xferBenchConfig::isStorageBackend()) {
         std::cerr << "Unknown storage backend: " << xferBenchConfig::backend << std::endl;
-        exit (EXIT_FAILURE);
+        exit(EXIT_FAILURE);
     }
 
     if (xferBenchConfig::storage_enable_direct) {
@@ -348,7 +344,7 @@ createFileFds (std::string name) {
         xferBenchConfig::filepath :
         std::filesystem::current_path().string();
     std::string file_backend = xferBenchConfig::backend;
-    std::transform (file_backend.begin(), file_backend.end(), file_backend.begin(), ::tolower);
+    std::transform(file_backend.begin(), file_backend.end(), file_backend.begin(), ::tolower);
     const std::string file_name_prefix = "/nixlbench_" + file_backend + "_test_file_";
 
     for (int i = 0; i < num_files; i++) {
@@ -356,8 +352,8 @@ createFileFds (std::string name) {
         std::cout << "Creating " << " file: " << file_name << std::endl;
         int fd = open(file_name.c_str(), flags, 0744);
         if (fd < 0) {
-            std::cerr << "Failed to open file: " << file_name << " with error: "
-                      << strerror(errno) << std::endl;
+            std::cerr << "Failed to open file: " << file_name << " with error: " << strerror(errno)
+                      << std::endl;
             for (int j = 0; j < i; j++) {
                 close(fds[j]);
             }
@@ -368,21 +364,22 @@ createFileFds (std::string name) {
     return fds;
 }
 
-std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id) {
-    auto ret = std::optional<xferBenchIOV>(std::in_place, (uintptr_t)gds_running_ptr, buffer_size, fd);
+std::optional<xferBenchIOV>
+xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id) {
+    auto ret =
+        std::optional<xferBenchIOV>(std::in_place, (uintptr_t)gds_running_ptr, buffer_size, fd);
     // Fill up with data
     void *buf = (void *)malloc(buffer_size);
     if (!buf) {
-        std::cerr << "Failed to allocate " << buffer_size
-                  << " bytes of memory" << std::endl;
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
         return std::nullopt;
     }
     // File is always initialized with XFERBENCH_TARGET_BUFFER_ELEMENT
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
     int rc = pwrite(fd, buf, buffer_size, gds_running_ptr);
     if (rc < 0) {
-        std::cerr << "Failed to write to file: " << fd
-                  << " with error: " << strerror(errno) << std::endl;
+        std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
+                  << std::endl;
         return std::nullopt;
     }
     free(buf);
@@ -392,33 +389,34 @@ std::optional<xferBenchIOV> xferBenchNixlWorker::initBasicDescFile(size_t buffer
     return ret;
 }
 
-void xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
+void
+xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
     free((void *)iov.addr);
 }
 
 #if HAVE_CUDA
-void xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
+void
+xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
     CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
 
     if (xferBenchConfig::enable_vmm) {
-        CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len),
-                                "Failed to unmap memory");
-        CHECK_CUDA_DRIVER_ERROR(cuMemRelease(iov.handle),
-                                "Failed to release memory");
+        CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len), "Failed to unmap memory");
+        CHECK_CUDA_DRIVER_ERROR(cuMemRelease(iov.handle), "Failed to release memory");
         CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, iov.padded_size),
                                 "Failed to free reserved address");
     } else {
-        CHECK_CUDA_ERROR(cudaFree((void *)iov.addr),
-                                  "Failed to deallocate CUDA buffer");
+        CHECK_CUDA_ERROR(cudaFree((void *)iov.addr), "Failed to deallocate CUDA buffer");
     }
 }
 #endif /* HAVE_CUDA */
 
-void xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
+void
+xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
     close(iov.devId);
 }
 
-std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int num_lists) {
+std::vector<std::vector<xferBenchIOV>>
+xferBenchNixlWorker::allocateMemory(int num_lists) {
     std::vector<std::vector<xferBenchIOV>> iov_lists;
     size_t i, buffer_size, num_devices = 0;
     nixl_opt_args_t opt_args;
@@ -433,7 +431,7 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
     opt_args.backends.push_back(backend_engine);
 
     if (xferBenchConfig::isStorageBackend()) {
-        remote_fds = createFileFds (getName());
+        remote_fds = createFileFds(getName());
         if (remote_fds.empty()) {
             std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
             exit(EXIT_FAILURE);
@@ -449,8 +447,7 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
             }
             nixl_reg_dlist_t desc_list(FILE_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args),
-                        "registerMem failed");
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
         }
         // Reset the running pointer to 0
@@ -483,20 +480,20 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNixlWorker::allocateMemory(int n
 
         nixl_reg_dlist_t desc_list(seg_type);
         iovListToNixlRegDlist(iov_list, desc_list);
-        CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args),
-                       "registerMem failed");
+        CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
         iov_lists.push_back(iov_list);
     }
 
     return iov_lists;
 }
 
-void xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
+void
+xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     nixl_opt_args_t opt_args;
 
     opt_args.backends.push_back(backend_engine);
-    for (auto &iov_list: iov_lists) {
-        for (auto &iov: iov_list) {
+    for (auto &iov_list : iov_lists) {
+        for (auto &iov : iov_list) {
             switch (seg_type) {
             case DRAM_SEG:
                 cleanupBasicDescDram(iov);
@@ -514,24 +511,23 @@ void xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>
 
         nixl_reg_dlist_t desc_list(seg_type);
         iovListToNixlRegDlist(iov_list, desc_list);
-        CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args),
-                         "deregisterMem failed");
+        CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
     }
 
     if (xferBenchConfig::isStorageBackend()) {
-        for (auto &iov_list: remote_iovs) {
-            for (auto &iov: iov_list) {
+        for (auto &iov_list : remote_iovs) {
+            for (auto &iov : iov_list) {
                 cleanupBasicDescFile(iov);
             }
             nixl_reg_dlist_t desc_list(FILE_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args),
-                             "deregisterMem failed");
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
     }
 }
 
-int xferBenchNixlWorker::exchangeMetadata() {
+int
+xferBenchNixlWorker::exchangeMetadata() {
     int meta_sz, ret = 0;
 
     if (xferBenchConfig::isStorageBackend()) {
@@ -550,22 +546,22 @@ int xferBenchNixlWorker::exchangeMetadata() {
 
         if (IS_PAIRWISE_AND_SG()) {
             destrank = rt->getRank() - xferBenchConfig::num_target_dev;
-            //XXX: Fix up the rank, depends on processes distributed on hosts
-            //assumes placement is adjacent ranks to same node
+            // XXX: Fix up the rank, depends on processes distributed on hosts
+            // assumes placement is adjacent ranks to same node
         } else {
             destrank = 0;
         }
         rt->sendInt(&meta_sz, destrank);
         rt->sendChar((char *)buffer, meta_sz, destrank);
     } else if (isInitiator()) {
-        char * buffer;
+        char *buffer;
         std::string remote_agent;
         int srcrank;
 
         if (IS_PAIRWISE_AND_SG()) {
             srcrank = rt->getRank() + xferBenchConfig::num_initiator_dev;
-            //XXX: Fix up the rank, depends on processes distributed on hosts
-            //assumes placement is adjacent ranks to same node
+            // XXX: Fix up the rank, depends on processes distributed on hosts
+            // assumes placement is adjacent ranks to same node
         } else {
             srcrank = 1;
         }
@@ -575,7 +571,7 @@ int xferBenchNixlWorker::exchangeMetadata() {
 
         std::string remote_metadata(buffer, meta_sz);
         agent->loadRemoteMD(remote_metadata, remote_agent);
-        if("" == remote_agent) {
+        if ("" == remote_agent) {
             std::cerr << "NIXL: loadMetadata failed" << std::endl;
         }
         free(buffer);
@@ -589,9 +585,9 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     int desc_str_sz;
 
     if (xferBenchConfig::isStorageBackend()) {
-        for (auto &iov_list: local_iovs) {
+        for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
-            for (auto &iov: iov_list) {
+            for (auto &iov : iov_list) {
                 std::optional<xferBenchIOV> basic_desc;
                 basic_desc = initBasicDescFile(iov.len, remote_fds[0], iov.devId);
                 if (basic_desc) {
@@ -601,7 +597,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             res.push_back(remote_iov_list);
         }
     } else {
-        for (const auto &local_iov: local_iovs) {
+        for (const auto &local_iov : local_iovs) {
             nixlSerDes ser_des;
             nixl_xfer_dlist_t local_desc(seg_type);
 
@@ -618,8 +614,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
 
                 if (IS_PAIRWISE_AND_SG()) {
                     destrank = rt->getRank() - xferBenchConfig::num_target_dev;
-                    //XXX: Fix up the rank, depends on processes distributed on hosts
-                    //assumes placement is adjacent ranks to same node
+                    // XXX: Fix up the rank, depends on processes distributed on hosts
+                    // assumes placement is adjacent ranks to same node
                 } else {
                     destrank = 0;
                 }
@@ -631,8 +627,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
 
                 if (IS_PAIRWISE_AND_SG()) {
                     srcrank = rt->getRank() + xferBenchConfig::num_initiator_dev;
-                    //XXX: Fix up the rank, depends on processes distributed on hosts
-                    //assumes placement is adjacent ranks to same node
+                    // XXX: Fix up the rank, depends on processes distributed on hosts
+                    // assumes placement is adjacent ranks to same node
                 } else {
                     srcrank = 1;
                 }
@@ -653,16 +649,16 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     return res;
 }
 
-static int execTransfer(nixlAgent *agent,
-                        const std::vector<std::vector<xferBenchIOV>> &local_iovs,
-                        const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
-                        const nixl_xfer_op_t op,
-                        const int num_iter,
-                        const int num_threads)
-{
+static int
+execTransfer(nixlAgent *agent,
+             const std::vector<std::vector<xferBenchIOV>> &local_iovs,
+             const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
+             const nixl_xfer_op_t op,
+             const int num_iter,
+             const int num_threads) {
     int ret = 0;
 
-    #pragma omp parallel num_threads(num_threads)
+#pragma omp parallel num_threads(num_threads)
     {
         const int tid = omp_get_thread_num();
         const auto &local_iov = local_iovs[tid];
@@ -697,8 +693,8 @@ static int execTransfer(nixlAgent *agent,
             target = "target";
         }
 
-        CHECK_NIXL_ERROR(agent->createXferReq(op, local_desc, remote_desc, target,
-                                            req, &params), "createTransferReq failed");
+        CHECK_NIXL_ERROR(agent->createXferReq(op, local_desc, remote_desc, target, req, &params),
+                         "createTransferReq failed");
 
         for (int i = 0; i < num_iter && !error; i++) {
             rc = agent->postXferReq(req);
@@ -728,9 +724,10 @@ static int execTransfer(nixlAgent *agent,
     return ret;
 }
 
-std::variant<double, int> xferBenchNixlWorker::transfer(size_t block_size,
-                                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
-                                               const std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
+std::variant<double, int>
+xferBenchNixlWorker::transfer(size_t block_size,
+                              const std::vector<std::vector<xferBenchIOV>> &local_iovs,
+                              const std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
     int num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
     int skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
     struct timeval t_start, t_end;
@@ -755,17 +752,19 @@ std::variant<double, int> xferBenchNixlWorker::transfer(size_t block_size,
 
     gettimeofday(&t_start, nullptr);
 
-    ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads);
+    ret = execTransfer(
+        agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads);
 
     gettimeofday(&t_end, nullptr);
-    total_duration += (((t_end.tv_sec - t_start.tv_sec) * 1e6) +
-                       (t_end.tv_usec - t_start.tv_usec)); // In us
+    total_duration +=
+        (((t_end.tv_sec - t_start.tv_sec) * 1e6) + (t_end.tv_usec - t_start.tv_usec)); // In us
 
     synchronize();
     return ret < 0 ? std::variant<double, int>(ret) : std::variant<double, int>(total_duration);
 }
 
-void xferBenchNixlWorker::poll(size_t block_size) {
+void
+xferBenchNixlWorker::poll(size_t block_size) {
     nixl_notifs_t notifs;
     nixl_status_t status;
     int skip = 0, num_iter = 0, total_iter = 0;
@@ -781,26 +780,26 @@ void xferBenchNixlWorker::poll(size_t block_size) {
 
     /* Ensure warmup is done*/
     do {
-        status = agent->getNotifs (notifs);
-    } while (status == NIXL_SUCCESS && skip != int (notifs["initiator"].size()));
+        status = agent->getNotifs(notifs);
+    } while (status == NIXL_SUCCESS && skip != int(notifs["initiator"].size()));
     synchronize();
 
     /* Polling for actual iterations*/
     do {
-        status = agent->getNotifs (notifs);
-    } while (status == NIXL_SUCCESS && total_iter != int (notifs["initiator"].size()));
+        status = agent->getNotifs(notifs);
+    } while (status == NIXL_SUCCESS && total_iter != int(notifs["initiator"].size()));
     synchronize();
 }
 
-int xferBenchNixlWorker::synchronizeStart() {
+int
+xferBenchNixlWorker::synchronizeStart() {
     if (IS_PAIRWISE_AND_SG()) {
-    	std::cout << "Waiting for all processes to start... (expecting "
-    	          << rt->getSize() << " total: "
-		  << xferBenchConfig::num_initiator_dev << " initiators and "
-    	          << xferBenchConfig::num_target_dev << " targets)" << std::endl;
+        std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
+                  << " total: " << xferBenchConfig::num_initiator_dev << " initiators and "
+                  << xferBenchConfig::num_target_dev << " targets)" << std::endl;
     } else {
-    	std::cout << "Waiting for all processes to start... (expecting "
-    	          << rt->getSize() << " total" << std::endl;
+        std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
+                  << " total" << std::endl;
     }
     if (rt) {
         int ret = rt->barrier("start_barrier");
