@@ -172,23 +172,23 @@ void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
 }
 
 namespace {
-    static std::string
-    getPluginDir() {
-        // Environment variable takes precedence
-        const char* plugin_dir = getenv("NIXL_PLUGIN_DIR");
-        if (plugin_dir) {
-            return plugin_dir;
-        }
-        // By default, use the plugin directory relative to the binary
-        Dl_info info;
-        int ret = dladdr(reinterpret_cast<void *>(&getPluginDir), &info);
-        if (ret != 0) {
-            NIXL_ERROR << "Failed to get plugin directory from dladdr";
-            return "";
-        }
-        return std::filesystem::path(info.dli_fname).parent_path().string() + "/plugins";
+static std::string
+getPluginDir() {
+    // Environment variable takes precedence
+    const char *plugin_dir = getenv("NIXL_PLUGIN_DIR");
+    if (plugin_dir) {
+        return plugin_dir;
     }
+    // By default, use the plugin directory relative to the binary
+    Dl_info info;
+    int ret = dladdr(reinterpret_cast<void *>(&getPluginDir), &info);
+    if (ret != 0) {
+        NIXL_ERROR << "Failed to get plugin directory from dladdr";
+        return "";
+    }
+    return std::filesystem::path(info.dli_fname).parent_path().string() + "/plugins";
 }
+} // namespace
 
 // PluginManager implementation
 nixlPluginManager::nixlPluginManager() {
