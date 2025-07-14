@@ -171,15 +171,23 @@ void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
     }
 }
 
-static std::string
-getDefaultPluginDir() {
-    Dl_info info;
-    int ret = dladdr(reinterpret_cast<void *>(&getDefaultPluginDir), &info);
-    if (ret != 0) {
-        NIXL_ERROR << "Failed to get plugin directory from dladdr";
-        return "";
+namespace {
+    static std::string
+    getPluginDir() {
+        // Environment variable takes precedence
+        const char* plugin_dir = getenv("NIXL_PLUGIN_DIR");
+        if (plugin_dir) {
+            return plugin_dir;
+        }
+        // By default, use the plugin directory relative to the binary
+        Dl_info info;
+        int ret = dladdr(reinterpret_cast<void *>(&getPluginDir), &info);
+        if (ret != 0) {
+            NIXL_ERROR << "Failed to get plugin directory from dladdr";
+            return "";
+        }
+        return std::filesystem::path(info.dli_fname).parent_path().string() + "/plugins";
     }
-    return std::filesystem::path(info.dli_fname).parent_path().string() + "/plugins";
 }
 
 // PluginManager implementation
@@ -194,19 +202,11 @@ nixlPluginManager::nixlPluginManager() {
 #endif
 
     // Check for NIXL_PLUGIN_DIR environment variable
-    const char* plugin_dir = getenv("NIXL_PLUGIN_DIR");
-    if (plugin_dir) {
-        NIXL_DEBUG << "Loading plugins from directory: " << plugin_dir;
-        plugin_dirs_.insert(plugin_dirs_.begin(),
-                            plugin_dir); // Insert at the beginning for priority
+    std::string plugin_dir = getPluginDir();
+    if (!plugin_dir.empty()) {
+        NIXL_DEBUG << "Loading plugins from: " << plugin_dir;
+        plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);
         discoverPluginsFromDir(plugin_dir);
-    } else {
-        std::string plugin_dir = getDefaultPluginDir();
-        if (!plugin_dir.empty()) {
-            NIXL_DEBUG << "Loading plugins from default path: " << plugin_dir;
-            plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);
-            discoverPluginsFromDir(plugin_dir);
-        }
     }
 
     registerBuiltinPlugins();
