@@ -494,7 +494,6 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
         absl::StrFormat("%s/3fs-virt/iovs/%s", utils.mount_point, boost::uuids::to_string(uuid));
     if (symlink(shm_path.c_str(), link_path.c_str()) == -1) {
         NIXL_ERROR << "Failed to create symlink: " << strerror(errno);
-        munmap(mapped_addr, mapped_size);
         close(shm_fd);
         shm_unlink(shm_name.c_str());
         throw nixlHf3fsShmException("Failed to create symlink " + std::string(strerror(errno)));
@@ -509,10 +508,6 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
 nixlHf3fsShmMetadata::~nixlHf3fsShmMetadata() {
     if (unlink(link_path.c_str()) && errno != ENOENT) {
         NIXL_ERROR << "Failed to remove symlink: " << strerror(errno);
-    }
-
-    if (munmap(mapped_addr, mapped_size) == -1) {
-        NIXL_ERROR << "Failed to unmap shared memory: " << strerror(errno);
     }
 
     if (shm_unlink(shm_name.c_str()) == -1) {
