@@ -528,7 +528,7 @@ void nixlUcxEngine::progressThreadRestart()
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       pthrControlPipe{0, 0} {
-    unsigned long numWorkers;
+    size_t numWorkers;
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
 
@@ -576,14 +576,11 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
                                           numWorkers,
                                           init_params->syncMode);
 
-    for (unsigned int i = 0; i < numWorkers; i++) {
-        auto uw = std::make_unique<nixlUcxWorker>(*uc, err_handling_mode);
-        auto addr = uw->epAddr();
-        uws.push_back(std::move(uw));
-        if (i == 0) {
-            workerAddr = addr;
-        }
+    for (size_t i = 0; i < numWorkers; i++) {
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
     }
+
+    workerAddr = uws.front()->epAddr();
 
     if (pthrOn) {
         for (auto &uw: uws) {
@@ -626,12 +623,10 @@ nixlUcxEngine::~nixlUcxEngine() {
 
     progressThreadStop();
     if (pthrOn) {
-        if (pthrControlPipe[0] != 0) {
-            close(pthrControlPipe[0]);
-        }
-
-        if (pthrControlPipe[1] != 0) {
-            close(pthrControlPipe[1]);
+        for (const auto pthr_control_pipe : pthrControlPipe) {
+            if (pthr_control_pipe != 0) {
+                close(pthr_control_pipe);
+            }
         }
     }
 
