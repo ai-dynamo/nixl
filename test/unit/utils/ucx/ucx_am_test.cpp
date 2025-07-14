@@ -53,17 +53,9 @@ int main()
     vector<string> devs;
     devs.push_back("mlx5_0");
 
-    std::shared_ptr<nixlUcxContext> c[2] = {
-
-        std::make_shared<nixlUcxContext>(devs, 0, nullptr, nullptr,
-                                         false,
-                                         UCP_ERR_HANDLING_MODE_NONE, 1,
-                                         nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE),
-        std::make_shared<nixlUcxContext>(devs, 0, nullptr, nullptr,
-                                         false,
-                                         UCP_ERR_HANDLING_MODE_NONE, 1,
-                                         nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)
-    };
+    nixlUcxContext c[2] = {
+        {devs, 0, nullptr, nullptr, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
+        {devs, 0, nullptr, nullptr, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
 
     nixlUcxWorker w[2] = {
         nixlUcxWorker(c[0]),
