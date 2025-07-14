@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __UCX_BACKEND_H
-#define __UCX_BACKEND_H
+#ifndef __MOONCAKE_BACKEND_H
+#define __MOONCAKE_BACKEND_H
 
 #include <vector>
 #include <cstring>
