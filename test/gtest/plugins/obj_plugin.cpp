@@ -23,53 +23,51 @@
 namespace gtest {
 namespace obj_plugin {
 
-nixl_b_params_t obj_params{
-    {"region", "eu-central-1"},
-    {"bucket", "nixl-ci-test"},
-};
+    nixl_b_params_t obj_params{
+        {"region", "eu-central-1"},
+        {"bucket", "nixl-ci-test"},
+    };
 
-const nixlBackendInitParams obj_test_params = {
-    .localAgent = "Agent1",
-    .type = "OBJ",
-    .customParams = &obj_params,
-    .enableProgTh = false,
-    .pthrDelay = 0,
-    .syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW
-};
+    const nixlBackendInitParams obj_test_params = {.localAgent = "Agent1",
+                                                   .type = "OBJ",
+                                                   .customParams = &obj_params,
+                                                   .enableProgTh = false,
+                                                   .pthrDelay = 0,
+                                                   .syncMode =
+                                                       nixl_thread_sync_t::NIXL_THREAD_SYNC_RW};
 
-class SetupObjTestFixture : public plugins_common::SetupBackendTestFixture {
-protected:
-    SetupObjTestFixture() {
-        backend_engine_ = std::make_unique<nixlObjEngine>(&GetParam());
+    class SetupObjTestFixture : public plugins_common::SetupBackendTestFixture {
+    protected:
+        SetupObjTestFixture() {
+            backend_engine_ = std::make_unique<nixlObjEngine>(&GetParam());
+        }
+    };
+
+    TEST_P(SetupObjTestFixture, SimpleLifeCycleTest) {
+        EXPECT_TRUE(isLoaded());
     }
-};
 
-TEST_P(SetupObjTestFixture, SimpleLifeCycleTest) {
-    EXPECT_TRUE(isLoaded());
-}
+    TEST_P(SetupObjTestFixture, XferTest) {
+        EXPECT_TRUE(isLoaded());
+        EXPECT_TRUE((setupLocalXfer(DRAM_SEG, OBJ_SEG, false)));
+        EXPECT_TRUE(testLocalXfer(NIXL_WRITE));
+        resetLocalBuf();
+        EXPECT_TRUE(testLocalXfer(NIXL_READ));
+        EXPECT_TRUE(checkLocalBuf());
+        EXPECT_TRUE(teardownXfer());
+    }
 
-TEST_P(SetupObjTestFixture, XferTest) {
-    EXPECT_TRUE(isLoaded());
-    EXPECT_TRUE((setupLocalXfer(DRAM_SEG, OBJ_SEG, false)));
-    EXPECT_TRUE(testLocalXfer(NIXL_WRITE));
-    resetLocalBuf();
-    EXPECT_TRUE(testLocalXfer(NIXL_READ));
-    EXPECT_TRUE(checkLocalBuf());
-    EXPECT_TRUE(teardownXfer());
-}
+    TEST_P(SetupObjTestFixture, XferMultiBufTest) {
+        EXPECT_TRUE(isLoaded());
+        EXPECT_TRUE((setupLocalXfer(DRAM_SEG, OBJ_SEG, false, 3)));
+        EXPECT_TRUE(testLocalXfer(NIXL_WRITE));
+        resetLocalBuf();
+        EXPECT_TRUE(testLocalXfer(NIXL_READ));
+        EXPECT_TRUE(checkLocalBuf());
+        EXPECT_TRUE(teardownXfer());
+    }
 
-TEST_P(SetupObjTestFixture, XferMultiBufTest) {
-    EXPECT_TRUE(isLoaded());
-    EXPECT_TRUE((setupLocalXfer(DRAM_SEG, OBJ_SEG, false, 3)));
-    EXPECT_TRUE(testLocalXfer(NIXL_WRITE));
-    resetLocalBuf();
-    EXPECT_TRUE(testLocalXfer(NIXL_READ));
-    EXPECT_TRUE(checkLocalBuf());
-    EXPECT_TRUE(teardownXfer());
-}
-
-INSTANTIATE_TEST_SUITE_P(ObjTests, SetupObjTestFixture, 
-                        testing::Values(obj_test_params));
+    INSTANTIATE_TEST_SUITE_P(ObjTests, SetupObjTestFixture, testing::Values(obj_test_params));
 
 } // namespace obj_plugin
-} // namespace gtest 
+} // namespace gtest

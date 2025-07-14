@@ -47,10 +47,16 @@ protected:
     checkLocalBuf();
 
     bool
-    setupLocalXfer(nixl_mem_t local_mem_type, nixl_mem_t xfer_mem_type, bool split_buf = true, int num_bufs = 1);
+    setupLocalXfer(nixl_mem_t local_mem_type,
+                   nixl_mem_t xfer_mem_type,
+                   bool split_buf = true,
+                   int num_bufs = 1);
 
     bool
-    setupRemoteXfer(nixl_mem_t local_mem_type, nixl_mem_t xfer_mem_type, bool split_buf = true, int num_bufs = 1);
+    setupRemoteXfer(nixl_mem_t local_mem_type,
+                    nixl_mem_t xfer_mem_type,
+                    bool split_buf = true,
+                    int num_bufs = 1);
 
     bool
     testXfer(nixl_xfer_op_t op);
@@ -107,23 +113,22 @@ private:
                     std::unique_ptr<MemoryHandler> &mem_handler,
                     int buf_index,
                     int dev_id);
-   
+
     nixl_status_t
-    backendDeregDealloc(nixlBackendEngine *engine,
-                        std::unique_ptr<MemoryHandler>& mem_handler);
-    
+    backendDeregDealloc(nixlBackendEngine *engine, std::unique_ptr<MemoryHandler> &mem_handler);
+
     void
     populateDescList(nixl_meta_dlist_t &descs, std::unique_ptr<MemoryHandler> mem_handler[]);
 
     bool
     verifyConnInfo();
-    
+
     void
     setupNotifs(std::string msg);
-    
+
     bool
     prepXferMem(nixl_mem_t local_mem_type, nixl_mem_t xfer_mem_type, bool is_remote);
-    
+
     bool
     verifyNotifs(std::string &msg);
 };
