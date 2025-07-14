@@ -618,9 +618,6 @@ nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
 
 // Through parent destructor the unregister will be called.
 nixlUcxEngine::~nixlUcxEngine() {
-    // initErr is not used in this class and should be removed
-    NIXL_ASSERT(!this->initErr);
-
     progressThreadStop();
     if (pthrOn) {
         for (const auto pthr_control_pipe : pthrControlPipe) {
