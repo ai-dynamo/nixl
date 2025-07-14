@@ -54,9 +54,9 @@ DEFINE_uint64(max_block_size, 64 * (1 << 20), "Max size of block \
 DEFINE_uint64(start_batch_size, 1, "Starting size of batch (Default: 1)");
 DEFINE_uint64(max_batch_size, 1, "Max size of batch (starts from 1)");
 DEFINE_int32(num_iter, 1000, "Max iterations");
-DEFINE_int32 (large_blk_iter_ftr,
-              16,
-              "factor to reduce test iteration when testing large block size(>1MB)");
+DEFINE_int32(large_blk_iter_ftr,
+             16,
+             "factor to reduce test iteration when testing large block size(>1MB)");
 DEFINE_int32(warmup_iter, 100, "Number of warmup iterations before timing");
 DEFINE_int32 (
     num_threads,
@@ -335,8 +335,8 @@ void xferBenchConfig::printConfig() {
     printOption ("Max batch size (--max_batch_size=N)", std::to_string (max_batch_size));
     printOption ("Num iter (--num_iter=N)", std::to_string (num_iter));
     printOption ("Warmup iter (--warmup_iter=N)", std::to_string (warmup_iter));
-    printOption ("Large block iter factor (--large_blk_iter_ftr=N)",
-                 std::to_string(large_blk_iter_ftr));
+    printOption("Large block iter factor (--large_blk_iter_ftr=N)",
+                std::to_string(large_blk_iter_ftr));
     printOption ("Num threads (--num_threads=N)", std::to_string (num_threads));
     std::cout << std::string(80, '-') << std::endl;
     std::cout << std::endl;
