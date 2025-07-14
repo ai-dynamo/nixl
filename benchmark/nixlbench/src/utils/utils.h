@@ -121,7 +121,7 @@ class xferBenchConfig {
         static size_t start_batch_size;
         static size_t max_batch_size;
         static int num_iter;
-        static int large_block_iter_factor;
+        static int large_blk_iter_ftr;
         static int warmup_iter;
         static int num_threads;
         static bool enable_pt;
