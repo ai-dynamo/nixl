@@ -201,7 +201,6 @@ nixlPluginManager::nixlPluginManager() {
     }
 #endif
 
-    // Check for NIXL_PLUGIN_DIR environment variable
     std::string plugin_dir = getPluginDir();
     if (!plugin_dir.empty()) {
         NIXL_DEBUG << "Loading plugins from: " << plugin_dir;
