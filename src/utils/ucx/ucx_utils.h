@@ -176,8 +176,8 @@ class nixlUcxWorker {
 public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
-        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
-
+        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
+        bool is_shared = false);
     nixlUcxWorker( nixlUcxWorker&& ) = delete;
     nixlUcxWorker( const nixlUcxWorker& ) = delete;
     void operator=( nixlUcxWorker&& ) = delete;
@@ -205,7 +205,7 @@ public:
 
 private:
     [[nodiscard]] static ucp_worker *
-    createUcpWorker(const nixlUcxContext &);
+    createUcpWorker(const nixlUcxContext &, bool);
 
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     ucp_err_handling_mode_t err_handling_mode_;

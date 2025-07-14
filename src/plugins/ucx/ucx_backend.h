@@ -18,6 +18,7 @@
 #define NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_H
 
 #include <vector>
+#include <queue>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -27,6 +28,7 @@
 #include <atomic>
 #include <chrono>
 #include <poll.h>
+#include <unordered_set>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -110,6 +112,8 @@ class nixlUcxEngine
         std::unique_ptr<nixlUcxContext> uc;
         std::vector<std::unique_ptr<nixlUcxWorker>> uws;
         std::string workerAddr;
+        size_t recvNotifWorkerId;
+        size_t numSharedWorkers;
 
         /* Progress thread data */
         std::mutex pthrActiveLock;
@@ -137,6 +141,32 @@ class nixlUcxEngine
         std::unordered_map<std::string, ucx_connection_ptr_t,
                            std::hash<std::string>, strEqual> remoteConnMap;
 
+        // Thread to worker mapping
+        pthread_key_t pKeyEngine;
+        pthread_key_t pKeyWorkerId;
+        mutable std::queue<size_t> freeWorkers;
+        mutable std::mutex workersMutex;
+
+        nixl_status_t
+        initThreadMapping();
+        void
+        destroyThreadMapping();
+        nixl_status_t
+        getDedicatedWorkerId(size_t &worker_id) const;
+        nixl_status_t
+        getSharedWorkerId(size_t &worker_id) const;
+        nixl_status_t
+        getWorkerIdWithPreference(bool prefer_shared, size_t &worker_id) const;
+        nixl_status_t
+        getFreeDedicatedWorkerId(size_t &worker_id) const;
+        static void
+        threadMapDestructor(void *arg);
+        // Add worker back to the free workers queue
+        void
+        pushFreeWorker(size_t worker_id) const {
+            const std::lock_guard<std::mutex> lock(workersMutex);
+            freeWorkers.push(worker_id);
+        }
 
         void vramInitCtx();
         void vramFiniCtx();
@@ -182,6 +212,35 @@ class nixlUcxEngine
                                     size_t worker_id) const;
         void notifProgress();
         void notifProgressCombineHelper(notif_list_t &src, notif_list_t &tgt);
+
+        /*
+         * Engine tracking for threadMapDestructor,
+         * threadMapDestructor is called when a thread exits, and try to access the engine to
+         * push the worker_id back to its free workers queue.
+         *
+         * But there is a race condition when engine is destroyed around the same time when
+         * threadMapDestructor is called. threadMapDestructor may use a dangling pointer to
+         * the engine.
+         *
+         * To avoid this race condition, we add a engine tracking mechanism to ensure that
+         * the engine is still alive when threadMapDestructor is called.
+         */
+        static std::unordered_set<nixlUcxEngine *> engineSet;
+        static std::mutex engineSetMutex;
+        static void
+        addEngine(nixlUcxEngine *engine) {
+            std::lock_guard<std::mutex> lock(engineSetMutex);
+            engineSet.insert(engine);
+        }
+        static void
+        removeEngine(nixlUcxEngine *engine) {
+            std::lock_guard<std::mutex> lock(engineSetMutex);
+            engineSet.erase(engine);
+        }
+        static bool
+        isEngineExist(nixlUcxEngine *engine) {
+            return engineSet.find(engine) != engineSet.end();
+        }
 
     public:
         nixlUcxEngine(const nixlBackendInitParams* init_params);
@@ -255,12 +314,9 @@ class nixlUcxEngine
         nixl_status_t checkConn(const std::string &remote_agent);
         nixl_status_t endConn(const std::string &remote_agent);
 
-        const std::unique_ptr<nixlUcxWorker> &getWorker(size_t worker_id) const {
+        const std::unique_ptr<nixlUcxWorker> &
+        getWorker(size_t worker_id) const {
             return uws[worker_id];
-        }
-
-        size_t getWorkerId() const {
-            return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
         }
 };
 
