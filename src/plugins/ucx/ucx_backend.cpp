@@ -532,7 +532,7 @@ void nixlUcxEngine::progressThreadRestart()
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       pthrControlPipe{0, 0} {
-    size_t numWorkers;
+    size_t numDedicatedWorkers;
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
 
@@ -561,18 +561,18 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
 
     const auto num_workers_iter = custom_params->find("num_workers");
     if (num_workers_iter == custom_params->end() ||
-        !absl::SimpleAtoi(num_workers_iter->second, &numWorkers)) {
+        !absl::SimpleAtoi(num_workers_iter->second, &numSharedWorkers)) {
         // Default to have 1 shared worker and 0 dedicated worker
-        numWorkers = 0;
-    }
-
-    const auto num_shared_iter = custom_params->find("num_shared_workers");
-    if (num_shared_iter == custom_params->end() ||
-        !absl::SimpleAtoi(num_shared_iter->second, &numSharedWorkers)) {
         numSharedWorkers = 1;
     }
 
-    if (numWorkers + numSharedWorkers == 0) {
+    const auto num_shared_iter = custom_params->find("num_dedicated_workers");
+    if (num_shared_iter == custom_params->end() ||
+        !absl::SimpleAtoi(num_shared_iter->second, &numDedicatedWorkers)) {
+        numDedicatedWorkers = 0;
+    }
+
+    if (numDedicatedWorkers + numSharedWorkers == 0) {
         throw std::invalid_argument("Total number of workers must be greater than 0");
     }
 
@@ -590,14 +590,14 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
                                           _internalRequestInit,
                                           _internalRequestFini,
                                           pthrOn,
-                                          numWorkers,
+                                          numDedicatedWorkers + numSharedWorkers,
                                           init_params->syncMode);
 
     for (size_t i = 0; i < numSharedWorkers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, true));
     }
 
-    for (size_t i = 0; i < numWorkers; i++) {
+    for (size_t i = 0; i < numDedicatedWorkers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, false));
         freeWorkers.push(i + numSharedWorkers);
     }

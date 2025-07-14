@@ -36,7 +36,7 @@ using namespace std;
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
     nixl_b_params_t params = {
-        {"ucx_devices", ""}, {"num_workers", "0"}, {"num_shared_workers", "1"}};
+        {"ucx_devices", ""}, {"num_workers", "1"}, {"num_dedicated_workers", "0"}};
 
     params.emplace(nixl_ucx_err_handling_param_name,
                    ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
