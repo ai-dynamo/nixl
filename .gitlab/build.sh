@@ -31,7 +31,14 @@ if [ -z "$UCX_INSTALL_DIR" ]; then
     UCX_INSTALL_DIR=$INSTALL_DIR
 fi
 
+ARCH=$(uname -m)
+[ "$ARCH" = "arm64" ] && ARCH="aarch64"
+
 apt-get -qq update
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.86.0
+export PATH=$HOME/.cargo/bin:$PATH
+
 apt-get -qq install -y curl \
                              libnuma-dev \
                              numactl \
@@ -67,7 +74,8 @@ apt-get -qq install -y curl \
                              uuid-dev \
                              ibverbs-utils \
                              libibmad-dev \
-                             doxygen
+                             doxygen \
+                             clang
 
 curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
 ( \
@@ -90,17 +98,18 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
 )
 
 export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib
+export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib
 export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
-
+export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:$PKG_CONFIG_PATH
+export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 # Disabling CUDA IPC not to use NVLINK, as it slows down local
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Denable_rust_bindings=false
 cd nixl_build && ninja && ninja install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
 # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
+
