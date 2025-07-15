@@ -144,8 +144,8 @@ if __name__ == "__main__":
     # Example using nixl_agent_config
     agent = init_agent()
 
-    num_descs = 2**20
-    length = 64
+    num_descs = 2**8
+    length = 1024
     addr_base = nixl_utils.malloc_passthru(num_descs * length)
     print(f"Performance test: Creating nixlXferDList with {num_descs} descriptors")
 

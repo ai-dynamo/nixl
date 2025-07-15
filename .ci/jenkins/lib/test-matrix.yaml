@@ -1,0 +1,120 @@
+---
+#
+# Key Components:
+# - Job Configuration: Defines timeout, failure behavior, and server resources
+# - Docker Images: Specifies the container images used for different build stages
+# - Matrix Axes: Defines build variations (currently x86_64 architecture)
+# - Run Steps: Sequential steps for running tests
+#
+# When Modified:
+# - Adding/removing Docker images: Affects available test environments
+# - Modifying matrix axes: Changes test variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts test performance and resource allocation
+# - Adding/removing steps: Changes the test pipeline sequence
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+
+job: nixl-ci-test
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+# label is defined at jenkins slave configuration, we want to run the job on a gpu agent and be able to esaly replace it without having to change this file
+runs_on_agents:
+  - {nodeLabel: 'H100'}
+
+matrix:
+  axes:
+    image:
+      - nvcr.io/nvidia/pytorch:25.02-py3
+    arch:
+      - x86_64
+
+env:
+  INSTALL_DIR: ${WORKSPACE}/nixl_install
+  UCX_VERSION: v1.19.x
+
+steps:
+  - name: Get Environment Info
+    parallel: false
+    run: |
+      set +ex
+      # print kernel version
+      uname -r
+      # print ofed info
+      ofed_info -s
+      # print nvidia drivers info
+      lsmod | grep nvidia_peermem
+      lsmod | grep gdrdrv
+      lsmod | grep nvidia_fs
+      # print nvidia-smi
+      nvidia-smi
+      nvidia-smi topo -m
+      # print MPS info
+      pgrep -a mps
+      # print compute mode
+      nvidia-smi -q | grep -i "compute mode"
+      # check rdma status
+      ibv_devinfo
+      #ib_write_bw
+
+
+  - name: Build GPU Test Environment
+    parallel: false
+    run: |
+      docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} .
+    onfail: docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+
+  - name: Run GPU Test Environment
+    parallel: false
+    run: |
+      docker run -dt --name "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" \
+        --ulimit memlock=-1:-1 \
+        --network=host \
+        --ipc=host \
+        --cap-add=SYS_PTRACE \
+        --gpus all \
+        --device=/dev/infiniband \
+        --device=/dev/gdrdrv \
+        -v ${WORKSPACE}:${WORKSPACE} \
+        -w ${WORKSPACE} \
+        "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+    onfail: |
+      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+
+  - name: Build
+    parallel: false
+    run: |
+      docker exec -w ${WORKSPACE} -e UCX_VERSION=${UCX_VERSION} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/build.sh ${INSTALL_DIR}"
+    onfail: |
+      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+
+  - name: Test CPP
+    parallel: false
+    run: |
+      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
+    onfail: |
+      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+
+  - name: Test Python
+    parallel: false
+    run: |
+      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
+    always: |
+      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+
+# once this fix is merged we can use the following to stop/kill/rm the container instead of the cleanup command in each step
+# https://github.com/Mellanox/ci-demo/pull/111
+# pipeline_stop:
+#   agentSelector: "{nodeLabel: 'nixl_gpu'}"
+#   run: |
+#     docker stop "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+#     docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+#     docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
