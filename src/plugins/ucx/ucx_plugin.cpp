@@ -18,6 +18,8 @@
 #include "backend/backend_plugin.h"
 #include "ucx_backend.h"
 
+#include "nixl_log.h"
+
 namespace
 {
    const char* ucx_plugin_name = "UCX";
@@ -27,6 +29,7 @@ namespace
         try {
             return new nixlUcxEngine(init_params);
         } catch (const std::exception &e) {
+            NIXL_ERROR << "Failed to create UCX engine: " << e.what();
             return nullptr;
         }
    }
