@@ -174,6 +174,12 @@ def nixl_bench_args(func):
         type=bool,
         help="Enable VMM memory allocation when DRAM is requested",
     )(func)
+    func = click.option(
+        "--benchmark-name",
+        type=str,
+        help="Name of benchmark (default: default)",
+        default="default",
+    )(func)
     return func
 
 

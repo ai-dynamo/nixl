@@ -126,6 +126,7 @@ class xferBenchConfig {
         static bool enable_pt;
         static std::string device_list;
         static std::string etcd_endpoints;
+        static std::string benchmark_name;
         static std::string filepath;
         static bool enable_vmm;
         static int num_files;

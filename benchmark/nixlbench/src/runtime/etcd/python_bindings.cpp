@@ -26,7 +26,8 @@ PYBIND11_MODULE (etcd_runtime, m) {
     m.doc() = "Python bindings for ETCD runtime";
 
     py::class_<xferBenchEtcdRT> (m, "EtcdRuntime")
-        .def (py::init<const std::string &, const int, int *>(),
+        .def (py::init<const std::string &, const std::string &, const int, int *>(),
+              py::arg ("benchmark_name"),
               py::arg ("etcd_endpoints"),
               py::arg ("size"),
               py::arg ("terminate") = nullptr)
