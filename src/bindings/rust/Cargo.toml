@@ -15,7 +15,7 @@
 
 [package]
 name = "nixl-sys"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "Low-level bindings to the nixl library"
 license = "Apache-2.0"
