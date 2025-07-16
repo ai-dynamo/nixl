@@ -34,10 +34,6 @@ system:
 
 ## Profiling
 
-> [!NOTE]
-> When using KVBench/NIXLBench, you should perform a WRITE operation before a READ.
-> This is because the files need to be created and populated with data before you can read from them.
-
 ### Step 1: Perform a WRITE operation first (GPU to Storage)
 
 ```bash
@@ -47,7 +43,7 @@ python main.py profile \
   --backend GDS \
   --source gpu \
   --etcd-endpoints "http://localhost:2379" \
-  --gds_filepath /path/to/your/directory \
+  --filepath /path/to/your/directory \
   --num_requests 1
 ```
 
@@ -55,7 +51,7 @@ This command:
 - Uses the DeepSeek model configuration
 - Sets up GDS as the backend
 - Sets the source as GPU memory (`--source gpu`)
-- Specifies the directory for GDS files (`--gds_filepath`)
+- Specifies the directory for GDS files (`--filepath`)
 - Specifies the number of concurrent user requests to simulate (`--num_requests`)
 
 ### Step 2: Perform a READ operation (Storage to GPU)
@@ -69,7 +65,7 @@ python main.py profile \
   --backend GDS \
   --source file \
   --etcd-endpoints "http://localhost:2379" \
-  --gds_filepath /path/to/your/directory \
+  --filepath /path/to/your/directory \
   --num_requests 1
 ```
 
@@ -87,7 +83,7 @@ The profiling results will show:
 ## Troubleshooting
 
 - If you encounter "File not found" errors during READ operations, ensure you've performed a WRITE operation first
-- Check that the directory specified in `--gds_filepath` exists and has proper permissions
+- Check that the directory specified in `--filepath` exists and has proper permissions
 - Verify that your system has GPU Direct Storage support enabled
 - Make sure the ETCD server is running at the specified endpoint
 

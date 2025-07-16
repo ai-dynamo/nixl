@@ -449,15 +449,15 @@ void nixlUcxEngine::progressFunc()
             pollFds[wid].revents = 0;
 
             bool made_progress = false;
-            ucs_status_t status = UCS_INPROGRESS;
+            nixl_status_t status;
             const auto &uw = uws[wid];
             do {
                 while (uw->progress())
                     made_progress = true;
 
-                status = ucp_worker_arm(uw->getWorker());
-            } while (status == UCS_ERR_BUSY);
-            NIXL_ASSERT(status == UCS_OK);
+                status = uw->arm();
+            } while (status == NIXL_IN_PROG);
+            NIXL_ASSERT(status == NIXL_SUCCESS) << ", status: " << status;
 
             if (made_progress && !wid)
                 notifProgress();
@@ -525,30 +525,29 @@ void nixlUcxEngine::progressThreadRestart()
  * Constructor/Destructor
 *****************************************/
 
-nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
-: nixlBackendEngine (init_params) {
-    unsigned long numWorkers;
+nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
+    : nixlBackendEngine(init_params),
+      pthrControlPipe{0, 0} {
+    size_t numWorkers;
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
 
     if (init_params->enableProgTh) {
-        pthrOn = true;
         if (!nixlUcxMtLevelIsSupported(nixl_ucx_mt_t::WORKER)) {
-            NIXL_ERROR << "UCX library does not support multi-threading";
-            this->initErr = true;
-            return;
+            throw std::invalid_argument("UCX library does not support multi-threading");
         }
+
         if (pipe(pthrControlPipe) < 0) {
-            NIXL_PERROR << "Couldn't create progress thread control pipe";
-            this->initErr = true;
-            return;
+            throw std::runtime_error("Couldn't create progress thread control pipe");
         }
 
         // This will ensure that the resulting delay is at least 1ms and fits into int in order for
         // it to be compatible with poll()
         pthrDelay = std::chrono::ceil<std::chrono::milliseconds>(
             std::chrono::microseconds(init_params->pthrDelay < std::numeric_limits<int>::max() ?
-                                      init_params->pthrDelay : std::numeric_limits<int>::max()));
+                                          init_params->pthrDelay :
+                                          std::numeric_limits<int>::max()));
+        pthrOn = true;
     } else {
         pthrOn = false;
     }
@@ -560,47 +559,39 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (num_workers_iter == custom_params->end() || !absl::SimpleAtoi(num_workers_iter->second, &numWorkers))
         numWorkers = 1;
 
+    ucp_err_handling_mode_t err_handling_mode;
     const auto err_handling_mode_it =
-            custom_params->find("ucx_error_handling_mode");
-    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
-    if (err_handling_mode_it != custom_params->end() &&
-        (err_handling_mode_it->second == "peer")) {
+        custom_params->find(std::string(nixl_ucx_err_handling_param_name));
+    if (err_handling_mode_it == custom_params->end()) {
         err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+    } else {
+        err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
     }
 
-    uc = std::make_shared<nixlUcxContext>(devs, sizeof(nixlUcxIntReq),
+    uc = std::make_unique<nixlUcxContext>(devs,
+                                          sizeof(nixlUcxIntReq),
                                           _internalRequestInit,
                                           _internalRequestFini,
                                           pthrOn,
-                                          err_handling_mode, numWorkers, init_params->syncMode);
+                                          numWorkers,
+                                          init_params->syncMode);
 
-    for (unsigned int i = 0; i < numWorkers; i++)
-        uws.emplace_back(std::make_unique<nixlUcxWorker>(uc));
-
-    const auto &uw = uws.front();
-    workerAddr = uw->epAddr();
-
-    if (workerAddr.empty()) {
-        NIXL_ERROR << "Failed to get UCX worker address";
-        initErr = true;
-        return;
+    for (size_t i = 0; i < numWorkers; i++) {
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
     }
+
+    workerAddr = uws.front()->epAddr();
 
     if (pthrOn) {
         for (auto &uw: uws) {
-            int fd;
-            ucs_status_t ret = ucp_worker_get_efd(uw->getWorker(), &fd);
-            if (ret != UCS_OK) {
-                NIXL_ERROR << "Couldn't obtain fd for a worker, status: " << ucs_status_string(ret);
-                initErr = true;
-                return;
-            }
-
-            pollFds.push_back({fd, POLLIN, 0});
+            pollFds.push_back({uw->getEfd(), POLLIN, 0});
         }
         pollFds.push_back({pthrControlPipe[0], POLLIN, 0});
     }
 
+    // TODO: in case of UCX error handling is enabled, we can clean up AM based connections error
+    //       handling, if user requested disabled error handling, we dont care about it.
+    auto &uw = uws.front();
     uw->regAmCallback(CONN_CHECK, connectionCheckAmCb, this);
     uw->regAmCallback(DISCONNECT, connectionTermAmCb, this);
     uw->regAmCallback(NOTIF_STR, notifAmCb, this);
@@ -626,20 +617,16 @@ nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
 }
 
 // Through parent destructor the unregister will be called.
-nixlUcxEngine::~nixlUcxEngine () {
-    // per registered memory deregisters it, which removes the corresponding metadata too
-    // parent destructor takes care of the desc list
-    // For remote metadata, they should be removed here
-    if (this->initErr) {
-        // Nothing to do
-        return;
-    }
-
+nixlUcxEngine::~nixlUcxEngine() {
     progressThreadStop();
     if (pthrOn) {
-        close(pthrControlPipe[0]);
-        close(pthrControlPipe[1]);
+        for (const auto pthr_control_pipe : pthrControlPipe) {
+            if (pthr_control_pipe != 0) {
+                close(pthr_control_pipe);
+            }
+        }
     }
+
     vramFiniCtx();
 }
 
@@ -861,38 +848,33 @@ nixl_status_t
 nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
                                  const std::string &agent,
                                  nixlBackendMD* &output) {
-    auto md = std::make_unique<nixlUcxPublicMetadata>();
-    size_t size = blob.size();
+    try {
+        auto md = std::make_unique<nixlUcxPublicMetadata>();
+        size_t size = blob.size();
 
-    auto search = remoteConnMap.find(agent);
+        auto search = remoteConnMap.find(agent);
 
-    if(search == remoteConnMap.end()) {
-        //TODO: err: remote connection not found
-        return NIXL_ERR_NOT_FOUND;
+        if (search == remoteConnMap.end()) {
+            // TODO: err: remote connection not found
+            return NIXL_ERR_NOT_FOUND;
+        }
+        md->conn = search->second;
+
+        std::vector<char> addr(size);
+        nixlSerDes::_stringToBytes(addr.data(), blob, size);
+
+        for (size_t wid = 0; wid < uws.size(); wid++) {
+            md->addRkey(*md->conn->getEp(wid), addr.data());
+        }
+
+        output = (nixlBackendMD *)md.release();
+
+        return NIXL_SUCCESS;
     }
-    md->conn = search->second;
-
-    std::vector<char> addr(size);
-    nixlSerDes::_stringToBytes(addr.data(), blob, size);
-
-    bool error = false;
-    for (size_t wid = 0; wid < uws.size(); wid++) {
-        nixlUcxRkey rkey;
-        error = md->conn->getEp(wid)->rkeyImport(addr.data(), size, rkey);
-        if (error)
-            // TODO: error out. Should we indicate which desc failed or unroll everything prior
-            break;
-        md->rkeys.push_back(rkey);
-    }
-    if (error) {
-        for (size_t wid = 0; wid < md->rkeys.size(); wid++)
-            md->conn->getEp(wid)->rkeyDestroy(md->rkeys[wid]);
+    catch (const std::runtime_error &e) {
+        NIXL_ERROR << e.what();
         return NIXL_ERR_BACKEND;
     }
-
-    output = (nixlBackendMD*) md.release();
-
-    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -917,9 +899,6 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
 nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
 
     nixlUcxPublicMetadata *md = (nixlUcxPublicMetadata*) input; //typecast?
-
-    for (size_t wid = 0; wid < md->rkeys.size(); wid++)
-        md->conn->getEp(wid)->rkeyDestroy(md->rkeys[wid]);
     delete md;
 
     return NIXL_SUCCESS;

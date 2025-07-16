@@ -16,12 +16,10 @@
  */
 #include "backend/backend_engine.h"
 #include "backend/backend_plugin.h"
+#include "common.h"
 
 namespace mocks {
 namespace basic_plugin {
-
-static constexpr const char *plugin_name = "MOCK_BASIC";
-static constexpr const char *plugin_version = "0.0.1";
 
 static nixlBackendEngine *create_engine(const nixlBackendInitParams *) {
   return nullptr;
@@ -29,9 +27,15 @@ static nixlBackendEngine *create_engine(const nixlBackendInitParams *) {
 
 static void destroy_engine(nixlBackendEngine *) {}
 
-static const char *get_plugin_name() { return plugin_name; }
+static const char *
+get_plugin_name() {
+    return gtest::mock_basic_plugin_name;
+}
 
-static const char *get_plugin_version() { return plugin_version; }
+static const char *
+get_plugin_version() {
+    return "0.0.1";
+}
 
 static nixl_b_params_t get_backend_options() { return nixl_b_params_t(); }
 
