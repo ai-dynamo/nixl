@@ -7,7 +7,7 @@ CheckOptions:
     - { key: readability-identifier-naming.ClassCase, value: camelBack }
     - { key: readability-identifier-naming.StructCase, value: camelBack }
     - { key: readability-identifier-naming.UnionCase, value: camelBack }
-    - { key: readability-identifier-naming.EnumCase, value: camelBack }
+    - { key: readability-identifier-naming.EnumCase, value: lower_case }
     # Fields and methods for classes, structs, and unions
     - { key: readability-identifier-naming.ClassMemberCase, value: camelBack }
     - { key: readability-identifier-naming.StructMemberCase, value: camelBack }
