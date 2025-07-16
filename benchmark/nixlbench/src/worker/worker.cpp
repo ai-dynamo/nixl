@@ -32,7 +32,7 @@ static xferBenchRT *createRT(int *terminate) {
             total = 1;
         }
         xferBenchEtcdRT *etcd_rt = new xferBenchEtcdRT(
-            xferBenchConfig::benchmark_name, xferBenchConfig::etcd_endpoints, total, terminate);
+            xferBenchConfig::benchmark_group, xferBenchConfig::etcd_endpoints, total, terminate);
         if (etcd_rt->setup() != 0) {
             std::cerr << "Failed to setup ETCD runtime" << std::endl;
             delete etcd_rt;

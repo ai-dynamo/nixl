@@ -33,9 +33,9 @@
 /**********
  * xferBench Config
  **********/
-DEFINE_string(benchmark_name,
+DEFINE_string(benchmark_group,
               "default",
-              "Name of benchmark. Use different names to run multiple benchmarks in parallel "
+              "Name of benchmark group. Use different names to run multiple benchmarks in parallel "
               "(Default: default)");
 DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
@@ -120,7 +120,7 @@ bool xferBenchConfig::enable_pt = false;
 bool xferBenchConfig::enable_vmm = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
-std::string xferBenchConfig::benchmark_name = "default";
+std::string xferBenchConfig::benchmark_group = "default";
 int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
@@ -132,7 +132,7 @@ bool xferBenchConfig::storage_enable_direct = false;
 
 int
 xferBenchConfig::loadFromFlags() {
-    benchmark_name = FLAGS_benchmark_name;
+    benchmark_group = FLAGS_benchmark_group;
     runtime_type = FLAGS_runtime_type;
     worker_type = FLAGS_worker_type;
 

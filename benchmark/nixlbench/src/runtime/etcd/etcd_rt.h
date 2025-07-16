@@ -46,7 +46,7 @@ private:
     // ETCD connection settings
     std::string stored_etcd_endpoints;
     std::string namespace_prefix;
-    std::string benchmark_name;
+    std::string benchmark_group;
     std::unique_ptr<etcd::Client> client;
 
     int my_rank; // Rank information
@@ -73,7 +73,7 @@ private:
     }
 
 public:
-    xferBenchEtcdRT(const std::string &benchmark_name,
+    xferBenchEtcdRT(const std::string &benchmark_group,
                     const std::string &etcd_endpoints,
                     const int size,
                     int *terminate = nullptr);
