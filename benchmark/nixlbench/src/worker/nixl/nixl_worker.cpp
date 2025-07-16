@@ -34,7 +34,6 @@
 #include <utils/serdes/serdes.h>
 #include <omp.h>
 
-
 #define ROUND_UP(value, granularity) \
     ((((value) + (granularity) - 1) / (granularity)) * (granularity))
 
@@ -210,16 +209,71 @@ iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list, nixl_xfer_dlis
     }
 }
 
+
+enum class AllocationType { POSIX_MEMALIGN, CALLOC, MALLOC };
+
+static bool
+allocateXferMemory(size_t buffer_size,
+                   void **addr,
+                   std::optional<AllocationType> allocation_type = std::nullopt,
+                   std::optional<size_t> num = 1) {
+
+    if (!addr) {
+        std::cerr << "Invalid address" << std::endl;
+        return false;
+    }
+    if (buffer_size == 0) {
+        std::cerr << "Invalid buffer size" << std::endl;
+        return false;
+    }
+    AllocationType type = allocation_type.value_or(AllocationType::MALLOC);
+
+    if (type == AllocationType::POSIX_MEMALIGN) {
+        if (xferBenchConfig::page_size == 0) {
+            std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
+            return false;
+        }
+        int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
+        if (rc != 0 || !*addr) {
+            std::cerr << "Failed to allocate " << buffer_size
+                      << " bytes of page-aligned DRAM memory" << std::endl;
+            return false;
+        }
+        memset(*addr, 0, buffer_size);
+    } else if (type == AllocationType::CALLOC) {
+        *addr = calloc(num.value_or(1), buffer_size);
+        if (!*addr) {
+            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory"
+                      << std::endl;
+            return false;
+        }
+    } else if (type == AllocationType::MALLOC) {
+        *addr = malloc(buffer_size);
+        if (!*addr) {
+            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory"
+                      << std::endl;
+            return false;
+        }
+    } else {
+        std::cerr << "Invalid allocation type" << std::endl;
+        return false;
+    }
+    return true;
+}
+
 std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     void *addr;
 
-    addr = calloc(1, buffer_size);
-    if (!addr) {
+    AllocationType type = AllocationType::CALLOC;
+    if (xferBenchConfig::storage_enable_direct) {
+        type = AllocationType::POSIX_MEMALIGN;
+    }
+
+    if (!allocateXferMemory(buffer_size, &addr, type)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
         return std::nullopt;
     }
-
     if (isInitiator()) {
         memset(addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
     } else if (isTarget()) {
@@ -349,7 +403,8 @@ createFileFds(std::string name) {
 
     for (int i = 0; i < num_files; i++) {
         std::string file_name = file_path + file_name_prefix + name + "_" + std::to_string(i);
-        std::cout << "Creating " << " file: " << file_name << std::endl;
+        std::cout << "Creating "
+                  << " file: " << file_name << std::endl;
         int fd = open(file_name.c_str(), flags, 0744);
         if (fd < 0) {
             std::cerr << "Failed to open file: " << file_name << " with error: " << strerror(errno)
@@ -369,13 +424,27 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_i
     auto ret =
         std::optional<xferBenchIOV>(std::in_place, (uintptr_t)gds_running_ptr, buffer_size, fd);
     // Fill up with data
-    void *buf = (void *)malloc(buffer_size);
-    if (!buf) {
+    void *buf;
+    AllocationType type = AllocationType::MALLOC;
+
+    if (xferBenchConfig::storage_enable_direct) {
+        type = AllocationType::POSIX_MEMALIGN;
+    }
+
+    if (!allocateXferMemory(buffer_size, &buf, type) || !buf) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
         return std::nullopt;
     }
+
     // File is always initialized with XFERBENCH_TARGET_BUFFER_ELEMENT
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+    if (xferBenchConfig::storage_enable_direct) {
+        gds_running_ptr =
+            ((gds_running_ptr + xferBenchConfig::page_size - 1) / xferBenchConfig::page_size) *
+            xferBenchConfig::page_size;
+    } else {
+        gds_running_ptr += (buffer_size * mem_dev_id);
+    }
     int rc = pwrite(fd, buf, buffer_size, gds_running_ptr);
     if (rc < 0) {
         std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
@@ -383,8 +452,6 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_i
         return std::nullopt;
     }
     free(buf);
-
-    gds_running_ptr += (buffer_size * mem_dev_id);
 
     return ret;
 }
@@ -427,6 +494,16 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
         num_devices = xferBenchConfig::num_target_dev;
     }
     buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_lists);
+
+    if (xferBenchConfig::storage_enable_direct) {
+        if (xferBenchConfig::page_size == 0) {
+            std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        buffer_size =
+            ((buffer_size + xferBenchConfig::page_size - 1) / xferBenchConfig::page_size) *
+            xferBenchConfig::page_size;
+    }
 
     opt_args.backends.push_back(backend_engine);
 
