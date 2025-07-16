@@ -73,8 +73,8 @@ private:
     }
 
 public:
-    xferBenchEtcdRT(const std::string& benchmark_name,
-                    const std::string& etcd_endpoints,
+    xferBenchEtcdRT(const std::string &benchmark_name,
+                    const std::string &etcd_endpoints,
                     const int size,
                     int *terminate = nullptr);
     ~xferBenchEtcdRT();

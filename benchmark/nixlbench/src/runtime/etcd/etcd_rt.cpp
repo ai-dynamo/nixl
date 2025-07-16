@@ -28,9 +28,10 @@
 #define ETCD_EP_DEFAULT "http://localhost:2379"
 
 // ETCD Runtime implementation
-xferBenchEtcdRT::xferBenchEtcdRT(const std::string& benchmark_name,
-                                 const std::string& etcd_endpoints,
-                                 const int size, int *terminate_input) {
+xferBenchEtcdRT::xferBenchEtcdRT(const std::string &benchmark_name,
+                                 const std::string &etcd_endpoints,
+                                 const int size,
+                                 int *terminate_input) {
     // Store parameters for later use in setup
     stored_etcd_endpoints = etcd_endpoints.empty() ? ETCD_EP_DEFAULT : etcd_endpoints;
     global_size = size;

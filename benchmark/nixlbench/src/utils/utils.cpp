@@ -33,10 +33,15 @@
 /**********
  * xferBench Config
  **********/
-DEFINE_string(benchmark_name, "default", "Name of benchmark. Use different names to run multiple benchmarks in parallel (Default: default)");
+DEFINE_string(benchmark_name,
+              "default",
+              "Name of benchmark. Use different names to run multiple benchmarks in parallel "
+              "(Default: default)");
 DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
-DEFINE_string(backend, XFERBENCH_BACKEND_UCX, "Name of communication backend [UCX, UCX_MO, GDS, POSIX, GPUNETIO] \
+DEFINE_string(backend,
+              XFERBENCH_BACKEND_UCX,
+              "Name of communication backend [UCX, UCX_MO, GDS, POSIX, GPUNETIO] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]");
@@ -125,7 +130,8 @@ std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::filepath = "";
 bool xferBenchConfig::storage_enable_direct = false;
 
-int xferBenchConfig::loadFromFlags() {
+int
+xferBenchConfig::loadFromFlags() {
     benchmark_name = FLAGS_benchmark_name;
     runtime_type = FLAGS_runtime_type;
     worker_type = FLAGS_worker_type;
