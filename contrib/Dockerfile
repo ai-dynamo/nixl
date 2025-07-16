@@ -15,14 +15,21 @@
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
+ARG OS
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
+# Set default OS if not provided
+ARG OS=${OS:-ubuntu24}
+
 ARG ARCH="x86_64"
-ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG DEFAULT_PYTHON_VERSION="3.10"
 ARG UCX_REF="v1.19.x"
 
-RUN apt-get update -y && \
+# Fix GPG key issues by installing Ubuntu keyring
+RUN apt-get update -y --allow-unauthenticated && \
+    apt-get install -y ubuntu-keyring && \
+    apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
     pybind11-dev \
@@ -55,10 +62,7 @@ WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
 	cd etcd-cpp-apiv3 && mkdir build && cd build && \
 	cmake .. && make -j$(nproc) && make install
-RUN git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
-    mkdir aws_sdk_build && cd aws_sdk_build && \
-    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    make -j$(nproc) && make install
+
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -84,19 +88,21 @@ COPY . /workspace/nixl
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
+ENV PATH=$VIRTUAL_ENV/bin:$PATH
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade meson pybind11 patchelf
+    uv pip install --upgrade "meson>=0.64.0" patchelf
 
-    # Add Mellanox repository and install packages
+# Add Mellanox repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else echo "${ARCH}"; fi) && \
+    # Map OS names to Mellanox repository format
+    MELLANOX_OS=$(if [ "${OS}" = "ubuntu22" ]; then echo "ubuntu22.04"; elif [ "${OS}" = "ubuntu24" ]; then echo "ubuntu24.04"; else echo "${OS}"; fi) && \
     export PKG_CONFIG_PATH="/opt/mellanox/doca/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:/opt/mellanox/dpdk/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" && \
-    curl -fsSL https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/${ARCH_SUFFIX}/GPG-KEY-Mellanox.pub | \
+    curl -fsSL https://linux.mellanox.com/public/repo/doca/3.0.0/${MELLANOX_OS}/${ARCH_SUFFIX}/GPG-KEY-Mellanox.pub | \
     gpg --dearmor | tee /usr/share/keyrings/mellanox-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/mellanox-archive-keyring.gpg] https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/${ARCH_SUFFIX} ./" | \
+    echo "deb [signed-by=/usr/share/keyrings/mellanox-archive-keyring.gpg] https://linux.mellanox.com/public/repo/doca/3.0.0/${MELLANOX_OS}/${ARCH_SUFFIX} ./" | \
     tee /etc/apt/sources.list.d/mellanox.list && \
-    DEBIAN_FRONTEND=noninteractive apt update -y && \
-    apt install -y --no-install-recommends \
+    apt-get update -y --allow-unauthenticated && \
+    apt-get install -y --no-install-recommends --allow-unauthenticated \
         mlnx-dpdk mlnx-dpdk-dev \
         doca-sdk-common doca-sdk-dma doca-sdk-dpdk-bridge \
         doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all \
@@ -129,7 +135,7 @@ RUN cd /usr/local/src && \
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl && \
+    uv run meson setup /workspace/nixl build/ --prefix=/usr/local/nixl -Dstatic_plugins=posix,ucx,ucx_mo,cuda_gds,hf3fs,mooncake,gpunetio && \
     cd build && \
     ninja && \
     ninja install
@@ -153,6 +159,7 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
 
 # Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
 RUN uv pip install auditwheel && \
-    uv run auditwheel repair --exclude libcuda.so.1 /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
+    ls -la /tmp/dist/ && \
+    uv run auditwheel repair --exclude libcuda.so.1 /tmp/dist/nixl-*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
 
-RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+RUN ls -la dist/ && uv pip install dist/nixl-*.whl

@@ -76,7 +76,44 @@ $SUDO apt-get -qq install -y curl \
                              uuid-dev \
                              ibverbs-utils \
                              libibmad-dev \
-                             doxygen
+                             doxygen \
+                             libclang-dev \
+                             libgflags-dev \
+                             libcpprest-dev \
+                             etcd-client \
+                             liburing-dev \
+                             libcurl4-openssl-dev \
+                             zlib1g-dev
+
+# Reinstall RDMA packages to ensure proper installation
+$SUDO apt-get -qq install -y --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+                             librdmacm-dev ibverbs-providers
+
+# Install etcd-cpp-apiv3
+git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+cd etcd-cpp-apiv3 && mkdir build && cd build && \
+cmake .. && make -j$(nproc) && make install && \
+cd /workspace/nixl
+
+# Setup Rust environment
+export RUSTUP_HOME=/usr/local/rustup
+export CARGO_HOME=/usr/local/cargo
+export PATH=/usr/local/cargo/bin:$PATH
+export RUST_VERSION=1.86.0
+export RUSTARCH=${ARCH:-x86_64}-unknown-linux-gnu
+
+# Download and install rustup
+wget --tries=3 --waitretry=5 \
+    "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" \
+    "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init.sha256" && \
+sha256sum -c rustup-init.sha256 && \
+chmod +x rustup-init && \
+./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
+rm rustup-init* && \
+chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+
+# Ensure we're in the nixl project root directory
+cd /workspace/nixl
 
 curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
@@ -97,6 +134,9 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
         make -j install-strip && \
         $SUDO ldconfig \
 )
+
+# Ensure we're in the nixl project root directory for meson setup
+cd /workspace/nixl
 
 export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib
