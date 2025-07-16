@@ -21,6 +21,10 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REF="v1.19.x"
+ARG UCX_PREFIX="/usr"
+ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG NIXL_PREFIX="/usr/local/nixl"
+ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
@@ -110,6 +114,7 @@ RUN cd /usr/local/src && \
      cd ucx && 			     \
      git checkout $UCX_REF &&        \
      ./autogen.sh && ./configure     \
+         --prefix=$UCX_PREFIX        \
          --enable-shared             \
          --disable-static            \
          --disable-doxygen-doc       \
@@ -128,15 +133,13 @@ RUN cd /usr/local/src && \
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl && \
+    uv run meson setup build/ --prefix=$NIXL_PREFIX && \
     cd build && \
     ninja && \
     ninja install
 
-ENV NIXL_PREFIX=/usr/local/nixl
-ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/$ARCH-linux-gnu/plugins
-RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
-    echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
+RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
 RUN cd src/bindings/rust && cargo build --release --locked
@@ -144,7 +147,7 @@ RUN cd src/bindings/rust && cargo build --release --locked
 RUN ./contrib/build-wheel.sh \
     --python-version $DEFAULT_PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
-    --ucx-plugins-dir /usr/lib64/ucx \
+    --ucx-plugins-dir $UCX_PLUGIN_DIR \
     --nixl-plugins-dir $NIXL_PLUGIN_DIR \
     --output-dir /workspace/nixl/dist
 
