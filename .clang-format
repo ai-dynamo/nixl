@@ -52,6 +52,7 @@ PackConstructorInitializers: CurrentLine
 PointerAlignment: Right
 ReferenceAlignment: Right
 ReflowComments: true
+SeparateDefinitionBlocks: Always
 SortIncludes: false
 SortUsingDeclarations: false
 SpaceAfterCStyleCast: false
