@@ -129,6 +129,7 @@ int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::filepath = "";
 bool xferBenchConfig::storage_enable_direct = false;
+long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 
 int
 xferBenchConfig::loadFromFlags() {
