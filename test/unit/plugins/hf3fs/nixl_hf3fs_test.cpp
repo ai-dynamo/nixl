@@ -324,7 +324,7 @@ int main(int argc, char *argv[])
     print_segment_title(phase_title("Allocating and initializing buffers"));
 
     for (int i = 0; i < num_transfers; i++) {
-        void *ptr = aligned_alloc(page_size, transfer_size); // malloc(transfer_size);
+        void *ptr = aligned_alloc(page_size, transfer_size);
         if (!ptr) {
             std::cerr << "DRAM allocation failed" << std::endl;
             return 1;

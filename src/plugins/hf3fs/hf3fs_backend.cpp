@@ -31,6 +31,8 @@
 
 #define NUM_CQES 1024
 
+long nixlHf3fsEngine::page_size;
+
 nixlHf3fsEngine::nixlHf3fsEngine (const nixlBackendInitParams* init_params)
     : nixlBackendEngine (init_params)
 {
@@ -93,31 +95,31 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
                    << ", len: " << mem.len << ")";
         break;
     }
-        case FILE_SEG: {
-            int fd = mem.devId;
+    case FILE_SEG: {
+        int fd = mem.devId;
 
-            // if the same file is reused - no need to re-register
-            auto it = hf3fs_file_set.find (fd);
-            if (it == hf3fs_file_set.end()) {
-                int ret = 0;
-                status = hf3fs_utils->registerFileHandle(fd, &ret);
-                if (status != NIXL_SUCCESS) {
-                    HF3FS_LOG_RETURN(
-                        status, absl::StrFormat("Error - failed to register file handle %d", fd));
-                }
-                hf3fs_file_set.insert(fd);
+        // if the same file is reused - no need to re-register
+        auto it = hf3fs_file_set.find(fd);
+        if (it == hf3fs_file_set.end()) {
+            int ret = 0;
+            status = hf3fs_utils->registerFileHandle(fd, &ret);
+            if (status != NIXL_SUCCESS) {
+                HF3FS_LOG_RETURN(status,
+                                 absl::StrFormat("Error - failed to register file handle %d", fd));
             }
-
-            nixlHf3fsFileMetadata *md = new nixlHf3fsFileMetadata();
-            md->handle.fd = fd;
-            md->handle.size = mem.len;
-            md->handle.metadata = mem.metaInfo;
-            out = (nixlBackendMD *)md;
-            break;
+            hf3fs_file_set.insert(fd);
         }
-        case VRAM_SEG:
-        default:
-            HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - type not supported");
+
+        nixlHf3fsFileMetadata *md = new nixlHf3fsFileMetadata();
+        md->handle.fd = fd;
+        md->handle.size = mem.len;
+        md->handle.metadata = mem.metaInfo;
+        out = (nixlBackendMD *)md;
+        break;
+    }
+    case VRAM_SEG:
+    default:
+        HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - type not supported");
     }
 
     return status;
@@ -449,14 +451,14 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
     // Create POSIX shared memory object
     int shm_fd = shm_open(shm_name.c_str(), O_CREAT | O_RDWR, 0666);
     if (shm_fd == -1) {
-        NIXL_ERROR << "Failed to create POSIX shared memory: " << strerror(errno);
+        NIXL_PERROR << "Failed to create POSIX shared memory";
         throw nixlHf3fsShmException("Failed to create POSIX shared memory: " +
                                     std::string(strerror(errno)));
     }
 
     // Set the size of the shared memory object
     if (ftruncate(shm_fd, len) == -1) {
-        NIXL_ERROR << "Failed to set shared memory size: " << strerror(errno);
+        NIXL_PERROR << "Failed to set shared memory size";
         close(shm_fd);
         shm_unlink(shm_name.c_str());
         throw nixlHf3fsShmException("Failed to set shared memory size: " +
@@ -472,7 +474,7 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
      */
     ssize_t written = pwrite(shm_fd, addr, len, 0);
     if (written < 0 || written != (ssize_t)len) {
-        NIXL_ERROR << "Failed to write to shared memory: " << strerror(errno);
+        NIXL_PERROR << "Failed to write to shared memory";
         close(shm_fd);
         shm_unlink(shm_name.c_str());
         throw nixlHf3fsShmException("Failed to write to shared memory: " +
@@ -481,7 +483,7 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
 
     mapped_addr = mmap(addr, len, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, shm_fd, 0);
     if (mapped_addr == MAP_FAILED) {
-        NIXL_ERROR << "Failed to map shared memory: " << strerror(errno);
+        NIXL_PERROR << "Failed to map shared memory";
         close(shm_fd);
         shm_unlink(shm_name.c_str());
         throw nixlHf3fsShmException("Failed to map shared memory: " + std::string(strerror(errno)));
@@ -493,7 +495,7 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
     link_path =
         absl::StrFormat("%s/3fs-virt/iovs/%s", utils.mount_point, boost::uuids::to_string(uuid));
     if (symlink(shm_path.c_str(), link_path.c_str()) == -1) {
-        NIXL_ERROR << "Failed to create symlink: " << strerror(errno);
+        NIXL_PERROR << "Failed to create symlink";
         close(shm_fd);
         shm_unlink(shm_name.c_str());
         throw nixlHf3fsShmException("Failed to create symlink " + std::string(strerror(errno)));
@@ -507,11 +509,11 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
 
 nixlHf3fsShmMetadata::~nixlHf3fsShmMetadata() {
     if (unlink(link_path.c_str()) && errno != ENOENT) {
-        NIXL_ERROR << "Failed to remove symlink: " << strerror(errno);
+        NIXL_PERROR << "Failed to remove symlink";
     }
 
     if (shm_unlink(shm_name.c_str()) == -1) {
-        NIXL_ERROR << "Failed to unlink shared memory: " << strerror(errno);
+        NIXL_PERROR << "Failed to unlink shared memory";
     }
 
     NIXL_INFO << "Cleaned up POSIX shared memory: " << shm_name;
