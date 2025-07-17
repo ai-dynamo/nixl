@@ -78,3 +78,14 @@ steps:
       # install git for building container image
       yum install -y git
       contrib/build-container.sh --no-cache
+
+pipeline_stop:
+  shell: action
+  module: groovy
+  run: |
+    import ipp.blossom.*
+    withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+      githubHelper = GithubHelper.getInstance("${GIT_PASSWORD}", githubData)
+      githubHelper.uploadLogs(this, env.JOB_NAME, env.BUILD_NUMBER, null, null)
+      currentBuild.description = githubHelper.getBuildDescription()
+    }
