@@ -22,6 +22,8 @@ ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REF="v1.19.x"
 
+RUN echo "TEST POINT FAILURE" && false
+
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
