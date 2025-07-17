@@ -181,8 +181,8 @@ getPluginDir() {
     }
     // By default, use the plugin directory relative to the binary
     Dl_info info;
-    int ret = dladdr(reinterpret_cast<void *>(&getPluginDir), &info);
-    if (ret != 0) {
+    int ok = dladdr(reinterpret_cast<void *>(&getPluginDir), &info);
+    if (!ok) {
         NIXL_ERROR << "Failed to get plugin directory from dladdr";
         return "";
     }
