@@ -686,7 +686,8 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
+nixl_status_t
+nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
     if (remoteSections.count(remote_name) == 0) {
         remoteSections[remote_name] = new nixlRemoteSection(remote_name);
     }
@@ -703,7 +704,8 @@ nixl_status_t nixlAgentData::loadRemoteSections(const std::string &remote_name, 
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
+nixl_status_t
+nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
     if (remote_name == name) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -718,7 +720,7 @@ nixl_status_t nixlAgentData::invalidateRemoteData(const std::string &remote_name
 
     auto it_backends = remoteBackends.find(remote_name);
     if (it_backends != remoteBackends.end()) {
-        for (auto & it: it_backends->second) {
+        for (auto &it : it_backends->second) {
             backendEngines[it.first]->disconnect(remote_name);
         }
 

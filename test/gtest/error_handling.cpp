@@ -121,7 +121,7 @@ private:
     template<TestType test_type> size_t numIter();
     void
     exchangeMetaData();
-    std::variant<nixlXferReqH*, nixl_status_t>
+    std::variant<nixlXferReqH *, nixl_status_t>
     postXfer(enum nixl_xfer_op_t op, bool target_failure);
 
     ScopedEnv    m_env;
@@ -141,7 +141,8 @@ void TestErrorHandling::Agent::init(const std::string& name, const std::string& 
     EXPECT_EQ(NIXL_SUCCESS, m_priv->registerMem(m_mem.m_dlist, &m_mem.m_params));
 }
 
-void TestErrorHandling::Agent::destroy(bool after_failure) {
+void
+TestErrorHandling::Agent::destroy(bool after_failure) {
     disconnect(after_failure);
     m_priv->deregisterMem(m_mem.m_dlist, &m_mem.m_params);
     m_backend = nullptr;
@@ -328,7 +329,7 @@ void TestErrorHandling::exchangeMetaData() {
     m_Target.loadRemoteMD(m_Initiator.getLocalMD());
 }
 
-std::variant<nixlXferReqH*, nixl_status_t>
+std::variant<nixlXferReqH *, nixl_status_t>
 TestErrorHandling::postXfer(enum nixl_xfer_op_t op, bool target_failure) {
     EXPECT_TRUE(op == NIXL_WRITE || op == NIXL_READ);
 
@@ -360,8 +361,7 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, bool target_failure) {
             return status;
         }
 
-        EXPECT_EQ(NIXL_IN_PROG, status) << "status: "
-                                        << nixlEnumStrings::statusStr(status);
+        EXPECT_EQ(NIXL_IN_PROG, status) << "status: " << nixlEnumStrings::statusStr(status);
     } else {
         EXPECT_LE(0, status) << "status: "
                              << nixlEnumStrings::statusStr(status);
