@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+source $(dirname $0)/../.ci/scripts/common.sh
+
 set -e
 set -x
 TEXT_YELLOW="\033[1;33m"
@@ -33,22 +35,9 @@ $SUDO apt-get -qq install -y libaio-dev
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
 
-if [ -z "$INSTALL_DIR" ]; then
-    echo "Usage: $0 <install_dir>"
-    exit 1
-fi
+check_install_dir $INSTALL_DIR
 
-ARCH=$(uname -m)
-[ "$ARCH" = "arm64" ] && ARCH="aarch64"
-
-export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
-
-export CPATH=${INSTALL_DIR}/include:$CPATH
-export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
-export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
+set_env $INSTALL_DIR
 
 echo "==== Show system info ===="
 env
@@ -74,9 +63,11 @@ cd ${INSTALL_DIR}
 ./bin/test_plugin
 
 # Run NIXL client-server test
-./bin/nixl_test target 127.0.0.1 1234&
+nixl_test_port=$(get_next_server_port)
+
+./bin/nixl_test target 127.0.0.1 $nixl_test_port&
 sleep 1
-./bin/nixl_test initiator 127.0.0.1 1234
+./bin/nixl_test initiator 127.0.0.1 $nixl_test_port
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"

@@ -14,16 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+source $(dirname $0)/../.ci/scripts/common.sh
+
 set -e
 set -x
 
-# Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
 
-if [ -z "$INSTALL_DIR" ]; then
-    echo "Usage: $0 <install_dir>"
-    exit 1
-fi
+check_install_dir $INSTALL_DIR
 
 # For running as user - check if running as root, if not set sudo variable
 if [ "$(id -u)" -ne 0 ]; then
@@ -34,16 +32,7 @@ fi
 
 $SUDO apt-get -qq install liburing-dev
 
-ARCH=$(uname -m)
-[ "$ARCH" = "arm64" ] && ARCH="aarch64"
-
-export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
-export CPATH=${INSTALL_DIR}/include:$CPATH
-export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
-export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
+set_env $INSTALL_DIR
 
 pip3 install --break-system-packages .
 pip3 install --break-system-packages pytest
@@ -57,8 +46,10 @@ python3 test/python/prep_xfer_perf.py list
 python3 test/python/prep_xfer_perf.py array
 
 echo "==== Running python example ===="
+blocking_send_recv_port=$(get_next_server_port)
+
 cd examples/python
-python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port=1234&
+python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port=$blocking_send_recv_port&
 sleep 5
-python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port=1234
+python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port=$blocking_send_recv_port
 python3 partial_md_example.py
