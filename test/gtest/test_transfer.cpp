@@ -430,20 +430,19 @@ TEST_P(TestTransfer, RandomSizes)
          {1000000, 100, 3, 4},
          {40, 1000, 1, 4}}
     };
+    nixl_mem_t mem_type = m_cuda_device? VRAM_SEG : DRAM_SEG;
 
     for (const auto &[size, count, repeat, num_threads] : test_cases) {
         std::vector<MemBuffer> src_buffers, dst_buffers;
 
-        std::cout << "size: " << size << ", count: " << count << ", repeat: " << repeat << ", num_threads: " << num_threads << std::endl;
-
-        createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
-        createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+        createRegisteredMem(getAgent(0), size, count, mem_type, src_buffers);
+        createRegisteredMem(getAgent(1), size, count, mem_type, dst_buffers);
 
         exchangeMD();
         doTransfer(getAgent(0), getAgentName(0), getAgent(1), getAgentName(1),
                    size, count, repeat, num_threads,
-                   DRAM_SEG, src_buffers,
-                   DRAM_SEG, dst_buffers);
+                   mem_type, src_buffers,
+                   mem_type, dst_buffers);
     }
 }
 
