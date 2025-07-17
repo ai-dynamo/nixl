@@ -21,6 +21,7 @@ set -x
 # and second argument being the UCX installation directory.
 INSTALL_DIR=$1
 UCX_INSTALL_DIR=$2
+EXTRA_BUILD_ARGS=${3:-""}
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -67,7 +68,8 @@ apt-get -qq install -y curl \
                              uuid-dev \
                              ibverbs-utils \
                              libibmad-dev \
-                             doxygen
+                             doxygen \
+                             libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
 curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
 ( \
@@ -89,6 +91,13 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
         ldconfig \
 )
 
+( \
+  git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+      mkdir aws_sdk_build && cd aws_sdk_build && \
+      cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+      make -j$(nproc) && make install
+)
+
 export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib
 export CPATH=${INSTALL_DIR}/include:$CPATH
@@ -99,7 +108,7 @@ export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true ${EXTRA_BUILD_ARGS}
 cd nixl_build && ninja && ninja install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.

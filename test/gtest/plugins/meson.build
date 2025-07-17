@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# TODO: assert aws-cpp-sdk-s3 exist
+
 plugins_test_exe = executable('plugins_gtest',
     sources : ['../main.cpp', 'memory_handler.cpp', 'plugins_common.cpp', 'obj_plugin.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs, plugins_inc_dirs, '.'],
