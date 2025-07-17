@@ -97,6 +97,7 @@ class nixlAgentData {
         void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
+        nixl_status_t invalidateRemoteData(const std::string &remote_name);
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);

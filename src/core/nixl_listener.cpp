@@ -652,3 +652,29 @@ void nixlAgentData::getCommWork(std::vector<nixl_comm_req_t> &req_list){
     req_list = std::move(commQueue);
     commQueue.clear();
 }
+
+nixl_status_t nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
+    if (remote_name == name) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    nixl_status_t ret = NIXL_ERR_NOT_FOUND;
+    auto it_section = remoteSections.find(remote_name);
+    if (it_section != remoteSections.end()) {
+        delete it_section->second;
+        remoteSections.erase(it_section);
+        ret = NIXL_SUCCESS;
+    }
+
+    auto it_backends = remoteBackends.find(remote_name);
+    if (it_backends != remoteBackends.end()) {
+        for (auto & it: it_backends->second) {
+            backendEngines[it.first]->disconnect(remote_name);
+        }
+
+        remoteBackends.erase(it_backends);
+        ret = NIXL_SUCCESS;
+    }
+
+    return ret;
+}
