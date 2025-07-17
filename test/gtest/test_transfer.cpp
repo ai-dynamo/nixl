@@ -436,7 +436,7 @@ TEST_P(TestTransfer, RandomSizes)
          {1000000, 100, 3, 4},
          {40, 1000, 1, 4}}
     };
-    nixl_mem_t mem_type = DRAM_SEG;
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
 
     for (const auto &[size, count, repeat, num_threads] : test_cases) {
         std::vector<MemBuffer> src_buffers, dst_buffers;
