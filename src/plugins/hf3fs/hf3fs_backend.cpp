@@ -490,7 +490,7 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
     }
 
     mapped_size = len;
-    shm_path = "/dev/shm" + shm_name;
+    std::string shm_path = "/dev/shm" + shm_name;
 
     link_path =
         absl::StrFormat("%s/3fs-virt/iovs/%s", utils.mount_point, boost::uuids::to_string(uuid));
