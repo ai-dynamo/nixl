@@ -17,6 +17,8 @@
 #ifndef __TRANSFER_REQUEST_H_
 #define __TRANSFER_REQUEST_H_
 
+#include <chrono>
+
 // Contains pointers to corresponding backend engine and its handler, and populated
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
 class nixlXferReqH {
@@ -33,6 +35,10 @@ class nixlXferReqH {
 
         nixl_xfer_op_t     backendOp;
         nixl_status_t      status;
+        // Total bytes transferred for telemetry
+        uint64_t           totalBytes;
+        // Transaction timing
+        std::chrono::high_resolution_clock::time_point transaction_start_time;
 
     public:
         inline nixlXferReqH() { }
@@ -44,7 +50,7 @@ class nixlXferReqH {
             if (backendHandle != nullptr)
                 engine->releaseReqH(backendHandle);
         }
-
+        void updateRequestStats();
     friend class nixlAgent;
 };
 
