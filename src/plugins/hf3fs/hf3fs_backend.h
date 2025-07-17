@@ -45,7 +45,6 @@ class nixlHf3fsMetadata : public nixlBackendMD {
         nixlHf3fsMemType type;
 
         nixlHf3fsMetadata(nixlHf3fsMemType type) : nixlBackendMD(true), type(type) {}
-        ~nixlHf3fsMetadata() { }
 };
 
 class nixlHf3fsFileMetadata : public nixlHf3fsMetadata {
@@ -53,13 +52,11 @@ public:
     hf3fsFileHandle handle;
 
     nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) {}
-    ~nixlHf3fsFileMetadata() {}
 };
 
 class nixlHf3fsRegMemMetadata : public nixlHf3fsMetadata {
 public:
     nixlHf3fsRegMemMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_REG_MEM) {}
-    ~nixlHf3fsRegMemMetadata() {}
 };
 
 class nixlHf3fsShmMetadata : public nixlHf3fsMetadata {
@@ -78,39 +75,35 @@ public:
 class nixlHf3fsIO {
     public:
         hf3fs_iov iov;
-        int fd;
-        void *addr; // Start address to read from/write to
-        size_t size;      // Size of the buffer
-        bool is_read;     // Whether this is a read operation
+        int fd = -1;
+        void *addr = nullptr; // Start address to read from/write to
+        size_t size = 0; // Size of the buffer
+        bool is_read = false; // Whether this is a read operation
         size_t offset;    // Offset in the file
         nixlHf3fsMemType mem_type;
 
-        nixlHf3fsIO() : fd(-1), addr(nullptr), size(0), is_read(false) {}
-        ~nixlHf3fsIO() {}
+        nixlHf3fsIO() = default;
 };
 
 class nixlH3fsThreadStatus {
     public:
-        std::thread *thread;
-        nixl_status_t error_status;
-        std::string error_message;
-        bool stop_thread;
+        std::thread *thread = nullptr;
+        nixl_status_t error_status = NIXL_SUCCESS;
+        std::string error_message = "";
+        bool stop_thread = false;
 
-        nixlH3fsThreadStatus() : thread(nullptr), error_status(NIXL_SUCCESS), error_message(""),
-                                 stop_thread(false) {}
-        ~nixlH3fsThreadStatus() {}
+        nixlH3fsThreadStatus() = default;
 };
 
 class nixlHf3fsBackendReqH : public nixlBackendReqH {
     public:
         std::list<nixlHf3fsIO *> io_list;
         hf3fs_ior ior;
-        uint32_t completed_ios; // Number of completed IOs
-        uint32_t num_ios; // Number of submitted IOs
+        uint32_t completed_ios = 0; // Number of completed IOs
+        uint32_t num_ios = 0; // Number of submitted IOs
         nixlH3fsThreadStatus io_status;
 
-        nixlHf3fsBackendReqH() : completed_ios(0), num_ios(0) {}
-        ~nixlHf3fsBackendReqH() {}
+        nixlHf3fsBackendReqH() = default;
 };
 
 
@@ -118,7 +111,7 @@ class nixlHf3fsEngine : public nixlBackendEngine {
     private:
         hf3fsUtil *hf3fs_utils;
         std::unordered_set<int> hf3fs_file_set;
-        long page_size;
+        static long page_size;
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
         void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;
