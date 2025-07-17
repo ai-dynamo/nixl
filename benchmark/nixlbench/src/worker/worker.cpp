@@ -31,8 +31,8 @@ static xferBenchRT *createRT(int *terminate) {
         if (xferBenchConfig::isStorageBackend()) {
             total = 1;
         }
-        xferBenchEtcdRT *etcd_rt =
-            new xferBenchEtcdRT (xferBenchConfig::etcd_endpoints, total, terminate);
+        xferBenchEtcdRT *etcd_rt = new xferBenchEtcdRT(
+            xferBenchConfig::benchmark_group, xferBenchConfig::etcd_endpoints, total, terminate);
         if (etcd_rt->setup() != 0) {
             std::cerr << "Failed to setup ETCD runtime" << std::endl;
             delete etcd_rt;
