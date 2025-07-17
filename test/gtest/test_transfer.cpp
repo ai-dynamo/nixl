@@ -280,9 +280,8 @@ protected:
         registerMem(agent, out, mem_type);
     }
 
-    void deregisterMem(nixlAgent& agent, const std::vector<MemBuffer>& buffers,
-                       nixl_mem_t mem_type)
-    {
+    void
+    deregisterMem(nixlAgent &agent, const std::vector<MemBuffer> &buffers, nixl_mem_t mem_type) {
         auto desc_list = makeDescList<nixlBlobDesc>(buffers, mem_type);
         agent.deregisterMem(desc_list);
     }
