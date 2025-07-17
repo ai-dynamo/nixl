@@ -439,10 +439,18 @@ TEST_P(TestTransfer, RandomSizes)
         createRegisteredMem(getAgent(1), size, count, mem_type, dst_buffers);
 
         exchangeMD();
-        doTransfer(getAgent(0), getAgentName(0), getAgent(1), getAgentName(1),
-                   size, count, repeat, num_threads,
-                   mem_type, src_buffers,
-                   mem_type, dst_buffers);
+        doTransfer(getAgent(0),
+                   getAgentName(0),
+                   getAgent(1),
+                   getAgentName(1),
+                   size,
+                   count,
+                   repeat,
+                   num_threads,
+                   mem_type,
+                   src_buffers,
+                   mem_type,
+                   dst_buffers);
     }
 }
 
