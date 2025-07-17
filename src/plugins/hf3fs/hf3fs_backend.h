@@ -62,7 +62,6 @@ public:
 class nixlHf3fsShmMetadata : public nixlHf3fsMetadata {
 public:
     std::string shm_name;
-    std::string shm_path;
     std::string link_path;
     void *mapped_addr;
     size_t mapped_size;
