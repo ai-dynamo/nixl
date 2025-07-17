@@ -106,7 +106,7 @@ get_options() {
             ;;
         --ucx-upstream)
             # Master branch (v1.20) also containing EFA SRD support
-            #UCX_REF=9d2b88a1f67faf9876f267658bd077b379b8bb76
+            UCX_REF=9d2b88a1f67faf9876f267658bd077b379b8bb76
             ;;
         --arch)
             if [ "$2" ]; then
