@@ -653,6 +653,56 @@ void nixlAgentData::getCommWork(std::vector<nixl_comm_req_t> &req_list){
     commQueue.clear();
 }
 
+nixl_status_t
+nixlAgentData::loadConnInfo(const std::string &remote_name,
+                            const nixl_backend_t &backend,
+                            const nixl_blob_t &conn_info) {
+    // Current agent might not support a remote backend
+    if (backendEngines.count(backend) == 0) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    // No need to reload same conn info, error if it changed
+    if ((remoteBackends.count(remote_name) != 0) &&
+        (remoteBackends[remote_name].count(backend) != 0)) {
+        if (remoteBackends[remote_name][backend] != conn_info) {
+            return NIXL_ERR_NOT_ALLOWED;
+        }
+
+        return NIXL_SUCCESS;
+    }
+
+    nixlBackendEngine *eng = backendEngines[backend];
+    if (!eng->supportsRemote()) {
+        return NIXL_ERR_UNKNOWN;
+    }
+
+    nixl_status_t ret = eng->loadRemoteConnInfo(remote_name, conn_info);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
+
+    remoteBackends[remote_name].emplace(backend, conn_info);
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
+    if (remoteSections.count(remote_name) == 0) {
+        remoteSections[remote_name] = new nixlRemoteSection(remote_name);
+    }
+
+    nixl_status_t ret = remoteSections[remote_name]->loadRemoteData(&sd, backendEngines);
+    // TODO: can be more graceful, if just the new MD blob was improper
+    if (ret != NIXL_SUCCESS) {
+        delete remoteSections[remote_name];
+        remoteSections.erase(remote_name);
+        remoteBackends.erase(remote_name);
+        return ret;
+    }
+
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
     if (remote_name == name) {
         return NIXL_ERR_INVALID_PARAM;

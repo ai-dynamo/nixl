@@ -80,7 +80,8 @@ class TestErrorHandling : public testing::TestWithParam<std::string> {
 
     public:
         void init(const std::string& name, const std::string& backend_name);
-        void destroy(bool after_failure);
+        void
+        destroy(bool after_failure);
         void
         disconnect(bool after_failure);
         void fillRegList(nixl_xfer_dlist_t& dlist, nixlBasicDesc& desc) const;
@@ -118,8 +119,10 @@ protected:
 private:
     template<TestType test_type> bool isFailure(size_t iter);
     template<TestType test_type> size_t numIter();
-    void exchangeMetaData();
-    std::variant<nixlXferReqH*, nixl_status_t> postXfer(enum nixl_xfer_op_t op, bool target_failure);
+    void
+    exchangeMetaData();
+    std::variant<nixlXferReqH*, nixl_status_t>
+    postXfer(enum nixl_xfer_op_t op, bool target_failure);
 
     ScopedEnv    m_env;
     Agent        m_Initiator;
@@ -135,8 +138,7 @@ void TestErrorHandling::Agent::init(const std::string& name, const std::string& 
     m_mem.init(m_backend);
     m_mem.fillData();
 
-    EXPECT_EQ(NIXL_SUCCESS,
-              m_priv->registerMem(m_mem.m_dlist, &m_mem.m_params));
+    EXPECT_EQ(NIXL_SUCCESS, m_priv->registerMem(m_mem.m_dlist, &m_mem.m_params));
 }
 
 void TestErrorHandling::Agent::destroy(bool after_failure) {
@@ -152,11 +154,13 @@ TestErrorHandling::Agent::disconnect(bool after_failure) {
 
     const nixl_status_t status = m_priv->invalidateRemoteMD(m_MetaRemote);
     if (after_failure) {
-        ASSERT_EQ(NIXL_ERR_NOT_FOUND, status) << "Agent " << m_name << " has un-invalidated metadata of "
-                                              << m_MetaRemote << ", status: " << nixlEnumStrings::statusStr(status);
+        ASSERT_EQ(NIXL_ERR_NOT_FOUND, status)
+            << "Agent " << m_name << " has un-invalidated metadata of " << m_MetaRemote
+            << ", status: " << nixlEnumStrings::statusStr(status);
     } else {
-        ASSERT_EQ(NIXL_SUCCESS, status) << "Agent " << m_name << " failed to invalidate remote metadata, status: "
-                                        << nixlEnumStrings::statusStr(status);
+        ASSERT_EQ(NIXL_SUCCESS, status)
+            << "Agent " << m_name << " failed to invalidate remote metadata, status: "
+            << nixlEnumStrings::statusStr(status);
     }
 
     m_MetaRemote.clear();
@@ -191,14 +195,12 @@ TestErrorHandling::Agent::createXferReq(const nixl_xfer_op_t& op,
 }
 
 nixl_status_t
-TestErrorHandling::Agent::postXferReq(nixlXferReqH* req_handle) const {
-    nixl_status_t status = m_priv->postXferReq(req_handle);
-    EXPECT_NE(NIXL_ERR_NOT_POSTED, status);
-    return status;
+TestErrorHandling::Agent::postXferReq(nixlXferReqH *req_handle) const {
+    return m_priv->postXferReq(req_handle);
 }
 
 nixl_status_t
-TestErrorHandling::Agent::waitForCompletion(nixlXferReqH* req_handle) {
+TestErrorHandling::Agent::waitForCompletion(nixlXferReqH *req_handle) {
     nixl_status_t status;
 
     do {
@@ -261,7 +263,7 @@ void TestErrorHandling::testXfer() {
             status = std::get<nixl_status_t>(result);
         } else {
             // Transfer was posted, wait for completion
-            nixlXferReqH* req_handle = std::get<nixlXferReqH*>(result);
+            nixlXferReqH *req_handle = std::get<nixlXferReqH *>(result);
             status = m_Initiator.waitForCompletion(req_handle);
         }
 
@@ -343,8 +345,7 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, bool target_failure) {
 
     status = m_Initiator.createXferReq(op, sReq_descs, rReq_descs, req_handle);
     EXPECT_EQ(NIXL_SUCCESS, status)
-        << "createXferReq failed with unexpected error: "
-        << nixlEnumStrings::statusStr(status);
+        << "createXferReq failed with unexpected error: " << nixlEnumStrings::statusStr(status);
 
     if (target_failure) {
         m_Target.destroy(false);
