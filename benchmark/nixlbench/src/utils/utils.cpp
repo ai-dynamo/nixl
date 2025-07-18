@@ -33,9 +33,15 @@
 /**********
  * xferBench Config
  **********/
+DEFINE_string(benchmark_group,
+              "default",
+              "Name of benchmark group. Use different names to run multiple benchmarks in parallel "
+              "(Default: default)");
 DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
-DEFINE_string(backend, XFERBENCH_BACKEND_UCX, "Name of communication backend [UCX, UCX_MO, GDS, POSIX, GPUNETIO] \
+DEFINE_string(backend,
+              XFERBENCH_BACKEND_UCX,
+              "Name of communication backend [UCX, UCX_MO, GDS, POSIX, GPUNETIO] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]");
@@ -118,6 +124,7 @@ bool xferBenchConfig::enable_pt = false;
 bool xferBenchConfig::enable_vmm = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
+std::string xferBenchConfig::benchmark_group = "default";
 int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
@@ -126,8 +133,11 @@ int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::filepath = "";
 bool xferBenchConfig::storage_enable_direct = false;
+long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 
-int xferBenchConfig::loadFromFlags() {
+int
+xferBenchConfig::loadFromFlags() {
+    benchmark_group = FLAGS_benchmark_group;
     runtime_type = FLAGS_runtime_type;
     worker_type = FLAGS_worker_type;
 

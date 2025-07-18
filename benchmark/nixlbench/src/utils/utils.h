@@ -127,6 +127,7 @@ class xferBenchConfig {
         static bool enable_pt;
         static std::string device_list;
         static std::string etcd_endpoints;
+        static std::string benchmark_group;
         static std::string filepath;
         static bool enable_vmm;
         static int num_files;
@@ -135,6 +136,7 @@ class xferBenchConfig {
         static int gds_batch_pool_size;
         static int gds_batch_limit;
         static std::string gpunetio_device_list;
+        static long page_size;
 
         static int loadFromFlags();
         static void printConfig();

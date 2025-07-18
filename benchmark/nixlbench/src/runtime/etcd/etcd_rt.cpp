@@ -28,7 +28,9 @@
 #define ETCD_EP_DEFAULT "http://localhost:2379"
 
 // ETCD Runtime implementation
-xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int size,
+xferBenchEtcdRT::xferBenchEtcdRT(const std::string &benchmark_group,
+                                 const std::string &etcd_endpoints,
+                                 const int size,
                                  int *terminate_input) {
     // Store parameters for later use in setup
     stored_etcd_endpoints = etcd_endpoints.empty() ? ETCD_EP_DEFAULT : etcd_endpoints;
@@ -36,7 +38,7 @@ xferBenchEtcdRT::xferBenchEtcdRT(const std::string& etcd_endpoints, const int si
     terminate = terminate_input;
 
     // Initialize other members
-    namespace_prefix = "xferbench/"; // Namespace for XFER benchmark
+    namespace_prefix = "xferbench/" + benchmark_group + "/"; // Namespace for XFER benchmark
     barrier_gen = 0;
     my_rank = -1; // Will be set in setup()
 
