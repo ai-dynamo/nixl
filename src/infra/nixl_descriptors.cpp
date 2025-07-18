@@ -421,6 +421,21 @@ void nixlDescList<T>::print() const {
 }
 
 template <class T>
+void nixlDescList<T>::extractMetadata(std::vector<nixl_blob_t>& metadata) const {
+    metadata.clear();
+    metadata.reserve(descs.size());
+
+    for (const auto& desc : descs) {
+        if constexpr (std::is_same<nixlBlobDesc, T>::value) {
+            metadata.push_back(desc.metaInfo);
+        } else {
+            // For non-blob descriptors, add empty metadata
+            metadata.push_back("");
+        }
+    }
+}
+
+template <class T>
 bool operator==(const nixlDescList<T> &lhs, const nixlDescList<T> &rhs) {
     if ((lhs.getType()       != rhs.getType())       ||
         (lhs.descCount()     != rhs.descCount())     ||

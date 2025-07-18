@@ -34,8 +34,9 @@ class nixlGdsMetadata : public nixlBackendMD {
         gdsFileHandle handle;
         gdsMemBuf buf;
         nixl_mem_t type;
+        bool file_opened_by_nixl; // Track if file was opened by NIXL
 
-        nixlGdsMetadata() : nixlBackendMD(true) { }
+        nixlGdsMetadata() : nixlBackendMD(true), file_opened_by_nixl(false) { }
         ~nixlGdsMetadata() { }
 };
 
@@ -171,5 +172,8 @@ class nixlGdsEngine : public nixlBackendEngine {
 
         nixl_status_t checkXfer(nixlBackendReqH* handle) const;
         nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
+
+        nixl_status_t queryMem(const nixl_reg_dlist_t &descs,
+                           std::vector<nixl_query_resp_t> &resp) const override;
 };
 #endif

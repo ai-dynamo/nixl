@@ -13,11 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-nixl_build_lib = library('nixl_build',
-                        'nixl_descriptors.cpp',
-                        'nixl_memory_section.cpp',
-                        include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-                        dependencies: [serdes_interface, nixl_common_dep, file_utils_interface],
-                        install: true)
+test_file_utils = executable('test_file_utils',
+    'test_file_utils.cpp',
+    include_directories: [include_directories('../../../../src'), nixl_inc_dirs],
+    dependencies: [
+        file_utils_interface,
+        nixl_common_dep
+    ],
+    install: false
+)
 
-nixl_infra = declare_dependency(link_with: nixl_build_lib)
+test('file_utils', test_file_utils)

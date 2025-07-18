@@ -145,6 +145,20 @@ enum class nixl_cost_t {
 };
 
 /**
+ * @struct nixlQueryResp
+ * @brief A structure for querying memory results
+ */
+struct nixlQueryResp {
+    bool accessible;
+    nixl_b_params_t info;
+};
+/**
+ * @brief An alias for nixlQueryResp for querying memory results
+ */
+using nixl_query_resp_t = nixlQueryResp;
+
+
+/**
  * @struct nixlAgentOptionalArgs
  * @brief A structure for optional argument that can be provided to relevant agent methods.
  */

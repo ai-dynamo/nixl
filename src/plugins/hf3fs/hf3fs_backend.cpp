@@ -22,6 +22,7 @@
 #include "hf3fs_log.h"
 #include "common/str_tools.h"
 #include "common/nixl_log.h"
+#include "file/file_utils.h"
 
 #define NUM_CQES 1024
 
@@ -69,10 +70,8 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             status = NIXL_SUCCESS;
             break;
         case FILE_SEG: {
-            fd = mem.devId;
-
-            // if the same file is reused - no need to re-register
-            auto it = hf3fs_file_set.find (fd);
+            // Check if we already have a file descriptor for this devId
+            auto it = hf3fs_file_set.find (mem.devId);
             if (it != hf3fs_file_set.end()) {
                 md->handle.fd = *it;
                 md->handle.size = mem.len;
@@ -81,6 +80,12 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
                 status = NIXL_SUCCESS;
                 break;
             }
+
+            bool file_opened = false;
+
+            // Use devId as file descriptor for now
+            fd = mem.devId;
+            md->file_opened_by_nixl = false;
 
             ret = 0;
             status = hf3fs_utils->registerFileHandle(fd, &ret);
@@ -112,6 +117,7 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     if (md->type == FILE_SEG) {
         hf3fs_file_set.erase (md->handle.fd);
         hf3fs_utils->deregisterFileHandle(md->handle.fd);
+        // No need to close fd since we're not opening files
     } else if (md->type == DRAM_SEG) {
         return NIXL_SUCCESS;
     } else {
@@ -399,4 +405,14 @@ nixl_status_t nixlHf3fsEngine::releaseReqH(nixlBackendReqH* handle) const
 nixlHf3fsEngine::~nixlHf3fsEngine() {
     hf3fs_utils->closeHf3fsDriver();
     delete hf3fs_utils;
+}
+
+nixl_status_t nixlHf3fsEngine::queryMem(const nixl_reg_dlist_t &descs,
+                                         std::vector<nixl_query_resp_t> &resp) const {
+    // Extract metadata from descriptors
+    std::vector<nixl_blob_t> metadata;
+    descs.extractMetadata(metadata);
+
+    // Use file utils to query the files directly with metadata
+    return queryFileInfoList(metadata, resp);
 }

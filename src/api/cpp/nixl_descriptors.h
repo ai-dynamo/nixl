@@ -333,6 +333,12 @@ class nixlDescList {
          * @brief Print the descriptor list for debugging
          */
         void print() const;
+
+        /**
+         * @brief Extract metadata from all descriptors in the list
+         * @param metadata Output vector of metadata strings
+         */
+        void extractMetadata(std::vector<nixl_blob_t>& metadata) const;
 };
 /**
  * @brief A typedef for a nixlDescList<nixlBasicDesc>

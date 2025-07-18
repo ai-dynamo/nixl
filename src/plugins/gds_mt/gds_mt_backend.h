@@ -108,6 +108,9 @@ public:
     nixl_status_t
     releaseReqH (nixlBackendReqH *handle) const override;
 
+    nixl_status_t queryMem(const nixl_reg_dlist_t &descs,
+                           std::vector<nixl_query_resp_t> &resp) const override;
+
 private:
     gdsMtUtil gds_mt_utils_;
     std::unordered_map<int, std::weak_ptr<gdsMtFileHandle>> gds_mt_file_map_;

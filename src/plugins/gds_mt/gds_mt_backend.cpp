@@ -31,13 +31,20 @@
 #include <atomic>
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
-#include "taskflow/taskflow.hpp"
+#include "gds_mt_utils.h"
+#include "file/file_utils.h"
+#include <taskflow/taskflow.hpp>
+#include <unordered_map>
 
 namespace {
 const size_t default_thread_count = std::max (1u, std::thread::hardware_concurrency() / 2);
 
 struct FileSegData {
     std::shared_ptr<gdsMtFileHandle> handle;
+    bool file_opened_by_nixl; // Track if file was opened by NIXL
+
+    FileSegData(std::shared_ptr<gdsMtFileHandle> h, bool opened = false)
+        : handle(std::move(h)), file_opened_by_nixl(opened) {}
 };
 
 struct MemSegData {
@@ -67,9 +74,9 @@ struct GdsMtTransferRequestH {
 
 class nixlGdsMtMetadata : public nixlBackendMD {
 public:
-    explicit nixlGdsMtMetadata (std::shared_ptr<gdsMtFileHandle> file_handle)
+    explicit nixlGdsMtMetadata (std::shared_ptr<gdsMtFileHandle> file_handle, bool file_opened_by_nixl = false)
         : nixlBackendMD (true),
-          data_ (FileSegData{std::move (file_handle)}) {}
+          data_ (FileSegData{std::move (file_handle), file_opened_by_nixl}) {}
 
     explicit nixlGdsMtMetadata (void *addr, size_t size, int flags)
         : nixlBackendMD (true),
@@ -205,15 +212,18 @@ nixlGdsMtEngine::registerMem (const nixlBlobDesc &mem,
             }
             gds_mt_file_map_.erase (it);
         }
+
+        int fd = mem.devId;
+
         try {
-            handle = std::make_shared<gdsMtFileHandle> (mem.devId);
+            handle = std::make_shared<gdsMtFileHandle> (fd);
         }
         catch (const std::exception &e) {
             NIXL_ERROR << "GDS_MT: failed to create file handle: " << e.what();
             return NIXL_ERR_BACKEND;
         }
         gds_mt_file_map_[mem.devId] = handle;
-        out = new nixlGdsMtMetadata (handle);
+        out = new nixlGdsMtMetadata (handle, false);
         return NIXL_SUCCESS;
     }
 
@@ -256,6 +266,8 @@ nixlGdsMtEngine::deregisterMem (nixlBackendMD *meta) {
             if (it != gds_mt_file_map_.end() && it->second.expired()) {
                 gds_mt_file_map_.erase (it);
             }
+
+            // No need to close fd since we're not opening files
         }
     }
 
@@ -367,4 +379,14 @@ nixl_status_t
 nixlGdsMtEngine::releaseReqH (nixlBackendReqH *handle) const {
     std::unique_ptr<nixlGdsMtBackendReqH> gds_mt_handle ((nixlGdsMtBackendReqH *)handle);
     return NIXL_SUCCESS;
+}
+
+nixl_status_t nixlGdsMtEngine::queryMem(const nixl_reg_dlist_t &descs,
+                                         std::vector<nixl_query_resp_t> &resp) const {
+    // Extract metadata from descriptors
+    std::vector<nixl_blob_t> metadata;
+    descs.extractMetadata(metadata);
+
+    // Use file utils to query the files directly with metadata
+    return queryFileInfoList(metadata, resp);
 }

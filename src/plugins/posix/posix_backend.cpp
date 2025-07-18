@@ -25,6 +25,7 @@
 #include "common/nixl_log.h"
 #include "queue_factory_impl.h"
 #include "nixl_types.h"
+#include "file/file_utils.h"
 
 namespace {
     bool isValidPrepXferParams(const nixl_xfer_op_t &operation,
@@ -310,4 +311,14 @@ nixl_status_t nixlPosixEngine::releaseReqH(nixlBackendReqH* handle) const {
         return e.code();
     }
     return NIXL_ERR_BACKEND;
+}
+
+nixl_status_t nixlPosixEngine::queryMem(const nixl_reg_dlist_t &descs,
+                                        std::vector<nixl_query_resp_t> &resp) const {
+    // Extract metadata from descriptors
+    std::vector<nixl_blob_t> metadata;
+    descs.extractMetadata(metadata);
+
+    // Use file utils to query the files directly with metadata
+    return queryFileInfoList(metadata, resp);
 }

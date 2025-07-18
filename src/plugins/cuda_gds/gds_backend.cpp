@@ -17,8 +17,12 @@
 #include <cassert>
 #include <cufile.h>
 #include "gds_backend.h"
-#include "common/str_tools.h"
+#include "gds_utils.h"
 #include "common/nixl_log.h"
+#include "file/file_utils.h"
+#include <unordered_map>
+#include <memory>
+#include <cuda_runtime.h>
 
 /** Setting the default values to check the batch limit */
 #define DEFAULT_BATCH_LIMIT 128
@@ -98,7 +102,7 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
 
     switch (nixl_mem) {
         case FILE_SEG: {
-            // if the same file is reused - no need to re-register
+            // Check if we already have a file handle for this devId
             auto it = gds_file_map.find(mem.devId);
             if (it != gds_file_map.end()) {
                 md->handle = it->second;
@@ -107,7 +111,12 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
                 break;
             }
 
-            status = gds_utils->registerFileHandle(mem.devId, mem.len,
+            int fd;
+            // Use devId as file descriptor for now
+            fd = mem.devId;
+            md->file_opened_by_nixl = false;
+
+            status = gds_utils->registerFileHandle(fd, mem.len,
                                                    mem.metaInfo, md->handle);
             if (status == NIXL_SUCCESS) {
                 gds_file_map[mem.devId] = md->handle;
@@ -159,7 +168,8 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     nixlGdsMetadata *md = (nixlGdsMetadata *)meta;
     if (md->type == FILE_SEG) {
         gds_utils->deregisterFileHandle(md->handle);
-	gds_file_map.erase(md->handle.fd);
+        gds_file_map.erase(md->handle.fd);
+        // No need to close fd since we're not opening files
     } else {
         gds_utils->deregisterBufHandle(md->buf.base);
     }
@@ -420,4 +430,14 @@ nixlGdsEngine::~nixlGdsEngine() {
         gds_utils->closeGdsDriver();
         delete gds_utils;
     }
+}
+
+nixl_status_t nixlGdsEngine::queryMem(const nixl_reg_dlist_t &descs,
+                                       std::vector<nixl_query_resp_t> &resp) const {
+    // Extract metadata from descriptors
+    std::vector<nixl_blob_t> metadata;
+    descs.extractMetadata(metadata);
+
+    // Use file utils to query the files directly with metadata
+    return queryFileInfoList(metadata, resp);
 }
