@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef RANDOM_ID_H
-#define RANDOM_ID_H
+#ifndef UUID_V4_H
+#define UUID_V4_H
 
 #include <array>
 #include <string>
@@ -24,23 +24,27 @@
 namespace nixl {
 
 /**
- * @brief A class that generates 16-byte random values and converts them to UUID format
+ * @brief A class that generates RFC 9562 UUID version 4 identifiers
  *
- * This class generates random 16-byte values and provides
- * a method to convert them to the UUID string format (8-4-4-4-12).
+ * This class generates cryptographically random 16-byte values and converts them
+ * to the standard UUID version 4 format (8-4-4-4-12) following RFC 9562 specification.
  */
-class RandomID {
+class UUIDv4 {
 public:
-    RandomID();
-    ~RandomID() = default;
+    /**
+     * @brief Default constructor that generates a new random UUID version 4
+     */
+    UUIDv4();
+    ~UUIDv4() = default;
 
     /**
-     * @brief Converts the 16-byte random value to a UUID string format
+     * @brief Converts the 16-byte random value to a UUID version 4 string format
      *
-     * The UUID format follows the standard 8-4-4-4-12 pattern:
-     * xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+     * The UUID format follows the RFC 9562 standard 8-4-4-4-12 pattern:
+     * xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+     * where x is a hexadecimal digit, 4 indicates version 4, and y is the variant.
      *
-     * @return String representation in UUID format
+     * @return String representation in UUID version 4 format
      */
     std::string
     to_string() const;
@@ -58,7 +62,7 @@ private:
     std::array<uint8_t, 16> data;
 
     /**
-     * @brief Generates random bytes using a random number generator
+     * @brief Generates cryptographically random bytes for UUID version 4
      * @param output Pointer to the output buffer
      * @param size Number of bytes to generate
      */
@@ -68,4 +72,4 @@ private:
 
 } // namespace nixl
 
-#endif /* RANDOM_ID_H */
+#endif /* UUID_V4_H */

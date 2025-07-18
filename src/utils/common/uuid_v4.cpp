@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "random_id.h"
+#include "uuid_v4.h"
 
 #include <iomanip>
 #include <sstream>
@@ -22,16 +22,20 @@
 
 namespace nixl {
 
-RandomID::RandomID() {
+UUIDv4::UUIDv4() {
     generate_random_bytes(data.data(), data.size());
+    // Set version 4 bits (version 4 = 0100 in binary)
+    data[6] = (data[6] & 0x0F) | 0x40;
+    // Set variant bits (RFC 9562 variant = 10 in binary)
+    data[8] = (data[8] & 0x3F) | 0x80;
 }
 
 std::string
-RandomID::to_string() const {
+UUIDv4::to_string() const {
     std::ostringstream oss;
     oss << std::hex << std::setfill('0');
 
-    // Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    // Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (RFC 9562 UUID version 4)
     for (size_t i = 0; i < 16; ++i) {
         if (i == 4 || i == 6 || i == 8 || i == 10) {
             oss << '-';
@@ -43,7 +47,7 @@ RandomID::to_string() const {
 }
 
 void
-RandomID::generate_random_bytes(uint8_t *output, size_t size) {
+UUIDv4::generate_random_bytes(uint8_t *output, size_t size) {
     std::random_device rd;
     std::mt19937_64 gen(rd());
     std::uniform_int_distribution<uint8_t> dis(0, 255);
