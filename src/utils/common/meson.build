@@ -33,6 +33,7 @@ nixl_common_deps = [
 # Define a shared library for common utilities
 nixl_common_lib = shared_library('nixl_common',
     'nixl_log.cpp',
+    'random_id.cpp',
     dependencies: nixl_common_deps,
     include_directories: nixl_common_inc,
     install: true,
