@@ -22,10 +22,10 @@
 #include <nixl_types.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include "common/random_id.h"
 #include <list>
 #include <unordered_set>
 #include <thread>
-#include <boost/uuid/uuid.hpp>
 #include "hf3fs_utils.h"
 #include "backend/backend_engine.h"
 
@@ -65,7 +65,7 @@ public:
     std::string link_path;
     void *mapped_addr;
     size_t mapped_size;
-    boost::uuids::uuid uuid;
+    nixl::RandomID uuid;
 
     nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil &utils);
     ~nixlHf3fsShmMetadata();

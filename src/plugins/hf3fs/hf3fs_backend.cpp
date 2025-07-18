@@ -21,8 +21,6 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <filesystem>
-#include <boost/uuid/uuid_generators.hpp>
-#include <boost/uuid/uuid_io.hpp>
 #include "hf3fs_backend.h"
 #include "hf3fs_log.h"
 #include "common/str_tools.h"
@@ -227,8 +225,11 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
 
         if (mem_md->type == NIXL_HF3FS_MEM_TYPE_SH_MEM) {
             nixlHf3fsShmMetadata *shm_md = (nixlHf3fsShmMetadata *)mem_md;
-            status = hf3fs_utils->wrapIOV(
-                &io->iov, shm_md->mapped_addr, shm_md->mapped_size, size, shm_md->uuid.data);
+            status = hf3fs_utils->wrapIOV(&io->iov,
+                                          shm_md->mapped_addr,
+                                          shm_md->mapped_size,
+                                          size,
+                                          shm_md->uuid.get_data().data());
             if (status != NIXL_SUCCESS) {
                 delete io;
                 nixl_err = status;
@@ -441,12 +442,8 @@ nixlHf3fsEngine::queryMem(const nixl_reg_dlist_t &descs,
 nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil &utils)
     : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_SH_MEM) {
 
-    // Generate UUID for shared memory name
-    boost::uuids::random_generator uuidGenerator;
-    uuid = uuidGenerator();
-
     // Create shared memory name using UUID (POSIX shared memory names start with /)
-    shm_name = "/nixl_hf3fs." + boost::uuids::to_string(uuid);
+    shm_name = "/nixl_hf3fs." + uuid.to_string();
 
     // Create POSIX shared memory object
     int shm_fd = shm_open(shm_name.c_str(), O_CREAT | O_RDWR, 0666);
@@ -492,8 +489,7 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
     mapped_size = len;
     std::string shm_path = "/dev/shm" + shm_name;
 
-    link_path =
-        absl::StrFormat("%s/3fs-virt/iovs/%s", utils.mount_point, boost::uuids::to_string(uuid));
+    link_path = absl::StrFormat("%s/3fs-virt/iovs/%s", utils.mount_point, uuid.to_string());
     if (symlink(shm_path.c_str(), link_path.c_str()) == -1) {
         NIXL_PERROR << "Failed to create symlink";
         close(shm_fd);
