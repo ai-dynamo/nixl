@@ -657,8 +657,8 @@ nixl_status_t
 nixlAgentData::loadConnInfo(const std::string &remote_name,
                             const nixl_backend_t &backend,
                             const nixl_blob_t &conn_info) {
-    // Current agent might not support a remote backend
     if (backendEngines.count(backend) == 0) {
+        NIXL_ERROR << "Agent " << name << " does not support a remote backend: " << backend;
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -674,10 +674,11 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
 
     nixlBackendEngine *eng = backendEngines[backend];
     if (!eng->supportsRemote()) {
+        NIXL_ERROR << backend << " does not support remote operations";
         return NIXL_ERR_UNKNOWN;
     }
 
-    nixl_status_t ret = eng->loadRemoteConnInfo(remote_name, conn_info);
+    const nixl_status_t ret = eng->loadRemoteConnInfo(remote_name, conn_info);
     if (ret != NIXL_SUCCESS) {
         return ret;
     }
@@ -692,7 +693,7 @@ nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd
         remoteSections[remote_name] = new nixlRemoteSection(remote_name);
     }
 
-    nixl_status_t ret = remoteSections[remote_name]->loadRemoteData(&sd, backendEngines);
+    const nixl_status_t ret = remoteSections[remote_name]->loadRemoteData(&sd, backendEngines);
     // TODO: can be more graceful, if just the new MD blob was improper
     if (ret != NIXL_SUCCESS) {
         delete remoteSections[remote_name];
@@ -707,6 +708,7 @@ nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd
 nixl_status_t
 nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
     if (remote_name == name) {
+        NIXL_ERROR << "Agent " << name << " cannot invalidate itself";
         return NIXL_ERR_INVALID_PARAM;
     }
 

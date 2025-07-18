@@ -891,14 +891,11 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
         if (req_hndl->status == NIXL_IN_PROG) {
-            delete req_hndl;
-            return NIXL_ERR_REPOST_ACTIVE;
+            return req_hndl->handleFailure(*data, NIXL_ERR_REPOST_ACTIVE);
         }
 
-        if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
-            data->invalidateRemoteData(req_hndl->remoteAgent);
-            delete req_hndl;
-            return NIXL_ERR_REMOTE_DISCONNECT;
+        if (req_hndl->status < 0) {
+            return req_hndl->handleFailure(*data, req_hndl->status);
         }
     }
 
@@ -933,10 +930,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                       req_hndl->remoteAgent,
                                       req_hndl->backendHandle,
                                       &opt_args);
-    if (ret == NIXL_ERR_REMOTE_DISCONNECT) {
-        data->invalidateRemoteData(req_hndl->remoteAgent);
-        delete req_hndl;
-        return NIXL_ERR_REMOTE_DISCONNECT;
+    if (ret < 0) {
+        return req_hndl->handleFailure(*data, ret);
     }
 
     req_hndl->status = ret;
@@ -960,15 +955,12 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
     if (req_hndl->status == NIXL_IN_PROG) {
         // Check if the remote was invalidated before completion
         if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
-            delete req_hndl;
-            return NIXL_ERR_NOT_FOUND;
+            return req_hndl->handleFailure(*data, NIXL_ERR_NOT_FOUND);
         }
 
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
-        if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
-            data->invalidateRemoteData(req_hndl->remoteAgent);
-            delete req_hndl;
-            return NIXL_ERR_REMOTE_DISCONNECT;
+        if (req_hndl->status < 0) {
+            return req_hndl->handleFailure(*data, req_hndl->status);
         }
     }
 
@@ -1240,8 +1232,6 @@ nixl_status_t
 nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
                          std::string &agent_name) {
     nixlSerDes sd;
-    size_t count;
-    size_t conn_cnt;
     nixl_blob_t conn_info;
     nixl_backend_t nixl_backend;
     nixl_status_t ret;
@@ -1253,7 +1243,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     }
 
     std::string remote_agent = sd.getStr("Agent");
-    if (remote_agent.size() == 0) {
+    if (remote_agent.empty()) {
         return NIXL_ERR_MISMATCH;
     }
 
@@ -1263,21 +1253,22 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
 
+    size_t conn_cnt;
     ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
     if(ret) {
         NIXL_ERROR << "Error getting connection count: " << nixlEnumStrings::statusStr(ret);
         return ret;
     }
 
-    count = 0;
+    size_t count = 0;
     for (size_t i = 0; i < conn_cnt; ++i) {
         nixl_backend = sd.getStr("t");
-        if (nixl_backend.size() == 0) {
+        if (nixl_backend.empty()) {
             return NIXL_ERR_MISMATCH;
         }
 
         conn_info = sd.getStr("c");
-        if (conn_info.size() == 0) {
+        if (conn_info.empty()) {
             return NIXL_ERR_MISMATCH;
         }
 
