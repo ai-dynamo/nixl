@@ -251,7 +251,7 @@ xferBenchConfig::loadFromFlags() {
 
     if (large_blk_iter_ftr == 0 || large_blk_iter_ftr > num_iter) {
         std::cerr << "iter_factor must not be 0 and must be lower than num_iter" << std::endl;
-	return -1;
+        return -1;
     }
 
     int partition = (num_threads * large_blk_iter_ftr);
