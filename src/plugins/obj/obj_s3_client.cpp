@@ -36,58 +36,58 @@
 namespace {
 
 Aws::Client::ClientConfiguration
-createClientConfiguration (nixl_b_params_t *custom_params) {
+createClientConfiguration(nixl_b_params_t *custom_params) {
     Aws::Client::ClientConfiguration config;
 
     if (!custom_params) return config;
 
-    auto endpoint_override_it = custom_params->find ("endpoint_override");
+    auto endpoint_override_it = custom_params->find("endpoint_override");
     if (endpoint_override_it != custom_params->end())
         config.endpointOverride = endpoint_override_it->second;
 
-    auto scheme_it = custom_params->find ("scheme");
+    auto scheme_it = custom_params->find("scheme");
     if (scheme_it != custom_params->end()) {
         if (scheme_it->second == "http")
             config.scheme = Aws::Http::Scheme::HTTP;
         else if (scheme_it->second == "https")
             config.scheme = Aws::Http::Scheme::HTTPS;
         else
-            throw std::runtime_error ("Invalid scheme: " + scheme_it->second);
+            throw std::runtime_error("Invalid scheme: " + scheme_it->second);
     }
 
-    auto region_it = custom_params->find ("region");
+    auto region_it = custom_params->find("region");
     if (region_it != custom_params->end()) config.region = region_it->second;
 
     return config;
 }
 
 std::optional<Aws::Auth::AWSCredentials>
-createAWSCredentials (nixl_b_params_t *custom_params) {
+createAWSCredentials(nixl_b_params_t *custom_params) {
     if (!custom_params) return std::nullopt;
 
     std::string access_key, secret_key, session_token;
 
-    auto access_key_it = custom_params->find ("access_key");
+    auto access_key_it = custom_params->find("access_key");
     if (access_key_it != custom_params->end()) access_key = access_key_it->second;
 
-    auto secret_key_it = custom_params->find ("secret_key");
+    auto secret_key_it = custom_params->find("secret_key");
     if (secret_key_it != custom_params->end()) secret_key = secret_key_it->second;
 
-    auto session_token_it = custom_params->find ("session_token");
+    auto session_token_it = custom_params->find("session_token");
     if (session_token_it != custom_params->end()) session_token = session_token_it->second;
 
     if (access_key.empty() || secret_key.empty()) return std::nullopt;
 
-    if (session_token.empty()) return Aws::Auth::AWSCredentials (access_key, secret_key);
+    if (session_token.empty()) return Aws::Auth::AWSCredentials(access_key, secret_key);
 
-    return Aws::Auth::AWSCredentials (access_key, secret_key, session_token);
+    return Aws::Auth::AWSCredentials(access_key, secret_key, session_token);
 }
 
 bool
-getUseVirtualAddressing (nixl_b_params_t *custom_params) {
+getUseVirtualAddressing(nixl_b_params_t *custom_params) {
     if (!custom_params) return false;
 
-    auto virtual_addressing_it = custom_params->find ("use_virtual_addressing");
+    auto virtual_addressing_it = custom_params->find("use_virtual_addressing");
     if (virtual_addressing_it != custom_params->end()) {
         const std::string &value = virtual_addressing_it->second;
         if (value == "true")
@@ -95,128 +95,128 @@ getUseVirtualAddressing (nixl_b_params_t *custom_params) {
         else if (value == "false")
             return false;
         else
-            throw std::runtime_error ("Invalid value for use_virtual_addressing: '" + value +
-                                      "'. Must be 'true' or 'false'");
+            throw std::runtime_error("Invalid value for use_virtual_addressing: '" + value +
+                                     "'. Must be 'true' or 'false'");
     }
 
     return false;
 }
 
 std::string
-getBucketName (nixl_b_params_t *custom_params) {
+getBucketName(nixl_b_params_t *custom_params) {
     if (custom_params) {
-        auto bucket_it = custom_params->find ("bucket");
+        auto bucket_it = custom_params->find("bucket");
         if (bucket_it != custom_params->end() && !bucket_it->second.empty()) {
             return bucket_it->second;
         }
     }
 
-    const char *env_bucket = std::getenv ("AWS_DEFAULT_BUCKET");
-    if (env_bucket && env_bucket[0] != '\0') return std::string (env_bucket);
-    throw std::runtime_error ("Bucket name not found. Please provide 'bucket' in custom_params or "
-                              "set AWS_DEFAULT_BUCKET environment variable");
+    const char *env_bucket = std::getenv("AWS_DEFAULT_BUCKET");
+    if (env_bucket && env_bucket[0] != '\0') return std::string(env_bucket);
+    throw std::runtime_error("Bucket name not found. Please provide 'bucket' in custom_params or "
+                             "set AWS_DEFAULT_BUCKET environment variable");
 }
 
 } // namespace
 
-AwsS3Client::AwsS3Client (nixl_b_params_t *custom_params,
-                          std::shared_ptr<Aws::Utils::Threading::Executor> executor)
-    : aws_options_ (
+AwsS3Client::AwsS3Client(nixl_b_params_t *custom_params,
+                         std::shared_ptr<Aws::Utils::Threading::Executor> executor)
+    : awsOptions_(
           []() {
               auto *opts = new Aws::SDKOptions();
-              Aws::InitAPI (*opts);
+              Aws::InitAPI(*opts);
               return opts;
           }(),
-          [] (Aws::SDKOptions *opts) {
-              Aws::ShutdownAPI (*opts);
+          [](Aws::SDKOptions *opts) {
+              Aws::ShutdownAPI(*opts);
               delete opts;
           }) {
-    auto config = ::createClientConfiguration (custom_params);
+    auto config = ::createClientConfiguration(custom_params);
     if (executor) config.executor = executor;
 
-    auto credentials_opt = ::createAWSCredentials (custom_params);
-    bool use_virtual_addressing = ::getUseVirtualAddressing (custom_params);
-    bucket_name_ = Aws::String (::getBucketName (custom_params));
+    auto credentials_opt = ::createAWSCredentials(custom_params);
+    bool use_virtual_addressing = ::getUseVirtualAddressing(custom_params);
+    bucketName_ = Aws::String(::getBucketName(custom_params));
 
     if (credentials_opt.has_value())
-        s3_client_ = std::make_unique<Aws::S3::S3Client> (
+        s3Client_ = std::make_unique<Aws::S3::S3Client>(
             credentials_opt.value(),
             config,
             Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::RequestDependent,
             use_virtual_addressing);
     else
-        s3_client_ = std::make_unique<Aws::S3::S3Client> (
+        s3Client_ = std::make_unique<Aws::S3::S3Client>(
             config,
             Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::RequestDependent,
             use_virtual_addressing);
 }
 
 void
-AwsS3Client::setExecutor (std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
-    throw std::runtime_error ("AwsS3Client::setExecutor() not supported - AWS SDK doesn't allow "
-                              "changing executor after client creation");
+AwsS3Client::setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
+    throw std::runtime_error("AwsS3Client::setExecutor() not supported - AWS SDK doesn't allow "
+                             "changing executor after client creation");
 }
 
 void
-AwsS3Client::PutObjectAsync (std::string_view key,
-                             uintptr_t data_ptr,
-                             size_t data_len,
-                             size_t offset,
-                             PutObjectCallback callback) {
+AwsS3Client::PutObjectAsync(std::string_view key,
+                            uintptr_t data_ptr,
+                            size_t data_len,
+                            size_t offset,
+                            PutObjectCallback callback) {
     // AWS S3 doesn't support partial put operations with offset
     if (offset != 0) {
-        callback (false);
+        callback(false);
         return;
     }
 
     Aws::S3::Model::PutObjectRequest request;
-    request.WithBucket (bucket_name_).WithKey (Aws::String (key));
+    request.WithBucket(bucketName_).WithKey(Aws::String(key));
 
-    auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf> (
-        "PutObjectStreamBuf", reinterpret_cast<unsigned char *> (data_ptr), data_len);
+    auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf>(
+        "PutObjectStreamBuf", reinterpret_cast<unsigned char *>(data_ptr), data_len);
     auto data_stream =
-        Aws::MakeShared<Aws::IOStream> ("PutObjectInputStream", preallocated_stream_buf.get());
-    request.SetBody (data_stream);
+        Aws::MakeShared<Aws::IOStream>("PutObjectInputStream", preallocated_stream_buf.get());
+    request.SetBody(data_stream);
 
-    s3_client_->PutObjectAsync (
+    s3Client_->PutObjectAsync(
         request,
-        [callback, preallocated_stream_buf, data_stream] (
+        [callback, preallocated_stream_buf, data_stream](
             const Aws::S3::S3Client *client,
             const Aws::S3::Model::PutObjectRequest &req,
             const Aws::S3::Model::PutObjectOutcome &outcome,
             const std::shared_ptr<const Aws::Client::AsyncCallerContext> &context) {
-            callback (outcome.IsSuccess());
+            callback(outcome.IsSuccess());
         },
         nullptr);
 }
 
 void
-AwsS3Client::GetObjectAsync (std::string_view key,
-                             uintptr_t data_ptr,
-                             size_t data_len,
-                             size_t offset,
-                             GetObjectCallback callback) {
-    auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf> (
-        "GetObjectStreamBuf", reinterpret_cast<unsigned char *> (data_ptr), data_len);
-    auto stream_factory = Aws::MakeShared<Aws::IOStreamFactory> (
+AwsS3Client::GetObjectAsync(std::string_view key,
+                            uintptr_t data_ptr,
+                            size_t data_len,
+                            size_t offset,
+                            GetObjectCallback callback) {
+    auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf>(
+        "GetObjectStreamBuf", reinterpret_cast<unsigned char *>(data_ptr), data_len);
+    auto stream_factory = Aws::MakeShared<Aws::IOStreamFactory>(
         "GetObjectStreamFactory", [preallocated_stream_buf]() -> Aws::IOStream * {
-            return new Aws::IOStream (preallocated_stream_buf.get()); // AWS SDK owns the stream
+            return new Aws::IOStream(preallocated_stream_buf.get()); // AWS SDK owns the stream
         });
 
     Aws::S3::Model::GetObjectRequest request;
-    request.WithBucket (bucket_name_)
-        .WithKey (Aws::String (key))
-        .WithRange (absl::StrFormat ("bytes=%d-%d", offset, offset + data_len - 1));
-    request.SetResponseStreamFactory (*stream_factory.get());
+    request.WithBucket(bucketName_)
+        .WithKey(Aws::String(key))
+        .WithRange(absl::StrFormat("bytes=%d-%d", offset, offset + data_len - 1));
+    request.SetResponseStreamFactory(*stream_factory.get());
 
-    s3_client_->GetObjectAsync (
+    s3Client_->GetObjectAsync(
         request,
         [callback,
-         stream_factory] (const Aws::S3::S3Client *client,
-                          const Aws::S3::Model::GetObjectRequest &req,
-                          const Aws::S3::Model::GetObjectOutcome &outcome,
-                          const std::shared_ptr<const Aws::Client::AsyncCallerContext> &context) {
-            callback (outcome.IsSuccess());
+         stream_factory](const Aws::S3::S3Client *client,
+                         const Aws::S3::Model::GetObjectRequest &req,
+                         const Aws::S3::Model::GetObjectOutcome &outcome,
+                         const std::shared_ptr<const Aws::Client::AsyncCallerContext> &context) {
+            callback(outcome.IsSuccess());
         },
         nullptr);
 }

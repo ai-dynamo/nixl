@@ -44,8 +44,9 @@ enum xferBenchEtcdMsgType {
 class xferBenchEtcdRT: public xferBenchRT {
 private:
     // ETCD connection settings
-    std::string etcd_endpoints;
+    std::string stored_etcd_endpoints;
     std::string namespace_prefix;
+    std::string benchmark_group;
     std::unique_ptr<etcd::Client> client;
 
     int my_rank; // Rank information
@@ -68,13 +69,19 @@ private:
             suffix = "/" + std::to_string(rank);
         }
 
-        return namespace_prefix + name + suffix;
+        return namespace_prefix + "/" + name + suffix;
     }
 
 public:
-    xferBenchEtcdRT(const std::string& etcd_endpoints, const int size,
+    xferBenchEtcdRT(const std::string &benchmark_group,
+                    const std::string &etcd_endpoints,
+                    const int size,
                     int *terminate = nullptr);
     ~xferBenchEtcdRT();
+
+    // Setup function to initialize connection and perform registration
+    int
+    setup();
 
     int getRank() const;
     int getSize() const;

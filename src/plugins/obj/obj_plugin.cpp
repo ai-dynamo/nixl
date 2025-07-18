@@ -23,9 +23,9 @@
 namespace {
 
 [[nodiscard]] nixlBackendEngine *
-create_obj_engine (const nixlBackendInitParams *init_params) {
+create_obj_engine(const nixlBackendInitParams *init_params) {
     try {
-        return new nixlObjEngine (init_params);
+        return new nixlObjEngine(init_params);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Failed to create obj engine: " << e.what();
@@ -34,7 +34,7 @@ create_obj_engine (const nixlBackendInitParams *init_params) {
 }
 
 void
-destroy_obj_engine (nixlBackendEngine *engine) {
+destroy_obj_engine(nixlBackendEngine *engine) {
     delete engine;
 }
 

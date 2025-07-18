@@ -21,6 +21,10 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REF="v1.19.x"
+ARG UCX_PREFIX="/usr"
+ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG NIXL_PREFIX="/usr/local/nixl"
+ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
@@ -78,17 +82,7 @@ RUN wget --tries=3 --waitretry=5 \
     rm rustup-init* && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-WORKDIR /workspace/nixl
-COPY . /workspace/nixl
-
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade meson pybind11 patchelf
-
-    # Add Mellanox repository and install packages
+# Add Mellanox repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else echo "${ARCH}"; fi) && \
     export PKG_CONFIG_PATH="/opt/mellanox/doca/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:/opt/mellanox/dpdk/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" && \
     curl -fsSL https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/${ARCH_SUFFIX}/GPG-KEY-Mellanox.pub | \
@@ -102,6 +96,16 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else ech
         doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all \
         doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 
+WORKDIR /workspace/nixl
+COPY . /workspace/nixl
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+ENV VIRTUAL_ENV=/workspace/nixl/.venv
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
+    # pybind11 pip install needed for ubuntu 22.04
+    uv pip install --upgrade meson pybind11 patchelf
+
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
@@ -110,6 +114,7 @@ RUN cd /usr/local/src && \
      cd ucx && 			     \
      git checkout $UCX_REF &&        \
      ./autogen.sh && ./configure     \
+         --prefix=$UCX_PREFIX        \
          --enable-shared             \
          --disable-static            \
          --disable-doxygen-doc       \
@@ -126,33 +131,24 @@ RUN cd /usr/local/src && \
      make -j install-strip &&        \
      ldconfig
 
-
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl && \
+    uv run meson setup build/ --prefix=$NIXL_PREFIX && \
     cd build && \
     ninja && \
     ninja install
 
-ENV NIXL_PREFIX=/usr/local/nixl
-ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/$ARCH-linux-gnu/plugins
-RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
-    echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
+RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
 RUN cd src/bindings/rust && cargo build --release --locked
 
-# Create the wheel
-# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
-ARG WHL_PYTHON_VERSIONS="3.12"
-ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
-RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
-        uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
-    done
-
-# Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
-RUN uv pip install auditwheel && \
-    uv run auditwheel repair --exclude libcuda.so.1 /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
+RUN ./contrib/build-wheel.sh \
+    --python-version $DEFAULT_PYTHON_VERSION \
+    --platform manylinux_2_39_$ARCH \
+    --ucx-plugins-dir $UCX_PLUGIN_DIR \
+    --nixl-plugins-dir $NIXL_PLUGIN_DIR \
+    --output-dir /workspace/nixl/dist
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl

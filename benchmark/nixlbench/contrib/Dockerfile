@@ -80,18 +80,17 @@ RUN echo "INFO: Starting custom UCX build..." && \
         libnuma-dev librdmacm-dev ibverbs-providers libibverbs-dev rdma-core \
         ibverbs-utils libibumad-dev && \
     echo "INFO: Removing pre-existing UCX installations..." && \
-    rm -rf /usr/local/ucx /opt/hpcx/ucx && \
+    rm -rf /usr/lib/ucx /opt/hpcx/ucx && \
     cd /workspace/ucx && \
     ./autogen.sh && \
     echo "INFO: Building UCX..." && \
-    ./contrib/configure-release --prefix=/usr/local/ucx \
-                                --with-cuda=/usr/local/cuda \
+    ./contrib/configure-release --with-cuda=/usr/local/cuda \
                                 --enable-mt \
                                 --without-go && \
     make -j$(nproc) && \
     make install && \
     cd / && \
-    echo "INFO: Finished building and installing UCX to /usr/local/ucx."
+    echo "INFO: Finished building and installing UCX."
 
 # --- Stage 3: UCX Image Selection ---
 # This stage selects the correct UCX image based on the UCX argument
@@ -120,7 +119,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade meson pybind11 patchelf pyYAML
+    uv pip install --upgrade meson pybind11 patchelf pyYAML click tabulate
 
 RUN rm -rf build && \
     mkdir build && \
@@ -154,9 +153,23 @@ RUN echo $LD_LIBRARY_PATH
 RUN ldconfig
 
 RUN ls -ll /workspace/nixlbench
+
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build -Dnixl_path=/usr/local/nixl/ && \
-    cd build && ninja
-ENV PATH=/workspace/nixlbench/build:$PATH
+    uv run meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench && \
+    cd build && ninja && ninja install
+
+WORKDIR /workspace/nixl
+
+RUN ls -ll benchmark/kvbench
+
+# Install dependencies for benchmarks
+RUN uv pip install -e benchmark/kvbench
+
+ENV PATH=/usr/local/nixlbench/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
+ENV PYTHON_PATH=/usr/local/nixlbench/lib/python3/dist-packages/nixlbench/
+
+# Fix for etcd proto dependencies
+ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 WORKDIR /workspace/nixl/benchmark/kvbench

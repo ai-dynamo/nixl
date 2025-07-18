@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TEST_GTEST_MOCKS_MOCK_DRAM_BACKEND_ENGINE_H
-#define TEST_GTEST_MOCKS_MOCK_DRAM_BACKEND_ENGINE_H
+#ifndef TEST_GTEST_MOCKS_MOCK_BACKEND_ENGINE_H
+#define TEST_GTEST_MOCKS_MOCK_BACKEND_ENGINE_H
 
 #include "backend/backend_engine.h"
 #include "backend/backend_plugin.h"
@@ -23,30 +23,34 @@
 
 namespace mocks {
 
-class MockDramBackendEngine : public nixlBackendEngine {
-public:
-  MockDramBackendEngine(const nixlBackendInitParams *init_params) : nixlBackendEngine(init_params), sharedState(1) {}
-  ~MockDramBackendEngine();
+class MockBackendEngine : public nixlBackendEngine {
+private:
+    nixlBackendEngine *gmock_backend_engine;
 
-  bool supportsRemote() const override {
-    assert(sharedState > 0);
-    return true;
-  }
+public:
+    MockBackendEngine(const nixlBackendInitParams *init_params);
+    ~MockBackendEngine() = default;
+
+    bool
+    supportsRemote() const override {
+        assert(sharedState > 0);
+        return gmock_backend_engine->supportsRemote();
+    }
   bool supportsLocal() const override {
     assert(sharedState > 0);
-    return true;
+    return gmock_backend_engine->supportsLocal();
   }
   bool supportsNotif() const override {
     assert(sharedState > 0);
-    return false;
+    return gmock_backend_engine->supportsNotif();
   }
   bool supportsProgTh() const override {
     assert(sharedState > 0);
-    return false;
+    return gmock_backend_engine->supportsProgTh();
   }
   nixl_mem_list_t getSupportedMems() const override {
     assert(sharedState > 0);
-    return nixl_mem_list_t{DRAM_SEG};
+    return gmock_backend_engine->getSupportedMems();
   }
   nixl_status_t registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem,
                             nixlBackendMD *&out) override;
@@ -70,12 +74,11 @@ public:
   nixl_status_t releaseReqH(nixlBackendReqH *handle) const override;
   nixl_status_t getPublicData(const nixlBackendMD *meta, std::string &str) const override {
     assert(sharedState > 0);
-    return NIXL_SUCCESS;
+    return gmock_backend_engine->getPublicData(meta, str);
   }
   nixl_status_t getConnInfo(std::string &str) const override {
     assert(sharedState > 0);
-    str = "MockDramBackendEngineConnInfo";
-    return NIXL_SUCCESS;
+    return gmock_backend_engine->getConnInfo(str);
   }
   nixl_status_t loadRemoteConnInfo(const std::string &remote_agent,
                                    const std::string &remote_conn_info);
