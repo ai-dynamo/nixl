@@ -22,7 +22,7 @@
 #include <nixl_types.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include "common/random_id.h"
+#include "common/uuid_v4.h"
 #include <list>
 #include <unordered_set>
 #include <thread>
@@ -65,7 +65,7 @@ public:
     std::string link_path;
     void *mapped_addr;
     size_t mapped_size;
-    nixl::RandomID uuid;
+    nixl::UUIDv4 uuid;
 
     nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil &utils);
     ~nixlHf3fsShmMetadata();
