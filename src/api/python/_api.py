@@ -44,7 +44,7 @@ nixl_xfer_handle = int
 class nixl_agent_config:
     def __init__(
         self,
-        enable_prog_thread: bool = True,
+        enable_prog_thread: bool = False,
         enable_listen_thread: bool = False,
         listen_port: int = 0,
         backends: list[str] = ["UCX"],
