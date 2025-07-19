@@ -98,6 +98,13 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
         $SUDO ldconfig \
 )
 
+git clone https://github.com/kvcache-ai/Mooncake.git
+cd Mooncake && bash dependencies.sh
+export PATH=${PATH}:/usr/local/go/bin
+apt-get -qq remove libibverbs-dev
+apt-get -qq install -y libibverbs-dev
+mkdir build && cd build && cmake .. -DBUILD_SHARED_LIBS=ON && make -j && make install
+
 export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib
 export CPATH=${INSTALL_DIR}/include:$CPATH
@@ -108,6 +115,7 @@ export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
+cd /workspace
 meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true
 cd nixl_build && ninja && ninja install
 
