@@ -1,3 +1,6 @@
+# Default owners are maintainers
+* @ai-dynamo/nixl-maintainers
+
 # CI/CD
 /.github/ @ai-dynamo/Devops @ai-dynamo/nixl-devops
 /.ci/ @ai-dynamo/nixl-devops
