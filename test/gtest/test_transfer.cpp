@@ -280,6 +280,12 @@ protected:
         registerMem(agent, out, mem_type);
     }
 
+    void
+    deregisterMem(nixlAgent &agent, const std::vector<MemBuffer> &buffers, nixl_mem_t mem_type) {
+        auto desc_list = makeDescList<nixlBlobDesc>(buffers, mem_type);
+        agent.deregisterMem(desc_list);
+    }
+
     void verifyNotifs(nixlAgent &agent, const std::string &from_name, size_t expected_count)
     {
         nixl_notifs_t notif_map;
@@ -430,18 +436,29 @@ TEST_P(TestTransfer, RandomSizes)
          {1000000, 100, 3, 4},
          {40, 1000, 1, 4}}
     };
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
 
     for (const auto &[size, count, repeat, num_threads] : test_cases) {
         std::vector<MemBuffer> src_buffers, dst_buffers;
 
-        createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
-        createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+        createRegisteredMem(getAgent(0), size, count, mem_type, src_buffers);
+        createRegisteredMem(getAgent(1), size, count, mem_type, dst_buffers);
 
         exchangeMD();
-        doTransfer(getAgent(0), getAgentName(0), getAgent(1), getAgentName(1),
-                   size, count, repeat, num_threads,
-                   DRAM_SEG, src_buffers,
-                   DRAM_SEG, dst_buffers);
+        doTransfer(getAgent(0),
+                   getAgentName(0),
+                   getAgent(1),
+                   getAgentName(1),
+                   size,
+                   count,
+                   repeat,
+                   num_threads,
+                   mem_type,
+                   src_buffers,
+                   mem_type,
+                   dst_buffers);
+        deregisterMem(getAgent(0), src_buffers, mem_type);
+        deregisterMem(getAgent(1), dst_buffers, mem_type);
     }
 }
 
@@ -460,6 +477,9 @@ TEST_P(TestTransfer, remoteMDFromSocket)
                size, count, 1, 1,
                mem_type, src_buffers,
                mem_type, dst_buffers);
+
+    deregisterMem(getAgent(0), src_buffers, mem_type);
+    deregisterMem(getAgent(1), dst_buffers, mem_type);
 }
 
 TEST_P(TestTransfer, NotificationOnly) {
@@ -488,6 +508,7 @@ TEST_P(TestTransfer, ListenerCommSize) {
     ASSERT_EQ(NIXL_SUCCESS, status);
     ASSERT_TRUE(
         wait_until_true([&]() { return checkRemoteMD(0, 1) == NIXL_SUCCESS; }));
+    deregisterMem(getAgent(1), buffers, DRAM_SEG);
 }
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values("UCX"));
