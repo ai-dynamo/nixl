@@ -171,7 +171,7 @@ protected:
 
     template<typename Desc>
     nixlDescList<Desc>
-    makeDescList(const std::vector<MemBuffer> &buffers, nixl_mem_t mem_type)
+    makeDescList(const std::vector<MemBuffer> &buffers, nixl_mem_t mem_type) const
     {
         nixlDescList<Desc> desc_list(mem_type);
         for (const auto &buffer : buffers) {
@@ -281,8 +281,8 @@ protected:
     }
 
     void
-    deregisterMem(nixlAgent &agent, const std::vector<MemBuffer> &buffers, nixl_mem_t mem_type) {
-        auto desc_list = makeDescList<nixlBlobDesc>(buffers, mem_type);
+    deregisterMem(nixlAgent &agent, const std::vector<MemBuffer> &buffers, nixl_mem_t mem_type) const {
+        const auto desc_list = makeDescList<nixlBlobDesc>(buffers, mem_type);
         agent.deregisterMem(desc_list);
     }
 
