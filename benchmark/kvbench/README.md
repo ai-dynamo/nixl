@@ -1,7 +1,8 @@
 # NIXL KVBench
-A utility for generating NIXL Bench commands that test KVCache transfer across various LLM architectures and access patterns (including block and layer approaches).
+A comprehensive utility for generating NIXL Bench commands that test KVCache transfer across various LLM architectures and access patterns, plus custom traffic performance testing for asymmetric traffic flows.
 
 ## Table of Contents
+- [Overview](#overview)
 - [Supported LLM Architectures](#supported-llm-architectures)
 - [Building](#building)
   - [Docker](#docker)
@@ -13,16 +14,21 @@ A utility for generating NIXL Bench commands that test KVCache transfer across v
   - [CLI Override Arguments](#cli-override-arguments)
   - [Plan Command Arguments](#plan-command-arguments)
   - [Shared Benchmark Arguments](#shared-benchmark-arguments)
+  - [CTP Command Arguments](#ctp-command-arguments)
 - [Command Descriptions](#command-descriptions)
-  - [Plan Command](#plan-command)
-  - [Profile Command](#profile-command)
-  - [KVCache Command](#kvcache-command)
-  - [IOSize Command](#iosize-command)
-- [Examples](#example-deepseek-r1-with-block-access-tp1-pp16)
-  - [DeepSeek R1 with Block Access](#example-deepseek-r1-with-block-access-tp1-pp16)
-  - [DeepSeek R1 with Layer Access](#example-deepseek-r1-with-layer-access-tp1-pp16)
-  - [Overriding Model Configuration](#example-overriding-model-configuration-with-cli-args)
+  - [KVBench Commands](#kvbench-commands)
+  - [CTP Commands](#ctp-commands)
+- [Examples](#examples)
+  - [KVBench Examples](#kvbench-examples)
+  - [CTP Examples](#ctp-examples)
 - [Developer Guides](#developer-guides)
+
+## Overview
+
+NIXL KVBench provides two main categories of functionality:
+
+1. **KVBench Commands**: Test KV cache transfers across various LLM architectures with different access patterns (block and layer approaches)
+2. **CTP Commands**: Custom Traffic Performance Testing for measuring asymmetric traffic patterns using transfer matrices
 
 ## Supported LLM Architectures
 - DeepSeek R1
@@ -48,34 +54,33 @@ source venv/bin/activate
 pip install uv
 uv sync --active
 ```
+
 ## Usage
 
 ### Basic Usage
 ```bash
 python main.py --help
-usage: main.py [-h] {plan,profile,kvcache,iosize} ...
+Usage: main.py [OPTIONS] COMMAND [ARGS]...
 
-KVBench
+  KVBench - NIXL Performance Testing CLI
 
-positional arguments:
-  {plan,profile,kvcache,iosize}
-                        Available commands
-    plan                Display the recommended configuration for nixlbench
-    profile             Run nixlbench
-    kvcache             Display kvcache information
-    iosize              Display io size information
+Options:
+  --debug / --no-debug  Enable debug logging
+  --help                Show this message and exit.
 
-options:
-  -h, --help            show this help message and exit
+Commands:
+  ct-perftest             Run custom traffic performance test using...
+  kvcache                 Display kvcache information
+  plan                    Display the recommended configuration for...
+  profile                 Run nixlbench
+  sequential-ct-perftest  Run sequential custom traffic performance test...
 ```
 
 ## Command Line Arguments
 
-KVBench supports various argument groups that apply to different commands:
-
 ### Common Arguments
 
-These arguments are shared across all KVBench commands (plan, kvcache, profile):
+These arguments are shared across KVBench commands (plan, kvcache, profile, io-size):
 
 | Argument | Description |
 | -------- | ----------- |
@@ -135,59 +140,88 @@ These arguments are used by both `plan` and `profile` commands:
 | `--device_list` | Comma-separated device names (default: all) |
 | `--runtime_type` | Type of runtime to use [ETCD] (default: ETCD) |
 | `--etcd-endpoints` | ETCD server URL for coordination (default: http://localhost:2379) |
-| `--storage_enable_direct` | Enable direct I/O for GDS operations |
-| `--gds_filepath` | File path for GDS operations |
+| `--storage_enable_direct` | Enable direct I/O for storage operations |
+| `--filepath` | File path for storage operations |
 | `--enable_vmm` | Enable VMM memory allocation when DRAM is requested |
+
+### CTP Command Arguments
+
+Specific to CTP (Custom Traffic Performance) commands:
+
+| Argument | Description |
+| -------- | ----------- |
+| `config_file` | Path to YAML configuration file (required) |
+| `--verify-buffers / --no-verify-buffers` | Verify buffer contents after transfer (default: False) |
+| `--print-recv-buffers / --no-print-recv-buffers` | Print received buffer contents (default: False) |
+| `--json-output-path` | Path to save JSON output (sequential-ct-perftest only) |
 
 ## Command Descriptions
 
-KVBench provides four main commands:
+### KVBench Commands
 
-### Plan Command
+#### Plan Command
 
 The `plan` command generates and displays recommended `nixlbench` command configurations based on your model architecture and parameters. It helps you prepare optimal benchmark settings without running the benchmark itself.
 
 ```bash
-python main.py plan --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
+python main.py plan --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml" --backend POSIX
 ```
 
-### Profile Command
+#### Profile Command
 
 The `profile` command actually runs the benchmark with the specified configuration using `nixlbench`, collecting performance data across various KV cache operations and access patterns.
 
 ```bash
-python main.py profile --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
+python main.py profile --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml" --backend POSIX
 ```
 
-### KVCache Command
+#### KVCache Command
 
 The `kvcache` command analyzes and displays detailed information about the KV cache for a specified model configuration, including model type, sequence lengths, batch sizes, and I/O sizes.
 
 ```bash
-python main.py kvcache --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
-Model                  : DEEPSEEK_R1
-Input Sequence Length  : 10000
-Batch Size             : 298
-IO Size                : 1.12 MB
+python main.py kvcache --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml" --isl 10000 --page_size 512
+Model          ISL    Num Requests    Batch Size  IO Size      TP    PP    Page Size  Access
+-----------  -----  --------------  ------------  ---------  ----  ----  -----------  --------
+DEEPSEEK_R1  10000              10          1490  2.25 MB       1     8          512  block
 ```
 
-### IOSize Command
+### CTP Commands
 
-The `iosize` command displays information about the I/O size requirements for a specified model configuration, helping you understand memory usage and data transfer needs.
+#### Sequential CT Perftest
 
-```bash
-python main.py iosize --model ./examples/model_deepseek_r1.yaml --model_config "./examples/block-tp1-pp8.yaml"
-IO Size per GPU: 4608
+Benchmark the performance of a continuum of traffic patterns one after the other. Before running each pattern, all ranks do a barrier, optionally sleep for a given amount of time, then run the pattern and measure execution time.
+
+**Reports**: Sequential CT Perftest reports the total latency per matrix execution, along with their latency when run isolated, which can be used to evaluate how well the network reacts to congestion.
+
+```
+  Transfer size (GB)    Latency (ms)    Isolated Latency (ms)    Num Senders
+--------------------  --------------  -----------------------  -------------
+         4.945               35.047                   35.421              4
+         3.230               21.152                   21.800              4
+         1.104                8.222                    8.280              4
+         ...                 ...                         ...             ...
+         0.129                2.147                    2.386              4
 ```
 
-## Example: DeepSeek R1 with Block Access (TP=1, PP=16)
+#### CT Perftest
+
+Benchmark the performance of one traffic pattern. The pattern is run in multiple iterations and then metrics are reported. Useful for optimizing specific patterns.
+
+**Reports**: CT Perftest reports total latency (time elapsed between the first rank started until the last rank finished), average time per iteration, total size sent over the network, and average bandwidth by rank.
+
+## Examples
+
+### KVBench Examples
+
+#### DeepSeek R1 with Block Access (TP=1, PP=16)
 ```bash
 python main.py plan \
   --model ./examples/model_deepseek_r1.yaml \
   --model_config ./examples/block-tp1-pp16.yaml \
   --backend GDS \
   --source gpu \
-  --etcd-endpoint "http://localhost:2379"
+  --etcd-endpoints "http://localhost:2379"
 ================================================================================
 Model Config: ./examples/block-tp1-pp16.yaml
 ISL: 10000 tokens
@@ -205,14 +239,14 @@ nixlbench \
     --target_seg_type VRAM
 ```
 
-## Example: DeepSeek R1 with Layer Access (TP=1, PP=16)
+#### DeepSeek R1 with Layer Access (TP=1, PP=16)
 ```bash
 python main.py plan \
   --model ./examples/model_deepseek_r1.yaml \
   --model_config ./examples/layer-tp1-pp16.yaml \
   --backend GDS \
   --source gpu \
-  --etcd-endpoint "http://localhost:2379"
+  --etcd-endpoints "http://localhost:2379"
 ================================================================================
 Model Config: ./examples/layer-tp1-pp16.yaml
 ISL: 10000 tokens
@@ -230,14 +264,14 @@ nixlbench \
     --target_seg_type VRAM
 ```
 
-## Example: Overriding model configuration with cli args
+#### Overriding Model Configuration with CLI Args
 ```bash
 python main.py plan \
   --model ./examples/model_deepseek_r1.yaml \
   --model_config ./examples/block-tp1-pp8.yaml \
   --backend GDS \
   --source gpu \
-  --etcd-endpoint "http://localhost:2379" \
+  --etcd-endpoints "http://localhost:2379" \
   --pp 32 \
   --num_requests 100
 ================================================================================
@@ -256,6 +290,126 @@ nixlbench \
     --start_block_size 294912 \
     --target_seg_type VRAM
 ```
+
+### CTP Examples
+
+#### Configuration Files
+
+CTP tests are defined using YAML configuration files.
+
+**CT Perftest Configuration** (single traffic pattern):
+```yaml
+iters: 50
+warmup_iters: 10
+traffic_pattern:
+  matrix_file: "/path/to/matrix.txt"
+  shards: 1
+  mem_type: "cuda"
+  xfer_op: "WRITE"
+```
+
+**Sequential CT Perftest Configuration** (multiple traffic patterns):
+```yaml
+traffic_patterns:
+- matrix_file: /path/to/matrices/matrix_0.txt
+  metadata:
+    isl: 38328
+  sleep_after_launch_sec: 16.480753057792
+- matrix_file: /path/to/matrices/matrix_1.txt
+  metadata:
+    isl: 25034
+  sleep_after_launch_sec: 71.875102179328
+```
+
+**Traffic Pattern Parameters**:
+- `matrix_file`: File containing the transfer matrix (required)
+- `shards`: Number of chunks to shard the buffer into (default: 1)
+- `mem_type`: Memory type, currently supports "cuda" (default: "cuda")
+- `xfer_op`: Transfer operation, "READ" or "WRITE" (default: "WRITE")
+- `sleep_after_launch_sec`: Seconds to sleep before running pattern (default: 0)
+
+**Matrix File Format**:
+Matrix cells are separated by whitespaces and contain either bytes as integers or standard units (K, M, G).
+
+Example matrix file:
+```
+0 0 1M 1M
+0 0 1M 1M
+0 0 0 5K
+0 0 0 5K
+```
+
+#### Generate Traffic Pattern Matrices
+
+Optionally, generate matrices using the inference workload matrix generation tool:
+```bash
+python test/inference_workload_matgen.py generate \
+    --num-user-requests 10 \
+    --num-prefill-nodes 16 \
+    --num-decode-nodes 16 \
+    --prefill-tp 8 \
+    --prefill-pp 1 \
+    --prefill-cp 1 \
+    --decode-tp 8 \
+    --decode-pp 1 \
+    --decode-cp 1 \
+    --results-dir $PWD/matrices \
+    --model llama-405b
+```
+
+#### Running CTP Tests
+
+**Sequential CT Perftest**:
+```bash
+# Basic usage
+python main.py sequential-ct-perftest ./config.yaml
+
+# With options
+python main.py sequential-ct-perftest ./config.yaml \
+    --verify-buffers \
+    --json-output-path ./results.json
+
+# With debug logging
+python main.py --debug sequential-ct-perftest ./config.yaml \
+    --verify-buffers \
+    --json-output-path ./results.json
+
+# With Slurm
+srun <params> python main.py sequential-ct-perftest ./config.yaml \
+    --verify-buffers \
+    --json-output-path ./results.json
+```
+
+**CT Perftest**:
+```bash
+# Basic usage
+python main.py ct-perftest ./config.yaml
+
+# With options
+python main.py ct-perftest ./config.yaml \
+    --verify-buffers \
+    --print-recv-buffers
+
+# With debug logging
+python main.py --debug ct-perftest ./config.yaml \
+    --verify-buffers
+```
+
+## Implementation Details
+
+### CTP Implementation
+- Custom traffic patterns defined using transfer matrices where cell [i,j] defines message size from rank i to rank j
+- `benchmark.kvbench.test.custom_traffic_perftest.py` implements CT Perftest and TrafficPattern dataclass
+- `benchmark.kvbench.test.sequential_custom_traffic_perftest.py` implements Sequential CT Perftest
+- Utilizes common utilities for distributed testing support
+- `benchmark.kvbench.test.traffic_pattern.py` defines abstraction for traffic patterns
+
+### Known Issues
+- The nixl xfer preparation currently takes significant time (the `_prepare_tp()` method)
+
+### Next Steps
+- [ ] Support more memory types beyond CUDA
+- [ ] Optimize transfer preparation performance
 
 ## Developer Guides
 For more detailed information, please refer to the following documentation:
