@@ -64,6 +64,7 @@ $SUDO apt-get -qq install -y curl \
                              libgrpc++-dev \
                              libprotobuf-dev \
                              libaio-dev \
+                             liburing-dev \
                              meson \
                              ninja-build \
                              pkg-config \
