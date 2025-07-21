@@ -29,7 +29,6 @@
 #ifdef HAVE_CUDA
 
 #include <cuda_runtime.h>
-#include <cufile.h>
 
 #endif
 
