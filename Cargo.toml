@@ -27,6 +27,5 @@ authors = ["NIXL Developers <nixl-developers@nvidia.com>"]
 license = "Apache-2.0"
 homepage = "https://github.com/ai-dynamo/nixl"
 repository = "https://github.com/ai-dynamo/nixl.git"
-keywords = ["llm", "genai", "inference", "nvidia", "distributed", "nixl", "networking", "xfer",
-            "communication"]
+keywords = ["gpu", "inference", "distributed", "networking", "nvidia"]
 readme = "README.md"
