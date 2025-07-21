@@ -36,8 +36,14 @@ public:
 
 enum nixlHf3fsMemType {
     NIXL_HF3FS_MEM_TYPE_FILE = 0,
-    NIXL_HF3FS_MEM_TYPE_REG_MEM = 1,
-    NIXL_HF3FS_MEM_TYPE_SH_MEM = 2,
+    NIXL_HF3FS_MEM_TYPE_DRAM = 1,
+    NIXL_HF3FS_MEM_TYPE_DRAM_ZC = 2,
+};
+
+enum nixlHf3fsMemConfig {
+    NIXL_HF3FS_MEM_CONFIG_AUTO = 0,
+    NIXL_HF3FS_MEM_CONFIG_DRAM = 1,
+    NIXL_HF3FS_MEM_CONFIG_DRAM_ZC = 2,
 };
 
 class nixlHf3fsMetadata : public nixlBackendMD {
@@ -54,12 +60,12 @@ public:
     nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) {}
 };
 
-class nixlHf3fsRegMemMetadata : public nixlHf3fsMetadata {
+class nixlHf3fsDramMetadata : public nixlHf3fsMetadata {
 public:
-    nixlHf3fsRegMemMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_REG_MEM) {}
+    nixlHf3fsDramMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_DRAM) {}
 };
 
-class nixlHf3fsShmMetadata : public nixlHf3fsMetadata {
+class nixlHf3fsDramZCMetadata : public nixlHf3fsMetadata {
 public:
     std::string shm_name;
     std::string link_path;
@@ -67,8 +73,8 @@ public:
     size_t mapped_size;
     nixl::UUIDv4 uuid;
 
-    nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil &utils);
-    ~nixlHf3fsShmMetadata();
+    nixlHf3fsDramZCMetadata(uint8_t *addr, size_t len, hf3fsUtil &utils);
+    ~nixlHf3fsDramZCMetadata();
 };
 
 class nixlHf3fsIO {
@@ -110,6 +116,7 @@ class nixlHf3fsEngine : public nixlBackendEngine {
     private:
         hf3fsUtil *hf3fs_utils;
         std::unordered_set<int> hf3fs_file_set;
+        nixlHf3fsMemConfig mem_config;
         static long page_size;
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;

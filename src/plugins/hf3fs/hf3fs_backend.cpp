@@ -40,20 +40,36 @@ nixlHf3fsEngine::nixlHf3fsEngine (const nixlBackendInitParams* init_params)
     if (hf3fs_utils->openHf3fsDriver() == NIXL_ERR_BACKEND) {
         NIXL_ERROR << "Error opening HF3FS driver";
         this->initErr = true;
+        return;
     }
+
+    mem_config = NIXL_HF3FS_MEM_CONFIG_AUTO;
 
     // Get mount point from parameters if available
     std::string mount_point = "/mnt/3fs/"; // default
-    if (init_params &&
-        init_params->customParams &&
-        init_params->customParams->count("mount_point") > 0) {
-        mount_point = init_params->customParams->at("mount_point");
+    if (init_params && init_params->customParams) {
+        if (init_params->customParams->count("mount_point") > 0) {
+            mount_point = init_params->customParams->at("mount_point");
+        }
+        if (init_params->customParams->count("mem_config") > 0) {
+            std::string mem_config_str = init_params->customParams->at("mem_config");
+            if (mem_config_str == "dram") {
+                mem_config = NIXL_HF3FS_MEM_CONFIG_DRAM;
+            } else if (mem_config_str == "dram_zc") {
+                mem_config = NIXL_HF3FS_MEM_CONFIG_DRAM_ZC;
+            } else if (mem_config_str != "auto") {
+                this->initErr = true;
+                NIXL_ERROR << "Error: Invalid mem_config: " << mem_config_str;
+                return;
+            }
+        }
     }
 
     char mount_point_cstr[256];
     auto ret = hf3fs_extract_mount_point(mount_point_cstr, 256, mount_point.c_str());
     if (ret < 0) {
         this->initErr = true;
+        return;
     }
 
     hf3fs_utils->mount_point = mount_point_cstr;
@@ -73,22 +89,31 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
     case DRAM_SEG: {
         // mmap requires the memory to be aligned to the page size
         // and the length to be a multiple of the page size
-        if (page_size == 0 || (mem.addr % page_size == 0 && mem.len % page_size == 0)) {
-            try {
-                nixlHf3fsShmMetadata *md =
-                    new nixlHf3fsShmMetadata((uint8_t *)mem.addr, mem.len, *hf3fs_utils);
-                out = (nixlBackendMD *)md;
-                NIXL_DEBUG << "HF3FS: Registered shared memory(addr: " << std::hex << mem.addr
-                           << ", len: " << mem.len << ")";
-                break;
-            }
-            catch (const nixlHf3fsShmException &e) {
-                NIXL_DEBUG << "HF3FS: Failed to register shared memory(addr: " << std::hex
-                           << mem.addr << ", len: " << mem.len << "): " << e.what();
-                // fall back to using regular memory
+        if (mem_config == NIXL_HF3FS_MEM_CONFIG_AUTO ||
+            mem_config == NIXL_HF3FS_MEM_CONFIG_DRAM_ZC) {
+            if (page_size == 0 || (mem.addr % page_size == 0 && mem.len % page_size == 0)) {
+                try {
+                    nixlHf3fsDramZCMetadata *md =
+                        new nixlHf3fsDramZCMetadata((uint8_t *)mem.addr, mem.len, *hf3fs_utils);
+                    out = (nixlBackendMD *)md;
+                    NIXL_DEBUG << "HF3FS: Registered shared memory(addr: " << std::hex << mem.addr
+                               << ", len: " << mem.len << ")";
+                    break;
+                }
+                catch (const nixlHf3fsShmException &e) {
+                    NIXL_DEBUG << "HF3FS: Failed to register shared memory(addr: " << std::hex
+                               << mem.addr << ", len: " << mem.len << "): " << e.what();
+                    if (mem_config != NIXL_HF3FS_MEM_CONFIG_AUTO) {
+                        HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
+                                         "Error: Failed to register shared memory");
+                    }
+                }
+            } else if (mem_config == NIXL_HF3FS_MEM_CONFIG_DRAM_ZC) {
+                HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
+                                 "Error: DRAM_ZC requires page-aligned memory");
             }
         }
-        out = new nixlHf3fsRegMemMetadata();
+        out = new nixlHf3fsDramMetadata();
         NIXL_DEBUG << "HF3FS: Registered regular memory(addr: " << std::hex << mem.addr
                    << ", len: " << mem.len << ")";
         break;
@@ -130,7 +155,7 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
         nixlHf3fsFileMetadata *file_md = (nixlHf3fsFileMetadata *)md;
         hf3fs_file_set.erase(file_md->handle.fd);
         hf3fs_utils->deregisterFileHandle(file_md->handle.fd);
-    } else if (md->type != NIXL_HF3FS_MEM_TYPE_SH_MEM && md->type != NIXL_HF3FS_MEM_TYPE_REG_MEM) {
+    } else if (md->type != NIXL_HF3FS_MEM_TYPE_DRAM && md->type != NIXL_HF3FS_MEM_TYPE_DRAM_ZC) {
         HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - invalid metadata type");
     }
     delete md;
@@ -140,7 +165,7 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
 void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle) const
 {
     for (auto prev_io : handle->io_list) {
-        if (prev_io->mem_type == NIXL_HF3FS_MEM_TYPE_REG_MEM) {
+        if (prev_io->mem_type == NIXL_HF3FS_MEM_TYPE_DRAM) {
             hf3fs_utils->destroyIOV(&prev_io->iov);
         }
         delete prev_io;
@@ -223,8 +248,8 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
             goto cleanup_handle;
         }
 
-        if (mem_md->type == NIXL_HF3FS_MEM_TYPE_SH_MEM) {
-            nixlHf3fsShmMetadata *shm_md = (nixlHf3fsShmMetadata *)mem_md;
+        if (mem_md->type == NIXL_HF3FS_MEM_TYPE_DRAM_ZC) {
+            nixlHf3fsDramZCMetadata *shm_md = (nixlHf3fsDramZCMetadata *)mem_md;
             status = hf3fs_utils->wrapIOV(&io->iov,
                                           shm_md->mapped_addr,
                                           shm_md->mapped_size,
@@ -293,7 +318,7 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
     }
     for (auto it = hf3fs_handle->io_list.begin(); it != hf3fs_handle->io_list.end(); ++it) {
         nixlHf3fsIO* io = *it;
-        void *addr = (io->mem_type == NIXL_HF3FS_MEM_TYPE_REG_MEM) ? io->iov.base : io->addr;
+        void *addr = (io->mem_type == NIXL_HF3FS_MEM_TYPE_DRAM) ? io->iov.base : io->addr;
 
         status = hf3fs_utils->prepIO(
             &hf3fs_handle->ior, &io->iov, addr, io->offset, io->size, io->fd, io->is_read, io);
@@ -365,7 +390,7 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
                 }
 
                 nixlHf3fsIO* io = (nixlHf3fsIO*)cqes[i].userdata;
-                if (io->is_read && io->mem_type == NIXL_HF3FS_MEM_TYPE_REG_MEM) {
+                if (io->is_read && io->mem_type == NIXL_HF3FS_MEM_TYPE_DRAM) {
                     memcpy(io->addr, io->iov.base, io->size);
                 }
 
@@ -439,8 +464,8 @@ nixlHf3fsEngine::queryMem(const nixl_reg_dlist_t &descs,
     return nixl::queryFileInfoList(metadata, resp);
 }
 
-nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil &utils)
-    : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_SH_MEM) {
+nixlHf3fsDramZCMetadata::nixlHf3fsDramZCMetadata(uint8_t *addr, size_t len, hf3fsUtil &utils)
+    : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_DRAM_ZC) {
 
     // Create shared memory name using UUID (POSIX shared memory names start with /)
     shm_name = "/nixl_hf3fs." + uuid.to_string();
@@ -503,7 +528,7 @@ nixlHf3fsShmMetadata::nixlHf3fsShmMetadata(uint8_t *addr, size_t len, hf3fsUtil 
     NIXL_INFO << "Created POSIX shared memory: " << shm_name << " with size: " << len;
 }
 
-nixlHf3fsShmMetadata::~nixlHf3fsShmMetadata() {
+nixlHf3fsDramZCMetadata::~nixlHf3fsDramZCMetadata() {
     if (unlink(link_path.c_str()) && errno != ENOENT) {
         NIXL_PERROR << "Failed to remove symlink";
     }
