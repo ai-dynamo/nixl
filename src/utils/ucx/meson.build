@@ -22,7 +22,7 @@ endif
 ucx_utils_inc_dirs = include_directories('.')
 
 ucx_utils_lib = library('ucx_utils',
-           'ucx_utils.cpp', 'ucx_utils.h',
+           'ucx_utils.cpp', 'ucx_utils.h', 'config.h', 'config.cpp', 'rkey.cpp', 'rkey.h',
            dependencies: ucx_utils_dep,
            include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
            install: true)

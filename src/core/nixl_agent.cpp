@@ -24,6 +24,10 @@
 #include "plugin_manager.h"
 #include "common/nixl_log.h"
 
+static const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
+    {"GDS", "GDS_MT"},
+};
+
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
     static std::array<std::string, FILE_SEG+1> nixl_mem_str = {
@@ -207,6 +211,20 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     // Registering same type of backend is not supported, unlikely and prob error
     if (data->backendEngines.count(type)!=0)
         return NIXL_ERR_INVALID_PARAM;
+
+    // Check if the plugin is in an illegal combination with another plugin backend already created
+    for (const auto &combination : illegal_plugin_combinations) {
+        if (std::find(combination.begin(), combination.end(), type) != combination.end()) {
+            for (const auto &plugin_name : combination) {
+                if (plugin_name != type &&
+                    data->backendEngines.find(plugin_name) != data->backendEngines.end()) {
+                    NIXL_ERROR << "Plugin backend " << type << " is in illegal combination with "
+                               << plugin_name;
+                    return NIXL_ERR_NOT_ALLOWED;
+                }
+            }
+        }
+    }
 
     init_params.localAgent   = data->name;
     init_params.type         = type;
@@ -978,41 +996,35 @@ nixlAgent::genNotif(const std::string &remote_agent,
                     const nixl_blob_t &msg,
                     const nixl_opt_args_t* extra_params) const {
 
-    nixlBackendEngine* backend = nullptr;
-    backend_list_t*    backend_list;
+    backend_list_t backend_list_value;
+    backend_list_t* backend_list;
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    if (!extra_params || extra_params->backends.size() == 0) {
+    if (!extra_params || extra_params->backends.empty()) {
         backend_list = &data->notifEngines;
         if (backend_list->empty())
             return NIXL_ERR_BACKEND;
     } else {
-        backend_list = new backend_list_t();
-        for (auto & elm : extra_params->backends)
+        backend_list = &backend_list_value;
+        for (auto &elm : extra_params->backends)
             if (elm->engine->supportsNotif())
                 backend_list->push_back(elm->engine);
 
         if (backend_list->empty()) {
-            delete backend_list;
             return NIXL_ERR_BACKEND;
         }
     }
 
+    bool localNotif = data->name == remote_agent;
     for (auto & eng: *backend_list) {
-        if (data->remoteBackends[remote_agent].count(
-                                 eng->getType()) != 0) {
-            backend = eng;
-            break;
+        if ((localNotif && eng->supportsLocal()) ||
+            (!localNotif &&
+             data->remoteBackends[remote_agent].count(eng->getType()) != 0)) {
+            return eng->genNotif(remote_agent, msg);
         }
     }
 
-    if (extra_params && extra_params->backends.size() > 0)
-        delete backend_list;
-
-    if (backend)
-        return backend->genNotif(remote_agent, msg);
-    else
-        return NIXL_ERR_NOT_FOUND;
+    return NIXL_ERR_NOT_FOUND;
 }
 
 nixl_status_t

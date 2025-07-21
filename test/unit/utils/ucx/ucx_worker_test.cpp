@@ -21,7 +21,7 @@
 #include <iostream>
 
 #include "ucx/ucx_utils.h"
-
+#include "ucx/rkey.h"
 //TODO: meson conditional build for CUDA
 //#define USE_VRAM
 
@@ -85,18 +85,20 @@ int main()
     // TODO: pass dev name for testing
     // in CI it would be goot to test both SHM and IB
     //devs.push_back("mlx5_0");
-    std::shared_ptr<nixlUcxContext> c[2] = {
-        std::make_shared<nixlUcxContext>(devs, sizeof(requestData),
-                                         nixlUcxRequestInit, nullptr,
-                                         false,
-                                         UCP_ERR_HANDLING_MODE_NONE, 1,
-                                         nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE),
-        std::make_shared<nixlUcxContext>(devs, sizeof(requestData),
-                                         nixlUcxRequestInit, nullptr,
-                                         false,
-                                         UCP_ERR_HANDLING_MODE_NONE, 1,
-                                         nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)
-    };
+    nixlUcxContext c[2] = {{devs,
+                            sizeof(requestData),
+                            nixlUcxRequestInit,
+                            nullptr,
+                            false,
+                            1,
+                            nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
+                           {devs,
+                            sizeof(requestData),
+                            nixlUcxRequestInit,
+                            nullptr,
+                            false,
+                            1,
+                            nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
 
     nixlUcxWorker w[2] = {
         nixlUcxWorker(c[0]),
@@ -104,21 +106,24 @@ int main()
     };
     std::unique_ptr<nixlUcxEp> ep[2];
     nixlUcxMem mem[2];
-    nixlUcxRkey rkey[2];
+    std::unique_ptr<nixl::ucx::rkey> rkey[2];
     nixlUcxReq req;
     uint8_t *buffer[2];
     uint8_t *chk_buffer;
     nixl_status_t ret;
     size_t buf_size = 128 * 1024 * 1024; /* Use large buffer to ensure non-inline transfer */
     size_t i;
+    nixl_mem_t nixl_mem_type;
 
 #ifdef USE_VRAM
     checkCudaError(cudaSetDevice(gpu_id), "Failed to set device");
     checkCudaError(cudaMalloc(&buffer[0], buf_size), "Failed to allocate CUDA buffer 0");
     checkCudaError(cudaMalloc(&buffer[1], buf_size), "Failed to allocate CUDA buffer 1");
+    nixl_mem_type = VRAM_SEG;
 #else
     buffer[0] = (uint8_t*) calloc(1, buf_size);
     buffer[1] = (uint8_t*) calloc(1, buf_size);
+    nixl_mem_type = DRAM_SEG;
 #endif
     chk_buffer = (uint8_t*) calloc(1, buf_size);
 
@@ -131,10 +136,10 @@ int main()
         auto result = w[!i].connect((void*)addr.data(), addr.size());
         assert(result.ok());
         ep[!i] = std::move(*result);
-        assert(0 == c[i]->memReg(buffer[i], buf_size, mem[i]));
-        std::string rkey_tmp = c[i]->packRkey(mem[i]);
+        assert(0 == c[i].memReg(buffer[i], buf_size, mem[i], nixl_mem_type));
+        std::string rkey_tmp = c[i].packRkey(mem[i]);
         assert(!rkey_tmp.empty());
-        assert(0 == ep[!i]->rkeyImport(rkey_tmp.data(), rkey_tmp.size(), rkey[!i]));
+        rkey[!i] = std::make_unique<nixl::ucx::rkey>(*ep[!i], rkey_tmp.data());
     }
 
     /* =========================================
@@ -150,7 +155,7 @@ int main()
 #endif
 
     // Write request
-    ret = ep[0]->write(buffer[0], mem[0], (uint64_t) buffer[1], rkey[0], buf_size/2, req);
+    ret = ep[0]->write(buffer[0], mem[0], (uint64_t)buffer[1], *rkey[0], buf_size / 2, req);
     completeRequest(w, std::string("WRITE"), false, ret, req);
 
     // Flush to ensure that all data is in-place
@@ -185,7 +190,7 @@ int main()
 #endif
 
     // Read request
-    ret = ep[0]->read((uint64_t) buffer[1], rkey[0], buffer[0], mem[0], buf_size, req);
+    ret = ep[0]->read((uint64_t)buffer[1], *rkey[0], buffer[0], mem[0], buf_size, req);
     completeRequest(w, std::string("READ"), false, ret, req);
 
     // Flush to ensure that all data is in-place
@@ -207,8 +212,7 @@ int main()
 
     /* Test shutdown */
     for(i = 0; i < 2; i++) {
-        ep[i]->rkeyDestroy(rkey[i]);
-        c[i]->memDereg(mem[i]);
+        c[i].memDereg(mem[i]);
         assert(ep[i].release());
     }
 

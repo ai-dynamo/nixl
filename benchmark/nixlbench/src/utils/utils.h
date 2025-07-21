@@ -69,6 +69,8 @@
 #define XFERBENCH_BACKEND_GDS "GDS"
 #define XFERBENCH_BACKEND_POSIX "POSIX"
 #define XFERBENCH_BACKEND_GPUNETIO "GPUNETIO"
+#define XFERBENCH_BACKEND_MOONCAKE "Mooncake"
+#define XFERBENCH_BACKEND_HF3FS "HF3FS"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -124,18 +126,22 @@ class xferBenchConfig {
         static bool enable_pt;
         static std::string device_list;
         static std::string etcd_endpoints;
-        static std::string gds_filepath;
+        static std::string filepath;
         static bool enable_vmm;
         static int num_files;
         static std::string posix_api_type;
-        static std::string posix_filepath;
         static bool storage_enable_direct;
         static int gds_batch_pool_size;
         static int gds_batch_limit;
         static std::string gpunetio_device_list;
+
         static int loadFromFlags();
         static void printConfig();
+        static void
+        printOption (const std::string &desc, const std::string &value);
         static std::vector<std::string> parseDeviceList();
+        static bool
+        isStorageBackend();
 };
 
 // Generic IOV descriptor class independent of NIXL
