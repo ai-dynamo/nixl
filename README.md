@@ -159,7 +159,7 @@ The preferred way is to build it through meson-python, which will just let it be
 
 ### Rust Bindings
 #### Build
-- Use `-Denable_rust_bindings=true` meson option to build rust bindings.
+- Use `-Drust=true` meson option to build rust bindings.
 - Use `-Ddebug=false` for a release build.
 - Or build manually:
     ```bash
