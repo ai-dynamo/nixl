@@ -285,7 +285,7 @@ xferBenchConfig::printOption(const std::string &desc, const std::string &value) 
 
 void
 xferBenchConfig::printSeparator(const char sep) {
-    std::cout << std::string(170, sep) << std::endl;
+    std::cout << std::string(140, sep) << std::endl;
 }
 
 void
