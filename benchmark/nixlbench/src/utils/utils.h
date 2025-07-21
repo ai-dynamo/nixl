@@ -55,7 +55,7 @@
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
 #define MAXBW 50.0 // 400 Gbps or 50 GB/sec
 #define LARGE_BLOCK_SIZE (1LL * (1 << 20))
-#define LARGE_BLOCK_SIZE_ITER_FACTOR 16
+#define MIN_WARMUP_ITERS 8
 
 #define XFERBENCH_INITIATOR_BUFFER_ELEMENT 0xbb
 #define XFERBENCH_TARGET_BUFFER_ELEMENT 0xaa
@@ -121,11 +121,13 @@ class xferBenchConfig {
         static size_t start_batch_size;
         static size_t max_batch_size;
         static int num_iter;
+        static int large_blk_iter_ftr;
         static int warmup_iter;
         static int num_threads;
         static bool enable_pt;
         static std::string device_list;
         static std::string etcd_endpoints;
+        static std::string benchmark_group;
         static std::string filepath;
         static bool enable_vmm;
         static int num_files;
@@ -134,6 +136,7 @@ class xferBenchConfig {
         static int gds_batch_pool_size;
         static int gds_batch_limit;
         static std::string gpunetio_device_list;
+        static long page_size;
 
         static int loadFromFlags();
         static void printConfig();

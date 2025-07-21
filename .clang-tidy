@@ -1,0 +1,26 @@
+Checks: '-*,readability-identifier-naming'
+CheckOptions:
+    # Local variables and function arguments
+    - { key: readability-identifier-naming.LocalVariableCase, value: lower_case }
+    - { key: readability-identifier-naming.ParameterCase, value: lower_case }
+    # Class, struct, union, and enum type names
+    - { key: readability-identifier-naming.ClassCase, value: camelBack }
+    - { key: readability-identifier-naming.StructCase, value: camelBack }
+    - { key: readability-identifier-naming.UnionCase, value: camelBack }
+    - { key: readability-identifier-naming.EnumCase, value: lower_case }
+    # Fields and methods for classes, structs, and unions
+    - { key: readability-identifier-naming.ClassMemberCase, value: camelBack }
+    - { key: readability-identifier-naming.StructMemberCase, value: camelBack }
+    - { key: readability-identifier-naming.UnionMemberCase, value: camelBack }
+    - { key: readability-identifier-naming.MethodCase, value: camelBack }
+    # Private class members (fields)
+    - { key: readability-identifier-naming.PrivateMemberCase, value: camelBack }
+    - { key: readability-identifier-naming.PrivateMemberSuffix, value: _ }
+    # Enum values (enumerators)
+    - { key: readability-identifier-naming.EnumConstantCase, value: UPPER_CASE }
+    # For 'using' type aliases
+    - { key: readability-identifier-naming.TypeAliasCase, value: lower_case }
+    - { key: readability-identifier-naming.TypeAliasSuffix, value: _t }
+    # For 'typedef' type aliases
+    - { key: readability-identifier-naming.TypedefCase, value: lower_case }
+    - { key: readability-identifier-naming.TypedefSuffix, value: _t }

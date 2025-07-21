@@ -21,6 +21,8 @@ set -x
 # and second argument being the UCX installation directory.
 INSTALL_DIR=$1
 UCX_INSTALL_DIR=$2
+# UCX_VERSION is the version of UCX to build override default with env variable.
+UCX_VERSION=${UCX_VERSION:-v1.18.0}
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -31,15 +33,19 @@ if [ -z "$UCX_INSTALL_DIR" ]; then
     UCX_INSTALL_DIR=$INSTALL_DIR
 fi
 
+
+# For running as user - check if running as root, if not set sudo variable
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO=sudo
+else
+    SUDO=""
+fi
+
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
-apt-get -qq update
-
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.86.0
-export PATH=$HOME/.cargo/bin:$PATH
-
-apt-get -qq install -y curl \
+$SUDO apt-get -qq update
+$SUDO apt-get -qq install -y curl \
                              libnuma-dev \
                              numactl \
                              autotools-dev \
@@ -77,12 +83,15 @@ apt-get -qq install -y curl \
                              doxygen \
                              clang
 
-curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.86.0
+export PATH=$HOME/.cargo/bin:$PATH
+
+curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
   ./autogen.sh && \
   ./configure \
-          --prefix=${UCX_INSTALL_DIR} \
+          --prefix="${UCX_INSTALL_DIR}" \
           --enable-shared \
           --disable-static \
           --disable-doxygen-doc \
@@ -94,7 +103,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
           --enable-mt && \
         make -j && \
         make -j install-strip && \
-        ldconfig \
+        $SUDO ldconfig \
 )
 
 export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64

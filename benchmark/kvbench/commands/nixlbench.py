@@ -59,6 +59,7 @@ class NIXLBench:
         total_buffer_size=None,
         warmup_iter=100,
         worker_type="nixl",
+        benchmark_group="default",
     ):
         """
         Initialize a NIXLBench instance with benchmark configuration.
@@ -66,6 +67,7 @@ class NIXLBench:
         Args:
             model (BaseModelArch): Model architecture specification.
             model_config (ModelConfig): Model runtime and system configuration.
+            benchmark_group (str, optional): Name of benchmark group. Defaults to "default".
             backend (str, optional): Communication backend. Defaults to "UCX".
             check_consistency (bool, optional): Whether to check consistency. Defaults to False.
             device_list (str, optional): List of devices to use. Defaults to "all".
@@ -98,6 +100,7 @@ class NIXLBench:
         """
         self.model = model
         self.model_config = model_config
+        self.benchmark_group = benchmark_group
         self.backend = backend
         self.check_consistency = check_consistency
         self.device_list = device_list
@@ -223,6 +226,7 @@ class NIXLBench:
             dict: Dictionary containing all benchmark parameters.
         """
         return {
+            "benchmark_group": self.benchmark_group,
             "backend": self.backend,
             "check_consistency": self.check_consistency,
             "device_list": self.device_list,
@@ -295,6 +299,7 @@ class NIXLBench:
             "total_buffer_size": 8589934592,
             "warmup_iter": 100,
             "worker_type": "nixl",
+            "benchmark_group": "default",
         }
 
     def plan(self, format: str = "text"):
