@@ -96,16 +96,6 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else ech
         doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all \
         doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 
-WORKDIR /workspace/nixl
-COPY . /workspace/nixl
-
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade meson pybind11 patchelf
-
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
@@ -130,6 +120,16 @@ RUN cd /usr/local/src && \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
+
+WORKDIR /workspace/nixl
+COPY . /workspace/nixl
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+ENV VIRTUAL_ENV=/workspace/nixl/.venv
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
+    # pybind11 pip install needed for ubuntu 22.04
+    uv pip install --upgrade meson pybind11 patchelf
 
 RUN rm -rf build && \
     mkdir build && \
