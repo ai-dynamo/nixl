@@ -79,6 +79,11 @@ ScopedEnv::Variable::~Variable()
 
 PortAllocator::PortAllocator() : _port(_get_first_port()) {}
 
+PortAllocator &PortAllocator::instance() {
+    static PortAllocator _instance;
+    return _instance;
+}
+
 bool PortAllocator::_is_port_available(uint16_t port) {
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
@@ -92,22 +97,18 @@ bool PortAllocator::_is_port_available(uint16_t port) {
 
 uint16_t PortAllocator::next_tcp_port() {
     std::lock_guard<std::mutex> lock(_mutex);
-
-    if (!_instance) {
-        _instance = std::make_unique<PortAllocator>();
-    }
-
     int max_port = MIN_PORT + _get_concurrent_id() * (PORT_RANGE + 1) - 1;
+    PortAllocator &instance = PortAllocator::instance();
 
-    while (!_is_port_available(++_instance->_port) && (_instance->_port <= max_port));
+    while (!_is_port_available(++instance._port) && (instance._port <= max_port));
 
-    if (_instance->_port >= max_port) {
+    if (instance._port >= max_port) {
         // Please increase PORT_RANGE in common.h and .ci/scripts/common.sh to avoid this error
         throw std::runtime_error(
             "Reached max port within executor port range, consider increasing PORT_RANGE");
     }
 
-    return _instance->_port;
+    return instance._port;
 }
 
 uint16_t PortAllocator::_get_first_port() {

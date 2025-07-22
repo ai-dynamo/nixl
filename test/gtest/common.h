@@ -74,24 +74,21 @@ public:
     // Offset to avoid conflicts with common.sh allocated ports
     static constexpr uint16_t OFFSET = PORT_RANGE / 2;
 
-    friend std::unique_ptr<PortAllocator> std::make_unique<PortAllocator>();
-    friend class std::default_delete<PortAllocator>;
-
 private:
     PortAllocator();
-    virtual ~PortAllocator() = default;
     PortAllocator(const PortAllocator &other) = delete;
     void operator=(const PortAllocator &) = delete;
 
 public:
+    virtual ~PortAllocator() = default;
     static uint16_t next_tcp_port();
+    static PortAllocator &instance();
 
 private:
     static uint16_t _get_first_port();
     static bool _is_port_available(uint16_t port);
     static int _get_concurrent_id();
 
-    static std::unique_ptr<PortAllocator> _instance;
     static std::mutex _mutex;
 
     uint16_t _port;
