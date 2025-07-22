@@ -99,7 +99,7 @@ uint16_t PortAllocator::next_tcp_port() {
 
     int max_port = MIN_PORT + _get_concurrent_id() * (PORT_RANGE + 1) - 1;
 
-    while (!_is_port_available(++_instance->_port) && _instance->_port <= max_port);
+    while (!_is_port_available(++_instance->_port) && (_instance->_port <= max_port));
 
     if (_instance->_port >= max_port) {
         // Please increase PORT_RANGE in common.h and .ci/scripts/common.sh to avoid this error
