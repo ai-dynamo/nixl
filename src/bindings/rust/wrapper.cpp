@@ -16,8 +16,8 @@
  */
 #include "wrapper.h"
 
-#include <nixl.h>
-#include <nixl_types.h>
+#include "nixl.h"
+#include "nixl_types.h"
 
 #include <cstdlib>
 #include <cstring>
