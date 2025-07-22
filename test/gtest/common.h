@@ -73,7 +73,7 @@ public:
     static constexpr uint16_t MAX_PORT = 65535;
     static constexpr uint16_t PORT_RANGE = 1000;
     // Offset to avoid conflicts with common.sh allocated ports
-    static constexpr uint16_t OFFSET = 500;
+    static constexpr uint16_t OFFSET = PORT_RANGE / 2;
 
 private:
     PortAllocator();
