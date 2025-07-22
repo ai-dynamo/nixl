@@ -96,9 +96,9 @@ bool PortAllocator::_is_port_available(uint16_t port) {
 }
 
 uint16_t PortAllocator::next_tcp_port() {
-    std::lock_guard<std::mutex> lock(_mutex);
-    int max_port = MIN_PORT + _get_concurrent_id() * (PORT_RANGE + 1) - 1;
     PortAllocator &instance = PortAllocator::instance();
+    std::lock_guard<std::mutex> lock(instance._mutex);
+    int max_port = MIN_PORT + _get_concurrent_id() * (PORT_RANGE + 1) - 1;
 
     while (!_is_port_available(++instance._port) && (instance._port <= max_port));
 

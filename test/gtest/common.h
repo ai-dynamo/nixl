@@ -89,8 +89,7 @@ private:
     static bool _is_port_available(uint16_t port);
     static int _get_concurrent_id();
 
-    static std::mutex _mutex;
-
+    std::mutex _mutex;
     uint16_t _port;
 };
 
