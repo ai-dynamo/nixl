@@ -104,7 +104,7 @@ protected:
     {
         // Create two agents
         for (int i = 0; i < AGENT_COUNT_; i++) {
-            int port = get_available_tcp_port();
+            int port = PortAllocator::next_tcp_port();
             std::string name = "agent_" + std::to_string(i);
             nixlAgentConfig cfg(false, true, port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
 

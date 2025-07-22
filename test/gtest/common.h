@@ -21,8 +21,10 @@
 #include <iomanip>
 #include <cassert>
 #include <cstdint>
+#include <memory>
 #include <stack>
 #include <optional>
+#include <mutex>
 
 namespace gtest {
 constexpr const char *
@@ -64,8 +66,34 @@ private:
     std::stack<Variable> m_vars;
 };
 
-uint16_t
-get_available_tcp_port();
+
+class PortAllocator {
+public:
+    static constexpr uint16_t MIN_PORT = 10500;
+    static constexpr uint16_t MAX_PORT = 65535;
+    static constexpr uint16_t PORT_RANGE = 1000;
+    // Offset to avoid conflicts with common.sh allocated ports
+    static constexpr uint16_t OFFSET = 500;
+
+private:
+    PortAllocator();
+    virtual ~PortAllocator() = default;
+    PortAllocator(const PortAllocator &other) = delete;
+    void operator=(const PortAllocator &) = delete;
+
+public:
+    static uint16_t next_tcp_port();
+
+private:
+    static uint16_t _get_first_port();
+    static bool _is_port_available(uint16_t port);
+    static int _get_concurrent_id();
+
+    static std::unique_ptr<PortAllocator> _instance;
+    static std::mutex _mutex;
+
+    uint16_t _port;
+};
 
 } // namespace gtest
 

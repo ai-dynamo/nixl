@@ -20,6 +20,7 @@
 #include <iomanip>
 #include <cassert>
 #include <cstring>
+#include <memory>
 #include <stack>
 #include <optional>
 #include <netinet/in.h>
@@ -76,34 +77,52 @@ ScopedEnv::Variable::~Variable()
     }
 }
 
-uint16_t
-get_available_tcp_port() {
-    int sock_fd, ret;
-    struct sockaddr_in addr_in, ret_addr;
-    socklen_t len = sizeof(ret_addr);
-    uint16_t port;
-
-    sock_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock_fd < 0) {
-        throw std::runtime_error("socket create failed");
-    }
-
-    memset(&addr_in, 0, sizeof(struct sockaddr_in));
-    addr_in.sin_family = AF_INET;
-    addr_in.sin_addr.s_addr = INADDR_ANY;
-
-    do {
-        addr_in.sin_port = htons(0);
-        /* Ports below 1024 are considered "privileged" (can be used only by
-         * user root). Ports above and including 1024 can be used by anyone */
-        ret = bind(sock_fd, (struct sockaddr *)&addr_in, sizeof(struct sockaddr_in));
-    } while (ret);
-
-    ret = getsockname(sock_fd, (struct sockaddr *)&ret_addr, &len);
-
-    port = ntohs(ret_addr.sin_port);
-    close(sock_fd);
-    return port;
+PortAllocator::PortAllocator()
+    : _port(_get_first_port())
+{
 }
 
+bool PortAllocator::_is_port_available(uint16_t port) {
+    // Check if the port is already in use using bind
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int ret = bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr));
+    close(sock_fd);
+    return ret == 0;
+}
+
+
+uint16_t PortAllocator::next_tcp_port() {
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    if (!_instance) {
+        _instance = std::make_unique<PortAllocator>();
+    }
+
+    int max_port = MIN_PORT + _get_concurrent_id() * (PORT_RANGE + 1) - 1;
+
+    while (!_is_port_available(++_instance->_port) && _instance->_port <= max_port);
+
+    return _instance->_port;
+}
+
+uint16_t PortAllocator::_get_first_port() {
+    return MIN_PORT + _get_concurrent_id() * PORT_RANGE + OFFSET;
+}
+
+int PortAllocator::_get_concurrent_id() {
+    char *jenkins_executor_number = getenv("EXECUTOR_NUMBER");
+    char *gitlab_concurrent_id = getenv("CI_CONCURRENT_ID");
+
+    if (jenkins_executor_number) {
+         return std::stoi(jenkins_executor_number);
+    } else if (gitlab_concurrent_id) {
+        return std::stoi(gitlab_concurrent_id);
+    }
+
+    return rand() % ((MAX_PORT - MIN_PORT) / PORT_RANGE);
+}
 } // namespace gtest

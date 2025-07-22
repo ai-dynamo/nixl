@@ -126,7 +126,7 @@ protected:
 
         // Create two agents
         for (size_t i = 0; i < 2; i++) {
-            ports.push_back(get_available_tcp_port());
+            ports.push_back(PortAllocator::next_tcp_port());
             agents.emplace_back(std::make_unique<nixlAgent>(getAgentName(i),
                                                             getConfig(getPort(i))));
             nixlBackendH *backend_handle = nullptr;
