@@ -26,7 +26,7 @@ if not disable_gds_backend and cuda_dep.found()
       subdir('cuda_gds')
 endif
 
-if taskflow_proj.found() and cuda_dep.found()
+if taskflow_proj.found() and cuda_dep.found() and not disable_gds_backend
       subdir('gds_mt')
 endif
 

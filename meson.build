@@ -91,7 +91,7 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 etcd_inc_path = get_option('etcd_inc_path')
 etcd_lib_path = get_option('etcd_lib_path')
 if not etcd_dep.found() and etcd_lib_path != ''
-    etcd_lib = cpp.find_library('etcd-cpp-api')
+    etcd_lib = cpp.find_library('etcd-cpp-api', dirs: etcd_lib_path)
     if etcd_lib.found()
         if cpp.has_header('Client.hpp', args : '-I' + etcd_inc_path)
             etcd_inc = include_directories(etcd_inc_path, is_system: true)
