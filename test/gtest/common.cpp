@@ -103,7 +103,8 @@ uint16_t PortAllocator::next_tcp_port() {
 
     if (_instance->_port >= max_port) {
         // Please increase PORT_RANGE in common.h and .ci/scripts/common.sh to avoid this error
-        throw std::runtime_error("Reached max port within executor port range, consider increasing PORT_RANGE");
+        throw std::runtime_error(
+            "Reached max port within executor port range, consider increasing PORT_RANGE");
     }
 
     return _instance->_port;

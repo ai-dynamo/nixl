@@ -102,8 +102,7 @@ protected:
                                100000);
     }
 
-    uint16_t
-    getPort(int i) const {
+    uint16_t getPort(int i) const {
         return ports.at(i);
     }
 
@@ -147,8 +146,7 @@ protected:
         return GetParam();
     }
 
-    nixl_opt_args_t
-    extra_params_ip(int remote) {
+    nixl_opt_args_t extra_params_ip(int remote) {
         nixl_opt_args_t extra_params;
 
         extra_params.ipAddr = "127.0.0.1";
