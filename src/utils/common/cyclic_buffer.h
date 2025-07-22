@@ -25,20 +25,26 @@
 #include <stdexcept>
 #include <iostream>
 #include <string>
-#include "common/nixl_log.h"
 
-template<typename T, size_t Size> class SharedRingBuffer {
+#include "common/nixl_log.h"
+#include "util.h"
+
+template<typename T> class SharedRingBuffer {
 private:
     struct BufferHeader {
         std::atomic<size_t> write_pos{0};
         std::atomic<size_t> read_pos{0};
         std::atomic<uint32_t> version{0};
         uint32_t expected_version{0};
-        static constexpr size_t capacity = Size;
-        static constexpr size_t mask = Size - 1; // Size must be power of 2
+        size_t capacity;
+        size_t mask;
 
-        BufferHeader() {
-            static_assert((Size & (Size - 1)) == 0, "Size must be power of 2");
+        BufferHeader(size_t size) : capacity(size), mask(size - 1) {
+            // Ensure size is power of 2
+            if ((size & (size - 1)) != 0) {
+                size = nextPowerOf2(size);
+                NIXL_WARN << "Size " << size << " is not power of 2, rounding up to: " << size;
+            }
             static_assert(std::is_trivially_copyable<T>::value,
                           "T must be trivially copyable for shared memory");
         }
@@ -49,17 +55,59 @@ private:
     int file_fd_;
     bool is_creator_;
     std::string file_path_;
+    bool initialized_;
+    size_t buffer_size_;
 
-    static constexpr size_t total_size = sizeof(BufferHeader) + sizeof(T) * Size;
+    size_t
+    getTotalSize() const {
+        return sizeof(BufferHeader) + sizeof(T) * buffer_size_;
+    }
 
 public:
-    SharedRingBuffer(const char *name, bool create = true, uint32_t version = 1)
+    SharedRingBuffer()
+        : header_(nullptr),
+          data_(nullptr),
+          file_fd_(-1),
+          is_creator_(false),
+          file_path_(""),
+          initialized_(false),
+          buffer_size_(0) {}
+
+    SharedRingBuffer(const char *name, size_t size, bool create, uint32_t version = 1)
         : file_fd_(-1),
           is_creator_(create),
-          file_path_(name) {
+          file_path_(name),
+          initialized_(false),
+          buffer_size_(size) {
+        initialize(name, size, create, version);
+    }
+
+    // Constructor for reading existing buffer (size will be read from header)
+    SharedRingBuffer(const char *name, uint32_t version = 1)
+        : file_fd_(-1),
+          is_creator_(false),
+          file_path_(name),
+          initialized_(false),
+          buffer_size_(0) {
+        initialize(name, 0, false, version);
+    }
+
+    void
+    initialize(const char *name, size_t size = 0, bool create = true, uint32_t version = 1) {
+        if (file_fd_ != -1) {
+            NIXL_WARN << "SharedRingBuffer already initialized";
+            return;
+        }
+
+        if (create && size == 0) {
+            NIXL_WARN << "Cannot create buffer with size 0";
+            return;
+        }
 
         if (create) {
-            NIXL_INFO << "Creating file-based shared memory on path: " << std::string(name);
+            buffer_size_ = size;
+            NIXL_INFO << "Creating file-based shared memory on path: " << std::string(name)
+                      << " with size: " << size;
             // Create or truncate file
             file_fd_ = open(name, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
             if (file_fd_ == -1) {
@@ -69,28 +117,110 @@ public:
             }
 
             // Set file size
-            if (ftruncate(file_fd_, total_size) == -1) {
+            if (ftruncate(file_fd_, getTotalSize()) == -1) {
                 close(file_fd_);
                 unlink(name);
                 NIXL_WARN << "Failed to set file size";
                 return;
             }
-        } else {
-            // Open existing file
-            file_fd_ = open(name, O_RDWR, 0666);
-            if (file_fd_ == -1) {
-                NIXL_WARN << "Failed to open file for shared memory";
+
+            // Map memory
+            void *ptr =
+                mmap(nullptr, getTotalSize(), PROT_READ | PROT_WRITE, MAP_SHARED, file_fd_, 0);
+            if (ptr == MAP_FAILED) {
+                close(file_fd_);
+                unlink(name);
+                NIXL_WARN << "Failed to map file memory";
                 return;
             }
+
+            header_ = static_cast<BufferHeader *>(ptr);
+            data_ = reinterpret_cast<T *>(static_cast<char *>(ptr) + sizeof(BufferHeader));
+
+            // Initialize header
+            new (header_) BufferHeader(size);
+            header_->version.store(version, std::memory_order_release);
+            header_->expected_version = version;
+            initialized_ = true;
+        } else {
+            // Reading existing buffer
+            if (size == 0) {
+                // Auto-detect size from header
+                initializeFromHeader(name, version);
+            } else {
+                // Use provided size
+                buffer_size_ = size;
+                initializeWithSize(name, version);
+            }
+        }
+    }
+
+private:
+    // Helper method to initialize by reading size from header
+    void
+    initializeFromHeader(const char *name, uint32_t version) {
+        // Open existing file
+        file_fd_ = open(name, O_RDWR, 0666);
+        if (file_fd_ == -1) {
+            NIXL_WARN << "Failed to open file for shared memory";
+            return;
+        }
+
+        // First, map just the header to read the size
+        void *header_ptr =
+            mmap(nullptr, sizeof(BufferHeader), PROT_READ | PROT_WRITE, MAP_SHARED, file_fd_, 0);
+        if (header_ptr == MAP_FAILED) {
+            close(file_fd_);
+            NIXL_WARN << "Failed to map header memory";
+            return;
+        }
+
+        BufferHeader *temp_header = static_cast<BufferHeader *>(header_ptr);
+
+        // Check version compatibility
+        uint32_t current_version = temp_header->version.load(std::memory_order_acquire);
+        if (current_version != version) {
+            munmap(temp_header, sizeof(BufferHeader));
+            close(file_fd_);
+            NIXL_WARN << "Version mismatch: expected " + std::to_string(version) + ", got " +
+                    std::to_string(current_version);
+            return;
+        }
+
+        // Read the buffer size from header
+        buffer_size_ = temp_header->capacity;
+        NIXL_INFO << "Reading existing buffer with size: " << buffer_size_;
+
+        // Unmap the header and remap the entire buffer
+        munmap(temp_header, sizeof(BufferHeader));
+
+        // Map the entire buffer
+        void *ptr = mmap(nullptr, getTotalSize(), PROT_READ | PROT_WRITE, MAP_SHARED, file_fd_, 0);
+        if (ptr == MAP_FAILED) {
+            close(file_fd_);
+            NIXL_WARN << "Failed to map file memory";
+            return;
+        }
+
+        header_ = static_cast<BufferHeader *>(ptr);
+        data_ = reinterpret_cast<T *>(static_cast<char *>(ptr) + sizeof(BufferHeader));
+        initialized_ = true;
+    }
+
+    // Helper method to initialize with known size
+    void
+    initializeWithSize(const char *name, uint32_t version) {
+        // Open existing file
+        file_fd_ = open(name, O_RDWR, 0666);
+        if (file_fd_ == -1) {
+            NIXL_WARN << "Failed to open file for shared memory";
+            return;
         }
 
         // Map memory
-        void *ptr = mmap(nullptr, total_size, PROT_READ | PROT_WRITE, MAP_SHARED, file_fd_, 0);
+        void *ptr = mmap(nullptr, getTotalSize(), PROT_READ | PROT_WRITE, MAP_SHARED, file_fd_, 0);
         if (ptr == MAP_FAILED) {
             close(file_fd_);
-            if (create) {
-                unlink(name);
-            }
             NIXL_WARN << "Failed to map file memory";
             return;
         }
@@ -98,27 +228,22 @@ public:
         header_ = static_cast<BufferHeader *>(ptr);
         data_ = reinterpret_cast<T *>(static_cast<char *>(ptr) + sizeof(BufferHeader));
 
-        // Initialize header if creator
-        if (create) {
-            new (header_) BufferHeader();
-            header_->version.store(version, std::memory_order_release);
-            header_->expected_version = version;
-        } else {
-            // Check version compatibility
-            uint32_t current_version = header_->version.load(std::memory_order_acquire);
-            if (current_version != version) {
-                munmap(header_, total_size);
-                close(file_fd_);
-                NIXL_WARN << "Version mismatch: expected " + std::to_string(version) + ", got " +
-                        std::to_string(current_version);
-                return;
-            }
+        // Check version compatibility
+        uint32_t current_version = header_->version.load(std::memory_order_acquire);
+        if (current_version != version) {
+            munmap(header_, getTotalSize());
+            close(file_fd_);
+            NIXL_WARN << "Version mismatch: expected " + std::to_string(version) + ", got " +
+                    std::to_string(current_version);
+            return;
         }
+        initialized_ = true;
     }
 
+public:
     ~SharedRingBuffer() {
         if (header_) {
-            munmap(header_, total_size);
+            munmap(header_, getTotalSize());
         }
         if (file_fd_ != -1) {
             close(file_fd_);
@@ -213,6 +338,14 @@ public:
             return 0;
         }
         return header_->version.load(std::memory_order_acquire);
+    }
+
+    size_t
+    get_capacity() const {
+        if (!header_) {
+            return 0;
+        }
+        return header_->capacity;
     }
 
     static void

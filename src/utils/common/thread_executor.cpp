@@ -24,20 +24,16 @@ std::unique_ptr<ThreadExecutor> ThreadExecutor::instance_;
 std::mutex ThreadExecutor::instance_mutex_;
 std::atomic<bool> ThreadExecutor::initialized_{false};
 
-ThreadExecutor::ThreadExecutor(std::chrono::microseconds poll_interval)
-    : stop_requested_(false),
-      thread_active_(false),
-      default_poll_interval_(poll_interval) {
+ThreadExecutor::ThreadExecutor() : stop_requested_(false), thread_active_(false) {
+
+    io_context_ = std::make_unique<boost::asio::io_context>();
+    work_guard_ = std::make_unique<boost::asio::io_context::work>(*io_context_);
 
     executor_thread_ = std::thread(&ThreadExecutor::executorLoop, this);
 
-    // Wait for thread to become active
     while (!thread_active_.load()) {
         std::this_thread::yield();
     }
-
-    NIXL_DEBUG << "ThreadExecutor started with poll interval: " << default_poll_interval_.count()
-               << " microseconds";
 }
 
 ThreadExecutor::~ThreadExecutor() {
@@ -53,19 +49,15 @@ ThreadExecutor::getInstance() {
 }
 
 void
-ThreadExecutor::initialize(std::chrono::microseconds poll_interval) {
+ThreadExecutor::initialize() {
     std::lock_guard<std::mutex> lock(instance_mutex_);
     if (initialized_.load()) {
         NIXL_WARN << "ThreadExecutor already initialized";
         return;
     }
 
-    ThreadExecutor *raw_ptr = new ThreadExecutor(poll_interval);
-    instance_.reset(raw_ptr);
+    instance_.reset(new ThreadExecutor());
     initialized_.store(true);
-
-    NIXL_INFO << "ThreadExecutor initialized with poll interval: " << poll_interval.count()
-              << " microseconds";
 }
 
 void
@@ -90,50 +82,14 @@ void
 ThreadExecutor::executorLoop() {
     thread_active_ = true;
 
-    while (!stop_requested_.load()) {
-        std::unique_lock<std::mutex> lock(tasks_mutex_);
-
-        if (tasks_.empty()) {
-            tasks_cv_.wait_for(lock, default_poll_interval_, [this] {
-                return stop_requested_.load() || !tasks_.empty();
-            });
-            continue;
-        }
-
-        auto now = std::chrono::steady_clock::now();
-        std::vector<std::string> tasks_to_remove;
-        std::vector<std::shared_ptr<TaskInfo>> tasks_to_execute;
-
-        for (auto &[name, task_info] : tasks_) {
-            if (!task_info->active) {
-                tasks_to_remove.push_back(name);
-                continue;
-            }
-
-            if (now >= task_info->next_execution) {
-                tasks_to_execute.push_back(task_info);
-
-                if (task_info->mode == TaskMode::ONESHOT) {
-                    tasks_to_remove.push_back(name);
-                } else {
-                    task_info->next_execution = getNextExecutionTime(task_info);
-                }
-            }
-        }
-
-        for (const auto &name : tasks_to_remove) {
-            tasks_.erase(name);
-        }
-
-        lock.unlock();
-
-        for (auto &task_info : tasks_to_execute) {
-            executeTask(task_info);
-        }
-
-        if (tasks_to_execute.empty()) {
-            std::this_thread::sleep_for(default_poll_interval_);
-        }
+    try {
+        io_context_->run();
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Exception in ThreadExecutor io_context: " << e.what();
+    }
+    catch (...) {
+        NIXL_ERROR << "Unknown exception in ThreadExecutor io_context";
     }
 
     thread_active_ = false;
@@ -152,6 +108,55 @@ ThreadExecutor::executeTask(std::shared_ptr<TaskInfo> task_info) {
     }
     catch (...) {
         NIXL_ERROR << "Unknown exception in task '" << task_info->name << "'";
+    }
+}
+
+void
+ThreadExecutor::scheduleTask(std::shared_ptr<TaskInfo> task_info) {
+    if (!task_info->active || !task_info->timer) {
+        return;
+    }
+
+    auto delay = std::chrono::duration_cast<std::chrono::milliseconds>(
+        task_info->next_execution - std::chrono::steady_clock::now());
+
+    if (delay.count() <= 0) {
+        delay = std::chrono::milliseconds(1);
+    }
+
+    task_info->timer->expires_after(delay);
+    task_info->timer->async_wait([this, task_info](const boost::system::error_code &ec) {
+        handleTaskExecution(ec, task_info);
+    });
+}
+
+void
+ThreadExecutor::handleTaskExecution(const boost::system::error_code &ec,
+                                    std::shared_ptr<TaskInfo> task_info) {
+    if (ec) {
+        if (ec != boost::asio::error::operation_aborted) {
+            NIXL_ERROR << "Timer error for task '" << task_info->name << "': " << ec.message();
+        }
+        return;
+    }
+
+    if (!task_info->active) {
+        return;
+    }
+
+    // Execute the task
+    executeTask(task_info);
+
+    // Handle task mode
+    if (task_info->mode == TaskMode::ONESHOT) {
+        // Remove oneshot task
+        std::lock_guard<std::mutex> lock(tasks_mutex_);
+        tasks_.erase(task_info->name);
+        NIXL_DEBUG << "Removed oneshot task: " << task_info->name;
+    } else if (task_info->mode == TaskMode::PERIODIC && task_info->active) {
+        // Reschedule periodic task
+        task_info->next_execution = getNextExecutionTime(task_info);
+        scheduleTask(task_info);
     }
 }
 
@@ -175,12 +180,14 @@ ThreadExecutor::registerOneshotTask(const std::string &name, std::function<void(
         return false;
     }
 
-    auto task_info =
-        std::make_shared<TaskInfo>(task, TaskMode::ONESHOT, std::chrono::microseconds(0), name);
+    auto task_info = std::make_shared<TaskInfo>(
+        task, TaskMode::ONESHOT, std::chrono::microseconds(0), name, *io_context_);
     tasks_[name] = task_info;
 
     NIXL_DEBUG << "Registered oneshot task: " << name;
-    tasks_cv_.notify_one();
+
+    // Schedule the task immediately
+    scheduleTask(task_info);
 
     return true;
 }
@@ -206,12 +213,15 @@ ThreadExecutor::registerPeriodicTask(const std::string &name,
         return false;
     }
 
-    auto task_info = std::make_shared<TaskInfo>(task, TaskMode::PERIODIC, interval, name);
+    auto task_info =
+        std::make_shared<TaskInfo>(task, TaskMode::PERIODIC, interval, name, *io_context_);
     tasks_[name] = task_info;
 
     NIXL_DEBUG << "Registered periodic task: " << name << " with interval: " << interval.count()
                << " microseconds";
-    tasks_cv_.notify_one();
+
+    // Schedule the task
+    scheduleTask(task_info);
 
     return true;
 }
@@ -231,6 +241,10 @@ ThreadExecutor::unregisterTask(const std::string &name) {
         return false;
     }
 
+    // Cancel the timer and mark as inactive
+    if (it->second->timer) {
+        it->second->timer->cancel();
+    }
     it->second->active = false;
     tasks_.erase(it);
 
@@ -246,15 +260,31 @@ ThreadExecutor::stop() {
 
     NIXL_DEBUG << "Stopping ThreadExecutor";
     stop_requested_ = true;
-    tasks_cv_.notify_all();
+
+    // Cancel all timers
+    {
+        std::lock_guard<std::mutex> lock(tasks_mutex_);
+        for (auto &[name, task_info] : tasks_) {
+            if (task_info->timer) {
+                task_info->timer->cancel();
+            }
+            task_info->active = false;
+        }
+        tasks_.clear();
+    }
+
+    // Stop the io_context
+    if (work_guard_) {
+        work_guard_.reset();
+    }
+
+    if (io_context_) {
+        io_context_->stop();
+    }
 
     if (executor_thread_.joinable()) {
         executor_thread_.join();
     }
-
-    // Clear any remaining tasks
-    std::lock_guard<std::mutex> lock(tasks_mutex_);
-    tasks_.clear();
 
     NIXL_DEBUG << "ThreadExecutor stopped";
 }

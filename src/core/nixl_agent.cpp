@@ -67,6 +67,23 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
     }
 }
 
+std::string
+nixlEnumStrings::telemetryCategoryStr(const nixl_telemetry_category_t &category) {
+    static std::array<std::string, 9> nixl_telemetry_category_str = {"NIXL_TELEMETRY_MEMORY",
+                                                                     "NIXL_TELEMETRY_TRANSFER",
+                                                                     "NIXL_TELEMETRY_CONNECTION",
+                                                                     "NIXL_TELEMETRY_BACKEND",
+                                                                     "NIXL_TELEMETRY_ERROR",
+                                                                     "NIXL_TELEMETRY_PERFORMANCE",
+                                                                     "NIXL_TELEMETRY_SYSTEM",
+                                                                     "NIXL_TELEMETRY_CUSTOM",
+                                                                     "NIXL_TELEMETRY_MAX"};
+    int category_int = static_cast<int>(category);
+    if (category_int < 0 || category_int >= static_cast<int>(nixl_telemetry_category_str.size()))
+        return "BAD_CATEGORY";
+    return nixl_telemetry_category_str[category_int];
+}
+
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :
@@ -112,6 +129,7 @@ nixlAgentData::~nixlAgentData() {
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
     data(std::make_unique<nixlAgentData>(name, cfg))
 {
+    nixlTelemetry::getInstance()->initialize(name);
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
         if(my_port == 0) my_port = default_comm_port;
@@ -352,8 +370,8 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
 
     if (count > 0) {
         // sum all the sizes of the descriptors using std::accumulate
-        int64_t total_size = std::accumulate(descs.begin(), descs.end(), 0,
-            [](int64_t sum, const nixlBasicDesc &desc) {
+        uint64_t total_size = std::accumulate(descs.begin(), descs.end(), uint64_t{0},
+            [](uint64_t sum, const nixlBlobDesc &desc) {
                 return sum + desc.len;
             });
         nixlTelemetry::getInstance()->updateMemoryRegistered(total_size);
@@ -391,8 +409,8 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
             bad_ret = ret;
     }
     if (bad_ret == NIXL_SUCCESS) {
-        int64_t total_size = std::accumulate(descs.begin(), descs.end(), 0,
-            [](int64_t sum, const nixlBasicDesc &desc) {
+        uint64_t total_size = std::accumulate(descs.begin(), descs.end(), uint64_t{0},
+            [](uint64_t sum, const nixlBlobDesc &desc) {
                 return sum + desc.len;
             });
         nixlTelemetry::getInstance()->updateMemoryRegistered(-total_size);
@@ -1430,8 +1448,7 @@ void nixlXferReqH::updateRequestStats() {
     if (status == NIXL_SUCCESS) {
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - transaction_start_time);
-        nixlTelemetry::getInstance()->addRequestTime(duration);
-        nixlTelemetry::getInstance()->updateTransactionTime(duration);
+        nixlTelemetry::getInstance()->addTransactionTime(duration);
         if (backendOp == NIXL_WRITE) {
             nixlTelemetry::getInstance()->updateTxBytes(totalBytes);
             nixlTelemetry::getInstance()->updateTxRequestsNum(1);
@@ -1439,7 +1456,7 @@ void nixlXferReqH::updateRequestStats() {
             nixlTelemetry::getInstance()->updateRxBytes(totalBytes);
             nixlTelemetry::getInstance()->updateRxRequestsNum(1);
         }
-    } else {
+    } else if (status != NIXL_IN_PROG) {
         // don't count success
         nixlTelemetry::getInstance()->updateErrorCount(status);
     }

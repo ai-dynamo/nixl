@@ -77,6 +77,22 @@ enum class nixl_thread_sync_t {
 };
 
 /**
+ * @enum nixl_telemetry_category_t
+ * @brief An enumeration of main telemetry event categories for easy filtering and aggregation
+ */
+enum class nixl_telemetry_category_t {
+    NIXL_TELEMETRY_MEMORY = 0,      // Memory operations (register, deregister, allocation)
+    NIXL_TELEMETRY_TRANSFER = 1,    // Data transfer operations (read, write)
+    NIXL_TELEMETRY_CONNECTION = 2,  // Connection management (connect, disconnect)
+    NIXL_TELEMETRY_BACKEND = 3,     // Backend-specific operations
+    NIXL_TELEMETRY_ERROR = 4,       // Error events
+    NIXL_TELEMETRY_PERFORMANCE = 5, // Performance metrics
+    NIXL_TELEMETRY_SYSTEM = 6,      // System-level events
+    NIXL_TELEMETRY_CUSTOM = 7,      // Custom/user-defined events
+    NIXL_TELEMETRY_MAX = 8
+};
+
+/**
  * @namespace nixlEnumStrings
  * @brief     This namespace to get string representation
  *            of different enums
@@ -85,6 +101,7 @@ namespace nixlEnumStrings {
     std::string memTypeStr(const nixl_mem_t &mem);
     std::string xferOpStr (const nixl_xfer_op_t &op);
     std::string statusStr (const nixl_status_t &status);
+    std::string telemetryCategoryStr (const nixl_telemetry_category_t &category);
 }
 
 
@@ -138,54 +155,21 @@ extern const std::string default_metadata_label;
 extern const std::string default_partial_metadata_label;
 
 constexpr char TELEMETRY_PREFIX[] = "nixl_telemetry";
-
 constexpr int TELEMETRY_VERSION = 1;
-constexpr size_t TELEMETRY_BUFFER_SIZE = 1024;
-constexpr size_t MAX_METRIC_NAME_LEN = 64;
-constexpr size_t MAX_METRIC_UNIT_LEN = 16;
-constexpr size_t MAX_PLUGIN_NAME_LEN = 32;
-constexpr size_t MAX_METRICS_PER_EVENT = 8;
-constexpr size_t MAX_BACKENDS_PER_EVENT = 8;
-constexpr size_t LAST_REQUESTS_ARRAY_SIZE = 8;
 
-/**
- * @struct nixlPluginTelemetryMetric
- * @brief A structure to hold a single plugin telemetry metric (trivially copyable)
- */
-struct nixlPluginTelemetryMetric {
-    // Metric name (e.g., "gpu_memory_usage", "network_bandwidth")
-    char name[MAX_METRIC_NAME_LEN];
-    uint64_t value;
-};
+constexpr size_t MAX_EVENT_NAME_LEN = 32;
+constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 
-/**
- * @struct nixlPluginTelemetryEvent
- * @brief A structure to hold plugin-specific telemetry data (trivially copyable)
- */
-struct nixlPluginTelemetryEvent {
-    char plugin_name[MAX_PLUGIN_NAME_LEN];
-    uint32_t num_metrics;
-    nixlPluginTelemetryMetric metrics[MAX_METRICS_PER_EVENT];
-};
 /**
  * @struct nixlTelemetryEvent
- * @brief A structure to hold telemetry event data.
+ * @brief A structure to hold individual telemetry event data for cyclic buffer storage
  */
 struct nixlTelemetryEvent {
-    uint64_t timestamp_us;
-    uint64_t tx_bytes;
-    uint64_t rx_bytes;
-    uint32_t tx_requests_num;
-    uint32_t rx_requests_num;
-    uint64_t memory_registered;
-    uint16_t num_backends;
-    uint64_t total_transaction_time_us; // Cumulative transaction time in microseconds
-    uint32_t last_requests_time_us[LAST_REQUESTS_ARRAY_SIZE]; // Last requests time in microseconds
-    uint32_t error_counts[std::abs(
-        NIXL_ERR_LAST)]; // Count for each return type, pay attention index used is abs(val-1)
-    nixlPluginTelemetryEvent backend_telemetry[MAX_BACKENDS_PER_EVENT];
+    uint64_t timestamp_us;                          // Event timestamp in microseconds
+    nixl_telemetry_category_t category;             // Main event category for filtering
+    char event_name[MAX_EVENT_NAME_LEN];            // Detailed event name/identifier
+    uint64_t value;                                 // Numeric value associated with the event
 };
-
 
 /**
  * @enum nixl_cost_t

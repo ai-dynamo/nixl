@@ -20,7 +20,9 @@
 #include "common/cyclic_buffer.h"
 #include "nixl_types.h"
 #include <string>
+#include <array>
 #include <vector>
+#include <mutex>
 
 #ifdef NIXL_ENABLE_TELEMETRY
 
@@ -33,12 +35,18 @@ public:
         static nixlTelemetry instance;
         return &instance;
     }
+
+    bool
+    initialize(const std::string file = "", size_t buffer_size = DEFAULT_TELEMETRY_BUFFER_SIZE);
+
     void
     writeEvent();
+
     bool
     isEnabled() const {
         return true;
     }
+
     void
     updateTxBytes(uint64_t tx_bytes);
     void
@@ -50,29 +58,24 @@ public:
     void
     updateErrorCount(nixl_status_t error_type);
     void
-    updateMemoryRegistered(int64_t memory_registered);
+    updateMemoryRegistered(uint64_t memory_registered);
+    void
+    updateMemoryDeregistered(uint64_t memory_deregistered);
+    void
+    addTransactionTime(std::chrono::microseconds transaction_time);
 
     void
-    addRequestTime(std::chrono::microseconds transaction_time);
-
-    // Transaction time tracking methods
-    void
-    updateTransactionTime(std::chrono::microseconds transaction_time);
-    void
-    resetTransactionTimeStats();
-
-    // Plugin telemetry methods (new)
-    void
-    updatePluginTelemetry(const std::string &plugin_name,
-                          const std::vector<nixlPluginTelemetryMetric> &metrics);
+    addGeneralTelemetry(const std::string &event_name, uint64_t value);
 
     ~nixlTelemetry();
 
 private:
-    SharedRingBuffer<nixlTelemetryEvent, TELEMETRY_BUFFER_SIZE> buffer_;
-    nixlTelemetryEvent event_;
-    uint8_t last_requests_index_;
-    bool updated_;
+    void
+    update_data(const std::string &event_name, nixl_telemetry_category_t category, uint64_t value);
+    SharedRingBuffer<nixlTelemetryEvent> buffer_;
+    std::array<std::vector<nixlTelemetryEvent>, 2> plugin_telemetry_;
+    std::mutex plugin_telemetry_mutex_;
+    bool update_index_;
     bool enabled_;
 };
 
@@ -87,34 +90,46 @@ public:
         return &instance;
     }
 
+    bool
+    initialize(const std::string file = "", size_t buffer_size = DEFAULT_TELEMETRY_BUFFER_SIZE) {
+        return false;
+    }
+
     // No-op methods when telemetry is disabled
     void
     writeEvent() {}
+
     bool
     isEnabled() const {
         return false;
     }
+
     void
     updateTxBytes(uint64_t) {}
+
     void
     updateRxBytes(uint64_t) {}
+
     void
     updateTxRequestsNum(uint32_t) {}
+
     void
     updateRxRequestsNum(uint32_t) {}
+
     void
     updateErrorCount(nixl_status_t error_type) {}
-    void
-    updateMemoryRegistered(int64_t) {}
 
     void
-    updateTransactionTime(std::chrono::microseconds) {}
+    updateMemoryRegistered(int64_t memory_registered) {}
 
     void
-    addRequestTime(std::chrono::microseconds) {}
+    updateMemoryDeregistered(uint64_t memory_deregistered) {}
 
     void
-    updatePluginTelemetry(const std::string &, const std::vector<nixlPluginTelemetryMetric> &) {}
+    addTransactionTime(std::chrono::microseconds transaction_time) {}
+
+    void
+    addGeneralTelemetry(const std::string &event_name, uint64_t value) {}
 
     ~nixlTelemetry() = default;
 };

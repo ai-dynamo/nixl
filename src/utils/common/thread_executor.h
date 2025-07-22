@@ -18,14 +18,13 @@
 #define _NIXL_THREAD_EXECUTOR_H
 
 #include <functional>
-#include <thread>
 #include <mutex>
-#include <condition_variable>
 #include <atomic>
 #include <unordered_map>
 #include <chrono>
 #include <memory>
 #include <string>
+#include <boost/asio.hpp>
 #include "nixl_time.h"
 
 namespace nixl {
@@ -48,29 +47,32 @@ struct TaskInfo {
     std::chrono::steady_clock::time_point next_execution;
     bool active;
     std::string name;
+    std::shared_ptr<boost::asio::steady_timer> timer;
 
     TaskInfo() : mode(TaskMode::ONESHOT), interval(std::chrono::microseconds(0)), active(false) {}
 
     TaskInfo(const std::function<void()> &t,
              TaskMode m,
              const std::chrono::microseconds &i,
-             const std::string &n)
+             const std::string &n,
+             boost::asio::io_context &io_ctx)
         : task(t),
           mode(m),
           interval(i),
           active(true),
-          name(n) {
+          name(n),
+          timer(std::make_shared<boost::asio::steady_timer>(io_ctx)) {
         next_execution = std::chrono::steady_clock::now();
     }
 };
 
 /**
- * @brief Thread executor for managing periodic and oneshot tasks
+ * @brief Thread executor for managing periodic and oneshot tasks using Boost.Asio
  *
  * This class provides a centralized thread executor that can manage multiple
- * tasks with different execution modes. It supports both oneshot execution
- * (execute once and remove) and periodic execution (execute repeatedly at
- * specified intervals).
+ * tasks with different execution modes using Boost.Asio for efficient I/O
+ * handling. It supports both oneshot execution (execute once and remove) and
+ * periodic execution (execute repeatedly at specified intervals).
  *
  * This is implemented as a singleton to provide global access from anywhere
  * in the codebase.
@@ -82,22 +84,28 @@ private:
     static std::mutex instance_mutex_;
     static std::atomic<bool> initialized_;
 
+    std::unique_ptr<boost::asio::io_context> io_context_;
+    std::unique_ptr<boost::asio::io_context::work> work_guard_;
     std::thread executor_thread_;
     mutable std::mutex tasks_mutex_;
-    std::condition_variable tasks_cv_;
     std::atomic<bool> stop_requested_;
     std::atomic<bool> thread_active_;
 
     std::unordered_map<std::string, std::shared_ptr<TaskInfo>> tasks_;
-    std::chrono::microseconds default_poll_interval_;
 
-    explicit ThreadExecutor(std::chrono::microseconds poll_interval = std::chrono::milliseconds(1));
+    explicit ThreadExecutor();
 
     void
     executorLoop();
 
     void
     executeTask(std::shared_ptr<TaskInfo> task_info);
+
+    void
+    scheduleTask(std::shared_ptr<TaskInfo> task_info);
+
+    void
+    handleTaskExecution(const boost::system::error_code &ec, std::shared_ptr<TaskInfo> task_info);
 
     std::chrono::steady_clock::time_point
     getNextExecutionTime(const std::shared_ptr<TaskInfo> &task_info);
@@ -109,7 +117,7 @@ public:
     getInstance();
 
     static void
-    initialize(std::chrono::microseconds poll_interval = std::chrono::milliseconds(1));
+    initialize();
 
     static void
     shutdown();

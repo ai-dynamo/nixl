@@ -21,4 +21,17 @@
 #define CONCAT_0(a, b) a ## b
 #define UNIQUE_NAME(name) CONCAT(name, __COUNTER__)
 
+template <typename T>
+constexpr T nextPowerOf2(T n) {
+    static_assert(std::is_unsigned<T>::value, "nextPowerOf2 requires an unsigned integer type");
+
+    if (n == 0) return 1;
+
+    --n;
+    for (std::size_t i = 1; i < sizeof(T) * 8; i <<= 1) {
+        n |= n >> i;
+    }
+    return n + 1;
+}
+
 #endif /* UTIL_H */

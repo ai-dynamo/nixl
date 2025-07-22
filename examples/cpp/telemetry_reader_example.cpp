@@ -80,38 +80,10 @@ void
 print_telemetry_event(const nixlTelemetryEvent &event) {
     std::cout << "\n=== NIXL Telemetry Event ===" << std::endl;
     std::cout << "Timestamp: " << format_timestamp(event.timestamp_us) << std::endl;
-    std::cout << "Transfer Statistics:" << std::endl;
-    std::cout << "  TX Bytes: " << format_bytes(event.tx_bytes) << std::endl;
-    std::cout << "  RX Bytes: " << format_bytes(event.rx_bytes) << std::endl;
-    std::cout << "  TX Requests: " << event.tx_requests_num << std::endl;
-    std::cout << "  RX Requests: " << event.rx_requests_num << std::endl;
-    std::cout << "  Memory Registered: " << format_bytes(event.memory_registered) << " bytes"
-              << std::endl;
-    std::cout << "  Total Transaction Time: " << event.total_transaction_time_us << " us"
-              << std::endl;
-    std::cout << "  Error Counts:" << std::endl;
+    std::cout << "Category: " << nixlEnumStrings::telemetryCategoryStr(event.category) << std::endl;
+    std::cout << "Event name: " << event.event_name << std::endl;
+    std::cout << "Value: " << event.value << std::endl;
 
-    for (int i = 0; i < std::abs(NIXL_ERR_LAST); i++) {
-        // skip success since not captured
-        if (i != 1) {
-            std::cout << "    "
-                      << nixlEnumStrings::statusStr(static_cast<nixl_status_t>((i - 1) * -1))
-                      << ": " << event.error_counts[i] << std::endl;
-        }
-    }
-
-    if (event.num_backends > 0) {
-        std::cout << "Plugin Telemetry (" << event.num_backends << " backends):" << std::endl;
-        for (uint16_t i = 0; i < event.num_backends; i++) {
-            const auto &backend = event.backend_telemetry[i];
-            std::cout << "  Backend: " << backend.plugin_name << std::endl;
-            std::cout << "    Metrics (" << backend.num_metrics << "):" << std::endl;
-            for (uint32_t j = 0; j < backend.num_metrics; j++) {
-                const auto &metric = backend.metrics[j];
-                std::cout << "      " << metric.name << ": " << metric.value << std::endl;
-            }
-        }
-    }
     std::cout << "===========================" << std::endl;
 }
 
@@ -161,7 +133,7 @@ usage() {
     std::cout << "Usage: telemetry_reader_example <telemetry_folder_path> <read any file>"
               << std::endl;
     std::cout << "Options:" << std::endl;
-    std::cout << "  <telemetry_folder_path>    Path to the telemetry folder" << std::endl;
+    std::cout << "  <telemetry_folder_path>    Path to the telemetry folder or file" << std::endl;
     std::cout << "  <read any file>            Read telemetry data from any file (not only active "
                  "process) in the folder (0 - false, 1 - true, default: 0)"
               << std::endl;
@@ -180,7 +152,13 @@ main(int argc, char *argv[]) {
         read_any_file = std::stoi(argv[2]);
     }
     auto telemetry_path = argv[1];
-    auto telemetry_file_name = look_for_stat_active_telemetry_files(telemetry_path, read_any_file);
+    // check if the path is a file
+    std::string telemetry_file_name;
+    if (fs::is_regular_file(telemetry_path)) {
+        telemetry_file_name = telemetry_path;
+    } else {
+        telemetry_file_name = look_for_stat_active_telemetry_files(telemetry_path, read_any_file);
+    }
     if (telemetry_file_name.empty()) {
         std::cerr << "No active telemetry files found" << std::endl;
         return 1;
@@ -194,8 +172,7 @@ main(int argc, char *argv[]) {
         std::cout << "Press Ctrl+C to stop reading telemetry..." << std::endl;
 
         // Open the shared memory buffer for reading
-        SharedRingBuffer<nixlTelemetryEvent, TELEMETRY_BUFFER_SIZE> buffer(
-            telemetry_file_name.c_str(), false, TELEMETRY_VERSION);
+        SharedRingBuffer<nixlTelemetryEvent> buffer(telemetry_file_name.c_str(), TELEMETRY_VERSION);
 
         std::cout << "Successfully opened telemetry buffer (version: " << buffer.get_version()
                   << ")" << std::endl;
