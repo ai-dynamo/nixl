@@ -26,6 +26,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <random>
 
 namespace gtest {
 
@@ -77,7 +78,9 @@ ScopedEnv::Variable::~Variable()
     }
 }
 
-PortAllocator::PortAllocator() : _port(_get_first_port()) {}
+PortAllocator::PortAllocator() : _concurrent_id(_get_concurrent_id()), _port(_get_first_port(_concurrent_id)) {
+    std::cout << "PortAllocator constructor: concurrent_id=" << _concurrent_id << ", port=" << _port << std::endl;
+}
 
 PortAllocator &PortAllocator::instance() {
     static PortAllocator _instance;
@@ -98,7 +101,7 @@ bool PortAllocator::_is_port_available(uint16_t port) {
 uint16_t PortAllocator::next_tcp_port() {
     PortAllocator &instance = PortAllocator::instance();
     std::lock_guard<std::mutex> lock(instance._mutex);
-    int max_port = MIN_PORT + _get_concurrent_id() * (PORT_RANGE + 1) - 1;
+    int max_port = MIN_PORT + instance._concurrent_id * (PORT_RANGE + 1) - 1;
 
     while (!_is_port_available(++instance._port) && (instance._port <= max_port));
 
@@ -111,8 +114,8 @@ uint16_t PortAllocator::next_tcp_port() {
     return instance._port;
 }
 
-uint16_t PortAllocator::_get_first_port() {
-    return MIN_PORT + _get_concurrent_id() * PORT_RANGE + OFFSET;
+uint16_t PortAllocator::_get_first_port(int concurrent_id) {
+    return MIN_PORT + concurrent_id * PORT_RANGE + OFFSET;
 }
 
 int PortAllocator::_get_concurrent_id() {
@@ -125,6 +128,10 @@ int PortAllocator::_get_concurrent_id() {
         return std::stoi(gitlab_concurrent_id);
     }
 
-    return rand() % ((MAX_PORT - MIN_PORT) / PORT_RANGE);
+    std::random_device random_device;
+    std::mt19937 generator(random_device());
+    std::uniform_int_distribution<> distribution(0, (MAX_PORT - MIN_PORT) / PORT_RANGE);
+
+    return distribution(generator);
 }
 } // namespace gtest
