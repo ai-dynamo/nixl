@@ -75,6 +75,7 @@ public:
     static constexpr uint16_t OFFSET = PORT_RANGE / 2;
 
     friend std::unique_ptr<PortAllocator> std::make_unique<PortAllocator>();
+    friend class std::default_delete<PortAllocator>;
 
 private:
     PortAllocator();
