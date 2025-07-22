@@ -111,11 +111,11 @@ steps:
       else
         CLEAN_UCX="${UCX_VERSION}"
       fi
-      
+
       ARTIFACTORY_REGISTRY="${ARTIFACTORY_HOST}/${ARTIFACTORY_BASE_REPO}/verification/${BUILD_TARGET}"
       ARTIFACTORY_API="https://${ARTIFACTORY_HOST}/artifactory/api/storage/${ARTIFACTORY_BASE_REPO}/verification/${BUILD_TARGET}"
       TAG_NAME="${BASE_IMAGE_TAG}-$(git rev-parse --short=8 HEAD)-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
-      
+
       # Prepare image properties for Artifactory
       IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=$(git rev-parse --short=8 HEAD);UCX_VERSION=${CLEAN_UCX};arch=${arch};"
       IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};"
