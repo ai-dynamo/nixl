@@ -74,6 +74,8 @@ public:
     // Offset to avoid conflicts with common.sh allocated ports
     static constexpr uint16_t OFFSET = PORT_RANGE / 2;
 
+    friend std::unique_ptr<PortAllocator> std::make_unique<PortAllocator>();
+
 private:
     PortAllocator();
     virtual ~PortAllocator() = default;
