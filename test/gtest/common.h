@@ -90,8 +90,8 @@ private:
     static int _get_concurrent_id();
 
     std::mutex _mutex;
-    uint16_t _port;
     uint16_t _concurrent_id;
+    uint16_t _port;
 };
 
 } // namespace gtest

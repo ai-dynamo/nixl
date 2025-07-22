@@ -78,8 +78,11 @@ ScopedEnv::Variable::~Variable()
     }
 }
 
-PortAllocator::PortAllocator() : _concurrent_id(_get_concurrent_id()), _port(_get_first_port(_concurrent_id)) {
-    std::cout << "PortAllocator constructor: concurrent_id=" << _concurrent_id << ", port=" << _port << std::endl;
+PortAllocator::PortAllocator()
+    : _concurrent_id(_get_concurrent_id()),
+      _port(_get_first_port(_concurrent_id)) {
+    std::cout << "PortAllocator constructor: concurrent_id=" << _concurrent_id << ", port=" << _port
+              << std::endl;
 }
 
 PortAllocator &PortAllocator::instance() {
