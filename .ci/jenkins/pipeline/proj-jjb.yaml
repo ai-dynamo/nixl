@@ -61,15 +61,25 @@
         try {{
             // Trigger the actual build and test jobs in parallel
             parallel build: {{
-                build job: 'nixl-ci-build', parameters: [
+                def build = build job: 'nixl-ci-build', parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ]
+                ], propagate: false
+                currentBuild.description += "<br>Job: <a href='${{build.absoluteUrl}}'>nixl-ci-build</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
+                if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
+                  currentBuild.result = build.result
+                  error("Build CI failed")
+                }}
             }}, test: {{
-                build job: 'nixl-ci-test', parameters: [
+                def build = build job: 'nixl-ci-test', parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ]
+                ], propagate: false
+                currentBuild.description += "<br>Job: <a href='${{build.absoluteUrl}}'>nixl-ci-test</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
+                if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
+                  currentBuild.result = build.result
+                  error("Test CI failed")
+                }}
             }},
             failFast: false  // Continue even if some parallel jobs fail
 
