@@ -29,7 +29,7 @@ matrix:
 env:
   ARTIFACTORY_HOST: "urm.nvidia.com"
   ARTIFACTORY_BASE_REPO: "sw-nbu-swx-nixl-docker-local"
-  LOCAL_TAG_BASE: "localhost/nixl:build-"
+  LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
   NPROC: "16"
 
@@ -49,6 +49,7 @@ pipeline_start:
 # Build pipeline
 steps:
   - name: Prepare
+    containerSelector: "{ name: 'podman.*' }"
     run: |
       # Setup podman and dependencies
       rm -f /etc/containers/storage.conf
@@ -63,6 +64,7 @@ steps:
 
   - name: Build NIXLBench
     enable: ${BUILD_TARGET == "nixlbench"}
+    containerSelector: "{ name: 'podman.*' }"
     run: |
       "benchmark/nixlbench/contrib/build.sh" \
         --base-image "${BASE_IMAGE}" \
@@ -75,6 +77,7 @@ steps:
 
   - name: Build NIXL
     enable: ${BUILD_TARGET == "nixl"}
+    containerSelector: "{ name: 'podman.*' }"
     run: |
       export UCX_REF="${UCX_VERSION}"
 
@@ -86,6 +89,7 @@ steps:
         --no-cache
 
   - name: Add Version Info
+    containerSelector: "{ name: 'podman.*' }"
     run: |
       if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
@@ -107,6 +111,7 @@ steps:
 
   - name: Push
     credentialsId: 'svc-nixl-artifactory-token'
+    containerSelector: "{ name: 'podman.*' }"
     run: |
       if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
