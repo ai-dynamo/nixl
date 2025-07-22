@@ -66,7 +66,6 @@ private:
     std::stack<Variable> m_vars;
 };
 
-
 class PortAllocator {
 public:
     static constexpr uint16_t MIN_PORT = 10500;
