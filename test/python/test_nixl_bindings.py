@@ -17,6 +17,9 @@ import pickle
 
 import nixl._bindings as nixl
 import nixl._utils as nixl_utils
+from nixl.logging import get_logger
+
+logger = get_logger(__name__)
 
 # These should automatically be run by pytest because of function names
 
@@ -31,7 +34,7 @@ def test_list():
 
     pickled_list = pickle.dumps(test_list)
 
-    print(pickled_list)
+    logger.info(pickled_list)
 
     unpickled_list = pickle.loads(pickled_list)
 
@@ -39,7 +42,7 @@ def test_list():
 
     assert test_list.getType() == nixl.DRAM_SEG
 
-    print(test_list.descCount())
+    logger.info("Descriptor count: %s", test_list.descCount())
     assert test_list.descCount() == 3
 
     test_list.remDesc(1)
@@ -87,10 +90,8 @@ def test_agent():
     meta1 = agent1.getLocalMD()
     meta2 = agent2.getLocalMD()
 
-    print("Agent1 MD: ")
-    print(meta1)
-    print("Agent2 MD: ")
-    print(meta2)
+    logger.info("Agent1 MD: \n%s", meta1)
+    logger.info("Agent2 MD: \n%s", meta2)
 
     ret_name = agent1.loadRemoteMD(meta2)
     assert ret_name.decode(encoding="UTF-8") == name2
@@ -106,23 +107,23 @@ def test_agent():
     dst_list = nixl.nixlXferDList(nixl.DRAM_SEG, False)
     dst_list.addDesc((addr2 + offset, req_size, 0))
 
-    print("Transfer from " + str(addr1 + offset) + " to " + str(addr2 + offset))
+    logger.info("Transfer from %s to %s", str(addr1 + offset), str(addr2 + offset))
 
     noti_str = "n\0tification"
-    print(noti_str)
+    logger.info("Notification string: %s", noti_str)
 
-    print(src_list)
-    print(dst_list)
+    logger.info("Source list: %s", src_list)
+    logger.info("Destination list: %s", dst_list)
 
     handle = agent1.createXferReq(nixl.NIXL_WRITE, src_list, dst_list, name2, noti_str)
     assert handle != 0
 
-    print(handle)
+    logger.info("Transfer handle: %s", handle)
 
     status = agent1.postXferReq(handle)
     assert status == nixl.NIXL_SUCCESS or status == nixl.NIXL_IN_PROG
 
-    print("Transfer posted")
+    logger.info("Transfer posted")
 
     notifMap = {}
 
@@ -137,10 +138,10 @@ def test_agent():
 
     nixl_utils.verify_transfer(addr1 + offset, addr2 + offset, req_size)
     assert len(notifMap[name1]) == 1
-    print(notifMap[name1][0])
+    logger.info("Received notification: %s", notifMap[name1][0])
     assert notifMap[name1][0] == noti_str.encode()
 
-    print("Transfer verified")
+    logger.info("Transfer verified")
 
     agent1.releaseXferReq(handle)
 
