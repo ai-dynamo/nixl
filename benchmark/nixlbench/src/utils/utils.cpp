@@ -63,6 +63,9 @@ DEFINE_uint64(max_block_size, 64 * (1 << 20), "Max size of block \
 DEFINE_uint64(start_batch_size, 1, "Starting size of batch (Default: 1)");
 DEFINE_uint64(max_batch_size, 1, "Max size of batch (starts from 1)");
 DEFINE_int32(num_iter, 1000, "Max iterations");
+DEFINE_int32(large_blk_iter_ftr,
+             16,
+             "factor to reduce test iteration when testing large block size(>1MB)");
 DEFINE_int32(warmup_iter, 100, "Number of warmup iterations before timing");
 DEFINE_int32 (
     num_threads,
@@ -117,6 +120,7 @@ size_t xferBenchConfig::max_block_size = 0;
 size_t xferBenchConfig::start_batch_size = 0;
 size_t xferBenchConfig::max_batch_size = 0;
 int xferBenchConfig::num_iter = 0;
+int xferBenchConfig::large_blk_iter_ftr = 16;
 int xferBenchConfig::warmup_iter = 0;
 int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
@@ -199,6 +203,7 @@ xferBenchConfig::loadFromFlags() {
     start_batch_size = FLAGS_start_batch_size;
     max_batch_size = FLAGS_max_batch_size;
     num_iter = FLAGS_num_iter;
+    large_blk_iter_ftr = FLAGS_large_blk_iter_ftr;
     warmup_iter = FLAGS_warmup_iter;
     num_threads = FLAGS_num_threads;
     etcd_endpoints = FLAGS_etcd_endpoints;
@@ -247,7 +252,12 @@ xferBenchConfig::loadFromFlags() {
         return -1;
     }
 
-    int partition = (num_threads * LARGE_BLOCK_SIZE_ITER_FACTOR);
+    if (large_blk_iter_ftr == 0 || large_blk_iter_ftr > num_iter) {
+        std::cerr << "iter_factor must not be 0 and must be lower than num_iter" << std::endl;
+        return -1;
+    }
+
+    int partition = (num_threads * large_blk_iter_ftr);
     if (num_iter % partition) {
         num_iter += partition - (num_iter % partition);
         std::cout << "WARNING: Adjusting num_iter to " << num_iter
@@ -340,12 +350,14 @@ xferBenchConfig::printConfig() {
     printOption ("Num initiator dev (--num_initiator_dev=N)", std::to_string (num_initiator_dev));
     printOption ("Num target dev (--num_target_dev=N)", std::to_string (num_target_dev));
     printOption ("Start block size (--start_block_size=N)", std::to_string (start_block_size));
-    printOption("Max block size (--max_block_size=N)", std::to_string(max_block_size));
-    printOption("Start batch size (--start_batch_size=N)", std::to_string(start_batch_size));
-    printOption("Max batch size (--max_batch_size=N)", std::to_string(max_batch_size));
-    printOption("Num iter (--num_iter=N)", std::to_string(num_iter));
-    printOption("Warmup iter (--warmup_iter=N)", std::to_string(warmup_iter));
-    printOption("Num threads (--num_threads=N)", std::to_string(num_threads));
+    printOption ("Max block size (--max_block_size=N)", std::to_string (max_block_size));
+    printOption ("Start batch size (--start_batch_size=N)", std::to_string (start_batch_size));
+    printOption ("Max batch size (--max_batch_size=N)", std::to_string (max_batch_size));
+    printOption ("Num iter (--num_iter=N)", std::to_string (num_iter));
+    printOption ("Warmup iter (--warmup_iter=N)", std::to_string (warmup_iter));
+    printOption("Large block iter factor (--large_blk_iter_ftr=N)",
+                std::to_string(large_blk_iter_ftr));
+    printOption ("Num threads (--num_threads=N)", std::to_string (num_threads));
     printSeparator('-');
     std::cout << std::endl;
 }
@@ -523,7 +535,7 @@ xferBenchUtils::printStats(bool is_target,
     int num_iter = xferBenchConfig::num_iter;
 
     if (block_size > LARGE_BLOCK_SIZE) {
-        num_iter /= LARGE_BLOCK_SIZE_ITER_FACTOR;
+        num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
     // TODO: We can avoid this by creating a sub-communicator across initiator ranks

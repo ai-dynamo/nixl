@@ -98,6 +98,7 @@ meson configure /path/to/build/dir
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --etcd-endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 --enable_vmm               # Enable VMM memory allocation when DRAM is requested
+--large_blk_iter_ftr NUM   # Factor to reduce transfer iteration for block size above 1MB (default: 16)
 ```
 
 ### Using ETCD for Coordination
