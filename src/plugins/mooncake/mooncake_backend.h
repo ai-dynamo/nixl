@@ -37,7 +37,7 @@ class nixlMooncakeBackendMD;
 
 class nixlMooncakeEngine : public nixlBackendEngine {
 public:
-    nixlMooncakeEngine (const nixlBackendInitParams *init_params);
+    nixlMooncakeEngine(const nixlBackendInitParams *init_params);
     ~nixlMooncakeEngine();
 
     bool
@@ -62,59 +62,59 @@ public:
 
     /* Object management */
     nixl_status_t
-    getPublicData (const nixlBackendMD *meta, std::string &str) const;
+    getPublicData(const nixlBackendMD *meta, std::string &str) const;
     nixl_status_t
-    getConnInfo (std::string &str) const;
+    getConnInfo(std::string &str) const;
     nixl_status_t
-    loadRemoteConnInfo (const std::string &remote_agent, const std::string &remote_conn_info);
+    loadRemoteConnInfo(const std::string &remote_agent, const std::string &remote_conn_info);
 
     nixl_status_t
-    connect (const std::string &remote_agent);
+    connect(const std::string &remote_agent);
     nixl_status_t
-    disconnect (const std::string &remote_agent);
+    disconnect(const std::string &remote_agent);
 
     nixl_status_t
-    registerMem (const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out);
+    registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out);
     nixl_status_t
-    deregisterMem (nixlBackendMD *meta);
+    deregisterMem(nixlBackendMD *meta);
 
     nixl_status_t
-    loadLocalMD (nixlBackendMD *input, nixlBackendMD *&output);
+    loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output);
 
     nixl_status_t
-    loadRemoteMD (const nixlBlobDesc &input,
-                  const nixl_mem_t &nixl_mem,
-                  const std::string &remote_agent,
-                  nixlBackendMD *&output);
+    loadRemoteMD(const nixlBlobDesc &input,
+                 const nixl_mem_t &nixl_mem,
+                 const std::string &remote_agent,
+                 nixlBackendMD *&output);
     nixl_status_t
-    unloadMD (nixlBackendMD *input);
+    unloadMD(nixlBackendMD *input);
 
     // Data transfer
     nixl_status_t
-    prepXfer (const nixl_xfer_op_t &operation,
-              const nixl_meta_dlist_t &local,
-              const nixl_meta_dlist_t &remote,
-              const std::string &remote_agent,
-              nixlBackendReqH *&handle,
-              const nixl_opt_b_args_t *opt_args = nullptr) const;
+    prepXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const;
 
     nixl_status_t
-    postXfer (const nixl_xfer_op_t &operation,
-              const nixl_meta_dlist_t &local,
-              const nixl_meta_dlist_t &remote,
-              const std::string &remote_agent,
-              nixlBackendReqH *&handle,
-              const nixl_opt_b_args_t *opt_args = nullptr) const;
+    postXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const;
 
     nixl_status_t
-    checkXfer (nixlBackendReqH *handle) const;
+    checkXfer(nixlBackendReqH *handle) const;
     nixl_status_t
-    releaseReqH (nixlBackendReqH *handle) const;
+    releaseReqH(nixlBackendReqH *handle) const;
 
     nixl_status_t
-    getNotifs (notif_list_t &notif_list);
+    getNotifs(notif_list_t &notif_list);
     nixl_status_t
-    genNotif (const std::string &remote_agent, const std::string &msg) const override;
+    genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
 private:
     struct AgentInfo {
