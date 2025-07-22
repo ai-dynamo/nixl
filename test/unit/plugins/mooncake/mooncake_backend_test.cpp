@@ -112,7 +112,6 @@ public:
     }
 };
 
-
 nixlBackendEngine *
 createEngine(std::string name, bool p_thread) {
     nixlBackendEngine *mooncake;
@@ -385,7 +384,6 @@ op2string(nixl_xfer_op_t op, bool hasNotif) {
 
     return string("ERR-OP");
 }
-
 
 void
 performTransfer(nixlBackendEngine *mooncake1,

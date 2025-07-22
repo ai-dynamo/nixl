@@ -127,6 +127,7 @@ nixlMooncakeEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
 struct nixlMooncakeBackendMD : public nixlBackendMD {
     nixlMooncakeBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {}
+
     virtual ~nixlMooncakeBackendMD() {}
     void *addr;
     size_t length;
@@ -206,6 +207,7 @@ nixlMooncakeEngine::unloadMD(nixlBackendMD *input) {
 
 struct nixlMooncakeBackendReqH : public nixlBackendReqH {
     nixlMooncakeBackendReqH() : nixlBackendReqH() {}
+
     virtual ~nixlMooncakeBackendReqH() {}
     uint64_t batch_id;
     size_t request_count;
