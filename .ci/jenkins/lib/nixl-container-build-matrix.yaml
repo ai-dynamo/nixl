@@ -29,7 +29,7 @@ matrix:
 env:
   ARTIFACTORY_HOST: "urm.nvidia.com"
   ARTIFACTORY_BASE_REPO: "sw-nbu-swx-nixl-docker-local"
-  LOCAL_TAG_BASE: "nixl-ci:build-"
+  LOCAL_TAG_BASE: "localhost/nixl:build-"
   MAIL_FROM: "jenkins@nvidia.com"
   NPROC: "16"
 
