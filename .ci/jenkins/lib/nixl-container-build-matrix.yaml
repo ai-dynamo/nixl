@@ -62,48 +62,49 @@ steps:
       fi
 
   - name: Build NIXLBench
-    enable: ${BUILD_TARGET == "nixlbench"}
     run: |
-      "benchmark/nixlbench/contrib/build.sh" \
-        --base-image "${BASE_IMAGE}" \
-        --base-image-tag "${BASE_IMAGE_TAG}" \
-        --tag "${LOCAL_TAG_BASE}${arch}" \
-        --arch "${arch}" \
-        --no-cache \
-        --nixl "$WORKSPACE" \
-        --ucx "$WORKSPACE/ucx-src"
+      if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
+        "benchmark/nixlbench/contrib/build.sh" \
+          --base-image "${BASE_IMAGE}" \
+          --base-image-tag "${BASE_IMAGE_TAG}" \
+          --tag "${LOCAL_TAG_BASE}${arch}" \
+          --arch "${arch}" \
+          --no-cache \
+          --nixl "$WORKSPACE" \
+          --ucx "$WORKSPACE/ucx-src"
+      fi
 
   - name: Build NIXL
-    enable: ${BUILD_TARGET == "nixl"}
     run: |
-      export UCX_REF="${UCX_VERSION}"
+      if [[ "${BUILD_TARGET}" == "nixl" ]]; then
+        export UCX_REF="${UCX_VERSION}"
+        "contrib/build-container.sh" \
+          --base-image "${BASE_IMAGE}" \
+          --base-image-tag "${BASE_IMAGE_TAG}" \
+          --tag "${LOCAL_TAG_BASE}${arch}" \
+          --arch "${arch}" \
+          --no-cache
+      fi
 
-      "contrib/build-container.sh" \
-        --base-image "${BASE_IMAGE}" \
-        --base-image-tag "${BASE_IMAGE_TAG}" \
-        --tag "${LOCAL_TAG_BASE}${arch}" \
-        --arch "${arch}" \
-        --no-cache
+  - name: Add Version Info
+    run: |
+      if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
+        CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
+      else
+        CLEAN_UCX="${UCX_VERSION}"
+      fi
 
-  # - name: Add Version Info
-  #   run: |
-  #     if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
-  #       CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
-  #     else
-  #       CLEAN_UCX="${UCX_VERSION}"
-  #     fi
+      # Generate version info file from template
+      export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+             BUILD_TARGET BASE_IMAGE BASE_IMAGE_TAG arch \
+             BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE \
+             NIXL_VERSION="$(git rev-parse --short=8 HEAD)" UCX_VERSION="${CLEAN_UCX}"
+      envsubst < .ci/assets/nixl-version-info.json.template > version-info.json
 
-  #     # Generate version info file from template
-  #     export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-  #            BUILD_TARGET BASE_IMAGE BASE_IMAGE_TAG arch \
-  #            BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE \
-  #            NIXL_VERSION="$(git rev-parse --short=8 HEAD)" UCX_VERSION="${CLEAN_UCX}"
-  #     envsubst < .ci/assets/nixl-version-info.json.template > version-info.json
-
-  #     # Add version info to the image
-  #     CONTAINER_ID=$(docker create "${LOCAL_TAG_BASE}${arch}")
-  #     docker cp version-info.json "${CONTAINER_ID}:/opt/nixl-version.json"
-  #     docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
+      # Add version info to the image
+      CONTAINER_ID=$(docker create "${LOCAL_TAG_BASE}${arch}")
+      docker cp version-info.json "${CONTAINER_ID}:/opt/nixl-version.json"
+      docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
 
   - name: Push
     credentialsId: 'svc-nixl-artifactory-token'
