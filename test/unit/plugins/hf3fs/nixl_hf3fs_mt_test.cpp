@@ -67,6 +67,19 @@ namespace {
         absl::PrintF("%s\n", message);
     }
 
+    std::string
+    format_data_size(size_t bytes) {
+        if (bytes >= gb_size) {
+            return absl::StrFormat("%.2f GB", (double)bytes / gb_size);
+        } else if (bytes >= mb_size) {
+            return absl::StrFormat("%.2f MB", (double)bytes / mb_size);
+        } else if (bytes >= kb_size) {
+            return absl::StrFormat("%.2f KB", (double)bytes / kb_size);
+        } else {
+            return absl::StrFormat("%zu bytes", bytes);
+        }
+    }
+
     void fill_test_pattern(void* buffer, size_t size, int thread_id) {
         char* buf = (char*)buffer;
         size_t offset = 0;
@@ -197,9 +210,9 @@ namespace {
                                      write_end - write_start);
 
             print_protected(absl::StrFormat(
-                "thread_id: %d write data_size: %zu duration: %lld write_iterations: %d",
+                "thread_id: %d total write data: %s duration: %lld µs write_iterations: %d",
                 thread_id,
-                transfer_size * num_transfers * write_iterations,
+                format_data_size(transfer_size * num_transfers * write_iterations),
                 write_end - write_start,
                 write_iterations));
 #endif
@@ -261,9 +274,9 @@ namespace {
             read_stats.add_transfer(transfer_size * num_transfers * read_iterations,
                                     read_end - read_start);
             print_protected(absl::StrFormat(
-                "thread_id: %d read data_size: %zu duration: %lld read_iterations: %d",
+                "thread_id: %d total read data: %zu duration: %lld µs read_iterations: %d",
                 thread_id,
-                transfer_size * num_transfers * read_iterations,
+                format_data_size(transfer_size * num_transfers * read_iterations),
                 read_end - read_start,
                 read_iterations));
 
@@ -558,8 +571,8 @@ int main(int argc, char *argv[]) {
               << std::endl;
     std::cout << absl::StrFormat("Write duration: %.6f seconds", write_duration_seconds)
               << std::endl;
-    std::cout << absl::StrFormat("Total data transferred: %.2f GB",
-                                 ((double)total_write_bytes / gb_size))
+    std::cout << absl::StrFormat("Total write data transferred: %s",
+                                 format_data_size(total_write_bytes))
               << std::endl;
     std::cout << absl::StrFormat("Write throughput: %.2f GB/s", write_total_gbps) << std::endl;
 
@@ -612,8 +625,8 @@ int main(int argc, char *argv[]) {
     std::cout << absl::StrFormat("Total transfers failed: %d", total_failed_read_transfers.load())
               << std::endl;
     std::cout << absl::StrFormat("Read duration: %.6f seconds", read_duration_seconds) << std::endl;
-    std::cout << absl::StrFormat("Total data transferred: %.2f GB",
-                                 ((double)total_read_bytes / gb_size))
+    std::cout << absl::StrFormat("Total read data transferred: %s",
+                                 format_data_size(total_read_bytes))
               << std::endl;
     std::cout << absl::StrFormat("Read throughput: %.2f GB/s", read_total_gbps) << std::endl;
 
