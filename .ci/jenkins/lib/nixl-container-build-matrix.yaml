@@ -49,7 +49,6 @@ pipeline_start:
 # Build pipeline
 steps:
   - name: Prepare
-    containerSelector: "{ name: 'podman.*' }"
     run: |
       # Setup podman and dependencies
       rm -f /etc/containers/storage.conf
@@ -64,7 +63,6 @@ steps:
 
   - name: Build NIXLBench
     enable: ${BUILD_TARGET == "nixlbench"}
-    containerSelector: "{ name: 'podman.*' }"
     run: |
       "benchmark/nixlbench/contrib/build.sh" \
         --base-image "${BASE_IMAGE}" \
@@ -77,7 +75,6 @@ steps:
 
   - name: Build NIXL
     enable: ${BUILD_TARGET == "nixl"}
-    containerSelector: "{ name: 'podman.*' }"
     run: |
       export UCX_REF="${UCX_VERSION}"
 
@@ -88,30 +85,28 @@ steps:
         --arch "${arch}" \
         --no-cache
 
-  - name: Add Version Info
-    containerSelector: "{ name: 'podman.*' }"
-    run: |
-      if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
-        CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
-      else
-        CLEAN_UCX="${UCX_VERSION}"
-      fi
+  # - name: Add Version Info
+  #   run: |
+  #     if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
+  #       CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
+  #     else
+  #       CLEAN_UCX="${UCX_VERSION}"
+  #     fi
 
-      # Generate version info file from template
-      export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-             BUILD_TARGET BASE_IMAGE BASE_IMAGE_TAG arch \
-             BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE \
-             NIXL_VERSION="$(git rev-parse --short=8 HEAD)" UCX_VERSION="${CLEAN_UCX}"
-      envsubst < .ci/assets/nixl-version-info.json.template > version-info.json
+  #     # Generate version info file from template
+  #     export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+  #            BUILD_TARGET BASE_IMAGE BASE_IMAGE_TAG arch \
+  #            BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE \
+  #            NIXL_VERSION="$(git rev-parse --short=8 HEAD)" UCX_VERSION="${CLEAN_UCX}"
+  #     envsubst < .ci/assets/nixl-version-info.json.template > version-info.json
 
-      # Add version info to the image
-      CONTAINER_ID=$(docker create "${LOCAL_TAG_BASE}${arch}")
-      docker cp version-info.json "${CONTAINER_ID}:/opt/nixl-version.json"
-      docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
+  #     # Add version info to the image
+  #     CONTAINER_ID=$(docker create "${LOCAL_TAG_BASE}${arch}")
+  #     docker cp version-info.json "${CONTAINER_ID}:/opt/nixl-version.json"
+  #     docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
 
   - name: Push
     credentialsId: 'svc-nixl-artifactory-token'
-    containerSelector: "{ name: 'podman.*' }"
     run: |
       if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
