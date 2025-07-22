@@ -35,11 +35,12 @@ class nixlBackendEngine {
         bool              initErr = false;
         const std::string localAgent;
 
-        [[nodiscard]] nixl_status_t setInitParam(const std::string &key, const std::string &value) {
-	    if (customParams.try_emplace(key,value).second) {
+        [[nodiscard]] nixl_status_t
+        setInitParam(const std::string &key, const std::string &value) {
+            if (customParams.emplace(key, value).second) {
                 return NIXL_SUCCESS;
             }
-	    return NIXL_ERR_NOT_ALLOWED;
+            return NIXL_ERR_NOT_ALLOWED;
         }
 
         [[nodiscard]] nixl_status_t getInitParam(const std::string &key, std::string &value) const {

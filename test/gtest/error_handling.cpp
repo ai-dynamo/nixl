@@ -193,7 +193,7 @@ TestErrorHandling::Agent::waitForNotif(const std::string& expectedNotif) {
     } while (notif_map.empty());
 
     std::vector<std::string> notifs = notif_map[m_MetaRemote];
-    EXPECT_EQ(1,             notifs.size());
+    EXPECT_EQ(1u, notifs.size());
     EXPECT_EQ(expectedNotif, notifs.front());
     return NIXL_SUCCESS;
 }
