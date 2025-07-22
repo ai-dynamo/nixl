@@ -76,11 +76,11 @@ public:
 
 private:
     PortAllocator();
+    ~PortAllocator() = default;
     PortAllocator(const PortAllocator &other) = delete;
     void operator=(const PortAllocator &) = delete;
 
 public:
-    virtual ~PortAllocator() = default;
     static uint16_t next_tcp_port();
     static PortAllocator &instance();
 
