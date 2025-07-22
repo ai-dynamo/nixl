@@ -45,6 +45,11 @@ pipeline_start:
     def suffix = params.TAG_SUFFIX ? "-${params.TAG_SUFFIX}" : ""
     def buildName = params.BUILD_TARGET
     currentBuild.displayName += "-${buildName}-${params.NIXL_VERSION}-${params.UCX_VERSION}${suffix}"
+    env.ENABLE_NIXL_BUILD = params.BUILD_TARGET == 'nixl' ? 'true' : 'false'
+    env.ENABLE_NIXLBENCH_BUILD = params.BUILD_TARGET == 'nixlbench' ? 'true' : 'false'
+    echo "ENABLE_NIXL_BUILD: ${env.ENABLE_NIXL_BUILD}"
+    echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
+    echo "BUILD_TARGET: ${params.BUILD_TARGET}"
 
 # Build pipeline
 steps:
@@ -62,29 +67,28 @@ steps:
       fi
 
   - name: Build NIXLBench
+    enable: ${ENABLE_NIXLBENCH_BUILD}
     run: |
-      if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
-        "benchmark/nixlbench/contrib/build.sh" \
-          --base-image "${BASE_IMAGE}" \
-          --base-image-tag "${BASE_IMAGE_TAG}" \
-          --tag "${LOCAL_TAG_BASE}${arch}" \
-          --arch "${arch}" \
-          --no-cache \
-          --nixl "$WORKSPACE" \
-          --ucx "$WORKSPACE/ucx-src"
-      fi
+      "benchmark/nixlbench/contrib/build.sh" \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_IMAGE_TAG}" \
+        --tag "${LOCAL_TAG_BASE}${arch}" \
+        --arch "${arch}" \
+        --no-cache \
+        --nixl "$WORKSPACE" \
+        --ucx "$WORKSPACE/ucx-src"
 
   - name: Build NIXL
+    enable: ${ENABLE_NIXL_BUILD}
     run: |
-      if [[ "${BUILD_TARGET}" == "nixl" ]]; then
-        export UCX_REF="${UCX_VERSION}"
-        "contrib/build-container.sh" \
-          --base-image "${BASE_IMAGE}" \
-          --base-image-tag "${BASE_IMAGE_TAG}" \
-          --tag "${LOCAL_TAG_BASE}${arch}" \
-          --arch "${arch}" \
-          --no-cache
-      fi
+      export UCX_REF="${UCX_VERSION}"
+
+      "contrib/build-container.sh" \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_IMAGE_TAG}" \
+        --tag "${LOCAL_TAG_BASE}${arch}" \
+        --arch "${arch}" \
+        --no-cache
 
   - name: Add Version Info
     run: |
