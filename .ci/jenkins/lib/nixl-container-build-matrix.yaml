@@ -33,6 +33,8 @@ env:
   MAIL_FROM: "jenkins@nvidia.com"
   NPROC: "16"
 
+taskName: "${BUILD_TARGET}/${arch}/${axis_index}"
+
 credentials:
   - credentialsId: 'svc-nixl-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USERNAME'
@@ -61,14 +63,13 @@ steps:
       ln -sfT $(type -p podman) /usr/bin/docker
       yum install -y git gettext
 
-      if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
-        git clone https://github.com/openucx/ucx.git "$WORKSPACE/ucx-src"
-        (cd "$WORKSPACE/ucx-src" && git checkout "${UCX_VERSION}")
-      fi
-
   - name: Build NIXLBench
     enable: ${ENABLE_NIXLBENCH_BUILD}
     run: |
+      # Clone UCX source for nixlbench
+      git clone https://github.com/openucx/ucx.git ucx-src
+      git -C ucx-src checkout "${UCX_VERSION}"
+
       "benchmark/nixlbench/contrib/build.sh" \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_IMAGE_TAG}" \
@@ -81,14 +82,18 @@ steps:
   - name: Build NIXL
     enable: ${ENABLE_NIXL_BUILD}
     run: |
-      export UCX_REF="${UCX_VERSION}"
+      ucx_arg=""
+      if [[ -n "${UCX_VERSION}" ]]; then
+        ucx_arg="--ucx-upstream ${UCX_VERSION}"
+      fi
 
       "contrib/build-container.sh" \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_IMAGE_TAG}" \
         --tag "${LOCAL_TAG_BASE}${arch}" \
         --arch "${arch}" \
-        --no-cache
+        --no-cache \
+        ${ucx_arg}
 
   - name: Add Version Info
     run: |
@@ -119,14 +124,14 @@ steps:
         CLEAN_UCX="${UCX_VERSION}"
       fi
 
+      NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
       ARTIFACTORY_REGISTRY="${ARTIFACTORY_HOST}/${ARTIFACTORY_BASE_REPO}/verification/${BUILD_TARGET}"
       ARTIFACTORY_API="https://${ARTIFACTORY_HOST}/artifactory/api/storage/${ARTIFACTORY_BASE_REPO}/verification/${BUILD_TARGET}"
-      TAG_NAME="${BASE_IMAGE_TAG}-$(git rev-parse --short=8 HEAD)-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+      TAG_NAME="${BASE_IMAGE_TAG}-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
 
-      # Prepare image properties for Artifactory
-      IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=$(git rev-parse --short=8 HEAD);UCX_VERSION=${CLEAN_UCX};arch=${arch};"
-      IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};"
-      IMAGE_PROPERTIES+="BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
+      # Prepare image properties
+      IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${CLEAN_UCX};arch=${arch};"
+      IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
       IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
 
       # Login to Artifactory
@@ -142,7 +147,7 @@ steps:
           "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
       }
 
-      # Always create standard tag: base-buildtarget-version-ucx-version-arch[-suffix]
+      # Always create standard tag
       tag_push_set_properties "${TAG_NAME}"
 
       # Check if latest tag should be updated
