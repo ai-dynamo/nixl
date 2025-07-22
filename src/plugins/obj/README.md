@@ -113,7 +113,8 @@ nixl_b_params_t params = {
     {"endpoint_override", "http://localhost:9000"},
     {"scheme", "http"},
     {"region", "us-east-1"},
-    {"use_virtual_addressing", "false"}
+    {"use_virtual_addressing", "false"},
+    {"req_checksum", "supported"}
 };
 agent.createBackend("obj", params);
 ```

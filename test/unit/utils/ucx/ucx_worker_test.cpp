@@ -27,8 +27,8 @@
 
 #ifdef USE_VRAM
 
+#include <cuda.h>
 #include <cuda_runtime.h>
-#include <cufile.h>
 
 int gpu_id = 0;
 
