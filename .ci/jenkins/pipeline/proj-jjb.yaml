@@ -284,15 +284,15 @@
           name: "TAG_SUFFIX"
           default: ""
           description: >
-            Optional tag suffix.Tag format:<br/>
-            <code>&lt;base-image-tag&gt;-&lt;build-target&gt;-&lt;nixl-version&gt;-ucx-&lt;ucx-version&gt;-&lt;arch&gt;[-&lt;suffix&gt;]</code><br/>
+            Optional tag suffix. Tag format:<br/>
+            <code>&lt;base-image-tag&gt;-&lt;nixl-version&gt;-ucx-&lt;ucx-version&gt;-&lt;arch&gt;[-&lt;suffix&gt;]</code><br/>
       - bool:
           name: "UPDATE_LATEST"
           default: false
           description: >
             Update the latest tag for this architecture.<br/>
-            When enabled, also creates: <code>&lt;base-image-tag&gt;-&lt;build-target&gt;-&lt;arch&gt;-latest</code><br/>
-            Example: <code>25.03-cuda12.8-devel-ubuntu24.04-nixlbench-aarch64-latest</code><br/>
+            When enabled, also creates: <code>&lt;base-image-tag&gt;-&lt;arch&gt;-latest</code><br/>
+            Example: <code>25.03-cuda12.8-devel-ubuntu24.04-aarch64-latest</code><br/>
       - string:
           name: "MAIL_TO"
           default: "c4ad44db.NVIDIA.onmicrosoft.com@amer.teams.ms"

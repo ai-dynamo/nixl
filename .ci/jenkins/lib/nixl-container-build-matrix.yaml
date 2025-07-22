@@ -56,12 +56,14 @@ steps:
       ln -sfT $(type -p podman) /usr/bin/docker
       yum install -y git gettext
 
+      if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
+        git clone https://github.com/openucx/ucx.git "$WORKSPACE/ucx-src"
+        (cd "$WORKSPACE/ucx-src" && git checkout "${UCX_VERSION}")
+      fi
+
   - name: Build NIXLBench
     enable: ${BUILD_TARGET == "nixlbench"}
     run: |
-      git clone https://github.com/openucx/ucx.git ucx-src
-      (cd ucx-src && git checkout "${UCX_VERSION}")
-
       "benchmark/nixlbench/contrib/build.sh" \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_IMAGE_TAG}" \
@@ -86,7 +88,7 @@ steps:
   - name: Add Version Info
     run: |
       if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
-        CLEAN_UCX=$(cd ucx-src && git rev-parse --short=8 HEAD)
+        CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
       else
         CLEAN_UCX="${UCX_VERSION}"
       fi
@@ -107,7 +109,7 @@ steps:
     credentialsId: 'svc-nixl-artifactory-token'
     run: |
       if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
-        CLEAN_UCX=$(cd ucx-src && git rev-parse --short=8 HEAD)
+        CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
       else
         CLEAN_UCX="${UCX_VERSION}"
       fi
