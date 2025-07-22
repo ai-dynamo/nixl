@@ -58,6 +58,19 @@ createClientConfiguration(nixl_b_params_t *custom_params) {
     auto region_it = custom_params->find("region");
     if (region_it != custom_params->end()) config.region = region_it->second;
 
+    auto req_checksum_it = custom_params->find("req_checksum");
+    if (req_checksum_it != custom_params->end()) {
+        if (req_checksum_it->second == "required")
+            config.checksumConfig.requestChecksumCalculation =
+                Aws::Client::RequestChecksumCalculation::WHEN_REQUIRED;
+        else if (req_checksum_it->second == "supported")
+            config.checksumConfig.requestChecksumCalculation =
+                Aws::Client::RequestChecksumCalculation::WHEN_SUPPORTED;
+        else
+            throw std::runtime_error("Invalid value for req_checksum: '" + req_checksum_it->second +
+                                     "'. Must be 'required' or 'supported'");
+    }
+
     return config;
 }
 
