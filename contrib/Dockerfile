@@ -26,6 +26,8 @@ ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
 ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 
+RUN echo "TEST POINT FAILURE" && false
+
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
