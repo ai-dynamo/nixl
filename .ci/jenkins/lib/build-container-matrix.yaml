@@ -63,6 +63,8 @@ steps:
       ln -sfT $(type -p podman) /usr/bin/docker
       yum install -y git gettext
 
+      echo "DEBUG BEFORE SET: REGISTRY_HOST='${REGISTRY_HOST:-unset}' REGISTRY_REPO='${REGISTRY_REPO:-unset}'"
+
   - name: Build NIXLBench
     enable: ${ENABLE_NIXLBENCH_BUILD}
     run: |
@@ -136,6 +138,8 @@ steps:
       ARTIFACTORY_REGISTRY="${REGISTRY_HOST}/${REGISTRY_REPO}/${BUILD_TARGET}"
       ARTIFACTORY_API="https://${REGISTRY_HOST}/artifactory/api/storage/${REGISTRY_REPO}/${BUILD_TARGET}"
       TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+
+      echo "DEBUG BEFORE LOGIN: REGISTRY_HOST='${REGISTRY_HOST:-unset}' REGISTRY_REPO='${REGISTRY_REPO:-unset}'"
 
       # Prepare image properties
       IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${CLEAN_UCX};arch=${arch};"
