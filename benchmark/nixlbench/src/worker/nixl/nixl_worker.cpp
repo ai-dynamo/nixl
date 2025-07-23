@@ -472,6 +472,11 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_i
     return ret;
 }
 
+std::optional<xferBenchIOV>
+xferBenchNixlWorker::initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name) {
+    return std::optional<xferBenchIOV>(std::in_place, 0, buffer_size, mem_dev_id, name);
+}
+
 void
 xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
     free((void *)iov.addr);
@@ -496,6 +501,14 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
 void
 xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
     close(iov.devId);
+}
+
+void
+xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
+    if (!xferBenchUtils::rmObjS3(iov.metaInfo)) {
+        std::cerr << "Failed to remove S3 object: " << iov.metaInfo << std::endl;
+        exit(EXIT_FAILURE);
+    }
 }
 
 std::vector<std::vector<xferBenchIOV>>
