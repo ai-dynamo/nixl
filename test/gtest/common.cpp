@@ -80,10 +80,8 @@ ScopedEnv::Variable::~Variable()
 
 PortAllocator::PortAllocator()
     : _concurrent_id(_get_concurrent_id()),
-      _port(_get_first_port(_concurrent_id)) {
-    std::cout << "PortAllocator constructor: concurrent_id=" << _concurrent_id << ", port=" << _port
-              << std::endl;
-}
+      _port(_get_first_port(_concurrent_id))
+      {}
 
 PortAllocator &PortAllocator::instance() {
     static PortAllocator _instance;
@@ -95,6 +93,7 @@ bool PortAllocator::_is_port_available(uint16_t port) {
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = INADDR_ANY;
+
     int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     int ret = bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr));
     close(sock_fd);
@@ -104,7 +103,7 @@ bool PortAllocator::_is_port_available(uint16_t port) {
 uint16_t PortAllocator::next_tcp_port() {
     PortAllocator &instance = PortAllocator::instance();
     std::lock_guard<std::mutex> lock(instance._mutex);
-    int max_port = MIN_PORT + instance._concurrent_id * (PORT_RANGE + 1) - 1;
+    int max_port = MIN_PORT + (instance._concurrent_id + 1) * PORT_RANGE - 1;
 
     while (!_is_port_available(++instance._port) && (instance._port <= max_port));
 
