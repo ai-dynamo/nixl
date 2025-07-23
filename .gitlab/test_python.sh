@@ -53,8 +53,15 @@ pip3 install --break-system-packages pytest
 pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
 
+echo "==== Running ETCD server ===="
+export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:2379"
+etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} &
+sleep 5
+
 echo "==== Running python tests ===="
 python3 examples/python/nixl_api_example.py
+python3 examples/python/partial_md_example.py
+python3 examples/python/partial_md_example.py --etcd
 pytest test/python
 python3 test/python/prep_xfer_perf.py list
 python3 test/python/prep_xfer_perf.py array
@@ -67,3 +74,5 @@ python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$bl
 sleep 5
 python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
 python3 partial_md_example.py
+
+pkill etcd
