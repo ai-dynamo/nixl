@@ -43,7 +43,7 @@ DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communic
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
 DEFINE_string(backend,
               XFERBENCH_BACKEND_UCX,
-              "Name of communication backend [UCX, UCX_MO, GDS, POSIX, GPUNETIO] \
+              "Name of communication backend [UCX, UCX_MO, GDS, POSIX, GPUNETIO, OBJ] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]");
@@ -77,7 +77,7 @@ DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 DEFINE_bool(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 
-// Storage backend(GDS, POSIX, HF3FS) options
+// Storage backend(GDS, POSIX, HF3FS, OBJ) options
 DEFINE_string (filepath, "", "File path for storage operations");
 DEFINE_int32 (num_files, 1, "Number of files used by benchmark");
 DEFINE_bool (storage_enable_direct, false, "Enable direct I/O for storage operations");
@@ -340,7 +340,7 @@ void xferBenchConfig::printConfig() {
     }
     printOption ("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption ("Backend (--backend=[UCX,UCX_MO,GDS,POSIX])", backend);
+        printOption("Backend (--backend=[UCX,UCX_MO,GDS,POSIX,OBJ])", backend);
         printOption ("Enable pt (--enable_pt=[0,1])", std::to_string (enable_pt));
         printOption ("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption ("Enable VMM (--enable_vmm=[0,1])", std::to_string (enable_vmm));
@@ -501,11 +501,31 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                 } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
                     addr = calloc(1, len);
                     is_allocated = true;
-                    ssize_t rc = pread(iov.devId, addr, len, iov.addr);
-                    if (rc < 0) {
-                        std::cerr << "Failed to read from device: " << iov.devId
-                                  << " with error: " << strerror(errno) << std::endl;
-                        exit(EXIT_FAILURE);
+                    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+                        if (!getObjS3(iov.metaInfo)) {
+                            std::cerr << "Failed to get S3 object: " << iov.metaInfo << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        int fd = open(iov.metaInfo.c_str(), O_RDONLY);
+                        if (fd < 0) {
+                            std::cerr << "Failed to open downloaded file: " << iov.metaInfo
+                                      << " with error: " << strerror(errno) << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        ssize_t rc = pread(fd, addr, len, 0);
+                        if (rc < 0) {
+                            std::cerr << "Failed to read from file: " << iov.metaInfo
+                                      << " with error: " << strerror(errno) << std::endl;
+                        }
+                        close(fd);
+                        unlink(iov.metaInfo.c_str());
+                    } else {
+                        ssize_t rc = pread(iov.devId, addr, len, iov.addr);
+                        if (rc < 0) {
+                            std::cerr << "Failed to read from device: " << iov.devId
+                                      << " with error: " << strerror(errno) << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
                     }
                 }
             } else {

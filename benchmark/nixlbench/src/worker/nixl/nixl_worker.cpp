@@ -537,7 +537,38 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
 
     opt_args.backends.push_back(backend_engine);
 
-    if (xferBenchConfig::isStorageBackend()) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
+
+        for (int list_idx = 0; list_idx < num_lists; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                std::optional<xferBenchIOV> basic_desc;
+                std::string unique_name = "nixlbench_obj" + std::to_string(list_idx) + "_" +
+                    std::to_string(i) + "_" + std::to_string(timestamp);
+
+                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+                    if (!xferBenchUtils::putObjS3(buffer_size, unique_name)) {
+                        std::cerr << "Failed to put S3 object: " << unique_name << std::endl;
+                        continue;
+                    }
+                }
+
+                basic_desc = initBasicDescObj(buffer_size, i, unique_name);
+                if (basic_desc) {
+                    std::cout << "Creating obj: " << unique_name << std::endl;
+                    iov_list.push_back(basic_desc.value());
+                }
+            }
+            nixl_reg_dlist_t desc_list(OBJ_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            remote_iovs.push_back(iov_list);
+        }
+    } else if (xferBenchConfig::isStorageBackend()) {
+
         remote_fds = createFileFds(getName());
         if (remote_fds.empty()) {
             std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
@@ -622,7 +653,16 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
         CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
     }
 
-    if (xferBenchConfig::isStorageBackend()) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        for (auto &iov_list : remote_iovs) {
+            for (auto &iov : iov_list) {
+                cleanupBasicDescObj(iov);
+            }
+            nixl_reg_dlist_t desc_list(OBJ_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+    } else if (xferBenchConfig::isStorageBackend()) {
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
                 cleanupBasicDescFile(iov);
@@ -697,7 +737,11 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov : iov_list) {
                 std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(iov.len, remote_fds[0], iov.devId);
+                if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
+                    basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
+                } else {
+                    basic_desc = initBasicDescFile(iov.len, remote_fds[0], iov.devId);
+                }
                 if (basic_desc) {
                     remote_iov_list.push_back(basic_desc.value());
                 }
@@ -776,7 +820,9 @@ execTransfer(nixlAgent *agent,
         nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
         nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
 
-        if (xferBenchConfig::isStorageBackend()) {
+        if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
+            remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
+        } else if (xferBenchConfig::isStorageBackend()) {
             remote_desc = nixl_xfer_dlist_t(FILE_SEG);
         }
 
