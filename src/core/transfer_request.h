@@ -19,6 +19,10 @@
 
 // Contains pointers to corresponding backend engine and its handler, and populated
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
+#include "nixl_types.h"
+#include "agent_data.h"
+#include "common/nixl_log.h"
+
 class nixlXferReqH {
     private:
         nixlBackendEngine* engine         = nullptr;
@@ -33,6 +37,19 @@ class nixlXferReqH {
 
         nixl_xfer_op_t     backendOp;
         nixl_status_t      status;
+
+        nixl_status_t
+        handleFailure(nixlAgentData &data, nixl_status_t status) {
+            NIXL_DEBUG << "Handling failure: " << nixlEnumStrings::statusStr(status);
+
+            if (status == NIXL_ERR_REMOTE_DISCONNECT) {
+                data.invalidateRemoteData(remoteAgent);
+            }
+
+            delete this;
+            return status;
+        }
+
 
     public:
         inline nixlXferReqH() { }
