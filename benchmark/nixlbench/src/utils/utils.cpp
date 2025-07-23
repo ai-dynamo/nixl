@@ -26,6 +26,8 @@
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
+#include <fcntl.h>
+#include <filesystem>
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
@@ -632,4 +634,131 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
                   << std::setw(15) << throughput_gb
                   << std::endl;
     }
+}
+
+std::string
+xferBenchUtils::buildAwsCredentials() {
+    std::string env_setup = "";
+
+    if (!xferBenchConfig::obj_access_key.empty()) {
+        env_setup += "AWS_ACCESS_KEY_ID=" + xferBenchConfig::obj_access_key + " ";
+    }
+    if (!xferBenchConfig::obj_secret_key.empty()) {
+        env_setup += "AWS_SECRET_ACCESS_KEY=" + xferBenchConfig::obj_secret_key + " ";
+    }
+    if (!xferBenchConfig::obj_session_token.empty()) {
+        env_setup += "AWS_SESSION_TOKEN=" + xferBenchConfig::obj_session_token + " ";
+    }
+    if (!xferBenchConfig::obj_region.empty()) {
+        env_setup += "AWS_DEFAULT_REGION=" + xferBenchConfig::obj_region + " ";
+    }
+
+    return env_setup;
+}
+
+bool
+xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
+    std::string filename = "/tmp/" + name;
+    int fd = open(filename.c_str(), O_RDWR | O_CREAT, 0744);
+    if (fd < 0) {
+        std::cerr << "Failed to open file: " << name << " with error: " << strerror(errno)
+                  << std::endl;
+        return false;
+    }
+    // Create buffer filled with XFERBENCH_TARGET_BUFFER_ELEMENT
+    void *buf = (void *)malloc(buffer_size);
+    if (!buf) {
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
+        close(fd);
+        return false;
+    }
+    memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+    int rc = pwrite(fd, buf, buffer_size, 0);
+    if (rc < 0) {
+        std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
+                  << std::endl;
+        free(buf);
+        close(fd);
+        return false;
+    }
+    free(buf);
+
+    std::string bucket_name = xferBenchConfig::obj_bucket_name;
+    if (bucket_name.empty()) {
+        std::cerr << "Error: Invalid bucket name for S3 object put" << std::endl;
+        close(fd);
+        unlink(filename.c_str());
+        return false;
+    }
+    std::string aws_cmd = "aws s3 cp " + filename + " s3://" + bucket_name;
+    if (!xferBenchConfig::obj_endpoint_override.empty()) {
+        aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
+    }
+
+    std::string full_cmd = buildAwsCredentials() + aws_cmd;
+    std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
+              << " (size: " << buffer_size << " bytes)" << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Failed to put S3 object " << name << " in bucket " << bucket_name
+                  << " (exit code: " << result << ")" << std::endl;
+        close(fd);
+        unlink(filename.c_str());
+        return false;
+    }
+
+    close(fd);
+    unlink(filename.c_str());
+    return true;
+}
+
+bool
+xferBenchUtils::getObjS3(const std::string &name) {
+    std::string bucket_name = xferBenchConfig::obj_bucket_name;
+    if (bucket_name.empty()) {
+        std::cerr << "Error: Invalid bucket name for S3 object get" << std::endl;
+        return false;
+    }
+    std::string aws_cmd = "aws s3 cp s3://" + bucket_name + "/" + name + " " + name;
+    if (!xferBenchConfig::obj_endpoint_override.empty()) {
+        aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
+    }
+
+    std::string full_cmd = buildAwsCredentials() + aws_cmd;
+    std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Failed to get S3 object " << name << " from bucket " << bucket_name
+                  << " (exit code: " << result << ")" << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool
+xferBenchUtils::rmObjS3(const std::string &name) {
+    std::string bucket_name = xferBenchConfig::obj_bucket_name;
+    if (bucket_name.empty()) {
+        std::cerr << "Error: Invalid bucket name for S3 object get" << std::endl;
+        return false;
+    }
+
+    std::string aws_cmd = "aws s3 rm s3://" + bucket_name + "/" + name;
+    if (!xferBenchConfig::obj_endpoint_override.empty()) {
+        aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
+    }
+
+    std::string full_cmd = buildAwsCredentials() + aws_cmd;
+    std::cout << "Removing S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Warning: Failed to remove S3 object " << name << " from bucket "
+                  << bucket_name << " (exit code: " << result << ")" << std::endl;
+        return false;
+    }
+    return true;
 }

@@ -190,6 +190,14 @@ class xferBenchUtils {
         static void setRT(xferBenchRT *rt);
         static void setDevToUse(std::string dev);
         static std::string getDevToUse();
+        static std::string
+        buildAwsCredentials();
+        static bool
+        putObjS3(size_t buffer_size, const std::string &name);
+        static bool
+        getObjS3(const std::string &name);
+        static bool
+        rmObjS3(const std::string &name);
 
         static void checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
         static void printStatsHeader();
