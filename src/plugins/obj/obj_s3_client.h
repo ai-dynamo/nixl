@@ -27,23 +27,23 @@
 #include <aws/core/Aws.h>
 #include "nixl_types.h"
 
-using PutObjectCallback = std::function<void (bool success)>;
-using GetObjectCallback = std::function<void (bool success)>;
+using put_object_callback_t = std::function<void(bool success)>;
+using get_object_callback_t = std::function<void(bool success)>;
 
 /**
  * Abstract interface for S3 client operations.
  * Provides async operations for PutObject and GetObject.
  */
-class IS3Client {
+class iS3Client {
 public:
-    virtual ~IS3Client() = default;
+    virtual ~iS3Client() = default;
 
     /**
      * Set the executor for async operations.
      * @param executor The executor to use for async operations
      */
     virtual void
-    setExecutor (std::shared_ptr<Aws::Utils::Threading::Executor> executor) = 0;
+    setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) = 0;
 
     /**
      * Asynchronously put an object to S3.
@@ -54,11 +54,11 @@ public:
      * @param callback Callback function to handle the result
      */
     virtual void
-    PutObjectAsync (std::string_view key,
-                    uintptr_t data_ptr,
-                    size_t data_len,
-                    size_t offset,
-                    PutObjectCallback callback) = 0;
+    putObjectAsync(std::string_view key,
+                   uintptr_t data_ptr,
+                   size_t data_len,
+                   size_t offset,
+                   put_object_callback_t callback) = 0;
 
     /**
      * Asynchronously get an object from S3.
@@ -69,47 +69,47 @@ public:
      * @param callback Callback function to handle the result
      */
     virtual void
-    GetObjectAsync (std::string_view key,
-                    uintptr_t data_ptr,
-                    size_t data_len,
-                    size_t offset,
-                    GetObjectCallback callback) = 0;
+    getObjectAsync(std::string_view key,
+                   uintptr_t data_ptr,
+                   size_t data_len,
+                   size_t offset,
+                   get_object_callback_t callback) = 0;
 };
 
 /**
  * Concrete implementation of IS3Client using AWS SDK S3Client.
  */
-class AwsS3Client : public IS3Client {
+class awsS3Client : public iS3Client {
 public:
     /**
      * Constructor that creates an AWS S3Client from custom parameters.
      * @param custom_params Custom parameters containing S3 configuration
      * @param executor Optional executor for async operations
      */
-    AwsS3Client (nixl_b_params_t *custom_params,
-                 std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
+    awsS3Client(nixl_b_params_t *custom_params,
+                std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
 
     void
-    setExecutor (std::shared_ptr<Aws::Utils::Threading::Executor> executor) override;
+    setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) override;
 
     void
-    PutObjectAsync (std::string_view key,
-                    uintptr_t data_ptr,
-                    size_t data_len,
-                    size_t offset,
-                    PutObjectCallback callback) override;
+    putObjectAsync(std::string_view key,
+                   uintptr_t data_ptr,
+                   size_t data_len,
+                   size_t offset,
+                   put_object_callback_t callback) override;
 
     void
-    GetObjectAsync (std::string_view key,
-                    uintptr_t data_ptr,
-                    size_t data_len,
-                    size_t offset,
-                    GetObjectCallback callback) override;
+    getObjectAsync(std::string_view key,
+                   uintptr_t data_ptr,
+                   size_t data_len,
+                   size_t offset,
+                   get_object_callback_t callback) override;
 
 private:
-    std::unique_ptr<Aws::SDKOptions, std::function<void (Aws::SDKOptions *)>> aws_options_;
-    std::unique_ptr<Aws::S3::S3Client> s3_client_;
-    Aws::String bucket_name_;
+    std::unique_ptr<Aws::SDKOptions, std::function<void(Aws::SDKOptions *)>> awsOptions_;
+    std::unique_ptr<Aws::S3::S3Client> s3Client_;
+    Aws::String bucketName_;
 };
 
 #endif // OBJ_S3_CLIENT_H

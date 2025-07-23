@@ -13,148 +13,198 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
+import click
 
 
-def add_common_args(subparser: argparse.ArgumentParser):
-    subparser.add_argument("--model", type=str, help="Model name (e.g., 'llama3.1-8b')")
-    subparser.add_argument(
+def common_args(func):
+    """Decorator for common model arguments"""
+    func = click.option(
+        "--model", type=str, help="Path to a model architecture YAML file"
+    )(func)
+    func = click.option(
         "--model_config", type=str, help="Path to a single model config YAML file"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--model_configs",
         type=str,
         help="Path to multiple model config YAML files (supports glob patterns like 'configs/*.yaml')",
-    )
+    )(func)
+    return func
 
 
-def add_cli_args(subparser: argparse.ArgumentParser):
-    subparser.add_argument("--pp", type=int, help="Pipeline parallelism size")
-    subparser.add_argument("--tp", type=int, help="Tensor parallelism size")
-    subparser.add_argument("--isl", type=int, help="Input sequence length")
-    subparser.add_argument("--osl", type=int, help="Output sequence length")
-    subparser.add_argument("--num_requests", type=int, help="Number of requests")
-    subparser.add_argument("--page_size", type=int, help="Page size")
-    subparser.add_argument("--access_pattern", type=str, help="Access pattern")
+def cli_args(func):
+    """Decorator for CLI-specific arguments"""
+    func = click.option("--pp", type=int, help="Pipeline parallelism size")(func)
+    func = click.option("--tp", type=int, help="Tensor parallelism size")(func)
+    func = click.option("--isl", type=int, help="Input sequence length")(func)
+    func = click.option("--osl", type=int, help="Output sequence length")(func)
+    func = click.option("--num_requests", type=int, help="Number of requests")(func)
+    func = click.option("--page_size", type=int, help="Page size")(func)
+    func = click.option("--access_pattern", type=str, help="Access pattern")(func)
+    return func
 
 
-def add_plan_args(subparser: argparse.ArgumentParser):
-    subparser.add_argument(
+def plan_args(func):
+    """Decorator for plan-specific arguments"""
+    func = click.option(
         "--format",
         default="text",
         type=str,
         help="Output of the nixl command [text, json, csv] (default: text)",
-    )
+    )(func)
+    return func
 
 
-def add_nixl_bench_args(subparser: argparse.ArgumentParser):
-    subparser.add_argument(
+def nixl_bench_args(func):
+    """Decorator for NIXL benchmark arguments"""
+    func = click.option(
         "--source",
         default="file",
         type=str,
         help="Source of the nixl descriptors [file, memory, gpu] (default: file)",
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--destination",
         default="memory",
         type=str,
         help="Destination of the nixl descriptors [file, memory, gpu] (default: memory)",
-    )
-    subparser.add_argument(
-        "--backend", type=str, help="Communication backend [UCX, UCX_MO] (default: UCX)"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
+        "--backend",
+        type=str,
+        help="Communication backend [POSIX, GDS] (default: POSIX)",
+    )(func)
+    func = click.option(
         "--worker_type",
         type=str,
         help="Worker to use to transfer data [nixl, nvshmem] (default: nixl)",
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--initiator_seg_type",
         type=str,
         help="Memory segment type for initiator [DRAM, VRAM] (default: DRAM)",
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--target_seg_type",
         type=str,
         help="Memory segment type for target [DRAM, VRAM] (default: DRAM)",
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--scheme",
         type=str,
         help="Communication scheme [pairwise, manytoone, onetomany, tp] (default: pairwise)",
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--mode",
         type=str,
         help="Process mode [SG (Single GPU per proc), MG (Multi GPU per proc)] (default: SG)",
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--op_type", type=str, help="Operation type [READ, WRITE] (default: WRITE)"
-    )
-    subparser.add_argument(
-        "--check_consistency", action="store_true", help="Enable consistency checking"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
+        "--check_consistency", is_flag=True, help="Enable consistency checking"
+    )(func)
+    func = click.option(
         "--total_buffer_size", type=int, help="Total buffer size (default: 8GiB)"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--start_block_size", type=int, help="Starting block size (default: 4KiB)"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--max_block_size", type=int, help="Maximum block size (default: 64MiB)"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--start_batch_size", type=int, help="Starting batch size (default: 1)"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--max_batch_size", type=int, help="Maximum batch size (default: 1)"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--num_iter", type=int, help="Number of iterations (default: 1000)"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--warmup_iter", type=int, help="Number of warmup iterations (default: 100)"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--num_threads",
         type=int,
         help="Number of threads used by benchmark (default: 1)",
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--num_initiator_dev",
         type=int,
         help="Number of devices in initiator processes (default: 1)",
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--num_target_dev",
         type=int,
         help="Number of devices in target processes (default: 1)",
+    )(func)
+    func = click.option("--enable_pt", is_flag=True, help="Enable progress thread")(
+        func
     )
-    subparser.add_argument(
-        "--enable_pt", action="store_true", help="Enable progress thread"
-    )
-    subparser.add_argument(
+    func = click.option(
         "--device_list", type=str, help="Comma-separated device names (default: all)"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--runtime_type", type=str, help="Type of runtime to use [ETCD] (default: ETCD)"
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--etcd-endpoints",
         type=str,
         help="ETCD server URL for coordination (default: http://localhost:2379)",
-    )
-    subparser.add_argument(
+    )(func)
+    func = click.option(
         "--storage_enable_direct",
         type=bool,
-        help="Enable direct I/O for storage operations (only used with POSIX backend)",
+        help="Enable direct I/O for storage operations",
         default=False,
-    )
-    subparser.add_argument(
-        "--gds_filepath", type=str, help="(File path for GDS operations"
-    )
-    subparser.add_argument(
-        "--enable_vmm",
-        action="store_true",
+    )(func)
+    func = click.option(
+        "--filepath", type=str, help="File path for storage operations"
+    )(func)
+    func = click.option(
+        "--posix_api_type",
+        type=str,
+        help="API type for POSIX operations [AIO, URING] (only used with POSIX backend",
+    )(func)
+    func = click.option(
+        "--enable-vmm",
+        type=bool,
         help="Enable VMM memory allocation when DRAM is requested",
-    )
+    )(func)
+    func = click.option(
+        "--benchmark-group",
+        type=str,
+        help="Name of benchmark group (default: default). Use different names to run multiple benchmarks in parallel",
+        default="default",
+    )(func)
+    return func
+
+
+def ctp_args(func):
+    """Decorator for CTP (Custom Traffic Pattern) arguments"""
+    func = click.option(
+        "--verify-buffers/--no-verify-buffers",
+        default=False,
+        help="Verify buffer contents after transfer",
+    )(func)
+    func = click.option(
+        "--print-recv-buffers/--no-print-recv-buffers",
+        default=False,
+        help="Print received buffer contents",
+    )(func)
+    func = click.option(
+        "--json-output-path",
+        type=click.Path(),
+        help="Path to save JSON output",
+        default=None,
+    )(func)
+    func = click.option(
+        "--config-file",
+        type=click.Path(exists=True),
+        required=True,
+        help="Path to YAML config file",
+    )(func)
+    return func

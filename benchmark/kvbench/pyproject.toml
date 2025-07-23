@@ -14,12 +14,26 @@
 # limitations under the License.
 
 [project]
-name = "kvbench"
-version = "0.1.0"
-description = "Add your description here"
+name = "NIXLKVBench"
+version = "0.2.0"
+description = "Benchmarking utility for testing KVCache transfers in large language models (LLMs) using the NIXL runtime."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "pytest>=8.3.5",
+    "click==8.1.7",
+    "numpy==2.3.1",
+    "pytest==7.4.4",
     "pyyaml>=6.0.2",
+    "etcd3>=0.12.0",
+    "tabulate==0.9.0",
+    "torch==2.7.0",
+    "tqdm==4.66.5",
+    "nixl",
 ]
+
+[tool.setuptools.packages.find]
+include = ["models*", "runtime*", "commands*"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

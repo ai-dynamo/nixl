@@ -21,6 +21,8 @@ set -x
 # and second argument being the UCX installation directory.
 INSTALL_DIR=$1
 UCX_INSTALL_DIR=$2
+# UCX_VERSION is the version of UCX to build override default with env variable.
+UCX_VERSION=${UCX_VERSION:-v1.18.0}
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -31,8 +33,18 @@ if [ -z "$UCX_INSTALL_DIR" ]; then
     UCX_INSTALL_DIR=$INSTALL_DIR
 fi
 
-apt-get -qq update
-apt-get -qq install -y curl \
+# For running as user - check if running as root, if not set sudo variable
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO=sudo
+else
+    SUDO=""
+fi
+
+# Some docker images are with broken installations:
+$SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
+
+$SUDO apt-get -qq update
+$SUDO apt-get -qq install -y curl \
                              libnuma-dev \
                              numactl \
                              autotools-dev \
@@ -46,6 +58,7 @@ apt-get -qq install -y curl \
                              libibverbs-dev \
                              libgoogle-glog-dev \
                              libgtest-dev \
+                             libgmock-dev \
                              libjsoncpp-dev \
                              libpython3-dev \
                              libboost-all-dev \
@@ -53,7 +66,9 @@ apt-get -qq install -y curl \
                              libgrpc-dev \
                              libgrpc++-dev \
                              libprotobuf-dev \
+                             libcpprest-dev \
                              libaio-dev \
+                             liburing-dev \
                              meson \
                              ninja-build \
                              pkg-config \
@@ -68,12 +83,12 @@ apt-get -qq install -y curl \
                              libibmad-dev \
                              doxygen
 
-curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
+curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
   ./autogen.sh && \
   ./configure \
-          --prefix=${UCX_INSTALL_DIR} \
+          --prefix="${UCX_INSTALL_DIR}" \
           --enable-shared \
           --disable-static \
           --disable-doxygen-doc \
@@ -85,7 +100,18 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/v1.18.0" | tar xz
           --enable-mt && \
         make -j && \
         make -j install-strip && \
-        ldconfig \
+        $SUDO ldconfig \
+)
+
+( \
+  cd /tmp && \
+  git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+  cd etcd-cpp-apiv3 && \
+  mkdir build && cd build && \
+  cmake .. && \
+  make -j$(nproc) && \
+  $SUDO make install && \
+  $SUDO ldconfig \
 )
 
 export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
@@ -93,6 +119,7 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/li
 export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
+export CMAKE_PREFIX_PATH=${INSTALL_DIR}:${CMAKE_PREFIX_PATH}
 
 # Disabling CUDA IPC not to use NVLINK, as it slows down local
 # UCX transfers and can cause contention with local collectives.
