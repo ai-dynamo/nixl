@@ -80,8 +80,7 @@ ScopedEnv::Variable::~Variable()
 
 PortAllocator::PortAllocator()
     : _concurrent_id(_get_concurrent_id()),
-      _port(_get_first_port(_concurrent_id))
-      {}
+      _port(_get_first_port(_concurrent_id)) {}
 
 PortAllocator &PortAllocator::instance() {
     static PortAllocator _instance;
