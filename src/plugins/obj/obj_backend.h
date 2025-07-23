@@ -28,7 +28,7 @@
 class nixlObjEngine : public nixlBackendEngine {
 public:
     nixlObjEngine(const nixlBackendInitParams *init_params);
-    nixlObjEngine(const nixlBackendInitParams *init_params, std::shared_ptr<IS3Client> s3_client);
+    nixlObjEngine(const nixlBackendInitParams *init_params, std::shared_ptr<iS3Client> s3_client);
     virtual ~nixlObjEngine();
 
     bool
@@ -105,8 +105,8 @@ public:
     }
 
 private:
-    std::shared_ptr<AsioThreadPoolExecutor> executor_;
-    std::shared_ptr<IS3Client> s3Client_;
+    std::shared_ptr<asioThreadPoolExecutor> executor_;
+    std::shared_ptr<iS3Client> s3Client_;
     std::unordered_map<uint64_t, std::string> devIdToObjKey_;
 };
 
