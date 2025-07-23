@@ -174,12 +174,21 @@ public:
     int devId;
     size_t padded_size;
     unsigned long long handle;
+    std::string metaInfo;
 
     xferBenchIOV(uintptr_t a, size_t l, int d) :
         addr(a), len(l), devId(d), padded_size(len), handle(0) {}
 
     xferBenchIOV(uintptr_t a, size_t l, int d, size_t p, unsigned long long h) :
         addr(a), len(l), devId(d), padded_size(p), handle(h) {}
+
+    xferBenchIOV(uintptr_t a, size_t l, int d, std::string m)
+        : addr(a),
+          len(l),
+          devId(d),
+          padded_size(len),
+          handle(0),
+          metaInfo(m) {}
 };
 
 class xferBenchUtils {

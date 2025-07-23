@@ -199,6 +199,7 @@ iovListToNixlRegDlist(const std::vector<xferBenchIOV> &iov_list, nixl_reg_dlist_
         desc.addr = iov.addr;
         desc.len = iov.len;
         desc.devId = iov.devId;
+        desc.metaInfo = iov.metaInfo;
         dlist.addDesc(desc);
     }
 }
@@ -580,6 +581,7 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
             }
 
             if (basic_desc) {
+                basic_desc.value().metaInfo = remote_iovs[list_idx][i].metaInfo;
                 iov_list.push_back(basic_desc.value());
             }
         }
