@@ -21,6 +21,8 @@ set -x
 # and second argument being the UCX installation directory.
 INSTALL_DIR=$1
 UCX_INSTALL_DIR=$2
+EXTRA_BUILD_ARGS=${3:-""}
+
 # UCX_VERSION is the version of UCX to build override default with env variable.
 UCX_VERSION=${UCX_VERSION:-v1.18.0}
 
@@ -125,7 +127,7 @@ export CMAKE_PREFIX_PATH=${INSTALL_DIR}:${CMAKE_PREFIX_PATH}
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true "${EXTRA_BUILD_ARGS}"
 cd nixl_build && ninja && ninja install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
