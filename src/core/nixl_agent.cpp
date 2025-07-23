@@ -16,6 +16,8 @@
  */
 
 #include <iostream>
+#include <numeric>
+
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
@@ -23,6 +25,8 @@
 #include "agent_data.h"
 #include "plugin_manager.h"
 #include "common/nixl_log.h"
+#include "common/thread_executor.h"
+#include "telemetry.h"
 
 static const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
@@ -61,6 +65,23 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
         case NIXL_ERR_REMOTE_DISCONNECT: return "NIXL_ERR_REMOTE_DISCONNECT";
         default:                         return "BAD_STATUS";
     }
+}
+
+std::string
+nixlEnumStrings::telemetryCategoryStr(const nixl_telemetry_category_t &category) {
+    static std::array<std::string, 9> nixl_telemetry_category_str = {"NIXL_TELEMETRY_MEMORY",
+                                                                     "NIXL_TELEMETRY_TRANSFER",
+                                                                     "NIXL_TELEMETRY_CONNECTION",
+                                                                     "NIXL_TELEMETRY_BACKEND",
+                                                                     "NIXL_TELEMETRY_ERROR",
+                                                                     "NIXL_TELEMETRY_PERFORMANCE",
+                                                                     "NIXL_TELEMETRY_SYSTEM",
+                                                                     "NIXL_TELEMETRY_CUSTOM",
+                                                                     "NIXL_TELEMETRY_MAX"};
+    int category_int = static_cast<int>(category);
+    if (category_int < 0 || category_int >= static_cast<int>(nixl_telemetry_category_str.size()))
+        return "BAD_CATEGORY";
+    return nixl_telemetry_category_str[category_int];
 }
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
@@ -108,6 +129,7 @@ nixlAgentData::~nixlAgentData() {
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
     data(std::make_unique<nixlAgentData>(name, cfg))
 {
+    nixlTelemetry::getInstance()->initialize(name);
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
         if(my_port == 0) my_port = default_comm_port;
@@ -346,10 +368,16 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     if (extra_params && extra_params->backends.size() > 0)
         delete backend_list;
 
-    if (count > 0)
+    if (count > 0) {
+        // sum all the sizes of the descriptors using std::accumulate
+        uint64_t total_size = std::accumulate(descs.begin(), descs.end(), uint64_t{0},
+            [](uint64_t sum, const nixlBlobDesc &desc) {
+                return sum + desc.len;
+            });
+        nixlTelemetry::getInstance()->updateMemoryRegistered(total_size);
         return NIXL_SUCCESS;
-    else
-        return NIXL_ERR_BACKEND;
+    }
+    return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
@@ -380,7 +408,13 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
         if (ret != NIXL_SUCCESS)
             bad_ret = ret;
     }
-
+    if (bad_ret == NIXL_SUCCESS) {
+        uint64_t total_size = std::accumulate(descs.begin(), descs.end(), uint64_t{0},
+            [](uint64_t sum, const nixlBlobDesc &desc) {
+                return sum + desc.len;
+            });
+        nixlTelemetry::getInstance()->updateMemoryRegistered(-total_size);
+    }
     return bad_ret;
 }
 
@@ -440,8 +474,10 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     NIXL_LOCK_GUARD(data->lock);
     // When central KV is supported, still it should return error,
     // just we can add a call to fetchRemoteMD for next time
-    if (!init_side && (data->remoteSections.count(agent_name) == 0))
+    if (!init_side && (data->remoteSections.count(agent_name) == 0)) {
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
+    }
 
     if (!extra_params || extra_params->backends.size() == 0) {
         if (!init_side)
@@ -451,8 +487,10 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
             backend_set = data->memorySection->
                                 queryBackends(descs.getType());
 
-        if (!backend_set || backend_set->empty())
+        if (!backend_set || backend_set->empty()) {
+            nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_NOT_FOUND);
             return NIXL_ERR_NOT_FOUND;
+        }
     } else {
         backend_set = new backend_set_t();
         for (auto & elm : extra_params->backends)
@@ -494,6 +532,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     if (count == 0) {
         delete handle;
         dlist_hndl = nullptr;
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     } else {
         dlist_hndl = handle;
@@ -517,15 +556,20 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     req_hndl = nullptr;
 
-    if (!local_side || !remote_side)
+    if (!local_side || !remote_side) {
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_INVALID_PARAM);
         return NIXL_ERR_INVALID_PARAM;
+    }
 
-    if ((!local_side->isLocal) || (remote_side->isLocal))
+    if ((!local_side->isLocal) || (remote_side->isLocal)) {
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_INVALID_PARAM);
         return NIXL_ERR_INVALID_PARAM;
+    }
 
     NIXL_LOCK_GUARD(data->lock);
     // The remote was invalidated in between prepXferDlist and this call
     if (data->remoteSections.count(remote_side->remoteAgent) == 0) {
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_NOT_FOUND);
         delete req_hndl;
         return NIXL_ERR_NOT_FOUND;
     }
@@ -556,6 +600,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     nixl_meta_dlist_t* local_descs  = local_side->descs.at(backend);
     nixl_meta_dlist_t* remote_descs = remote_side->descs.at(backend);
+    uint64_t totalBytes = 0;
 
     if ((desc_count == 0) || (remote_indices.size() == 0) ||
         (desc_count != (int) remote_indices.size()))
@@ -571,6 +616,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         if ((*local_descs )[local_indices [i]].len !=
             (*remote_descs)[remote_indices[i]].len)
             return NIXL_ERR_INVALID_PARAM;
+        totalBytes += (*local_descs)[local_indices[i]].len;
     }
 
     if (extra_params && extra_params->hasNotif) {
@@ -584,7 +630,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     // Populate has been already done, no benefit in having sorted descriptors
     // which will be overwritten by [] assignment operator.
-    nixlXferReqH* handle   = new nixlXferReqH;
+    std::unique_ptr<nixlXferReqH> handle   = std::make_unique<nixlXferReqH>();
     handle->initiatorDescs = new nixl_meta_dlist_t (
                                      local_descs->getType(),
                                      false, desc_count);
@@ -644,6 +690,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     handle->hasNotif    = opt_args.hasNotif;
     handle->backendOp   = operation;
     handle->status      = NIXL_ERR_NOT_POSTED;
+    handle->totalBytes  = totalBytes;
 
     ret = handle->engine->prepXfer (handle->backendOp,
                                     *handle->initiatorDescs,
@@ -652,11 +699,11 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                                     handle->backendHandle,
                                     &opt_args);
     if (ret != NIXL_SUCCESS) {
-        delete handle;
+        nixlTelemetry::getInstance()->updateErrorCount(ret);
         return ret;
     }
 
-    req_hndl = handle;
+    req_hndl = handle.release();
     return NIXL_SUCCESS;
 }
 
@@ -668,24 +715,27 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          nixlXferReqH* &req_hndl,
                          const nixl_opt_args_t* extra_params) const {
     nixl_status_t     ret1, ret2;
+    uint64_t totalBytes = 0;
     nixl_opt_b_args_t opt_args;
-    backend_set_t*    backend_set = new backend_set_t();
+    std::unique_ptr<backend_set_t> backend_set = std::make_unique<backend_set_t>();
 
     req_hndl = nullptr;
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
     {
-        delete backend_set;
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
 
     // Check the correspondence between descriptor lists
     if (local_descs.descCount() != remote_descs.descCount())
         return NIXL_ERR_INVALID_PARAM;
-    for (int i=0; i<local_descs.descCount(); ++i)
+    for (int i=0; i<local_descs.descCount(); ++i) {
+        totalBytes += local_descs[i].len;
         if (local_descs[i].len != remote_descs[i].len)
             return NIXL_ERR_INVALID_PARAM;
+    }
 
     if (!extra_params || extra_params->backends.size() == 0) {
         // Finding backends that support the corresponding memories
@@ -696,7 +746,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             data->remoteSections[remote_agent]->queryBackends(
                                                 remote_descs.getType());
         if (!local_set || !remote_set) {
-            delete backend_set;
             return NIXL_ERR_NOT_FOUND;
         }
 
@@ -705,7 +754,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                 backend_set->insert(elm);
 
         if (backend_set->empty()) {
-            delete backend_set;
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
@@ -717,7 +765,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO: merge descriptors back to back in memory (like makeXferReq).
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    nixlXferReqH *handle   = new nixlXferReqH;
+    std::unique_ptr<nixlXferReqH> handle   = std::make_unique<nixlXferReqH>();
     handle->initiatorDescs = new nixl_meta_dlist_t (
                                      local_descs.getType(),
                                      local_descs.isSorted());
@@ -742,10 +790,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         }
     }
 
-    delete backend_set;
-
     if (!handle->engine) {
-        delete handle;
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -760,7 +806,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     if (opt_args.hasNotif && (!handle->engine->supportsNotif())) {
-        delete handle;
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_BACKEND);
         return NIXL_ERR_BACKEND;
     }
 
@@ -769,6 +815,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->status      = NIXL_ERR_NOT_POSTED;
     handle->notifMsg    = opt_args.notifMsg;
     handle->hasNotif    = opt_args.hasNotif;
+    handle->totalBytes  = totalBytes;
 
     ret1 = handle->engine->prepXfer (handle->backendOp,
                                      *handle->initiatorDescs,
@@ -777,11 +824,11 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                      handle->backendHandle,
                                      &opt_args);
     if (ret1 != NIXL_SUCCESS) {
-        delete handle;
+        nixlTelemetry::getInstance()->updateErrorCount(ret1);
         return ret1;
     }
 
-    req_hndl = handle;
+    req_hndl = handle.release();
     return NIXL_SUCCESS;
 }
 
@@ -799,11 +846,13 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
     if (!req_hndl->remoteAgent.empty() &&
         (data->remoteSections.count(req_hndl->remoteAgent) == 0)) {
         NIXL_ERROR << "Invalid request handle: remote agent not found";
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
 
     if (!req_hndl->engine) {
         NIXL_ERROR << "Invalid request handle: engine is null";
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_UNKNOWN);
         return NIXL_ERR_UNKNOWN;
     }
 
@@ -826,13 +875,16 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     opt_args.hasNotif = false;
 
-    if (!req_hndl)
+    if (!req_hndl) {
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_INVALID_PARAM);
         return NIXL_ERR_INVALID_PARAM;
+    }
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // Check if the remote was invalidated before post/repost
     if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
         delete req_hndl;
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -867,9 +919,14 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     if (opt_args.hasNotif && (!req_hndl->engine->supportsNotif())) {
         delete req_hndl;
+        nixlTelemetry::getInstance()->updateErrorCount(NIXL_ERR_BACKEND);
         return NIXL_ERR_BACKEND;
     }
 
+    // Record transaction start time for timing
+    if (nixlTelemetry::getInstance()->isEnabled()) {
+        req_hndl->transaction_start_time = std::chrono::high_resolution_clock::now();
+    }
     // If status is not NIXL_IN_PROG we can repost,
     ret = req_hndl->engine->postXfer (req_hndl->backendOp,
                                      *req_hndl->initiatorDescs,
@@ -877,6 +934,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                       req_hndl->remoteAgent,
                                       req_hndl->backendHandle,
                                       &opt_args);
+    req_hndl->updateRequestStats();
+
     req_hndl->status = ret;
     return ret;
 }
@@ -894,6 +953,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         }
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
+        req_hndl->updateRequestStats();
     }
 
     return req_hndl->status;
@@ -1379,4 +1439,25 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
         }
     }
     return NIXL_ERR_NOT_FOUND;
+}
+
+void nixlXferReqH::updateRequestStats() {
+    if (!nixlTelemetry::getInstance()->isEnabled()) {
+        return;
+    }
+    if (status == NIXL_SUCCESS) {
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - transaction_start_time);
+        nixlTelemetry::getInstance()->addTransactionTime(duration);
+        if (backendOp == NIXL_WRITE) {
+            nixlTelemetry::getInstance()->updateTxBytes(totalBytes);
+            nixlTelemetry::getInstance()->updateTxRequestsNum(1);
+        } else {
+            nixlTelemetry::getInstance()->updateRxBytes(totalBytes);
+            nixlTelemetry::getInstance()->updateRxRequestsNum(1);
+        }
+    } else if (status != NIXL_IN_PROG) {
+        // don't count success
+        nixlTelemetry::getInstance()->updateErrorCount(status);
+    }
 }

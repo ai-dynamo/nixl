@@ -19,6 +19,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <cstdint>
 
 
 /*** Forward declarations ***/
@@ -60,7 +61,8 @@ enum nixl_status_t {
     NIXL_ERR_REPOST_ACTIVE = -7,
     NIXL_ERR_UNKNOWN = -8,
     NIXL_ERR_NOT_SUPPORTED = -9,
-    NIXL_ERR_REMOTE_DISCONNECT = -10
+    NIXL_ERR_REMOTE_DISCONNECT = -10,
+    NIXL_ERR_LAST = -11
 };
 
 /**
@@ -75,6 +77,22 @@ enum class nixl_thread_sync_t {
 };
 
 /**
+ * @enum nixl_telemetry_category_t
+ * @brief An enumeration of main telemetry event categories for easy filtering and aggregation
+ */
+enum class nixl_telemetry_category_t {
+    NIXL_TELEMETRY_MEMORY = 0,      // Memory operations (register, deregister, allocation)
+    NIXL_TELEMETRY_TRANSFER = 1,    // Data transfer operations (read, write)
+    NIXL_TELEMETRY_CONNECTION = 2,  // Connection management (connect, disconnect)
+    NIXL_TELEMETRY_BACKEND = 3,     // Backend-specific operations
+    NIXL_TELEMETRY_ERROR = 4,       // Error events
+    NIXL_TELEMETRY_PERFORMANCE = 5, // Performance metrics
+    NIXL_TELEMETRY_SYSTEM = 6,      // System-level events
+    NIXL_TELEMETRY_CUSTOM = 7,      // Custom/user-defined events
+    NIXL_TELEMETRY_MAX = 8
+};
+
+/**
  * @namespace nixlEnumStrings
  * @brief     This namespace to get string representation
  *            of different enums
@@ -83,6 +101,7 @@ namespace nixlEnumStrings {
     std::string memTypeStr(const nixl_mem_t &mem);
     std::string xferOpStr (const nixl_xfer_op_t &op);
     std::string statusStr (const nixl_status_t &status);
+    std::string telemetryCategoryStr (const nixl_telemetry_category_t &category);
 }
 
 
@@ -135,6 +154,22 @@ extern const std::string default_metadata_label;
  */
 extern const std::string default_partial_metadata_label;
 
+constexpr char TELEMETRY_PREFIX[] = "nixl_telemetry";
+constexpr int TELEMETRY_VERSION = 1;
+
+constexpr size_t MAX_EVENT_NAME_LEN = 32;
+constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
+
+/**
+ * @struct nixlTelemetryEvent
+ * @brief A structure to hold individual telemetry event data for cyclic buffer storage
+ */
+struct nixlTelemetryEvent {
+    uint64_t timestamp_us;                          // Event timestamp in microseconds
+    nixl_telemetry_category_t category;             // Main event category for filtering
+    char event_name[MAX_EVENT_NAME_LEN];            // Detailed event name/identifier
+    uint64_t value;                                 // Numeric value associated with the event
+};
 
 /**
  * @enum nixl_cost_t
