@@ -100,6 +100,16 @@ DEFINE_string (posix_api_type,
 DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
 		      communication (only used with nixl worker)");
 
+// OBJ options - only used when backend is OBJ
+DEFINE_string(obj_access_key, "", "Access key for S3 backend");
+DEFINE_string(obj_secret_key, "", "Secret key for S3 backend");
+DEFINE_string(obj_session_token, "", "Session token for S3 backend");
+DEFINE_string(obj_bucket_name, XFERBENCH_OBJ_BUCKET_NAME_DEFAULT, "Bucket name for S3 backend");
+DEFINE_string(obj_scheme, XFERBENCH_OBJ_SCHEME_HTTP, "HTTP scheme for S3 backend [http, https]");
+DEFINE_string(obj_region, XFERBENCH_OBJ_REGION_EU_CENTRAL_1, "Region for S3 backend");
+DEFINE_bool(obj_use_virtual_addressing, false, "Use virtual addressing for S3 backend");
+DEFINE_string(obj_endpoint_override, "", "Endpoint override for S3 backend");
+
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
 std::string xferBenchConfig::backend = "";
@@ -134,6 +144,14 @@ std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::filepath = "";
 bool xferBenchConfig::storage_enable_direct = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
+std::string xferBenchConfig::obj_access_key = "";
+std::string xferBenchConfig::obj_secret_key = "";
+std::string xferBenchConfig::obj_session_token = "";
+std::string xferBenchConfig::obj_bucket_name = "";
+std::string xferBenchConfig::obj_scheme = "";
+std::string xferBenchConfig::obj_region = "";
+bool xferBenchConfig::obj_use_virtual_addressing = false;
+std::string xferBenchConfig::obj_endpoint_override = "";
 
 int
 xferBenchConfig::loadFromFlags() {
@@ -183,6 +201,26 @@ xferBenchConfig::loadFromFlags() {
         // Load HD3FS-specific configurations if backend is HD3FS
         if (backend == XFERBENCH_BACKEND_HF3FS) {
             storage_enable_direct = FLAGS_storage_enable_direct;
+        }
+
+        // Load OBJ-specific configurations if backend is OBJ
+        if (backend == XFERBENCH_BACKEND_OBJ) {
+            obj_access_key = FLAGS_obj_access_key;
+            obj_secret_key = FLAGS_obj_secret_key;
+            obj_session_token = FLAGS_obj_session_token;
+            obj_bucket_name = FLAGS_obj_bucket_name;
+            obj_scheme = FLAGS_obj_scheme;
+            obj_region = FLAGS_obj_region;
+            obj_use_virtual_addressing = FLAGS_obj_use_virtual_addressing;
+            obj_endpoint_override = FLAGS_obj_endpoint_override;
+
+            // Validate OBJ S3 scheme
+            if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
+                obj_scheme != XFERBENCH_OBJ_SCHEME_HTTPS) {
+                std::cerr << "Invalid OBJ S3 scheme: " << obj_scheme
+                          << ". Must be one of [http, https]" << std::endl;
+                return -1;
+            }
         }
     }
 
@@ -317,6 +355,20 @@ void xferBenchConfig::printConfig() {
             printOption ("POSIX API type (--posix_api_type=[AIO,URING])", posix_api_type);
         }
 
+        // Print OBJ options if backend is OBJ
+        if (backend == XFERBENCH_BACKEND_OBJ) {
+            printOption("OBJ S3 access key (--obj_access_key=key)", obj_access_key);
+            printOption("OBJ S3 secret key (--obj_secret_key=key)", obj_secret_key);
+            printOption("OBJ S3 session token (--obj_session_token=token)", obj_session_token);
+            printOption("OBJ S3 bucket name (--obj_bucket_name=nixlbench-bucket)", obj_bucket_name);
+            printOption("OBJ S3 scheme (--obj_scheme=[http, https])", obj_scheme);
+            printOption("OBJ S3 region (--obj_region=region)", obj_region);
+            printOption("OBJ S3 use virtual addressing (--obj_use_virtual_addressing=[0,1])",
+                        std::to_string(obj_use_virtual_addressing));
+            printOption("OBJ S3 endpoint override (--obj_endpoint_override=endpoint)",
+                        obj_endpoint_override);
+        }
+
         if (xferBenchConfig::isStorageBackend()) {
             printOption ("filepath (--filepath=path)", filepath);
             printOption ("Number of files (--num_files=N)", std::to_string (num_files));
@@ -383,7 +435,8 @@ bool
 xferBenchConfig::isStorageBackend() {
     return (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend);
 }
 /**********
  * xferBench Utils

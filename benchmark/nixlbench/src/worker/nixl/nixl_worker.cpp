@@ -160,6 +160,22 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
         // Using default param values for HF3FS backend
         std::cout << "HF3FS backend" << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_OBJ)) {
+        // Using default param values for OBJ backend
+        backend_params["access_key"] = xferBenchConfig::obj_access_key;
+        backend_params["secret_key"] = xferBenchConfig::obj_secret_key;
+        backend_params["session_token"] = xferBenchConfig::obj_session_token;
+        backend_params["bucket"] = xferBenchConfig::obj_bucket_name;
+        backend_params["scheme"] = xferBenchConfig::obj_scheme;
+        backend_params["region"] = xferBenchConfig::obj_region;
+        backend_params["use_virtual_addressing"] =
+            xferBenchConfig::obj_use_virtual_addressing ? "true" : "false";
+
+        if (xferBenchConfig::obj_endpoint_override != "") {
+            backend_params["endpoint_override"] = xferBenchConfig::obj_endpoint_override;
+        }
+
+        std::cout << "OBJ backend" << std::endl;
     } else {
         std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);

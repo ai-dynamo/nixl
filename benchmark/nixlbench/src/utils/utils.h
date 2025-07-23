@@ -71,10 +71,21 @@
 #define XFERBENCH_BACKEND_GPUNETIO "GPUNETIO"
 #define XFERBENCH_BACKEND_MOONCAKE "Mooncake"
 #define XFERBENCH_BACKEND_HF3FS "HF3FS"
+#define XFERBENCH_BACKEND_OBJ "OBJ"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
 #define XFERBENCH_POSIX_API_URING "URING"
+
+// OBJ S3 scheme types
+#define XFERBENCH_OBJ_SCHEME_HTTP "http"
+#define XFERBENCH_OBJ_SCHEME_HTTPS "https"
+
+// OBJ S3 region types
+#define XFERBENCH_OBJ_REGION_EU_CENTRAL_1 "eu-central-1"
+
+// OBJ S3 bucket names
+#define XFERBENCH_OBJ_BUCKET_NAME_DEFAULT ""
 
 // Scheme types for transfer patterns
 #define XFERBENCH_SCHEME_PAIRWISE     "pairwise"
@@ -137,6 +148,14 @@ class xferBenchConfig {
         static int gds_batch_limit;
         static std::string gpunetio_device_list;
         static long page_size;
+        static std::string obj_access_key;
+        static std::string obj_secret_key;
+        static std::string obj_session_token;
+        static std::string obj_bucket_name;
+        static std::string obj_scheme;
+        static std::string obj_region;
+        static bool obj_use_virtual_addressing;
+        static std::string obj_endpoint_override;
 
         static int loadFromFlags();
         static void printConfig();
