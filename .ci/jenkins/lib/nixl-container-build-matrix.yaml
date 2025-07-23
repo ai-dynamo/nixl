@@ -82,18 +82,14 @@ steps:
   - name: Build NIXL
     enable: ${ENABLE_NIXL_BUILD}
     run: |
-      ucx_arg=""
-      if [[ -n "${UCX_VERSION}" ]]; then
-        ucx_arg="--ucx-upstream ${UCX_VERSION}"
-      fi
+      export UCX_REF="${UCX_VERSION}"
 
       "contrib/build-container.sh" \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_IMAGE_TAG}" \
         --tag "${LOCAL_TAG_BASE}${arch}" \
         --arch "${arch}" \
-        --no-cache \
-        ${ucx_arg}
+        --no-cache
 
   - name: Add Version Info
     run: |
