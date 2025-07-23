@@ -70,6 +70,7 @@ RUN echo "INFO: Using UCX from base image (UCX=${UCX})."
 
 # --- Stage 2b: Represents building UCX from source ---
 FROM os_setup_stage AS ucx_custom_image
+ARG NPROC
 RUN mkdir -p /workspace/ucx
 COPY --from=ucx . /workspace/ucx
 
@@ -87,7 +88,7 @@ RUN echo "INFO: Starting custom UCX build..." && \
     ./contrib/configure-release --with-cuda=/usr/local/cuda \
                                 --enable-mt \
                                 --without-go && \
-    make -j$(nproc) && \
+    make -j${NPROC:-$(nproc)} && \
     make install && \
     cd / && \
     echo "INFO: Finished building and installing UCX."
@@ -102,11 +103,12 @@ ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
+ARG NPROC
 
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
 	cd etcd-cpp-apiv3 && mkdir build && cd build && \
-	cmake .. && make -j$(nproc) && make install
+	cmake .. && make -j${NPROC:-$(nproc)} && make install
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY --from=nixl . /workspace/nixl

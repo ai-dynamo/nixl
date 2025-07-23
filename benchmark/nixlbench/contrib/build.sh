@@ -41,7 +41,7 @@ WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 OS="ubuntu24"
-NPROC=$(nproc)
+NPROC=${NPROC:-$(nproc)}
 
 get_options() {
     while :; do

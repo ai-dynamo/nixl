@@ -25,6 +25,7 @@ ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
 ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
+ARG NPROC
 
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
@@ -58,11 +59,11 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
 WORKDIR /workspace
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
 	cd etcd-cpp-apiv3 && mkdir build && cd build && \
-	cmake .. && make -j$(nproc) && make install
+	cmake .. && make -j${NPROC:-$(nproc)} && make install
 RUN git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    make -j$(nproc) && make install
+    make -j${NPROC:-$(nproc)} && make install
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -127,8 +128,8 @@ RUN cd /usr/local/src && \
          --with-gdrcopy=/usr/local   \
          --with-efa                  \
          --enable-mt &&              \
-     make -j &&                      \
-     make -j install-strip &&        \
+     make -j${NPROC:-$(nproc)} &&                \
+     make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
 
 RUN rm -rf build && \

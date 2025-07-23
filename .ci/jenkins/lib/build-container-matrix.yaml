@@ -2,7 +2,7 @@
 # Builds and pushes NIXL and NIXLBench containers with configurable NIXL/UCX versions
 
 ---
-job: nixl-ci-container-builder
+job: nixl-ci-build-container
 
 # Build settings
 failFast: false
@@ -27,8 +27,8 @@ matrix:
 
 # Configuration
 env:
-  ARTIFACTORY_HOST: "urm.nvidia.com"
-  ARTIFACTORY_BASE_REPO: "sw-nbu-swx-nixl-docker-local"
+  REGISTRY_HOST: "urm.nvidia.com"
+  REGISTRY_REPO: "sw-nbu-swx-nixl-docker-local/verification"
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
   NPROC: "16"
@@ -93,10 +93,16 @@ steps:
 
   - name: Add Version Info
     run: |
-      if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
+      if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
       else
-        CLEAN_UCX="${UCX_VERSION}"
+        UCX_REF="${UCX_VERSION:-$(sed -n 's/^UCX_REF=${UCX_REF:-\(.*\)}/\1/p' contrib/build-container.sh)}"
+        CLEAN_UCX=$([[ "$UCX_REF" =~ ^[a-f0-9]{8,40}$ ]] && echo "${UCX_REF:0:8}" || \
+          git ls-remote https://github.com/openucx/ucx.git "$UCX_REF" | head -1 | cut -c1-8)
+        [[ -n "$CLEAN_UCX" ]] || {
+          echo "ERROR: failed to resolve UCX_REF from: ${UCX_VERSION:-default}"
+          exit 1
+        }
       fi
 
       # Generate version info file from template
@@ -114,16 +120,22 @@ steps:
   - name: Push
     credentialsId: 'svc-nixl-artifactory-token'
     run: |
-      if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
+      if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
       else
-        CLEAN_UCX="${UCX_VERSION}"
+        UCX_REF="${UCX_VERSION:-$(sed -n 's/^UCX_REF=${UCX_REF:-\(.*\)}/\1/p' contrib/build-container.sh)}"
+        CLEAN_UCX=$([[ "$UCX_REF" =~ ^[a-f0-9]{8,40}$ ]] && echo "${UCX_REF:0:8}" || \
+          git ls-remote https://github.com/openucx/ucx.git "$UCX_REF" | head -1 | cut -c1-8)
+        [[ -n "$CLEAN_UCX" ]] || {
+          echo "ERROR: failed to resolve UCX_REF from: ${UCX_VERSION:-default}"
+          exit 1
+        }
       fi
 
       NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
-      ARTIFACTORY_REGISTRY="${ARTIFACTORY_HOST}/${ARTIFACTORY_BASE_REPO}/verification/${BUILD_TARGET}"
-      ARTIFACTORY_API="https://${ARTIFACTORY_HOST}/artifactory/api/storage/${ARTIFACTORY_BASE_REPO}/verification/${BUILD_TARGET}"
-      TAG_NAME="${BASE_IMAGE_TAG}-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+      ARTIFACTORY_REGISTRY="${REGISTRY_HOST}/${REGISTRY_REPO}/${BUILD_TARGET}"
+      ARTIFACTORY_API="https://${REGISTRY_HOST}/artifactory/api/storage/${REGISTRY_REPO}/${BUILD_TARGET}"
+      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
 
       # Prepare image properties
       IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${CLEAN_UCX};arch=${arch};"
@@ -131,7 +143,7 @@ steps:
       IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
 
       # Login to Artifactory
-      echo "$ARTIFACTORY_PASSWORD" | docker login "${ARTIFACTORY_REGISTRY}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST}" -u "$ARTIFACTORY_USERNAME" --password-stdin
 
       # Function to tag, push, and set properties
       tag_push_set_properties() {
@@ -154,9 +166,9 @@ steps:
   - name: Show Results
     run: |
       echo "Image type built: ${BUILD_TARGET} (${arch})"
-      echo "Image pushed to: ${ARTIFACTORY_HOST}/${ARTIFACTORY_BASE_REPO}/verification/${BUILD_TARGET}"
+      echo "Image pushed to: ${REGISTRY_HOST}/${REGISTRY_REPO}/${BUILD_TARGET}"
       if [[ "${UPDATE_LATEST}" == "true" ]]; then
-        echo "Latest tag updated: ${ARTIFACTORY_HOST}/${ARTIFACTORY_BASE_REPO}/verification/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
+        echo "Latest tag updated: ${REGISTRY_HOST}/${REGISTRY_REPO}/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
       fi
 
       echo -e "\nBuild config for manual repro:"

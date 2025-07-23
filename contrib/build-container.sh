@@ -37,7 +37,7 @@ WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 UCX_REF=${UCX_REF:-v1.19.x}
 OS="ubuntu24"
-NPROC=$(nproc)
+NPROC=${NPROC:-$(nproc)}
 
 get_options() {
     while :; do
