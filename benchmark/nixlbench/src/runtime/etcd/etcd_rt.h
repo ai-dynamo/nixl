@@ -29,7 +29,7 @@
 
 // Forward declaration for etcd client
 namespace etcd {
-    class Client;
+    class SyncClient;
 }
 
 enum xferBenchEtcdMsgType {
@@ -47,7 +47,7 @@ private:
     std::string stored_etcd_endpoints;
     std::string namespace_prefix;
     std::string benchmark_group;
-    std::unique_ptr<etcd::Client> client;
+    std::unique_ptr<etcd::SyncClient> client;
 
     int my_rank; // Rank information
     int global_size;

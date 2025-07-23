@@ -23,10 +23,10 @@
 #include "sync.h"
 
 #if HAVE_ETCD
-#include <etcd/Client.hpp>
+#include <etcd/SyncClient.hpp>
 
 namespace etcd {
-    class Client;
+    class SyncClient;
 }
 
 #define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"
