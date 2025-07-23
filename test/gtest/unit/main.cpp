@@ -19,14 +19,14 @@
 namespace gtest {
 
 int
-RunTests (int argc, char **argv) {
-    testing::InitGoogleTest (&argc, argv);
+RunTests(int argc, char **argv) {
+    testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
 
 } // namespace gtest
 
 int
-main (int argc, char **argv) {
-    return gtest::RunTests (argc, argv);
+main(int argc, char **argv) {
+    return gtest::RunTests(argc, argv);
 }

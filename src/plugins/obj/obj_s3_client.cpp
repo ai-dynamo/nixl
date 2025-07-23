@@ -132,7 +132,7 @@ getBucketName(nixl_b_params_t *custom_params) {
 
 } // namespace
 
-AwsS3Client::AwsS3Client(nixl_b_params_t *custom_params,
+awsS3Client::awsS3Client(nixl_b_params_t *custom_params,
                          std::shared_ptr<Aws::Utils::Threading::Executor> executor)
     : awsOptions_(
           []() {
@@ -165,17 +165,17 @@ AwsS3Client::AwsS3Client(nixl_b_params_t *custom_params,
 }
 
 void
-AwsS3Client::setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
+awsS3Client::setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
     throw std::runtime_error("AwsS3Client::setExecutor() not supported - AWS SDK doesn't allow "
                              "changing executor after client creation");
 }
 
 void
-AwsS3Client::PutObjectAsync(std::string_view key,
+awsS3Client::putObjectAsync(std::string_view key,
                             uintptr_t data_ptr,
                             size_t data_len,
                             size_t offset,
-                            PutObjectCallback callback) {
+                            put_object_callback_t callback) {
     // AWS S3 doesn't support partial put operations with offset
     if (offset != 0) {
         callback(false);
@@ -204,11 +204,11 @@ AwsS3Client::PutObjectAsync(std::string_view key,
 }
 
 void
-AwsS3Client::GetObjectAsync(std::string_view key,
+awsS3Client::getObjectAsync(std::string_view key,
                             uintptr_t data_ptr,
                             size_t data_len,
                             size_t offset,
-                            GetObjectCallback callback) {
+                            get_object_callback_t callback) {
     auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf>(
         "GetObjectStreamBuf", reinterpret_cast<unsigned char *>(data_ptr), data_len);
     auto stream_factory = Aws::MakeShared<Aws::IOStreamFactory>(

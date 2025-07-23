@@ -27,10 +27,10 @@
 
 namespace gtest::obj {
 
-class MockS3Client : public IS3Client {
+class mockS3Client : public iS3Client {
 private:
     bool simulateSuccess_ = true;
-    std::shared_ptr<AsioThreadPoolExecutor> executor_;
+    std::shared_ptr<asioThreadPoolExecutor> executor_;
     std::vector<std::function<void()>> pendingCallbacks_;
 
 public:
@@ -41,24 +41,24 @@ public:
 
     void
     setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) override {
-        executor_ = std::dynamic_pointer_cast<AsioThreadPoolExecutor>(executor);
+        executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
     }
 
     void
-    PutObjectAsync(std::string_view key,
+    putObjectAsync(std::string_view key,
                    uintptr_t data_ptr,
                    size_t data_len,
                    size_t offset,
-                   PutObjectCallback callback) override {
+                   put_object_callback_t callback) override {
         pendingCallbacks_.push_back([callback, this]() { callback(simulateSuccess_); });
     }
 
     void
-    GetObjectAsync(std::string_view key,
+    getObjectAsync(std::string_view key,
                    uintptr_t data_ptr,
                    size_t data_len,
                    size_t offset,
-                   GetObjectCallback callback) override {
+                   get_object_callback_t callback) override {
         pendingCallbacks_.push_back([callback, data_ptr, data_len, offset, this]() {
             if (simulateSuccess_ && data_ptr && data_len > 0) {
                 char *buffer = reinterpret_cast<char *>(data_ptr);
@@ -76,7 +76,7 @@ public:
             executor_->Submit([callback]() { callback(); });
         }
         pendingCallbacks_.clear();
-        executor_->WaitUntilIdle();
+        executor_->waitUntilIdle();
     }
 
     size_t
@@ -90,10 +90,10 @@ public:
     }
 };
 
-class ObjTestFixture : public testing::Test {
+class objTestFixture : public testing::Test {
 protected:
     std::unique_ptr<nixlObjEngine> objEngine_;
-    std::shared_ptr<MockS3Client> mockS3Client_;
+    std::shared_ptr<mockS3Client> mockS3Client_;
     nixlBackendInitParams initParams_;
     nixl_b_params_t customParams_;
 
@@ -106,7 +106,7 @@ protected:
         initParams_.pthrDelay = 0;
         initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
 
-        mockS3Client_ = std::make_shared<MockS3Client>();
+        mockS3Client_ = std::make_shared<mockS3Client>();
 
         // Initialize nixlObjEngine with the mock IS3Client
         // The engine will create its own executor and call setExecutor on the mock client
@@ -291,7 +291,7 @@ protected:
     }
 };
 
-TEST_F(ObjTestFixture, EngineInitialization) {
+TEST_F(objTestFixture, EngineInitialization) {
     ASSERT_NE(objEngine_, nullptr);
     EXPECT_EQ(objEngine_->getType(), "OBJ");
     EXPECT_TRUE(objEngine_->supportsLocal());
@@ -303,7 +303,7 @@ TEST_F(ObjTestFixture, EngineInitialization) {
     EXPECT_TRUE(mockS3Client_->hasExecutor());
 }
 
-TEST_F(ObjTestFixture, GetSupportedMems) {
+TEST_F(objTestFixture, GetSupportedMems) {
     auto supported_mems = objEngine_->getSupportedMems();
     EXPECT_EQ(supported_mems.size(), 2);
     EXPECT_TRUE(std::find(supported_mems.begin(), supported_mems.end(), OBJ_SEG) !=
@@ -312,7 +312,7 @@ TEST_F(ObjTestFixture, GetSupportedMems) {
                 supported_mems.end());
 }
 
-TEST_F(ObjTestFixture, RegisterMemoryObjSeg) {
+TEST_F(objTestFixture, RegisterMemoryObjSeg) {
     nixlBlobDesc mem_desc;
     mem_desc.devId = 42;
     mem_desc.metaInfo = "test-object-key";
@@ -327,7 +327,7 @@ TEST_F(ObjTestFixture, RegisterMemoryObjSeg) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
-TEST_F(ObjTestFixture, RegisterMemoryObjSegWithoutKey) {
+TEST_F(objTestFixture, RegisterMemoryObjSegWithoutKey) {
     nixlBlobDesc mem_desc;
     mem_desc.devId = 99;
     mem_desc.metaInfo = ""; // Empty key - engine will generate a key
@@ -342,7 +342,7 @@ TEST_F(ObjTestFixture, RegisterMemoryObjSegWithoutKey) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
-TEST_F(ObjTestFixture, RegisterMemoryDramSeg) {
+TEST_F(objTestFixture, RegisterMemoryDramSeg) {
     nixlBlobDesc mem_desc;
     mem_desc.devId = 123;
 
@@ -356,7 +356,7 @@ TEST_F(ObjTestFixture, RegisterMemoryDramSeg) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
-TEST_F(ObjTestFixture, CancelTransfer) {
+TEST_F(objTestFixture, CancelTransfer) {
     mockS3Client_->setSimulateSuccess(true);
 
     nixlBlobDesc local_desc, remote_desc;
@@ -411,7 +411,7 @@ TEST_F(ObjTestFixture, CancelTransfer) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
-TEST_F(ObjTestFixture, ReadFromOffset) {
+TEST_F(objTestFixture, ReadFromOffset) {
     mockS3Client_->setSimulateSuccess(true);
 
     std::vector<char> test_buffer(1024);
@@ -461,27 +461,27 @@ TEST_F(ObjTestFixture, ReadFromOffset) {
     objEngine_->deregisterMem(remote_metadata);
 }
 
-TEST_F(ObjTestFixture, AsyncReadTransferWithControlledExecution) {
+TEST_F(objTestFixture, AsyncReadTransferWithControlledExecution) {
     testAsyncTransferWithControlledExecution(NIXL_READ);
 }
 
-TEST_F(ObjTestFixture, AsyncWriteTransferWithControlledExecution) {
+TEST_F(objTestFixture, AsyncWriteTransferWithControlledExecution) {
     testAsyncTransferWithControlledExecution(NIXL_WRITE);
 }
 
-TEST_F(ObjTestFixture, MultiDescriptorWrite) {
+TEST_F(objTestFixture, MultiDescriptorWrite) {
     testMultiDescriptorTransfer(NIXL_WRITE);
 }
 
-TEST_F(ObjTestFixture, MultiDescriptorRead) {
+TEST_F(objTestFixture, MultiDescriptorRead) {
     testMultiDescriptorTransfer(NIXL_READ);
 }
 
-TEST_F(ObjTestFixture, AsyncReadTransferFailureIsHandled) {
+TEST_F(objTestFixture, AsyncReadTransferFailureIsHandled) {
     testAsyncTransferFailureIsHandled(NIXL_READ);
 }
 
-TEST_F(ObjTestFixture, AsyncWriteTransferFailureIsHandled) {
+TEST_F(objTestFixture, AsyncWriteTransferFailureIsHandled) {
     testAsyncTransferFailureIsHandled(NIXL_WRITE);
 }
 
