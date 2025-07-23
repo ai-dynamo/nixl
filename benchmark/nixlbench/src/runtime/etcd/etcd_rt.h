@@ -29,13 +29,10 @@
 
 // Forward declaration for etcd client
 namespace etcd {
-    class SyncClient;
+class SyncClient;
 }
 
-enum xferBenchEtcdMsgType {
-    XFER_BENCH_ETCD_MSG_TYPE_INT = 1,
-    XFER_BENCH_ETCD_MSG_TYPE_CHAR = 2
-};
+enum xferBenchEtcdMsgType { XFER_BENCH_ETCD_MSG_TYPE_INT = 1, XFER_BENCH_ETCD_MSG_TYPE_CHAR = 2 };
 
 /**
  * ETCD-based runtime for XFER benchmark coordination

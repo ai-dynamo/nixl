@@ -50,8 +50,9 @@ xferBenchEtcdRT::setup() {
     // Connect to ETCD
     try {
         std::cout << "Connecting to ETCD at " << stored_etcd_endpoints << std::endl;
-        client = std::make_unique<etcd::SyncClient> (stored_etcd_endpoints);
-    } catch (const std::exception& e) {
+        client = std::make_unique<etcd::SyncClient>(stored_etcd_endpoints);
+    }
+    catch (const std::exception &e) {
         std::cerr << "Failed to connect to ETCD: " << e.what() << std::endl;
         return -1;
     }
@@ -86,15 +87,13 @@ xferBenchEtcdRT::setup() {
     setSize(global_size);
 
     if (my_rank >= global_size) {
-        std::cerr << "Rank " << my_rank
-                  << " is greater than or equal to global size "
+        std::cerr << "Rank " << my_rank << " is greater than or equal to global size "
                   << global_size << std::endl;
         client->rmdir(makeKey(""), true);
         return -1;
     }
-    std::cout << "ETCD Runtime: Registered as rank " << my_rank
-	      << " item " << my_rank + 1 << " of "
-	      << global_size << std::endl;
+    std::cout << "ETCD Runtime: Registered as rank " << my_rank << " item " << my_rank + 1 << " of "
+              << global_size << std::endl;
 
     return 0;
 }
@@ -104,7 +103,8 @@ xferBenchEtcdRT::~xferBenchEtcdRT() {
     client->rmdir(makeKey(""), true);
 }
 
-int xferBenchEtcdRT::getRank() const {
+int
+xferBenchEtcdRT::getRank() const {
     return my_rank;
 }
 
@@ -188,7 +188,8 @@ int xferBenchEtcdRT::recvInt(int* buffer, int src_rank) {
                 client->rm(msg_key);
 
                 return 0;
-            } catch (const std::exception& e) {
+            }
+            catch (const std::exception &e) {
                 std::cerr << "Error converting value to integer: " << e.what() << std::endl;
                 return -1;
             }
@@ -220,7 +221,8 @@ int xferBenchEtcdRT::sendChar(char* buffer, size_t count, int dest_rank) {
         client->put(data_key, data_str);
 
         // Store metadata
-        std::string meta = std::to_string(my_rank) + ":" + std::to_string(dest_rank) + ":" + std::to_string(count);
+        std::string meta =
+            std::to_string(my_rank) + ":" + std::to_string(dest_rank) + ":" + std::to_string(count);
         client->put(msg_key, meta);
 
         int retries = 0;
@@ -326,7 +328,7 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
             while (received < expected && should_retry(retries, 30)) {
                 auto response = client->ls(reduce_key);
                 if (response.error_code() == 0) {
-                    for (const auto& kv : response.keys()) {
+                    for (const auto &kv : response.keys()) {
                         // Skip our own contribution
                         std::string key = kv;
                         if (key == value_key) {
@@ -360,8 +362,8 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
             client->rmdir(reduce_key, true);
 
             if (received < expected) {
-                std::cerr << "Timeout waiting for reduction contributions (got " << received
-                          << "/" << expected << " contributions)" << std::endl;
+                std::cerr << "Timeout waiting for reduction contributions (got " << received << "/"
+                          << expected << " contributions)" << std::endl;
                 return -1;
             }
         }
@@ -405,7 +407,8 @@ int xferBenchEtcdRT::barrier(const std::string& barrier_id) {
         }
 
         throw std::runtime_error("wait");
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e) {
         std::cerr << "Error in barrier " << e.what() << " " << barrier_key
             << " rank " << my_rank << " completed "
             << count << "/" << global_size << " ranks)" << std::endl;
@@ -423,7 +426,7 @@ int xferBenchEtcdRT::broadcastInt(int* buffer, size_t count, int root_rank) {
         // First phase: root process puts the value in etcd
         if (my_rank == root_rank) {
             // Serialize array of integers using binary representation
-            std::string value_str(reinterpret_cast<char*>(buffer), count * sizeof(int));
+            std::string value_str(reinterpret_cast<char *>(buffer), count * sizeof(int));
             client->put(bcast_key, value_str);
         }
 
@@ -449,7 +452,8 @@ int xferBenchEtcdRT::broadcastInt(int* buffer, size_t count, int root_rank) {
                                       << ") is smaller than expected (" << count * sizeof(int) << ")" << std::endl;
                             retries++;
                         }
-                    } catch (const std::exception& e) {
+                    }
+                    catch (const std::exception &e) {
                         std::cerr << "Error deserializing broadcast data: " << e.what() << std::endl;
                         return -1;
                     }

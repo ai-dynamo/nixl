@@ -26,7 +26,7 @@
 #include <etcd/SyncClient.hpp>
 
 namespace etcd {
-    class SyncClient;
+class SyncClient;
 }
 
 #define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"

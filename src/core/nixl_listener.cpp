@@ -200,7 +200,8 @@ public:
 
         try {
             etcd = std::make_unique<etcd::SyncClient>(etcd_endpoints);
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error creating etcd client: " << e.what();
             return;
         }
@@ -233,14 +234,16 @@ public:
             etcd::Response response = etcd->put(metadata_key, metadata);
 
             if (response.is_ok()) {
-                NIXL_DEBUG << "Successfully stored " << metadata_type << " in etcd with key: " << metadata_key
-                           << " (rev " << response.value().modified_index() << ")";
+                NIXL_DEBUG << "Successfully stored " << metadata_type
+                           << " in etcd with key: " << metadata_key << " (rev "
+                           << response.value().modified_index() << ")";
                 return NIXL_SUCCESS;
             } else {
                 NIXL_ERROR << "Failed to store " << metadata_type << " in etcd: " << response.error_message();
                 return NIXL_ERR_BACKEND;
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error sending " << metadata_type << " to etcd: " << e.what();
             return NIXL_ERR_BACKEND;
         }
@@ -266,7 +269,8 @@ public:
                            << agent_name << " : " << response.error_message();
                 return NIXL_ERR_BACKEND;
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Exception removing etcd keys for agent: " << agent_name << " : " << e.what();
             return NIXL_ERR_BACKEND;
         }
@@ -294,7 +298,8 @@ public:
                 NIXL_ERROR << "Failed to fetch key: " << metadata_key << " from etcd: " << response.error_message();
                 return NIXL_ERR_NOT_FOUND;
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error fetching key: " << metadata_key << " from etcd: " << e.what();
             return NIXL_ERR_UNKNOWN;
         }
@@ -337,8 +342,8 @@ public:
             }
             watcher.Cancel();
             return future.get();
-
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error watching etcd for key: " << metadata_key << " : " << e.what();
             return NIXL_ERR_BACKEND;
         }
