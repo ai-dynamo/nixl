@@ -99,6 +99,7 @@ public:
           nixlMem(nixl_mem),
           devId(dev_id),
           objKey(obj_key) {}
+
     ~nixlObjMetadata() = default;
 
     nixl_mem_t nixlMem;
@@ -114,16 +115,16 @@ public:
 
 nixlObjEngine::nixlObjEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
-      executor_(std::make_shared<AsioThreadPoolExecutor>(getNumThreads(init_params->customParams))),
-      s3Client_(std::make_shared<AwsS3Client>(init_params->customParams, executor_)) {
+      executor_(std::make_shared<asioThreadPoolExecutor>(getNumThreads(init_params->customParams))),
+      s3Client_(std::make_shared<awsS3Client>(init_params->customParams, executor_)) {
     NIXL_INFO << "Object storage backend initialized with S3 client wrapper";
 }
 
 // Used for testing to inject a mock S3 client dependency
 nixlObjEngine::nixlObjEngine(const nixlBackendInitParams *init_params,
-                             std::shared_ptr<IS3Client> s3_client)
+                             std::shared_ptr<iS3Client> s3_client)
     : nixlBackendEngine(init_params),
-      executor_(std::make_shared<AsioThreadPoolExecutor>(std::thread::hardware_concurrency())),
+      executor_(std::make_shared<asioThreadPoolExecutor>(std::thread::hardware_concurrency())),
       s3Client_(s3_client) {
     s3Client_->setExecutor(executor_);
     NIXL_INFO << "Object storage backend initialized with injected S3 client";
@@ -146,6 +147,8 @@ nixlObjEngine::registerMem(const nixlBlobDesc &mem,
             nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo);
         devIdToObjKey_[mem.devId] = obj_md->objKey;
         out = obj_md.release();
+    } else {
+        out = nullptr;
     }
 
     return NIXL_SUCCESS;
@@ -207,12 +210,12 @@ nixlObjEngine::postXfer(const nixl_xfer_op_t &operation,
         // S3 client interface signals completion via a callback, but NIXL API polls request handle
         // for the status code. Use future/promise pair to bridge the gap.
         if (operation == NIXL_WRITE)
-            s3Client_->PutObjectAsync(
+            s3Client_->putObjectAsync(
                 obj_key_search->second, data_ptr, data_len, offset, [status_promise](bool success) {
                     status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
                 });
         else
-            s3Client_->GetObjectAsync(
+            s3Client_->getObjectAsync(
                 obj_key_search->second, data_ptr, data_len, offset, [status_promise](bool success) {
                     status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
                 });
