@@ -27,7 +27,7 @@ matrix:
 
 # Configuration
 env:
-  REGISTRY_HOST: "urm.nvidia.com"
+  REGISTRY_HOSTESS: "urm.nvidia.com"
   REGISTRY_REPO: "sw-nbu-swx-nixl-docker-local/verification"
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
@@ -63,7 +63,7 @@ steps:
       ln -sfT $(type -p podman) /usr/bin/docker
       yum install -y git gettext
 
-      echo "DEBUG BEFORE SET: REGISTRY_HOST='${REGISTRY_HOST:-unset}' REGISTRY_REPO='${REGISTRY_REPO:-unset}'"
+      echo "DEBUG BEFORE SET: REGISTRY_HOSTESS='${REGISTRY_HOSTESS:-unset}' REGISTRY_REPO='${REGISTRY_REPO:-unset}'"
 
   - name: Build NIXLBench
     enable: ${ENABLE_NIXLBENCH_BUILD}
@@ -95,6 +95,9 @@ steps:
 
   - name: Add Version Info
     run: |
+      # Extract standardized 8-char commit hash for UCX version info:
+      # - nixlbench: use local ucx-src workspace HEAD
+      # - nixl: resolve UCX_VERSION param (branch/tag/hash) or parse from the build script
       if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
       else
@@ -122,24 +125,16 @@ steps:
   - name: Push
     credentialsId: 'svc-nixl-artifactory-token'
     run: |
-      if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
-        CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
-      else
-        UCX_REF="${UCX_VERSION:-$(sed -n 's/^UCX_REF=${UCX_REF:-\(.*\)}/\1/p' contrib/build-container.sh)}"
-        CLEAN_UCX=$([[ "$UCX_REF" =~ ^[a-f0-9]{8,40}$ ]] && echo "${UCX_REF:0:8}" || \
-          git ls-remote https://github.com/openucx/ucx.git "$UCX_REF" | head -1 | cut -c1-8)
-        [[ -n "$CLEAN_UCX" ]] || {
-          echo "ERROR: failed to resolve UCX_REF from: ${UCX_VERSION:-default}"
-          exit 1
-        }
-      fi
+      # Extract UCX SHA from version-info.json
+      CLEAN_UCX=$(grep -oP '"ucx_version":\s*"\K[^\"]+' version-info.json)
+        [[ -n "$CLEAN_UCX" ]] || { echo "ERROR: unable to extract UCX SHA from version-info.json"; exit 1; }
 
       NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
-      ARTIFACTORY_REGISTRY="${REGISTRY_HOST}/${REGISTRY_REPO}/${BUILD_TARGET}"
-      ARTIFACTORY_API="https://${REGISTRY_HOST}/artifactory/api/storage/${REGISTRY_REPO}/${BUILD_TARGET}"
+      ARTIFACTORY_REGISTRY="${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}"
+      ARTIFACTORY_API="https://${REGISTRY_HOSTESS}/artifactory/api/storage/${REGISTRY_REPO}/${BUILD_TARGET}"
       TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
 
-      echo "DEBUG BEFORE LOGIN: REGISTRY_HOST='${REGISTRY_HOST:-unset}' REGISTRY_REPO='${REGISTRY_REPO:-unset}'"
+      echo "DEBUG BEFORE LOGIN: REGISTRY_HOSTESS='${REGISTRY_HOSTESS:-unset}' REGISTRY_REPO='${REGISTRY_REPO:-unset}'"
 
       # Prepare image properties
       IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${CLEAN_UCX};arch=${arch};"
@@ -147,7 +142,7 @@ steps:
       IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
 
       # Login to Artifactory
-      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOSTESS}" -u "$ARTIFACTORY_USERNAME" --password-stdin
 
       # Function to tag, push, and set properties
       tag_push_set_properties() {
@@ -170,9 +165,9 @@ steps:
   - name: Show Results
     run: |
       echo "Image type built: ${BUILD_TARGET} (${arch})"
-      echo "Image pushed to: ${REGISTRY_HOST}/${REGISTRY_REPO}/${BUILD_TARGET}"
+      echo "Image pushed to: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}"
       if [[ "${UPDATE_LATEST}" == "true" ]]; then
-        echo "Latest tag updated: ${REGISTRY_HOST}/${REGISTRY_REPO}/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
+        echo "Latest tag updated: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
       fi
 
       echo -e "\nBuild config for manual repro:"
