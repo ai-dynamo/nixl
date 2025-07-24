@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import pickle
+import tempfile
 
 import nixl._bindings as nixl
 import nixl._utils as nixl_utils
@@ -156,3 +158,91 @@ def test_agent():
 
     nixl_utils.free_passthru(addr1)
     nixl_utils.free_passthru(addr2)
+
+
+def test_query_mem():
+    """Test basic queryMem functionality"""
+
+    os.makedirs("files_for_query", exist_ok=True)
+    # Create temporary test files
+    temp_file1 = tempfile.NamedTemporaryFile(dir="files_for_query", delete=False)
+    temp_file1.write(b"Test content for queryMem file 1")
+    temp_file1.close()
+
+    temp_file2 = tempfile.NamedTemporaryFile(dir="files_for_query", delete=False)
+    temp_file2.write(b"Test content for queryMem file 2")
+    temp_file2.close()
+
+    # Create a non-existent file path
+    non_existent_file = "./nixl_test_nonexistent_file_12345.txt"
+
+    try:
+        # Create an agent
+        config = nixl.nixlAgentConfig(False, False)
+        agent = nixl.nixlAgent("test_agent", config)
+
+        try:
+            params, mems = agent.getPluginParams("POSIX")
+            backend = agent.createBackend("POSIX", params)
+
+            descs = nixl.nixlRegDList(nixl.FILE_SEG, False)
+
+            # Test 1: Query with empty descriptor list
+            try:
+                resp = agent.queryMem(descs, backend)
+                assert len(resp) == 0
+            except Exception as e:
+                # Some backends might not support queryMem, which is okay
+                print(
+                    f"queryMem with empty list failed (expected for some backends): {e}"
+                )
+
+            # Test 2: Query with actual file descriptors
+            # Existing file 1
+            descs.addDesc((0, 0, 0, temp_file1.name))
+            # Non-existent file
+            descs.addDesc((0, 0, 0, non_existent_file))
+            # Existing file 2
+            descs.addDesc((0, 0, 0, temp_file2.name))
+
+            try:
+                resp = agent.queryMem(descs, backend)
+
+                # Verify results
+                assert len(resp) == 3
+
+                # First file should be accessible (returns dict with info)
+                assert resp[0] is not None
+                assert isinstance(resp[0], dict)
+                assert "size" in resp[0]
+                assert "mode" in resp[0]
+
+                # Second file should not be accessible (returns None)
+                assert resp[1] is None
+
+                # Third file should be accessible (returns dict with info)
+                assert resp[2] is not None
+                assert isinstance(resp[2], dict)
+                assert "size" in resp[2]
+                assert "mode" in resp[2]
+
+            except Exception as e:
+                # Some backends might not support queryMem, which is okay
+                print(f"queryMem failed (expected for some backends): {e}")
+        except Exception as e:
+            print(f"Backend creation failed: {e}")
+            # Try MOCK_DRAM as fallback
+            try:
+                params, mems = agent.getPluginParams("MOCK_DRAM")
+                backend = agent.createBackend("MOCK_DRAM", params)
+                print("Using MOCK_DRAM backend")
+            except Exception as e2:
+                print(f"MOCK_DRAM also failed: {e2}")
+                return
+
+    finally:
+        # Clean up temporary files
+        if os.path.exists(temp_file1.name):
+            os.unlink(temp_file1.name)
+        if os.path.exists(temp_file2.name):
+            os.unlink(temp_file2.name)

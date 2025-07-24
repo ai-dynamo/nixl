@@ -31,13 +31,18 @@
 #include <atomic>
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
-#include "taskflow/taskflow.hpp"
+#include "gds_mt_utils.h"
+#include "file/file_utils.h"
+#include <taskflow/taskflow.hpp>
+#include <unordered_map>
 
 namespace {
 const size_t default_thread_count = std::max (1u, std::thread::hardware_concurrency() / 2);
 
 struct FileSegData {
     std::shared_ptr<gdsMtFileHandle> handle;
+
+    FileSegData(std::shared_ptr<gdsMtFileHandle> h) : handle(std::move(h)) {}
 };
 
 struct MemSegData {
@@ -205,6 +210,7 @@ nixlGdsMtEngine::registerMem (const nixlBlobDesc &mem,
             }
             gds_mt_file_map_.erase (it);
         }
+
         try {
             handle = std::make_shared<gdsMtFileHandle> (mem.devId);
         }
@@ -256,6 +262,8 @@ nixlGdsMtEngine::deregisterMem (nixlBackendMD *meta) {
             if (it != gds_mt_file_map_.end() && it->second.expired()) {
                 gds_mt_file_map_.erase (it);
             }
+
+            // No need to close fd since we're not opening files
         }
     }
 
@@ -367,4 +375,16 @@ nixl_status_t
 nixlGdsMtEngine::releaseReqH (nixlBackendReqH *handle) const {
     std::unique_ptr<nixlGdsMtBackendReqH> gds_mt_handle ((nixlGdsMtBackendReqH *)handle);
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlGdsMtEngine::queryMem(const nixl_reg_dlist_t &descs,
+                          std::vector<nixl_query_resp_t> &resp) const {
+    // Extract metadata from descriptors which are file names
+    // Different plugins might customize parsing of metaInfo to get the file names
+    std::vector<nixl_blob_t> metadata(descs.descCount());
+    for (int i = 0; i < descs.descCount(); ++i)
+        metadata[i] = descs[i].metaInfo;
+
+    return nixl::queryFileInfoList(metadata, resp);
 }

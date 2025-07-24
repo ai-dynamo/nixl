@@ -17,8 +17,12 @@
 #include <cassert>
 #include <cufile.h>
 #include "gds_backend.h"
-#include "common/str_tools.h"
+#include "gds_utils.h"
 #include "common/nixl_log.h"
+#include "file/file_utils.h"
+#include <unordered_map>
+#include <memory>
+#include <cuda_runtime.h>
 
 /** Setting the default values to check the batch limit */
 #define DEFAULT_BATCH_LIMIT 128
@@ -98,7 +102,7 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
 
     switch (nixl_mem) {
         case FILE_SEG: {
-            // if the same file is reused - no need to re-register
+            // Check if we already have a file handle for this devId
             auto it = gds_file_map.find(mem.devId);
             if (it != gds_file_map.end()) {
                 md->handle = it->second;
@@ -159,7 +163,8 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     nixlGdsMetadata *md = (nixlGdsMetadata *)meta;
     if (md->type == FILE_SEG) {
         gds_utils->deregisterFileHandle(md->handle);
-	gds_file_map.erase(md->handle.fd);
+        gds_file_map.erase(md->handle.fd);
+        // No need to close fd since we're not opening files
     } else {
         gds_utils->deregisterBufHandle(md->buf.base);
     }
@@ -420,4 +425,15 @@ nixlGdsEngine::~nixlGdsEngine() {
         gds_utils->closeGdsDriver();
         delete gds_utils;
     }
+}
+
+nixl_status_t
+nixlGdsEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const {
+    // Extract metadata from descriptors which are file names
+    // Different plugins might customize parsing of metaInfo to get the file names
+    std::vector<nixl_blob_t> metadata(descs.descCount());
+    for (int i = 0; i < descs.descCount(); ++i)
+        metadata[i] = descs[i].metaInfo;
+
+    return nixl::queryFileInfoList(metadata, resp);
 }

@@ -150,12 +150,24 @@ $ ninja
 # After installation (ninja install), documentation will be available in <prefix>/share/doc/nixl/
 ```
 
-### pybind11 Python Interface
-The pybind11 bindings for the public facing NIXL API are available in src/bindings/python. These bindings implement the headers in the src/api/cpp directory.
+### Python Interface
 
-The preferred way is to build it through meson-python, which will just let it be installed with pip. This can be done from the root nixl directory:
+NIXL provides Python bindings through pybind11. For detailed Python API documentation, see [docs/python_api.md](docs/python_api.md).
 
-` $ pip install .`
+The preferred way to install the Python bindings is through pip:
+
+```bash
+pip install nixl
+```
+
+Or build from source:
+
+```bash
+# From the root nixl directory
+pip install .
+```
+
+For Python examples, see [examples/python/](examples/python/).
 
 ### Rust Bindings
 ```bash

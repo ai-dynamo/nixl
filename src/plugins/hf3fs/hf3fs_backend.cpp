@@ -22,6 +22,7 @@
 #include "hf3fs_log.h"
 #include "common/str_tools.h"
 #include "common/nixl_log.h"
+#include "file/file_utils.h"
 
 #define NUM_CQES 1024
 
@@ -59,7 +60,6 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
                                             nixlBackendMD* &out)
 {
     nixl_status_t status;
-    int fd;
     int ret;
     nixlHf3fsMetadata *md = new nixlHf3fsMetadata();
 
@@ -69,10 +69,8 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             status = NIXL_SUCCESS;
             break;
         case FILE_SEG: {
-            fd = mem.devId;
-
-            // if the same file is reused - no need to re-register
-            auto it = hf3fs_file_set.find (fd);
+            // Check if we already have a file descriptor for this devId
+            auto it = hf3fs_file_set.find(mem.devId);
             if (it != hf3fs_file_set.end()) {
                 md->handle.fd = *it;
                 md->handle.size = mem.len;
@@ -83,18 +81,19 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             }
 
             ret = 0;
-            status = hf3fs_utils->registerFileHandle(fd, &ret);
+            status = hf3fs_utils->registerFileHandle(mem.devId, &ret);
             if (status != NIXL_SUCCESS) {
                 delete md;
-                HF3FS_LOG_RETURN(status,
-                    absl::StrFormat("Error - failed to register file handle %d", fd));
+                HF3FS_LOG_RETURN(
+                    status,
+                    absl::StrFormat("Error - failed to register file handle %d", mem.devId));
             }
-            md->handle.fd = fd;
+            md->handle.fd = mem.devId;
             md->handle.size = mem.len;
             md->handle.metadata = mem.metaInfo;
             md->type = nixl_mem;
 
-            hf3fs_file_set.insert (fd);
+            hf3fs_file_set.insert(mem.devId);
             break;
         }
         case VRAM_SEG:
@@ -112,6 +111,7 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     if (md->type == FILE_SEG) {
         hf3fs_file_set.erase (md->handle.fd);
         hf3fs_utils->deregisterFileHandle(md->handle.fd);
+        // No need to close fd since we're not opening files
     } else if (md->type == DRAM_SEG) {
         return NIXL_SUCCESS;
     } else {
@@ -399,4 +399,16 @@ nixl_status_t nixlHf3fsEngine::releaseReqH(nixlBackendReqH* handle) const
 nixlHf3fsEngine::~nixlHf3fsEngine() {
     hf3fs_utils->closeHf3fsDriver();
     delete hf3fs_utils;
+}
+
+nixl_status_t
+nixlHf3fsEngine::queryMem(const nixl_reg_dlist_t &descs,
+                          std::vector<nixl_query_resp_t> &resp) const {
+    // Extract metadata from descriptors which are file names
+    // Different plugins might customize parsing of metaInfo to get the file names
+    std::vector<nixl_blob_t> metadata(descs.descCount());
+    for (int i = 0; i < descs.descCount(); ++i)
+        metadata[i] = descs[i].metaInfo;
+
+    return nixl::queryFileInfoList(metadata, resp);
 }

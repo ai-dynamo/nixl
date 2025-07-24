@@ -15,7 +15,7 @@
 
 # Try to find liburing (optional) - first try pkg-config
 uring_dep = dependency('liburing', required: false)
-plugin_deps = [nixl_infra, nixl_common_dep]
+plugin_deps = [nixl_infra, nixl_common_dep, file_utils_interface]
 
 # Define base source files - conditionally include uring_queue.cpp
 posix_sources = [
