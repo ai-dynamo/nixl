@@ -798,23 +798,30 @@ class nixl_agent:
                 )
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
-            mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
-            base_addr = descs.data_ptr()
-            region_len = descs.numel() * descs.element_size()
-            gpu_id = descs.get_device()
-            if gpu_id == -1:  # DRAM
-                gpu_id = 0
-            new_descs = nixlBind.nixlXferDList(
-                self.nixl_mems[mem_type],
-                [(base_addr, region_len, gpu_id)],
-                is_sorted,
-            )
+            if descs.is_contiguous():
+                mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+                base_addr = descs.data_ptr()
+                region_len = descs.numel() * descs.element_size()
+                gpu_id = descs.get_device()
+                if gpu_id == -1:  # DRAM
+                    gpu_id = 0
+                new_descs = nixlBind.nixlXferDList(
+                    self.nixl_mems[mem_type],
+                    [(base_addr, region_len, gpu_id)],
+                    is_sorted,
+                )
+            else:
+                print("Please use a list of contiguous Tensors")
+                new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
                 if descs[i].device != tensor_type:
+                    return None
+                if not descs[i].is_contiguous():
+                    print("Please use a list of contiguous Tensors")
                     return None
                 base_addr = descs[i].data_ptr()
                 region_len = descs[i].numel() * descs[i].element_size()
@@ -885,23 +892,30 @@ class nixl_agent:
                 )
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
-            mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
-            base_addr = descs.data_ptr()
-            region_len = descs.numel() * descs.element_size()
-            gpu_id = descs.get_device()
-            if gpu_id == -1:  # DRAM
-                gpu_id = 0
-            new_descs = nixlBind.nixlRegDList(
-                self.nixl_mems[mem_type],
-                [(base_addr, region_len, gpu_id, "")],
-                is_sorted,
-            )
+            if descs.is_contiguous():
+                mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+                base_addr = descs.data_ptr()
+                region_len = descs.numel() * descs.element_size()
+                gpu_id = descs.get_device()
+                if gpu_id == -1:  # DRAM
+                    gpu_id = 0
+                new_descs = nixlBind.nixlRegDList(
+                    self.nixl_mems[mem_type],
+                    [(base_addr, region_len, gpu_id, "")],
+                    is_sorted,
+                )
+            else:
+                print("Please use a list of contiguous Tensors")
+                new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
                 if descs[i].device != tensor_type:
+                    return None
+                if not descs[i].is_contiguous():
+                    print("Please use a list of contiguous Tensors")
                     return None
                 base_addr = descs[i].data_ptr()
                 region_len = descs[i].numel() * descs[i].element_size()
