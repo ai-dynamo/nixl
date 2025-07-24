@@ -22,7 +22,7 @@
 #include "agent_data.h"
 #include "common/nixl_log.h"
 #if HAVE_ETCD
-#include <etcd/Client.hpp>
+#include <etcd/SyncClient.hpp>
 #include <etcd/Watcher.hpp>
 #include <future>
 #endif // HAVE_ETCD
@@ -176,7 +176,7 @@ recvCommMessage(int fd, std::string &msg) {
 #if HAVE_ETCD
 class nixlEtcdClient {
 private:
-    std::unique_ptr<etcd::Client> etcd;
+    std::unique_ptr<etcd::SyncClient> etcd;
     std::string namespace_prefix;
     std::vector<std::string> invalidated_agents;
     std::mutex invalidated_agents_mutex;
@@ -199,8 +199,9 @@ public:
         }
 
         try {
-            etcd = std::make_unique<etcd::Client>(etcd_endpoints);
-        } catch (const std::exception& e) {
+            etcd = std::make_unique<etcd::SyncClient>(etcd_endpoints);
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error creating etcd client: " << e.what();
             return;
         }
@@ -212,7 +213,7 @@ public:
         NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
 
         std::string agent_prefix = makeKey(my_agent_name, "");
-        etcd::Response response = etcd->put(agent_prefix, "").get();
+        etcd::Response response = etcd->put(agent_prefix, "");
         if (!response.is_ok()) {
             throw std::runtime_error("Failed to store agent " + my_agent_name +
                                      " prefix key in etcd: " + response.error_message());
@@ -230,17 +231,19 @@ public:
 
         try {
             std::string metadata_key = makeKey(agent_name, metadata_type);
-            etcd::Response response = etcd->put(metadata_key, metadata).get();
+            etcd::Response response = etcd->put(metadata_key, metadata);
 
             if (response.is_ok()) {
-                NIXL_DEBUG << "Successfully stored " << metadata_type << " in etcd with key: " << metadata_key
-                           << " (rev " << response.value().modified_index() << ")";
+                NIXL_DEBUG << "Successfully stored " << metadata_type
+                           << " in etcd with key: " << metadata_key << " (rev "
+                           << response.value().modified_index() << ")";
                 return NIXL_SUCCESS;
             } else {
                 NIXL_ERROR << "Failed to store " << metadata_type << " in etcd: " << response.error_message();
                 return NIXL_ERR_BACKEND;
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error sending " << metadata_type << " to etcd: " << e.what();
             return NIXL_ERR_BACKEND;
         }
@@ -255,7 +258,7 @@ public:
 
         try {
             std::string agent_prefix = makeKey(agent_name, "");
-            etcd::Response response = etcd->rmdir(agent_prefix, true).get();
+            etcd::Response response = etcd->rmdir(agent_prefix, true);
 
             if (response.is_ok()) {
                 NIXL_DEBUG << "Successfully removed " << response.values().size()
@@ -266,7 +269,8 @@ public:
                            << agent_name << " : " << response.error_message();
                 return NIXL_ERR_BACKEND;
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Exception removing etcd keys for agent: " << agent_name << " : " << e.what();
             return NIXL_ERR_BACKEND;
         }
@@ -283,7 +287,7 @@ public:
 
         std::string metadata_key = makeKey(agent_name, metadata_type);
         try {
-            etcd::Response response = etcd->get(metadata_key).get();
+            etcd::Response response = etcd->get(metadata_key);
 
             if (response.is_ok()) {
                 metadata = response.value().as_string();
@@ -294,7 +298,8 @@ public:
                 NIXL_ERROR << "Failed to fetch key: " << metadata_key << " from etcd: " << response.error_message();
                 return NIXL_ERR_NOT_FOUND;
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error fetching key: " << metadata_key << " from etcd: " << e.what();
             return NIXL_ERR_UNKNOWN;
         }
@@ -305,7 +310,7 @@ public:
         try {
 
             // Get current index to watch from
-            etcd::Response response = etcd->get(metadata_key).get();
+            etcd::Response response = etcd->get(metadata_key);
             int64_t watch_index = response.index();
             std::promise<nixl_status_t> ret_prom;
             auto future = ret_prom.get_future();
@@ -337,8 +342,8 @@ public:
             }
             watcher.Cancel();
             return future.get();
-
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error watching etcd for key: " << metadata_key << " : " << e.what();
             return NIXL_ERR_BACKEND;
         }
