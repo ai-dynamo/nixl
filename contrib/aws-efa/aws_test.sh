@@ -130,8 +130,8 @@ echo "Streaming logs from pod: $POD"
 kubectl -n ucx-ci-batch-nodes logs -f "$POD" || kubectl -n ucx-ci-batch-nodes logs "$POD" --previous || true
 
 # Check final job status
-echo "Waiting for job completion (timeout: 10m)..."
-if ! wait_for_status "SUCCEEDED" 600 10; then
+echo "Waiting for job completion (timeout: 4h)..."
+if ! wait_for_status "SUCCEEDED" 14400 10; then
     echo "Failure running NIXL tests"
     exit 1
 fi
