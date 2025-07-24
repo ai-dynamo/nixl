@@ -365,6 +365,39 @@ namespace internal {
         : string_holder(std::move(data)),
           compatibility(string_.data(), string_.size()) {}
 
+    deserializer::deserializer(deserializer &&other) noexcept
+        : deserializer(std::move(other.string_), other.buffer_.data() - other.string_.data()) {}
+
+    deserializer::deserializer(const deserializer &other)
+        : deserializer(std::string(other.string_), other.buffer_.data() - other.string_.data()) {}
+
+    deserializer &
+    deserializer::operator=(deserializer &&other) noexcept {
+        if (this != &other) {
+            assign(std::move(other.string_), other.buffer_.data() - other.string_.data());
+        }
+        return *this;
+    }
+
+    deserializer &
+    deserializer::operator=(const deserializer &other) {
+        if (this != &other) {
+            assign(std::string(other.string_), other.buffer_.data() - other.string_.data());
+        }
+        return *this;
+    }
+
+    deserializer::deserializer(std::string &&data, const size_t offset) noexcept
+        : string_holder(std::move(data)) {
+        buffer_ = std::string_view(string_.data() + offset, string_.size() - offset);
+    }
+
+    void
+    deserializer::assign(std::string &&data, const size_t offset) noexcept {
+        string_ = std::move(data);
+        buffer_ = std::string_view(string_.data() + offset, string_.size() - offset);
+    }
+
 } // namespace internal
 
 namespace {

@@ -35,11 +35,7 @@ namespace internal {
 
 class serializer {
 public:
-    serializer()
-        : serializer(4000) // OK?
-    {}
-
-    explicit serializer(const size_t preAlloc);
+    explicit serializer(const size_t preAlloc = 4000);
 
     void
     addString(const std::string_view &tag, const std::string_view &str) {
@@ -226,6 +222,20 @@ namespace internal {
     class deserializer : private string_holder, public compatibility {
     public:
         explicit deserializer(std::string &&data);
+
+        deserializer(deserializer &&) noexcept;
+        deserializer(const deserializer &);
+
+        deserializer &
+        operator=(deserializer &&) noexcept;
+        deserializer &
+        operator=(const deserializer &);
+
+    private:
+        deserializer(std::string &&data, size_t offset) noexcept;
+
+        void
+        assign(std::string &&data, size_t offset) noexcept;
     };
 
 } // namespace internal
@@ -255,6 +265,8 @@ public:
     // Default construct as serializer (as before).
     // Throws bad_alloc on out-of-memory (as before).
     nixlSerDes();
+
+    // Add c'tor that takes a string and does an implicit importStr?
 
     // Serialization of strings as before.
     nixl_status_t
