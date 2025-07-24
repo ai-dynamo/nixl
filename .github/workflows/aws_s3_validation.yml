@@ -1,0 +1,79 @@
+name: AWS S3 NIXL Validation
+
+on:
+  push:
+    branches:
+    - main
+    - "pull-request/[0-9]+"
+
+jobs:
+  run_aws_s3_tests:
+    name: Run AWS S3 Tests
+    environment: SWX_AWS
+    runs-on: ubuntu-latest
+    env:
+      AWS_DEFAULT_REGION: eu-central-1
+      AWS_ACCESS_KEY_ID: ${{ secrets.NIXL_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.NIXL_AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_BUCKET: nixl-ci-test-${{ github.run_id }}
+      NIXL_INSTALL_DIR: /opt/nixl
+    strategy:
+      fail-fast: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup
+        run: |
+          set -exE
+          # Install AWS CLI
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -qq awscliv2.zip
+          sudo ./aws/install --update
+
+          # Verify AWS credentials
+          aws sts get-caller-identity >/dev/null
+
+          # Create S3 bucket
+          aws s3 mb s3://${AWS_DEFAULT_BUCKET}
+
+          # Loop to check if S3 bucket exists with retries
+          max_attempts=5
+          attempt=1
+          while [ $attempt -le $max_attempts ]; do
+            if aws s3 ls s3://${AWS_DEFAULT_BUCKET} >/dev/null 2>&1; then
+              echo "S3 bucket exists successfully on attempt $attempt"
+              break
+            else
+              echo "S3 bucket check failed on attempt $attempt/$max_attempts"
+              if [ $attempt -eq $max_attempts ]; then
+                echo "S3 bucket creation failed after $max_attempts attempts"
+                exit 1
+              fi
+              sleep 2
+              attempt=$((attempt + 1))
+            fi
+          done
+
+          # validate upload file to s3
+          echo test > testfile.txt
+          aws s3 cp testfile.txt s3://${AWS_DEFAULT_BUCKET}/testfile.txt
+      - name: Build NIXL
+        timeout-minutes: 30
+        run: |
+          sudo ./.gitlab/build.sh $NIXL_INSTALL_DIR $NIXL_INSTALL_DIR -Ddisable_gds_backend=true
+      - name: Run AWS S3 tests
+        working-directory: ./.gitlab
+        timeout-minutes: 180
+        run: |
+          echo "Running AWS S3 Tests on bucket $AWS_DEFAULT_BUCKET"
+          ./test_plugins.sh ${NIXL_INSTALL_DIR}
+      - name: Cleanup AWS resources
+        if: always()
+        run: |
+          # Delete S3 bucket
+          aws s3 rb s3://${AWS_DEFAULT_BUCKET} --force
+
