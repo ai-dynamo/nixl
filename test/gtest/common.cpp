@@ -88,13 +88,8 @@ PortAllocator &PortAllocator::instance() {
 }
 
 bool PortAllocator::_is_port_available(uint16_t port) {
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(port),
-        .sin_addr = {
-            .s_addr = INADDR_ANY
-        }
-    };
+    struct sockaddr_in addr = { 
+        .sin_family = AF_INET, .sin_port = htons(port), .sin_addr = { .s_addr = INADDR_ANY }};
 
     const auto sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     const auto ret = bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr));
