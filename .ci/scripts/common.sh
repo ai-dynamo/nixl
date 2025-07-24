@@ -30,7 +30,9 @@ max_port_number=65535
 if [ -n "$CI_CONCURRENT_ID" ]; then
     nixl_concurrent_id=$CI_CONCURRENT_ID
 # Jenkins CI
-elif [ -z "$EXECUTOR_NUMBER" ]; then
+elif [ -n "$EXECUTOR_NUMBER" ]; then
+    nixl_concurrent_id=$EXECUTOR_NUMBER
+else
     # Fallback to random number if both CI_CONCURRENT_ID and EXECUTOR_NUMBER are not set
     nixl_concurrent_id=$((RANDOM % $(((max_port_number - min_port_number) / tcp_port_range))))
 fi
