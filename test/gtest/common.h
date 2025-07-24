@@ -78,16 +78,22 @@ private:
     PortAllocator();
     ~PortAllocator() = default;
     PortAllocator(const PortAllocator &other) = delete;
-    void operator=(const PortAllocator &) = delete;
+    void
+    operator=(const PortAllocator &) = delete;
 
 public:
-    static uint16_t next_tcp_port();
-    static PortAllocator &instance();
+    static uint16_t
+    next_tcp_port();
+    static PortAllocator &
+    instance();
 
 private:
-    static uint16_t _get_first_port(int concurrent_id);
-    static bool _is_port_available(uint16_t port);
-    static int _get_concurrent_id();
+    static uint16_t
+    _get_first_port(int concurrent_id);
+    static bool
+    _is_port_available(uint16_t port);
+    static int
+    _get_concurrent_id();
 
     std::mutex _mutex;
     uint16_t _concurrent_id;
