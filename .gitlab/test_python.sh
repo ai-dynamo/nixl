@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 
@@ -64,9 +67,12 @@ python3 test/python/prep_xfer_perf.py list
 python3 test/python/prep_xfer_perf.py array
 
 echo "==== Running python example ===="
+blocking_send_recv_port=$(get_next_tcp_port)
+
 cd examples/python
-python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port=1234&
+python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
 sleep 5
-python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port=1234
+python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
+python3 partial_md_example.py
 
 pkill etcd

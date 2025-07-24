@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 TEXT_YELLOW="\033[1;33m"
@@ -80,9 +84,11 @@ cd ${INSTALL_DIR}
 ./bin/test_plugin
 
 # Run NIXL client-server test
-./bin/nixl_test target 127.0.0.1 1234&
+nixl_test_port=$(get_next_tcp_port)
+
+./bin/nixl_test target 127.0.0.1 "$nixl_test_port"&
 sleep 1
-./bin/nixl_test initiator 127.0.0.1 1234
+./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"
