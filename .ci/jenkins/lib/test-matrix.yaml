@@ -72,7 +72,9 @@ steps:
       mkdir -p "${WS}"
       cp -a ${WORKSPACE}/. "${WS}/"
       docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} .
-    onfail: docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+    onfail: |
+      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      rm -rf "${WS}"
 
   - name: Run GPU Test Environment
     parallel: false
@@ -92,6 +94,7 @@ steps:
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      rm -rf "${WS}"
 
   - name: Build
     parallel: false
@@ -100,6 +103,7 @@ steps:
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      rm -rf "${WS}"
 
   - name: Test CPP
     parallel: false
@@ -108,6 +112,7 @@ steps:
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      rm -rf "${WS}"
 
   - name: Test Python
     parallel: false
