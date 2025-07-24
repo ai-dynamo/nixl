@@ -4,6 +4,7 @@
     "ucx_version": "${UCX_VERSION}"
   },
   "build_info": {
+    "build_target": "${BUILD_TARGET}",
     "timestamp": "${BUILD_TIMESTAMP}",
     "architecture": "${arch}",
     "base_image_name": "${BASE_IMAGE}",
