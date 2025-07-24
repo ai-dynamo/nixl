@@ -33,6 +33,7 @@ gtest_inc_dirs = include_directories('.')
 
 subdir('mocks')
 subdir('unit')
+subdir('plugins')
 
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
