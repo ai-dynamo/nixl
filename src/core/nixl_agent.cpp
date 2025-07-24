@@ -16,6 +16,8 @@
  */
 
 #include <iostream>
+#include <chrono>
+#include <iostream>
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
@@ -63,6 +65,19 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
     }
 }
 
+/*** nixlXferReqH telemetry update method, used mainly in the nixlAgent ***/
+void
+nixlXferReqH::updateRequestStats(const std::string &dbg_msg_type) {
+    const auto xfer_time = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::high_resolution_clock::now() - telemetry.startTime);
+    // If endTime needs to be recorded per Xfer, now() value here can be returned
+
+    // To be replaced with NIXL_DEBUG when full telemetry is added
+    std::cout << "[NIXL TELEMETRY]: From backend " << engine->getType() << " " << dbg_msg_type
+              << " Xfer with " << initiatorDescs->descCount() << " descriptors of total size "
+              << telemetry.totalBytes << "B in " << xfer_time.count() << "us." << std::endl;
+}
+
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 nixlAgentData::nixlAgentData(const std::string &name,
                              const nixlAgentConfig &cfg) :
@@ -81,6 +96,17 @@ nixlAgentData::nixlAgentData(const std::string &name,
         throw std::invalid_argument("Agent needs a name");
 
     memorySection = new nixlLocalSection();
+
+    const char *telemetry = std::getenv("NIXL_TELEMETRY_ENABLE");
+    if (telemetry != nullptr) {
+        if (!strcasecmp(telemetry, "y"))
+            telemetryEnabled = true;
+        else if (!strcasecmp(telemetry, "n"))
+            telemetryEnabled = false;
+        else
+            NIXL_WARN
+                << "Invalid NIXL_TELEMETRY_ENABLE environment variable, not enabling telemetry.";
+    }
 }
 
 nixlAgentData::~nixlAgentData() {
@@ -556,6 +582,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     nixl_meta_dlist_t* local_descs  = local_side->descs.at(backend);
     nixl_meta_dlist_t* remote_descs = remote_side->descs.at(backend);
+    size_t totalBytes = 0;
 
     if ((desc_count == 0) || (remote_indices.size() == 0) ||
         (desc_count != (int) remote_indices.size()))
@@ -571,6 +598,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         if ((*local_descs )[local_indices [i]].len !=
             (*remote_descs)[remote_indices[i]].len)
             return NIXL_ERR_INVALID_PARAM;
+        totalBytes += (*local_descs)[local_indices[i]].len;
     }
 
     if (extra_params && extra_params->hasNotif) {
@@ -638,12 +666,13 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         handle->targetDescs->resize(j);
     }
 
-    handle->engine      = backend;
+    handle->engine = backend;
     handle->remoteAgent = remote_side->remoteAgent;
-    handle->notifMsg    = opt_args.notifMsg;
-    handle->hasNotif    = opt_args.hasNotif;
-    handle->backendOp   = operation;
-    handle->status      = NIXL_ERR_NOT_POSTED;
+    handle->notifMsg = opt_args.notifMsg;
+    handle->hasNotif = opt_args.hasNotif;
+    handle->backendOp = operation;
+    handle->status = NIXL_ERR_NOT_POSTED;
+    handle->telemetry.totalBytes = totalBytes;
 
     ret = handle->engine->prepXfer (handle->backendOp,
                                     *handle->initiatorDescs,
@@ -681,11 +710,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     // Check the correspondence between descriptor lists
+    size_t totalBytes = 0;
     if (local_descs.descCount() != remote_descs.descCount())
         return NIXL_ERR_INVALID_PARAM;
-    for (int i=0; i<local_descs.descCount(); ++i)
+    for (int i = 0; i < local_descs.descCount(); ++i) {
         if (local_descs[i].len != remote_descs[i].len)
             return NIXL_ERR_INVALID_PARAM;
+        totalBytes += local_descs[i].len;
+    }
 
     if (!extra_params || extra_params->backends.size() == 0) {
         // Finding backends that support the corresponding memories
@@ -765,10 +797,11 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     handle->remoteAgent = remote_agent;
-    handle->backendOp   = operation;
-    handle->status      = NIXL_ERR_NOT_POSTED;
-    handle->notifMsg    = opt_args.notifMsg;
-    handle->hasNotif    = opt_args.hasNotif;
+    handle->backendOp = operation;
+    handle->status = NIXL_ERR_NOT_POSTED;
+    handle->notifMsg = opt_args.notifMsg;
+    handle->hasNotif = opt_args.hasNotif;
+    handle->telemetry.totalBytes = totalBytes;
 
     ret1 = handle->engine->prepXfer (handle->backendOp,
                                      *handle->initiatorDescs,
@@ -829,6 +862,11 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (!req_hndl)
         return NIXL_ERR_INVALID_PARAM;
 
+    // The initial checks should be fast if post succeeds, including them in the overall time
+    if (data->telemetryEnabled) {
+        req_hndl->telemetry.startTime = std::chrono::high_resolution_clock::now();
+    }
+
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // Check if the remote was invalidated before post/repost
     if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
@@ -878,6 +916,15 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                       req_hndl->backendHandle,
                                       &opt_args);
     req_hndl->status = ret;
+
+    if (data->telemetryEnabled) {
+        if (req_hndl->status == NIXL_SUCCESS)
+            req_hndl->updateRequestStats("Posted and Completed");
+        else if (req_hndl->status == NIXL_IN_PROG)
+            req_hndl->updateRequestStats("Posted");
+        // Errors should show up in debug log separately, not adding a print here
+    }
+
     return ret;
 }
 
@@ -895,6 +942,9 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
     }
+
+    if (data->telemetryEnabled && req_hndl->status == NIXL_SUCCESS)
+        req_hndl->updateRequestStats("Completed");
 
     return req_hndl->status;
 }
