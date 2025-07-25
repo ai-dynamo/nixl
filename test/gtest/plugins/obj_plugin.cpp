@@ -76,11 +76,12 @@ TEST_P(setupObjTestFixture, queryMemTest) {
     transfer.testTransfer(NIXL_WRITE);
 
     nixl_reg_dlist_t descs(OBJ_SEG);
-    descs.addDesc(nixlBlobDesc(nixlBasicDesc(),"test-obj-key-0"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-0"));
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-1"));
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-nonexistent"));
     std::vector<nixl_query_resp_t> resp;
     localBackendEngine_->queryMem(descs, resp);
+
     EXPECT_EQ(resp.size(), 3);
     EXPECT_EQ(resp[0].has_value(), true);
     EXPECT_EQ(resp[1].has_value(), true);
