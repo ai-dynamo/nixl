@@ -24,6 +24,7 @@ NIXL_BENCH_BUILD_CONTEXT_ARGS="--build-context nixlbench=$BUILD_CONTEXT/"
 DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
 UCX_SRC=""
 UCX_BUILD_CONTEXT_ARGS=""
+BUILD_TYPE="release"
 commit_id=$(git rev-parse --short HEAD)
 
 # Get latest TAG and add COMMIT_ID for dev
@@ -35,12 +36,22 @@ fi
 
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
 BASE_IMAGE_TAG=25.03-cuda12.8-devel-ubuntu24.04
-ARCH=$(uname -m)
-[ "$ARCH" = "arm64" ] && ARCH="aarch64"
-WHL_BASE=manylinux_2_39
-WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 OS="ubuntu24"
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)
+        WHL_PLATFORM="manylinux_2_39_x86_64"
+        ;;
+    aarch64)
+        WHL_PLATFORM="manylinux_2_39_aarch64"
+        ;;
+    *)
+        echo "Unsupported architecture: $ARCH"
+        exit 1
+        ;;
+esac
+
 
 get_options() {
     while :; do
@@ -60,6 +71,14 @@ get_options() {
         --base-image-tag)
             if [ "$2" ]; then
                 BASE_IMAGE_TAG=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --build-type)
+            if [ "$2" ]; then
+                BUILD_TYPE=$2
                 shift
             else
                 missing_requirement $1
@@ -111,15 +130,6 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
-        --arch)
-            if [ "$2" ]; then
-                ARCH=$2
-                WHL_PLATFORM=${WHL_BASE}_${ARCH}
-                shift
-            else
-                missing_requirement $1
-            fi
-            ;;
         --)
             shift
             break
@@ -155,11 +165,11 @@ show_build_options() {
     echo "Building NIXLBench Image"
     echo "NIXL Source: ${NIXL_SRC}"
     echo "UCX Source: ${UCX_SRC} (optional)"
+    echo "Build Type: ${BUILD_TYPE}"
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
     echo "Build Context Args: ${BUILD_CONTEXT_ARGS}"
     echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
-    echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
 }
@@ -174,7 +184,6 @@ show_help() {
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--tag tag for image]"
-    echo "  [--arch [x86_64|aarch64] to select target architecture]"
     exit 0
 }
 
@@ -192,8 +201,9 @@ get_options "$@"
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
-BUILD_ARGS+=" --build-arg ARCH=$ARCH"
+BUILD_ARGS+=" --build-arg TARGETARCH=$ARCH"
+BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 
 show_build_options
-
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain
+set -x
+docker build -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_ARGS $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain
