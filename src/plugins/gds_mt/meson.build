@@ -47,7 +47,7 @@ else
         cpp_args: ['-fPIC'],
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
         install_dir: plugin_install_dir,
-        install_rpath: '$ORIGIN:$ORIGIN/..')
+        install_rpath: '$ORIGIN/..')
     if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
             'echo "GDS_MT=' + gds_mt_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
