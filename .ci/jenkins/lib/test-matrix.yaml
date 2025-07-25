@@ -34,8 +34,8 @@ matrix:
       - x86_64
 
 env:
-  WS: ${WORKSPACE}-${BUILD_NUMBER}
-  INSTALL_DIR: ${WS}/nixl_install
+  BUILD_WORKSPACE: ${WORKSPACE}-${BUILD_NUMBER}
+  INSTALL_DIR: ${BUILD_WORKSPACE}/nixl_install
   UCX_VERSION: v1.19.x
 
 steps:
@@ -69,12 +69,12 @@ steps:
       set -x
       # Clean any leftover nixl-ci-test containers
       docker ps -q --filter "name=nixl-ci-test" | xargs -r docker rm -f
-      mkdir -p "${WS}"
-      cp -a ${WORKSPACE}/. "${WS}/"
+      mkdir -p "${BUILD_WORKSPACE}"
+      cp -a ${WORKSPACE}/. "${BUILD_WORKSPACE}/"
       docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} .
     onfail: |
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      rm -rf "${WS}"
+      rm -rf "${BUILD_WORKSPACE}"
 
   - name: Run GPU Test Environment
     parallel: false
@@ -88,40 +88,40 @@ steps:
         --gpus all \
         --device=/dev/infiniband \
         --device=/dev/gdrdrv \
-        -v ${WS}:${WS} \
-        -w ${WS} \
+        -v ${BUILD_WORKSPACE}:${BUILD_WORKSPACE} \
+        -w ${BUILD_WORKSPACE} \
         "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      rm -rf "${WS}"
+      rm -rf "${BUILD_WORKSPACE}"
 
   - name: Build
     parallel: false
     run: |
-      docker exec -w ${WS} -e UCX_VERSION=${UCX_VERSION} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/build.sh ${INSTALL_DIR}"
+      docker exec -w ${BUILD_WORKSPACE} -e UCX_VERSION=${UCX_VERSION} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/build.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      rm -rf "${WS}"
+      rm -rf "${BUILD_WORKSPACE}"
 
   - name: Test CPP
     parallel: false
     run: |
-      docker exec -w ${WS} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
+      docker exec -w ${BUILD_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      rm -rf "${WS}"
+      rm -rf "${BUILD_WORKSPACE}"
 
   - name: Test Python
     parallel: false
     run: |
-      docker exec -w ${WS} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
+      docker exec -w ${BUILD_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
     always: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      rm -rf "${WS}"
+      rm -rf "${BUILD_WORKSPACE}"
 
 # once this fix is merged we can use the following to stop/kill/rm the container instead of the cleanup command in each step
 # https://github.com/Mellanox/ci-demo/pull/111
