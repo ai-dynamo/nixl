@@ -170,13 +170,15 @@ nixl_status_t
 nixlObjEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const {
     std::vector<nixl_blob_t> metadata;
     metadata.reserve(descs.descCount());
-    for (auto &desc : descs)
-        metadata.emplace_back(desc.metaInfo);
+    resp.reserve(descs.descCount());
 
     try {
-        for (const auto &m : metadata)
-            resp.push_back(s3Client_->checkObjectExists(m) ? nixl_query_resp_t{nixl_b_params_t{}} :
-                                                             std::nullopt);
+        for (auto &desc : descs) {
+            auto &meta = metadata.emplace_back(desc.metaInfo);
+            resp.emplace_back(s3Client_->checkObjectExists(meta) ?
+                                  nixl_query_resp_t{nixl_b_params_t{}} :
+                                  std::nullopt);
+        }
     }
     catch (const std::runtime_error &e) {
         NIXL_ERROR << "Failed to query memory: " << e.what();
