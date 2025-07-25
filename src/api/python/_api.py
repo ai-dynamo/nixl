@@ -284,6 +284,28 @@ class nixl_agent:
         self.agent.deregisterMem(dereg_list, handle_list)
 
     """
+    @brief Query information about memory/storage for a specific backend.
+
+    @param reg_list List of either memory regions, tensors, or nixlRegDList to query.
+    @param backend Backend name for querying.
+    @param mem_type Optional memory type, necessary if specifying a list of memory regions.
+    @return List of query results where each item is either None if not found, or a dictionary with the info
+    """
+
+    def query_memory(
+        self, reg_list, backend: str, mem_type: Optional[str] = None
+    ) -> list[Optional[dict[str, str]]]:
+        reg_descs = self.get_reg_descs(reg_list, mem_type, False)
+
+        # Get the backend handle
+        if backend not in self.backends:
+            raise ValueError(
+                f"Backend '{backend}' not found. Available backends: {list(self.backends.keys())}"
+            )
+
+        return self.agent.queryMem(reg_descs, self.backends[backend])
+
+    """
     @brief  Proactively establish a connection with a remote agent,
             which will reduce the time spent in the first transfer between the two agents.
             NIXL will establish the connection for all the backends that talk to that remote
