@@ -173,7 +173,7 @@
             properties-content: |
               jjb_proj={jjb_proj}-test
     description: Do NOT edit this job through the Web GUI !
-    concurrent: true
+    concurrent: false
     sandbox: true
     # Test job parameters
     parameters:
