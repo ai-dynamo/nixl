@@ -29,11 +29,11 @@
 
 #define NUM_CQES 1024
 
-long nixlHf3fsEngine::page_size;
+long nixlHf3fsEngine::page_size = sysconf(_SC_PAGESIZE);
 
-nixlHf3fsEngine::nixlHf3fsEngine (const nixlBackendInitParams* init_params)
-    : nixlBackendEngine (init_params)
-{
+nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
+    : nixlBackendEngine(init_params),
+      mem_config(NIXL_HF3FS_MEM_CONFIG_AUTO) {
     hf3fs_utils = new hf3fsUtil();
 
     this->initErr = false;
@@ -42,8 +42,6 @@ nixlHf3fsEngine::nixlHf3fsEngine (const nixlBackendInitParams* init_params)
         this->initErr = true;
         return;
     }
-
-    mem_config = NIXL_HF3FS_MEM_CONFIG_AUTO;
 
     // Get mount point from parameters if available
     std::string mount_point = "/mnt/3fs/"; // default
@@ -74,7 +72,6 @@ nixlHf3fsEngine::nixlHf3fsEngine (const nixlBackendInitParams* init_params)
 
     hf3fs_utils->mount_point = mount_point_cstr;
 
-    page_size = sysconf(_SC_PAGESIZE);
     NIXL_DEBUG << "HF3FS: Page size: " << page_size;
 }
 
@@ -140,7 +137,6 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
         out = (nixlBackendMD *)md;
         break;
     }
-    case VRAM_SEG:
     default:
         HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - type not supported");
     }

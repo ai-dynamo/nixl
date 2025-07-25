@@ -23,6 +23,13 @@ ret1 = A1.createBackend("HF3FS", init1, hf3fs);
 ...
 ```
 
+### Backend parameters
+Paramaters accepted by the HF3FS plugin during createBackend()
+- mem_config: Indicate if the plugin should create a shared memory on the user-provided memory ["dram", "dram_zc", "auto"] (default: "auto")
+	- dram_zc: always create shared memory and return failure if shared memory creation fails.
+	- dram: Never create shared memory
+	- auto: the plugin will try to create a shared memory and fallback to non shared memory if fails.
+
 ## Performance tuning
 To get the best performance, please provide a memory that is page-aligned with sized the multiple of page size to `nixlAgent->registerMem()`.
 

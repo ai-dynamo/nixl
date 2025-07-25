@@ -331,7 +331,6 @@ int main(int argc, char *argv[])
         }
         dram_addr.emplace_back(ptr);
         if (!filled_after_mem_register) {
-            std::cout << "before" << std::endl;
             fill_test_pattern(dram_addr.back().get(), transfer_size);
         }
 
@@ -402,7 +401,6 @@ int main(int argc, char *argv[])
     printProgress(float(++i) / 2);
 
     if (filled_after_mem_register) {
-        std::cout << "after" << std::endl;
         for (i = 0; i < num_transfers; ++i) {
             fill_test_pattern(dram_addr[i].get(), transfer_size);
         }

@@ -34,13 +34,13 @@ public:
     nixlHf3fsShmException(const std::string &message) : std::runtime_error(message) {}
 };
 
-enum nixlHf3fsMemType {
+enum nixl_hf3fs_mem_type {
     NIXL_HF3FS_MEM_TYPE_FILE = 0,
     NIXL_HF3FS_MEM_TYPE_DRAM = 1,
     NIXL_HF3FS_MEM_TYPE_DRAM_ZC = 2,
 };
 
-enum nixlHf3fsMemConfig {
+enum nixl_hf3fs_mem_config {
     NIXL_HF3FS_MEM_CONFIG_AUTO = 0,
     NIXL_HF3FS_MEM_CONFIG_DRAM = 1,
     NIXL_HF3FS_MEM_CONFIG_DRAM_ZC = 2,
@@ -48,9 +48,9 @@ enum nixlHf3fsMemConfig {
 
 class nixlHf3fsMetadata : public nixlBackendMD {
     public:
-        nixlHf3fsMemType type;
+        nixl_hf3fs_mem_type type;
 
-        nixlHf3fsMetadata(nixlHf3fsMemType type) : nixlBackendMD(true), type(type) {}
+        nixlHf3fsMetadata(nixl_hf3fs_mem_type type) : nixlBackendMD(true), type(type) {}
 };
 
 class nixlHf3fsFileMetadata : public nixlHf3fsMetadata {
@@ -85,7 +85,7 @@ class nixlHf3fsIO {
         size_t size = 0; // Size of the buffer
         bool is_read = false; // Whether this is a read operation
         size_t offset;    // Offset in the file
-        nixlHf3fsMemType mem_type;
+        nixl_hf3fs_mem_type mem_type;
 
         nixlHf3fsIO() = default;
 };
@@ -116,7 +116,7 @@ class nixlHf3fsEngine : public nixlBackendEngine {
     private:
         hf3fsUtil *hf3fs_utils;
         std::unordered_set<int> hf3fs_file_set;
-        nixlHf3fsMemConfig mem_config;
+        nixl_hf3fs_mem_config mem_config;
         static long page_size;
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
