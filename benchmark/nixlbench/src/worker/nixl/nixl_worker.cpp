@@ -108,6 +108,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
+        backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
+
         // No need to set device_list if all is specified
         // fallback to backend preference
         if (devices[0] != "all" && devices.size() >= 1) {
