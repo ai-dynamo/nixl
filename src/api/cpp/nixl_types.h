@@ -19,8 +19,8 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include "absl/strings/numbers.h"
 #include <optional>
-
 
 /*** Forward declarations ***/
 class nixlSerDes;
@@ -112,6 +112,23 @@ using nixl_mem_list_t = std::vector<nixl_mem_t>;
  *        to hold nixl_b_params_t .
  */
 using nixl_b_params_t = std::unordered_map<std::string, std::string>;
+
+template<typename T>
+T
+nixl_b_params_get(const nixl_b_params_t *customParams, const std::string &key, T defaultValue) {
+    if (!customParams) {
+        return defaultValue;
+    }
+
+    auto it = customParams->find(key);
+    if (it == customParams->end()) {
+        return defaultValue;
+    }
+
+    T result;
+    if constexpr (std::is_same_v<T, int>)
+        return absl::SimpleAtoi(it->second, &result) ? result : defaultValue;
+}
 
 /**
  * @brief A typedef for a  std::unordered_map<std::string, std::vector<nixl_blob_t>>
