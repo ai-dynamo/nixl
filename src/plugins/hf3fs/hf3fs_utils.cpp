@@ -49,12 +49,13 @@ void hf3fsUtil::deregisterFileHandle(int fd)
     hf3fs_dereg_fd(fd);
 }
 
-nixl_status_t hf3fsUtil::wrapIOV(struct hf3fs_iov *iov, void *addr, size_t size, size_t block_size)
-{
-    // Create a dummy ID - you might want a more sophisticated approach
-    uint8_t dummy_id[16] = {0};
-
-    auto ret = hf3fs_iovwrap(iov, addr, dummy_id, this->mount_point.c_str(), size, 0, -1);
+nixl_status_t
+hf3fsUtil::wrapIOV(struct hf3fs_iov *iov,
+                   void *addr,
+                   size_t size,
+                   size_t block_size,
+                   const uint8_t *id) {
+    auto ret = hf3fs_iovwrap(iov, addr, id, this->mount_point.c_str(), size, block_size, -1);
 
     if (ret < 0) {
         HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
@@ -67,7 +68,7 @@ nixl_status_t hf3fsUtil::wrapIOV(struct hf3fs_iov *iov, void *addr, size_t size,
 
 nixl_status_t hf3fsUtil::createIOR(struct hf3fs_ior *ior, int num_ios, bool is_read)
 {
-    auto ret = hf3fs_iorcreate(ior, this->mount_point.c_str(), num_ios, is_read, num_ios, -1);
+    auto ret = hf3fs_iorcreate(ior, this->mount_point.c_str(), num_ios, is_read, 0, -1);
     if (ret < 0) {
         HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
             absl::StrFormat("Error creating IOR, error: %d (errno: %d - %s)",
@@ -77,9 +78,8 @@ nixl_status_t hf3fsUtil::createIOR(struct hf3fs_ior *ior, int num_ios, bool is_r
     return NIXL_SUCCESS;
 }
 
-nixl_status_t hf3fsUtil::createIOV(struct hf3fs_iov *iov, void *addr, size_t size,
-                                   size_t block_size)
-{
+nixl_status_t
+hf3fsUtil::createIOV(struct hf3fs_iov *iov, size_t size, size_t block_size) {
     auto ret = hf3fs_iovcreate(iov, this->mount_point.c_str(), size, block_size, -1);
     if (ret < 0) {
         HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,

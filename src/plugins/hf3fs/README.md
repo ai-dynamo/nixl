@@ -23,3 +23,17 @@ ret1 = A1.createBackend("HF3FS", init1, hf3fs);
 ...
 ```
 
+### Backend parameters
+Paramaters accepted by the HF3FS plugin during createBackend()
+- mem_config: Indicate if the plugin should create a shared memory on the user-provided memory ["dram", "dram_zc", "auto"] (default: "auto")
+	- dram_zc: always create shared memory and return failure if shared memory creation fails.
+	- dram: Never create shared memory
+	- auto: the plugin will try to create a shared memory and fallback to non shared memory if fails.
+
+## Performance tuning
+To get the best performance, please provide a memory that is page-aligned with sized the multiple of page size to `nixlAgent->registerMem()`.
+
+This plugin will try to shared the user provided memory direcrly with the 3FS backend process using mmap() to reduce data copy.
+mmap() requires the memory to be page-aligned, and size has to be multiple of page size.
+
+If the user-provided memory could not be shared, the plugin will allocate it's own memory to shared with 3FS backend process and copy the data between user-provided memory and the shared memory.
