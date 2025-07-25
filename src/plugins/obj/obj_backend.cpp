@@ -21,6 +21,7 @@
 #include <absl/strings/str_format.h>
 #include <memory>
 #include <future>
+#include <optional>
 #include <vector>
 #include <chrono>
 #include <algorithm>
@@ -160,6 +161,24 @@ nixlObjEngine::deregisterMem(nixlBackendMD *meta) {
     if (obj_md) {
         std::unique_ptr<nixlObjMetadata> obj_md_ptr = std::unique_ptr<nixlObjMetadata>(obj_md);
         devIdToObjKey_.erase(obj_md->devId);
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlObjEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const {
+    resp.reserve(descs.descCount());
+
+    try {
+        for (auto &desc : descs)
+            resp.emplace_back(s3Client_->checkObjectExists(desc.metaInfo) ?
+                                  nixl_query_resp_t{nixl_b_params_t{}} :
+                                  std::nullopt);
+    }
+    catch (const std::runtime_error &e) {
+        NIXL_ERROR << "Failed to query memory: " << e.what();
+        return NIXL_ERR_BACKEND;
     }
 
     return NIXL_SUCCESS;
