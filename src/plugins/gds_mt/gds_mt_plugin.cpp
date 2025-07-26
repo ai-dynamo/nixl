@@ -20,68 +20,15 @@
 #include "common/nixl_log.h"
 #include <exception>
 
-static const char *PLUGIN_NAME = "GDS_MT";
-static const char *PLUGIN_VERSION = "0.1.0";
-
-static nixlBackendEngine *
-create_gds_mt_engine (const nixlBackendInitParams *init_params) {
-    try {
-        return new nixlGdsMtEngine (init_params);
+namespace {
+    nixl_b_params_t get_gds_mt_options() {
+        return {};
     }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "GDS_MT: Failed to create engine: " << e.what();
-        return nullptr;
+
+    nixl_mem_list_t get_gds_mt_mems() {
+        return {DRAM_SEG, VRAM_SEG, FILE_SEG};
     }
 }
 
-static void
-destroy_gds_mt_engine (nixlBackendEngine *engine) {
-    delete engine;
-}
-
-static const char *
-get_plugin_name() {
-    return PLUGIN_NAME;
-}
-
-static const char *
-get_plugin_version() {
-    return PLUGIN_VERSION;
-}
-
-static nixl_b_params_t
-get_backend_options() {
-    return {};
-}
-
-static nixl_mem_list_t
-get_backend_mems() {
-    return {DRAM_SEG, VRAM_SEG, FILE_SEG};
-}
-
-static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
-                                   create_gds_mt_engine,
-                                   destroy_gds_mt_engine,
-                                   get_plugin_name,
-                                   get_plugin_version,
-                                   get_backend_options,
-                                   get_backend_mems};
-
-#ifdef STATIC_PLUGIN_GDS_MT
-
-nixlBackendPlugin *
-createStaticGdsMtPlugin() {
-    return &plugin;
-}
-
-#else
-
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return &plugin;
-}
-
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
-
-#endif
+// Define the complete GDS_MT plugin using the template
+NIXL_DEFINE_PLUGIN(GDS_MT, nixlGdsMtEngine, "0.1.0", get_gds_mt_options, get_gds_mt_mems)

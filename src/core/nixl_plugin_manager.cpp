@@ -390,43 +390,46 @@ const std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
     return static_plugins_;
 }
 
+#define REGISTER_STATIC_PLUGIN(name) \
+    extern nixlBackendPlugin* createStatic##name##Plugin(); \
+    registerStaticPlugin(#name, createStatic##name##Plugin);
+
 void nixlPluginManager::registerBuiltinPlugins() {
 #ifdef STATIC_PLUGIN_UCX
-        extern nixlBackendPlugin* createStaticUcxPlugin();
-        registerStaticPlugin("UCX", createStaticUcxPlugin);
+        REGISTER_STATIC_PLUGIN(UCX)
 #endif //STATIC_PLUGIN_UCX
 
 #ifdef STATIC_PLUGIN_UCX_MO
-        extern nixlBackendPlugin* createStaticUcxMoPlugin();
-        registerStaticPlugin("UCX_MO", createStaticUcxMoPlugin);
+        REGISTER_STATIC_PLUGIN(UCX_MO)
 #endif // STATIC_PLUGIN_UCX_MO
 
 #ifdef STATIC_PLUGIN_GDS
 #ifndef DISABLE_GDS_BACKEND
-        extern nixlBackendPlugin* createStaticGdsPlugin();
-        registerStaticPlugin("GDS", createStaticGdsPlugin);
+        REGISTER_STATIC_PLUGIN(GDS)
 #endif // DISABLE_GDS_BACKEND
 #endif // STATIC_PLUGIN_GDS
 
+#ifdef STATIC_PLUGIN_GDS_MT
+        REGISTER_STATIC_PLUGIN(GDS_MT)
+#endif // STATIC_PLUGIN_GDS_MT
+
 #ifdef STATIC_PLUGIN_POSIX
-        extern nixlBackendPlugin* createStaticPosixPlugin();
-        registerStaticPlugin("POSIX", createStaticPosixPlugin);
+        REGISTER_STATIC_PLUGIN(POSIX)
 #endif // STATIC_PLUGIN_POSIX
 
 #ifdef STATIC_PLUGIN_GPUNETIO
-#ifndef DISABLE_GPUNETIO_BACKEND
-        extern nixlBackendPlugin* createStaticGpunetioPlugin();
-        registerStaticPlugin("GPUNETIO", createStaticGpunetioPlugin);
-#endif // DISABLE_GPUNETIO_BACKEND
+        REGISTER_STATIC_PLUGIN(GPUNETIO)
 #endif // STATIC_PLUGIN_GPUNETIO
 
 #ifdef STATIC_PLUGIN_OBJ
-        extern nixlBackendPlugin *createStaticObjPlugin();
-        registerStaticPlugin ("OBJ", createStaticObjPlugin);
+        REGISTER_STATIC_PLUGIN(OBJ)
 #endif // STATIC_PLUGIN_OBJ
 
 #ifdef STATIC_PLUGIN_MOONCAKE
-        extern nixlBackendPlugin *createStaticMooncakePlugin();
-        registerStaticPlugin("MOONCAKE", createStaticMooncakePlugin);
+        REGISTER_STATIC_PLUGIN(MOONCAKE)
 #endif // STATIC_PLUGIN_MOONCAKE
+
+#ifdef STATIC_PLUGIN_HF3FS
+        REGISTER_STATIC_PLUGIN(HF3FS)
+#endif // STATIC_PLUGIN_HF3FS
 }
