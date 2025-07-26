@@ -56,6 +56,7 @@ struct nixl_capi_xfer_dlist_handle_s;
 struct nixl_capi_reg_dlist_s;
 struct nixl_capi_xfer_req_s;
 struct nixl_capi_notif_map_s;
+struct nixl_capi_query_resp_list_s;
 
 // Opaque handle types for C++ objects
 typedef struct nixl_capi_agent_s* nixl_capi_agent_t;
@@ -70,6 +71,7 @@ typedef struct nixl_capi_xfer_dlist_handle_s* nixl_capi_xfer_dlist_handle_t;
 typedef struct nixl_capi_reg_dlist_s* nixl_capi_reg_dlist_t;
 typedef struct nixl_capi_xfer_req_s* nixl_capi_xfer_req_t;
 typedef struct nixl_capi_notif_map_s* nixl_capi_notif_map_t;
+typedef struct nixl_capi_query_resp_list_s *nixl_capi_query_resp_list_t;
 
 // Transfer request functions
 typedef enum {
@@ -231,8 +233,13 @@ nixl_capi_status_t nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nix
 nixl_capi_status_t nixl_capi_destroy_reg_dlist(nixl_capi_reg_dlist_t dlist);
 nixl_capi_status_t nixl_capi_reg_dlist_get_type(nixl_capi_reg_dlist_t dlist, nixl_capi_mem_type_t* mem_type);
 nixl_capi_status_t nixl_capi_reg_dlist_verify_sorted(nixl_capi_reg_dlist_t dlist, bool *is_sorted);
-nixl_capi_status_t nixl_capi_reg_dlist_add_desc(
-    nixl_capi_reg_dlist_t dlist, uintptr_t addr, size_t len, uint64_t dev_id);
+nixl_capi_status_t
+nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist,
+                             uintptr_t addr,
+                             size_t len,
+                             uint64_t dev_id,
+                             const void *metadata,
+                             size_t metadata_len);
 nixl_capi_status_t nixl_capi_reg_dlist_len(nixl_capi_reg_dlist_t dlist, size_t* len);
 nixl_capi_status_t nixl_capi_reg_dlist_desc_count(nixl_capi_reg_dlist_t dlist, size_t* count);
 nixl_capi_status_t nixl_capi_reg_dlist_is_empty(nixl_capi_reg_dlist_t dlist, bool* is_empty);
@@ -249,6 +256,29 @@ nixl_capi_status_t nixl_capi_notif_map_get_notifs_size(nixl_capi_notif_map_t map
 nixl_capi_status_t nixl_capi_notif_map_get_notif(
     nixl_capi_notif_map_t map, const char* agent_name, size_t index, const void** data, size_t* len);
 nixl_capi_status_t nixl_capi_notif_map_clear(nixl_capi_notif_map_t map);
+
+// Query response list functions
+nixl_capi_status_t
+nixl_capi_create_query_resp_list(nixl_capi_query_resp_list_t *list);
+nixl_capi_status_t
+nixl_capi_destroy_query_resp_list(nixl_capi_query_resp_list_t list);
+nixl_capi_status_t
+nixl_capi_query_resp_list_size(nixl_capi_query_resp_list_t list, size_t *size);
+nixl_capi_status_t
+nixl_capi_query_resp_list_has_value(nixl_capi_query_resp_list_t list,
+                                    size_t index,
+                                    bool *has_value);
+nixl_capi_status_t
+nixl_capi_query_resp_list_get_params(nixl_capi_query_resp_list_t list,
+                                     size_t index,
+                                     nixl_capi_params_t *params);
+
+// Query memory function
+nixl_capi_status_t
+nixl_capi_query_mem(nixl_capi_agent_t agent,
+                    nixl_capi_reg_dlist_t descs,
+                    nixl_capi_query_resp_list_t resp,
+                    nixl_capi_opt_args_t opt_args);
 
 #ifdef __cplusplus
 }

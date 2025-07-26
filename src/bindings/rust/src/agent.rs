@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::descriptors::{QueryResponseList, RegDescList};
 
 /// A NIXL agent that can create backends and manage memory
 #[derive(Debug, Clone)]
@@ -241,6 +242,38 @@ impl Agent {
             dev_id: descriptor.device_id(),
             mem_type: descriptor.mem_type(),
         })
+    }
+
+    /// Query information about memory/storage
+    ///
+    /// # Arguments
+    /// * `descs` - Registration descriptor list to query
+    /// * `opt_args` - Optional arguments specifying backends
+    ///
+    /// # Returns
+    /// A list of query responses, where each response may contain parameters
+    /// describing the memory/storage characteristics.
+    pub fn query_mem(
+        &self,
+        descs: &RegDescList,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<QueryResponseList, NixlError> {
+        let resp = QueryResponseList::new()?;
+
+        let status = unsafe {
+            nixl_capi_query_mem(
+                self.inner.write().unwrap().handle.as_ptr(),
+                descs.handle(),
+                resp.handle(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(resp),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
     }
 
     /// Gets the local metadata for this agent as a byte array
