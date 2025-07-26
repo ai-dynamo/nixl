@@ -14,17 +14,17 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /SECURITY.md @ai-dynamo/Devops
 
 # Bindings
-/src/bindings/rust @roiedanino @gleon99
+/src/bindings/rust @ai-dynamo/nixl-maintainers @roiedanino @gleon99
 
 # UCX Plugins
-/src/plugins/ucx* @brminich @yosefe @gleon99
-/src/utils/ucx @brminich @yosefe @gleon99
+/src/plugins/ucx* @ai-dynamo/nixl-maintainers @brminich @yosefe @gleon99
+/src/utils/ucx @ai-dynamo/nixl-maintainers @brminich @yosefe @gleon99
 
 # Storage Plugins
-/src/plugins/posix @w1ldptr @barneuman @etoledano
-/src/plugins/hf3fs @w1ldptr @barneuman @etoledano
-/src/plugins/cuda_gds @w1ldptr @barneuman @etoledano
-/src/plugins/obj @w1ldptr @barneuman @etoledano
+/src/plugins/posix @ai-dynamo/nixl-maintainers @w1ldptr @barneuman @etoledano
+/src/plugins/hf3fs @ai-dynamo/nixl-maintainers @w1ldptr @barneuman @etoledano
+/src/plugins/cuda_gds @ai-dynamo/nixl-maintainers @w1ldptr @barneuman @etoledano
+/src/plugins/obj @ai-dynamo/nixl-maintainers @w1ldptr @barneuman @etoledano
 
 # Benchmarks
-/benchmark/nixlbench @aranadive @ovidiusm @brminich
+/benchmark @ai-dynamo/nixl-maintainers @aranadive @ovidiusm @brminich
