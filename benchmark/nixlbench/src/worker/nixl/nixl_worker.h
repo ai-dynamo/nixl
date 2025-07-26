@@ -65,6 +65,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
 #endif
         std::optional<xferBenchIOV> initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id);
         void cleanupBasicDescFile(xferBenchIOV &basic_desc);
+        std::optional<xferBenchIOV>
+        initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
+        void
+        cleanupBasicDescObj(xferBenchIOV &basic_desc);
 };
 
 #endif // __NIXL_WORKER_H

@@ -64,6 +64,10 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else ech
         doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all \
         doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 
+# Install AWS CLI
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws
+
 # --- Stage 2a: Represents using UCX from the base image ---
 FROM os_setup_stage AS ucx_upstream_image
 RUN echo "INFO: Using UCX from base image (UCX=${UCX})."
@@ -113,6 +117,15 @@ RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY --from=nixl . /workspace/nixl
 COPY --from=nixlbench . /workspace/nixlbench
+
+# Install AWS SDK C++ dependencies and build
+RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev
+RUN git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+    mkdir sdk_build && \
+    cd sdk_build && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    make -j && \
+    make install
 
 WORKDIR /workspace/nixl
 
