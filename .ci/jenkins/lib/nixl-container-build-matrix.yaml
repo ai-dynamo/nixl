@@ -1,0 +1,161 @@
+# NIXL Container Build Configuration
+# Builds and pushes NIXL and NIXLBench containers with configurable NIXL/UCX versions
+
+---
+job: nixl-ci-container-builder
+
+# Build settings
+failFast: false
+timeout_minutes: 240
+
+# Infrastructure
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 16Gi, cpu: 8000m}"
+  requests: "{memory: 8Gi, cpu: 4000m}"
+
+credentials:
+  - credentialsId: 'svc-nixl-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USERNAME'
+    passwordVariable: 'ARTIFACTORY_PASSWORD'
+
+runs_on_dockers:
+  - name: "podman-v5.0.2"
+    url: "quay.io/podman/stable:v5.0.2"
+    privileged: true
+
+# Build matrix
+matrix:
+  axes:
+    arch:
+      - x86_64
+      - aarch64
+
+# Configuration
+env:
+  REGISTRY_HOST: "urm.nvidia.com"
+  REGISTRY_BASE_REPO: "sw-nbu-swx-nixl-docker-local"
+  REGISTRY_PATH: "verification"
+  LOCAL_TAG: "nixl-ci"
+  MAIL_FROM: "jenkins@nvidia.com"
+  NPROC: "16"
+
+taskName: "${BUILD_TARGET}/${arch}/${axis_index}"
+
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    def suffix = params.TAG_SUFFIX ? "-${params.TAG_SUFFIX}" : ""
+    def buildName = params.BUILD_TARGET
+    currentBuild.displayName += "-${buildName}-${params.NIXL_VERSION}-${params.UCX_VERSION}${suffix}"
+    env.ENABLE_NIXL_BUILD = params.BUILD_TARGET == 'nixl' ? 'true' : 'false'
+    env.ENABLE_NIXL_BENCH_BUILD = params.BUILD_TARGET == 'nixlbench' ? 'true' : 'false'
+    echo "ENABLE_NIXL_BUILD: ${env.ENABLE_NIXL_BUILD}"
+    echo "ENABLE_NIXL_BENCH_BUILD: ${env.ENABLE_NIXL_BENCH_BUILD}"
+    echo "BUILD_TARGET: ${params.BUILD_TARGET}"
+
+# Build pipeline
+steps:
+  - name: Prepare
+    parallel: false
+    run: |
+      # Setup podman and dependencies
+      rm -f /etc/containers/storage.conf
+      podman system reset -f || true
+      ln -sfT $(type -p podman) /usr/bin/docker
+      yum install -y git gettext
+
+  - name: Build nixlbench Image
+    enable: ${ENABLE_NIXL_BENCH_BUILD}
+    run: |
+      # Clone UCX source for nixlbench
+      git clone https://github.com/openucx/ucx.git ucx-src
+      git -C ucx-src checkout "${UCX_VERSION}"
+
+      benchmark/nixlbench/contrib/build.sh \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_IMAGE_TAG}" \
+        --tag "${LOCAL_TAG}" \
+        --arch "${arch}" \
+        --no-cache \
+        --nixl $WORKSPACE \
+        --ucx $WORKSPACE/ucx-src
+
+  - name: Build nixl Image
+    enable: ${ENABLE_NIXL_BUILD}
+    run: |
+      ucx_ref=""
+      if [ -n "${UCX_VERSION}" ]; then
+        ucx_ref="--ucx-upstream ${UCX_VERSION}"
+      fi
+      contrib/build-container.sh \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_IMAGE_TAG}" \
+        --tag "${LOCAL_TAG}" \
+        --arch "${arch}" \
+        --no-cache \
+        "${ucx_ref}"
+
+  - name: Push Image to Registry
+    parallel: false
+    credentialsId: 'svc-nixl-artifactory-token'
+    run: |
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+
+      NIXL_SHA=$(git rev-parse --short=8 HEAD)
+      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_SHA}-ucx-${UCX_VERSION}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+      IMAGE_FULL_TAG="${REGISTRY_HOST}/${REGISTRY_BASE_REPO}/${REGISTRY_PATH}/${BUILD_TARGET}:${TAG_NAME}"
+      # ARTIFACTORY_API="${REGISTRY_HOST}/artifactory/api/storage/${REGISTRY_BASE_REPO}/${REGISTRY_PATH}/${TAG_NAME}"
+
+      # IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_SHA};UCX_VERSION=${UCX_VERSION};arch=${arch};"
+      # IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};"
+      # IMAGE_PROPERTIES+="BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
+      # IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
+
+      # echo "Pushing image to ${IMAGE_FULL_TAG}"
+      docker tag "${LOCAL_TAG}" "${IMAGE_FULL_TAG}"
+      docker push "${IMAGE_FULL_TAG}"
+
+      # curl -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
+      #   "?properties=${IMAGE_PROPERTIES}"
+
+      # Check if latest tag should be updated
+      # if "${UPDATE_LATEST}" ; then
+      #   docker tag "${LOCAL_TAG}" "${IMAGE_FULL_TAG}-latest"
+      #   docker push "${IMAGE_FULL_TAG}-latest"
+      #   curl -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
+      #   "${ARTIFACTORY_API}/${TAG_NAME}-latest?properties=${IMAGE_PROPERTIES}"
+      # fi
+
+pipeline_stop:
+  shell: action
+  module: groovy
+  run: |
+    if (params.MAIL_TO) {
+        def jobStatus = currentBuild.result ?: 'SUCCESS'
+        def statusColor = jobStatus == 'SUCCESS' ? 'green' : 'red'
+
+        def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
+
+        mail(
+            from: env.MAIL_FROM,
+            to: params.MAIL_TO,
+            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
+            mimeType: 'text/html',
+            body: """
+                <p>Started by: <b>${userName}</b></p>
+                <p>Status: <span style="color: ${statusColor};"><b>${jobStatus}</b></span></p>
+                <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
+                <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+                <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
+                <p>Build Target: <b>${params.BUILD_TARGET}</b></p>
+                <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
+                <p>UCX Version: <b>${params.UCX_VERSION}</b></p>
+                <p>Base Image: <b>${params.BASE_IMAGE}:${params.BASE_IMAGE_TAG}</b></p>
+                <p>Architectures: <b>x86_64, aarch64</b></p>
+                ${params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
+            """
+        )
+    }
