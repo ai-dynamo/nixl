@@ -19,6 +19,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <optional>
 
 
 /*** Forward declarations ***/
@@ -143,6 +144,14 @@ extern const std::string default_partial_metadata_label;
 enum class nixl_cost_t {
     ANALYTICAL_BACKEND = 0, // Analytical backend cost estimate
 };
+
+/**
+ * @brief A typedef for std::optional<nixl_b_params_t> for querying memory results
+ *        Validity of a nixl_query_resp_t can be checked by has_value() method,
+ *        and if true, the dictionary can be accessed by value() method.
+ */
+using nixl_query_resp_t = std::optional<nixl_b_params_t>;
+
 
 /**
  * @struct nixlAgentOptionalArgs

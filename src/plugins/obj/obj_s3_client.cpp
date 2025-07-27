@@ -24,7 +24,10 @@
 #include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/PutObjectResult.h>
 #include <aws/s3/model/GetObjectResult.h>
+#include <aws/s3/model/HeadObjectRequest.h>
+#include <aws/s3/model/HeadObjectResult.h>
 #include <aws/core/http/Scheme.h>
+#include <aws/core/http/HttpResponse.h>
 #include <aws/core/auth/AWSCredentials.h>
 #include <aws/core/client/ClientConfiguration.h>
 #include <aws/core/utils/Outcome.h>
@@ -232,4 +235,19 @@ awsS3Client::getObjectAsync(std::string_view key,
             callback(outcome.IsSuccess());
         },
         nullptr);
+}
+
+bool
+awsS3Client::checkObjectExists(std::string_view key) {
+    Aws::S3::Model::HeadObjectRequest request;
+    request.WithBucket(bucketName_).WithKey(Aws::String(key));
+
+    auto outcome = s3Client_->HeadObject(request);
+    if (outcome.IsSuccess())
+        return true;
+    else if (outcome.GetError().GetResponseCode() == Aws::Http::HttpResponseCode::NOT_FOUND)
+        return false;
+    else
+        throw std::runtime_error("Failed to check if object exists: " +
+                                 outcome.GetError().GetMessage());
 }
