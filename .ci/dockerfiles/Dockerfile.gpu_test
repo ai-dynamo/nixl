@@ -58,8 +58,7 @@ RUN mkdir -p /etc/sudoers.d && \
     chown root:root /etc/sudoers.d/${_LOGIN}
 
 # Copy workspace into container (workaround for files disappearing from workspace)
-COPY . /docker_workspace
-RUN chown -R "${_UID}":"${_GID}" /docker_workspace
+COPY --chown="${_UID}":"${_GID}" . /docker_workspace
 
 # Set working directory
 WORKDIR ${_HOME}
