@@ -57,6 +57,10 @@ RUN mkdir -p /etc/sudoers.d && \
     chmod 440 /etc/sudoers.d/${_LOGIN} && \
     chown root:root /etc/sudoers.d/${_LOGIN}
 
+# Copy workspace into container
+COPY . /docker_workspace
+RUN chown -R "${_UID}":"${_GID}" /docker_workspace
+
 # Set working directory
 WORKDIR ${_HOME}
 
