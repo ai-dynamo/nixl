@@ -390,8 +390,8 @@ const std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
     return static_plugins_;
 }
 
-#define REGISTER_STATIC_PLUGIN(name) \
-    extern nixlBackendPlugin* createStatic##name##Plugin(); \
+#define REGISTER_STATIC_PLUGIN(name)                        \
+    extern nixlBackendPlugin *createStatic##name##Plugin(); \
     registerStaticPlugin(#name, createStatic##name##Plugin);
 
 void nixlPluginManager::registerBuiltinPlugins() {

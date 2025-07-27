@@ -21,17 +21,19 @@
 #include "common/nixl_log.h"
 
 namespace {
-    nixl_b_params_t get_obj_options() {
-        nixl_b_params_t params;
-        params["access_key"] = "AWS access key ID (required)";
-        params["secret_key"] = "AWS secret access key (required)";
-        params["session_token"] = "AWS session token (optional)";
-        return params;
-    }
+nixl_b_params_t
+get_obj_options() {
+    nixl_b_params_t params;
+    params["access_key"] = "AWS access key ID (required)";
+    params["secret_key"] = "AWS secret access key (required)";
+    params["session_token"] = "AWS session token (optional)";
+    return params;
+}
 
-    nixl_mem_list_t get_obj_mems() {
-        return {DRAM_SEG, OBJ_SEG};
-    }
+nixl_mem_list_t
+get_obj_mems() {
+    return {DRAM_SEG, OBJ_SEG};
+}
 }
 
 // Define the complete OBJ plugin using the template

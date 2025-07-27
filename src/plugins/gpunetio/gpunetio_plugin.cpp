@@ -19,21 +19,23 @@
 #include "gpunetio_backend.h"
 
 namespace {
-    nixl_b_params_t get_gpunetio_options() {
-        nixl_b_params_t params;
-        params["network_devices"] = "";
-        params["gpu_devices"] = "";
-        params["cuda_streams"] = "";
-        return params;
-    }
-
-    nixl_mem_list_t get_gpunetio_mems() {
-        nixl_mem_list_t mems;
-        mems.push_back(DRAM_SEG);
-        mems.push_back(VRAM_SEG);
-        return mems;
-    }
+nixl_b_params_t
+get_gpunetio_options() {
+    nixl_b_params_t params;
+    params["network_devices"] = "";
+    params["gpu_devices"] = "";
+    params["cuda_streams"] = "";
+    return params;
 }
+
+nixl_mem_list_t
+get_gpunetio_mems() {
+    nixl_mem_list_t mems;
+    mems.push_back(DRAM_SEG);
+    mems.push_back(VRAM_SEG);
+    return mems;
+}
+} // namespace
 
 // Define the complete GPUNETIO plugin using the template
 NIXL_DEFINE_PLUGIN(GPUNETIO, nixlDocaEngine, "0.1.0", get_gpunetio_options, get_gpunetio_mems)

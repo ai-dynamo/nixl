@@ -20,19 +20,16 @@
 #include "nixl_log.h"
 
 namespace {
-    nixl_b_params_t get_ucx_options() {
-        return get_ucx_backend_common_options();
-    }
-
-
-    [[nodiscard]] nixl_mem_list_t get_ucx_mems() {
-        return {
-            DRAM_SEG,
-            VRAM_SEG
-        };
-    }
->>>>>>> faeca51d (Plugins: Templatize the Backend Plugin APIs)
+nixl_b_params_t
+get_ucx_options() {
+    return get_ucx_backend_common_options();
 }
+
+nixl_mem_list_t
+get_ucx_mems() {
+    return {DRAM_SEG, VRAM_SEG};
+}
+} // namespace
 
 // Define the complete UCX plugin using the template
 NIXL_DEFINE_PLUGIN(UCX, nixlUcxEngine, "0.1.0", get_ucx_options, get_ucx_mems)

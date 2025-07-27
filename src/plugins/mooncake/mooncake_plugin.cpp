@@ -19,19 +19,21 @@
 #include "mooncake_backend.h"
 
 namespace {
-    nixl_b_params_t get_mooncake_options() {
-        nixl_b_params_t params;
-        params["mooncake_devices"] = "";
-        return params;
-    }
-
-    nixl_mem_list_t get_mooncake_mems() {
-        nixl_mem_list_t mems;
-        mems.push_back(DRAM_SEG);
-        mems.push_back(VRAM_SEG);
-        return mems;
-    }
+nixl_b_params_t
+get_mooncake_options() {
+    nixl_b_params_t params;
+    params["mooncake_devices"] = "";
+    return params;
 }
+
+nixl_mem_list_t
+get_mooncake_mems() {
+    nixl_mem_list_t mems;
+    mems.push_back(DRAM_SEG);
+    mems.push_back(VRAM_SEG);
+    return mems;
+}
+} // namespace
 
 // Define the complete MOONCAKE plugin using the template
 NIXL_DEFINE_PLUGIN(MOONCAKE, nixlMooncakeEngine, "0.1.0", get_mooncake_options, get_mooncake_mems)

@@ -19,19 +19,21 @@
 #include "gds_backend.h"
 
 namespace {
-    nixl_b_params_t get_gds_options() {
-        nixl_b_params_t params;
-        return params;
-    }
-
-    nixl_mem_list_t get_gds_mems() {
-        nixl_mem_list_t mems;
-        mems.push_back(DRAM_SEG);
-        mems.push_back(VRAM_SEG);
-        mems.push_back(FILE_SEG);
-        return mems;
-    }
+nixl_b_params_t
+get_gds_options() {
+    nixl_b_params_t params;
+    return params;
 }
+
+nixl_mem_list_t
+get_gds_mems() {
+    nixl_mem_list_t mems;
+    mems.push_back(DRAM_SEG);
+    mems.push_back(VRAM_SEG);
+    mems.push_back(FILE_SEG);
+    return mems;
+}
+} // namespace
 
 // Define the complete GDS plugin using the template
 NIXL_DEFINE_PLUGIN(GDS, nixlGdsEngine, "0.1.1", get_gds_options, get_gds_mems)

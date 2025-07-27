@@ -20,15 +20,17 @@
 #include "backend/backend_plugin.h"
 
 namespace {
-    nixl_b_params_t get_posix_options() {
-        nixl_b_params_t params;
-        return params;
-    }
-
-    nixl_mem_list_t get_posix_mems() {
-        return {DRAM_SEG, FILE_SEG};
-    }
+nixl_b_params_t
+get_posix_options() {
+    nixl_b_params_t params;
+    return params;
 }
+
+nixl_mem_list_t
+get_posix_mems() {
+    return {DRAM_SEG, FILE_SEG};
+}
+} // namespace
 
 // Define the complete POSIX plugin using the template
 NIXL_DEFINE_PLUGIN(POSIX, nixlPosixEngine, "0.1.0", get_posix_options, get_posix_mems)

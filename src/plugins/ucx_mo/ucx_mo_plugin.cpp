@@ -20,16 +20,18 @@
 #include "ucx_utils.h"
 
 namespace {
-    nixl_b_params_t get_ucx_mo_options() {
-        nixl_b_params_t params = get_ucx_backend_common_options();
-        params["num_ucx_engines"] = "8";
-        return params;
-    }
-
-    nixl_mem_list_t get_ucx_mo_mems() {
-        return {DRAM_SEG, VRAM_SEG};
-    }
+nixl_b_params_t
+get_ucx_mo_options() {
+    nixl_b_params_t params = get_ucx_backend_common_options();
+    params["num_ucx_engines"] = "8";
+    return params;
 }
+
+nixl_mem_list_t
+get_ucx_mo_mems() {
+    return {DRAM_SEG, VRAM_SEG};
+}
+} // namespace
 
 // Define the complete UCX_MO plugin using the template
 NIXL_DEFINE_PLUGIN(UCX_MO, nixlUcxMoEngine, "0.1.0", get_ucx_mo_options, get_ucx_mo_mems)

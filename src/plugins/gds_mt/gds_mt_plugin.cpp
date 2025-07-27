@@ -21,14 +21,16 @@
 #include <exception>
 
 namespace {
-    nixl_b_params_t get_gds_mt_options() {
-        return {};
-    }
-
-    nixl_mem_list_t get_gds_mt_mems() {
-        return {DRAM_SEG, VRAM_SEG, FILE_SEG};
-    }
+nixl_b_params_t
+get_gds_mt_options() {
+    return {};
 }
+
+nixl_mem_list_t
+get_gds_mt_mems() {
+    return {DRAM_SEG, VRAM_SEG, FILE_SEG};
+}
+} // namespace
 
 // Define the complete GDS_MT plugin using the template
 NIXL_DEFINE_PLUGIN(GDS_MT, nixlGdsMtEngine, "0.1.0", get_gds_mt_options, get_gds_mt_mems)

@@ -51,59 +51,61 @@ public:
 #define NIXL_PLUGIN_EXPORT __attribute__((visibility("default")))
 
 // Template for creating backend plugins with minimal boilerplate
-template<typename EngineType>
-class nixlBackendPluginTemplate {
+template<typename EngineType> class nixlBackendPluginTemplate {
 public:
-    static nixlBackendEngine* create_engine_impl(const nixlBackendInitParams* init_params) {
+    static nixlBackendEngine *
+    create_engine_impl(const nixlBackendInitParams *init_params) {
         try {
             return new EngineType(init_params);
-        } catch (const std::exception &e) {
+        }
+        catch (const std::exception &e) {
             return nullptr;
         }
     }
 
-    static void destroy_engine_impl(nixlBackendEngine* engine) {
+    static void
+    destroy_engine_impl(nixlBackendEngine *engine) {
         delete engine;
     }
 
-    static nixlBackendPlugin create_plugin(
-        const char* name,
-        const char* version,
-        nixl_b_params_t (*get_options)(),
-        nixl_mem_list_t (*get_mems)()) {
+    static nixlBackendPlugin
+    create_plugin(const char *name,
+                  const char *version,
+                  nixl_b_params_t (*get_options)(),
+                  nixl_mem_list_t (*get_mems)()) {
 
-        static const char* plugin_name = name;
-        static const char* plugin_version = version;
+        static const char *plugin_name = name;
+        static const char *plugin_version = version;
 
-        return {
-            NIXL_PLUGIN_API_VERSION,
-            create_engine_impl,
-            destroy_engine_impl,
-            []() { return plugin_name; },
-            []() { return plugin_version; },
-            get_options,
-            get_mems
-        };
+        return {NIXL_PLUGIN_API_VERSION,
+                create_engine_impl,
+                destroy_engine_impl,
+                []() { return plugin_name; },
+                []() { return plugin_version; },
+                get_options,
+                get_mems};
     }
 };
 
 // Macro to define a complete plugin with minimal code
 #define NIXL_DEFINE_PLUGIN(PluginName, EngineType, PluginVersion, GetOptionsFunc, GetMemsFunc) \
-    namespace { \
-        nixlBackendPlugin plugin = nixlBackendPluginTemplate<EngineType>::create_plugin( \
-            #PluginName, PluginVersion, GetOptionsFunc, GetMemsFunc); \
-    } \
-    \
-    extern "C" nixlBackendPlugin* createStatic##PluginName##Plugin() { \
-        return &plugin; \
-    } \
-    \
-    extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init() { \
-        return &plugin; \
-    } \
-    \
-    extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() { \
-    }
+    namespace {                                                                                \
+        nixlBackendPlugin plugin =                                                             \
+            nixlBackendPluginTemplate<EngineType>::create_plugin(#PluginName,                  \
+                                                                 PluginVersion,                \
+                                                                 GetOptionsFunc,               \
+                                                                 GetMemsFunc);                 \
+    }                                                                                          \
+                                                                                               \
+    extern "C" nixlBackendPlugin *createStatic##PluginName##Plugin() {                         \
+        return &plugin;                                                                        \
+    }                                                                                          \
+                                                                                               \
+    extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {                      \
+        return &plugin;                                                                        \
+    }                                                                                          \
+                                                                                               \
+    extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
 
 // Creator Function type for static plugins
 typedef nixlBackendPlugin* (*nixlStaticPluginCreatorFunc)();

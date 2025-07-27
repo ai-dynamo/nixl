@@ -20,18 +20,20 @@
 #include <iostream>
 
 namespace {
-    nixl_b_params_t get_hf3fs_options() {
-        nixl_b_params_t params;
-        return params;
-    }
-
-    nixl_mem_list_t get_hf3fs_mems() {
-        nixl_mem_list_t mems;
-        mems.push_back(FILE_SEG);
-        mems.push_back(DRAM_SEG);
-        return mems;
-    }
+nixl_b_params_t
+get_hf3fs_options() {
+    nixl_b_params_t params;
+    return params;
 }
+
+nixl_mem_list_t
+get_hf3fs_mems() {
+    nixl_mem_list_t mems;
+    mems.push_back(FILE_SEG);
+    mems.push_back(DRAM_SEG);
+    return mems;
+}
+} // namespace
 
 // Define the complete HF3FS plugin using the template
 NIXL_DEFINE_PLUGIN(HF3FS, nixlHf3fsEngine, "0.1.0", get_hf3fs_options, get_hf3fs_mems)
