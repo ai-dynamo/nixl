@@ -17,6 +17,10 @@
 #include "plugin_manager.h"
 #include "common.h"
 #include <gtest/gtest.h>
+#include <iostream>
+#include <sstream>
+#include <vector>
+#include <string>
 
 namespace gtest {
 std::vector<std::string> SplitWithDelimiter(const std::string &str,
@@ -33,13 +37,13 @@ std::vector<std::string> SplitWithDelimiter(const std::string &str,
 
 void ParseTcpPortRange(const std::string &arg) {
     if (arg.find("--min-tcp-port=") == 0) {
-      const std::string min_port = SplitWithDelimiter(arg, '=').back();
-      PortAllocator::instance().set_min_port(std::stoi(min_port));
+        const std::string min_port = SplitWithDelimiter(arg, '=').back();
+        PortAllocator::instance().set_min_port(std::stoi(min_port));
     }
 
     if (arg.find("--max-tcp-port=") == 0) {
-      const std::string max_port = SplitWithDelimiter(arg, '=').back();
-      PortAllocator::instance().set_max_port(std::stoi(max_port));
+        const std::string max_port = SplitWithDelimiter(arg, '=').back();
+        PortAllocator::instance().set_max_port(std::stoi(max_port));
     }
 }
 

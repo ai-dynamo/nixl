@@ -112,7 +112,7 @@ PortAllocator::next_tcp_port() {
     std::lock_guard<std::mutex> lock(instance._mutex);
     const int port_range = instance._max_port - instance._min_port;
 
-    for (int scanned = 0; scanned < port_range; scanned++) { 
+    for (int scanned = 0; scanned < port_range; scanned++) {
         if (is_port_available(instance._port)) {
             return instance._port++;
         }
@@ -124,9 +124,8 @@ PortAllocator::next_tcp_port() {
         }
     }
 
-    throw std::runtime_error("No port available in range: " 
-        + std::to_string(instance._min_port) + " - " 
-        + std::to_string(instance._max_port));
+    throw std::runtime_error("No port available in range: " + std::to_string(instance._min_port) +
+                             " - " + std::to_string(instance._max_port));
 }
 
 } // namespace gtest

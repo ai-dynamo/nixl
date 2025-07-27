@@ -83,9 +83,11 @@ public:
     next_tcp_port();
     static PortAllocator &
     instance();
-    
-    void set_min_port(uint16_t min_port);
-    void set_max_port(uint16_t max_port);
+
+    void
+    set_min_port(uint16_t min_port);
+    void
+    set_max_port(uint16_t max_port);
 
 private:
     static bool
