@@ -20,7 +20,7 @@ if not aws_s3.found()
 endif
 
 plugins_test_exe = executable('plugins_gtest',
-    sources : ['../main.cpp', 'obj_plugin.cpp'],
+    sources : ['../main.cpp', '../common.cpp', 'obj_plugin.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs, plugins_inc_dirs, '.'],
     dependencies : [nixl_dep, gtest_dep, absl_strings_dep, absl_time_dep, plugin_deps,
                     obj_backend_interface],
