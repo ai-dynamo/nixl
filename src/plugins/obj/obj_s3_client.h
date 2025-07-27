@@ -74,6 +74,14 @@ public:
                    size_t data_len,
                    size_t offset,
                    get_object_callback_t callback) = 0;
+
+    /**
+     * Check if the object exists.
+     * @param key The object key
+     * @return true if the object exists, false otherwise
+     */
+    virtual bool
+    checkObjectExists(std::string_view key) = 0;
 };
 
 /**
@@ -105,6 +113,9 @@ public:
                    size_t data_len,
                    size_t offset,
                    get_object_callback_t callback) override;
+
+    bool
+    checkObjectExists(std::string_view key) override;
 
 private:
     std::unique_ptr<Aws::SDKOptions, std::function<void(Aws::SDKOptions *)>> awsOptions_;
