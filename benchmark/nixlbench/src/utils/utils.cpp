@@ -26,6 +26,8 @@
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
+#include <fcntl.h>
+#include <filesystem>
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
@@ -41,7 +43,7 @@ DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communic
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
 DEFINE_string(backend,
               XFERBENCH_BACKEND_UCX,
-              "Name of communication backend [UCX, UCX_MO, GDS, POSIX, GPUNETIO] \
+              "Name of communication backend [UCX, UCX_MO, GDS, POSIX, GPUNETIO, OBJ] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]");
@@ -75,7 +77,7 @@ DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 DEFINE_bool(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 
-// Storage backend(GDS, POSIX, HF3FS) options
+// Storage backend(GDS, POSIX, HF3FS, OBJ) options
 DEFINE_string (filepath, "", "File path for storage operations");
 DEFINE_int32 (num_files, 1, "Number of files used by benchmark");
 DEFINE_bool (storage_enable_direct, false, "Enable direct I/O for storage operations");
@@ -99,6 +101,19 @@ DEFINE_string (posix_api_type,
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
 DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
 		      communication (only used with nixl worker)");
+
+// OBJ options - only used when backend is OBJ
+DEFINE_string(obj_access_key, "", "Access key for S3 backend");
+DEFINE_string(obj_secret_key, "", "Secret key for S3 backend");
+DEFINE_string(obj_session_token, "", "Session token for S3 backend");
+DEFINE_string(obj_bucket_name, XFERBENCH_OBJ_BUCKET_NAME_DEFAULT, "Bucket name for S3 backend");
+DEFINE_string(obj_scheme, XFERBENCH_OBJ_SCHEME_HTTP, "HTTP scheme for S3 backend [http, https]");
+DEFINE_string(obj_region, XFERBENCH_OBJ_REGION_EU_CENTRAL_1, "Region for S3 backend");
+DEFINE_bool(obj_use_virtual_addressing, false, "Use virtual addressing for S3 backend");
+DEFINE_string(obj_endpoint_override, "", "Endpoint override for S3 backend");
+DEFINE_string(obj_req_checksum,
+              XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
+              "Required checksum for S3 backend [supported, required]");
 
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
@@ -134,6 +149,15 @@ std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::filepath = "";
 bool xferBenchConfig::storage_enable_direct = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
+std::string xferBenchConfig::obj_access_key = "";
+std::string xferBenchConfig::obj_secret_key = "";
+std::string xferBenchConfig::obj_session_token = "";
+std::string xferBenchConfig::obj_bucket_name = "";
+std::string xferBenchConfig::obj_scheme = "";
+std::string xferBenchConfig::obj_region = "";
+bool xferBenchConfig::obj_use_virtual_addressing = false;
+std::string xferBenchConfig::obj_endpoint_override = "";
+std::string xferBenchConfig::obj_req_checksum = "";
 
 int
 xferBenchConfig::loadFromFlags() {
@@ -183,6 +207,34 @@ xferBenchConfig::loadFromFlags() {
         // Load HD3FS-specific configurations if backend is HD3FS
         if (backend == XFERBENCH_BACKEND_HF3FS) {
             storage_enable_direct = FLAGS_storage_enable_direct;
+        }
+
+        // Load OBJ-specific configurations if backend is OBJ
+        if (backend == XFERBENCH_BACKEND_OBJ) {
+            obj_access_key = FLAGS_obj_access_key;
+            obj_secret_key = FLAGS_obj_secret_key;
+            obj_session_token = FLAGS_obj_session_token;
+            obj_bucket_name = FLAGS_obj_bucket_name;
+            obj_scheme = FLAGS_obj_scheme;
+            obj_region = FLAGS_obj_region;
+            obj_use_virtual_addressing = FLAGS_obj_use_virtual_addressing;
+            obj_endpoint_override = FLAGS_obj_endpoint_override;
+            obj_req_checksum = FLAGS_obj_req_checksum;
+
+            // Validate OBJ S3 scheme
+            if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
+                obj_scheme != XFERBENCH_OBJ_SCHEME_HTTPS) {
+                std::cerr << "Invalid OBJ S3 scheme: " << obj_scheme
+                          << ". Must be one of [http, https]" << std::endl;
+                return -1;
+            }
+            // Validate OBJ S3 required checksum
+            if (obj_req_checksum != XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED &&
+                obj_req_checksum != XFERBENCH_OBJ_REQ_CHECKSUM_REQUIRED) {
+                std::cerr << "Invalid OBJ S3 required checksum: " << obj_req_checksum
+                          << ". Must be one of [supported, required]" << std::endl;
+                return -1;
+            }
         }
     }
 
@@ -300,7 +352,7 @@ void xferBenchConfig::printConfig() {
     }
     printOption ("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption ("Backend (--backend=[UCX,UCX_MO,GDS,POSIX])", backend);
+        printOption("Backend (--backend=[UCX,UCX_MO,GDS,POSIX,OBJ])", backend);
         printOption ("Enable pt (--enable_pt=[0,1])", std::to_string (enable_pt));
         printOption ("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption ("Enable VMM (--enable_vmm=[0,1])", std::to_string (enable_vmm));
@@ -315,6 +367,22 @@ void xferBenchConfig::printConfig() {
         // Print POSIX options if backend is POSIX
         if (backend == XFERBENCH_BACKEND_POSIX) {
             printOption ("POSIX API type (--posix_api_type=[AIO,URING])", posix_api_type);
+        }
+
+        // Print OBJ options if backend is OBJ
+        if (backend == XFERBENCH_BACKEND_OBJ) {
+            printOption("OBJ S3 access key (--obj_access_key=key)", obj_access_key);
+            printOption("OBJ S3 secret key (--obj_secret_key=key)", obj_secret_key);
+            printOption("OBJ S3 session token (--obj_session_token=token)", obj_session_token);
+            printOption("OBJ S3 bucket name (--obj_bucket_name=nixlbench-bucket)", obj_bucket_name);
+            printOption("OBJ S3 scheme (--obj_scheme=[http, https])", obj_scheme);
+            printOption("OBJ S3 region (--obj_region=region)", obj_region);
+            printOption("OBJ S3 use virtual addressing (--obj_use_virtual_addressing=[0,1])",
+                        std::to_string(obj_use_virtual_addressing));
+            printOption("OBJ S3 endpoint override (--obj_endpoint_override=endpoint)",
+                        obj_endpoint_override);
+            printOption("OBJ S3 required checksum (--obj_req_checksum=[supported, required])",
+                        obj_req_checksum);
         }
 
         if (xferBenchConfig::isStorageBackend()) {
@@ -383,7 +451,8 @@ bool
 xferBenchConfig::isStorageBackend() {
     return (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend);
 }
 /**********
  * xferBench Utils
@@ -446,11 +515,31 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                 } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
                     addr = calloc(1, len);
                     is_allocated = true;
-                    ssize_t rc = pread(iov.devId, addr, len, iov.addr);
-                    if (rc < 0) {
-                        std::cerr << "Failed to read from device: " << iov.devId
-                                  << " with error: " << strerror(errno) << std::endl;
-                        exit(EXIT_FAILURE);
+                    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+                        if (!getObjS3(iov.metaInfo)) {
+                            std::cerr << "Failed to get S3 object: " << iov.metaInfo << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        int fd = open(iov.metaInfo.c_str(), O_RDONLY);
+                        if (fd < 0) {
+                            std::cerr << "Failed to open downloaded file: " << iov.metaInfo
+                                      << " with error: " << strerror(errno) << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        ssize_t rc = pread(fd, addr, len, 0);
+                        if (rc < 0) {
+                            std::cerr << "Failed to read from file: " << iov.metaInfo
+                                      << " with error: " << strerror(errno) << std::endl;
+                        }
+                        close(fd);
+                        unlink(iov.metaInfo.c_str());
+                    } else {
+                        ssize_t rc = pread(iov.devId, addr, len, iov.addr);
+                        if (rc < 0) {
+                            std::cerr << "Failed to read from device: " << iov.devId
+                                      << " with error: " << strerror(errno) << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
                     }
                 }
             } else {
@@ -579,4 +668,131 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
                   << std::setw(15) << throughput_gb
                   << std::endl;
     }
+}
+
+std::string
+xferBenchUtils::buildAwsCredentials() {
+    std::string env_setup = "";
+
+    if (!xferBenchConfig::obj_access_key.empty()) {
+        env_setup += "AWS_ACCESS_KEY_ID=" + xferBenchConfig::obj_access_key + " ";
+    }
+    if (!xferBenchConfig::obj_secret_key.empty()) {
+        env_setup += "AWS_SECRET_ACCESS_KEY=" + xferBenchConfig::obj_secret_key + " ";
+    }
+    if (!xferBenchConfig::obj_session_token.empty()) {
+        env_setup += "AWS_SESSION_TOKEN=" + xferBenchConfig::obj_session_token + " ";
+    }
+    if (!xferBenchConfig::obj_region.empty()) {
+        env_setup += "AWS_DEFAULT_REGION=" + xferBenchConfig::obj_region + " ";
+    }
+
+    return env_setup;
+}
+
+bool
+xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
+    std::string filename = "/tmp/" + name;
+    int fd = open(filename.c_str(), O_RDWR | O_CREAT, 0744);
+    if (fd < 0) {
+        std::cerr << "Failed to open file: " << name << " with error: " << strerror(errno)
+                  << std::endl;
+        return false;
+    }
+    // Create buffer filled with XFERBENCH_TARGET_BUFFER_ELEMENT
+    void *buf = (void *)malloc(buffer_size);
+    if (!buf) {
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
+        close(fd);
+        return false;
+    }
+    memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+    int rc = pwrite(fd, buf, buffer_size, 0);
+    if (rc < 0) {
+        std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
+                  << std::endl;
+        free(buf);
+        close(fd);
+        return false;
+    }
+    free(buf);
+
+    std::string bucket_name = xferBenchConfig::obj_bucket_name;
+    if (bucket_name.empty()) {
+        std::cerr << "Error: Invalid bucket name for S3 object put" << std::endl;
+        close(fd);
+        unlink(filename.c_str());
+        return false;
+    }
+    std::string aws_cmd = "aws s3 cp " + filename + " s3://" + bucket_name;
+    if (!xferBenchConfig::obj_endpoint_override.empty()) {
+        aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
+    }
+
+    std::string full_cmd = buildAwsCredentials() + aws_cmd;
+    std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
+              << " (size: " << buffer_size << " bytes)" << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Failed to put S3 object " << name << " in bucket " << bucket_name
+                  << " (exit code: " << result << ")" << std::endl;
+        close(fd);
+        unlink(filename.c_str());
+        return false;
+    }
+
+    close(fd);
+    unlink(filename.c_str());
+    return true;
+}
+
+bool
+xferBenchUtils::getObjS3(const std::string &name) {
+    std::string bucket_name = xferBenchConfig::obj_bucket_name;
+    if (bucket_name.empty()) {
+        std::cerr << "Error: Invalid bucket name for S3 object get" << std::endl;
+        return false;
+    }
+    std::string aws_cmd = "aws s3 cp s3://" + bucket_name + "/" + name + " " + name;
+    if (!xferBenchConfig::obj_endpoint_override.empty()) {
+        aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
+    }
+
+    std::string full_cmd = buildAwsCredentials() + aws_cmd;
+    std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Failed to get S3 object " << name << " from bucket " << bucket_name
+                  << " (exit code: " << result << ")" << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool
+xferBenchUtils::rmObjS3(const std::string &name) {
+    std::string bucket_name = xferBenchConfig::obj_bucket_name;
+    if (bucket_name.empty()) {
+        std::cerr << "Error: Invalid bucket name for S3 object get" << std::endl;
+        return false;
+    }
+
+    std::string aws_cmd = "aws s3 rm s3://" + bucket_name + "/" + name;
+    if (!xferBenchConfig::obj_endpoint_override.empty()) {
+        aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
+    }
+
+    std::string full_cmd = buildAwsCredentials() + aws_cmd;
+    std::cout << "Removing S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Warning: Failed to remove S3 object " << name << " from bucket "
+                  << bucket_name << " (exit code: " << result << ")" << std::endl;
+        return false;
+    }
+    return true;
 }
