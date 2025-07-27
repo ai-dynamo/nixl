@@ -87,6 +87,10 @@
 // OBJ S3 bucket names
 #define XFERBENCH_OBJ_BUCKET_NAME_DEFAULT ""
 
+// OBJ S3 required checksum types
+#define XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED "supported"
+#define XFERBENCH_OBJ_REQ_CHECKSUM_REQUIRED "required"
+
 // Scheme types for transfer patterns
 #define XFERBENCH_SCHEME_PAIRWISE     "pairwise"
 #define XFERBENCH_SCHEME_ONE_TO_MANY  "onetomany"
@@ -156,6 +160,7 @@ class xferBenchConfig {
         static std::string obj_region;
         static bool obj_use_virtual_addressing;
         static std::string obj_endpoint_override;
+        static std::string obj_req_checksum;
 
         static int loadFromFlags();
         static void printConfig();

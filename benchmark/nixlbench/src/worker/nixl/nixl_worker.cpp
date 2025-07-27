@@ -170,6 +170,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         backend_params["region"] = xferBenchConfig::obj_region;
         backend_params["use_virtual_addressing"] =
             xferBenchConfig::obj_use_virtual_addressing ? "true" : "false";
+        backend_params["req_checksum"] = xferBenchConfig::obj_req_checksum;
 
         if (xferBenchConfig::obj_endpoint_override != "") {
             backend_params["endpoint_override"] = xferBenchConfig::obj_endpoint_override;

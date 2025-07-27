@@ -111,6 +111,9 @@ DEFINE_string(obj_scheme, XFERBENCH_OBJ_SCHEME_HTTP, "HTTP scheme for S3 backend
 DEFINE_string(obj_region, XFERBENCH_OBJ_REGION_EU_CENTRAL_1, "Region for S3 backend");
 DEFINE_bool(obj_use_virtual_addressing, false, "Use virtual addressing for S3 backend");
 DEFINE_string(obj_endpoint_override, "", "Endpoint override for S3 backend");
+DEFINE_string(obj_req_checksum,
+              XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
+              "Required checksum for S3 backend [supported, required]");
 
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
@@ -154,6 +157,7 @@ std::string xferBenchConfig::obj_scheme = "";
 std::string xferBenchConfig::obj_region = "";
 bool xferBenchConfig::obj_use_virtual_addressing = false;
 std::string xferBenchConfig::obj_endpoint_override = "";
+std::string xferBenchConfig::obj_req_checksum = "";
 
 int
 xferBenchConfig::loadFromFlags() {
@@ -215,12 +219,20 @@ xferBenchConfig::loadFromFlags() {
             obj_region = FLAGS_obj_region;
             obj_use_virtual_addressing = FLAGS_obj_use_virtual_addressing;
             obj_endpoint_override = FLAGS_obj_endpoint_override;
+            obj_req_checksum = FLAGS_obj_req_checksum;
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
                 obj_scheme != XFERBENCH_OBJ_SCHEME_HTTPS) {
                 std::cerr << "Invalid OBJ S3 scheme: " << obj_scheme
                           << ". Must be one of [http, https]" << std::endl;
+                return -1;
+            }
+            // Validate OBJ S3 required checksum
+            if (obj_req_checksum != XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED &&
+                obj_req_checksum != XFERBENCH_OBJ_REQ_CHECKSUM_REQUIRED) {
+                std::cerr << "Invalid OBJ S3 required checksum: " << obj_req_checksum
+                          << ". Must be one of [supported, required]" << std::endl;
                 return -1;
             }
         }
@@ -369,6 +381,8 @@ void xferBenchConfig::printConfig() {
                         std::to_string(obj_use_virtual_addressing));
             printOption("OBJ S3 endpoint override (--obj_endpoint_override=endpoint)",
                         obj_endpoint_override);
+            printOption("OBJ S3 required checksum (--obj_req_checksum=[supported, required])",
+                        obj_req_checksum);
         }
 
         if (xferBenchConfig::isStorageBackend()) {
