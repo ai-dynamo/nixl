@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "plugin_manager.h"
+#include "common.h"
 #include <gtest/gtest.h>
 
 namespace gtest {
@@ -30,6 +31,18 @@ std::vector<std::string> SplitWithDelimiter(const std::string &str,
   return tokens;
 }
 
+void ParseTcpPortRange(const std::string &arg) {
+    if (arg.find("--min-tcp-port=") == 0) {
+      const std::string min_port = SplitWithDelimiter(arg, '=').back();
+      PortAllocator::instance().set_min_port(std::stoi(min_port));
+    }
+
+    if (arg.find("--max-tcp-port=") == 0) {
+      const std::string max_port = SplitWithDelimiter(arg, '=').back();
+      PortAllocator::instance().set_max_port(std::stoi(max_port));
+    }
+}
+
 void ParseArguments(int argc, char **argv) {
   for (int i = 1; i < argc; ++i) {
     if (std::string(argv[i]).find("--tests_plugin_dirs=") == 0) {
@@ -42,6 +55,8 @@ void ParseArguments(int argc, char **argv) {
         }
       }
     }
+
+    ParseTcpPortRange(argv[i]);
   }
 }
 

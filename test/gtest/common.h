@@ -70,12 +70,9 @@ class PortAllocator {
 public:
     static constexpr uint16_t MIN_PORT = 10500;
     static constexpr uint16_t MAX_PORT = 65535;
-    static constexpr uint16_t PORT_RANGE = 1000;
-    // Offset to avoid conflicts with common.sh allocated ports
-    static constexpr uint16_t OFFSET = PORT_RANGE / 2;
 
 private:
-    PortAllocator();
+    PortAllocator() = default;
     ~PortAllocator() = default;
     PortAllocator(const PortAllocator &other) = delete;
     void
@@ -87,17 +84,17 @@ public:
     static PortAllocator &
     instance();
 
+    void set_min_port(uint16_t min_port);
+    void set_max_port(uint16_t max_port);
+
 private:
-    static uint16_t
-    _get_first_port(int concurrent_id);
     static bool
-    _is_port_available(uint16_t port);
-    static int
-    _get_concurrent_id();
+    is_port_available(uint16_t port);
 
     std::mutex _mutex;
-    uint16_t _concurrent_id;
-    uint16_t _port;
+    uint16_t _port = MIN_PORT;
+    uint16_t _min_port = MIN_PORT;
+    uint16_t _max_port = MAX_PORT;
 };
 
 } // namespace gtest

@@ -78,10 +78,6 @@ ScopedEnv::Variable::~Variable()
     }
 }
 
-PortAllocator::PortAllocator()
-    : _concurrent_id(_get_concurrent_id()),
-      _port(_get_first_port(_concurrent_id)) {}
-
 PortAllocator &
 PortAllocator::instance() {
     static PortAllocator _instance;
@@ -89,7 +85,7 @@ PortAllocator::instance() {
 }
 
 bool
-PortAllocator::_is_port_available(uint16_t port) {
+PortAllocator::is_port_available(uint16_t port) {
     struct sockaddr_in addr = {
         .sin_family = AF_INET, .sin_port = htons(port), .sin_addr = {.s_addr = INADDR_ANY}};
 
@@ -103,40 +99,23 @@ uint16_t
 PortAllocator::next_tcp_port() {
     PortAllocator &instance = PortAllocator::instance();
     std::lock_guard<std::mutex> lock(instance._mutex);
-    int max_port = MIN_PORT + (instance._concurrent_id + 1) * PORT_RANGE - 1;
+    const int port_range = instance._max_port - instance._min_port;
 
-    while (!_is_port_available(++instance._port) && (instance._port <= max_port))
-        ;
+    for (int scanned = 0; scanned < port_range; scanned++) { 
+        if (is_port_available(instance._port)) {
+            return instance._port++;
+        }
 
-    if (instance._port >= max_port) {
-        // Please increase PORT_RANGE in common.h and .ci/scripts/common.sh to avoid this error
-        throw std::runtime_error(
-            "Reached max port within executor port range, consider increasing PORT_RANGE");
+        instance._port++;
+
+        if (instance._port >= instance._max_port) {
+            instance._port = instance._min_port;
+        }
     }
 
-    return instance._port;
+    throw std::runtime_error("No port available in range: " 
+        + std::to_string(instance._min_port) + " - " 
+        + std::to_string(instance._max_port));
 }
 
-uint16_t
-PortAllocator::_get_first_port(int concurrent_id) {
-    return MIN_PORT + concurrent_id * PORT_RANGE + OFFSET;
-}
-
-int
-PortAllocator::_get_concurrent_id() {
-    char *jenkins_executor_number = getenv("EXECUTOR_NUMBER");
-    char *gitlab_concurrent_id = getenv("CI_CONCURRENT_ID");
-
-    if (jenkins_executor_number) {
-        return std::stoi(jenkins_executor_number);
-    } else if (gitlab_concurrent_id) {
-        return std::stoi(gitlab_concurrent_id);
-    }
-
-    std::random_device random_device;
-    std::mt19937 generator(random_device());
-    std::uniform_int_distribution<> distribution(0, (MAX_PORT - MIN_PORT) / PORT_RANGE);
-
-    return distribution(generator);
-}
 } // namespace gtest

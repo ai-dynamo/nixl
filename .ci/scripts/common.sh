@@ -49,3 +49,13 @@ get_next_tcp_port() {
     tcp_port=$((tcp_port >= tcp_port_max ? tcp_port_min : tcp_port))
     echo $tcp_port
 }
+
+min_gtest_port() {
+    # Half of the port range is used for gtest, to avoid conflicts with ports allocated by shell script
+    gtest_port_offset=$((tcp_port_range / 2))
+    echo $((tcp_port_min + nixl_concurrent_id * tcp_port_range + gtest_port_offset))
+}
+
+max_gtest_port() {
+    echo $((tcp_port_min + (nixl_concurrent_id + 1) * tcp_port_range - 1))
+}

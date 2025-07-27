@@ -80,7 +80,7 @@ cd ${INSTALL_DIR}
 
 ./bin/ucx_backend_multi
 ./bin/serdes_test
-./bin/gtest
+./bin/gtest --min-tcp-port="$(min_gtest_port)" --max-tcp-port="$(max_gtest_port)"
 ./bin/test_plugin
 
 # Run NIXL client-server test
