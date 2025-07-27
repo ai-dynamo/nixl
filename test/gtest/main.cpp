@@ -35,7 +35,7 @@ std::vector<std::string> SplitWithDelimiter(const std::string &str,
   return tokens;
 }
 
-void 
+void
 ParseTcpPortRange(const std::string &arg) {
     if (arg.find("--min-tcp-port=") == 0) {
         const std::string min_port = SplitWithDelimiter(arg, '=').back();
