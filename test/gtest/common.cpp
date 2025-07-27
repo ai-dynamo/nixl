@@ -84,6 +84,17 @@ PortAllocator::instance() {
     return _instance;
 }
 
+void
+PortAllocator::set_min_port(uint16_t min_port) {
+    _min_port = min_port;
+    _port = _min_port;
+}
+
+void
+PortAllocator::set_max_port(uint16_t max_port) {
+    _max_port = max_port;
+}
+
 bool
 PortAllocator::is_port_available(uint16_t port) {
     struct sockaddr_in addr = {
