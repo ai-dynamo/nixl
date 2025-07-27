@@ -99,11 +99,12 @@ fi
 echo "Detected OS version: $OS_VERSION"
 
 INSTALL_3FS=false
-if [ "$OS_VERSION" = "22.04" ]; then
+ARCH_DETECTED=$(uname -m)
+if [ "$OS_VERSION" = "22.04" ] && [ "$ARCH_DETECTED" = "x86_64" ]; then
     INSTALL_3FS=true
-    echo "Ubuntu 22.04 detected - will install 3FS and its dependencies"
+    echo "Ubuntu 22.04 and x86_64 architecture detected - will install 3FS and its dependencies"
 else
-    echo "OS version $OS_VERSION detected - skipping 3FS installation"
+    echo "OS version $OS_VERSION and architecture $ARCH_DETECTED detected - skipping 3FS installation"
 fi
 
 # Install 3FS-specific dependencies only if needed
@@ -130,6 +131,26 @@ $SUDO apt-get -qq install -y --reinstall libibverbs-dev rdma-core ibverbs-utils 
 
 # Install FoundationDB, Rust, FUSE and 3FS only for Ubuntu 22.04
 if [ "$INSTALL_3FS" = true ]; then
+      # Create completely isolated build environment to avoid PyTorch interference
+    # echo "Creating completely isolated build environment for 3FS..."
+    # export BUILD_CC="$CC"
+    # export BUILD_CXX="$CXX"
+    # export BUILD_CFLAGS="$CFLAGS"
+    # export BUILD_CXXFLAGS="$CXXFLAGS"
+    # export BUILD_LDFLAGS="$LDFLAGS"
+    # export BUILD_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
+    # export BUILD_LIBRARY_PATH="$LIBRARY_PATH"
+    # export BUILD_PATH="$PATH"
+    # export BUILD_PKG_CONFIG_PATH="$PKG_CONFIG_PATH"
+    # export BUILD_CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"
+    # Reset to minimal environment - completely isolate from PyTorch
+    # unset CC CXX CFLAGS CXXFLAGS LDFLAGS
+    # export LD_LIBRARY_PATH="/usr/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib"
+    # export LIBRARY_PATH="/usr/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib"
+    # export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+    # export PKG_CONFIG_PATH=""
+    # export CMAKE_PREFIX_PATH=""
+
     # Setup Rust environment
     export RUSTUP_HOME=/usr/local/rustup
     export CARGO_HOME=/usr/local/cargo
@@ -199,22 +220,50 @@ if [ "$INSTALL_3FS" = true ]; then
     git clone https://github.com/deepseek-ai/3fs /workspace/3fs
     git -C /workspace/3fs submodule update --init --recursive
     /workspace/3fs/patches/apply.sh
+    # Unset any PyTorch-specific environment variables
+    unset PYTHONPATH
+    unset TORCH_HOME
+    unset CUDA_HOME
+    unset CUDA_PATH
+    # Clean any existing build directory to avoid cached configuration
+    rm -rf /workspace/3fs/build
     cmake -S /workspace/3fs -B /workspace/3fs/build \
+            -G "Unix Makefiles" \
             -DCMAKE_CXX_COMPILER=clang++-14 \
             -DCMAKE_C_COMPILER=clang-14 \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DARROW_JEMALLOC_USE_STATIC=OFF \
+            -DARROW_MIMALLOC=OFF \
             -DARROW_JEMALLOC=OFF \
-            -DARROW_BUILD_STATIC=OFF \
-            -DARROW_USE_JEMALLOC=OFF \
-            -DARROW_DEPENDENCY_SOURCE=SYSTEM \
-    # Use fewer parallel jobs to avoid "Bad file descriptor" errors during jemalloc build
-    cmake --build /workspace/3fs/build -j$(( $(nproc) / 4 )) --verbose || {
-        echo "3FS build failed, trying with even fewer parallel jobs..."
-        cmake --build /workspace/3fs/build -j1 --verbose || {
-            echo "3FS build still failed, but continuing with installation..."
-        }
-    }
+            -DARROW_USE_SYSTEM_MALLOC=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DARROW_JEMALLOC_BUILD_JOBS=1
+            # -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            # -DARROW_USE_SYSTEM_MALLOC=ON \
+            # -DARROW_BUILD_STATIC=OFF \
+            # -DARROW_BUILD_SHARED=ON \
+            # -DARROW_DEPENDENCY_SOURCE=BUNDLED \
+            # -DARROW_WITH_JEMALLOC=OFF \
+            # -DARROW_WITH_MIMALLOC=OFF \
+            # -DARROW_JEMALLOC_USE_SHARED=OFF \
+            # -DARROW_WITH_ZSTD=OFF \
+            # -DARROW_WITH_ZLIB=OFF \
+            # -DARROW_WITH_SNAPPY=OFF \
+            # -DARROW_WITH_LZ4=OFF \
+            # -DARROW_WITH_BZ2=OFF \
+            # -DARROW_WITH_BROTLI=OFF \
+    cmake --build /workspace/3fs/build -j 16
+    # # Restore original environment
+    # if [ -n "$BUILD_CC" ]; then export CC="$BUILD_CC"; fi
+    # if [ -n "$BUILD_CXX" ]; then export CXX="$BUILD_CXX"; fi
+    # if [ -n "$BUILD_CFLAGS" ]; then export CFLAGS="$BUILD_CFLAGS"; fi
+    # if [ -n "$BUILD_CXXFLAGS" ]; then export CXXFLAGS="$BUILD_CXXFLAGS"; fi
+    # if [ -n "$BUILD_LDFLAGS" ]; then export LDFLAGS="$BUILD_LDFLAGS"; fi
+    # if [ -n "$BUILD_LD_LIBRARY_PATH" ]; then export LD_LIBRARY_PATH="$BUILD_LD_LIBRARY_PATH"; fi
+    # if [ -n "$BUILD_LIBRARY_PATH" ]; then export LIBRARY_PATH="$BUILD_LIBRARY_PATH"; fi
+    # if [ -n "$BUILD_PATH" ]; then export PATH="$BUILD_PATH"; fi
+    # if [ -n "$BUILD_PKG_CONFIG_PATH" ]; then export PKG_CONFIG_PATH="$BUILD_PKG_CONFIG_PATH"; fi
+    # if [ -n "$BUILD_CMAKE_PREFIX_PATH" ]; then export CMAKE_PREFIX_PATH="$BUILD_CMAKE_PREFIX_PATH"; fi
+    echo "3FS build completed successfully AAAAAAAAAAAAAAAAAAAAAAAA"
     cp /workspace/3fs/build/bin/* /usr/local/bin/
     mkdir -p /usr/include/hf3fs
     cp /workspace/3fs/src/lib/api/*.h /usr/include/hf3fs/
