@@ -6,11 +6,11 @@ jobs:
   python-checks:
     runs-on: ubuntu-latest
     strategy:
-    matrix:
-      path:
-        - ./src
-        - ./test
-        - ./benchmark
+      matrix:
+        path:
+          - ./src
+          - ./test
+          - ./benchmark
     steps:
     - uses: actions/checkout@v3
       with:
