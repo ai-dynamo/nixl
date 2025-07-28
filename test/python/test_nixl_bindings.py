@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import pickle
 import tempfile
@@ -21,6 +22,7 @@ import nixl._bindings as nixl
 import nixl._utils as nixl_utils
 from nixl.logging import get_logger
 
+logging.basicConfig(level=logging.INFO)
 logger = get_logger(__name__)
 
 # These should automatically be run by pytest because of function names
@@ -36,7 +38,7 @@ def test_list():
 
     pickled_list = pickle.dumps(test_list)
 
-    logger.info(pickled_list)
+    logger.info("Pickled list: %s", pickled_list)
 
     unpickled_list = pickle.loads(pickled_list)
 

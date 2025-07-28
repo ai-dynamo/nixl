@@ -16,12 +16,14 @@
 # limitations under the License.
 
 import argparse
+import logging
 
 import torch
 
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl.logging import get_logger
 
+logging.basicConfig(level=logging.INFO)
 logger = get_logger(__name__)
 
 

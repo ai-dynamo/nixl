@@ -37,23 +37,9 @@ Or for backward compatibility:
 """
 
 import logging
-import logging.config
 import os
-import socket
 
 _logging_configured = False
-
-
-class HostnameFilter(logging.Filter):
-    """Filter that adds hostname to log records."""
-
-    def __init__(self):
-        super().__init__()
-        self._hostname = socket.gethostname()
-
-    def filter(self, record):
-        record.hostname = self._hostname
-        return True
 
 
 def set_log_level_by_env(nixl_logger: logging.Logger) -> None:
@@ -87,16 +73,7 @@ def setup_logging() -> None:
     if _logging_configured:
         return
 
-    # Find python_logging.ini in the same directory as this file (project root)
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    config_file_path = os.path.join(current_dir, "python_logging.ini")
-    config_file = os.path.abspath(config_file_path)
-
-    logging.config.fileConfig(config_file, disable_existing_loggers=False)
-
     nixl_logger = logging.getLogger("nixl")
-    hostname_filter = HostnameFilter()
-    nixl_logger.addFilter(hostname_filter)
     set_log_level_by_env(nixl_logger)
 
     _logging_configured = True

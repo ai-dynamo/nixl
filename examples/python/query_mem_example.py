@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import sys
 import tempfile
@@ -23,12 +24,12 @@ try:
     from nixl._api import nixl_agent, nixl_agent_config
     from nixl.logging import get_logger
 
+    logging.basicConfig(level=logging.INFO)
     logger = get_logger(__name__)
 
     NIXL_AVAILABLE = True
 except ImportError:
-    import logging
-
+    logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     logger.error("NIXL API missing install NIXL.")
     NIXL_AVAILABLE = False
@@ -55,8 +56,7 @@ if __name__ == "__main__":
     non_existent_file = "/tmp/nixl_example_nonexistent.txt"
 
     try:
-        logger.info("Using NIXL Plugins from:")
-        logger.info(os.environ["NIXL_PLUGIN_DIR"])
+        logger.info("Using NIXL Plugins from: %s", os.environ["NIXL_PLUGIN_DIR"])
 
         # Create an NIXL agent
         logger.info("Creating NIXL agent...")

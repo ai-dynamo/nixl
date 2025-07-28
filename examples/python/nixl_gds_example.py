@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import sys
 
@@ -23,6 +24,7 @@ from nixl._api import nixl_agent, nixl_agent_config
 from nixl.logging import get_logger
 
 # Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = get_logger(__name__)
 
 

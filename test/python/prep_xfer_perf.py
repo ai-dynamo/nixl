@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import time
 
 import numpy as np
@@ -23,6 +24,7 @@ import nixl._utils as nixl_utils
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl.logging import get_logger
 
+logging.basicConfig(level=logging.INFO)
 logger = get_logger(__name__)
 
 
