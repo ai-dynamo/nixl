@@ -463,12 +463,20 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_i
     } else {
         gds_running_ptr += (buffer_size * mem_dev_id);
     }
-    int rc = pwrite(fd, buf, buffer_size, gds_running_ptr);
-    if (rc < 0) {
-        std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
-                  << std::endl;
-        return std::nullopt;
+
+    size_t written = 0;
+    while (buffer_size > 0) {
+        ssize_t rc = pwrite(fd, buf, buffer_size, gds_running_ptr + written);
+        if (rc < 0) {
+            std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
+                << std::endl;
+            return std::nullopt;
+        }
+
+        buffer_size -= rc;
+        written += rc;
     }
+
     free(buf);
 
     return ret;
