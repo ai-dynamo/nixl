@@ -840,7 +840,7 @@ class nixl_agent:
                     is_sorted,
                 )
             else:
-                print("Please use a list of contiguous Tensors")
+                logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
@@ -850,7 +850,7 @@ class nixl_agent:
                 if descs[i].device != tensor_type:
                     return None
                 if not descs[i].is_contiguous():
-                    print("Please use a list of contiguous Tensors")
+                    logger.error("Please use a list of contiguous Tensors")
                     return None
                 base_addr = descs[i].data_ptr()
                 region_len = descs[i].numel() * descs[i].element_size()
@@ -934,7 +934,7 @@ class nixl_agent:
                     is_sorted,
                 )
             else:
-                print("Please use a list of contiguous Tensors")
+                logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
@@ -944,7 +944,7 @@ class nixl_agent:
                 if descs[i].device != tensor_type:
                     return None
                 if not descs[i].is_contiguous():
-                    print("Please use a list of contiguous Tensors")
+                    logger.error("Please use a list of contiguous Tensors")
                     return None
                 base_addr = descs[i].data_ptr()
                 region_len = descs[i].numel() * descs[i].element_size()

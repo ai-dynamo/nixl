@@ -194,8 +194,9 @@ def test_query_mem():
                 assert len(resp) == 0
             except Exception as e:
                 # Some backends might not support queryMem, which is okay
-                print(
-                    f"queryMem with empty list failed (expected for some backends): {e}"
+                logger.exception(
+                    "queryMem with empty list failed (expected for some backends): %s",
+                    e,
                 )
 
             # Test 2: Query with actual file descriptors
@@ -229,16 +230,19 @@ def test_query_mem():
 
             except Exception as e:
                 # Some backends might not support queryMem, which is okay
-                print(f"queryMem failed (expected for some backends): {e}")
+                logger.exception(
+                    "queryMem failed (expected for some backends): %s",
+                    e,
+                )
         except Exception as e:
-            print(f"Backend creation failed: {e}")
+            logger.exception("Backend creation failed: %s", e)
             # Try MOCK_DRAM as fallback
             try:
                 params, mems = agent.getPluginParams("MOCK_DRAM")
                 backend = agent.createBackend("MOCK_DRAM", params)
-                print("Using MOCK_DRAM backend")
+                logger.info("Using MOCK_DRAM backend")
             except Exception as e2:
-                print(f"MOCK_DRAM also failed: {e2}")
+                logger.exception("MOCK_DRAM also failed: %s", e2)
                 return
 
     finally:
