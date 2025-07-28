@@ -13,8 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
-subdir('ucx')
-subdir('stream')
-subdir('file')
+aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: true)
+if not aws_s3.found()
+    message('aws-cpp-sdk-s3 not found, skipping plugins_gtest build')
+    subdir_done()
+endif
+
+plugins_test_exe = executable('plugins_gtest',
+    sources : ['../main.cpp', 'obj_plugin.cpp'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, plugins_inc_dirs, '.'],
+    dependencies : [nixl_dep, gtest_dep, absl_strings_dep, absl_time_dep, plugin_deps,
+                    obj_backend_interface],
+    link_with: [nixl_build_lib],
+    install : true
+)
+
+test('plugins_gtest', plugins_test_exe)
