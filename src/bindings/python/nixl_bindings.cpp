@@ -161,6 +161,15 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_ERR_NOT_SUPPORTED", NIXL_ERR_NOT_SUPPORTED)
         .export_values();
 
+    py::class_<nixl_xfer_telemetry_t>(m, "nixlXferTelemetry")
+        .def_property_readonly("start_time_ms", [](const nixl_xfer_telemetry_t& t) {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                t.startTime.time_since_epoch()).count();
+        })
+        .def_readwrite("post_elapsed_time_ms", &nixl_xfer_telemetry_t::postElapsedTime)
+        .def_readwrite("xfer_elapsed_time_ms", &nixl_xfer_telemetry_t::xferElapsedTime)
+        .def_readwrite("total_bytes", &nixl_xfer_telemetry_t::totalBytes);
+
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
     py::register_exception<nixlInvalidParamError>(m, "nixlInvalidParamError");
     py::register_exception<nixlBackendError>(m, "nixlBackendError");
@@ -651,6 +660,11 @@ PYBIND11_MODULE(_bindings, m) {
                  nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh);
                  throw_nixl_exception(ret);
                  return ret;
+             })
+        .def("getXferTelemetry",
+             [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_telemetry_t {
+                // TODO could also do in line without getter.
+                 return agent.getXferTelemetry((nixlXferReqH *)reqh);
              })
         .def("queryXferBackend",
              [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {

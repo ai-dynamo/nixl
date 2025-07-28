@@ -20,7 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <optional>
-
+#include <chrono>
 
 /*** Forward declarations ***/
 class nixlSerDes;
@@ -86,6 +86,16 @@ namespace nixlEnumStrings {
     std::string statusStr (const nixl_status_t &status);
 }
 
+
+/**
+ * @brief Telemetry data for a transfer request.
+ */
+struct nixl_xfer_telemetry_t {
+    std::chrono::high_resolution_clock::time_point startTime;
+    uint64_t postElapsedTime;
+    uint64_t xferElapsedTime;
+    size_t totalBytes;
+};
 
 /*** NIXL typedefs and defines used in the API ***/
 

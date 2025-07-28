@@ -510,6 +510,16 @@ class nixl_agent:
             return "ERR"
 
     """
+    @brief Get the telemetry of a transfer operation.
+
+    @param handle Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
+    @return Telemetry of the transfer operation.
+    """
+
+    def get_xfer_telemetry(self, handle: nixl_xfer_handle) -> nixlBind.nixlXferTelemetry:
+        return self.agent.getXferTelemetry(handle)
+
+    """
     @brief Query the backend that was chosen for a transfer operation.
 
     @param handle Handle to the transfer operation.
