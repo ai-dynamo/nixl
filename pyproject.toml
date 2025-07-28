@@ -35,3 +35,11 @@ profile = "black"
 
 [tool.meson-python.args]
 setup = ['-Dinstall_headers=false']
+
+[tool.pylint]
+disable = [
+    "C0114", # Missing module docstring
+    "C0115", # Missing class docstring
+    "C0116", # Missing function or method docstring
+    "W0105", # String statement has no effect (pointless-string-statement)
+]
