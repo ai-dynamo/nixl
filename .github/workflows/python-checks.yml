@@ -5,12 +5,16 @@ on: [pull_request]
 jobs:
   python-checks:
     runs-on: ubuntu-latest
+    strategy:
+    matrix:
+      path:
+        - ./src
+        - ./test
+        - ./benchmark
     steps:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 2
-    - name: Check for print() calls
+    - name: Check for print() calls in ${{ matrix.path }}
       run: |
-        ./.ci/scripts/check_prints.sh ./src
-        ./.ci/scripts/check_prints.sh ./test
-        ./.ci/scripts/check_prints.sh ./benchmark
+        ./.ci/scripts/check_prints.sh ${{ matrix.path }}

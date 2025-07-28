@@ -32,10 +32,10 @@ fi
 echo "Checking for BUILT-IN 'print()' calls in Python files within: $DIR_PATH"
 echo "---------------------------------------------------------------------"
 
-FOUND_PRINT=false
+found_print=false
 
 # Find all Python files and process them
-find "$DIR_PATH" -name "*.py" | while read -r py_file; do
+while read -r py_file; do
   # Use grep to find 'print()' calls with line numbers, then filter out method calls.
   # First grep: finds all occurrences of 'print(' with word boundary.
   # Second grep: filters out lines where 'print(' is preceded by a dot and optional whitespace.
@@ -43,16 +43,18 @@ find "$DIR_PATH" -name "*.py" | while read -r py_file; do
 
   if [ -n "$MATCHES" ]; then
     echo "Found built-in 'print()' in: $py_file"
-    echo "$MATCHES" | sed 's/^/  Line /' # Indent and prepend "Line "
+    echo "${MATCHES//$'\n'/$'\n' Line }" # Indent and prepend "Line "
     echo # Add a blank line for readability
-    FOUND_PRINT=true
+    found_print=true
   fi
-done
+done < <(find "$DIR_PATH" -name "*.py")
 
 echo "---------------------------------------------------------------------"
 
-if [ "$FOUND_PRINT" = true ]; then
+if [ "$found_print" = true ]; then
   echo "One or more Python files in '$DIR_PATH' contain built-in 'print()' calls."
+  exit 1
 else
   echo "No built-in 'print()' calls found in any Python files within '$DIR_PATH'."
+  exit 0
 fi

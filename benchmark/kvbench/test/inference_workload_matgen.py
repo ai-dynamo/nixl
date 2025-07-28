@@ -272,8 +272,6 @@ def gen_matrix(
     num_peers = int(num_peers)
     buf_size = kv_slice_size / num_peers
 
-    # print(f"kv_size: {format_size(kv_size)}, kv_slice_size: {format_size(kv_slice_size)}, buf_size: {format_size(buf_size)}, num_peers: {num_peers}")
-
     mat = np.zeros((world_size, world_size))
 
     dst_iter = iter(decode_worker)
@@ -606,10 +604,6 @@ if __name__ == "__main__":
             batch_size=batch_size,
             max_batch_mem=max_batch_mem,
         )
-
-        # world_size = num_prefill_nodes * prefill_tp + num_decode_nodes * decode_tp
-        # print(f"World size: {world_size}")
-        # print(f"Model config: {model_config}")
 
         main(
             num_user_requests=num_user_requests,
