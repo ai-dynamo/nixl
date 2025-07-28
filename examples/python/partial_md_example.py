@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import os
 
 import nixl._utils as nixl_utils
@@ -70,12 +71,28 @@ if __name__ == "__main__":
     buf_size = 256
     # Allocate memory and register with NIXL
 
-    logger.info("Using NIXL Plugins from:\n%s", os.environ["NIXL_PLUGIN_DIR"])
+    parser = argparse.ArgumentParser(description="NIXL Partial Metadata Example")
+    parser.add_argument(
+        "--etcd",
+        action="store_true",
+        help="Use ETCD for metadata exchange. Must set NIXL_ETCD_ENDPOINTS environment variable.",
+    )
+    args = parser.parse_args()
 
-    etcd_endpoints = os.getenv("NIXL_ETCD_ENDPOINTS", "")
-    if etcd_endpoints:
-        logger.info("NIXL_ETCD_ENDPOINTS is set, using endpoints: %s", etcd_endpoints)
+    logger.info("Using NIXL Plugins from:")
+    logger.info(os.environ["NIXL_PLUGIN_DIR"])
+
+    if args.etcd:
+        etcd_endpoints = os.getenv("NIXL_ETCD_ENDPOINTS", "")
+        if etcd_endpoints:
+            logger.info("NIXL_ETCD_ENDPOINTS is set, using endpoints: ", etcd_endpoints)
+        else:
+            raise ValueError(
+                "NIXL_ETCD_ENDPOINTS is not set, but --etcd flag is provided"
+            )
     else:
+        etcd_endpoints = ""
+        del os.environ["NIXL_ETCD_ENDPOINTS"]
         logger.info("NIXL_ETCD_ENDPOINTS is not set, using socket exchange")
 
     # Needed for socket exchange

@@ -24,7 +24,10 @@
 #include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/PutObjectResult.h>
 #include <aws/s3/model/GetObjectResult.h>
+#include <aws/s3/model/HeadObjectRequest.h>
+#include <aws/s3/model/HeadObjectResult.h>
 #include <aws/core/http/Scheme.h>
+#include <aws/core/http/HttpResponse.h>
 #include <aws/core/auth/AWSCredentials.h>
 #include <aws/core/client/ClientConfiguration.h>
 #include <aws/core/utils/Outcome.h>
@@ -57,6 +60,19 @@ createClientConfiguration(nixl_b_params_t *custom_params) {
 
     auto region_it = custom_params->find("region");
     if (region_it != custom_params->end()) config.region = region_it->second;
+
+    auto req_checksum_it = custom_params->find("req_checksum");
+    if (req_checksum_it != custom_params->end()) {
+        if (req_checksum_it->second == "required")
+            config.checksumConfig.requestChecksumCalculation =
+                Aws::Client::RequestChecksumCalculation::WHEN_REQUIRED;
+        else if (req_checksum_it->second == "supported")
+            config.checksumConfig.requestChecksumCalculation =
+                Aws::Client::RequestChecksumCalculation::WHEN_SUPPORTED;
+        else
+            throw std::runtime_error("Invalid value for req_checksum: '" + req_checksum_it->second +
+                                     "'. Must be 'required' or 'supported'");
+    }
 
     return config;
 }
@@ -119,7 +135,7 @@ getBucketName(nixl_b_params_t *custom_params) {
 
 } // namespace
 
-AwsS3Client::AwsS3Client(nixl_b_params_t *custom_params,
+awsS3Client::awsS3Client(nixl_b_params_t *custom_params,
                          std::shared_ptr<Aws::Utils::Threading::Executor> executor)
     : awsOptions_(
           []() {
@@ -152,17 +168,17 @@ AwsS3Client::AwsS3Client(nixl_b_params_t *custom_params,
 }
 
 void
-AwsS3Client::setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
+awsS3Client::setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
     throw std::runtime_error("AwsS3Client::setExecutor() not supported - AWS SDK doesn't allow "
                              "changing executor after client creation");
 }
 
 void
-AwsS3Client::PutObjectAsync(std::string_view key,
+awsS3Client::putObjectAsync(std::string_view key,
                             uintptr_t data_ptr,
                             size_t data_len,
                             size_t offset,
-                            PutObjectCallback callback) {
+                            put_object_callback_t callback) {
     // AWS S3 doesn't support partial put operations with offset
     if (offset != 0) {
         callback(false);
@@ -191,11 +207,11 @@ AwsS3Client::PutObjectAsync(std::string_view key,
 }
 
 void
-AwsS3Client::GetObjectAsync(std::string_view key,
+awsS3Client::getObjectAsync(std::string_view key,
                             uintptr_t data_ptr,
                             size_t data_len,
                             size_t offset,
-                            GetObjectCallback callback) {
+                            get_object_callback_t callback) {
     auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf>(
         "GetObjectStreamBuf", reinterpret_cast<unsigned char *>(data_ptr), data_len);
     auto stream_factory = Aws::MakeShared<Aws::IOStreamFactory>(
@@ -219,4 +235,19 @@ AwsS3Client::GetObjectAsync(std::string_view key,
             callback(outcome.IsSuccess());
         },
         nullptr);
+}
+
+bool
+awsS3Client::checkObjectExists(std::string_view key) {
+    Aws::S3::Model::HeadObjectRequest request;
+    request.WithBucket(bucketName_).WithKey(Aws::String(key));
+
+    auto outcome = s3Client_->HeadObject(request);
+    if (outcome.IsSuccess())
+        return true;
+    else if (outcome.GetError().GetResponseCode() == Aws::Http::HttpResponseCode::NOT_FOUND)
+        return false;
+    else
+        throw std::runtime_error("Failed to check if object exists: " +
+                                 outcome.GetError().GetMessage());
 }

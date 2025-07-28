@@ -165,8 +165,11 @@ std::variant<double, int> xferBenchNvshmemWorker::transfer(size_t block_size,
     // Here the local_trans_lists is the same as remote_trans_lists
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
-        skip /= LARGE_BLOCK_SIZE_ITER_FACTOR;
-        num_iter /= LARGE_BLOCK_SIZE_ITER_FACTOR;
+        skip /= xferBenchConfig::large_blk_iter_ftr;
+        if (skip < MIN_WARMUP_ITERS) {
+            skip = MIN_WARMUP_ITERS;
+        }
+        num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
     ret = execTransfer(local_trans_lists, remote_trans_lists, skip, stream);

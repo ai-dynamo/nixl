@@ -22,9 +22,9 @@
 #include <asio.hpp>
 #include <functional>
 
-class AsioThreadPoolExecutor : public Aws::Utils::Threading::Executor {
+class asioThreadPoolExecutor : public Aws::Utils::Threading::Executor {
 public:
-    explicit AsioThreadPoolExecutor(std::size_t num_threads) : pool_(num_threads) {}
+    explicit asioThreadPoolExecutor(std::size_t num_threads) : pool_(num_threads) {}
 
     void
     WaitUntilStopped() override {
@@ -33,7 +33,7 @@ public:
     }
 
     void
-    WaitUntilIdle() {
+    waitUntilIdle() {
         pool_.wait();
     }
 
