@@ -31,7 +31,7 @@ ARG _GID=30
 ARG _LOGIN=svc-nixl
 ARG _GROUP=hardware
 ARG _HOME=/home/$_LOGIN
-ARG WORKDIR
+ARG WORKSPACE
 
 # Labels for documentation
 LABEL maintainer="NVIDIA NIXL Team"
@@ -59,10 +59,10 @@ RUN mkdir -p /etc/sudoers.d && \
     chown root:root /etc/sudoers.d/${_LOGIN}
 
 # Copy workspace into container (workaround for files disappearing from workspace)
-COPY --chown="${_UID}":"${_GID}" . ${WORKDIR}
+COPY --chown="${_UID}":"${_GID}" . ${WORKSPACE}
 
 # Set working directory
-WORKDIR ${_HOME}
+WORKSPACE ${_HOME}
 
 # Switch to non-root user
 USER ${_LOGIN}
