@@ -97,7 +97,7 @@ steps:
       if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
       else
-        # Ref = UCX_VERSION or fallback from build script
+        # Ref = UCX_VERSION or get from build script
         UCX_REF="${UCX_VERSION:-$(sed -n 's/^UCX_REF=${UCX_REF:-\(.*\)}/\1/p' contrib/build-container.sh)}"
 
         # Hash? if yes truncate, else ls-remote then truncate
@@ -111,32 +111,31 @@ steps:
         [[ -n "$CLEAN_UCX" ]] || { echo "ERROR: failed to resolve UCX_REF=$UCX_REF"; exit 1; }
       fi
 
+      # Calculate tag name
+      NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
+      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+
       # Generate version info file from template
       export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
              BUILD_TARGET BASE_IMAGE BASE_IMAGE_TAG arch \
              BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE \
-             NIXL_VERSION="$(git rev-parse --short=8 HEAD)" UCX_VERSION="${CLEAN_UCX}"
-      envsubst < .ci/assets/nixl-version-info.json.template > version-info.json
+             NIXL_VERSION UCX_VERSION="${CLEAN_UCX}" TAG_NAME
+      envsubst < .ci/assets/nixl-version-info.template > version-info
 
       # Add version info to the image
       CONTAINER_ID=$(docker create "${LOCAL_TAG_BASE}${arch}")
-      docker cp version-info.json "${CONTAINER_ID}:/opt/nixl-version.json"
+      docker cp version-info "${CONTAINER_ID}:/opt/nixl-version"
       docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
 
   - name: Push
     credentialsId: 'svc-nixl-artifactory-token'
     run: |
-      # Extract UCX SHA from version-info.json
-      CLEAN_UCX=$(grep -oP '"ucx_version":\s*"\K[^\"]+' version-info.json)
-        [[ -n "$CLEAN_UCX" ]] || { echo "ERROR: unable to extract UCX SHA from version-info.json"; exit 1; }
-
-      NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
+      source version-info
       ARTIFACTORY_REGISTRY="${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}"
       ARTIFACTORY_API="https://${REGISTRY_HOSTESS}/artifactory/api/storage/${REGISTRY_REPO}/${BUILD_TARGET}"
-      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
 
       # Prepare image properties
-      IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${CLEAN_UCX};arch=${arch};"
+      IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${UCX_VERSION};arch=${arch};"
       IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
       IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
 
@@ -163,8 +162,9 @@ steps:
 
   - name: Show Results
     run: |
+      source version-info
       echo "Image type built: ${BUILD_TARGET} (${arch})"
-      echo "Image pushed to: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}"
+      echo "Image pushed to: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${TAG_NAME}"
       if [[ "${UPDATE_LATEST}" == "true" ]]; then
         echo "Latest tag updated: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
       fi
