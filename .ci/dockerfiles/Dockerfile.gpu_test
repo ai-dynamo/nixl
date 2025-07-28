@@ -19,6 +19,7 @@
 #   _LOGIN: Username (default: svc-nixl)
 #   _GROUP: Group name (default: hardware)
 #   _HOME: Home directory path (default: /home/svc-nixl)
+#   WORKSPACE: Workspace directory path
 #
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.02-py3
@@ -62,7 +63,7 @@ RUN mkdir -p /etc/sudoers.d && \
 COPY --chown="${_UID}":"${_GID}" . ${WORKSPACE}
 
 # Set working directory
-WORKSPACE ${_HOME}
+WORKDIR ${_HOME}
 
 # Switch to non-root user
 USER ${_LOGIN}
