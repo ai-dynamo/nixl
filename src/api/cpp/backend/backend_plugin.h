@@ -53,7 +53,7 @@ public:
 // Template for creating backend plugins with minimal boilerplate
 template<typename EngineType> class nixlBackendPluginTemplate {
 public:
-    static nixlBackendEngine *
+    [[nodiscard]] static nixlBackendEngine *
     create_engine_impl(const nixlBackendInitParams *init_params) {
         try {
             return new EngineType(init_params);
@@ -68,7 +68,7 @@ public:
         delete engine;
     }
 
-    static nixlBackendPlugin
+    [[nodiscard]] static nixlBackendPlugin
     create_plugin(const char *name,
                   const char *version,
                   nixl_b_params_t (*get_options)(),
@@ -87,14 +87,58 @@ public:
     }
 };
 
-// Macro to define a complete plugin with minimal code
 #define NIXL_DEFINE_PLUGIN(PluginName, EngineType, PluginVersion, GetOptionsFunc, GetMemsFunc) \
     namespace {                                                                                \
-        nixlBackendPlugin plugin =                                                             \
-            nixlBackendPluginTemplate<EngineType>::create_plugin(#PluginName,                  \
-                                                                 PluginVersion,                \
-                                                                 GetOptionsFunc,               \
-                                                                 GetMemsFunc);                 \
+        /* Core implementation functions */                                                    \
+        nixlBackendEngine *                                                                    \
+        create_engine_impl(const nixlBackendInitParams *init_params) {                         \
+            try {                                                                              \
+                return new EngineType(init_params);                                            \
+            }                                                                                  \
+            catch (const std::exception &e) {                                                  \
+                return nullptr;                                                                \
+            }                                                                                  \
+        }                                                                                      \
+                                                                                               \
+        void                                                                                   \
+        destroy_engine_impl(nixlBackendEngine *engine) {                                       \
+            delete engine;                                                                     \
+        }                                                                                      \
+                                                                                               \
+        /* [[nodiscard]] wrapper functions */                                                  \
+        [[nodiscard]] nixlBackendEngine *                                                      \
+        create_engine_wrapper(const nixlBackendInitParams *init_params) {                      \
+            return create_engine_impl(init_params);                                            \
+        }                                                                                      \
+                                                                                               \
+        [[nodiscard]] const char *                                                             \
+        get_name_wrapper() {                                                                   \
+            return #PluginName;                                                                \
+        }                                                                                      \
+                                                                                               \
+        [[nodiscard]] const char *                                                             \
+        get_version_wrapper() {                                                                \
+            return PluginVersion;                                                              \
+        }                                                                                      \
+                                                                                               \
+        [[nodiscard]] nixl_b_params_t                                                          \
+        get_options_wrapper() {                                                                \
+            return GetOptionsFunc ? GetOptionsFunc() : nixl_b_params_t{};                      \
+        }                                                                                      \
+                                                                                               \
+        [[nodiscard]] nixl_mem_list_t                                                          \
+        get_mems_wrapper() {                                                                   \
+            return GetMemsFunc ? GetMemsFunc() : nixl_mem_list_t{DRAM_SEG};                    \
+        }                                                                                      \
+                                                                                               \
+        /* Plugin structure using [[nodiscard]] wrapper functions */                           \
+        nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,                                   \
+                                    create_engine_wrapper,                                     \
+                                    destroy_engine_impl,                                       \
+                                    get_name_wrapper,                                          \
+                                    get_version_wrapper,                                       \
+                                    get_options_wrapper,                                       \
+                                    get_mems_wrapper};                                         \
     }                                                                                          \
                                                                                                \
     extern "C" nixlBackendPlugin *createStatic##PluginName##Plugin() {                         \
