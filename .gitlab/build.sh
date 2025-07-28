@@ -21,6 +21,7 @@ set -x
 # and second argument being the UCX installation directory.
 INSTALL_DIR=$1
 UCX_INSTALL_DIR=$2
+EXTRA_BUILD_ARGS=${3:-""}
 # UCX_VERSION is the version of UCX to build override default with env variable.
 UCX_VERSION=${UCX_VERSION:-v1.18.0}
 
@@ -43,6 +44,9 @@ fi
 
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
+
+# Some docker images are with broken installations:
+$SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
 $SUDO apt-get -qq install -y curl \
@@ -67,7 +71,9 @@ $SUDO apt-get -qq install -y curl \
                              libgrpc-dev \
                              libgrpc++-dev \
                              libprotobuf-dev \
+                             libcpprest-dev \
                              libaio-dev \
+                             liburing-dev \
                              meson \
                              ninja-build \
                              pkg-config \
@@ -81,10 +87,11 @@ $SUDO apt-get -qq install -y curl \
                              ibverbs-utils \
                              libibmad-dev \
                              doxygen \
-                             clang
+                             clang \
+                             libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.86.0
-export PATH=$HOME/.cargo/bin:$PATH
+export PATH="$HOME/.cargo/bin:$PATH"
 
 curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
@@ -106,17 +113,39 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
         $SUDO ldconfig \
 )
 
-export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
-export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib
-export CPATH=${INSTALL_DIR}/include:$CPATH
-export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:$PKG_CONFIG_PATH
-export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
+( \
+  cd /tmp && \
+  git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+  cd etcd-cpp-apiv3 && \
+  mkdir build && cd build && \
+  cmake .. && \
+  make -j"$(nproc)" && \
+  $SUDO make install && \
+  $SUDO ldconfig \
+)
+
+( \
+  git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+  mkdir aws_sdk_build && \
+  cd aws_sdk_build && \
+  cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+  make -j"$(nproc)" && \
+  $SUDO make install
+)
+
+export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/cuda/lib64"
+export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib"
+export CPATH="${INSTALL_DIR}/include:$CPATH"
+export PATH="${INSTALL_DIR}/bin:$PATH"
+export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:$PKG_CONFIG_PATH"
+export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
+export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
+
 # Disabling CUDA IPC not to use NVLINK, as it slows down local
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false
+meson setup nixl_build --prefix="${INSTALL_DIR}" -Ducx_path="${UCX_INSTALL_DIR}" -Dbuild_docs=true -Drust=false "${EXTRA_BUILD_ARGS}"
 cd nixl_build && ninja && ninja install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.

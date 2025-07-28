@@ -29,13 +29,10 @@
 
 // Forward declaration for etcd client
 namespace etcd {
-    class Client;
+class SyncClient;
 }
 
-enum xferBenchEtcdMsgType {
-    XFER_BENCH_ETCD_MSG_TYPE_INT = 1,
-    XFER_BENCH_ETCD_MSG_TYPE_CHAR = 2
-};
+enum xferBenchEtcdMsgType { XFER_BENCH_ETCD_MSG_TYPE_INT = 1, XFER_BENCH_ETCD_MSG_TYPE_CHAR = 2 };
 
 /**
  * ETCD-based runtime for XFER benchmark coordination
@@ -47,7 +44,7 @@ private:
     std::string stored_etcd_endpoints;
     std::string namespace_prefix;
     std::string benchmark_group;
-    std::unique_ptr<etcd::Client> client;
+    std::unique_ptr<etcd::SyncClient> client;
 
     int my_rank; // Rank information
     int global_size;
