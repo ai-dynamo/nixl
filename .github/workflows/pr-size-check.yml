@@ -1,0 +1,67 @@
+name: PR Size Check
+
+on: [pull_request]
+
+jobs:
+  check-pr-size:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 2  # Need full history to compare with base branch
+
+    - name: Check PR size
+      run: |
+        # Calculate detailed breakdown of changes
+        echo "📊 Analyzing PR changes..."
+        echo ""
+
+        # Lines added to existing files (excluding subprojects)
+        LINES_CHANGED=$(git diff --numstat HEAD^1 HEAD | grep -v "^[0-9]*	[0-9]*	subprojects/" | awk '$2 != 0 {sum += $1} END {print sum+0}')
+
+        # Lines added in new files (excluding subprojects)
+        LINES_NEW_FILES=$(git diff --numstat HEAD^1 HEAD | grep -v "^[0-9]*	[0-9]*	subprojects/" | awk '$2 == 0 {sum += $1} END {print sum+0}')
+
+        # Lines added in subprojects folder
+        LINES_SUBPROJECTS=$(git diff --numstat HEAD^1 HEAD | grep "^[0-9]*	[0-9]*	subprojects/" | awk '{sum += $1} END {print sum+0}')
+
+        # Total lines added (excluding subprojects for the limit check)
+        TOTAL_LINES_EXCLUDING_SUBPROJECTS=$((LINES_CHANGED + LINES_NEW_FILES))
+        TOTAL_LINES_ALL=$((TOTAL_LINES_EXCLUDING_SUBPROJECTS + LINES_SUBPROJECTS))
+
+        # Handle case where no changes are detected
+        if [ -z "$LINES_CHANGED" ] || [ "$LINES_CHANGED" -eq 0 ]; then
+          LINES_CHANGED=0
+        fi
+        if [ -z "$LINES_NEW_FILES" ] || [ "$LINES_NEW_FILES" -eq 0 ]; then
+          LINES_NEW_FILES=0
+        fi
+        if [ -z "$LINES_SUBPROJECTS" ] || [ "$LINES_SUBPROJECTS" -eq 0 ]; then
+          LINES_SUBPROJECTS=0
+        fi
+
+        echo "📈 Change Summary:"
+        echo "  • Lines added to existing files: $LINES_CHANGED"
+        echo "  • Lines added in new files: $LINES_NEW_FILES"
+        echo "  • Lines added in subprojects/: $LINES_SUBPROJECTS"
+        echo "  • Total lines (excluding subprojects): $TOTAL_LINES_EXCLUDING_SUBPROJECTS"
+        echo "  • Total lines (including subprojects): $TOTAL_LINES_ALL"
+        echo "  • Maximum allowed lines: 500"
+        echo ""
+
+        if [ "$TOTAL_LINES_EXCLUDING_SUBPROJECTS" -gt 500 ]; then
+          echo "❌ PR size check failed!"
+          echo "This PR adds $TOTAL_LINES_EXCLUDING_SUBPROJECTS lines (excluding subprojects), which exceeds the maximum of 500 lines."
+          echo "Please consider breaking this PR into smaller, more focused changes."
+          echo ""
+          echo "Files with the most changes (excluding subprojects):"
+          git diff --stat HEAD^1 HEAD | grep -v "subprojects/" | head -10
+          echo ""
+          echo "Detailed breakdown (excluding subprojects):"
+          git diff --numstat HEAD^1 HEAD | grep -v "^[0-9]*	[0-9]*	subprojects/" | sort -k3 -nr | head -10
+          exit 1
+        else
+          echo "✅ PR size check passed!"
+          echo "This PR adds $TOTAL_LINES_EXCLUDING_SUBPROJECTS lines (excluding subprojects), which is within the 500 line limit."
+        fi
