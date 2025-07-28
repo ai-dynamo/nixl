@@ -26,6 +26,7 @@
 #include <variant>
 #include <vector>
 #include <optional>
+#include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
 
 #if HAVE_CUDA
@@ -183,11 +184,11 @@ public:
     xferBenchTimer();
 
     // Return the elapsed time in microseconds
-    long long
+    nixlTime::us_t
     lap();
 
 private:
-    std::chrono::high_resolution_clock::time_point start_;
+    nixlTime::us_t start_;
 };
 
 // Stats class for measuring arbitrary numeric metrics with multiple samples

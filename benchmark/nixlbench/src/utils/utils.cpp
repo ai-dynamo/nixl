@@ -906,11 +906,11 @@ xferBenchStats::reserve(size_t n) {
  */
 
 xferBenchTimer::xferBenchTimer()
-    : start_(std::chrono::high_resolution_clock::now()) {}
+    : start_(nixlTime::getUs()) {}
 
-long long xferBenchTimer::lap() {
-    auto now = std::chrono::high_resolution_clock::now();
-    auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(now - start_).count();
+nixlTime::us_t xferBenchTimer::lap() {
+    nixlTime::us_t now = nixlTime::getUs();
+    nixlTime::us_t duration = now - start_;
     start_ = now;
-    return duration_us;
+    return duration;
 }
