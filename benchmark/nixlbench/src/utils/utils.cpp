@@ -485,6 +485,7 @@ static bool allBytesAre(void* buffer, size_t size, uint8_t value) {
 }
 
 void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
+    int i = 0, j = 0;
     for (const auto &iov_list: iov_lists) {
         for(const auto &iov: iov_list) {
             void *addr = NULL;
@@ -574,13 +575,15 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             }
             rc = allBytesAre(addr, len, check_val);
             if (true != rc) {
-                std::cerr << "Consistency check failed\n" << std::flush;
+                std::cerr << "Consistency check failed for iov " << i << ":" << j << std::endl;
             }
             // Free the addr only if is allocated here
             if (is_allocated) {
                 free(addr);
             }
+            j++;
         }
+        i++;
     }
 }
 
