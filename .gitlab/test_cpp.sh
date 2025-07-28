@@ -56,11 +56,17 @@ nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 
+echo "==== Running ETCD server ===="
+export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:2379"
+etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} &
+sleep 5
+
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
 ./bin/desc_example
 ./bin/agent_example
 ./bin/nixl_example
+./bin/nixl_etcd_example
 ./bin/ucx_backend_test
 ./bin/ucx_mo_backend_test
 
@@ -83,3 +89,5 @@ echo "./bin/md_streamer disabled"
 echo "./bin/p2p_test disabled"
 echo "./bin/ucx_worker_test disabled"
 echo "${TEXT_CLEAR}"
+
+pkill etcd

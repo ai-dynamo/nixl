@@ -89,8 +89,9 @@ static std::vector<std::vector<xferBenchIOV>> createTransferDescLists(xferBenchW
                         block_offset = 0;
                     }
                     xfer_list.push_back(xferBenchIOV((iov.addr + dev_offset) + block_offset,
-                                                      block_size,
-                                                      iov.devId));
+                                                     block_size,
+                                                     iov.devId,
+                                                     iov.metaInfo));
                 }
             }
         }
