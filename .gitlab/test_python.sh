@@ -52,6 +52,7 @@ pip3 install --break-system-packages zmq
 
 echo "==== Running ETCD server ===="
 export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:2379"
+export NIXL_ETCD_NAMESPACE="/nixl/test-"-`date +"%H:%M:%S:%N"`
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} &
 sleep 5
 
