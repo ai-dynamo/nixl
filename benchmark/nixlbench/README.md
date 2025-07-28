@@ -125,3 +125,24 @@ Example:
 ```
 
 The workers automatically coordinate ranks through ETCD as they connect.
+
+### Benchmarking the OBJ Plugin
+
+For OBJ plugin benchmarking run etcd-server and a single nixlbench instance.
+
+Example:
+```bash
+AWS_ACCESS_KEY_ID=<access_key> AWS_SECRET_ACCESS_KEY=<secret_key> AWS_DEFAULT_REGION=<region> /tmp/nixlbench/nixlbench --etcd-endpoints http://<etcd-server>:2379 --backend OBJ --obj_bucket_name <bucket_name>
+```
+Access key, secret access key, default region and bucket name are mandatory fields.
+Use your own valid credentials.
+
+Transfer times are higher than local storage so it is advisable to use less iterations than the default values.
+
+Example:
+```bash
+AWS_ACCESS_KEY_ID=<access_key> AWS_SECRET_ACCESS_KEY=<secret_key> AWS_DEFAULT_REGION=<region> /tmp/nixlbench/nixlbench --etcd-endpoints http://etcd-server:2379 --backend OBJ --obj_bucket_name nixl-ci-test --warmup_iter 32 --num_iter 32 --large_blk_iter_ftr 2
+```
+
+The default benchmark command tests write. To test read ops add the flag: `--op_type READ`.
+To test tranfer data validity add the flag: `--check_consistency true`.
