@@ -23,12 +23,14 @@ try:
     from nixl._api import nixl_agent, nixl_agent_config
     from nixl.logging import get_logger
 
+    logger = get_logger(__name__)
+
     NIXL_AVAILABLE = True
 except ImportError:
-    print("NIXL API missing install NIXL.")
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.error("NIXL API missing install NIXL.")
     NIXL_AVAILABLE = False
-
-logger = get_logger(__name__)
 
 if __name__ == "__main__":
     logger.info("NIXL queryMem Python API Example")
