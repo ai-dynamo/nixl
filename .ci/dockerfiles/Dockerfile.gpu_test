@@ -31,6 +31,7 @@ ARG _GID=30
 ARG _LOGIN=svc-nixl
 ARG _GROUP=hardware
 ARG _HOME=/home/$_LOGIN
+ARG WORKDIR
 
 # Labels for documentation
 LABEL maintainer="NVIDIA NIXL Team"
@@ -58,7 +59,7 @@ RUN mkdir -p /etc/sudoers.d && \
     chown root:root /etc/sudoers.d/${_LOGIN}
 
 # Copy workspace into container (workaround for files disappearing from workspace)
-COPY --chown="${_UID}":"${_GID}" . /docker_workspace
+COPY --chown="${_UID}":"${_GID}" . ${WORKDIR}
 
 # Set working directory
 WORKDIR ${_HOME}
