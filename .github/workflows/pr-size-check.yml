@@ -1,0 +1,44 @@
+name: PR Size Check
+
+on: [pull_request]
+
+jobs:
+  check-pr-size:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 2  # Need full history to compare with base branch
+
+    - name: Check PR size
+      run: |
+        # Calculate total lines added to existing files only (excluding new files), excluding subprojects folder
+        # git diff --numstat outputs: additions deletions filename
+        # For new files, additions column shows "-" instead of a number
+        # $1 != "-" condition excludes new files from line count
+        LINES_CHANGED=$(git diff --numstat HEAD^1 HEAD | grep -v "^[0-9]*	[0-9]*	subprojects/" | awk '$1 != "-" {sum += $1} END {print sum+0}')
+
+        # Handle case where no changes are detected
+        if [ -z "$LINES_CHANGED" ] || [ "$LINES_CHANGED" -eq 0 ]; then
+          LINES_CHANGED=0
+        fi
+
+        echo "Lines added in this PR: $LINES_CHANGED"
+        echo "Maximum allowed lines: 500"
+
+        if [ "$LINES_CHANGED" -gt 500 ]; then
+          echo "❌ PR size check failed!"
+          echo "This PR adds $LINES_CHANGED lines, which exceeds the maximum of 500 lines."
+          echo "Please consider breaking this PR into smaller, more focused changes."
+          echo ""
+          echo "Files with the most changes (excluding subprojects):"
+          git diff --stat HEAD^1 HEAD | grep -v "subprojects/" | head -10
+          echo ""
+          echo "Detailed breakdown (excluding subprojects):"
+          git diff --numstat HEAD^1 HEAD | grep -v "^[0-9]*	[0-9]*	subprojects/" | sort -k3 -nr | head -10
+          exit 1
+        else
+          echo "✅ PR size check passed!"
+          echo "This PR adds $LINES_CHANGED lines, which is within the 500 line limit."
+        fi
