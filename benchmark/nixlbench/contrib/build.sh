@@ -180,6 +180,7 @@ show_help() {
     echo "  [--base-image-tag base image tag]"
     echo "  [--nixlbench path/to/nixlbench/source/dir]"
     echo "  [--ucx path/to/ucx/source/dir]"
+    echo "  [--build-type [debug|release]]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--python-versions python versions to build for, comma separated]"
