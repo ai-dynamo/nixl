@@ -123,12 +123,12 @@ public:
                                                                                                \
         [[nodiscard]] nixl_b_params_t                                                          \
         get_options_wrapper() {                                                                \
-            return GetOptionsFunc ? GetOptionsFunc() : nixl_b_params_t{};                      \
+            return GetOptionsFunc();                                                          \
         }                                                                                      \
                                                                                                \
         [[nodiscard]] nixl_mem_list_t                                                          \
         get_mems_wrapper() {                                                                   \
-            return GetMemsFunc ? GetMemsFunc() : nixl_mem_list_t{DRAM_SEG};                    \
+            return GetMemsFunc();                                                             \
         }                                                                                      \
                                                                                                \
         /* Plugin structure using [[nodiscard]] wrapper functions */                           \
