@@ -28,6 +28,7 @@ try:
     NIXL_AVAILABLE = True
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
     logger.error("NIXL API missing install NIXL.")
     NIXL_AVAILABLE = False
