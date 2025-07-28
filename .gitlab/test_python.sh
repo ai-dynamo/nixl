@@ -74,7 +74,6 @@ cd examples/python
 python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
 sleep 5
 python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
-python3 partial_md_example.py
 
 python3 query_mem_example.py
 
