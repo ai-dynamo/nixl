@@ -14,8 +14,6 @@ jobs:
           - ./examples/python
     steps:
     - uses: actions/checkout@v3
-      with:
-        fetch-depth: 2
     - name: Check for print() calls in ${{ matrix.path }}
       run: |
         ./.ci/scripts/check_prints.sh ${{ matrix.path }}
