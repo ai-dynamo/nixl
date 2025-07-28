@@ -29,6 +29,16 @@ public:
     mutable std::mutex connectLock;
     std::vector<std::pair<uint32_t, struct doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
     struct doca_dev *ddev; /* DOCA device handler associated to queues */
+    struct doca_verbs_context *verbs_context;  /* DOCA Verbs Context */
+	struct doca_verbs_pd *verbs_pd;		   /* DOCA Verbs Protection Domain */
+	struct doca_verbs_ah_attr *verbs_ah_attr;  /* DOCA Verbs address handle */
+    struct ibv_pd *pd;			   /* local protection domain */
+	struct doca_verbs_gid gid;		   /* local gid address */
+	struct doca_verbs_gid remote_gid;	   /* remote gid address */
+	int lid;				   /* IB: local ID */
+	int dlid;				   /* IB: destination ID */
+    int gid_index;
+    struct ibv_port_attr port_attr;
     nixl_status_t addRdmaQp (const std::string &remote_agent);
     nixl_status_t connectServerRdmaQp (int oob_sock_client, const std::string &remote_agent);
     nixl_status_t nixlDocaInitNotif (const std::string &remote_agent, struct doca_dev *dev, struct doca_gpu *gpu);
@@ -142,13 +152,13 @@ private:
     uint32_t *wait_exit_gpu;
     uint32_t *wait_exit_cpu;
     int oob_sock_client;
-    struct docaNotifRecv *notif_fill_gpu;
-    struct docaNotifRecv *notif_fill_cpu;
-    struct docaNotifRecv *notif_progress_gpu;
-    struct docaNotifRecv *notif_progress_cpu;
+    struct docaNotif *notif_fill_gpu;
+    struct docaNotif *notif_fill_cpu;
+    struct docaNotif *notif_progress_gpu;
+    struct docaNotif *notif_progress_cpu;
 
-    struct docaNotifSend *notif_send_gpu;
-    struct docaNotifSend *notif_send_cpu;
+    struct docaNotif *notif_send_gpu;
+    struct docaNotif *notif_send_cpu;
 
     // Map of agent name to saved nixlDocaConnection info
     std::unordered_map<std::string, nixlDocaConnection> remoteConnMap;

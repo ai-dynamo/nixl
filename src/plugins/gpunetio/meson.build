@@ -14,10 +14,7 @@
 # limitations under the License.
 
 gpunetio_device_path = dependency('doca-gpunetio').get_variable(pkgconfig : 'libdir')
-dependency_gpunetio_device = declare_dependency(compile_args : '-Wl,--whole-archive',
-                                                link_args : ['-L' + gpunetio_device_path , '-ldoca_gpunetio_device'],)
-
-plugin_gpunetio_deps = [dependency('doca-common'), dependency('doca-rdma'), dependency('doca-gpunetio'), dependency_gpunetio_device]
+plugin_gpunetio_deps = [dependency('doca-common'), dependency('doca-verbs'), dependency('doca-gpunetio')]
 
 #Get Abseil dependencies
 absl_log_dep = dependency('absl_log', required: true)
