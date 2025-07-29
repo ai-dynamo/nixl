@@ -227,17 +227,153 @@ if [ "$INSTALL_3FS" = true ]; then
     unset CUDA_PATH
     # Clean any existing build directory to avoid cached configuration
     rm -rf /workspace/3fs/build
-    cmake -S /workspace/3fs -B /workspace/3fs/build \
-            -G "Unix Makefiles" \
-            -DCMAKE_CXX_COMPILER=clang++-14 \
-            -DCMAKE_C_COMPILER=clang-14 \
-            -DARROW_JEMALLOC_USE_STATIC=OFF \
-            -DARROW_MIMALLOC=OFF \
-            -DARROW_JEMALLOC=OFF \
-            -DARROW_USE_SYSTEM_MALLOC=ON \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DARROW_JEMALLOC_BUILD_JOBS=1
+
+    # ========== COMPREHENSIVE DIAGNOSTIC SECTION ==========
+    echo "========== 3FS BUILD DIAGNOSTICS START =========="
+
+    # System information
+    echo "=== SYSTEM INFO ==="
+    echo "Hostname: $(hostname)"
+    echo "Kernel: $(uname -a)"
+    echo "CPU Info: $(nproc) cores"
+    echo "Memory: $(free -h | grep '^Mem:' | awk '{print $2}')"
+    echo "Disk space: $(df -h /workspace | tail -1)"
+    echo "Load average: $(uptime)"
+
+    # Architecture and OS details
+    echo "=== ARCHITECTURE & OS ==="
+    echo "Architecture: $(uname -m)"
+    echo "OS Release:"
+    cat /etc/os-release | head -5
+    echo "GCC Version: $(gcc --version | head -1)"
+    echo "Clang-14 Version: $(clang-14 --version | head -1 2>/dev/null || echo 'clang-14 not found')"
+    echo "CMake Version: $(cmake --version | head -1)"
+    echo "Make Version: $(make --version | head -1)"
+
+    # Environment variables
+    echo "=== ENVIRONMENT VARIABLES ==="
+    echo "PATH: $PATH"
+    echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+    echo "LIBRARY_PATH: $LIBRARY_PATH"
+    echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+    echo "CMAKE_PREFIX_PATH: $CMAKE_PREFIX_PATH"
+    echo "CC: $CC"
+    echo "CXX: $CXX"
+    echo "CFLAGS: $CFLAGS"
+    echo "CXXFLAGS: $CXXFLAGS"
+    echo "LDFLAGS: $LDFLAGS"
+    echo "RUSTUP_HOME: $RUSTUP_HOME"
+    echo "CARGO_HOME: $CARGO_HOME"
+
+    # Check critical dependencies
+    echo "=== DEPENDENCY CHECKS ==="
+    echo "Clang-14 location: $(which clang-14 2>/dev/null || echo 'NOT FOUND')"
+    echo "Clang++-14 location: $(which clang++-14 2>/dev/null || echo 'NOT FOUND')"
+    echo "Rust toolchain:"
+    rustc --version 2>/dev/null || echo "Rust not found"
+    cargo --version 2>/dev/null || echo "Cargo not found"
+    echo "Git version: $(git --version)"
+
+    # Check Rust installation specifically
+    echo "=== RUST ENVIRONMENT ==="
+    ls -la /usr/local/rustup 2>/dev/null || echo "Rustup directory not found"
+    ls -la /usr/local/cargo 2>/dev/null || echo "Cargo directory not found"
+    ls -la /usr/local/cargo/bin/ 2>/dev/null || echo "Cargo bin directory not found"
+    echo "Rust version details:"
+    rustc --version 2>/dev/null || echo "Rust compiler not found"
+    cargo --version 2>/dev/null || echo "Cargo not found"
+
+    # Check 3FS source state
+    echo "=== 3FS SOURCE STATE ==="
+    echo "3FS directory size: $(du -sh /workspace/3fs 2>/dev/null || echo 'Directory not found')"
+    echo "Git status in 3FS:"
+    cd /workspace/3fs && git status --porcelain | head -10
+    echo "Git submodule status:"
+    cd /workspace/3fs && git submodule status | head -10
+    echo "Applied patches:"
+    ls -la /workspace/3fs/patches/ 2>/dev/null || echo "No patches directory"
+
+    # Check available libraries and their versions
+    echo "=== LIBRARY VERSIONS ==="
+    pkg-config --list-all | grep -E "(arrow|protobuf|grpc|folly|rocksdb)" | head -10 || echo "No relevant packages found"
+    echo "Arrow library check:"
+    ldconfig -p | grep arrow || echo "Arrow libraries not found in ldconfig"
+    echo "FoundationDB check:"
+    ls -la /usr/lib/libfdb* 2>/dev/null || echo "FoundationDB libraries not found"
+    fdbcli --version 2>/dev/null || echo "FoundationDB CLI not working"
+
+    # Memory and resource constraints
+    echo "=== RESOURCE CONSTRAINTS ==="
+    echo "Available memory:"
+    free -m
+    echo "Swap status:"
+    swapon --show 2>/dev/null || echo "No swap configured"
+    echo "Ulimits:"
+    ulimit -a | grep -E "(open files|max memory|stack size)"
+
+    # Additional resource analysis for CI comparison
+    echo "=== DETAILED RESOURCE ANALYSIS ==="
+    echo "Total system memory: $(free -h | grep '^Mem:' | awk '{print $2}')"
+    echo "Available memory: $(free -h | grep '^Mem:' | awk '{print $7}')"
+    echo "CPU cores: $(nproc)"
+    echo "CPU info:"
+    grep -E "model name|cpu cores|siblings" /proc/cpuinfo | head -6
+    echo "Load average details: $(cat /proc/loadavg)"
+    echo "Disk usage for /workspace:"
+    df -h /workspace 2>/dev/null || df -h /
+    echo "Available inodes:"
+    df -i /workspace 2>/dev/null || df -i /
+
+    # Check for previous build artifacts that might interfere
+    echo "=== POTENTIAL BUILD CONFLICTS ==="
+    echo "Existing CMake cache files:"
+    find /workspace/3fs -name "CMakeCache.txt" 2>/dev/null || echo "No CMake cache files found"
+    echo "Existing build directories:"
+    find /workspace/3fs -type d -name "build*" 2>/dev/null || echo "No build directories found"
+
+    # Check CMAKE configuration that will be used
+    echo "=== CMAKE CONFIGURATION PREVIEW ==="
+    echo "CMake will be called with these flags:"
+    echo "  Source: /workspace/3fs"
+    echo "  Build: /workspace/3fs/build"
+    echo "  Generator: Unix Makefiles"
+    echo "  CXX Compiler: clang++-14"
+    echo "  C Compiler: clang-14"
+    echo "  ARROW_JEMALLOC_USE_STATIC: OFF"
+    echo "  ARROW_MIMALLOC: OFF"
+    echo "  ARROW_JEMALLOC: OFF"
+    echo "  ARROW_USE_SYSTEM_MALLOC: ON"
+    echo "  CMAKE_BUILD_TYPE: Release"
+    echo "  ARROW_JEMALLOC_BUILD_JOBS: 1"
+
+    # Test basic compilation capability
+    echo "=== COMPILATION TEST ==="
+    echo "Testing basic C++ compilation with clang++-14:"
+    echo '#include <iostream>
+int main() { std::cout << "Hello World" << std::endl; return 0; }' > /tmp/test.cpp
+    clang++-14 -o /tmp/test /tmp/test.cpp 2>&1 && echo "Basic C++ compilation: SUCCESS" || echo "Basic C++ compilation: FAILED"
+    rm -f /tmp/test /tmp/test.cpp
+
+    echo "========== 3FS BUILD DIAGNOSTICS END =========="
+    # ========== END DIAGNOSTIC SECTION ==========
+    echo "========== CMAKE CONFIGURATION PHASE START =========="
+    echo "Running CMake configuration..."
+    CMAKE_CONFIG_CMD="cmake -S /workspace/3fs -B /workspace/3fs/build \\
+            -G \"Unix Makefiles\" \\
+            -DCMAKE_CXX_COMPILER=clang++-14 \\
+            -DCMAKE_C_COMPILER=clang-14 \\
+            -DARROW_JEMALLOC=OFF \\
+            -DARROW_JEMALLOC_USE_STATIC=OFF \\
+            -DARROW_MIMALLOC=OFF \\
+            -DARROW_USE_SYSTEM_MALLOC=ON \\
+            -DCMAKE_BUILD_TYPE=Release \\
+            -DARROW_BUILD_STATIC=OFF \\
+            -DARROW_BUILD_SHARED=ON \\
+            -DARROW_DEPENDENCY_USE_SHARED=OFF \\
+            -DARROW_THIRDPARTY_DEPENDENCIES=BUNDLED \\
+            -DARROW_WITH_JEMALLOC=OFF"
             # -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            # -DARROW_USE_SYSTEM_MALLOC=ON \
             # -DARROW_USE_SYSTEM_MALLOC=ON \
             # -DARROW_BUILD_STATIC=OFF \
             # -DARROW_BUILD_SHARED=ON \
@@ -251,7 +387,61 @@ if [ "$INSTALL_3FS" = true ]; then
             # -DARROW_WITH_LZ4=OFF \
             # -DARROW_WITH_BZ2=OFF \
             # -DARROW_WITH_BROTLI=OFF \
-    cmake --build /workspace/3fs/build -j 16
+
+    echo "CMAKE command: $CMAKE_CONFIG_CMD"
+    echo "Starting CMAKE configuration at: $(date)"
+
+    eval $CMAKE_CONFIG_CMD
+    CMAKE_CONFIG_EXIT_CODE=$?
+
+    echo "CMAKE configuration completed at: $(date)"
+    echo "CMAKE configuration exit code: $CMAKE_CONFIG_EXIT_CODE"
+
+    if [ $CMAKE_CONFIG_EXIT_CODE -ne 0 ]; then
+        echo "ERROR: CMAKE configuration failed with exit code $CMAKE_CONFIG_EXIT_CODE"
+        echo "Checking CMake error logs:"
+        if [ -f /workspace/3fs/build/CMakeFiles/CMakeError.log ]; then
+            echo "=== CMAKE ERROR LOG ==="
+            cat /workspace/3fs/build/CMakeFiles/CMakeError.log
+        fi
+        if [ -f /workspace/3fs/build/CMakeFiles/CMakeOutput.log ]; then
+            echo "=== CMAKE OUTPUT LOG ==="
+            tail -50 /workspace/3fs/build/CMakeFiles/CMakeOutput.log
+        fi
+        exit $CMAKE_CONFIG_EXIT_CODE
+    fi
+
+    echo "========== CMAKE CONFIGURATION PHASE END =========="
+    echo ""
+    echo "========== BUILD PHASE START =========="
+    echo "Starting build at: $(date)"
+    echo "Build command: cmake --build /workspace/3fs/build -j 16"
+
+    # Store build output and monitor progress
+    cmake --build /workspace/3fs/build -j 16 2>&1 | tee /tmp/3fs_build.log
+    BUILD_EXIT_CODE=${PIPESTATUS[0]}
+
+    echo "Build completed at: $(date)"
+    echo "Build exit code: $BUILD_EXIT_CODE"
+
+    if [ $BUILD_EXIT_CODE -ne 0 ]; then
+        echo "ERROR: Build failed with exit code $BUILD_EXIT_CODE"
+        echo "=== LAST 100 LINES OF BUILD OUTPUT ==="
+        tail -100 /tmp/3fs_build.log
+        echo ""
+        echo "=== BUILD ERROR ANALYSIS ==="
+        echo "Searching for common error patterns in build log..."
+        grep -i "error\|fail\|fatal" /tmp/3fs_build.log | tail -20 || echo "No obvious error patterns found"
+        echo ""
+        echo "=== MEMORY USAGE DURING BUILD ==="
+        free -m
+        echo ""
+        echo "=== DISK SPACE AFTER BUILD ==="
+        df -h /workspace
+        exit $BUILD_EXIT_CODE
+    fi
+
+    echo "========== BUILD PHASE END =========="
     # # Restore original environment
     # if [ -n "$BUILD_CC" ]; then export CC="$BUILD_CC"; fi
     # if [ -n "$BUILD_CXX" ]; then export CXX="$BUILD_CXX"; fi
