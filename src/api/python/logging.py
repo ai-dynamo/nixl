@@ -39,7 +39,6 @@ Or for backward compatibility:
 import logging
 import logging.config
 import os
-import socket
 
 _logging_configured = False
 
