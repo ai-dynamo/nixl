@@ -358,6 +358,28 @@ int main() { std::cout << "Hello World" << std::endl; return 0; }' > /tmp/test.c
     # ========== END DIAGNOSTIC SECTION ==========
     echo "========== CMAKE CONFIGURATION PHASE START =========="
     echo "Running CMake configuration..."
+
+    # Temporarily hide jemalloc libraries from CMake
+    echo "=== MASKING JEMALLOC LIBRARIES ==="
+    JEMALLOC_BACKUP_DIR="/tmp/jemalloc_backup"
+    mkdir -p "$JEMALLOC_BACKUP_DIR"
+
+    # Move jemalloc libraries temporarily
+    for lib in /usr/lib/x86_64-linux-gnu/libjemalloc* /usr/lib/libjemalloc* /lib/x86_64-linux-gnu/libjemalloc* /lib/libjemalloc*; do
+        if [ -f "$lib" ]; then
+            echo "Temporarily moving: $lib"
+            mv "$lib" "$JEMALLOC_BACKUP_DIR/" 2>/dev/null || true
+        fi
+    done
+
+    # Also hide jemalloc pkg-config files
+    for pc in /usr/lib/x86_64-linux-gnu/pkgconfig/jemalloc* /usr/lib/pkgconfig/jemalloc* /usr/share/pkgconfig/jemalloc*; do
+        if [ -f "$pc" ]; then
+            echo "Temporarily moving pkg-config: $pc"
+            mv "$pc" "$JEMALLOC_BACKUP_DIR/" 2>/dev/null || true
+        fi
+    done
+
     CMAKE_CONFIG_CMD="cmake -S /workspace/3fs -B /workspace/3fs/build \\
             -G \"Unix Makefiles\" \\
             -DCMAKE_CXX_COMPILER=clang++-14 \\
@@ -367,11 +389,22 @@ int main() { std::cout << "Hello World" << std::endl; return 0; }' > /tmp/test.c
             -DARROW_MIMALLOC=OFF \\
             -DARROW_USE_SYSTEM_MALLOC=ON \\
             -DCMAKE_BUILD_TYPE=Release \\
+            -DARROW_JEMALLOC_BUILD_JOBS=1 \\
             -DARROW_BUILD_STATIC=OFF \\
             -DARROW_BUILD_SHARED=ON \\
+            -DJEMALLOC_INCLUDE_DIR= \\
+            -DJEMALLOC_LIB= \\
             -DARROW_DEPENDENCY_USE_SHARED=OFF \\
             -DARROW_THIRDPARTY_DEPENDENCIES=BUNDLED \\
-            -DARROW_WITH_JEMALLOC=OFF"
+            -DARROW_WITH_JEMALLOC=OFF \\
+            -DJEMALLOC_ROOT= \\
+            -DJEMALLOC_LIBRARIES= \\
+            -DJEMALLOC_FOUND=FALSE \\
+            -DJemalloc_FOUND=FALSE \\
+            -DCMAKE_DISABLE_FIND_PACKAGE_jemalloc=TRUE \\
+            -DCMAKE_DISABLE_FIND_PACKAGE_Jemalloc=TRUE \\
+            -DCMAKE_C_FLAGS='-DARROW_JEMALLOC=0' \\
+            -DCMAKE_CXX_FLAGS='-DARROW_JEMALLOC=0'"
             # -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             # -DARROW_USE_SYSTEM_MALLOC=ON \
             # -DARROW_USE_SYSTEM_MALLOC=ON \
@@ -442,6 +475,29 @@ int main() { std::cout << "Hello World" << std::endl; return 0; }' > /tmp/test.c
     fi
 
     echo "========== BUILD PHASE END =========="
+
+    # Restore jemalloc libraries regardless of build result
+    echo "=== RESTORING JEMALLOC LIBRARIES ==="
+    if [ -d "$JEMALLOC_BACKUP_DIR" ]; then
+        for file in "$JEMALLOC_BACKUP_DIR"/*; do
+            if [ -f "$file" ]; then
+                filename=$(basename "$file")
+                echo "Restoring: $filename"
+                # Try to restore to original location
+                if [[ "$filename" == *"pkgconfig"* ]]; then
+                    mv "$file" "/usr/lib/x86_64-linux-gnu/pkgconfig/" 2>/dev/null || \
+                    mv "$file" "/usr/lib/pkgconfig/" 2>/dev/null || \
+                    mv "$file" "/usr/share/pkgconfig/" 2>/dev/null || true
+                else
+                    mv "$file" "/usr/lib/x86_64-linux-gnu/" 2>/dev/null || \
+                    mv "$file" "/usr/lib/" 2>/dev/null || \
+                    mv "$file" "/lib/x86_64-linux-gnu/" 2>/dev/null || \
+                    mv "$file" "/lib/" 2>/dev/null || true
+                fi
+            fi
+        done
+        rmdir "$JEMALLOC_BACKUP_DIR" 2>/dev/null || true
+    fi
     # # Restore original environment
     # if [ -n "$BUILD_CC" ]; then export CC="$BUILD_CC"; fi
     # if [ -n "$BUILD_CXX" ]; then export CXX="$BUILD_CXX"; fi
