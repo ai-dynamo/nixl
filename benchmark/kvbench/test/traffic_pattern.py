@@ -12,11 +12,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal, Optional
 
 import numpy as np
 import torch
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
