@@ -14,17 +14,17 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /SECURITY.md @ai-dynamo/Devops
 
 # Bindings
-/src/bindings/rust @roiedanino @gleon99
+/src/bindings/rust @roiedanino @gleon99 @mkhazraee
 
 # UCX Plugins
 /src/plugins/ucx* @brminich @yosefe @gleon99
 /src/utils/ucx @brminich @yosefe @gleon99
 
 # Storage Plugins
-/src/plugins/posix @w1ldptr @barneuman @etoledano
-/src/plugins/hf3fs @w1ldptr @barneuman @etoledano
-/src/plugins/cuda_gds @w1ldptr @barneuman @etoledano
-/src/plugins/obj @w1ldptr @barneuman @etoledano
+/src/plugins/posix @w1ldptr @barneuman @etoledano vvenkates27
+/src/plugins/hf3fs @w1ldptr @barneuman @etoledano vvenkates27
+/src/plugins/cuda_gds @w1ldptr @barneuman @etoledano vvenkates27
+/src/plugins/obj @w1ldptr @barneuman @etoledano vvenkates27
 
 # Benchmarks
-/benchmark/nixlbench @aranadive @ovidiusm @brminich
+/benchmark @aranadive @ovidiusm @brminich
