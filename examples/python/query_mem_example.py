@@ -21,18 +21,24 @@ import tempfile
 
 try:
     from nixl._api import nixl_agent, nixl_agent_config
+    from nixl.logging import get_logger
+
+    logger = get_logger(__name__)
 
     NIXL_AVAILABLE = True
 except ImportError:
-    print("NIXL API missing install NIXL.")
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.error("NIXL API missing install NIXL.")
     NIXL_AVAILABLE = False
 
 if __name__ == "__main__":
-    print("NIXL queryMem Python API Example")
-    print("=" * 40)
+    logger.info("NIXL queryMem Python API Example")
+    logger.info("=" * 40)
 
     if not NIXL_AVAILABLE:
-        print("Skipping example - NIXL bindings not available")
+        logger.warning("Skipping example - NIXL bindings not available")
         sys.exit(0)
 
     # Create temporary test files
@@ -49,17 +55,17 @@ if __name__ == "__main__":
     non_existent_file = "/tmp/nixl_example_nonexistent.txt"
 
     try:
-        print("Using NIXL Plugins from:")
-        print(os.environ["NIXL_PLUGIN_DIR"])
+        logger.info("Using NIXL Plugins from:")
+        logger.info(os.environ["NIXL_PLUGIN_DIR"])
 
         # Create an NIXL agent
-        print("Creating NIXL agent...")
+        logger.info("Creating NIXL agent...")
         config = nixl_agent_config(False, False, 0, [])
         agent = nixl_agent("example_agent", config)
 
         # Prepare a list of tuples as file paths in metaInfo field for querying.
         # Addr and length and devID fields are set to 0 for file queries.
-        print("Preparing file paths for querying...")
+        logger.info("Preparing file paths for querying...")
         file_paths = [
             (0, 0, 0, temp_files[0]),  # Existing file 1
             (0, 0, 0, temp_files[1]),  # Existing file 2
@@ -68,57 +74,57 @@ if __name__ == "__main__":
         ]
 
         # Query memory using queryMem
-        print("Querying memory/storage information...")
+        logger.info("Querying memory/storage information...")
 
         # Try to create a backend with POSIX plugin
         try:
             params = agent.get_plugin_params("POSIX")
             agent.create_backend("POSIX", params)
-            print("Created backend: POSIX")
+            logger.info("Created backend: POSIX")
 
             # Query with specific backend
             resp = agent.query_memory(file_paths, "POSIX", mem_type="FILE")
         except Exception as e:
-            print(f"POSIX backend creation failed: {e}")
+            logger.exception("POSIX backend creation failed: %s", e)
             # Try MOCK_DRAM as fallback
             try:
                 params = agent.get_plugin_params("MOCK_DRAM")
                 agent.create_backend("MOCK_DRAM", params)
-                print("Created backend: MOCK_DRAM")
+                logger.info("Created backend: MOCK_DRAM")
 
                 # Query with specific backend
                 resp = agent.query_memory(file_paths, "MOCK_DRAM", mem_type="FILE")
             except Exception as e2:
-                print(f"MOCK_DRAM also failed: {e2}")
-                print("No working backends available")
+                logger.exception("MOCK_DRAM also failed: %s", e2)
+                logger.exception("No working backends available")
                 sys.exit(0)
 
         # Display results
-        print(f"\nQuery results ({len(resp)} responses):")
-        print("-" * 50)
+        logger.info("\nQuery results (%d responses):", len(resp))
+        logger.info("-" * 50)
 
         for i, result in enumerate(resp):
-            print(f"Descriptor {i}:")
+            logger.info("Descriptor %d:", i)
             if result is not None:
-                print(f"  File size: {result.get('size', 'N/A')} bytes")
-                print(f"  File mode: {result.get('mode', 'N/A')}")
-                print(f"  Modified time: {result.get('mtime', 'N/A')}")
+                logger.info("  File size: %s bytes", result.get("size", "N/A"))
+                logger.info("  File mode: %s", result.get("mode", "N/A"))
+                logger.info("  Modified time: %s", result.get("mtime", "N/A"))
             else:
-                print("  File does not exist or is not accessible")
-            print()
+                logger.info("  File does not exist or is not accessible")
+            logger.info("")
 
-        print("Example completed successfully!")
+        logger.info("Example completed successfully!")
 
     except Exception as e:
-        print(f"Error in example: {e}")
+        logger.exception("Error in example: %s", e)
         import traceback
 
         traceback.print_exc()
 
     finally:
         # Clean up temporary files
-        print("Cleaning up temporary files...")
+        logger.info("Cleaning up temporary files...")
         for temp_file_path in temp_files:
             if os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
-                print(f"Removed: {temp_file_path}")
+                logger.info("Removed: %s", temp_file_path)
