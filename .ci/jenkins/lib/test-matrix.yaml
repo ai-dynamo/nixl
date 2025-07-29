@@ -38,6 +38,62 @@ env:
   UCX_VERSION: v1.19.x
 
 steps:
+  - name: Pre-flight Check
+    parallel: false
+    run: |
+      # Check for hanging Docker containers
+      HANGING_CONTAINERS=$(docker ps -q --filter "name=nixl-ci-test")
+      if [ -n "$HANGING_CONTAINERS" ]; then
+        echo "ERROR: Found hanging Docker containers:"
+        docker ps --filter "name=nixl-ci-test"
+        exit 1
+      fi
+      echo "Pre-flight check: No hanging containers found"
+
+      # Initial workspace state
+      FILE_COUNT=$(find ${WORKSPACE} -type f | wc -l)
+      GITLAB_EXISTS=$(test -d "${WORKSPACE}/.gitlab" && echo "YES" || echo "NO")
+      BUILD_SH_EXISTS=$(test -f "${WORKSPACE}/.gitlab/build.sh" && echo "YES" || echo "NO")
+      echo "DEBUG_FILES: count=$FILE_COUNT gitlab_dir=$GITLAB_EXISTS build_sh=$BUILD_SH_EXISTS stage=preflight"
+
+  - name: File Count Debug
+    parallel: false
+    run: |
+      FILE_COUNT=$(find ${WORKSPACE} -type f | wc -l)
+      GITLAB_EXISTS=$(test -d "${WORKSPACE}/.gitlab" && echo "YES" || echo "NO")
+      BUILD_SH_EXISTS=$(test -f "${WORKSPACE}/.gitlab/build.sh" && echo "YES" || echo "NO")
+      echo "DEBUG_FILES: count=$FILE_COUNT gitlab_dir=$GITLAB_EXISTS build_sh=$BUILD_SH_EXISTS stage=initial"
+
+      # Fail if required files are missing
+      if [ "$GITLAB_EXISTS" = "NO" ]; then
+        echo "ERROR: .gitlab directory is missing!"
+        ls -la ${WORKSPACE}
+        exit 1
+      fi
+      if [ "$BUILD_SH_EXISTS" = "NO" ]; then
+        echo "ERROR: .gitlab/build.sh is missing!"
+        ls -la ${WORKSPACE}/.gitlab
+        exit 1
+      fi
+
+  - name: Stash Marker Debug
+    parallel: false
+    run: |
+      STASH_MARKER=$(ls -1 ${WORKSPACE} | grep -c '^scm-repo.tar$' || echo 0)
+      FILE_COUNT=$(find ${WORKSPACE} -type f | wc -l)
+      echo "DEBUG_FILES: count=$FILE_COUNT stash_marker=$STASH_MARKER stage=after_initial"
+
+      # Stash marker status explanation:
+      # stash_marker=0: Normal workspace (no tarball) - files extracted properly
+      # stash_marker=1: Tarball present - possible unstash failure, workspace not extracted
+      if [ "$STASH_MARKER" -eq 1 ]; then
+        echo "WARNING: scm-repo.tar found - possible Jenkins unstash failure"
+        echo "Workspace contents:"
+        ls -la ${WORKSPACE}
+      else
+        echo "INFO: No stash tarball found - workspace appears normal"
+      fi
+
   - name: Get Environment Info
     parallel: false
     run: |
@@ -61,16 +117,83 @@ steps:
       ibv_devinfo
       #ib_write_bw
 
+  - name: Start File Monitoring
+    parallel: false
+    run: |
+      # Start background file monitoring for deletions (after workspace is stable)
+      if command -v inotifywait >/dev/null 2>&1; then
+        nohup inotifywait -m -r -e delete,delete_self,moved_from \
+          --format '%T DELETED: %w%f (event: %e)' --timefmt '%Y-%m-%d %H:%M:%S' \
+          ${WORKSPACE}/ > /tmp/file-monitor-${BUILD_ID}-${axis_index}.log 2>&1 &
+        echo $! > /tmp/monitor-pid-${BUILD_ID}-${axis_index}
+        echo "File monitoring started, PID: $(cat /tmp/monitor-pid-${BUILD_ID}-${axis_index})"
+      else
+        echo "inotifywait not available - skipping file monitoring"
+        touch /tmp/file-monitor-${BUILD_ID}-${axis_index}.log
+      fi
+
+  - name: Post Environment Info Debug
+    parallel: false
+    run: |
+      FILE_COUNT=$(find ${WORKSPACE} -type f | wc -l)
+      GITLAB_EXISTS=$(test -d "${WORKSPACE}/.gitlab" && echo "YES" || echo "NO")
+      BUILD_SH_EXISTS=$(test -f "${WORKSPACE}/.gitlab/build.sh" && echo "YES" || echo "NO")
+      echo "DEBUG_FILES: count=$FILE_COUNT gitlab_dir=$GITLAB_EXISTS build_sh=$BUILD_SH_EXISTS stage=post_env"
+
+      # Fail if required files are missing
+      if [ "$GITLAB_EXISTS" = "NO" ]; then
+        echo "ERROR: .gitlab directory disappeared after environment info!"
+        exit 1
+      fi
+      if [ "$BUILD_SH_EXISTS" = "NO" ]; then
+        echo "ERROR: .gitlab/build.sh disappeared after environment info!"
+        exit 1
+      fi
 
   - name: Build GPU Test Environment
     parallel: false
     run: |
+      FILE_COUNT=$(find ${WORKSPACE} -type f | wc -l)
+      GITLAB_EXISTS=$(test -d "${WORKSPACE}/.gitlab" && echo "YES" || echo "NO")
+      BUILD_SH_EXISTS=$(test -f "${WORKSPACE}/.gitlab/build.sh" && echo "YES" || echo "NO")
+      echo "DEBUG_FILES: count=$FILE_COUNT gitlab_dir=$GITLAB_EXISTS build_sh=$BUILD_SH_EXISTS stage=pre_docker_build"
+
       docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} .
-    onfail: docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+
+      FILE_COUNT=$(find ${WORKSPACE} -type f | wc -l)
+      GITLAB_EXISTS=$(test -d "${WORKSPACE}/.gitlab" && echo "YES" || echo "NO")
+      BUILD_SH_EXISTS=$(test -f "${WORKSPACE}/.gitlab/build.sh" && echo "YES" || echo "NO")
+      echo "DEBUG_FILES: count=$FILE_COUNT gitlab_dir=$GITLAB_EXISTS build_sh=$BUILD_SH_EXISTS stage=post_docker_build"
+
+      # Fail if required files are missing
+      if [ "$GITLAB_EXISTS" = "NO" ]; then
+        echo "ERROR: .gitlab directory disappeared after Docker build!"
+        exit 1
+      fi
+      if [ "$BUILD_SH_EXISTS" = "NO" ]; then
+        echo "ERROR: .gitlab/build.sh disappeared after Docker build!"
+        exit 1
+      fi
+    onfail: |
+      # Show what files were deleted
+      if [ -f /tmp/file-monitor-${BUILD_ID}-${axis_index}.log ]; then
+        echo "=== FILES DELETED DURING BUILD ==="
+        cat /tmp/file-monitor-${BUILD_ID}-${axis_index}.log
+        echo "================================="
+      fi
+      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      # Comprehensive Docker cleanup
+      chmod +x .ci/scripts/docker-cleanup.sh
+      .ci/scripts/docker-cleanup.sh "${BUILD_ID}" "${axis_index}"
 
   - name: Run GPU Test Environment
     parallel: false
     run: |
+      FILE_COUNT=$(find ${WORKSPACE} -type f | wc -l)
+      GITLAB_EXISTS=$(test -d "${WORKSPACE}/.gitlab" && echo "YES" || echo "NO")
+      BUILD_SH_EXISTS=$(test -f "${WORKSPACE}/.gitlab/build.sh" && echo "YES" || echo "NO")
+      echo "DEBUG_FILES: count=$FILE_COUNT gitlab_dir=$GITLAB_EXISTS build_sh=$BUILD_SH_EXISTS stage=pre_docker_run"
+
       docker run -dt --name "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" \
         --ulimit memlock=-1:-1 \
         --network=host \
@@ -82,33 +205,110 @@ steps:
         -v ${WORKSPACE}:${WORKSPACE} \
         -w ${WORKSPACE} \
         "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+
+      FILE_COUNT=$(find ${WORKSPACE} -type f | wc -l)
+      GITLAB_EXISTS=$(test -d "${WORKSPACE}/.gitlab" && echo "YES" || echo "NO")
+      BUILD_SH_EXISTS=$(test -f "${WORKSPACE}/.gitlab/build.sh" && echo "YES" || echo "NO")
+      echo "DEBUG_FILES: count=$FILE_COUNT gitlab_dir=$GITLAB_EXISTS build_sh=$BUILD_SH_EXISTS stage=post_docker_run"
+
+      # Fail if required files are missing
+      if [ "$GITLAB_EXISTS" = "NO" ]; then
+        echo "ERROR: .gitlab directory disappeared after Docker run!"
+        exit 1
+      fi
+      if [ "$BUILD_SH_EXISTS" = "NO" ]; then
+        echo "ERROR: .gitlab/build.sh disappeared after Docker run!"
+        exit 1
+      fi
     onfail: |
+      # Show what files were deleted
+      if [ -f /tmp/file-monitor-${BUILD_ID}-${axis_index}.log ]; then
+        echo "=== FILES DELETED DURING BUILD ==="
+        cat /tmp/file-monitor-${BUILD_ID}-${axis_index}.log
+        echo "================================="
+      fi
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      # Comprehensive Docker cleanup
+      chmod +x .ci/scripts/docker-cleanup.sh
+      .ci/scripts/docker-cleanup.sh "${BUILD_ID}" "${axis_index}"
 
   - name: Build
     parallel: false
     run: |
+      FILE_COUNT=$(find ${WORKSPACE} -type f | wc -l)
+      GITLAB_EXISTS=$(test -d "${WORKSPACE}/.gitlab" && echo "YES" || echo "NO")
+      BUILD_SH_EXISTS=$(test -f "${WORKSPACE}/.gitlab/build.sh" && echo "YES" || echo "NO")
+      echo "DEBUG_FILES: count=$FILE_COUNT gitlab_dir=$GITLAB_EXISTS build_sh=$BUILD_SH_EXISTS stage=pre_build"
+
+      # Final check before attempting build
+      if [ "$GITLAB_EXISTS" = "NO" ]; then
+        echo "ERROR: .gitlab directory is missing before build!"
+        exit 1
+      fi
+      if [ "$BUILD_SH_EXISTS" = "NO" ]; then
+        echo "ERROR: .gitlab/build.sh is missing before build!"
+        exit 1
+      fi
+
       docker exec -w ${WORKSPACE} -e UCX_VERSION=${UCX_VERSION} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/build.sh ${INSTALL_DIR}"
-    onfail: |
-      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
 
-  - name: Test CPP
-    parallel: false
-    run: |
-      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
-    onfail: |
-      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-
-  - name: Test Python
-    parallel: false
-    run: |
-      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
+      FILE_COUNT=$(find ${WORKSPACE} -type f | wc -l)
+      echo "DEBUG_FILES: count=$FILE_COUNT gitlab_dir=YES build_sh=YES stage=post_build"
     always: |
+      # Show what files were deleted
+      if [ -f /tmp/file-monitor-${BUILD_ID}-${axis_index}.log ]; then
+        echo "=== FILES DELETED DURING BUILD ==="
+        cat /tmp/file-monitor-${BUILD_ID}-${axis_index}.log
+        echo "================================="
+      fi
+      # Stop monitoring
+      if [ -f /tmp/monitor-pid-${BUILD_ID}-${axis_index} ]; then
+        kill $(cat /tmp/monitor-pid-${BUILD_ID}-${axis_index} 2>/dev/null) 2>/dev/null || true
+        rm -f /tmp/monitor-pid-${BUILD_ID}-${axis_index}
+      fi
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      # Comprehensive Docker cleanup (on success or failure)
+      chmod +x .ci/scripts/docker-cleanup.sh
+      .ci/scripts/docker-cleanup.sh "${BUILD_ID}" "${axis_index}"
+
+  - name: Show File Monitoring Results
+    parallel: false
+    run: |
+      echo "=== COMPLETE FILE MONITORING LOG ==="
+      if [ -f /tmp/file-monitor-${BUILD_ID}-${axis_index}.log ]; then
+        echo "Log file exists, size: $(wc -l < /tmp/file-monitor-${BUILD_ID}-${axis_index}.log) lines"
+        if [ -s /tmp/file-monitor-${BUILD_ID}-${axis_index}.log ]; then
+          echo "File deletions detected:"
+          cat /tmp/file-monitor-${BUILD_ID}-${axis_index}.log
+        else
+          echo "No file deletions detected during build"
+        fi
+      else
+        echo "Monitoring log file not found"
+      fi
+      echo "==================================="
+
+      # Final cleanup
+      rm -f /tmp/file-monitor-${BUILD_ID}-${axis_index}.log
+      rm -f /tmp/monitor-pid-${BUILD_ID}-${axis_index}
+
+# Tests commented out - problem occurs before tests
+#  - name: Test CPP
+#    parallel: false
+#    run: |
+#      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
+#    onfail: |
+#      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+#      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+
+#  - name: Test Python
+#    parallel: false
+#    run: |
+#      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
+#    always: |
+#      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
 
 # once this fix is merged we can use the following to stop/kill/rm the container instead of the cleanup command in each step
 # https://github.com/Mellanox/ci-demo/pull/111
