@@ -52,10 +52,7 @@ get_next_tcp_port() {
 
 # Second half of the port range is used for gtest
 gtest_offset=$((tcp_port_range / 2))
-min_gtest_port() {
-    echo $((tcp_port_min + gtest_offset))
-}
-
-max_gtest_port() {
-    echo $((tcp_port_max + gtest_offset))
-}
+# shellcheck disable=SC2034
+min_gtest_port=$((tcp_port_min + gtest_offset))
+# shellcheck disable=SC2034
+max_gtest_port=$((tcp_port_max + gtest_offset))
