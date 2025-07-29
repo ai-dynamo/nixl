@@ -48,4 +48,5 @@ uname -a || true
 
 echo "==== Running Plugins Gtest tests ===="
 cd ${INSTALL_DIR}
-./bin/plugins_gtest --min-tcp-port="$(min_gtest_port)" --max-tcp-port="$(max_gtest_port)"
+# shellcheck disable=SC2154
+./bin/plugins_gtest --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
