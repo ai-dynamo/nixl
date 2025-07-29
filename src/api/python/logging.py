@@ -44,18 +44,6 @@ import socket
 _logging_configured = False
 
 
-class HostnameFilter(logging.Filter):
-    """Filter that adds hostname to log records."""
-
-    def __init__(self):
-        super().__init__()
-        self._hostname = socket.gethostname()
-
-    def filter(self, record):
-        record.hostname = self._hostname
-        return True
-
-
 def set_log_level_by_env(nixl_logger: logging.Logger) -> None:
     # Override log level from environment variable if set
     env_log_level = os.getenv("NIXL_LOG_LEVEL")
@@ -95,8 +83,6 @@ def setup_logging() -> None:
     logging.config.fileConfig(config_file, disable_existing_loggers=False)
 
     nixl_logger = logging.getLogger("nixl")
-    hostname_filter = HostnameFilter()
-    nixl_logger.addFilter(hostname_filter)
     set_log_level_by_env(nixl_logger)
 
     _logging_configured = True
