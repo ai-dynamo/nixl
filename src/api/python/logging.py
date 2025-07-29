@@ -83,6 +83,7 @@ def setup_logging() -> None:
 
     nixl_logger = logging.getLogger("nixl")
     set_log_level_by_env(nixl_logger)
+    logging.raiseExceptions = True
 
     _logging_configured = True
 
