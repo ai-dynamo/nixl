@@ -65,7 +65,7 @@ steps:
   - name: Build GPU Test Environment
     parallel: false
     run: |
-      docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} .
+      docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} --build-arg WORKSPACE=${WORKSPACE} .
     onfail: docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
 
   - name: Run GPU Test Environment
@@ -79,8 +79,6 @@ steps:
         --gpus all \
         --device=/dev/infiniband \
         --device=/dev/gdrdrv \
-        -v ${WORKSPACE}:${WORKSPACE} \
-        -w ${WORKSPACE} \
         "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"

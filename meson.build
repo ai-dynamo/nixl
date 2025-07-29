@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.4.1',
+project('nixl', 'CPP', version: '0.5.0',
     default_options: ['buildtype=debug',
                 'werror=true',
                 'cpp_std=c++17',
@@ -162,7 +162,8 @@ if get_option('buildtype') == 'debug'
     run_command('truncate', '-s 0', plugfile, check: true)
 endif
 
-nixl_inc_dirs = include_directories('src/api/cpp', 'src/infra', 'src/core')
+nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core')
+plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')

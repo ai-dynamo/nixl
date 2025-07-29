@@ -94,19 +94,14 @@ RUN git clone --recurse-submodules -b v1.73.0 --depth 1 --shallow-submodules htt
     make -j$(nproc) && \
     make install
 
-RUN git clone https://github.com/microsoft/cpprestsdk.git && \
-    cd cpprestsdk && \
-    mkdir build && cd build && \
-    git submodule update --init && \
-    cmake .. -DCPPREST_EXCLUDE_WEBSOCKETS=ON  && \
-    make -j$(nproc) && make install
-
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
 
 RUN cd /workspace && \
-    git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
-	cd etcd-cpp-apiv3 && mkdir build && cd build && \
-	cmake .. && make -j$(nproc) && make install
+    git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+    cd etcd-cpp-apiv3 && \
+    sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
+    mkdir build && cd build && \
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
