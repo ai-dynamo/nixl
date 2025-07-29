@@ -19,13 +19,10 @@ import argparse
 import base64
 import csv
 import hashlib
-import logging
 import os
 import shutil
 import tempfile
 import zipfile
-
-logger = logging.getLogger(__name__)
 
 
 def extract_wheel(wheel_path):
@@ -35,7 +32,7 @@ def extract_wheel(wheel_path):
         Path to the temporary directory. The caller is responsible for cleaning up the directory.
     """
     temp_dir = tempfile.mkdtemp()
-    logger.info("Extracting wheel %s to %s", wheel_path, temp_dir)
+    print(f"Extracting wheel {wheel_path} to {temp_dir}")
     with zipfile.ZipFile(wheel_path, "r") as zip_ref:
         zip_ref.extractall(temp_dir)
     return temp_dir
@@ -85,7 +82,7 @@ def create_wheel(wheel_path, temp_dir):
     """
     Create a wheel from a temporary directory.
     """
-    logger.info("Creating wheel %s from %s", wheel_path, temp_dir)
+    print(f"Creating wheel {wheel_path} from {temp_dir}")
     update_wheel_record_file(temp_dir)
     with zipfile.ZipFile(
         wheel_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
@@ -193,7 +190,7 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
     if not os.path.exists(pkg_libs_dir):
         raise FileNotFoundError(f"nixl.libs directory not found in wheel: {wheel_path}")
 
-    logger.debug("Listing existing libs:")
+    print("Listing existing libs:")
     name_map = get_repaired_lib_name_map(pkg_libs_dir)
 
     # Ensure that all of them in name_map have RPATH set to $ORIGIN
@@ -206,20 +203,20 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
             rpath = "$ORIGIN"
         else:
             rpath = "$ORIGIN:" + rpath
-        logger.debug("Setting rpath for %s to %s", fpath, rpath)
+        print(f"Setting rpath for {fpath} to {rpath}")
         ret = os.system(f"patchelf --set-rpath '{rpath}' {fpath}")
         if ret != 0:
             raise RuntimeError(f"Failed to set rpath for {fpath}")
 
     pkg_plugins_dir = os.path.join(pkg_libs_dir, install_dirname)
-    logger.debug("Copying plugins from %s to %s", sys_plugins_dir, pkg_plugins_dir)
+    print(f"Copying plugins from {sys_plugins_dir} to {pkg_plugins_dir}")
     copied_files = copytree(sys_plugins_dir, pkg_plugins_dir)
     if not copied_files:
         raise RuntimeError(f"No plugins found in {sys_plugins_dir}")
 
     # Patch all libs to load plugin deps from the wheel
     for fname in copied_files:
-        logger.debug("Patching %s", fname)
+        print(f"Patching {fname}")
         fpath = os.path.join(pkg_plugins_dir, fname)
         if os.path.isfile(fpath) and ".so" in fname:
             rpath = os.popen(f"patchelf --print-rpath {fpath}").read().strip()
@@ -227,7 +224,7 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
                 rpath = "$ORIGIN/..:$ORIGIN"
             else:
                 rpath = "$ORIGIN/..:$ORIGIN:" + rpath
-            logger.debug("Setting rpath for %s to %s", fpath, rpath)
+            print(f"Setting rpath for {fpath} to {rpath}")
             ret = os.system(f"patchelf --set-rpath '{rpath}' {fpath}")
             if ret != 0:
                 raise RuntimeError(f"Failed to set rpath for {fpath}")
@@ -237,9 +234,7 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
                 base_name = libname.split(".")[0]
                 if base_name in name_map:
                     packaged_name = name_map[base_name]
-                    logger.debug(
-                        "Replacing %s with %s in %s", libname, packaged_name, fpath
-                    )
+                    print(f"Replacing {libname} with {packaged_name} in {fpath}")
                     ret = os.system(
                         f"patchelf --replace-needed {libname} {packaged_name} {fpath}"
                     )
@@ -248,7 +243,7 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
                             f"Failed to replace {libname} with {packaged_name} in {fpath}"
                         )
             # Check that there is no breakage introduced in the patched lib
-            logger.debug("Checking that %s loads", fpath)
+            print(f"Checking that {fpath} loads")
             original_deps = get_lib_deps(os.path.join(sys_plugins_dir, fname))
             for libname, libpath in get_lib_deps(fpath).items():
                 if libpath is None:
@@ -260,7 +255,7 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
 
     create_wheel(wheel_path, temp_dir)
     shutil.rmtree(temp_dir)
-    logger.info("Added plugins to wheel: %s", wheel_path)
+    print(f"Added plugins to wheel: {wheel_path}")
 
 
 def main():
