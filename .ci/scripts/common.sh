@@ -39,23 +39,23 @@ fi
 
 echo nixl_concurrent_id="$nixl_concurrent_id"
 
+# First half of the port range is used for shell script tests
 tcp_port_min=$((min_port_number + nixl_concurrent_id * tcp_port_range))
-tcp_port_max=$((tcp_port_min + tcp_port_range))
+tcp_port_max=$((tcp_port_min + tcp_port_range / 2))
 tcp_port=${tcp_port_min}
 
 get_next_tcp_port() {
-    # Cycle tcp_port between (tcp_port_min)..(tcp_port_max-1)
     tcp_port=$((tcp_port + 1))
     tcp_port=$((tcp_port >= tcp_port_max ? tcp_port_min : tcp_port))
     echo $tcp_port
 }
 
+# Second half of the port range is used for gtest
+gtest_offset=$((tcp_port_range / 2))
 min_gtest_port() {
-    # Half of the port range is used for gtest, to avoid conflicts with ports allocated by shell script
-    gtest_port_offset=$((tcp_port_range / 2))
-    echo $((tcp_port_min + nixl_concurrent_id * tcp_port_range + gtest_port_offset))
+    echo $((tcp_port_min + gtest_offset))
 }
 
 max_gtest_port() {
-    echo $((tcp_port_min + (nixl_concurrent_id + 1) * tcp_port_range - 1))
+    echo $((tcp_port_max + gtest_offset))
 }
