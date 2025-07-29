@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <gtest/gtest.h>
+#include "nixl_descriptors.h"
 #include "nixl_types.h"
 #include <memory>
 #include <string>
@@ -32,6 +33,7 @@ private:
     bool simulateSuccess_ = true;
     std::shared_ptr<asioThreadPoolExecutor> executor_;
     std::vector<std::function<void()>> pendingCallbacks_;
+    std::set<std::string> checkedKeys_;
 
 public:
     void
@@ -70,6 +72,12 @@ public:
         });
     }
 
+    bool
+    checkObjectExists(std::string_view key) override {
+        checkedKeys_.insert(std::string(key));
+        return simulateSuccess_;
+    }
+
     void
     execAsync() {
         for (auto &callback : pendingCallbacks_) {
@@ -82,6 +90,11 @@ public:
     size_t
     getPendingCount() const {
         return pendingCallbacks_.size();
+    }
+
+    const std::set<std::string> &
+    getCheckedKeys() const {
+        return checkedKeys_;
     }
 
     bool
@@ -485,4 +498,22 @@ TEST_F(objTestFixture, AsyncWriteTransferFailureIsHandled) {
     testAsyncTransferFailureIsHandled(NIXL_WRITE);
 }
 
+TEST_F(objTestFixture, CheckObjectExists) {
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-2"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-3"));
+    std::vector<nixl_query_resp_t> resp;
+    objEngine_->queryMem(descs, resp);
+
+    EXPECT_EQ(resp.size(), 3);
+    EXPECT_EQ(resp[0].has_value(), true);
+    EXPECT_EQ(resp[1].has_value(), true);
+    EXPECT_EQ(resp[2].has_value(), true);
+
+    EXPECT_EQ(mockS3Client_->getCheckedKeys().size(), 3);
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-1"));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-2"));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-3"));
+}
 } // namespace gtest::obj
