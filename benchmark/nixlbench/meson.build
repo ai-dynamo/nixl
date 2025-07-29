@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '0.4.1',
+project('nixlbench', 'CPP', version: '0.5.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
