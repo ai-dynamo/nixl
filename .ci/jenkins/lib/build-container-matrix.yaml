@@ -182,36 +182,38 @@ steps:
 
   # === EMAIL TEST STEP (TEMPORARY) ===
   # Remove this step and uncomment above to restore full pipeline
-  - name: Test Email Setup
+  - name: Minimal Test Step
     run: |
       echo "=== EMAIL TEST MODE ==="
-      echo "Simulating build completion for email testing..."
-
-      # Simulate version info file with test data
-      {
-        echo "UCX_VERSION=1a2b3c4d"
-        echo "TAG_NAME=25.03-cuda12.8-devel-ubuntu24.04-nixl-8a1b2c3d-ucx-1a2b3c4d-${arch}"
-        echo "NIXL_VERSION=8a1b2c3d"
-        echo "BUILD_TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-        echo "BUILD_TARGET=${BUILD_TARGET}"
-        echo "BASE_IMAGE=${BASE_IMAGE}"
-        echo "BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
-        echo "arch=${arch}"
-        echo "BUILD_NUMBER=${BUILD_NUMBER}"
-        echo "BUILD_URL=${BUILD_URL}"
-        echo "JOB_NAME=${JOB_NAME}"
-      } > version-info
-
-      echo "Created test version-info file:"
-      cat version-info
-
-      echo "Email test setup complete!"
+      echo "Minimal step to test email functionality in pipeline_stop"
+      echo "Real version-info file will be created in pipeline_stop"
 
 pipeline_stop:
   shell: action
   module: groovy
   run: |
     import groovy.text.GStringTemplateEngine
+
+    // EMAIL TEST MODE - Create simulated version-info file
+    sh script: '''
+      echo "=== Creating test version-info file ==="
+      {
+        echo "UCX_VERSION=1a2b3c4d"
+        echo "TAG_NAME=25.03-cuda12.8-devel-ubuntu24.04-nixl-8a1b2c3d-ucx-1a2b3c4d-x86_64"
+        echo "NIXL_VERSION=8a1b2c3d"
+        echo "BUILD_TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "BUILD_TARGET=${BUILD_TARGET}"
+        echo "BASE_IMAGE=${BASE_IMAGE}"
+        echo "BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
+        echo "arch=x86_64"
+        echo "BUILD_NUMBER=${BUILD_NUMBER}"
+        echo "BUILD_URL=${BUILD_URL}"
+        echo "JOB_NAME=${JOB_NAME}"
+      } > version-info
+      
+      echo "Created test version-info:"
+      cat version-info
+    ''', label: 'Create test version-info'
 
     // Force email test - always send if MAIL_TO is provided
     if (params.MAIL_TO) {
@@ -220,7 +222,7 @@ pipeline_stop:
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
 
         // Get versions from the version-info file
-        def versionVars = sh(script: 'source version-info && echo "$UCX_VERSION|$TAG_NAME|$NIXL_VERSION"', returnStdout: true).trim().split('\\|')
+        def versionVars = sh(script: '. version-info && echo "$UCX_VERSION|$TAG_NAME|$NIXL_VERSION"', returnStdout: true).trim().split('\\|')
 
         def binding = [
             jobStatus       : jobStatus,
