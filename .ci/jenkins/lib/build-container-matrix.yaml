@@ -200,30 +200,11 @@ pipeline_stop:
         def statusIcon = jobStatus == 'SUCCESS' ? '[SUCCESS]' : '[FAILED]'
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
 
-        // EMAIL TEST MODE - Create simulated version-info file
-        sh '''
-          echo "=== Creating test version-info file ==="
-          cd "${WORKSPACE}"
-          {
-            echo "UCX_VERSION=1a2b3c4d"
-            echo "TAG_NAME=25.03-cuda12.8-devel-ubuntu24.04-nixl-8a1b2c3d-ucx-1a2b3c4d-x86_64"
-            echo "NIXL_VERSION=8a1b2c3d"
-            echo "BUILD_TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-            echo "BUILD_TARGET=${BUILD_TARGET}"
-            echo "BASE_IMAGE=${BASE_IMAGE}"
-            echo "BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
-            echo "arch=x86_64"
-            echo "BUILD_NUMBER=${BUILD_NUMBER}"
-            echo "BUILD_URL=${BUILD_URL}"
-            echo "JOB_NAME=${JOB_NAME}"
-          } > version-info
-
-          echo "Created test version-info:"
-          cat version-info
-        '''
-
-        // Get versions from the version-info file
-        def versionVars = sh(script: 'cd "${WORKSPACE}" && . version-info && echo "$UCX_VERSION|$TAG_NAME|$NIXL_VERSION"', returnStdout: true).trim().split('\\|')
+        // EMAIL TEST MODE - Set simulated version variables directly
+        echo "=== EMAIL TEST MODE - Using simulated data ==="
+        def cleanUcx = "1a2b3c4d"
+        def tagName = "25.03-cuda12.8-devel-ubuntu24.04-nixl-8a1b2c3d-ucx-1a2b3c4d-x86_64"
+        def nixlVersion = "8a1b2c3d"
 
         def binding = [
             jobStatus       : jobStatus,
@@ -239,9 +220,9 @@ pipeline_stop:
             UCX_VERSION     : params.UCX_VERSION,
             REGISTRY_HOSTESS: env.REGISTRY_HOSTESS,
             REGISTRY_REPO   : env.REGISTRY_REPO,
-            cleanUcx        : versionVars[0],
-            tagName         : versionVars[1],
-            nixlVersion     : versionVars[2]
+            cleanUcx        : cleanUcx,
+            tagName         : tagName,
+            nixlVersion     : nixlVersion
         ]
 
         def templateText = readFile '.ci/assets/teams-email.template'
