@@ -13,8 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-gpunetio_device_path = dependency('doca-gpunetio').get_variable(pkgconfig : 'libdir')
-plugin_gpunetio_deps = [dependency('doca-common'), dependency('doca-verbs'), dependency('doca-gpunetio')]
+plugin_gpunetio_deps = [dependency('libibverbs'), dependency('libmlx5'), dependency('doca-common'), dependency('doca-verbs'), dependency('doca-gpunetio')]
 
 #Get Abseil dependencies
 absl_log_dep = dependency('absl_log', required: true)

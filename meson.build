@@ -70,15 +70,17 @@ if cuda_dep.found()
     # Please extend with your arch if not present in the list
     nvcc_flags = []
     nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
+    nvcc_flags += ['-gencode', 'arch=compute_89,code=sm_89']
     nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
     add_project_arguments(nvcc_flags, language: 'cuda')
 
     # Refer to https://mesonbuild.com/Cuda-module.html
     add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
-    add_project_arguments('-rdc=true', language: 'cuda')
+    #add_project_arguments('-rdc=true', language: 'cuda')
 
     nvcc_flags_link = []
     nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
+    nvcc_flags_link += ['-gencode=arch=compute_89,code=sm_89']
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
 endif
