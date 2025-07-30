@@ -203,6 +203,7 @@ pipeline_stop:
         // EMAIL TEST MODE - Create simulated version-info file
         sh '''
           echo "=== Creating test version-info file ==="
+          cd "${WORKSPACE}"
           {
             echo "UCX_VERSION=1a2b3c4d"
             echo "TAG_NAME=25.03-cuda12.8-devel-ubuntu24.04-nixl-8a1b2c3d-ucx-1a2b3c4d-x86_64"
@@ -222,7 +223,7 @@ pipeline_stop:
         '''
 
         // Get versions from the version-info file
-        def versionVars = sh(script: '. version-info && echo "$UCX_VERSION|$TAG_NAME|$NIXL_VERSION"', returnStdout: true).trim().split('\\|')
+        def versionVars = sh(script: 'cd "${WORKSPACE}" && . version-info && echo "$UCX_VERSION|$TAG_NAME|$NIXL_VERSION"', returnStdout: true).trim().split('\\|')
 
         def binding = [
             jobStatus       : jobStatus,
