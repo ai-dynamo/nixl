@@ -252,3 +252,5 @@ if __name__ == "__main__":
 
     del init_agent
     del target_agent
+
+    print("Test Complete.")
