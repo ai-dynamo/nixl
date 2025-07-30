@@ -42,12 +42,25 @@ echo nixl_concurrent_id="$nixl_concurrent_id"
 # First half of the port range is used for shell script tests
 tcp_port_min=$((min_port_number + nixl_concurrent_id * tcp_port_range))
 tcp_port_max=$((tcp_port_min + tcp_port_range / 2))
-tcp_port=${tcp_port_min}
 
 get_next_tcp_port() {
-    tcp_port=$((tcp_port + 1))
-    tcp_port=$((tcp_port >= tcp_port_max ? tcp_port_min : tcp_port))
-    echo $tcp_port
+    local port_file="/tmp/nixl_tcp_port_${nixl_concurrent_id}"
+
+    if [ ! -f "$port_file" ]; then
+        echo "$tcp_port_min" > "$port_file"
+    fi
+
+    local current_port
+    current_port=$(cat "$port_file")
+    local next_port=$((current_port + 1))
+
+    if [ "$next_port" -ge "$tcp_port_max" ]; then
+        next_port="$tcp_port_min"
+    fi
+
+    echo "$next_port" > "$port_file"
+
+    echo "$next_port"
 }
 
 # Second half of the port range is used for gtest
