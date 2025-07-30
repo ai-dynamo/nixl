@@ -295,7 +295,7 @@
             Example: <code>25.03-cuda12.8-devel-ubuntu24.04-aarch64-latest</code><br/>
       - string:
           name: "MAIL_TO"
-          default: "c4ad44db.NVIDIA.onmicrosoft.com@amer.teams.ms"
+          default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
           description: "Email address to send build results (optional)"
     # SCM configuration
     pipeline-scm:
