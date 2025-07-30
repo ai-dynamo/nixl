@@ -84,12 +84,12 @@ steps:
     run: |
       export UCX_REF="${UCX_VERSION}"
 
-      # "contrib/build-container.sh" \
-      #   --base-image "${BASE_IMAGE}" \
-      #   --base-image-tag "${BASE_IMAGE_TAG}" \
-      #   --tag "${LOCAL_TAG_BASE}${arch}" \
-      #   --arch "${arch}" \
-      #   --no-cache
+      "contrib/build-container.sh" \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_IMAGE_TAG}" \
+        --tag "${LOCAL_TAG_BASE}${arch}" \
+        --arch "${arch}" \
+        --no-cache
 
   - name: Add Version Info
     run: |
