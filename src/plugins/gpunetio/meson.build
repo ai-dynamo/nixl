@@ -24,7 +24,7 @@ compile_flags += '-D DOCA_ALLOW_EXPERIMENTAL_API'
 
 if 'GPUNETIO' in static_plugins
     gpunetio_backend_lib = static_library('GPUNETIO',
-               'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
+               'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_highlevel.cpp', 'gpunetio_kernels.cu',
                dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
@@ -34,7 +34,7 @@ if 'GPUNETIO' in static_plugins
                install_dir: plugin_install_dir)  # Custom prefix for plugin libraries
 else
     gpunetio_backend_lib = shared_library('GPUNETIO',
-               'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
+               'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_highlevel.cpp', 'gpunetio_kernels.cu',
                dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,

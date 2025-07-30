@@ -126,8 +126,7 @@ oob_connection_server_close(int oob_sock_fd) {
     }
 }
 
-struct doca_verbs_context *
-open_ib_device(char *name) {
+struct doca_verbs_context *open_ib_device(char *name) {
     int nb_ibdevs = 0;
     struct ibv_device **ibdev_list = ibv_get_device_list(&nb_ibdevs);
     struct doca_verbs_context *context;
@@ -137,8 +136,10 @@ open_ib_device(char *name) {
         return NULL;
     }
 
+    std::cout << "Found " << nb_ibdevs << " devices\n";
     for (int i = 0; i < nb_ibdevs; i++) {
         if (strncmp(ibv_get_device_name(ibdev_list[i]), name, strlen(name)) == 0) {
+            std::cout << "Found " << name << " device\n";
             struct ibv_device *dev_handle = ibdev_list[i];
             ibv_free_device_list(ibdev_list);
 
@@ -146,6 +147,7 @@ open_ib_device(char *name) {
                     dev_handle, DOCA_VERBS_CONTEXT_CREATE_FLAGS_NONE, &context) != DOCA_SUCCESS)
                 return NULL;
 
+            std::cout << "Opened " << name << " device\n";
             return context;
         }
     }
