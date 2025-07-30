@@ -114,8 +114,12 @@ if __name__ == "__main__":
         target_strs2.append((addr1, buf_size, 0, "test"))
         malloc_addrs.append(addr1)
 
-    target_reg_descs1 = target_agent.get_reg_descs(target_strs1, "DRAM", is_sorted=False)
-    target_reg_descs2 = target_agent.get_reg_descs(target_strs2, "DRAM", is_sorted=False)
+    target_reg_descs1 = target_agent.get_reg_descs(
+        target_strs1, "DRAM", is_sorted=False
+    )
+    target_reg_descs2 = target_agent.get_reg_descs(
+        target_strs2, "DRAM", is_sorted=False
+    )
     target_xfer_descs1 = target_reg_descs1.trim()
     target_xfer_descs2 = target_reg_descs2.trim()
 
@@ -248,5 +252,3 @@ if __name__ == "__main__":
 
     del init_agent
     del target_agent
-
-    print("Test Complete.")
