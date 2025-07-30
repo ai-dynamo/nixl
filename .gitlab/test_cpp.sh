@@ -84,6 +84,12 @@ cd ${INSTALL_DIR}
 sleep 1
 ./bin/nixl_test initiator 127.0.0.1 1234
 
+# Run NIXLBench test
+benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+./bin/nixlbench --etcd-endpoints http://127.0.0.1:2379 --initiator_seg_type DRAM --target_seg_type DRAM --total_buffer_size 80000000 --benchmark_group $benchmark_group &
+sleep 1
+./bin/nixlbench --etcd-endpoints http://127.0.0.1:2379 --initiator_seg_type DRAM --target_seg_type DRAM --total_buffer_size 80000000 --benchmark_group $benchmark_group
+
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"
 echo "./bin/p2p_test disabled"
