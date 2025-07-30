@@ -94,19 +94,14 @@ RUN git clone --recurse-submodules -b v1.73.0 --depth 1 --shallow-submodules htt
     make -j$(nproc) && \
     make install
 
-RUN git clone https://github.com/microsoft/cpprestsdk.git && \
-    cd cpprestsdk && \
-    mkdir build && cd build && \
-    git submodule update --init && \
-    cmake .. -DCPPREST_EXCLUDE_WEBSOCKETS=ON  && \
-    make -j$(nproc) && make install
-
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
 
 RUN cd /workspace && \
-    git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
-	cd etcd-cpp-apiv3 && mkdir build && cd build && \
-	cmake .. && make -j$(nproc) && make install
+    git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+    cd etcd-cpp-apiv3 && \
+    sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
+    mkdir build && cd build && \
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -194,12 +189,12 @@ ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
-        uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
+        ./contrib/build-wheel.sh \
+            --python-version $PYTHON_VERSION \
+            --platform $WHL_PLATFORM \
+            --ucx-plugins-dir /usr/lib64/ucx \
+            --nixl-plugins-dir $NIXL_PLUGIN_DIR \
+            --output-dir dist ; \
     done
-
-# Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
-RUN uv pip install auditwheel && \
-    uv run auditwheel repair --exclude libcuda.so.1 --exclude 'libssl*' --exclude 'libcrypto*' /tmp/dist/nixl-*cp3*.whl --plat $WHL_PLATFORM --wheel-dir dist && \
-    contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir /usr/lib64/ucx --nixl-plugins-dir /usr/local/nixl/lib64/plugins dist/*.whl
 
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl

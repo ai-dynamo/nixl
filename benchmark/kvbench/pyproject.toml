@@ -20,7 +20,6 @@ description = "Benchmarking utility for testing KVCache transfers in large langu
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "asposestorage==1.0.2",
     "click==8.1.7",
     "numpy==2.3.1",
     "pytest==7.4.4",
