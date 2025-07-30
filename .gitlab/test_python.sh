@@ -54,7 +54,8 @@ pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
 
 echo "==== Running ETCD server ===="
-export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${(get_next_tcp_port)}"
+etcd_port=$(get_next_tcp_port)
+export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} &
 sleep 5
 
