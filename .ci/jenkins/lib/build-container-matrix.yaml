@@ -93,12 +93,13 @@ steps:
 
   - name: Add Version Info
     run: |
+
+
       # Extract standardized 8-char commit hash for UCX version info:
       if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
       else
-        # Ref = UCX_VERSION or get from build script
-        UCX_REF="${UCX_VERSION:-$(sed -n 's/^UCX_REF=${UCX_REF:-\(.*\)}/\1/p' contrib/build-container.sh)}"
+        UCX_REF="$UCX_VERSION"
 
         # Hash? if yes truncate, else ls-remote then truncate
         if [[ "$UCX_REF" =~ ^[a-f0-9]{8,40}$ ]]; then
@@ -110,6 +111,8 @@ steps:
         # Verify
         [[ -n "$CLEAN_UCX" ]] || { echo "ERROR: failed to resolve UCX_REF=$UCX_REF"; exit 1; }
       fi
+
+
 
       # Calculate tag name
       NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
