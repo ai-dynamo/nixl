@@ -127,8 +127,10 @@ steps:
       docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
 
   - name: Stash Version Info
+    shell: action
+    module: groovy
     run: |
-      stash name: 'version-info', includes: 'version-info'
+      stash includes: 'version-info', name: 'version-info'
 
   - name: Push
     credentialsId: 'svc-nixl-artifactory-token'
