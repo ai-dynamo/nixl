@@ -60,11 +60,11 @@ constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
 constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
 constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
 constexpr uint32_t DOCA_RDMA_CM_LOCAL_PORT_SERVER = 6544;
-constexpr uint32_t VERBS_TEST_HOP_LIMIT  = 255;
+constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define DOCA_RDMA_SERVER_ADDR_LEN \
-    (MAX (MAX (DOCA_DEVINFO_IPV4_ADDR_SIZE, DOCA_DEVINFO_IPV6_ADDR_SIZE), DOCA_GID_BYTE_LENGTH))
+    (MAX(MAX(DOCA_DEVINFO_IPV4_ADDR_SIZE, DOCA_DEVINFO_IPV6_ADDR_SIZE), DOCA_GID_BYTE_LENGTH))
 // Pre-fill the whole recv queue with notif once
 constexpr uint32_t DOCA_MAX_NOTIF_INFLIGHT = RDMA_RECV_QUEUE_SIZE;
 constexpr uint32_t DOCA_MAX_NOTIF_MESSAGE_SIZE = 8192;
@@ -76,53 +76,48 @@ constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 
 /* High-level API */
 struct doca_gpu_verbs_qp_init_attr_hl {
-	struct doca_gpu *gpu_dev;
-	struct doca_dev *dev;
-	struct doca_verbs_context *verbs_context;
-	struct doca_verbs_pd *verbs_pd;
-	uint16_t sq_nwqe;
-	uint16_t rq_nwqe;
-	enum doca_gpu_dev_verbs_nic_handler nic_handler;
+    struct doca_gpu *gpu_dev;
+    struct doca_dev *dev;
+    struct doca_verbs_context *verbs_context;
+    struct doca_verbs_pd *verbs_pd;
+    uint16_t sq_nwqe;
+    uint16_t rq_nwqe;
+    enum doca_gpu_dev_verbs_nic_handler nic_handler;
 };
 
 struct doca_gpu_verbs_qp_hl {
-	struct doca_gpu *gpu_dev; /* DOCA GPU device to use */
+    struct doca_gpu *gpu_dev; /* DOCA GPU device to use */
 
-	// CQ
-	struct doca_verbs_cq *cq_rq;
-	struct doca_verbs_cq *cq_sq;
-	void *cq_sq_umem_gpu_ptr;
-	void *cq_rq_umem_gpu_ptr;
-	struct doca_umem *cq_sq_umem;
-	struct doca_umem *cq_rq_umem;
-	void *cq_sq_umem_dbr_gpu_ptr;
-	void *cq_rq_umem_dbr_gpu_ptr;
-	struct doca_umem *cq_sq_umem_dbr;
-	struct doca_umem *cq_rq_umem_dbr;
+    // CQ
+    struct doca_verbs_cq *cq_rq;
+    struct doca_verbs_cq *cq_sq;
+    void *cq_sq_umem_gpu_ptr;
+    void *cq_rq_umem_gpu_ptr;
+    struct doca_umem *cq_sq_umem;
+    struct doca_umem *cq_rq_umem;
+    void *cq_sq_umem_dbr_gpu_ptr;
+    void *cq_rq_umem_dbr_gpu_ptr;
+    struct doca_umem *cq_sq_umem_dbr;
+    struct doca_umem *cq_rq_umem_dbr;
 
-	// QP
-	struct doca_verbs_qp *qp;
-	void *qp_umem_gpu_ptr;
-	struct doca_umem *qp_umem;
-	void *qp_umem_dbr_gpu_ptr;
-	struct doca_umem *qp_umem_dbr;
-	struct doca_uar *external_uar;
+    // QP
+    struct doca_verbs_qp *qp;
+    void *qp_umem_gpu_ptr;
+    struct doca_umem *qp_umem;
+    void *qp_umem_dbr_gpu_ptr;
+    struct doca_umem *qp_umem_dbr;
+    struct doca_uar *external_uar;
 
-	enum doca_gpu_dev_verbs_nic_handler nic_handler;
+    enum doca_gpu_dev_verbs_nic_handler nic_handler;
 
-	// QP GPUNetIO Object
-	struct doca_gpu_verbs_qp *qp_gverbs;
+    // QP GPUNetIO Object
+    struct doca_gpu_verbs_qp *qp_gverbs;
 };
 
 struct nixlDocaMr {
-    nixlDocaMr(void *addr_,
-                uint32_t elem_num_,
-                size_t elem_size_,
-                struct ibv_pd *pd_);
+    nixlDocaMr(void *addr_, uint32_t elem_num_, size_t elem_size_, struct ibv_pd *pd_);
 
-    nixlDocaMr(void *addr_,
-                uint32_t tot_size_,
-                uint32_t rkey_);
+    nixlDocaMr(void *addr_, uint32_t tot_size_, uint32_t rkey_);
 
     ~nixlDocaMr();
 
@@ -152,7 +147,6 @@ struct docaXferReqGpu {
     uint64_t last_wqe;
     // struct doca_gpu_buf_arr *notif_barr_gpu;
     uintptr_t lbuf_notif;
-    uint32_t lstride_notif;
     uint32_t lkey_notif;
     uint64_t *last_rsvd;
     uint64_t *last_posted;
@@ -185,6 +179,7 @@ struct docaNotif {
     uintptr_t msg_buf;
     uint32_t msg_size;
     uint32_t msg_num;
+    uint32_t msg_last;
 };
 
 class nixlDocaConnection : public nixlBackendConnMD {
@@ -204,7 +199,7 @@ private:
     nixl_blob_t remoteMrStr;
 
 public:
-    nixlDocaPrivateMetadata() : nixlBackendMD (true) {}
+    nixlDocaPrivateMetadata() : nixlBackendMD(true) {}
 
     ~nixlDocaPrivateMetadata() {}
 
@@ -223,7 +218,7 @@ public:
     struct nixlDocaMr *mr;
     nixlDocaConnection conn;
 
-    nixlDocaPublicMetadata() : nixlBackendMD (false) {}
+    nixlDocaPublicMetadata() : nixlBackendMD(false) {}
 
     ~nixlDocaPublicMetadata() {}
 };
@@ -244,38 +239,49 @@ struct nixlDocaRdmaQp {
 
 struct nixlDocaEngine;
 
-void nixlDocaEngineCheckCudaError (cudaError_t result, const char *message);
-void nixlDocaEngineCheckCuError (CUresult result, const char *message);
-int oob_connection_client_setup (const char *server_ip, int *oob_sock_fd);
-void oob_connection_client_close (int oob_sock_fd);
-void oob_connection_server_close (int oob_sock_fd);
-struct doca_verbs_context *open_ib_device(char *name);
-doca_error_t create_verbs_ah_attr(struct doca_verbs_context *verbs_context,
-					 uint32_t gid_index,
-					 enum doca_verbs_addr_type addr_type,
-					 struct doca_verbs_ah_attr **verbs_ah_attr);
-doca_error_t connect_verbs_qp(nixlDocaEngine *eng, struct doca_verbs_qp *qp, uint32_t rqpn, uint32_t remote_gid);
-void * threadProgressFunc (void *arg);
+void
+nixlDocaEngineCheckCudaError(cudaError_t result, const char *message);
+void
+nixlDocaEngineCheckCuError(CUresult result, const char *message);
+int
+oob_connection_client_setup(const char *server_ip, int *oob_sock_fd);
+void
+oob_connection_client_close(int oob_sock_fd);
+void
+oob_connection_server_close(int oob_sock_fd);
+struct doca_verbs_context *
+open_ib_device(char *name);
+doca_error_t
+create_verbs_ah_attr(struct doca_verbs_context *verbs_context,
+                     uint32_t gid_index,
+                     enum doca_verbs_addr_type addr_type,
+                     struct doca_verbs_ah_attr **verbs_ah_attr);
+doca_error_t
+connect_verbs_qp(nixlDocaEngine *eng, struct doca_verbs_qp *qp, uint32_t rqpn, uint32_t remote_gid);
+void *
+threadProgressFunc(void *arg);
 
-doca_error_t doca_gpu_verbs_destroy_qp_hl(struct doca_gpu_verbs_qp_hl *qp);
-doca_error_t doca_gpu_verbs_create_qp_hl(struct doca_gpu_verbs_qp_init_attr_hl *qp_init_attr,
-					 struct doca_gpu_verbs_qp_hl **qp);
 doca_error_t
-doca_kernel_write (cudaStream_t stream,
-                   struct doca_gpu_dev_verbs_qp *qp_gpu,
-                   struct docaXferReqGpu *xferReqRing,
-                   uint32_t pos);
+doca_gpu_verbs_destroy_qp_hl(struct doca_gpu_verbs_qp_hl *qp);
 doca_error_t
-doca_kernel_read (cudaStream_t stream,
+doca_gpu_verbs_create_qp_hl(struct doca_gpu_verbs_qp_init_attr_hl *qp_init_attr,
+                            struct doca_gpu_verbs_qp_hl **qp);
+doca_error_t
+doca_kernel_write(cudaStream_t stream,
                   struct doca_gpu_dev_verbs_qp *qp_gpu,
                   struct docaXferReqGpu *xferReqRing,
                   uint32_t pos);
 doca_error_t
-doca_kernel_progress (cudaStream_t stream,
-                      struct docaXferCompletion *completion_list,
-                      struct docaNotif *notif_fill,
-                      struct docaNotif *notif_progress,
-                      struct docaNotif *notif_send_gpu,
-                      uint32_t *exit_flag);
+doca_kernel_read(cudaStream_t stream,
+                 struct doca_gpu_dev_verbs_qp *qp_gpu,
+                 struct docaXferReqGpu *xferReqRing,
+                 uint32_t pos);
+doca_error_t
+doca_kernel_progress(cudaStream_t stream,
+                     struct docaXferCompletion *completion_list,
+                     struct docaNotif *notif_fill,
+                     struct docaNotif *notif_progress,
+                     struct docaNotif *notif_send_gpu,
+                     uint32_t *exit_flag);
 
 #endif /* GPUNETIO_BACKEND_AUX_H */

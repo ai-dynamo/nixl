@@ -23,9 +23,9 @@ static const char *PLUGIN_NAME = "GPUNETIO";
 static const char *PLUGIN_VERSION = "0.1.0";
 
 static nixlBackendEngine *
-create_engine (const nixlBackendInitParams *init_params) {
+create_engine(const nixlBackendInitParams *init_params) {
     try {
-        return new nixlDocaEngine (init_params);
+        return new nixlDocaEngine(init_params);
     }
     catch (const std::exception &e) {
         return nullptr;
@@ -33,7 +33,7 @@ create_engine (const nixlBackendInitParams *init_params) {
 }
 
 static void
-destroy_engine (nixlBackendEngine *engine) {
+destroy_engine(nixlBackendEngine *engine) {
     delete engine;
 }
 
@@ -63,8 +63,8 @@ get_backend_options() {
 static nixl_mem_list_t
 get_backend_mems() {
     nixl_mem_list_t mems;
-    mems.push_back (DRAM_SEG);
-    mems.push_back (VRAM_SEG);
+    mems.push_back(DRAM_SEG);
+    mems.push_back(VRAM_SEG);
     return mems;
 }
 
