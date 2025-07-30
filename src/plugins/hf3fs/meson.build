@@ -40,7 +40,8 @@ else
                     install: true,
                     cpp_args : ['-fPIC'],
                     name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
-                    install_dir: plugin_install_dir)
+                    install_dir: plugin_install_dir,
+                    install_rpath: '$ORIGIN/..')
   if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
                     'echo "HF3FS=' + hf3fs_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',

@@ -44,7 +44,8 @@ else
                cpp_args : compile_flags + ['-fPIC'],
                cuda_args : gpu_cuda_args,
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
-               install_dir: plugin_install_dir)
+               install_dir: plugin_install_dir,
+               install_rpath: '$ORIGIN/..')
 
     if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
