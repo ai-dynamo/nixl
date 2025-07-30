@@ -7,7 +7,7 @@
 </head>
 <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f3f2f1;">
     <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        
+
         <!-- Header -->
         <div style="background-color: ${jobStatus == 'SUCCESS' ? '#107c10' : '#d13438'}; color: white; padding: 20px; text-align: center;">
             <h1 style="margin: 0; font-size: 24px;">${statusIcon} NIXL Container Build</h1>
