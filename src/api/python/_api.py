@@ -20,10 +20,6 @@ import numpy as np
 import torch
 
 import nixl._bindings as nixlBind
-from nixl.logging import get_logger
-
-# Get logger using centralized configuration
-logger = get_logger(__name__)
 
 DEFAULT_COMM_PORT = nixlBind.DEFAULT_COMM_PORT
 
@@ -80,7 +76,7 @@ class nixl_agent:
     ):
         if nixl_conf and instantiate_all:
             instantiate_all = False
-            logger.warning(
+            print(
                 "Ignoring instantiate_all based on the provided config in agent creation."
             )
         if not nixl_conf:
@@ -109,7 +105,7 @@ class nixl_agent:
 
         self.plugin_list = self.agent.getAvailPlugins()
         if len(self.plugin_list) == 0:
-            logger.error("No plugins available, cannot start transfers!")
+            print("No plugins available, cannot start transfers!")
             raise RuntimeError("No plugins available for NIXL, cannot start transfers!")
 
         self.plugin_b_options: dict[str, dict[str, str]] = {}
@@ -129,9 +125,10 @@ class nixl_agent:
             for bknd in nixl_conf.backends:
                 # TODO: populate init from nixl_conf when added
                 if bknd not in self.plugin_list:
-                    logger.warning(
-                        "Skipping backend registration %s due to the missing plugin.",
+                    print(
+                        "Skipping backend registration",
                         bknd,
+                        "due to the missing plugin.",
                     )
                 else:
                     self.create_backend(bknd, init)
@@ -150,7 +147,7 @@ class nixl_agent:
             "READ": nixlBind.NIXL_READ,
         }
 
-        logger.info("Initialized NIXL agent: %s", agent_name)
+        print("Initialized NIXL agent:", agent_name)
 
     """
     @brief Get the list of available plugins.
@@ -172,9 +169,7 @@ class nixl_agent:
         if backend in self.plugin_mem_types:
             return self.plugin_mem_types[backend]
         else:
-            logger.warning(
-                "Plugin %s is not available to get its supported mem types.", backend
-            )
+            print("Plugin", backend, "is not available to get its supported mem types.")
             return []
 
     """
@@ -189,7 +184,7 @@ class nixl_agent:
         if backend in self.plugin_b_options:
             return self.plugin_b_options[backend]
         else:
-            logger.warning("Plugin %s is not available to get its parameters.", backend)
+            print("Plugin", backend, "is not available to get its parameters.")
             return {}
 
     """
@@ -206,8 +201,8 @@ class nixl_agent:
         if backend in self.backend_mems:
             return self.backend_mems[backend]
         else:
-            logger.warning(
-                "Backend %s not instantiated to get its supported mem types.", backend
+            print(
+                "Backend", backend, "not instantiated to get its supported mem types."
             )
             return []
 
@@ -225,9 +220,7 @@ class nixl_agent:
         if backend in self.backend_options:
             return self.backend_options[backend]
         else:
-            logger.warning(
-                "Backend %s not instantiated to get its parameters.", backend
-            )
+            print("Backend", backend, "not instantiated to get its parameters.")
             return {}
 
     """
@@ -245,7 +238,7 @@ class nixl_agent:
         )
         self.backend_mems[backend] = mem_types
         self.backend_options[backend] = backend_options
-        logger.info("Backend %s was instantiated", backend)
+        print("Backend", backend, "was instantiated")
 
     """
     @brief Register memory regions, optionally with specified backends.
@@ -800,7 +793,7 @@ class nixl_agent:
         if isinstance(descs, nixlBind.nixlXferDList):
             return descs
         elif isinstance(descs, nixlBind.nixlRegDList):
-            logger.error("RegList type detected for transfer, please use XferList")
+            print("RegList type detected for transfer, please use XferList")
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
@@ -808,10 +801,10 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
+                print("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                logger.error("3-tuple list needed for transfer")
+                print("3-tuple list needed for transfer")
                 new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
@@ -819,10 +812,10 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
+                print("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                logger.error(
+                print(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
                 new_descs = None
@@ -840,7 +833,7 @@ class nixl_agent:
                     is_sorted,
                 )
             else:
-                logger.error("Please use a list of contiguous Tensors")
+                print("Please use a list of contiguous Tensors")
                 new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
@@ -850,7 +843,7 @@ class nixl_agent:
                 if descs[i].device != tensor_type:
                     return None
                 if not descs[i].is_contiguous():
-                    logger.error("Please use a list of contiguous Tensors")
+                    print("Please use a list of contiguous Tensors")
                     return None
                 base_addr = descs[i].data_ptr()
                 region_len = descs[i].numel() * descs[i].element_size()
@@ -894,7 +887,7 @@ class nixl_agent:
         if isinstance(descs, nixlBind.nixlRegDList):
             return descs
         elif isinstance(descs, nixlBind.nixlXferDList):
-            logger.error("XferList type detected for registration, please use RegList")
+            print("XferList type detected for registration, please use RegList")
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 4:
@@ -902,10 +895,10 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
+                print("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                logger.error("4-tuple list needed for registration")
+                print("4-tuple list needed for registration")
                 new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
@@ -913,10 +906,10 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
+                print("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                logger.error(
+                print(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
                 new_descs = None
@@ -934,7 +927,7 @@ class nixl_agent:
                     is_sorted,
                 )
             else:
-                logger.error("Please use a list of contiguous Tensors")
+                print("Please use a list of contiguous Tensors")
                 new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
@@ -944,7 +937,7 @@ class nixl_agent:
                 if descs[i].device != tensor_type:
                     return None
                 if not descs[i].is_contiguous():
-                    logger.error("Please use a list of contiguous Tensors")
+                    print("Please use a list of contiguous Tensors")
                     return None
                 base_addr = descs[i].data_ptr()
                 region_len = descs[i].numel() * descs[i].element_size()
