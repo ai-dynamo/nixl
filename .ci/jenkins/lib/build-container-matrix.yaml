@@ -53,141 +53,168 @@ pipeline_start:
     echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
     echo "BUILD_TARGET: ${params.BUILD_TARGET}"
 
-# Build pipeline
+# EMAIL TEST MODE - Full build pipeline commented out for testing
 steps:
-  - name: Prepare
+  # === COMMENTED OUT FOR EMAIL TESTING ===
+  # Uncomment below to restore full build pipeline
+
+  # - name: Prepare
+  #   run: |
+  #     # Setup podman and dependencies
+  #     rm -f /etc/containers/storage.conf
+  #     podman system reset -f || true
+  #     ln -sfT $(type -p podman) /usr/bin/docker
+  #     yum install -y git gettext
+
+  # - name: Build NIXLBench
+  #   enable: ${ENABLE_NIXLBENCH_BUILD}
+  #   run: |
+  #     # Clone UCX source for nixlbench
+  #     git clone https://github.com/openucx/ucx.git ucx-src
+  #     git -C ucx-src checkout "${UCX_VERSION}"
+  #
+  #     "benchmark/nixlbench/contrib/build.sh" \
+  #       --base-image "${BASE_IMAGE}" \
+  #       --base-image-tag "${BASE_IMAGE_TAG}" \
+  #       --tag "${LOCAL_TAG_BASE}${arch}" \
+  #       --arch "${arch}" \
+  #       --no-cache \
+  #       --nixl "$WORKSPACE" \
+  #       --ucx "$WORKSPACE/ucx-src"
+
+  # - name: Build NIXL
+  #   enable: ${ENABLE_NIXL_BUILD}
+  #   run: |
+  #     export UCX_REF="${UCX_VERSION}"
+  #
+  #     "contrib/build-container.sh" \
+  #       --base-image "${BASE_IMAGE}" \
+  #       --base-image-tag "${BASE_IMAGE_TAG}" \
+  #       --tag "${LOCAL_TAG_BASE}${arch}" \
+  #       --arch "${arch}" \
+  #       --no-cache
+
+  # - name: Add Version Info
+  #   run: |
+  #     # Extract standardized 8-char commit hash for UCX version info:
+  #     if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
+  #       CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
+  #     else
+  #       UCX_REF="$UCX_VERSION"
+  #
+  #       # Hash? if yes truncate, else ls-remote then truncate
+  #       if [[ "$UCX_REF" =~ ^[a-f0-9]{8,40}$ ]]; then
+  #         CLEAN_UCX="${UCX_REF:0:8}"
+  #       else
+  #         CLEAN_UCX=$(git ls-remote https://github.com/openucx/ucx.git "$UCX_REF" | head -n1 | cut -c1-8)
+  #       fi
+  #
+  #       # Verify
+  #       [[ -n "$CLEAN_UCX" ]] || { echo "ERROR: failed to resolve UCX_REF=$UCX_REF"; exit 1; }
+  #     fi
+  #
+  #     # Calculate tag name
+  #     NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
+  #     TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+  #
+  #     # Generate version info file from template
+  #     export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+  #            BUILD_TARGET BASE_IMAGE BASE_IMAGE_TAG arch \
+  #            BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE \
+  #            NIXL_VERSION UCX_VERSION="${CLEAN_UCX}" TAG_NAME
+  #     envsubst < .ci/assets/nixl-version-info.template > version-info
+  #
+  #     # Add version info to the image
+  #     CONTAINER_ID=$(docker create "${LOCAL_TAG_BASE}${arch}")
+  #     docker cp version-info "${CONTAINER_ID}:/opt/nixl-version"
+  #     docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
+
+  # - name: Push
+  #   credentialsId: 'svc-nixl-artifactory-token'
+  #   run: |
+  #     source version-info
+  #     ARTIFACTORY_REGISTRY="${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}"
+  #     ARTIFACTORY_API="https://${REGISTRY_HOSTESS}/artifactory/api/storage/${REGISTRY_REPO}/${BUILD_TARGET}"
+  #
+  #     # Prepare image properties
+  #     IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${UCX_VERSION};arch=${arch};"
+  #     IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
+  #     IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
+  #
+  #     # Login to Artifactory
+  #     echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOSTESS}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+  #
+  #     # Function to tag, push, and set properties
+  #     tag_push_set_properties() {
+  #       local target_tag="$1"
+  #       echo "Creating tag: ${target_tag}"
+  #       docker tag "${LOCAL_TAG_BASE}${arch}" "${ARTIFACTORY_REGISTRY}:${target_tag}"
+  #       docker push "${ARTIFACTORY_REGISTRY}:${target_tag}"
+  #       curl -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
+  #         "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
+  #     }
+  #
+  #     # Always create standard tag
+  #     tag_push_set_properties "${TAG_NAME}"
+  #
+  #     # Check if latest tag should be updated
+  #     if [[ "${UPDATE_LATEST}" == "true" ]]; then
+  #       tag_push_set_properties "${BASE_IMAGE_TAG}-${arch}-latest"
+  #     fi
+
+  # - name: Show Results
+  #   run: |
+  #     source version-info
+  #     echo "Image type built: ${BUILD_TARGET} (${arch})"
+  #     echo "Image pushed to: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${TAG_NAME}"
+  #     if [[ "${UPDATE_LATEST}" == "true" ]]; then
+  #       echo "Latest tag updated: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
+  #     fi
+  #
+  #     echo -e "\nBuild config for manual repro:"
+  #     if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
+  #       echo "git clone https://github.com/openucx/ucx.git ucx-src && (cd ucx-src && git checkout ${UCX_VERSION})"
+  #       echo "benchmark/nixlbench/contrib/build.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache --nixl \$WORKSPACE --ucx \$WORKSPACE/ucx-src"
+  #     else
+  #       echo "export UCX_REF=${UCX_VERSION}"
+  #       echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache"
+  #     fi
+
+  # === EMAIL TEST STEP (TEMPORARY) ===
+  # Remove this step and uncomment above to restore full pipeline
+  - name: Test Email Setup
     run: |
-      # Setup podman and dependencies
-      rm -f /etc/containers/storage.conf
-      podman system reset -f || true
-      ln -sfT $(type -p podman) /usr/bin/docker
-      yum install -y git gettext
+      echo "=== EMAIL TEST MODE ==="
+      echo "Simulating build completion for email testing..."
 
-  - name: Build NIXLBench
-    enable: ${ENABLE_NIXLBENCH_BUILD}
-    run: |
-      # Clone UCX source for nixlbench
-      git clone https://github.com/openucx/ucx.git ucx-src
-      git -C ucx-src checkout "${UCX_VERSION}"
+      # Simulate version info file with test data
+      {
+        echo "UCX_VERSION=1a2b3c4d"
+        echo "TAG_NAME=25.03-cuda12.8-devel-ubuntu24.04-nixl-8a1b2c3d-ucx-1a2b3c4d-${arch}"
+        echo "NIXL_VERSION=8a1b2c3d"
+        echo "BUILD_TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "BUILD_TARGET=${BUILD_TARGET}"
+        echo "BASE_IMAGE=${BASE_IMAGE}"
+        echo "BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
+        echo "arch=${arch}"
+        echo "BUILD_NUMBER=${BUILD_NUMBER}"
+        echo "BUILD_URL=${BUILD_URL}"
+        echo "JOB_NAME=${JOB_NAME}"
+      } > version-info
 
-      "benchmark/nixlbench/contrib/build.sh" \
-        --base-image "${BASE_IMAGE}" \
-        --base-image-tag "${BASE_IMAGE_TAG}" \
-        --tag "${LOCAL_TAG_BASE}${arch}" \
-        --arch "${arch}" \
-        --no-cache \
-        --nixl "$WORKSPACE" \
-        --ucx "$WORKSPACE/ucx-src"
+      echo "Created test version-info file:"
+      cat version-info
 
-  - name: Build NIXL
-    enable: ${ENABLE_NIXL_BUILD}
-    run: |
-      export UCX_REF="${UCX_VERSION}"
-
-      "contrib/build-container.sh" \
-        --base-image "${BASE_IMAGE}" \
-        --base-image-tag "${BASE_IMAGE_TAG}" \
-        --tag "${LOCAL_TAG_BASE}${arch}" \
-        --arch "${arch}" \
-        --no-cache
-
-  - name: Add Version Info
-    run: |
-
-
-      # Extract standardized 8-char commit hash for UCX version info:
-      if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
-        CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
-      else
-        UCX_REF="$UCX_VERSION"
-
-        # Hash? if yes truncate, else ls-remote then truncate
-        if [[ "$UCX_REF" =~ ^[a-f0-9]{8,40}$ ]]; then
-          CLEAN_UCX="${UCX_REF:0:8}"
-        else
-          CLEAN_UCX=$(git ls-remote https://github.com/openucx/ucx.git "$UCX_REF" | head -n1 | cut -c1-8)
-        fi
-
-        # Verify
-        [[ -n "$CLEAN_UCX" ]] || { echo "ERROR: failed to resolve UCX_REF=$UCX_REF"; exit 1; }
-      fi
-
-
-
-      # Calculate tag name
-      NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
-      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
-
-      # Generate version info file from template
-      export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-             BUILD_TARGET BASE_IMAGE BASE_IMAGE_TAG arch \
-             BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE \
-             NIXL_VERSION UCX_VERSION="${CLEAN_UCX}" TAG_NAME
-      envsubst < .ci/assets/nixl-version-info.template > version-info
-
-      # Add version info to the image
-      CONTAINER_ID=$(docker create "${LOCAL_TAG_BASE}${arch}")
-      docker cp version-info "${CONTAINER_ID}:/opt/nixl-version"
-      docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
-
-  - name: Push
-    credentialsId: 'svc-nixl-artifactory-token'
-    run: |
-      source version-info
-      ARTIFACTORY_REGISTRY="${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}"
-      ARTIFACTORY_API="https://${REGISTRY_HOSTESS}/artifactory/api/storage/${REGISTRY_REPO}/${BUILD_TARGET}"
-
-      # Prepare image properties
-      IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${UCX_VERSION};arch=${arch};"
-      IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
-      IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
-
-      # Login to Artifactory
-      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOSTESS}" -u "$ARTIFACTORY_USERNAME" --password-stdin
-
-      # Function to tag, push, and set properties
-      tag_push_set_properties() {
-        local target_tag="$1"
-        echo "Creating tag: ${target_tag}"
-        docker tag "${LOCAL_TAG_BASE}${arch}" "${ARTIFACTORY_REGISTRY}:${target_tag}"
-        docker push "${ARTIFACTORY_REGISTRY}:${target_tag}"
-        curl -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
-          "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
-      }
-
-      # Always create standard tag
-      tag_push_set_properties "${TAG_NAME}"
-
-      # Check if latest tag should be updated
-      if [[ "${UPDATE_LATEST}" == "true" ]]; then
-        tag_push_set_properties "${BASE_IMAGE_TAG}-${arch}-latest"
-      fi
-
-  - name: Show Results
-    run: |
-      source version-info
-      echo "Image type built: ${BUILD_TARGET} (${arch})"
-      echo "Image pushed to: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${TAG_NAME}"
-      if [[ "${UPDATE_LATEST}" == "true" ]]; then
-        echo "Latest tag updated: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
-      fi
-
-      echo -e "\nBuild config for manual repro:"
-      if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
-        echo "git clone https://github.com/openucx/ucx.git ucx-src && (cd ucx-src && git checkout ${UCX_VERSION})"
-        echo "benchmark/nixlbench/contrib/build.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache --nixl \$WORKSPACE --ucx \$WORKSPACE/ucx-src"
-      else
-        echo "export UCX_REF=${UCX_VERSION}"
-        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache"
-      fi
+      echo "Email test setup complete!"
 
 pipeline_stop:
   shell: action
   module: groovy
   run: |
-    if (params.MAIL_TO) {
-        import groovy.text.GStringTemplateEngine
+    import groovy.text.GStringTemplateEngine
 
+    // Force email test - always send if MAIL_TO is provided
+    if (params.MAIL_TO) {
         def jobStatus = currentBuild.result ?: 'SUCCESS'
         def statusIcon = jobStatus == 'SUCCESS' ? '[SUCCESS]' : '[FAILED]'
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
