@@ -189,7 +189,7 @@ pipeline_stop:
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
 
         // Get versions from the version-info file
-        def versionVars = sh(script: '. version-info && echo "$UCX_VERSION|$TAG_NAME|$NIXL_VERSION"', returnStdout: true).trim().split('\\|')
+        def versionVars = sh(script: 'cd "${WORKSPACE}" && . version-info && echo "$UCX_VERSION|$TAG_NAME|$NIXL_VERSION"', returnStdout: true).trim().split('\\|')
 
         def binding = [
             jobStatus       : jobStatus,
