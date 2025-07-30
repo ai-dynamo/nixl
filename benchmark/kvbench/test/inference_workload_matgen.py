@@ -57,10 +57,6 @@ import numpy as np
 import yaml
 from tqdm import tqdm
 
-from nixl.logging import get_logger
-
-logger = get_logger(__name__)
-
 
 @dataclass
 class ModelConfig:
@@ -194,7 +190,7 @@ def gen_batches(
             curr_mem = 0
     if curr:
         batches.append(Batch(user_requests=curr))
-        logger.warning("Last batch is incomplete, with size %d", len(curr))
+        print(f"Last batch is incomplete, his size is {len(curr)}")
 
     return batches
 
@@ -271,6 +267,8 @@ def gen_matrix(
         raise ValueError("Prefill TP*Prefill CP must be a divisor of decode TP")
     num_peers = int(num_peers)
     buf_size = kv_slice_size / num_peers
+
+    # print(f"kv_size: {format_size(kv_size)}, kv_slice_size: {format_size(kv_slice_size)}, buf_size: {format_size(buf_size)}, num_peers: {num_peers}")
 
     mat = np.zeros((world_size, world_size))
 
@@ -391,11 +389,11 @@ def main(
 
         decode_workers = reordered
 
-    logger.info("Prefill workers: %s", prefill_workers)
-    logger.info("Decode workers: %s", decode_workers)
+    print(f"Prefill workers: {prefill_workers}")
+    print(f"Decode workers: {decode_workers}")
 
     batches = gen_batches(num_user_requests, task_config, model_config)
-    logger.info("Generated %d batches", len(batches))
+    print(f"Generated {len(batches)} batches")
     matrices = gen_matrices_and_compute_time(
         batches,
         prefill_workers,
@@ -408,7 +406,7 @@ def main(
     # Save matrices and metadata to files
     results_dir = results_dir or Path(f"matrices_{world_size}ranks")
     results_dir = Path(results_dir)
-    logger.info("Saving %d matrices to %s", len(matrices), results_dir)
+    print(f"Saving {len(matrices)} matrices to {results_dir}")
     results_dir.mkdir(parents=True, exist_ok=True)
 
     metadata: dict[str, Any] = {
@@ -437,7 +435,7 @@ def main(
     metadata_path = results_dir / "metadata.yaml"
     with open(metadata_path, "w") as f:
         yaml.dump(metadata, f)
-        logger.info("Saved metadata to %s", metadata_path)
+        print(f"Saved metadata to {metadata_path}")
 
 
 if __name__ == "__main__":
@@ -604,6 +602,10 @@ if __name__ == "__main__":
             batch_size=batch_size,
             max_batch_mem=max_batch_mem,
         )
+
+        # world_size = num_prefill_nodes * prefill_tp + num_decode_nodes * decode_tp
+        # print(f"World size: {world_size}")
+        # print(f"Model config: {model_config}")
 
         main(
             num_user_requests=num_user_requests,

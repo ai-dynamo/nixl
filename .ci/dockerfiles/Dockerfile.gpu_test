@@ -19,6 +19,7 @@
 #   _LOGIN: Username (default: svc-nixl)
 #   _GROUP: Group name (default: hardware)
 #   _HOME: Home directory path (default: /home/svc-nixl)
+#   WORKSPACE: Workspace directory path
 #
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.02-py3
@@ -31,6 +32,7 @@ ARG _GID=30
 ARG _LOGIN=svc-nixl
 ARG _GROUP=hardware
 ARG _HOME=/home/$_LOGIN
+ARG WORKSPACE
 
 # Labels for documentation
 LABEL maintainer="NVIDIA NIXL Team"
@@ -56,6 +58,9 @@ RUN mkdir -p /etc/sudoers.d && \
     echo "${_LOGIN} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${_LOGIN} && \
     chmod 440 /etc/sudoers.d/${_LOGIN} && \
     chown root:root /etc/sudoers.d/${_LOGIN}
+
+# Copy workspace into container (workaround for files disappearing from workspace)
+COPY --chown="${_UID}":"${_GID}" . ${WORKSPACE}
 
 # Set working directory
 WORKDIR ${_HOME}
