@@ -84,12 +84,12 @@ steps:
     run: |
       export UCX_REF="${UCX_VERSION}"
 
-      "contrib/build-container.sh" \
-        --base-image "${BASE_IMAGE}" \
-        --base-image-tag "${BASE_IMAGE_TAG}" \
-        --tag "${LOCAL_TAG_BASE}${arch}" \
-        --arch "${arch}" \
-        --no-cache
+      # "contrib/build-container.sh" \
+      #   --base-image "${BASE_IMAGE}" \
+      #   --base-image-tag "${BASE_IMAGE_TAG}" \
+      #   --tag "${LOCAL_TAG_BASE}${arch}" \
+      #   --arch "${arch}" \
+      #   --no-cache
 
   - name: Add Version Info
     run: |
@@ -125,6 +125,10 @@ steps:
       CONTAINER_ID=$(docker create "${LOCAL_TAG_BASE}${arch}" --pull=never)
       docker cp version-info "${CONTAINER_ID}:/opt/nixl-version"
       docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
+
+  - name: Stash Version Info
+    run: |
+      stash name: 'version-info', includes: 'version-info'
 
   - name: Push
     credentialsId: 'svc-nixl-artifactory-token'
@@ -184,12 +188,13 @@ pipeline_stop:
     import groovy.text.GStringTemplateEngine
 
     if (params.MAIL_TO) {
+        unstash 'version-info'
         def jobStatus = currentBuild.result ?: 'SUCCESS'
         def statusIcon = jobStatus == 'SUCCESS' ? '[SUCCESS]' : '[FAILED]'
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
 
         // Get versions from the version-info file
-        def versionVars = sh(script: 'cd "${WORKSPACE}" && . version-info && echo "$UCX_VERSION|$TAG_NAME|$NIXL_VERSION"', returnStdout: true).trim().split('\\|')
+        def versionVars = sh(script: '. version-info && echo "$UCX_VERSION|$TAG_NAME|$NIXL_VERSION"', returnStdout: true).trim().split('\\|')
 
         def binding = [
             jobStatus       : jobStatus,
