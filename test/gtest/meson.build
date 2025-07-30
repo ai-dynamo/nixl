@@ -16,7 +16,6 @@
 gtest_dep = dependency('gtest', version : '>=1.11.0', required : false)
 absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
 absl_time_dep = abseil_proj.get_variable('absl_time_dep')
-absl_flags_dep = abseil_proj.get_variable('absl_flags_dep')
 
 if not gtest_dep.found()
     message('GTest not found, skipping gtest build')
@@ -84,7 +83,7 @@ if get_option('b_sanitize').split(',').contains('thread')
         sources : ['main.cpp', 'mocks/gmock_engine.cpp', 'multi_threading.cpp'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         cpp_args : cpp_flags,
-        dependencies : [nixl_dep, nixl_infra, cuda_dep, gtest_dep, gmock_dep, absl_flags_dep],
+        dependencies : [nixl_dep, nixl_infra, cuda_dep, gtest_dep, gmock_dep],
         link_with: [nixl_build_lib],
     )
 
