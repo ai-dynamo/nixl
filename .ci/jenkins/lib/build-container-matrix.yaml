@@ -126,12 +126,6 @@ steps:
       docker cp version-info "${CONTAINER_ID}:/opt/nixl-version"
       docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
 
-  - name: Stash Version Info
-    shell: action
-    module: groovy
-    run: |
-      stash includes: 'version-info', name: 'version-info'
-
   - name: Push
     credentialsId: 'svc-nixl-artifactory-token'
     run: |
@@ -187,44 +181,29 @@ pipeline_stop:
   shell: action
   module: groovy
   run: |
-    import groovy.text.GStringTemplateEngine
-
     if (params.MAIL_TO) {
-        unstash 'version-info'
         def jobStatus = currentBuild.result ?: 'SUCCESS'
-        def statusIcon = jobStatus == 'SUCCESS' ? '[SUCCESS]' : '[FAILED]'
+        def statusColor = jobStatus == 'SUCCESS' ? 'green' : 'red'
+
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
-
-        // Get versions from the version-info file
-        def versionVars = sh(script: '. $WORKSPACE/version-info && echo "$UCX_VERSION|$TAG_NAME|$NIXL_VERSION"', returnStdout: true).trim().split('\\|')
-
-        def binding = [
-            jobStatus       : jobStatus,
-            statusIcon      : statusIcon,
-            userName        : userName,
-            BUILD_TARGET    : params.BUILD_TARGET,
-            BUILD_NUMBER    : env.BUILD_NUMBER,
-            BUILD_URL       : env.BUILD_URL,
-            JOB_NAME        : env.JOB_NAME,
-            BASE_IMAGE      : params.BASE_IMAGE,
-            BASE_IMAGE_TAG  : params.BASE_IMAGE_TAG,
-            UPDATE_LATEST   : params.UPDATE_LATEST,
-            UCX_VERSION     : params.UCX_VERSION,
-            REGISTRY_HOSTESS: env.REGISTRY_HOSTESS,
-            REGISTRY_REPO   : env.REGISTRY_REPO,
-            cleanUcx        : versionVars[0],
-            tagName         : versionVars[1],
-            nixlVersion     : versionVars[2]
-        ]
-
-        def templateText = readFile '.ci/assets/teams-email.template'
-        def emailBody = new GStringTemplateEngine().createTemplate(templateText).make(binding).toString()
 
         mail(
             from: env.MAIL_FROM,
             to: params.MAIL_TO,
-            subject: "${statusIcon} NIXL ${params.BUILD_TARGET} Build [${env.BUILD_NUMBER}] - ${jobStatus}",
+            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
             mimeType: 'text/html',
-            body: emailBody
+            body: """
+                <p>Started by: <b>${userName}</b></p>
+                <p>Status: <span style="color: ${statusColor};"><b>${jobStatus}</b></span></p>
+                <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
+                <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+                <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
+                <p>Build Target: <b>${params.BUILD_TARGET}</b></p>
+                <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
+                <p>UCX Version: <b>${params.UCX_VERSION}</b></p>
+                <p>Base Image: <b>${params.BASE_IMAGE}:${params.BASE_IMAGE_TAG}</b></p>
+                <p>Architectures: <b>x86_64, aarch64</b></p>
+                ${params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
+            """
         )
     }
