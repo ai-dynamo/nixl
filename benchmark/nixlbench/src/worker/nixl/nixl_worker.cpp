@@ -613,7 +613,9 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
             }
 
             if (basic_desc) {
-                basic_desc.value().metaInfo = remote_iovs[list_idx][i].metaInfo;
+                if (!remote_iovs.empty()) {
+                    basic_desc.value().metaInfo = remote_iovs[list_idx][i].metaInfo;
+                }
                 iov_list.push_back(basic_desc.value());
             }
         }
