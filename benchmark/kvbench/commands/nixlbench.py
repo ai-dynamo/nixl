@@ -159,19 +159,18 @@ class NIXLBench:
             raise ValueError(f"Invalid source for POSIX: {source}")
 
     def _configure_ucx(self, source: str, destination: str):
-        if source == "memory":
-            self.initiator_seg_type = "DRAM"
-        elif source == "gpu":
-            self.target_seg_type = "VRAM"
-        else:
-            raise ValueError(f"Invalid source for UCX: {source}")
-
-        if destination == "memory":
-            self.target_seg_type = "DRAM"
-        elif destination == "gpu":
-            self.initiator_seg_type = "VRAM"
-        else:
-            raise ValueError(f"Invalid destination for UCX: {destination}")
+        arg_to_seg_type = {
+            "memory": "DRAM",
+            "gpu": "VRAM",
+        }
+        try:
+            self.initiator_seg_type = arg_to_seg_type[source]
+        except KeyError:
+            raise ValueError(f"Invalid source for UCX: {source}, valid sources are: {arg_to_seg_type.keys()}")
+        try:
+            self.target_seg_type = arg_to_seg_type[destination]
+        except KeyError:
+            raise ValueError(f"Invalid destination for UCX: {destination}, valid destinations are: {arg_to_seg_type.keys()}")
 
     def configure_segment_type(self, backend: str, source: str, destination: str):
         if backend.lower() == "gds":
