@@ -37,29 +37,25 @@ import os
 _logging_configured = False
 
 LOGGING_CONFIG = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'simpleFormatter': {
-            'format': '%(asctime)s NIXL %(levelname)-7s %(filename)s:%(lineno)d %(message)s',
-            'datefmt': '%Y-%m-%d %H:%M:%S'
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simpleFormatter": {
+            "format": "%(asctime)s NIXL %(levelname)-7s %(filename)s:%(lineno)d %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
         }
     },
-    'handlers': {
-        'consoleHandler': {
-            'class': 'logging.StreamHandler',
-            'level': 'INFO',
-            'formatter': 'simpleFormatter',
-            'stream': 'ext://sys.stdout'
+    "handlers": {
+        "consoleHandler": {
+            "class": "logging.StreamHandler",
+            "level": "INFO",
+            "formatter": "simpleFormatter",
+            "stream": "ext://sys.stdout",
         }
     },
-    'loggers': {
-        'nixl': {
-            'level': 'INFO',
-            'handlers': ['consoleHandler'],
-            'propagate': False
-        }
-    }
+    "loggers": {
+        "nixl": {"level": "INFO", "handlers": ["consoleHandler"], "propagate": False}
+    },
 }
 
 
@@ -99,8 +95,12 @@ def setup_logging() -> None:
 
     nixl_logger = logging.getLogger("nixl")
     set_log_level_by_env(nixl_logger)
-    
-    logging.raiseExceptions = os.getenv("NIXL_DEBUG_LOGGING", "").lower() in ("true", "1", "yes")
+
+    logging.raiseExceptions = os.getenv("NIXL_DEBUG_LOGGING", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
 
     _logging_configured = True
 

@@ -55,8 +55,7 @@ if __name__ == "__main__":
     non_existent_file = "/tmp/nixl_example_nonexistent.txt"
 
     try:
-        logger.info("Using NIXL Plugins from: %s",
-                    os.environ["NIXL_PLUGIN_DIR"])
+        logger.info("Using NIXL Plugins from: %s", os.environ["NIXL_PLUGIN_DIR"])
 
         # Create an NIXL agent
         logger.info("Creating NIXL agent...")
