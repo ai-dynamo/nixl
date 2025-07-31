@@ -62,6 +62,9 @@ use bindings::{
     nixl_capi_reg_dlist_resize, nixl_capi_register_mem, nixl_capi_string_list_get,
     nixl_capi_string_list_size, nixl_capi_xfer_dlist_add_desc, nixl_capi_xfer_dlist_clear,
     nixl_capi_xfer_dlist_has_overlaps, nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize,
+    nixl_capi_query_mem, nixl_capi_create_query_resp_list, nixl_capi_destroy_query_resp_list,
+    nixl_capi_query_resp_list_size, nixl_capi_query_resp_list_has_value,
+    nixl_capi_query_resp_list_get_params,
 };
 
 // Re-export status codes
@@ -81,6 +84,7 @@ mod xfer;
 pub use agent::*;
 pub use descriptors::*;
 pub use notify::*;
+pub use utils::*;
 pub use xfer::*;
 
 /// Errors that can occur when using NIXL
