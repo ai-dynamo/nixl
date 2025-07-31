@@ -79,13 +79,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    logger.info("Using NIXL Plugins from:")
-    logger.info(os.environ["NIXL_PLUGIN_DIR"])
+    logger.info("Using NIXL Plugins from: %s", os.environ["NIXL_PLUGIN_DIR"])
 
     if args.etcd:
         etcd_endpoints = os.getenv("NIXL_ETCD_ENDPOINTS", "")
         if etcd_endpoints:
-            logger.info("NIXL_ETCD_ENDPOINTS is set, using endpoints: ", etcd_endpoints)
+            logger.info("NIXL_ETCD_ENDPOINTS is set, using endpoints: %s", etcd_endpoints)
         else:
             raise ValueError(
                 "NIXL_ETCD_ENDPOINTS is not set, but --etcd flag is provided"

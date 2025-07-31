@@ -36,7 +36,7 @@ def test_list():
 
     pickled_list = pickle.dumps(test_list)
 
-    logger.info(pickled_list)
+    logger.info("Pickled list: %s", pickled_list)
 
     unpickled_list = pickle.loads(pickled_list)
 

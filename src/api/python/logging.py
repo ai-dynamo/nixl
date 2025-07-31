@@ -16,12 +16,6 @@
 """
 Centralized logging configuration for NIXL.
 
-This module provides a single point of configuration for logging across the entire NIXL project.
-It supports:
-1. Loading configuration from logging.ini file
-2. Override log levels using NIXL_LOG_LEVEL environment variable
-3. Fallback to sensible defaults if configuration files are missing
-
 Usage:
     from nixl_logging import get_logger
 
@@ -41,6 +35,32 @@ import logging.config
 import os
 
 _logging_configured = False
+
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'simpleFormatter': {
+            'format': '%(asctime)s NIXL %(levelname)-7s %(filename)s:%(lineno)d %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S'
+        }
+    },
+    'handlers': {
+        'consoleHandler': {
+            'class': 'logging.StreamHandler',
+            'level': 'INFO',
+            'formatter': 'simpleFormatter',
+            'stream': 'ext://sys.stdout'
+        }
+    },
+    'loggers': {
+        'nixl': {
+            'level': 'INFO',
+            'handlers': ['consoleHandler'],
+            'propagate': False
+        }
+    }
+}
 
 
 def set_log_level_by_env(nixl_logger: logging.Logger) -> None:
@@ -74,16 +94,13 @@ def setup_logging() -> None:
     if _logging_configured:
         return
 
-    # Find python_logging.ini in the same directory as this file (project root)
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    config_file_path = os.path.join(current_dir, "python_logging.ini")
-    config_file = os.path.abspath(config_file_path)
-
-    logging.config.fileConfig(config_file, disable_existing_loggers=False)
+    # Use dictionary-based configuration
+    logging.config.dictConfig(LOGGING_CONFIG)
 
     nixl_logger = logging.getLogger("nixl")
     set_log_level_by_env(nixl_logger)
-    logging.raiseExceptions = True
+    
+    logging.raiseExceptions = os.getenv("NIXL_DEBUG_LOGGING", "").lower() in ("true", "1", "yes")
 
     _logging_configured = True
 
