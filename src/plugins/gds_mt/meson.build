@@ -31,7 +31,7 @@ if 'GDS_MT' in static_plugins
         'gds_mt_utils.cpp', 'gds_mt_utils.h',
         'gds_mt_backend.cpp', 'gds_mt_backend.h',
         'gds_mt_plugin.cpp',
-        dependencies: [nixl_infra, nixl_common_dep, cuda_dep, cufile_dep, taskflow_proj],
+        dependencies: [nixl_infra, nixl_common_dep, cuda_dep, cufile_dep, taskflow_proj, file_utils_interface],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
         cpp_args: compile_flags,
@@ -41,12 +41,13 @@ else
         'gds_mt_utils.cpp', 'gds_mt_utils.h',
         'gds_mt_backend.cpp', 'gds_mt_backend.h',
         'gds_mt_plugin.cpp',
-        dependencies: [nixl_infra, nixl_common_dep, cuda_dep, cufile_dep, taskflow_proj],
+        dependencies: [nixl_infra, nixl_common_dep, cuda_dep, cufile_dep, taskflow_proj, file_utils_interface],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         cpp_args: ['-fPIC'],
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
-        install_dir: plugin_install_dir)
+        install_dir: plugin_install_dir,
+        install_rpath: '$ORIGIN/..')
     if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
             'echo "GDS_MT=' + gds_mt_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',

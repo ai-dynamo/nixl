@@ -23,10 +23,10 @@
 #include "sync.h"
 
 #if HAVE_ETCD
-#include <etcd/Client.hpp>
+#include <etcd/SyncClient.hpp>
 
 namespace etcd {
-    class Client;
+class SyncClient;
 }
 
 #define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"
@@ -62,6 +62,7 @@ class nixlAgentData {
         std::string     name;
         nixlAgentConfig config;
         nixlLock        lock;
+        bool telemetryEnabled = false;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
