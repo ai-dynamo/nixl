@@ -54,7 +54,8 @@ get_next_tcp_port() {
     current_port=$(cat "$port_file")
     local next_port=$((current_port + 1))
 
-    while [ -n "$(nc -zv localhost $next_port)" ]; do
+    # Check if the port is already in use
+    while ss -tuln | grep -q :$next_port; do
         next_port=$((next_port + 1))
     done
 
