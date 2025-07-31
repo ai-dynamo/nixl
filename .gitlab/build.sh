@@ -50,6 +50,7 @@ $SUDO apt-get -qq install -y curl \
                              numactl \
                              autotools-dev \
                              automake \
+                             git \
                              libtool \
                              libz-dev \
                              libiberty-dev \
@@ -143,5 +144,5 @@ cd nixl_build && ninja && ninja install && cd ..
 # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
 
 cd benchmark/nixlbench
-meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
+meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dprefix=${INSTALL_DIR}
 cd nixlbench_build && ninja && ninja install && cd ..
