@@ -301,8 +301,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     // We may need a GPU warmup with relevant DOCA engine kernels
     doca_kernel_write(0, nullptr, nullptr, 0);
     doca_kernel_read(0, nullptr, nullptr, 0);
-
-    cudaStreamSynchronize(0);
+    nixlDocaEngineCheckCudaError(cudaStreamSynchronize(0), "stream synchronize");
 
     lastPostedReq = 0;
     xferRingPos = 0;
@@ -999,13 +998,10 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
         tokens.push_back(token);
 
     uint32_t rkey = (uint32_t)atoi(tokens[0].c_str());
-    // nixlSerDes::_stringToBytes(&rkey, tokens[0].c_str(), tokens[0].size());
     uintptr_t addr = (uintptr_t)atol(tokens[1].c_str());
-    // nixlSerDes::_stringToBytes(&addr, tokens[1].c_str(), tokens[1].size());
     uint32_t tot_size = (uint32_t)atoi(tokens[2].c_str());
-    // nixlSerDes::_stringToBytes(&tot_size, tokens[2].c_str(), tokens[2].size());
 
-    printf("rkey %x addr %lx tot_size %d\n", rkey, addr, tot_size);
+    NIXL_INFO << "rkey " << rkey << " addr " << addr << " tot_size " << tot_size;
 
     // Empty mmap, filled with imported data
     try {
@@ -1138,15 +1134,15 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         memcpy((void *)notif_addr, newMsg.c_str(), newMsg.size());
 
         NIXL_INFO << "DOCA prepXfer with notif to " << remote_agent << " at "
-                   << xferReqRingCpu[treq->end_pos - 1].has_notif_msg_idx << " msg " << newMsg
-                   << " to " << remote_agent;
+                  << xferReqRingCpu[treq->end_pos - 1].has_notif_msg_idx << " msg " << newMsg
+                  << " to " << remote_agent;
 
     } else {
         xferReqRingCpu[treq->end_pos - 1].has_notif_msg_idx = DOCA_NOTIF_NULL;
     }
 
     NIXL_INFO << "DOCA REQUEST from " << treq->start_pos << " to " << treq->end_pos - 1
-               << " stream " << stream_id << std::endl;
+              << " stream " << stream_id << std::endl;
 
     treq->backendHandleGpu = 0;
 
@@ -1195,7 +1191,7 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
         if (((volatile docaXferCompletion *)completion_list_cpu)[completion_index].completed == 1) {
             *((volatile uint8_t *)&xferReqRingCpu[idx].in_use) = 0;
             NIXL_INFO << "DOCA checkXfer pos " << idx << " compl_idx " << completion_index
-                       << " COMPLETED!\n";
+                      << " COMPLETED!\n";
             return NIXL_SUCCESS;
         } else
             return NIXL_IN_PROG;
@@ -1235,15 +1231,15 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
             recv_idx = notif.second->recv_pi.load() & (DOCA_MAX_NOTIF_INFLIGHT - 1);
             addr = (char *)(notif.second->recv_addr + (recv_idx * notif.second->elems_size));
 
-            NIXL_INFO << "CPU num_msg " << num_msg << " at " << recv_idx << " addr " << addr << std::endl;
+            NIXL_INFO << "CPU num_msg " << num_msg << " at " << recv_idx << " addr " << addr
+                      << std::endl;
 
             msg_src = addr;
             position = msg_src.find(msg_tag_start);
 
             NIXL_INFO << "getNotifs idx " << recv_idx << " addr "
-                       << (void *)((notif.second->recv_addr +
-                                    (recv_idx * notif.second->elems_size)))
-                       << " msg " << msg_src << " position " << (int)position << std::endl;
+                      << (void *)((notif.second->recv_addr + (recv_idx * notif.second->elems_size)))
+                      << " msg " << msg_src << " position " << (int)position << std::endl;
 
             if (position != std::string::npos && position == 0) {
                 unsigned last = msg_src.find(msg_tag_end);
@@ -1255,7 +1251,7 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
                                 addr + last + msg_tag_end.size() + sz);
 
                 NIXL_INFO << "getNotifs propagating notif from " << notif.first << " msg " << msg
-                           << " size " << sz << " num " << num_msg << std::endl;
+                          << " size " << sz << " num " << num_msg << std::endl;
 
                 notif_list.push_back(std::pair(notif.first, msg));
                 // Tag cleanup
@@ -1308,7 +1304,7 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     memcpy((void *)msg_buf, newMsg.c_str(), newMsg.size());
 
     NIXL_INFO << "genNotif to " << remote_agent << " msg size " << std::to_string((int)msg.size())
-               << " msg " << newMsg << " at " << buf_idx;
+              << " msg " << newMsg << " at " << buf_idx;
 
     std::lock_guard<std::mutex> lock(notifSendLock);
     ((volatile struct docaNotif *)notif_send_cpu)->msg_buf = msg_buf;

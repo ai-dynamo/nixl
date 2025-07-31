@@ -126,7 +126,8 @@ oob_connection_server_close(int oob_sock_fd) {
     }
 }
 
-struct doca_verbs_context *open_ib_device(char *name) {
+struct doca_verbs_context *
+open_ib_device(char *name) {
     int nb_ibdevs = 0;
     struct ibv_device **ibdev_list = ibv_get_device_list(&nb_ibdevs);
     struct doca_verbs_context *context;
