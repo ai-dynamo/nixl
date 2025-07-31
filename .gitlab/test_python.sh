@@ -20,6 +20,14 @@
 set -e
 set -x
 
+# Set timeout for the script execution
+TIMEOUT_MIN="${TIMEOUT_MIN:-30m}"
+if [ "$TIMEOUT_SET" != "1" ]; then
+    export TIMEOUT_SET=1
+    exec timeout "$TIMEOUT_MIN" "$0" "$@"
+fi
+trap 'echo "ERROR: test run exceeded ${TIMEOUT_MIN}, terminating"; pkill etcd; exit 124' TERM
+
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
 
