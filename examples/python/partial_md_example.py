@@ -21,6 +21,10 @@ import os
 import nixl._utils as nixl_utils
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl._bindings import nixlNotFoundError
+from nixl.logging import get_logger
+
+# Configure logging
+logger = get_logger(__name__)
 
 
 def exchange_target_metadata(
@@ -75,13 +79,14 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    print("Using NIXL Plugins from:")
-    print(os.environ["NIXL_PLUGIN_DIR"])
+    logger.info("Using NIXL Plugins from: %s", os.environ["NIXL_PLUGIN_DIR"])
 
     if args.etcd:
         etcd_endpoints = os.getenv("NIXL_ETCD_ENDPOINTS", "")
         if etcd_endpoints:
-            print("NIXL_ETCD_ENDPOINTS is set, using endpoints: ", etcd_endpoints)
+            logger.info(
+                "NIXL_ETCD_ENDPOINTS is set, using endpoints: %s", etcd_endpoints
+            )
         else:
             raise ValueError(
                 "NIXL_ETCD_ENDPOINTS is not set, but --etcd flag is provided"
@@ -89,7 +94,7 @@ if __name__ == "__main__":
     else:
         etcd_endpoints = ""
         del os.environ["NIXL_ETCD_ENDPOINTS"]
-        print("NIXL_ETCD_ENDPOINTS is not set, using socket exchange")
+        logger.info("NIXL_ETCD_ENDPOINTS is not set, using socket exchange")
 
     # Needed for socket exchange
     ip_addr = "127.0.0.1"
@@ -171,16 +176,16 @@ if __name__ == "__main__":
         if not init_done:
             state = init_agent.check_xfer_state(xfer_handle_1)
             if state == "ERR":
-                print("Transfer got to Error state.")
+                logger.error("Transfer got to Error state.")
                 exit()
             elif state == "DONE":
                 init_done = True
-                print("Initiator done")
+                logger.info("Initiator done")
 
         if not target_done:
             if target_agent.check_remote_xfer_done("initiator", b"UUID1"):
                 target_done = True
-                print("Target done")
+                logger.info("Target done")
 
     # Second set of descs was not sent, should fail
     try:
@@ -188,9 +193,9 @@ if __name__ == "__main__":
             "READ", init_xfer_descs, target_xfer_descs2, "target", b"UUID1"
         )
     except nixlNotFoundError:
-        print("Correct exception")
+        logger.info("Correct exception")
     else:
-        print("Incorrect success")
+        logger.error("Incorrect success")
         os.abort()
 
     # Now send rest of descs
@@ -228,16 +233,16 @@ if __name__ == "__main__":
         if not init_done:
             state = init_agent.check_xfer_state(xfer_handle_2)
             if state == "ERR":
-                print("Transfer got to Error state.")
+                logger.error("Transfer got to Error state.")
                 exit()
             elif state == "DONE":
                 init_done = True
-                print("Initiator done")
+                logger.info("Initiator done")
 
         if not target_done:
             if target_agent.check_remote_xfer_done("initiator", b"UUID1"):
                 target_done = True
-                print("Target done")
+                logger.info("Target done")
 
     init_agent.release_xfer_handle(xfer_handle_1)
     init_agent.release_xfer_handle(xfer_handle_2)
@@ -253,4 +258,4 @@ if __name__ == "__main__":
     del init_agent
     del target_agent
 
-    print("Test Complete.")
+    logger.info("Test Complete.")
