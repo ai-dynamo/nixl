@@ -166,11 +166,15 @@ class NIXLBench:
         try:
             self.initiator_seg_type = arg_to_seg_type[source]
         except KeyError:
-            raise ValueError(f"Invalid source for UCX: {source}, valid sources are: {arg_to_seg_type.keys()}")
+            raise ValueError(
+                f"Invalid source for UCX: {source}, valid sources are: {arg_to_seg_type.keys()}"
+            )
         try:
             self.target_seg_type = arg_to_seg_type[destination]
         except KeyError:
-            raise ValueError(f"Invalid destination for UCX: {destination}, valid destinations are: {arg_to_seg_type.keys()}")
+            raise ValueError(
+                f"Invalid destination for UCX: {destination}, valid destinations are: {arg_to_seg_type.keys()}"
+            )
 
     def configure_segment_type(self, backend: str, source: str, destination: str):
         if backend.lower() == "gds":
