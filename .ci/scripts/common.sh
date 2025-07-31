@@ -53,6 +53,10 @@ get_next_tcp_port() {
     local current_port
     current_port=$(cat "$port_file")
     local next_port=$((current_port + 1))
+    
+    while [ -n "$(nc -zv localhost $next_port)" ]; do
+        next_port=$((next_port + 1))
+    done
 
     if [ "$next_port" -ge "$tcp_port_max" ]; then
         next_port="$tcp_port_min"
