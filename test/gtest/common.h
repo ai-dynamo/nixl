@@ -43,7 +43,10 @@ public:
 
 class ScopedEnv {
 public:
-    void addVar(const std::string &name, const std::string &value);
+    void
+    addVar(const std::string &name, const std::string &value);
+    void
+    popVar();
 
 private:
     class Variable {

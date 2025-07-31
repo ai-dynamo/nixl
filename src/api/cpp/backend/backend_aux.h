@@ -19,10 +19,13 @@
 
 #include <mutex>
 #include <string>
+#include <memory>
+
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
 
+class nixlTelemetry;
 // Might be removed to be decided by backend, or changed to high
 // level direction or so.
 typedef std::vector<std::pair<std::string, std::string>> notif_list_t;
@@ -52,6 +55,7 @@ class nixlBackendInitParams {
         bool              enableProgTh;
         nixlTime::us_t    pthrDelay;
         nixl_thread_sync_t syncMode;
+        std::shared_ptr<nixlTelemetry> telemetry;
 };
 
 // Pure virtual class to have a common pointer type
