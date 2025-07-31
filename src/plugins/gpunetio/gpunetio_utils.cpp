@@ -26,7 +26,7 @@
 // constexpr auto connection_delay = 500ms;
 constexpr std::chrono::microseconds connection_delay(500000);
 
-nixlDocaMr::nixlDocaMr(void *addr_, uint32_t elem_num_, size_t elem_size_, struct ibv_pd *pd_) {
+nixlDocaMr::nixlDocaMr(void *addr_, uint32_t elem_num_, uint32_t elem_size_, struct ibv_pd *pd_) {
     if (addr_ == nullptr || elem_num_ == 0 || elem_size_ == 0 || pd_ == nullptr)
         throw std::invalid_argument("Invalid mr input values");
 

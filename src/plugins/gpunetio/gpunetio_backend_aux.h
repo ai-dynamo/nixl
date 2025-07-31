@@ -115,7 +115,7 @@ struct doca_gpu_verbs_qp_hl {
 };
 
 struct nixlDocaMr {
-    nixlDocaMr(void *addr_, uint32_t elem_num_, size_t elem_size_, struct ibv_pd *pd_);
+    nixlDocaMr(void *addr_, uint32_t elem_num_, uint32_t elem_size_, struct ibv_pd *pd_);
 
     nixlDocaMr(void *addr_, uint32_t tot_size_, uint32_t rkey_);
 
@@ -123,8 +123,8 @@ struct nixlDocaMr {
 
     void *addr;
     uint32_t elem_num;
-    size_t elem_size;
-    size_t tot_size;
+    uint32_t elem_size;
+    uint32_t tot_size;
     struct ibv_pd *pd;
     struct ibv_mr *mr;
     uint32_t lkey;
@@ -136,14 +136,14 @@ struct docaXferReqGpu {
     uint32_t id;
     uintptr_t lbuf[DOCA_XFER_REQ_SIZE];
     uintptr_t rbuf[DOCA_XFER_REQ_SIZE];
-    size_t size[DOCA_XFER_REQ_SIZE];
+    uint32_t size[DOCA_XFER_REQ_SIZE];
     uint32_t lkey[DOCA_XFER_REQ_SIZE];
     uint32_t rkey[DOCA_XFER_REQ_SIZE];
     uint16_t num;
     uint8_t in_use;
     uint32_t conn_idx;
     uint32_t has_notif_msg_idx;
-    size_t msg_sz;
+    uint32_t msg_sz;
     uint64_t last_wqe;
     // struct doca_gpu_buf_arr *notif_barr_gpu;
     uintptr_t lbuf_notif;

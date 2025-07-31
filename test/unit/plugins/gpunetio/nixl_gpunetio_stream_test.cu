@@ -349,7 +349,7 @@ main (int argc, char *argv[]) {
         }
 
         std::cout << " Start Data Path Exchanges \n";
-        std::cout << " Waiting for first 'connected' notif from " << initiator << std::endl;
+        std::cout << " Waiting for first 'sent' notif from " << initiator << std::endl;
 
         checkCudaError (cudaStreamCreateWithFlags (&stream, cudaStreamNonBlocking),
                         "Failed to create CUDA stream");
