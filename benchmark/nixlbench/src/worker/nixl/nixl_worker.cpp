@@ -433,8 +433,7 @@ createFileFds(std::string name) {
 
     for (int i = 0; i < num_files; i++) {
         std::string file_name = file_path + file_name_prefix + name + "_" + std::to_string(i);
-        std::cout << "Creating "
-                  << " file: " << file_name << std::endl;
+        std::cout << "Creating " << " file: " << file_name << std::endl;
         int fd = open(file_name.c_str(), flags, 0744);
         if (fd < 0) {
             std::cerr << "Failed to open file: " << file_name << " with error: " << strerror(errno)
@@ -550,7 +549,8 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
 
     opt_args.backends.push_back(backend_engine);
 
-    if ((xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) || (xferBenchConfig::backend == XFERBENCH_BACKEND_AISTOR)) {
+    if ((xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) ||
+        (xferBenchConfig::backend == XFERBENCH_BACKEND_AISTOR)) {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -668,7 +668,8 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
         CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
     }
 
-    if ((xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) || (xferBenchConfig::backend == XFERBENCH_BACKEND_AISTOR)) {
+    if ((xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) ||
+        (xferBenchConfig::backend == XFERBENCH_BACKEND_AISTOR)) {
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
                 cleanupBasicDescObj(iov);
@@ -752,7 +753,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov : iov_list) {
                 std::optional<xferBenchIOV> basic_desc;
-                if ((XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) || (XFERBENCH_BACKEND_AISTOR == xferBenchConfig::backend)) {
+                if ((XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) ||
+                    (XFERBENCH_BACKEND_AISTOR == xferBenchConfig::backend)) {
                     basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
                 } else {
                     basic_desc = initBasicDescFile(iov.len, remote_fds[0], iov.devId);
@@ -835,7 +837,8 @@ execTransfer(nixlAgent *agent,
         nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
         nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
 
-        if ((XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) || (XFERBENCH_BACKEND_AISTOR == xferBenchConfig::backend)) {
+        if ((XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) ||
+            (XFERBENCH_BACKEND_AISTOR == xferBenchConfig::backend)) {
             remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
         } else if (xferBenchConfig::isStorageBackend()) {
             remote_desc = nixl_xfer_dlist_t(FILE_SEG);
