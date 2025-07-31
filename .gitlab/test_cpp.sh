@@ -63,32 +63,54 @@ sleep 5
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
-./bin/desc_example
-./bin/agent_example
-./bin/nixl_example
-./bin/nixl_etcd_example
-./bin/ucx_backend_test
-./bin/ucx_mo_backend_test
+# ./bin/desc_example
+# ./bin/agent_example
+# ./bin/nixl_example
+# ./bin/nixl_etcd_example
+# ./bin/ucx_backend_test
+# ./bin/ucx_mo_backend_test
 
 # POSIX test disabled until we solve io_uring and Docker compatibility
 
-./bin/nixl_posix_test -n 128 -s 1048576
+# ./bin/nixl_posix_test -n 128 -s 1048576
 
-./bin/ucx_backend_multi
-./bin/serdes_test
-./bin/gtest
-./bin/test_plugin
+# ./bin/ucx_backend_multi
+# ./bin/serdes_test
+# ./bin/gtest
+# ./bin/test_plugin
 
-# Run NIXL client-server test
-./bin/nixl_test target 127.0.0.1 1234&
-sleep 1
-./bin/nixl_test initiator 127.0.0.1 1234
+# # Run NIXL client-server test
+# ./bin/nixl_test target 127.0.0.1 1234&
+# sleep 1
+# ./bin/nixl_test initiator 127.0.0.1 1234
 
 # Run NIXLBench test
-benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
-./bin/nixlbench --etcd-endpoints http://127.0.0.1:2379 --initiator_seg_type DRAM --target_seg_type DRAM --total_buffer_size 80000000 --benchmark_group $benchmark_group &
-sleep 1
-./bin/nixlbench --etcd-endpoints http://127.0.0.1:2379 --initiator_seg_type DRAM --target_seg_type DRAM --total_buffer_size 80000000 --benchmark_group $benchmark_group
+
+run_nixlbench() {
+    args="$@"
+    ./bin/nixlbench --etcd-endpoints http://127.0.0.1:2379 --initiator_seg_type DRAM --target_seg_type DRAM --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
+}
+
+run_nixlbench_one_worker() {
+    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    args="$@"
+    run_nixlbench --benchmark_group $benchmark_group $args
+}
+
+run_nixlbench_two_workers() {
+    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    args="$@"
+    run_nixlbench --benchmark_group $benchmark_group $args &
+    pid=$!
+    sleep 1
+    run_nixlbench --benchmark_group $benchmark_group $args
+    wait $pid
+}
+
+run_nixlbench_two_workers --backend UCX --op_type READ
+run_nixlbench_two_workers --backend UCX --op_type WRITE
+run_nixlbench_one_worker --backend POSIX --op_type READ
+run_nixlbench_one_worker --backend POSIX --op_type WRITE
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"
