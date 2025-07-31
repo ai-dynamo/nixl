@@ -135,6 +135,7 @@ RUN cd /usr/local/src && \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
 
+ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
     mkdir build && \
     uv run meson setup build/ --prefix=$NIXL_PREFIX && \
