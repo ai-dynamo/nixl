@@ -116,7 +116,12 @@ static int processBatchSizes(xferBenchWorker &worker,
                                                          num_threads);
 
         if (worker.isTarget()) {
-            worker.exchangeIOV(local_trans_lists);
+            if (xferBenchConfig::isStorageBackend()) {
+                std::cerr << "storage backend should be always an initiator" << std::endl;
+                return EXIT_FAILURE;
+            }
+
+            worker.exchangeIOV(local_trans_lists, block_size);
             worker.poll(block_size);
 
             if (xferBenchConfig::check_consistency && xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
@@ -128,7 +133,8 @@ static int processBatchSizes(xferBenchWorker &worker,
                 xferBenchUtils::printStats(true, block_size, batch_size, 0);
             }
         } else if (worker.isInitiator()) {
-            std::vector<std::vector<xferBenchIOV>> remote_trans_lists(worker.exchangeIOV(local_trans_lists));
+            std::vector<std::vector<xferBenchIOV>> remote_trans_lists(
+                worker.exchangeIOV(local_trans_lists, block_size));
 
             auto result = worker.transfer(block_size,
                                           local_trans_lists,
