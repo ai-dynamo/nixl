@@ -213,10 +213,13 @@ connect_verbs_qp(nixlDocaEngine *eng,
         return status;
     }
 
-    status = doca_verbs_ah_attr_set_dlid(eng->verbs_ah_attr, eng->dlid);
-    if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set dlid";
-        return status;
+    // IB
+    if (eng->port_attr.link_layer == 1) {
+        status = doca_verbs_ah_attr_set_dlid(eng->verbs_ah_attr, eng->dlid);
+        if (status != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to set dlid";
+            return status;
+        }
     }
 
     status = doca_verbs_qp_attr_create(&verbs_qp_attr);

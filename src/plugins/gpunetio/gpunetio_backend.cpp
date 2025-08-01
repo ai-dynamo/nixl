@@ -682,7 +682,7 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
     result = connect_verbs_qp(
         this, rdma_qp->qp_data_hl->qp, rdma_qp->rqpn_data, rdma_qp->remote_gid_data);
     if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Function doca_rdma_connect data failed " << doca_error_get_descr(result);
+        NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
         return NIXL_ERR_BACKEND;
     }
 
@@ -691,7 +691,7 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
     result = connect_verbs_qp(
         this, rdma_qp->qp_notif_hl->qp, rdma_qp->rqpn_notif, rdma_qp->remote_gid_data);
     if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Function doca_rdma_connect notif failed " << doca_error_get_descr(result);
+        NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
         return NIXL_ERR_BACKEND;
     }
 
@@ -823,7 +823,7 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
     result = connect_verbs_qp(
         this, rdma_qp->qp_data_hl->qp, rdma_qp->rqpn_data, rdma_qp->remote_gid_data);
     if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Function doca_rdma_connect data failed " << doca_error_get_descr(result);
+        NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
         return NIXL_ERR_BACKEND;
     }
 
@@ -832,7 +832,7 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
     result = connect_verbs_qp(
         this, rdma_qp->qp_notif_hl->qp, rdma_qp->rqpn_notif, rdma_qp->remote_gid_data);
     if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Function doca_rdma_connect notif failed " << doca_error_get_descr(result);
+        NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
         return NIXL_ERR_BACKEND;
     }
 
