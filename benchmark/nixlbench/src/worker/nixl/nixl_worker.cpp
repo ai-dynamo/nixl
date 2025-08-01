@@ -182,6 +182,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         backend_params["access_key"] = xferBenchConfig::obj_access_key;
         backend_params["secret_key"] = xferBenchConfig::obj_secret_key;
         backend_params["bucket"] = xferBenchConfig::obj_bucket_name;
+        backend_params["scheme"] = xferBenchConfig::obj_scheme;
         backend_params["region"] = xferBenchConfig::obj_region;
 
         if (xferBenchConfig::obj_endpoint_override != "") {

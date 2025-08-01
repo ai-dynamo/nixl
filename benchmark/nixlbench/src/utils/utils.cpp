@@ -249,6 +249,7 @@ xferBenchConfig::loadFromFlags() {
             obj_access_key = FLAGS_obj_access_key;
             obj_secret_key = FLAGS_obj_secret_key;
             obj_bucket_name = FLAGS_obj_bucket_name;
+            obj_scheme = FLAGS_obj_scheme;
             obj_region = FLAGS_obj_region;
             obj_endpoint_override = FLAGS_obj_endpoint_override;
         }
@@ -408,6 +409,7 @@ xferBenchConfig::printConfig() {
             printOption("AIStor access key (--obj_access_key=key)", obj_access_key);
             printOption("AIStor secret key (--obj_secret_key=key)", obj_secret_key);
             printOption("AIStor bucket name (--obj_bucket_name=nixlbench-bucket)", obj_bucket_name);
+            printOption("AIStor scheme (--obj_scheme=[http, https])", obj_scheme);
             printOption("AIStor region (--obj_region=region)", obj_region);
             printOption("AIStor endpoint override (--obj_endpoint_override=endpoint)",
                         obj_endpoint_override);
