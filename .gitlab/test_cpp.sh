@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 TEXT_YELLOW="\033[1;33m"
@@ -57,8 +61,13 @@ ibv_devinfo || true
 uname -a || true
 
 echo "==== Running ETCD server ===="
-export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:2379"
-etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} &
+etcd_port=$(get_next_tcp_port)
+etcd_peer_port=$(get_next_tcp_port)
+export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
+export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
+etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
+     --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
+     --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
 sleep 5
 
 echo "==== Running C++ tests ===="
@@ -76,13 +85,17 @@ cd ${INSTALL_DIR}
 
 ./bin/ucx_backend_multi
 ./bin/serdes_test
-./bin/gtest
+
+# shellcheck disable=SC2154
+./bin/gtest --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
 # Run NIXL client-server test
-./bin/nixl_test target 127.0.0.1 1234&
+nixl_test_port=$(get_next_tcp_port)
+
+./bin/nixl_test target 127.0.0.1 "$nixl_test_port"&
 sleep 1
-./bin/nixl_test initiator 127.0.0.1 1234
+./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"

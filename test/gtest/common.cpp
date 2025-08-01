@@ -19,8 +19,14 @@
 #include <iostream>
 #include <iomanip>
 #include <cassert>
+#include <cstring>
+#include <memory>
 #include <stack>
 #include <optional>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <random>
 
 namespace gtest {
 
@@ -70,6 +76,56 @@ ScopedEnv::Variable::~Variable()
     } else {
         unsetenv(m_name.c_str());
     }
+}
+
+PortAllocator &
+PortAllocator::instance() {
+    static PortAllocator _instance;
+    return _instance;
+}
+
+void
+PortAllocator::set_min_port(uint16_t min_port) {
+    _min_port = min_port;
+    _port = _min_port;
+}
+
+void
+PortAllocator::set_max_port(uint16_t max_port) {
+    _max_port = max_port;
+}
+
+bool
+PortAllocator::is_port_available(uint16_t port) {
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET, .sin_port = htons(port), .sin_addr = {.s_addr = INADDR_ANY}};
+
+    const auto sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    const auto ret = bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr));
+    close(sock_fd);
+    return ret == 0;
+}
+
+uint16_t
+PortAllocator::next_tcp_port() {
+    PortAllocator &instance = PortAllocator::instance();
+    std::lock_guard<std::mutex> lock(instance._mutex);
+    const int port_range = instance._max_port - instance._min_port;
+
+    for (int scanned = 0; scanned < port_range; scanned++) {
+        if (is_port_available(instance._port)) {
+            return instance._port++;
+        }
+
+        instance._port++;
+
+        if (instance._port >= instance._max_port) {
+            instance._port = instance._min_port;
+        }
+    }
+
+    throw std::runtime_error("No port available in range: " + std::to_string(instance._min_port) +
+                             " - " + std::to_string(instance._max_port));
 }
 
 } // namespace gtest
