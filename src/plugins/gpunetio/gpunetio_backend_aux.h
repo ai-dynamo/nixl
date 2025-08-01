@@ -115,16 +115,16 @@ struct doca_gpu_verbs_qp_hl {
 };
 
 struct nixlDocaMr {
-    nixlDocaMr(void *addr_, uint32_t elem_num_, uint32_t elem_size_, struct ibv_pd *pd_);
+    nixlDocaMr(void *addr_, uint32_t elem_num_, size_t elem_size_, struct ibv_pd *pd_);
 
-    nixlDocaMr(void *addr_, uint32_t tot_size_, uint32_t rkey_);
+    nixlDocaMr(void *addr_, size_t tot_size_, uint32_t rkey_);
 
     ~nixlDocaMr();
 
     void *addr;
     uint32_t elem_num;
-    uint32_t elem_size;
-    uint32_t tot_size;
+    size_t elem_size;
+    size_t tot_size;
     struct ibv_pd *pd;
     struct ibv_mr *mr;
     uint32_t lkey;

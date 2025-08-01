@@ -935,23 +935,18 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
         priv->mr = new nixlDocaMr((void *)mem.addr, 1, (size_t)mem.len, pd);
     }
     catch (const std::exception &e) {
-        goto error;
+        return NIXL_ERR_BACKEND;
     }
 
     priv->devId = mem.devId;
     ss << (uint32_t)priv->mr->rkey << info_delimiter << ((uintptr_t)priv->mr->addr)
-       << info_delimiter << ((uint32_t)priv->mr->tot_size);
+       << info_delimiter << ((size_t)priv->mr->tot_size);
     priv->remoteMrStr = ss.str();
     // priv->remoteMrStr = nixlSerDes::_bytesToString ((void *)&(priv->mr->rkey), sizeof(uint32_t));
 
     out = (nixlBackendMD *)priv;
 
     return NIXL_SUCCESS;
-
-error:
-    delete priv->mr;
-
-    return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
@@ -999,7 +994,7 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
 
     uint32_t rkey = (uint32_t)atoi(tokens[0].c_str());
     uintptr_t addr = (uintptr_t)atol(tokens[1].c_str());
-    uint32_t tot_size = (uint32_t)atoi(tokens[2].c_str());
+    size_t tot_size = (size_t)atol(tokens[2].c_str());
 
     NIXL_INFO << "rkey " << rkey << " addr " << addr << " tot_size " << tot_size;
 

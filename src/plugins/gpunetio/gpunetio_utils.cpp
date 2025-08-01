@@ -26,7 +26,7 @@
 // constexpr auto connection_delay = 500ms;
 constexpr std::chrono::microseconds connection_delay(500000);
 
-nixlDocaMr::nixlDocaMr(void *addr_, uint32_t elem_num_, uint32_t elem_size_, struct ibv_pd *pd_) {
+nixlDocaMr::nixlDocaMr(void *addr_, uint32_t elem_num_, size_t elem_size_, struct ibv_pd *pd_) {
     if (addr_ == nullptr || elem_num_ == 0 || elem_size_ == 0 || pd_ == nullptr)
         throw std::invalid_argument("Invalid mr input values");
 
@@ -49,7 +49,7 @@ nixlDocaMr::nixlDocaMr(void *addr_, uint32_t elem_num_, uint32_t elem_size_, str
     rkey = htobe32(mr->rkey);
 };
 
-nixlDocaMr::nixlDocaMr(void *addr_, uint32_t tot_size_, uint32_t rkey_) {
+nixlDocaMr::nixlDocaMr(void *addr_, size_t tot_size_, uint32_t rkey_) {
     if (addr_ == nullptr || tot_size_ == 0 || rkey_ == 0)
         throw std::invalid_argument("Invalid mr input values");
 
@@ -317,7 +317,7 @@ connect_verbs_qp(nixlDocaEngine *eng,
             DOCA_VERBS_QP_ATTR_ALLOW_REMOTE_READ | DOCA_VERBS_QP_ATTR_ATOMIC_MODE |
             DOCA_VERBS_QP_ATTR_PKEY_INDEX | DOCA_VERBS_QP_ATTR_PORT_NUM);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to modify QP: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to modify QP " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
@@ -334,7 +334,7 @@ connect_verbs_qp(nixlDocaEngine *eng,
                                  DOCA_VERBS_QP_ATTR_DEST_QP_NUM | DOCA_VERBS_QP_ATTR_PATH_MTU |
                                  DOCA_VERBS_QP_ATTR_AH_ATTR | DOCA_VERBS_QP_ATTR_MIN_RNR_TIMER);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to modify QP: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to modify QP " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
@@ -350,7 +350,7 @@ connect_verbs_qp(nixlDocaEngine *eng,
                                       DOCA_VERBS_QP_ATTR_ACK_TIMEOUT |
                                       DOCA_VERBS_QP_ATTR_RETRY_CNT | DOCA_VERBS_QP_ATTR_RNR_RETRY);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to modify QP: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to modify QP " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
