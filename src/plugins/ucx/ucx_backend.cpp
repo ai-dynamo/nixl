@@ -574,9 +574,8 @@ nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_param
 
     // This will ensure that the resulting delay is at least 1ms and fits into int in order for
     // it to be compatible with poll()
-    auto pthrDelay = std::chrono::ceil<std::chrono::milliseconds>(std::chrono::microseconds(
-        init_params.pthrDelay < std::numeric_limits<int>::max() ? init_params.pthrDelay :
-                                                                  std::numeric_limits<int>::max()));
+    auto delay = std::min((int)init_params.pthrDelay, std::numeric_limits<int>::max());
+    auto pthrDelay = std::chrono::ceil<std::chrono::milliseconds>(std::chrono::microseconds(delay));
 
     size_t numWorkers = getWorkers().size();
     thread = std::make_unique<nixlUcxThread>(
