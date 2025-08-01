@@ -14,13 +14,13 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="24.10-cuda12.6-devel-ubuntu22.04"
 ARG OS
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 # Set default OS if not provided
-ARG OS=${OS:-ubuntu24}
+ARG OS=${OS:-ubuntu22}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REF="v1.19.x"
