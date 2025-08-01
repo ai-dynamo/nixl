@@ -43,6 +43,7 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | `secret_key` | AWS secret access key for authentication | - | No* |
 | `session_token` | AWS session token for temporary credentials | - | No |
 | `bucket` | S3 bucket name for operations | - | Yes** |
+| `create_bucket` | Create bucket if it doesn't exist (`true`/`false`) | `false` | No |
 | `endpoint_override` | Custom S3 endpoint URL | - | No |
 | `scheme` | HTTP scheme (`http` or `https`) | `https` | No |
 | `region` | AWS region for the S3 service | `us-east-1` | No |

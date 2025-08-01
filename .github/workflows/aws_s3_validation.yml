@@ -36,31 +36,6 @@ jobs:
 
           # Verify AWS credentials
           aws sts get-caller-identity >/dev/null
-
-          # Create S3 bucket
-          aws s3 mb s3://${AWS_DEFAULT_BUCKET}
-
-          # Loop to check if S3 bucket exists with retries
-          max_attempts=5
-          attempt=1
-          while [ $attempt -le $max_attempts ]; do
-            if aws s3 ls s3://${AWS_DEFAULT_BUCKET} >/dev/null 2>&1; then
-              echo "S3 bucket exists successfully on attempt $attempt"
-              break
-            else
-              echo "S3 bucket check failed on attempt $attempt/$max_attempts"
-              if [ $attempt -eq $max_attempts ]; then
-                echo "S3 bucket creation failed after $max_attempts attempts"
-                exit 1
-              fi
-              sleep 2
-              attempt=$((attempt + 1))
-            fi
-          done
-
-          # validate upload file to s3
-          echo test > testfile.txt
-          aws s3 cp testfile.txt s3://${AWS_DEFAULT_BUCKET}/testfile.txt
       - name: Build NIXL
         timeout-minutes: 30
         run: |

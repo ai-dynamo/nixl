@@ -33,7 +33,10 @@ namespace gtest::plugins::obj {
  * used during the tests.
  */
 
-nixl_b_params_t obj_params;
+nixl_b_params_t obj_params = {
+    {"create_bucket", "true"},
+};
+
 const std::string local_agent_name = "Agent1";
 const nixlBackendInitParams obj_test_params = {.localAgent = local_agent_name,
                                                .type = "OBJ",
@@ -87,7 +90,6 @@ TEST_P(setupObjTestFixture, queryMemTest) {
     EXPECT_EQ(resp[1].has_value(), true);
     EXPECT_EQ(resp[2].has_value(), false);
 }
-
 
 INSTANTIATE_TEST_SUITE_P(ObjTests, setupObjTestFixture, testing::Values(obj_test_params));
 

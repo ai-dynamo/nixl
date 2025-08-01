@@ -119,8 +119,18 @@ public:
 
 private:
     std::unique_ptr<Aws::SDKOptions, std::function<void(Aws::SDKOptions *)>> awsOptions_;
+    Aws::Client::ClientConfiguration config_;
     std::unique_ptr<Aws::S3::S3Client> s3Client_;
     Aws::String bucketName_;
+
+    bool
+    checkBucketExists();
+
+    void
+    createBucket();
+
+    void
+    checkCreateBucket(nixl_b_params_t *custom_params);
 };
 
 #endif // OBJ_S3_CLIENT_H

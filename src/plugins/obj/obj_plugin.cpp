@@ -55,6 +55,7 @@ get_backend_options() {
     params["secret_key"] = "AWS secret access key (required)";
     params["session_token"] = "AWS session token (optional)";
     params["bucket"] = "S3 bucket name (optional)";
+    params["create_bucket"] = "Create bucket if it doesn't exist (true/false) (default: false)";
     params["endpoint_override"] = "S3 endpoint override (optional)";
     params["scheme"] = "S3 scheme (http/https) (optional)";
     params["region"] = "AWS region (optional)";
