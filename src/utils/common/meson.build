@@ -30,10 +30,27 @@ nixl_common_deps = [
     absl_synchronization_dep,
 ]
 
+if get_option('enable_nsight_markers')
+    if cuda_lib_path == ''
+        nvxt_dep = dependency('cuda', required : false, modules : ['nvToolsExt'])
+    else
+        message('cuda lib path ', cuda_lib_path)
+        if cuda_stub_path == ''
+            cuda_stub_path = cuda_lib_path + '/stubs'
+        endif
+        nvxt_dep = declare_dependency(
+            link_args : ['-L' + cuda_lib_path, '-L' + cuda_stub_path, '-lnvToolsExt'],
+            include_directories : include_directories(cuda_inc_path))
+    endif
+    nixl_common_deps += nvxt_dep
+  add_project_arguments('-DMARK_NSIGHT', language: 'cpp')
+endif
+
 # Define a shared library for common utilities
 nixl_common_lib = shared_library('nixl_common',
     'nixl_log.cpp',
     'uuid_v4.cpp',
+    'util.cpp',
     dependencies: nixl_common_deps,
     include_directories: nixl_common_inc,
     install: true,

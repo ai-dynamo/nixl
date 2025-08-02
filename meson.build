@@ -51,15 +51,15 @@ cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
 
 if cuda_lib_path == ''
-    cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda' ])
+    cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda'])
 else
     message('cuda lib path ', cuda_lib_path)
     if cuda_stub_path == ''
         cuda_stub_path = cuda_lib_path + '/stubs'
     endif
     cuda_dep = declare_dependency(
-    link_args : ['-L' + cuda_lib_path, '-L' + cuda_stub_path, '-lcuda', '-lcudart'],
-    include_directories : include_directories(cuda_inc_path))
+      link_args : ['-L' + cuda_lib_path, '-L' + cuda_stub_path, '-lcuda', '-lcudart'],
+      include_directories : include_directories(cuda_inc_path))
 endif
 
 if cuda_dep.found()
