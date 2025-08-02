@@ -50,7 +50,7 @@ void test_thread(int id)
 
     std::cout << my_name << " Started\n";
 
-    ucx = (nixlBackendEngine*) new nixlUcxEngine (&init_params);
+    ucx = nixlUcxEngine::create(init_params).release();
 
     if(!USE_PTHREAD) ucx->progress();
 
