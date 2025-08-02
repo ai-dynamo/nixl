@@ -70,8 +70,6 @@ cd ${INSTALL_DIR}
 ./bin/ucx_backend_test
 ./bin/ucx_mo_backend_test
 
-POSIX test disabled until we solve io_uring and Docker compatibility
-
 ./bin/nixl_posix_test -n 128 -s 1048576
 
 ./bin/ucx_backend_multi
@@ -79,12 +77,9 @@ POSIX test disabled until we solve io_uring and Docker compatibility
 ./bin/gtest
 ./bin/test_plugin
 
-# Run NIXL client-server test
 ./bin/nixl_test target 127.0.0.1 1234&
 sleep 1
 ./bin/nixl_test initiator 127.0.0.1 1234
-
-# Run NIXLBench tests
 
 run_nixlbench() {
     args="$@"
