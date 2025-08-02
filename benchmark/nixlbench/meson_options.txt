@@ -13,11 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-option('cudapath_inc', type: 'string', value: '/usr/local/cuda/include', description: 'Include path for CUDA')
-option('cudapath_lib', type: 'string', value: '/usr/local/cuda/lib64/', description: 'Library path for CUDA')
-option('cudapath_stub', type: 'string', value: '/usr/local/cuda/lib64/stubs', description: 'Extra Stub path for CUDA')
+option('cudapath_inc', type: 'string', value: '', description: 'Include path for CUDA')
+option('cudapath_lib', type: 'string', value: '', description: 'Library path for CUDA')
+option('cudapath_stub', type: 'string', value: '', description: 'Extra Stub path for CUDA')
 option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD C++ Client includes')
 option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD C++ Client library')
 option('nixl_path', type: 'string', value: '/usr/local', description: 'Path to NiXL')
 option('nvshmem_inc_path', type: 'string', value: '', description: 'Path to NVSHMEM include directory')
 option('nvshmem_lib_path', type: 'string', value: '', description: 'Path to NVSHMEM library directory')
+option('ucx_path', type: 'string', value: '', description: 'Path to UCX install')
