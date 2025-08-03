@@ -22,11 +22,13 @@ import os
 import nixl._utils as nixl_utils
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl._bindings import nixlNotFoundError
+
 from . import util
 
 
 class PartialMdExampleErrCodes(enum.Enum):
     TRANSFER_FAILED = 1
+
 
 def exchange_target_metadata(
     target_agent,
@@ -67,6 +69,7 @@ def invalidate_target_metadata(
     else:
         target_agent.invalidate_local_metadata(ip_addr, init_port)
 
+
 def allocate_strings(malloc_addrs: list, buf_size: int, num_strings: int):
     target_strs = []
     for _ in range(num_strings):
@@ -76,10 +79,12 @@ def allocate_strings(malloc_addrs: list, buf_size: int, num_strings: int):
 
     return target_strs
 
+
 def xfer(init_agent, xfer_handle, target_agent):
     state = init_agent.transfer(xfer_handle)
     assert state != "ERR"
     util.wait_for_transfer_completion(init_agent, target_agent, xfer_handle, b"UUID1")
+
 
 def main():
     buf_size = 256

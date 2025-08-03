@@ -45,7 +45,7 @@ disable = [
     "C0302", # Too many lines in module
     "W0105", # String statement has no effect (pointless-string-statement)
     "W0511", # TODO (fixme)
-    "R0902", # Too many instance attributes 
+    "R0902", # Too many instance attributes
     "R0903", # Too few public methods
     "R0904", # Too many public methods
     "R0912", # Too many branches

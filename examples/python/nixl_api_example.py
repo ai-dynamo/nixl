@@ -15,9 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 import os
 import sys
-import enum
 
 import numpy as np
 import torch
@@ -122,7 +122,9 @@ if __name__ == "__main__":
     for _ in range(2):
         state = nixl_agent2.transfer(xfer_handle_1)
         assert state != "ERR"
-        util.wait_for_transfer_completion(nixl_agent2, nixl_agent1, xfer_handle_1, b"UUID1")
+        util.wait_for_transfer_completion(
+            nixl_agent2, nixl_agent1, xfer_handle_1, b"UUID1"
+        )
 
     # prep transfer mode
     local_prep_handle = nixl_agent2.prep_xfer_dlist(

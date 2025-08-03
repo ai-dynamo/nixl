@@ -91,9 +91,7 @@ def perf_test_list(num_descs: int, addr_base: int, length: int):
     assert reg_dlist.descCount() == num_descs
     print(f"get_reg_descs:\t\t{elapsed:.4f} sec")
 
-    prep_handles(
-        agent, xfer_dlist, reg_dlist, indices
-    )
+    prep_handles(agent, xfer_dlist, reg_dlist, indices)
 
     del agent
 
@@ -121,9 +119,7 @@ def perf_test_array(num_descs: int, addr_base: int, length: int):
     assert reg_dlist.descCount() == num_descs
     print(f"get_reg_descs:\t\t{elapsed:.4f} sec")
 
-    prep_handles(
-        agent, xfer_dlist, reg_dlist, indices
-    )
+    prep_handles(agent, xfer_dlist, reg_dlist, indices)
 
     del agent
 

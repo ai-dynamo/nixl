@@ -15,9 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 import os
 import sys
-import enum
 
 import nixl._utils as nixl_utils
 from nixl._api import nixl_agent, nixl_agent_config
