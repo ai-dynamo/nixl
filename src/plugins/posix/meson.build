@@ -15,7 +15,7 @@
 
 # Try to find liburing (optional) - first try pkg-config
 uring_dep = dependency('liburing', required: false)
-plugin_deps = [nixl_infra, nixl_common_dep]
+plugin_deps = [nixl_infra, nixl_common_dep, file_utils_interface]
 
 # Define base source files - conditionally include uring_queue.cpp
 posix_sources = [
@@ -70,7 +70,8 @@ else
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
-        install_dir: plugin_install_dir)
+        install_dir: plugin_install_dir,
+        install_rpath: '$ORIGIN/..')
     if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
             'echo "POSIX=' + posix_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
