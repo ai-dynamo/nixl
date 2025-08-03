@@ -29,6 +29,8 @@
 
 #define NUM_CQES 1024
 
+some error to make sure it compiles 3fs
+
 long nixlHf3fsEngine::page_size = sysconf(_SC_PAGESIZE);
 
 nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)

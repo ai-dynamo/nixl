@@ -14,13 +14,13 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
-ARG OS
+ARG BASE_IMAGE_TAG="24.10-cuda12.6-devel-ubuntu22.04"
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 # Set default OS if not provided
-ARG OS=${OS:-ubuntu24}
+ARG OS="ubuntu22"
+# ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REF="v1.19.x"
@@ -32,12 +32,8 @@ ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 
 ARG INSTALL_3FS="false"
 RUN if [ "$OS" = "ubuntu22" ] && [ "$ARCH" = "x86_64" ]; then \
-<<<<<<< Updated upstream
-        INSTALL_3FS="true"; \
-=======
         echo "INSTALL_3FS=true" >> /etc/environment && \
         echo "INSTALL_3FS=true"; \
->>>>>>> Stashed changes
     fi
 
 RUN apt-get update -y && \
