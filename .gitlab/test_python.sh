@@ -21,7 +21,7 @@ set -e
 set -x
 
 # Set timeout for the script execution
-TIMEOUT_MIN="${TIMEOUT_MIN:-30m}"
+TIMEOUT_MIN="${TIMEOUT_MIN:-15s}"
 if [ "$TIMEOUT_SET" != "1" ]; then
     export TIMEOUT_SET=1
     exec timeout "$TIMEOUT_MIN" "$0" "$@"
@@ -71,7 +71,10 @@ etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
 sleep 5
 
-echo "==== Running python tests ===="
+echo "==== Running python tests (DEMO: sleeping to trigger timeout) ===="
+echo "Timeout set to ${TIMEOUT_MIN}, sleeping for 30 seconds..."
+sleep 30
+echo "This line should never print - timeout should kill process"
 python3 examples/python/nixl_api_example.py
 python3 examples/python/partial_md_example.py
 python3 examples/python/partial_md_example.py --etcd
