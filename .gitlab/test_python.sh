@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 
@@ -51,8 +54,13 @@ pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
 
 echo "==== Running ETCD server ===="
-export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:2379"
-etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} &
+etcd_port=$(get_next_tcp_port)
+etcd_peer_port=$(get_next_tcp_port)
+export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
+export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
+etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
+     --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
+     --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
 sleep 5
 
 echo "==== Running python tests ===="
@@ -65,10 +73,12 @@ python3 test/python/prep_xfer_perf.py list
 python3 test/python/prep_xfer_perf.py array
 
 echo "==== Running python examples ===="
+blocking_send_recv_port=$(get_next_tcp_port)
+
 cd examples/python
-python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port=1234&
+python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
 sleep 5
-python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port=1234
+python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
 
 python3 query_mem_example.py
 
