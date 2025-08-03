@@ -16,8 +16,8 @@
             url: "{jjb_gh_url}"
         # Build history retention policy
         - build-discarder:
-            days-to-keep: 50       # Keep builds for 50 days
-            num-to-keep: 20        # Or keep last 20 builds, whichever comes first
+            days-to-keep: 14        # Keep builds for 14 days
+            num-to-keep: 1000        # Or keep last 1000 builds, whichever comes first
         # Inject project-specific variables
         - inject:
             keep-system-variables: true
@@ -103,8 +103,8 @@
         - github:
             url: "{jjb_gh_url}"
         - build-discarder:
-            days-to-keep: 50
-            num-to-keep: 20
+            days-to-keep: 14
+            num-to-keep: 1000
         - inject:
             keep-system-variables: true
             properties-content: |
@@ -166,8 +166,8 @@
         - github:
             url: "{jjb_gh_url}"
         - build-discarder:
-            days-to-keep: 50
-            num-to-keep: 20
+            days-to-keep: 14
+            num-to-keep: 1000
         - inject:
             keep-system-variables: true
             properties-content: |
