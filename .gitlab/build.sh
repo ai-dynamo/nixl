@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -16,6 +16,7 @@
 
 set -e
 set -x
+set -o pipefail
 
 # Parse commandline arguments with first argument being the install directory
 # and second argument being the UCX installation directory.
