@@ -30,6 +30,16 @@ ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 
+ARG INSTALL_3FS="false"
+RUN if [ "$OS" = "ubuntu22" ] && [ "$ARCH" = "x86_64" ]; then \
+<<<<<<< Updated upstream
+        INSTALL_3FS="true"; \
+=======
+        echo "INSTALL_3FS=true" >> /etc/environment && \
+        echo "INSTALL_3FS=true"; \
+>>>>>>> Stashed changes
+    fi
+
 RUN apt-get update -y && \
     apt-get install -y ubuntu-keyring && \
     apt-get update -y && \
@@ -61,7 +71,73 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
     libnuma-dev librdmacm-dev ibverbs-providers
 
+RUN if [ "$INSTALL_3FS" = "true" ]; then \
+    apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install \
+        libdouble-conversion-dev \
+        libuv1-dev \
+        liblz4-dev \
+        liblzma-dev \
+        libdwarf-dev \
+        libunwind-dev \
+        libgoogle-perftools-dev \
+        google-perftools \
+        clang-format-14 \
+        clang-14 \
+        clang-tidy-14 \
+        lld-14 \
+        libjemalloc-dev; \
+    fi
+
+# Set Rust environment variables only if INSTALL_3FS is true
+RUN if [ "$INSTALL_3FS" = "true" ]; then \
+    echo "RUSTUP_HOME=/usr/local/rustup" >> /etc/environment && \
+    echo "CARGO_HOME=/usr/local/cargo" >> /etc/environment && \
+    echo "PATH=/usr/local/cargo/bin:\$PATH" >> /etc/environment && \
+    echo "RUST_VERSION=1.86.0" >> /etc/environment && \
+    echo "RUSTARCH=${ARCH}-unknown-linux-gnu" >> /etc/environment; \
+fi
+
 WORKDIR /workspace
+
+RUN if [ "$INSTALL_3FS" = "true" ]; then \
+    wget --tries=3 --waitretry=5 \
+        "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" \
+        "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init.sha256" && \
+    sha256sum -c rustup-init.sha256 && \
+    chmod +x rustup-init && \
+    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
+    rm rustup-init* && \
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME; \
+    fi
+
+RUN if [ "$INSTALL_3FS" = "true" ]; then \
+    wget -q -O /tmp/foundationdb-server_7.1.67-1_amd64.deb https://github.com/apple/foundationdb/releases/download/7.1.67/foundationdb-server_7.1.67-1_amd64.deb && \
+    wget -q -O /tmp/foundationdb-clients_7.1.67-1_amd64.deb https://github.com/apple/foundationdb/releases/download/7.1.67/foundationdb-clients_7.1.67-1_amd64.deb && \
+    dpkg -i /tmp/foundationdb-clients_7.1.67-1_amd64.deb && \
+    dpkg -i --force-depends --force-configure-any /tmp/foundationdb-server_7.1.67-1_amd64.deb && \
+    rm -f /tmp/foundationdb-*.deb; \
+    fi
+
+RUN if [ "$INSTALL_3FS" = "true" ]; then \
+    wget -q -O /tmp/fuse-3.16.2.tar.gz https://github.com/libfuse/libfuse/releases/download/fuse-3.16.2/fuse-3.16.2.tar.gz && \
+    tar -zxf /tmp/fuse-3.16.2.tar.gz -C /tmp && \
+    mkdir -p /tmp/fuse-3.16.2/build && \
+    meson setup /tmp/fuse-3.16.2 /tmp/fuse-3.16.2/build && \
+    ninja -C /tmp/fuse-3.16.2/build && \
+    ninja -C /tmp/fuse-3.16.2/build install && \
+    rm -rf /tmp/fuse-3.16.2*; \
+    fi
+
+RUN if [ "$INSTALL_3FS" = "true" ]; then \
+    git clone https://github.com/deepseek-ai/3fs /workspace/3fs && \
+    git -C /workspace/3fs submodule update --init --recursive && \
+    /workspace/3fs/patches/apply.sh; \
+    cmake -S /workspace/3fs -B /workspace/3fs/build -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_C_COMPILER=clang-14 -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build /workspace/3fs/build -j 32; \
+    cmake --install /workspace/3fs/build; \
+    fi
+
 RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
@@ -120,7 +196,6 @@ ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     uv pip install --upgrade "meson>=0.64.0" patchelf
 
-# Install pybind11 via apt
 RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 
 RUN rm -rf /usr/lib/ucx
