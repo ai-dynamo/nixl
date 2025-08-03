@@ -46,6 +46,7 @@ matrix:
 
 env:
   NIXL_INSTALL_DIR: /opt/nixl
+  TEST_TIMEOUT: 1
 
 steps:
   - name: Build
@@ -59,11 +60,13 @@ steps:
 
   - name: Test CPP
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
       .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
 
   - name: Test Python
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
       .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
 
