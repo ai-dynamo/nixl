@@ -17,9 +17,19 @@
 
 import os
 import sys
+import enum
 
 import nixl._utils as nixl_utils
 from nixl._api import nixl_agent, nixl_agent_config
+
+
+class NixlGdsExampleErrCodes(enum.Enum):
+    MISSING_FILE_PATH = 1
+    CREATE_TRANSFER_FAILED = 2
+    TRANSFER_FAILED = 3
+    INIT_XFER_FAILED = 4
+    DATA_VERIFICATION_FAILED = 5
+
 
 if __name__ == "__main__":
     buf_size = 16 * 4096
@@ -27,7 +37,7 @@ if __name__ == "__main__":
 
     if len(sys.argv) < 2:
         print("Please specify file path in argv")
-        exit(0)
+        sys.exit(NixlGdsExampleErrCodes.MISSING_FILE_PATH.value)
 
     print("Using NIXL Plugins from:")
     print(os.environ["NIXL_PLUGIN_DIR"])
@@ -79,7 +89,7 @@ if __name__ == "__main__":
     )
     if not xfer_handle_1:
         print("Creating transfer failed.")
-        exit()
+        sys.exit(NixlGdsExampleErrCodes.CREATE_TRANSFER_FAILED.value)
 
     state = nixl_agent1.transfer(xfer_handle_1)
     assert state != "ERR"
@@ -90,7 +100,7 @@ if __name__ == "__main__":
         state = nixl_agent1.check_xfer_state(xfer_handle_1)
         if state == "ERR":
             print("Transfer got to Error state.")
-            exit()
+            sys.exit(NixlGdsExampleErrCodes.TRANSFER_FAILED.value)
         elif state == "DONE":
             done = True
             print("Initiator done")
@@ -101,7 +111,7 @@ if __name__ == "__main__":
     )
     if not xfer_handle_2:
         print("Creating transfer failed.")
-        exit()
+        sys.exit(NixlGdsExampleErrCodes.INIT_XFER_FAILED.value)
 
     state = nixl_agent1.transfer(xfer_handle_2)
     assert state != "ERR"
@@ -112,7 +122,7 @@ if __name__ == "__main__":
         state = nixl_agent1.check_xfer_state(xfer_handle_2)
         if state == "ERR":
             print("Transfer got to Error state.")
-            exit()
+            sys.exit(NixlGdsExampleErrCodes.TRANSFER_FAILED.value)
         elif state == "DONE":
             done = True
             print("Initiator done")

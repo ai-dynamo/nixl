@@ -47,9 +47,12 @@ class nixl_agent_config:
         enable_prog_thread: bool = True,
         enable_listen_thread: bool = False,
         listen_port: int = 0,
-        backends: list[str] = ["UCX"],
+        backends: list[str] = None,
     ):
         # TODO: add backend init parameters
+        if backends is None:
+            backends = ["UCX"]
+
         self.backends = backends
         self.enable_pthread = enable_prog_thread
         self.enable_listen = enable_listen_thread
@@ -168,9 +171,9 @@ class nixl_agent:
     def get_plugin_mem_types(self, backend: str) -> list[str]:
         if backend in self.plugin_mem_types:
             return self.plugin_mem_types[backend]
-        else:
-            print("Plugin", backend, "is not available to get its supported mem types.")
-            return []
+
+        print("Plugin", backend, "is not available to get its supported mem types.")
+        return []
 
     """
     @brief Get the initialization parameters of a plugin.
@@ -183,9 +186,9 @@ class nixl_agent:
     def get_plugin_params(self, backend: str) -> dict[str, str]:
         if backend in self.plugin_b_options:
             return self.plugin_b_options[backend]
-        else:
-            print("Plugin", backend, "is not available to get its parameters.")
-            return {}
+
+        print("Plugin", backend, "is not available to get its parameters.")
+        return {}
 
     """
     @brief  Get the memory types supported by a backend.
@@ -200,11 +203,9 @@ class nixl_agent:
     def get_backend_mem_types(self, backend: str) -> list[str]:
         if backend in self.backend_mems:
             return self.backend_mems[backend]
-        else:
-            print(
-                "Backend", backend, "not instantiated to get its supported mem types."
-            )
-            return []
+
+        print("Backend", backend, "not instantiated to get its supported mem types.")
+        return []
 
     """
     @brief  Get the parameters of a backend.
@@ -219,9 +220,9 @@ class nixl_agent:
     def get_backend_params(self, backend: str) -> dict[str, str]:
         if backend in self.backend_options:
             return self.backend_options[backend]
-        else:
-            print("Backend", backend, "not instantiated to get its parameters.")
-            return {}
+
+        print("Backend", backend, "not instantiated to get its parameters.")
+        return {}
 
     """
     @brief  Initialize a backend with the specified initialization parameters, described above.
@@ -230,7 +231,10 @@ class nixl_agent:
     @param initParams Dictionary of initialization parameters.
     """
 
-    def create_backend(self, backend: str, initParams: dict[str, str] = {}):
+    def create_backend(self, backend: str, initParams: dict[str, str] = None):
+        if initParams is None:
+            initParams = {}
+
         self.backends[backend] = self.agent.createBackend(backend, initParams)
 
         (backend_options, mem_types) = self.agent.getBackendParams(
@@ -256,8 +260,11 @@ class nixl_agent:
         reg_list,
         mem_type: Optional[str] = None,
         is_sorted: bool = False,
-        backends: list[str] = [],
+        backends: list[str] = None,
     ) -> nixlBind.nixlRegDList:
+        if backends is None:
+            backends = []
+
         reg_descs = self.get_reg_descs(reg_list, mem_type, is_sorted)
 
         handle_list = []
@@ -276,8 +283,11 @@ class nixl_agent:
     """
 
     def deregister_memory(
-        self, dereg_list: nixlBind.nixlRegDList, backends: list[str] = []
+        self, dereg_list: nixlBind.nixlRegDList, backends: list[str] = None
     ):
+        if backends is None:
+            backends = []
+
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
@@ -316,7 +326,10 @@ class nixl_agent:
     @param remote_agent Name of the remote agent.
     """
 
-    def make_connection(self, remote_agent: str, backends: list[str] = []):
+    def make_connection(self, remote_agent: str, backends: list[str] = None):
+        if backends is None:
+            backends = []
+
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
@@ -351,11 +364,14 @@ class nixl_agent:
         xfer_list,
         mem_type: Optional[str] = None,
         is_sorted: bool = False,
-        backends: list[str] = [],
+        backends: list[str] = None,
     ) -> nixl_prepped_dlist_handle:
+        if backends is None:
+            backends = []
+
         descs = self.get_xfer_descs(xfer_list, mem_type, is_sorted)
 
-        if agent_name == "NIXL_INIT_AGENT" or agent_name == "":
+        if agent_name in ("NIXL_INIT_AGENT", ""):
             agent_name = nixlBind.NIXL_INIT_AGENT
 
         handle_list = []
@@ -407,9 +423,12 @@ class nixl_agent:
         remote_xfer_side: nixl_prepped_dlist_handle,
         remote_indices: Union[list[int], np.ndarray],
         notif_msg: bytes = b"",
-        backends: list[str] = [],
+        backends: list[str] = None,
         skip_desc_merge: bool = False,
     ) -> nixl_xfer_handle:
+        if backends is None:
+            backends = []
+
         op = self.nixl_ops[operation]
         handle_list = []
         for backend_string in backends:
@@ -452,8 +471,11 @@ class nixl_agent:
         remote_descs: nixlBind.nixlXferDList,
         remote_agent: str,
         notif_msg: bytes = b"",
-        backends: list[str] = [],
+        backends: list[str] = None,
     ) -> nixl_xfer_handle:
+        if backends is None:
+            backends = []
+
         op = self.nixl_ops[operation]
         handle_list = []
         for backend_string in backends:
@@ -481,10 +503,11 @@ class nixl_agent:
         status = self.agent.postXferReq(handle, notif_msg)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
-        elif status == nixlBind.NIXL_IN_PROG:
+
+        if status == nixlBind.NIXL_IN_PROG:
             return "PROC"
-        else:
-            return "ERR"
+
+        return "ERR"
 
     """
     @brief Check the state of a transfer operation.
@@ -497,10 +520,11 @@ class nixl_agent:
         status = self.agent.getXferStatus(handle)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
-        elif status == nixlBind.NIXL_IN_PROG:
+
+        if status == nixlBind.NIXL_IN_PROG:
             return "PROC"
-        else:
-            return "ERR"
+
+        return "ERR"
 
     """
     @brief Query the backend that was chosen for a transfer operation.
@@ -546,7 +570,10 @@ class nixl_agent:
             Return Dict is a map of remote agent names to a list of notification messages from that agent.
     """
 
-    def get_new_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
+    def get_new_notifs(self, backends: list[str] = None) -> dict[str, list[bytes]]:
+        if backends is None:
+            backends = []
+
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
@@ -560,7 +587,10 @@ class nixl_agent:
     @return Dictionary of updated notifications.
     """
 
-    def update_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
+    def update_notifs(self, backends: list[str] = None) -> dict[str, list[bytes]]:
+        if backends is None:
+            backends = []
+
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
@@ -583,9 +613,12 @@ class nixl_agent:
         self,
         remote_agent_name: str,
         lookup_tag: bytes,
-        backends: list[str] = [],
+        backends: list[str] = None,
         tag_is_prefix=True,
     ) -> bool:
+        if backends is None:
+            backends = []
+
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
@@ -646,8 +679,11 @@ class nixl_agent:
         self,
         descs: nixlBind.nixlRegDList,
         inc_conn_info: bool = False,
-        backends: list[str] = [],
+        backends: list[str] = None,
     ) -> bytes:
+        if backends is None:
+            backends = []
+
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
@@ -707,11 +743,14 @@ class nixl_agent:
         self,
         descs: nixlBind.nixlRegDList,
         inc_conn_info: bool = False,
-        backends: list[str] = [],
+        backends: list[str] = None,
         ip_addr: str = "",
         port: int = DEFAULT_COMM_PORT,
         label: str = "",
     ):
+        if backends is None:
+            backends = []
+
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
@@ -761,10 +800,8 @@ class nixl_agent:
     ) -> bool:
         if descs is None:  # Just empty list, mem_type not important
             descs = nixlBind.nixlXferDList(nixlBind.DRAM_SEG)
-        if self.agent.checkRemoteMD(agent, descs) == nixlBind.NIXL_SUCCESS:
-            return True
-        else:
-            return False
+
+        return self.agent.checkRemoteMD(agent, descs) == nixlBind.NIXL_SUCCESS
 
     """
     @brief Get nixlXferDList from different input types:
@@ -792,7 +829,8 @@ class nixl_agent:
 
         if isinstance(descs, nixlBind.nixlXferDList):
             return descs
-        elif isinstance(descs, nixlBind.nixlRegDList):
+
+        if isinstance(descs, nixlBind.nixlRegDList):
             print("RegList type detected for transfer, please use XferList")
             new_descs = None
         elif isinstance(descs[0], tuple):
@@ -839,15 +877,16 @@ class nixl_agent:
             tensor_type = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
-            for i in range(len(descs)):
-                if descs[i].device != tensor_type:
+            for i, desc in enumerate(descs):
+                if desc.device != tensor_type:
                     return None
-                if not descs[i].is_contiguous():
+                if not desc.is_contiguous():
                     print("Please use a list of contiguous Tensors")
                     return None
-                base_addr = descs[i].data_ptr()
-                region_len = descs[i].numel() * descs[i].element_size()
-                gpu_id = descs[i].get_device()
+
+                base_addr = desc.data_ptr()
+                region_len = desc.numel() * desc.element_size()
+                gpu_id = desc.get_device()
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
@@ -886,7 +925,8 @@ class nixl_agent:
 
         if isinstance(descs, nixlBind.nixlRegDList):
             return descs
-        elif isinstance(descs, nixlBind.nixlXferDList):
+
+        if isinstance(descs, nixlBind.nixlXferDList):
             print("XferList type detected for registration, please use RegList")
             new_descs = None
         elif isinstance(descs[0], tuple):
@@ -933,15 +973,15 @@ class nixl_agent:
             tensor_type = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
-            for i in range(len(descs)):
-                if descs[i].device != tensor_type:
+            for i, desc in enumerate(descs):
+                if desc.device != tensor_type:
                     return None
-                if not descs[i].is_contiguous():
+                if not desc.is_contiguous():
                     print("Please use a list of contiguous Tensors")
                     return None
-                base_addr = descs[i].data_ptr()
-                region_len = descs[i].numel() * descs[i].element_size()
-                gpu_id = descs[i].get_device()
+                base_addr = desc.data_ptr()
+                region_len = desc.numel() * desc.element_size()
+                gpu_id = desc.get_device()
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
