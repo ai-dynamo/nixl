@@ -570,7 +570,10 @@ class nixl_agent:
             Return Dict is a map of remote agent names to a list of notification messages from that agent.
     """
 
-    def get_new_notifs(self, backends: Optional[list[str]] = None) -> dict[str, list[bytes]]:
+    def get_new_notifs(
+        self,
+        backends: Optional[list[str]] = None,
+    ) -> dict[str, list[bytes]]:
         if backends is None:
             backends = []
 
@@ -587,7 +590,10 @@ class nixl_agent:
     @return Dictionary of updated notifications.
     """
 
-    def update_notifs(self, backends: Optional[list[str]] = None) -> dict[str, list[bytes]]:
+    def update_notifs(
+        self,
+        backends: Optional[list[str]] = None,
+    ) -> dict[str, list[bytes]]:
         if backends is None:
             backends = []
 
