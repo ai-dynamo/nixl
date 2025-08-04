@@ -1056,36 +1056,45 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
 nixl_status_t
 nixlAgent::genNotif(const std::string &remote_agent,
                     const nixl_blob_t &msg,
-                    const nixl_opt_args_t* extra_params) const {
+                    const nixl_opt_args_t *extra_params) const {
 
     backend_list_t backend_list_value;
-    backend_list_t* backend_list;
+    backend_list_t *backend_list;
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.empty()) {
         backend_list = &data->notifEngines;
-        if (backend_list->empty())
-            return NIXL_ERR_BACKEND;
     } else {
         backend_list = &backend_list_value;
-        for (auto &elm : extra_params->backends)
-            if (elm->engine->supportsNotif())
+        for (auto &elm : extra_params->backends) {
+            if (elm->engine->supportsNotif()) {
                 backend_list->push_back(elm->engine);
-
-        if (backend_list->empty()) {
-            return NIXL_ERR_BACKEND;
+            }
         }
     }
 
-    bool localNotif = data->name == remote_agent;
-    for (auto & eng: *backend_list) {
-        if ((localNotif && eng->supportsLocal()) ||
-            (!localNotif &&
-             data->remoteBackends[remote_agent].count(eng->getType()) != 0)) {
-            return eng->genNotif(remote_agent, msg);
-        }
+    if (backend_list->empty()) {
+        return NIXL_ERR_BACKEND;
     }
 
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+
+    if (data->name == remote_agent) {
+        for (const auto &eng : *backend_list) {
+            if (eng->supportsLocal()) {
+                return eng->genNotif(remote_agent, msg);
+            }
+        }
+        return NIXL_ERR_NOT_FOUND;
+    }
+    const auto iter = data->remoteBackends.find(remote_agent);
+
+    if (iter != data->remoteBackends.end()) {
+        for (const auto &eng : *backend_list) {
+            if (iter->second.count(eng->getType()) != 0) {
+                return eng->genNotif(remote_agent, msg);
+            }
+        }
+    }
     return NIXL_ERR_NOT_FOUND;
 }
 

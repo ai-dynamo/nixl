@@ -114,8 +114,12 @@ if __name__ == "__main__":
         target_strs2.append((addr1, buf_size, 0, "test"))
         malloc_addrs.append(addr1)
 
-    target_reg_descs1 = target_agent.get_reg_descs(target_strs1, "DRAM", is_sorted=True)
-    target_reg_descs2 = target_agent.get_reg_descs(target_strs2, "DRAM", is_sorted=True)
+    target_reg_descs1 = target_agent.get_reg_descs(
+        target_strs1, "DRAM", is_sorted=False
+    )
+    target_reg_descs2 = target_agent.get_reg_descs(
+        target_strs2, "DRAM", is_sorted=False
+    )
     target_xfer_descs1 = target_reg_descs1.trim()
     target_xfer_descs2 = target_reg_descs2.trim()
 
@@ -132,7 +136,7 @@ if __name__ == "__main__":
         init_strs.append((addr1, buf_size, 0, "test"))
         malloc_addrs.append(addr1)
 
-    init_reg_descs = init_agent.get_reg_descs(init_strs, "DRAM", is_sorted=True)
+    init_reg_descs = init_agent.get_reg_descs(init_strs, "DRAM", is_sorted=False)
     init_xfer_descs = init_reg_descs.trim()
 
     assert init_agent.register_memory(init_reg_descs) is not None
@@ -207,7 +211,7 @@ if __name__ == "__main__":
         try:
             # initialize transfer mode
             xfer_handle_2 = init_agent.initialize_xfer(
-                "READ", init_xfer_descs, target_xfer_descs1, "target", b"UUID1"
+                "READ", init_xfer_descs, target_xfer_descs2, "target", b"UUID1"
             )
         except nixlNotFoundError:
             ready = False
