@@ -1,0 +1,209 @@
+# NIXL Container Build Configuration
+# Builds and pushes NIXL and NIXLBench containers with configurable NIXL/UCX versions
+
+---
+job: nixl-ci-build-container
+
+# Build settings
+failFast: false
+timeout_minutes: 240
+
+# Infrastructure
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 16Gi, cpu: 8000m}"
+  requests: "{memory: 8Gi, cpu: 4000m}"
+
+runs_on_dockers:
+  - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", privileged: true }
+
+# Build matrix
+matrix:
+  axes:
+    arch:
+      - x86_64
+      - aarch64
+
+# Configuration
+env:
+  REGISTRY_HOSTESS: "urm.nvidia.com"
+  REGISTRY_REPO: "sw-nbu-swx-nixl-docker-local/verification"
+  LOCAL_TAG_BASE: "nixl-ci:build-"
+  MAIL_FROM: "jenkins@nvidia.com"
+  NPROC: "16"
+
+taskName: "${BUILD_TARGET}/${arch}/${axis_index}"
+
+credentials:
+  - credentialsId: 'svc-nixl-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USERNAME'
+    passwordVariable: 'ARTIFACTORY_PASSWORD'
+
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    def suffix = params.TAG_SUFFIX ? "-${params.TAG_SUFFIX}" : ""
+    def buildName = params.BUILD_TARGET
+    currentBuild.displayName += "-${buildName}-${params.NIXL_VERSION}-${params.UCX_VERSION}${suffix}"
+    env.ENABLE_NIXL_BUILD = params.BUILD_TARGET == 'nixl' ? 'true' : 'false'
+    env.ENABLE_NIXLBENCH_BUILD = params.BUILD_TARGET == 'nixlbench' ? 'true' : 'false'
+    echo "ENABLE_NIXL_BUILD: ${env.ENABLE_NIXL_BUILD}"
+    echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
+    echo "BUILD_TARGET: ${params.BUILD_TARGET}"
+
+# Build pipeline
+steps:
+  - name: Prepare
+    run: |
+      # Setup podman and dependencies
+      rm -f /etc/containers/storage.conf
+      podman system reset -f || true
+      ln -sfT $(type -p podman) /usr/bin/docker
+      yum install -y git gettext
+
+  - name: Build NIXLBench
+    enable: ${ENABLE_NIXLBENCH_BUILD}
+    run: |
+      # Clone UCX source for nixlbench
+      git clone https://github.com/openucx/ucx.git ucx-src
+      git -C ucx-src checkout "${UCX_VERSION}"
+
+      "benchmark/nixlbench/contrib/build.sh" \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_IMAGE_TAG}" \
+        --tag "${LOCAL_TAG_BASE}${arch}" \
+        --arch "${arch}" \
+        --no-cache \
+        --nixl "$WORKSPACE" \
+        --ucx "$WORKSPACE/ucx-src"
+
+  - name: Build NIXL
+    enable: ${ENABLE_NIXL_BUILD}
+    run: |
+      export UCX_REF="${UCX_VERSION}"
+
+      "contrib/build-container.sh" \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_IMAGE_TAG}" \
+        --tag "${LOCAL_TAG_BASE}${arch}" \
+        --arch "${arch}" \
+        --no-cache
+
+  - name: Add Version Info
+    run: |
+      # Extract standardized 8-char commit hash for UCX version info:
+      if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
+        CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
+      else
+        UCX_REF="$UCX_VERSION"
+
+        # Hash? if yes truncate, else ls-remote then truncate
+        if [[ "$UCX_REF" =~ ^[a-f0-9]{8,40}$ ]]; then
+          CLEAN_UCX="${UCX_REF:0:8}"
+        else
+          CLEAN_UCX=$(git ls-remote https://github.com/openucx/ucx.git "$UCX_REF" | head -n1 | cut -c1-8)
+        fi
+
+        # Verify
+        [[ -n "$CLEAN_UCX" ]] || { echo "ERROR: failed to resolve UCX_REF=$UCX_REF"; exit 1; }
+      fi
+
+      # Calculate tag name
+      NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
+      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+
+      # Generate version info file from template
+      export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+             BUILD_TARGET BASE_IMAGE BASE_IMAGE_TAG arch \
+             BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE \
+             NIXL_VERSION UCX_VERSION="${CLEAN_UCX}" TAG_NAME
+      envsubst < .ci/assets/nixl-version-info.template > version-info
+
+      # Add version info to the image
+      CONTAINER_ID=$(docker create "${LOCAL_TAG_BASE}${arch}" --pull=never)
+      docker cp version-info "${CONTAINER_ID}:/opt/nixl-version"
+      docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
+
+  - name: Push
+    credentialsId: 'svc-nixl-artifactory-token'
+    run: |
+      source version-info
+      ARTIFACTORY_REGISTRY="${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}"
+      ARTIFACTORY_API="https://${REGISTRY_HOSTESS}/artifactory/api/storage/${REGISTRY_REPO}/${BUILD_TARGET}"
+
+      # Prepare image properties
+      IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${UCX_VERSION};arch=${arch};"
+      IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
+      IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
+
+      # Login to Artifactory
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOSTESS}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+
+      # Function to tag, push, and set properties
+      tag_push_set_properties() {
+        local target_tag="$1"
+        echo "Creating tag: ${target_tag}"
+        docker tag "${LOCAL_TAG_BASE}${arch}" "${ARTIFACTORY_REGISTRY}:${target_tag}"
+        docker push "${ARTIFACTORY_REGISTRY}:${target_tag}"
+        curl -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
+          "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
+      }
+
+      # Always create standard tag
+      tag_push_set_properties "${TAG_NAME}"
+
+      # Check if latest tag should be updated
+      if [[ "${UPDATE_LATEST}" == "true" ]]; then
+        tag_push_set_properties "${BASE_IMAGE_TAG}-${arch}-latest"
+      fi
+
+  - name: Show Results
+    run: |
+      source version-info
+      echo "Image type built: ${BUILD_TARGET} (${arch})"
+      echo "Image pushed to: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${TAG_NAME}"
+      if [[ "${UPDATE_LATEST}" == "true" ]]; then
+        echo "Latest tag updated: ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
+      fi
+
+      echo -e "\nBuild config for manual repro:"
+      if [[ "${BUILD_TARGET}" == "nixlbench" ]]; then
+        echo "git clone https://github.com/openucx/ucx.git ucx-src && (cd ucx-src && git checkout ${UCX_VERSION})"
+        echo "benchmark/nixlbench/contrib/build.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache --nixl \$WORKSPACE --ucx \$WORKSPACE/ucx-src"
+      else
+        echo "export UCX_REF=${UCX_VERSION}"
+        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache"
+      fi
+
+pipeline_stop:
+  shell: action
+  module: groovy
+  run: |
+    if (params.MAIL_TO) {
+        def jobStatus = currentBuild.result ?: 'SUCCESS'
+        def statusColor = jobStatus == 'SUCCESS' ? 'green' : 'red'
+
+        def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
+
+        mail(
+            from: env.MAIL_FROM,
+            to: params.MAIL_TO,
+            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
+            mimeType: 'text/html',
+            body: """
+                <p>Started by: <b>${userName}</b></p>
+                <p>Status: <span style="color: ${statusColor};"><b>${jobStatus}</b></span></p>
+                <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
+                <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+                <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
+                <p>Build Target: <b>${params.BUILD_TARGET}</b></p>
+                <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
+                <p>UCX Version: <b>${params.UCX_VERSION}</b></p>
+                <p>Base Image: <b>${params.BASE_IMAGE}:${params.BASE_IMAGE_TAG}</b></p>
+                <p>Architectures: <b>x86_64, aarch64</b></p>
+                ${params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
+            """
+        )
+    }
