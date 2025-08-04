@@ -53,6 +53,8 @@ jobs:
       - name: Run AWS tests
         working-directory: ./contrib/aws-efa
         timeout-minutes: 180
+        env:
+          TEST_TIMEOUT: 1
         run: |
           set -o pipefail
           test_cmd='${{ join(matrix.test_scripts, ' && ') }}'
