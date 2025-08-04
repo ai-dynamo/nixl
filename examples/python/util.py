@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 def wait_for_transfer_completion(init_agent, target_agent, xfer_handle, uuid):
     """Wait for both initiator and target to complete transfer."""
     target_done = False
