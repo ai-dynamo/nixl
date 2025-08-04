@@ -45,6 +45,7 @@ repos:
     hooks:
       - id: pylint
         args: []
+        additional_dependencies: [torch, numpy, pytest]
         types_or: [python, cython]
 
   - repo: https://github.com/codespell-project/codespell

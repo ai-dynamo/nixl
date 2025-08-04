@@ -57,6 +57,7 @@ disable = [
 
 [tool.pylint.typecheck]
 extension-pkg-allow-list = ["nixl._bindings", "nixl._utils"]
+ignored-modules = ["nixl._bindings", "nixl._utils", "nixl"]
 
 [tool.mypy]
 explicit_package_bases = true
