@@ -101,10 +101,10 @@ public:
 
     // Additional functions.
 
-    explicit nixlSerDes(const size_t reserve);  // Reserves space before serializing.
+    explicit nixlSerDes(const size_t reserve); // Reserves space before serializing.
 
     [[nodiscard]] bool
-    syntaxCheck() noexcept;  // Can be called after importStr().
+    syntaxCheck() noexcept; // Can be called after importStr().
 
     nixl_status_t
     importStr(std::string &&) noexcept;
