@@ -675,7 +675,7 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
     nixlBackendEngine *eng = backendEngines[backend];
     if (!eng->supportsRemote()) {
         NIXL_ERROR << backend << " does not support remote operations";
-        return NIXL_ERR_UNKNOWN;
+        return NIXL_ERR_NOT_SUPPORTED;
     }
 
     const nixl_status_t ret = eng->loadRemoteConnInfo(remote_name, conn_info);
