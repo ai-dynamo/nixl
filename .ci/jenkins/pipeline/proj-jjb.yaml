@@ -96,8 +96,8 @@
 - job-template:
     name: "{jjb_proj}-build"      # Will be expanded to 'nixl-ci-build'
     project-type: pipeline
-    disabled: false
     folder: "{jjb_folder}"
+    disabled: false
     properties:
         # Similar properties as dispatcher job
         - github:
@@ -218,14 +218,14 @@
                     parent-credentials: true
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
-# Template for NIXLBench container build job
-# Builds and pushes NIXLBench container images for x86_64 and aarch64
+# Template for NIXL build container job
+# Builds and pushes NIXL and NIXLBench container images for x86_64 and aarch64
 # Supports nightly automatic builds and manual builds via parameters
 - job-template:
-    name: "{jjb_proj}-nixlbench-container-build"
+    name: "{jjb_proj}-build-container"
     project-type: pipeline
-    disabled: false
     folder: "{jjb_folder}"
+    disabled: false
     properties:
       - build-discarder:
           days-to-keep: 30
@@ -233,22 +233,37 @@
       - inject:
           keep-system-variables: true
           properties-content: |
-            jjb_proj={jjb_proj}-nixlbench-container-build
-            conf_file=.ci/jenkins/lib/nixlbench-container-build-matrix.yaml
+            jjb_proj={jjb_proj}-build-container
+            conf_file=.ci/jenkins/lib/build-container-matrix.yaml
     description: >
-      <b>NIXLBench container build</b><br/>
+      <b>NIXL container build</b><br/>
       • Builds and pushes x86_64 &amp; aarch64 images with any NIXL/UCX version combination<br/>
+      • Choose between <b>nixlbench</b> or <b>nixl</b> build targets<br/>
       • Optional latest tag update via <code>UPDATE_LATEST</code> parameter<br/>
-      • All images pushed to unified path: <code>verification/nixlbench/</code><br/>
+      • Images pushed to: <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
       <br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
-    concurrent: false
+    concurrent: true
     sandbox: true
     # Nightly scheduler for automatic builds with default versions
     triggers:
-      - timed: "H 3 * * *" # Run nightly around 3 AM (H adds randomness within the hour)
+      - parameterized-timer:
+          cron: |
+            # Build nixlbench nightly around 3 AM - Ubuntu 24.04
+            H 3 * * * %BUILD_TARGET=nixlbench;UPDATE_LATEST=true
+            # Build nixl nightly around 4 AM - Ubuntu 24.04
+            H 4 * * * %BUILD_TARGET=nixl;UPDATE_LATEST=true
     # Manual build parameters
     parameters:
+      - choice:
+          name: "BUILD_TARGET"
+          choices:
+            - "nixlbench"
+            - "nixl"
+          description: >
+            Build target:<br/>
+            • <b>nixlbench</b>: Builds NIXLBench container with benchmark tools<br/>
+            • <b>nixl</b>: Builds NIXL library container
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
@@ -269,8 +284,8 @@
           name: "TAG_SUFFIX"
           default: ""
           description: >
-            Optional tag suffix. Does not apply if update latest is set. Tag format:<br/>
-            <code>&lt;base-image-tag&gt;-nixl-&lt;nixl-version&gt;-ucx-&lt;ucx-version&gt;-&lt;arch&gt;[-&lt;suffix&gt;]</code><br/>
+            Optional tag suffix. Tag format:<br/>
+            <code>&lt;base-image-tag&gt;-&lt;nixl-version&gt;-ucx-&lt;ucx-version&gt;-&lt;arch&gt;[-&lt;suffix&gt;]</code><br/>
       - bool:
           name: "UPDATE_LATEST"
           default: false
@@ -278,6 +293,10 @@
             Update the latest tag for this architecture.<br/>
             When enabled, also creates: <code>&lt;base-image-tag&gt;-&lt;arch&gt;-latest</code><br/>
             Example: <code>25.03-cuda12.8-devel-ubuntu24.04-aarch64-latest</code><br/>
+      - string:
+          name: "MAIL_TO"
+          default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
+          description: "Email address to send build results (optional)"
     # SCM configuration
     pipeline-scm:
       scm:
@@ -310,5 +329,5 @@
     jobs:
         - "{jjb_proj}-dispatcher"  # Create dispatcher job
         - "{jjb_proj}-build"       # Create build job
-        - "{jjb_proj}-nixlbench-container-build"  # Create NIXLBench container build job
+        - "{jjb_proj}-build-container"  # Create container builder job
         - "{jjb_proj}-test"        # Create test job
