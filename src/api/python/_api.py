@@ -47,7 +47,7 @@ class nixl_agent_config:
         enable_prog_thread: bool = True,
         enable_listen_thread: bool = False,
         listen_port: int = 0,
-        backends: list[str] = None,
+        backends: Optional[list[str]] = None,
     ):
         # TODO: add backend init parameters
         if backends is None:
@@ -231,7 +231,7 @@ class nixl_agent:
     @param initParams Dictionary of initialization parameters.
     """
 
-    def create_backend(self, backend: str, initParams: dict[str, str] = None):
+    def create_backend(self, backend: str, initParams: Optional[dict[str, str]] = None):
         if initParams is None:
             initParams = {}
 
@@ -260,7 +260,7 @@ class nixl_agent:
         reg_list,
         mem_type: Optional[str] = None,
         is_sorted: bool = False,
-        backends: list[str] = None,
+        backends: Optional[list[str]] = None,
     ) -> nixlBind.nixlRegDList:
         if backends is None:
             backends = []
@@ -283,7 +283,7 @@ class nixl_agent:
     """
 
     def deregister_memory(
-        self, dereg_list: nixlBind.nixlRegDList, backends: list[str] = None
+        self, dereg_list: nixlBind.nixlRegDList, backends: Optional[list[str]] = None
     ):
         if backends is None:
             backends = []
@@ -326,7 +326,7 @@ class nixl_agent:
     @param remote_agent Name of the remote agent.
     """
 
-    def make_connection(self, remote_agent: str, backends: list[str] = None):
+    def make_connection(self, remote_agent: str, backends: Optional[list[str]] = None):
         if backends is None:
             backends = []
 
@@ -364,7 +364,7 @@ class nixl_agent:
         xfer_list,
         mem_type: Optional[str] = None,
         is_sorted: bool = False,
-        backends: list[str] = None,
+        backends: Optional[list[str]] = None,
     ) -> nixl_prepped_dlist_handle:
         if backends is None:
             backends = []
@@ -423,7 +423,7 @@ class nixl_agent:
         remote_xfer_side: nixl_prepped_dlist_handle,
         remote_indices: Union[list[int], np.ndarray],
         notif_msg: bytes = b"",
-        backends: list[str] = None,
+        backends: Optional[list[str]] = None,
         skip_desc_merge: bool = False,
     ) -> nixl_xfer_handle:
         if backends is None:
@@ -471,7 +471,7 @@ class nixl_agent:
         remote_descs: nixlBind.nixlXferDList,
         remote_agent: str,
         notif_msg: bytes = b"",
-        backends: list[str] = None,
+        backends: Optional[list[str]] = None,
     ) -> nixl_xfer_handle:
         if backends is None:
             backends = []
@@ -570,7 +570,7 @@ class nixl_agent:
             Return Dict is a map of remote agent names to a list of notification messages from that agent.
     """
 
-    def get_new_notifs(self, backends: list[str] = None) -> dict[str, list[bytes]]:
+    def get_new_notifs(self, backends: Optional[list[str]] = None) -> dict[str, list[bytes]]:
         if backends is None:
             backends = []
 
@@ -587,7 +587,7 @@ class nixl_agent:
     @return Dictionary of updated notifications.
     """
 
-    def update_notifs(self, backends: list[str] = None) -> dict[str, list[bytes]]:
+    def update_notifs(self, backends: Optional[list[str]] = None) -> dict[str, list[bytes]]:
         if backends is None:
             backends = []
 
@@ -613,7 +613,7 @@ class nixl_agent:
         self,
         remote_agent_name: str,
         lookup_tag: bytes,
-        backends: list[str] = None,
+        backends: Optional[list[str]] = None,
         tag_is_prefix=True,
     ) -> bool:
         if backends is None:
@@ -679,7 +679,7 @@ class nixl_agent:
         self,
         descs: nixlBind.nixlRegDList,
         inc_conn_info: bool = False,
-        backends: list[str] = None,
+        backends: Optional[list[str]] = None,
     ) -> bytes:
         if backends is None:
             backends = []
@@ -743,7 +743,7 @@ class nixl_agent:
         self,
         descs: nixlBind.nixlRegDList,
         inc_conn_info: bool = False,
-        backends: list[str] = None,
+        backends: Optional[list[str]] = None,
         ip_addr: str = "",
         port: int = DEFAULT_COMM_PORT,
         label: str = "",
