@@ -59,4 +59,4 @@ disable = [
 extension-pkg-allow-list = ["nixl._bindings", "nixl._utils"]
 
 [tool.mypy]
-explicit_package_bases = True
+explicit_package_bases = true
