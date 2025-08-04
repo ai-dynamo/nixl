@@ -44,8 +44,9 @@ public:
         for (auto &entry : buf_) {
             uint8_t expected_byte = start_byte++;
             if (entry != expected_byte) {
-                NIXL_ERROR << "Verification failed! local: " << entry
-                           << ", expected: " << expected_byte;
+                NIXL_ERROR << absl::StrFormat("Byte mismatch: actual=0x%x, expected=0x%x",
+                                              static_cast<int>(entry),
+                                              static_cast<int>(expected_byte));
                 return false;
             }
         }
@@ -105,8 +106,8 @@ public:
 
     void
     populateMetaDesc(nixlMetaDesc *desc, int entry_index, size_t entry_size) {
-        desc->addr = 0;
-        desc->len = len_;
+        desc->addr = entry_index * entry_size;
+        desc->len = entry_size;
         desc->devId = devId_;
         desc->metadataP = md_;
     }
