@@ -108,6 +108,14 @@ steps:
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
 
+  - name: Test Nixlbench
+    parallel: false
+    run: |
+      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_nixlbench.sh ${INSTALL_DIR}"
+    always: |
+      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+
 # once this fix is merged we can use the following to stop/kill/rm the container instead of the cleanup command in each step
 # https://github.com/Mellanox/ci-demo/pull/111
 # pipeline_stop:
