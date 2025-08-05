@@ -69,7 +69,9 @@ use bindings::{
     nixl_capi_xfer_dlist_is_sorted, nixl_capi_xfer_dlist_trim, nixl_capi_xfer_dlist_rem_desc,
     nixl_capi_xfer_dlist_print, nixl_capi_create_xfer_dlist_handle, nixl_capi_destroy_xfer_dlist_handle,
     nixl_capi_reg_dlist_is_sorted, nixl_capi_gen_notif, nixl_capi_estimate_xfer_cost,
-
+    nixl_capi_query_mem, nixl_capi_create_query_resp_list, nixl_capi_destroy_query_resp_list,
+    nixl_capi_query_resp_list_size, nixl_capi_query_resp_list_has_value,
+    nixl_capi_query_resp_list_get_params,
 };
 
 // Re-export status codes
