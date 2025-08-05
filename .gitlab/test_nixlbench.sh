@@ -14,10 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-# shellcheck disable=SC1091
-. "$(dirname "$0")/../.ci/scripts/common.sh"
-
 set -e
 set -x
 TEXT_YELLOW="\033[1;33m"
@@ -29,10 +25,6 @@ if [ "$(id -u)" -ne 0 ]; then
 else
     SUDO=""
 fi
-
-$SUDO apt-get update
-$SUDO apt-get -qq install -y libaio-dev
-
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
@@ -61,46 +53,37 @@ ibv_devinfo || true
 uname -a || true
 
 echo "==== Running ETCD server ===="
-etcd_port=$(get_next_tcp_port)
-etcd_peer_port=$(get_next_tcp_port)
-export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
-export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
-etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
-     --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
-     --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
+export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:2379"
+etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} &
 sleep 5
 
-echo "==== Running C++ tests ===="
+echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
-./bin/desc_example
-./bin/agent_example
-./bin/nixl_example
-./bin/nixl_etcd_example
-./bin/ucx_backend_test
-./bin/ucx_mo_backend_test
 
-# POSIX test disabled until we solve io_uring and Docker compatibility
+run_nixlbench() {
+    args="$@"
+    ./bin/nixlbench --etcd-endpoints http://127.0.0.1:2379 --initiator_seg_type DRAM --target_seg_type DRAM --filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
+}
 
-./bin/nixl_posix_test -n 128 -s 1048576
+run_nixlbench_one_worker() {
+    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    args="$@"
+    run_nixlbench --benchmark_group $benchmark_group $args
+}
 
-./bin/ucx_backend_multi
-./bin/serdes_test
+run_nixlbench_two_workers() {
+    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    args="$@"
+    run_nixlbench --benchmark_group $benchmark_group $args &
+    pid=$!
+    sleep 1
+    run_nixlbench --benchmark_group $benchmark_group $args
+    wait $pid
+}
 
-# shellcheck disable=SC2154
-./bin/gtest --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
-./bin/test_plugin
-
-# Run NIXL client-server test
-nixl_test_port=$(get_next_tcp_port)
-
-./bin/nixl_test target 127.0.0.1 "$nixl_test_port"&
-sleep 1
-./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
-
-echo "${TEXT_YELLOW}==== Disabled tests==="
-echo "./bin/md_streamer disabled"
-echo "./bin/p2p_test disabled"
-echo "./bin/ucx_worker_test disabled"
-echo "${TEXT_CLEAR}"
+run_nixlbench_two_workers --backend UCX --op_type READ
+run_nixlbench_two_workers --backend UCX --op_type WRITE
+run_nixlbench_one_worker --backend POSIX --op_type READ
+run_nixlbench_one_worker --backend POSIX --op_type WRITE
 
 pkill etcd
