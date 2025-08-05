@@ -85,6 +85,10 @@ struct nixl_capi_notif_map_s {
   nixl_notifs_t notif_map;
 };
 
+struct nixl_capi_query_resp_list_s {
+    std::vector<nixl_query_resp_t> responses;
+};
+
 nixl_capi_status_t
 nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent)
 {
@@ -1136,25 +1140,33 @@ nixl_capi_reg_dlist_verify_sorted(nixl_capi_reg_dlist_t dlist, bool* is_sorted)
 }
 
 nixl_capi_status_t
-nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist, uintptr_t addr, size_t len, uint64_t dev_id)
-{
-  if (!dlist) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
+nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist,
+                             uintptr_t addr,
+                             size_t len,
+                             uint64_t dev_id,
+                             const void *metadata,
+                             size_t metadata_len) {
+    if (!dlist) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
 
-  try {
-    nixlBlobDesc desc(addr, len, dev_id);  // Empty metadata
-    dlist->dlist->addDesc(desc);
+    try {
+        nixl_blob_t meta_blob;
+        if (metadata && metadata_len > 0) {
+            meta_blob.assign((const char *)metadata, metadata_len);
+        }
+        nixlBlobDesc desc(addr, len, dev_id, meta_blob);
+        dlist->dlist->addDesc(desc);
 #ifdef NIXL_DEBUG
-    printf("** Adding descriptor\n");
-    dlist->dlist->print();
-    printf("** Added descriptor\n");
+        printf("** Adding descriptor\n");
+        dlist->dlist->print();
+        printf("** Added descriptor\n");
 #endif
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 nixl_capi_status_t
@@ -1713,6 +1725,113 @@ nixl_capi_notif_map_clear(nixl_capi_notif_map_t map)
   catch (const std::exception& e) {
     return NIXL_CAPI_ERROR_BACKEND;
   }
+}
+
+// Query response list functions
+nixl_capi_status_t
+nixl_capi_create_query_resp_list(nixl_capi_query_resp_list_t *list) {
+    if (!list) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        auto resp_list = new nixl_capi_query_resp_list_s;
+        *list = resp_list;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_destroy_query_resp_list(nixl_capi_query_resp_list_t list) {
+    if (!list) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        delete list;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_query_resp_list_size(nixl_capi_query_resp_list_t list, size_t *size) {
+    if (!list || !size) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        *size = list->responses.size();
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_query_resp_list_has_value(nixl_capi_query_resp_list_t list,
+                                    size_t index,
+                                    bool *has_value) {
+    if (!list || !has_value || index >= list->responses.size()) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        *has_value = list->responses[index].has_value();
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_query_resp_list_get_params(nixl_capi_query_resp_list_t list,
+                                     size_t index,
+                                     nixl_capi_params_t *params) {
+    if (!list || !params || index >= list->responses.size()) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        if (!list->responses[index].has_value()) {
+            return NIXL_CAPI_ERROR_INVALID_PARAM;
+        }
+
+        auto param_list = new nixl_capi_params_s;
+        param_list->params = list->responses[index].value();
+        *params = param_list;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+// Query memory function
+nixl_capi_status_t
+nixl_capi_query_mem(nixl_capi_agent_t agent,
+                    nixl_capi_reg_dlist_t descs,
+                    nixl_capi_query_resp_list_t resp,
+                    nixl_capi_opt_args_t opt_args) {
+    if (!agent || !descs || !resp) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        nixl_opt_args_t *args = opt_args ? &opt_args->args : nullptr;
+        nixl_status_t ret = agent->inner->queryMem(*descs->dlist, resp->responses, args);
+        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 }  // extern "C"
