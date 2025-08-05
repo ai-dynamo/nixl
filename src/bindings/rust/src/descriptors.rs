@@ -15,9 +15,11 @@
 
 use super::*;
 
+mod query;
 mod reg;
 mod xfer;
 
+pub use query::{QueryResponse, QueryResponseIterator, QueryResponseList};
 pub use reg::RegDescList;
 pub use xfer::XferDescList;
 
