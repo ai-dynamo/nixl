@@ -64,9 +64,9 @@ etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_
 sleep 5
 
 echo "==== Running python tests ===="
-python3 examples/python/nixl_api_example.py
-python3 examples/python/partial_md_example.py
-python3 examples/python/partial_md_example.py --etcd
+python3 -m examples.python.nixl_api_example
+python3 -m examples.python.partial_md_example
+python3 -m examples.python.partial_md_example --etcd
 pytest test/python
 
 python3 test/python/prep_xfer_perf.py list
@@ -75,11 +75,10 @@ python3 test/python/prep_xfer_perf.py array
 echo "==== Running python examples ===="
 blocking_send_recv_port=$(get_next_tcp_port)
 
-cd examples/python
-python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
+python3 -m examples.python.blocking_send_recv_example --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
 sleep 5
-python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
+python3 -m examples.python.blocking_send_recv_example --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
 
-python3 query_mem_example.py
+python3 -m examples.python.query_mem_example
 
 pkill etcd
