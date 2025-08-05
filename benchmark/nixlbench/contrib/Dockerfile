@@ -47,6 +47,7 @@ RUN apt-get update -y && \
     libtool \
     libz-dev \
     flex \
+    valgrind \
     libgtest-dev \
     build-essential
 
@@ -74,6 +75,7 @@ RUN echo "INFO: Using UCX from base image (UCX=${UCX})."
 
 # --- Stage 2b: Represents building UCX from source ---
 FROM os_setup_stage AS ucx_custom_image
+ARG BUILD_TYPE="release"
 ARG NPROC
 RUN mkdir -p /workspace/ucx
 COPY --from=ucx . /workspace/ucx
@@ -90,6 +92,7 @@ RUN echo "INFO: Starting custom UCX build..." && \
     ./autogen.sh && \
     echo "INFO: Building UCX..." && \
     ./contrib/configure-release --with-cuda=/usr/local/cuda \
+                                $(if [ "$BUILD_TYPE" = "debug" ]; then echo "--enable-debug"; fi) \
                                 --enable-mt \
                                 --without-go && \
     make -j${NPROC:-$(nproc)} && \
