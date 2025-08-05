@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 TEXT_YELLOW="\033[1;33m"
@@ -53,8 +57,13 @@ ibv_devinfo || true
 uname -a || true
 
 echo "==== Running ETCD server ===="
-export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:2379"
-etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} &
+etcd_port=$(get_next_tcp_port)
+etcd_peer_port=$(get_next_tcp_port)
+export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
+export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
+etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
+     --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
+     --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
 sleep 5
 
 echo "==== Running Nixlbench tests ===="
@@ -62,7 +71,7 @@ cd ${INSTALL_DIR}
 
 run_nixlbench() {
     args="$@"
-    ./bin/nixlbench --etcd-endpoints http://127.0.0.1:2379 --initiator_seg_type DRAM --target_seg_type DRAM --filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
+    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} --initiator_seg_type DRAM --target_seg_type DRAM --filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
 }
 
 run_nixlbench_one_worker() {
