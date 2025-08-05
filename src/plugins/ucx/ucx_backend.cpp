@@ -323,12 +323,10 @@ protected:
 
     // Notification to be sent after completion of all requests
     struct Notif {
-        std::string agent;
-        nixl_blob_t payload;
-
-        Notif(const std::string &remote_agent, const nixl_blob_t &msg)
-            : agent(remote_agent),
-              payload(msg) {}
+	    std::string agent;
+	    nixl_blob_t payload;
+	    Notif(const std::string& remote_agent, const nixl_blob_t& msg)
+		    : agent(remote_agent), payload(msg) {}
     };
     std::optional<Notif> notif;
 
