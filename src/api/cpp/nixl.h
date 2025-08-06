@@ -290,6 +290,15 @@ class nixlAgent {
         getXferStatus (nixlXferReqH* req_hndl) const;
 
         /**
+         * @brief  Get the telemetry of a transfer request
+         *
+         * @param  req_hndl      Transfer request handle after postXferReq
+         * @return nixl_xfer_telemetry_t Telemetry of the transfer request
+         */
+        nixl_xfer_telemetry_t
+        getXferTelemetry (nixlXferReqH *req_hndl) const;
+
+        /**
          * @brief  Query the backend associated with `req_hndl`. E.g., if for genNotif
          *         the same backend as a transfer is desired.
          *
