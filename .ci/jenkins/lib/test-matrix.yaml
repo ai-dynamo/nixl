@@ -36,7 +36,7 @@ matrix:
 env:
   INSTALL_DIR: ${WORKSPACE}/nixl_install
   UCX_VERSION: v1.19.x
-  TEST_TIMEOUT: 1
+  TEST_TIMEOUT: timeout 30m
 
 steps:
   - name: Get Environment Info
@@ -96,7 +96,7 @@ steps:
   - name: Test CPP
     parallel: false
     run: |
-      timeout ${TEST_TIMEOUT} docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
+      ${TEST_TIMEOUT} docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -104,7 +104,7 @@ steps:
   - name: Test Python
     parallel: false
     run: |
-      timeout ${TEST_TIMEOUT} docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
+      ${TEST_TIMEOUT} docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
     always: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
