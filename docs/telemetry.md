@@ -51,7 +51,7 @@ Telemetry is controlled by environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `NIXL_ENABLE_TELEMETRY` | Enable telemetry collection | Disabled |
+| `NIXL_TELEMETRY_ENABLE` | Enable telemetry collection | Disabled |
 | `NIXL_TELEMETRY_DIR` | Directory for telemetry files | `/tmp` |
 | `NIXL_TELEMETRY_BUFFER_SIZE` | Number of events in buffer | `4096` |
 | `NIXL_TELEMETRY_RUN_INTERVAL` | Flush interval (ms) | `100` |

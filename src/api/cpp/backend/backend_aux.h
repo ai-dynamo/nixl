@@ -55,7 +55,6 @@ class nixlBackendInitParams {
         bool              enableProgTh;
         nixlTime::us_t    pthrDelay;
         nixl_thread_sync_t syncMode;
-        std::shared_ptr<nixlTelemetry> telemetry;
 };
 
 // Pure virtual class to have a common pointer type

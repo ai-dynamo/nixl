@@ -86,21 +86,31 @@ nixlEnumStrings::telemetryCategoryStr(const nixl_telemetry_category_t &category)
 }
 
 void
-nixlXferReqH::updateRequestStats(std::shared_ptr<nixlTelemetry> telemetry_buffer) {
+nixlXferReqH::updateRequestStats(std::shared_ptr<nixlTelemetry> telemetry_pub) {
+    std::chrono::microseconds duration;
+
     if (status == NIXL_SUCCESS) {
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        duration = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - telemetry.startTime);
-        telemetry_buffer->addTransactionTime(duration);
+        NIXL_DEBUG << "[NIXL TELEMETRY]: From backend " << engine->getType()
+                   << " Posted and completed "
+                   << " Xfer with " << initiatorDescs->descCount() << " descriptors of total size "
+                   << telemetry.totalBytes << "B in " << duration.count() << "us.";
+    }
+    if (!telemetry_pub->isEnabled()) return;
+
+    if (status == NIXL_SUCCESS) {
+        telemetry_pub->addTransactionTime(duration);
         if (backendOp == NIXL_WRITE) {
-            telemetry_buffer->updateTxBytes(telemetry.totalBytes);
-            telemetry_buffer->updateTxRequestsNum(1);
+            telemetry_pub->updateTxBytes(telemetry.totalBytes);
+            telemetry_pub->updateTxRequestsNum(1);
         } else {
-            telemetry_buffer->updateRxBytes(telemetry.totalBytes);
-            telemetry_buffer->updateRxRequestsNum(1);
+            telemetry_pub->updateRxBytes(telemetry.totalBytes);
+            telemetry_pub->updateRxRequestsNum(1);
         }
     } else if (status != NIXL_IN_PROG) {
         // don't count NIXL_IN_PROG since there are a lot
-        telemetry_buffer->updateErrorCount(status);
+        telemetry_pub->updateErrorCount(status);
     }
 }
 
@@ -275,7 +285,6 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.enableProgTh = data->config.useProgThread;
     init_params.pthrDelay = data->config.pthrDelay;
     init_params.syncMode = data->config.syncMode;
-    init_params.telemetry = data->telemetry_;
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -988,10 +997,10 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
             delete req_hndl;
             return NIXL_ERR_NOT_FOUND;
         }
-        req_hndl->status = req_hndl->engine->checkXfer(
-                                     req_hndl->backendHandle);
+        req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
+    } else {
+        req_hndl->updateRequestStats(data->telemetry_);
     }
-    req_hndl->updateRequestStats(data->telemetry_);
 
     return req_hndl->status;
 }

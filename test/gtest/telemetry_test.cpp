@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <unistd.h>
 #include <climits>
+#include <atomic>
 
 #include "telemetry.h"
 #include "nixl_types.h"
@@ -43,8 +44,8 @@ protected:
             fs::create_directory(test_dir);
         }
 
-        env_helper.addVar("NIXL_ENABLE_TELEMETRY", "1");
-        env_helper.addVar("NIXL_TELEMETRY_DIR", test_dir.string());
+        env_helper.addVar(TELEMETRY_ENABLED_VAR, "1");
+        env_helper.addVar(TELEMETRY_DIR_VAR, test_dir.string());
     }
 
     void
@@ -64,8 +65,8 @@ protected:
     void
     validateState() {
         auto path = fs::path(test_dir) / test_file;
-        auto buffer =
-            std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path.string(), false, 0);
+        auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+            path.string(), false, TELEMETRY_VERSION);
         EXPECT_EQ(buffer->version(), TELEMETRY_VERSION);
         EXPECT_EQ(buffer->capacity(), capacity_);
         EXPECT_EQ(buffer->size(), size_);
@@ -76,14 +77,14 @@ protected:
     fs::path test_dir;
     std::string test_file;
     gtest::ScopedEnv env_helper;
-    size_t capacity_ = DEFAULT_TELEMETRY_BUFFER_SIZE;
+    size_t capacity_ = 4096;
     size_t size_ = 0;
     size_t read_pos_ = 0;
     size_t write_pos_ = 0;
-    size_t mask_ = DEFAULT_TELEMETRY_BUFFER_SIZE - 1;
+    size_t mask_ = 4096 - 1;
 };
 
-#ifdef NIXL_ENABLE_TELEMETRY
+#ifdef NIXL_TELEMETRY_ENABLE
 
 TEST_F(telemetryTest, BasicInitialization) {
     EXPECT_NO_THROW({
@@ -108,7 +109,7 @@ TEST_F(telemetryTest, InitializationWithEmptyFileName) {
 TEST_F(telemetryTest, TelemetryDisabled) {
     std::string test_file = "test_telemetry_disabled";
 
-    unsetenv("NIXL_ENABLE_TELEMETRY");
+    unsetenv(TELEMETRY_ENABLED_VAR);
     EXPECT_NO_THROW({
         nixlTelemetry telemetry(test_file);
         EXPECT_FALSE(telemetry.isEnabled());
@@ -116,13 +117,13 @@ TEST_F(telemetryTest, TelemetryDisabled) {
     });
 
     // Restore environment variable
-    setenv("NIXL_ENABLE_TELEMETRY", "1", 1);
+    setenv(TELEMETRY_ENABLED_VAR, "1", 1);
 }
 
 TEST_F(telemetryTest, CustomBufferSize) {
     auto tmp_capacity = capacity_;
     capacity_ = 32;
-    env_helper.addVar("NIXL_TELEMETRY_BUFFER_SIZE", "32");
+    env_helper.addVar(TELEMETRY_BUFFER_SIZE_VAR, "32");
 
     EXPECT_NO_THROW({
         nixlTelemetry telemetry(test_file);
@@ -134,18 +135,18 @@ TEST_F(telemetryTest, CustomBufferSize) {
 }
 
 TEST_F(telemetryTest, InvalidBufferSize) {
-    env_helper.addVar("NIXL_TELEMETRY_BUFFER_SIZE", "0");
+    env_helper.addVar(TELEMETRY_BUFFER_SIZE_VAR, "0");
 
     EXPECT_THROW({ nixlTelemetry telemetry(test_file); }, std::invalid_argument);
     env_helper.popVar();
-    env_helper.addVar("NIXL_TELEMETRY_BUFFER_SIZE", "1023");
+    env_helper.addVar(TELEMETRY_BUFFER_SIZE_VAR, "1023");
     EXPECT_THROW({ nixlTelemetry telemetry(test_file); }, std::invalid_argument);
     env_helper.popVar();
 }
 
 // Test transfer bytes tracking
 TEST_F(telemetryTest, TransferBytesTracking) {
-    env_helper.addVar("NIXL_TELEMETRY_RUN_INTERVAL", "1");
+    env_helper.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
     nixlTelemetry telemetry(test_file);
 
     EXPECT_NO_THROW(telemetry.updateTxBytes(1024));
@@ -160,7 +161,8 @@ TEST_F(telemetryTest, TransferBytesTracking) {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
     auto path = fs::path(test_dir) / test_file;
-    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path.string(), false);
+    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+        path.string(), false, TELEMETRY_VERSION);
     EXPECT_EQ(buffer->size(), 9);
     EXPECT_EQ(buffer->version(), TELEMETRY_VERSION);
     EXPECT_EQ(buffer->capacity(), capacity_);
@@ -216,7 +218,7 @@ TEST_F(telemetryTest, EmptyEventNames) {
 }
 
 TEST_F(telemetryTest, ShortRunInterval) {
-    env_helper.addVar("NIXL_TELEMETRY_RUN_INTERVAL", "1");
+    env_helper.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
     std::string test_file = "test_short_interval";
 
@@ -228,7 +230,7 @@ TEST_F(telemetryTest, ShortRunInterval) {
 }
 
 TEST_F(telemetryTest, LargeRunInterval) {
-    env_helper.addVar("NIXL_TELEMETRY_RUN_INTERVAL", "10000");
+    env_helper.addVar(TELEMETRY_RUN_INTERVAL_VAR, "10000");
 
     std::string test_file = "test_large_interval";
 
@@ -240,7 +242,7 @@ TEST_F(telemetryTest, LargeRunInterval) {
 }
 
 TEST_F(telemetryTest, BufferOverflowHandling) {
-    env_helper.addVar("NIXL_TELEMETRY_BUFFER_SIZE", "4");
+    env_helper.addVar(TELEMETRY_BUFFER_SIZE_VAR, "4");
 
     std::string test_file = "test_buffer_overflow";
     nixlTelemetry telemetry(test_file);
@@ -255,7 +257,7 @@ TEST_F(telemetryTest, BufferOverflowHandling) {
 TEST_F(telemetryTest, CustomTelemetryDirectory) {
     fs::path custom_dir = test_dir / "custom_telemetry";
     fs::create_directory(custom_dir);
-    env_helper.addVar("NIXL_TELEMETRY_DIR", custom_dir.string());
+    env_helper.addVar(TELEMETRY_DIR_VAR, custom_dir.string());
 
     std::string test_file = "test_custom_dir";
     EXPECT_NO_THROW({
@@ -269,7 +271,8 @@ TEST_F(telemetryTest, CustomTelemetryDirectory) {
 }
 
 TEST_F(telemetryTest, TelemetryCategoryStringConversion) {
-    for (int i = 0; i < static_cast<int>(nixl_telemetry_category_t::NIXL_TELEMETRY_MAX); ++i) {
+    for (int i = 0; i < static_cast<int>(nixl_telemetry_category_t::NIXL_TELEMETRY_CUSTOM) + 1;
+         ++i) {
         auto category = static_cast<nixl_telemetry_category_t>(i);
         std::string category_str = nixlEnumStrings::telemetryCategoryStr(category);
         EXPECT_FALSE(category_str.empty());
@@ -283,7 +286,7 @@ TEST_F(telemetryTest, TelemetryCategoryStringConversion) {
 
 // Test concurrent access (basic thread safety)
 TEST_F(telemetryTest, ConcurrentAccess) {
-    env_helper.addVar("NIXL_TELEMETRY_RUN_INTERVAL", "1");
+    env_helper.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
     test_file = "test_concurrent_access";
     nixlTelemetry telemetry(test_file);
 
@@ -324,6 +327,143 @@ TEST_F(telemetryTest, ConcurrentAccess) {
     write_pos_ = size_;
     validateState();
     env_helper.popVar();
+}
+
+TEST_F(telemetryTest, RuntimeEnableDisable) {
+    env_helper.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    // start with telemetry disabled
+    unsetenv(TELEMETRY_ENABLED_VAR);
+
+    nixlTelemetry telemetry(test_file);
+    EXPECT_FALSE(telemetry.isEnabled());
+
+    // enable telemetry
+    setenv(TELEMETRY_ENABLED_VAR, "1", 1);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+    EXPECT_TRUE(telemetry.isEnabled());
+
+    telemetry.updateTxBytes(1024);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    auto path = fs::path(test_dir) / test_file;
+    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+        path.string(), false, TELEMETRY_VERSION);
+    EXPECT_EQ(buffer->size(), 1);
+
+    // disable telemetry
+    unsetenv(TELEMETRY_ENABLED_VAR);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+    EXPECT_FALSE(telemetry.isEnabled());
+
+    size_t initial_size = buffer->size();
+    // will be ignored because telemetry is disabled
+    telemetry.updateRxBytes(1000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    EXPECT_EQ(buffer->size(), initial_size);
+
+    // re-enable telemetry
+    setenv(TELEMETRY_ENABLED_VAR, "1", 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+    EXPECT_TRUE(telemetry.isEnabled());
+    telemetry.updateRxBytes(2048);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+        path.string(), false, TELEMETRY_VERSION);
+    // buffer is reset so it will be 1
+    EXPECT_EQ(buffer->size(), initial_size);
+    env_helper.popVar();
+}
+
+TEST_F(telemetryTest, CleanupOnDisable) {
+    nixlTelemetry telemetry(test_file);
+    EXPECT_TRUE(telemetry.isEnabled());
+
+    // Add some events
+    telemetry.updateTxBytes(1024);
+    telemetry.updateRxBytes(2048);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    // Disable telemetry
+    unsetenv(TELEMETRY_ENABLED_VAR);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+
+    EXPECT_FALSE(telemetry.isEnabled());
+
+    // Verify that adding events when disabled doesn't cause issues
+    EXPECT_NO_THROW(telemetry.updateTxBytes(4096));
+    EXPECT_NO_THROW(telemetry.updateRxBytes(8192));
+    EXPECT_NO_THROW(telemetry.updateErrorCount(nixl_status_t::NIXL_ERR_BACKEND));
+    EXPECT_NO_THROW(telemetry.updateMemoryRegistered(1024));
+    EXPECT_NO_THROW(telemetry.updateMemoryDeregistered(512));
+    EXPECT_NO_THROW(telemetry.addTransactionTime(std::chrono::microseconds(100)));
+    EXPECT_NO_THROW(telemetry.addGeneralTelemetry("test_event", 100));
+}
+
+TEST_F(telemetryTest, ConcurrentAccessWithRuntimeChanges) {
+    nixlTelemetry telemetry(test_file);
+    EXPECT_TRUE(telemetry.isEnabled());
+
+    const int num_threads = 4;
+    const int operations_per_thread = 50;
+    std::atomic<bool> stop_threads(false);
+    std::atomic<int> size(0);
+    std::vector<std::thread> threads;
+
+    // Create threads that perform telemetry operations
+    for (int i = 0; i < num_threads; ++i) {
+        threads.emplace_back([&telemetry, i, &stop_threads, &size]() {
+            for (int j = 0; j < operations_per_thread && !stop_threads; ++j) {
+                switch (i % 4) {
+                case 0:
+                    telemetry.updateTxBytes(j * 100);
+                    size += 1;
+                    break;
+                case 1:
+                    telemetry.updateRxBytes(j * 50);
+                    size += 1;
+                    break;
+                case 2:
+                    telemetry.updateTxRequestsNum(j);
+                    size += 1;
+                    break;
+                case 3:
+                    telemetry.updateRxRequestsNum(j);
+                    size += 1;
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+    }
+
+    // Change telemetry state while threads are running
+    std::thread state_change_thread([&stop_threads]() {
+        for (int i = 0; i < 3 && !stop_threads; ++i) {
+            unsetenv(TELEMETRY_ENABLED_VAR);
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            setenv(TELEMETRY_ENABLED_VAR, "1", 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    });
+
+    // Wait for all threads to complete
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    EXPECT_EQ(size, operations_per_thread * num_threads);
+    size_ = size;
+    read_pos_ = 0;
+    write_pos_ = size;
+    validateState();
+    stop_threads = true;
+    state_change_thread.join();
+
+    // Verify no crashes occurred and telemetry is in a consistent state
+    EXPECT_NO_THROW({
+        telemetry.updateTxBytes(1000);
+        telemetry.updateRxBytes(2000);
+    });
 }
 
 #else

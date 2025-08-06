@@ -32,7 +32,7 @@
 namespace fs = std::filesystem;
 
 #include "common/cyclic_buffer.h"
-#include "nixl_types.h"
+#include "nixl_telemetry.h"
 
 volatile bool g_running = true;
 

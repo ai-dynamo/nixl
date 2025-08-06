@@ -29,14 +29,11 @@
 
 #include "common/nixl_log.h"
 #include "util.h"
-#include "nixl_types.h"
+
 
 template<typename T> class sharedRingBuffer {
 public:
-    sharedRingBuffer(const std::string &name,
-                     bool create,
-                     size_t size = 0,
-                     int version = TELEMETRY_VERSION)
+    sharedRingBuffer(const std::string &name, bool create, int version, size_t size = 0)
         : header_(nullptr),
           data_(nullptr),
           bufferSize_(size) {
@@ -218,7 +215,8 @@ private:
             unlink(name.c_str());
             NIXL_ERROR << "Version mismatch: expected " + std::to_string(version) + ", got " +
                     std::to_string(current_version);
-            throw std::runtime_error("Version mismatch");
+            throw std::runtime_error("Version mismatch: expected " + std::to_string(version) +
+                                     ", got " + std::to_string(current_version));
         }
 
         // Read the buffer size from header

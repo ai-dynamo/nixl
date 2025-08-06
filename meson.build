@@ -136,7 +136,7 @@ endif
 
 # Configure telemetry
 if get_option('enable_telemetry')
-    add_project_arguments('-DNIXL_ENABLE_TELEMETRY', language: 'cpp')
+    add_project_arguments('-DNIXL_TELEMETRY_ENABLE', language: 'cpp')
 endif
 
 # Configure NDEBUG for release builds

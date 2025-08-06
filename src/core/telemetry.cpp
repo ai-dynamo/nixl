@@ -25,88 +25,163 @@
 
 #include "common/nixl_log.h"
 #include "telemetry.h"
-#include "nixl_types.h"
+#include "nixl_telemetry.h"
 #include "util.h"
 
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
 
-nixlTelemetry::nixlTelemetry(const std::string file) : pool_(1) {
-    enabled_ = std::getenv("NIXL_ENABLE_TELEMETRY") != nullptr;
-    if (!enabled_) {
-        NIXL_INFO << "Telemetry disabled via NIXL_ENABLE_TELEMETRY environment variable";
+constexpr std::chrono::milliseconds TELEMETRY_CHECK_INTERVAL = 2s;
+constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
+constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
+
+nixlTelemetry::nixlTelemetry(const std::string file)
+    : pool_(1),
+      checkTask_(pool_.get_executor(), TELEMETRY_CHECK_INTERVAL),
+      writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL),
+      file_(file) {
+    enabled_ = std::getenv(TELEMETRY_ENABLED_VAR) != nullptr;
+
+    if (enabled_) {
+        initializeTelemetry();
         return;
     }
-    bufferSize_ = std::getenv("NIXL_TELEMETRY_BUFFER_SIZE") ?
-        std::stoul(std::getenv("NIXL_TELEMETRY_BUFFER_SIZE")) :
+
+    NIXL_INFO << "Telemetry disabled via " << TELEMETRY_ENABLED_VAR << " environment variable";
+    checkTask_.callback_ = [this]() { return checkTelemetryEnabled(); };
+    registerPeriodicTask(checkTask_);
+}
+
+nixlTelemetry::~nixlTelemetry() {
+    try {
+        checkTask_.timer_.cancel();
+    }
+    catch (const asio::system_error &e) {
+        NIXL_DEBUG << "Failed to cancel telemetry check timer: " << e.what();
+        // continue anyway since it's not critical
+    }
+    cleanupTelemetry();
+}
+
+void
+nixlTelemetry::initializeTelemetry() {
+    auto buffer_size = std::getenv(TELEMETRY_BUFFER_SIZE_VAR) ?
+        std::stoul(std::getenv(TELEMETRY_BUFFER_SIZE_VAR)) :
         DEFAULT_TELEMETRY_BUFFER_SIZE;
 
-    auto folder_path =
-        std::getenv("NIXL_TELEMETRY_DIR") ? std::getenv("NIXL_TELEMETRY_DIR") : "/tmp";
+    auto folder_path = std::getenv(TELEMETRY_DIR_VAR) ? std::getenv(TELEMETRY_DIR_VAR) : "/tmp";
 
     auto file_name =
-        file.empty() ? TELEMETRY_PREFIX + std::string(".") + std::to_string(getpid()) : file;
+        file_.empty() ? TELEMETRY_PREFIX + std::string(".") + std::to_string(getpid()) : file_;
 
     auto full_file_path = fs::path(folder_path) / file_name;
 
-    if (bufferSize_ == 0) {
+    if (buffer_size == 0) {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
     }
 
     NIXL_INFO << "Telemetry enabled, using buffer path: " << full_file_path
-              << " with size: " << bufferSize_;
+              << " with size: " << buffer_size;
 
     buffer_ = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-        full_file_path, true, bufferSize_, TELEMETRY_VERSION);
-    runInterval_ = std::getenv("NIXL_TELEMETRY_RUN_INTERVAL") ?
-        std::stoul(std::getenv("NIXL_TELEMETRY_RUN_INTERVAL")) :
+        full_file_path, true, TELEMETRY_VERSION, buffer_size);
+
+    auto run_interval = std::getenv(TELEMETRY_RUN_INTERVAL_VAR) ?
+        std::chrono::milliseconds(std::stoul(std::getenv(TELEMETRY_RUN_INTERVAL_VAR))) :
         DEFAULT_TELEMETRY_RUN_INTERVAL;
-    timer_ = std::make_shared<asio::steady_timer>(pool_.get_executor());
-    writeEvent();
-}
 
-nixlTelemetry::~nixlTelemetry() {
-    if (timer_) {
-        timer_->cancel();
-    }
-    // flush last events
-    if (buffer_) writeEventHelper();
+    // Update write task interval and start it
+    writeTask_.callback_ = [this]() { return writeEventHelper(); };
+    writeTask_.interval_ = run_interval;
+    registerPeriodicTask(writeTask_);
+    checkTask_.callback_ = [this]() { return checkTelemetryDisabled(); };
+    registerPeriodicTask(checkTask_);
 }
 
 void
+nixlTelemetry::cleanupTelemetry() {
+    try {
+        writeTask_.callback_ = nullptr;
+        writeTask_.timer_.cancel();
+    }
+    catch (const asio::system_error &e) {
+        NIXL_DEBUG << "Failed to cancel telemetry write timer: " << e.what();
+        // continue anyway since it's not critical
+    }
+    if (buffer_) {
+        writeEventHelper();
+        buffer_.reset();
+    }
+    enabled_ = false;
+    events_.clear();
+
+    NIXL_INFO << "Telemetry disabled and cleaned up";
+}
+
+bool
+nixlTelemetry::checkTelemetryEnabled() {
+    bool should_enable = std::getenv(TELEMETRY_ENABLED_VAR) != nullptr;
+    if (should_enable && !enabled_) {
+        NIXL_INFO << "Telemetry enabled during runtime";
+        enabled_ = true;
+        initializeTelemetry();
+    }
+    return !enabled_;
+}
+
+bool
+nixlTelemetry::checkTelemetryDisabled() {
+    bool should_disable = std::getenv(TELEMETRY_ENABLED_VAR) == nullptr;
+    if (should_disable && enabled_) {
+        NIXL_INFO << "Telemetry disabled during runtime";
+        enabled_ = false;
+        cleanupTelemetry();
+        checkTask_.callback_ = [this]() { return checkTelemetryEnabled(); };
+        registerPeriodicTask(checkTask_);
+    }
+    return enabled_;
+}
+
+bool
 nixlTelemetry::writeEventHelper() {
-    auto max_events_to_dump = buffer_->capacity();
-    std::vector<nixlTelemetryEvent> events_to_dump;
-    events_to_dump.reserve(buffer_->capacity() / 2);
-    events_.swap(events_to_dump);
-    for (size_t i = 0; i < std::min(max_events_to_dump, events_to_dump.size()); i++) {
-        if (!buffer_->push(events_to_dump[i])) {
-            NIXL_DEBUG << "Failed to push event to buffer, buffer is full";
-        }
+    if (!enabled_) return false;
+
+    std::vector<nixlTelemetryEvent> next_queue;
+    // assume next buffer will be the same size as the current one
+    next_queue.reserve(buffer_->capacity());
+    events_.swap(next_queue);
+    for (auto &event : next_queue) {
+        // if full, ignore
+        buffer_->push(event);
     }
+    return true;
 }
 
 void
-nixlTelemetry::writeEvent() {
-    timer_->expires_after(std::chrono::milliseconds(runInterval_));
-    timer_->async_wait([this](const asio::error_code &ec) {
+nixlTelemetry::registerPeriodicTask(periodicTask &task) {
+    task.timer_.expires_after(task.interval_);
+    task.timer_.async_wait([this, &task](const asio::error_code &ec) {
         if (ec != asio::error::operation_aborted) {
             auto start_time = std::chrono::steady_clock::now();
 
-            writeEventHelper();
+            if (!task.callback_ || !task.callback_()) {
+                // if return false, stop the task
+                return;
+            }
 
             auto end_time = std::chrono::steady_clock::now();
             auto execution_time =
                 std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
 
             // Schedule next execution with adjusted interval
-            auto next_interval = std::chrono::milliseconds(runInterval_) - execution_time;
+            auto next_interval = std::chrono::milliseconds(task.interval_) - execution_time;
             if (next_interval.count() < 0) {
                 next_interval = std::chrono::milliseconds(0);
             }
 
-            // Schedule the next write operation
-            writeEvent();
+            // Schedule the next operation
+            task.interval_ = next_interval;
+            registerPeriodicTask(task);
         }
     });
 }
@@ -124,7 +199,7 @@ nixlTelemetry::updateData(const std::string &event_name,
                              value);
 
     // agent can be multi-threaded
-    std::lock_guard<std::mutex> lock(pluginTelemetryMutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     events_.push_back(event);
 }
 

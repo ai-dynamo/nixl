@@ -14,22 +14,33 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _NIXL_TELEMETRY_H
-#define _NIXL_TELEMETRY_H
+#ifndef _TELEMETRY_H
+#define _TELEMETRY_H
 
 #include "common/cyclic_buffer.h"
+#include "nixl_telemetry.h"
 #include "nixl_types.h"
+
 #include <string>
 #include <vector>
 #include <mutex>
 #include <memory>
+#include <chrono>
+#include <functional>
 
 #include <asio.hpp>
 
-constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
-constexpr size_t DEFAULT_TELEMETRY_RUN_INTERVAL = 100;
+#ifdef NIXL_TELEMETRY_ENABLE
 
-#ifdef NIXL_ENABLE_TELEMETRY
+struct periodicTask {
+    asio::steady_timer timer_;
+    std::function<bool()> callback_;
+    std::chrono::milliseconds interval_;
+
+    periodicTask(const asio::any_io_executor &executor, std::chrono::milliseconds interval)
+        : timer_(executor),
+          interval_(interval) {}
+};
 
 class nixlTelemetry {
 public:
@@ -42,8 +53,6 @@ public:
         return enabled_;
     }
 
-    void
-    writeEvent();
     void
     updateTxBytes(uint64_t tx_bytes);
     void
@@ -65,17 +74,27 @@ public:
 
 private:
     void
-    updateData(const std::string &event_name, nixl_telemetry_category_t category, uint64_t value);
+    initializeTelemetry();
     void
+    cleanupTelemetry();
+    void
+    registerPeriodicTask(periodicTask &task);
+    void
+    updateData(const std::string &event_name, nixl_telemetry_category_t category, uint64_t value);
+    bool
+    checkTelemetryEnabled();
+    bool
+    checkTelemetryDisabled();
+    bool
     writeEventHelper();
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
-    std::size_t bufferSize_;
-    std::mutex pluginTelemetryMutex_;
+    std::mutex mutex_;
     asio::thread_pool pool_;
-    std::shared_ptr<asio::steady_timer> timer_;
-    std::size_t runInterval_;
+    periodicTask checkTask_;
+    periodicTask writeTask_;
     bool enabled_;
+    std::string file_;
 };
 
 #else // Telemetry disabled
