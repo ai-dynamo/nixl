@@ -1,0 +1,300 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Multi-target Dockerfile for NIXL ecosystem
+# Targets: base, nixl, nixlbench
+
+# Global build arguments - passed from build script
+ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
+ARG BASE_IMAGE_TAG="25.06-cuda12.9-devel-ubuntu24.04"
+ARG OS="ubuntu24.04"
+ARG ARCH="x86_64"
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_REF="v1.19.x"
+ARG NPROC="16"
+
+# =============================================================================
+# Target: base - Common base image with all shared dependencies
+# =============================================================================
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS base
+
+# Redeclare args for this stage (inherit from global)
+ARG ARCH
+ARG OS
+ARG DEFAULT_PYTHON_VERSION
+ARG NPROC
+ARG UCX_REF
+
+# Install common system packages, build tools, and RDMA/InfiniBand packages
+RUN apt-get update -y && \
+    apt-get install -y ubuntu-keyring && \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install \
+    autotools-dev \
+    automake \
+    build-essential \
+    cmake \
+    etcd-client \
+    etcd-server \
+    flex \
+    ibverbs-providers \
+    ibverbs-utils \
+    libaio-dev \
+    libibumad-dev \
+    libibverbs-dev \
+    libclang-dev \
+    libcpprest-dev \
+    libcurl4-openssl-dev \
+    libgflags-dev \
+    libgrpc-dev \
+    libgrpc++-dev \
+    libgtest-dev \
+    libnuma-dev \
+    libprotobuf-dev \
+    librdmacm-dev \
+    libssl-dev \
+    libtool \
+    liburing-dev \
+    libz-dev \
+    ninja-build \
+    protobuf-compiler-grpc \
+    pybind11-dev \
+    python${DEFAULT_PYTHON_VERSION}-dev \
+    rdma-core \
+    uuid-dev \
+    zlib1g-dev
+
+# Add Mellanox repository and install DOCA packages
+RUN case "${ARCH}" in \
+        aarch64) ARCH_SUFFIX="arm64-sbsa" ;; \
+        x86_64) ARCH_SUFFIX="${ARCH}" ;; \
+    esac && \
+    export PKG_CONFIG_PATH="/opt/mellanox/doca/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:/opt/mellanox/dpdk/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" && \
+    curl -fsSL https://linux.mellanox.com/public/repo/doca/3.0.0/${OS}/${ARCH_SUFFIX}/GPG-KEY-Mellanox.pub | \
+    gpg --dearmor | tee /usr/share/keyrings/mellanox-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/mellanox-archive-keyring.gpg] https://linux.mellanox.com/public/repo/doca/3.0.0/${OS}/${ARCH_SUFFIX} ./" | \
+    tee /etc/apt/sources.list.d/mellanox.list && \
+    apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+        doca-all \
+        doca-sdk-common doca-sdk-dma doca-sdk-dpdk-bridge \
+        doca-sdk-eth doca-sdk-flow doca-sdk-rdma \
+        mlnx-dpdk mlnx-dpdk-dev
+
+# Install Ubuntu 24 specific DOCA packages
+RUN if [ "$OS" = "ubuntu24.04" ]; then \
+        apt-get install -y --no-install-recommends \
+            doca-sdk-gpunetio \
+            libdoca-sdk-gpunetio-dev; \
+    fi
+
+# Install AWS CLI
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws
+
+# Set up workspace and build common dependencies
+WORKDIR /workspace
+
+# Build and install etcd-cpp-apiv3
+RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+    cd etcd-cpp-apiv3 && \
+    sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
+    mkdir build && cd build && \
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && \
+    make -j${NPROC} && make install
+
+# Build and install AWS SDK C++
+RUN git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+    mkdir aws_sdk_build && cd aws_sdk_build && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    make -j${NPROC} && make install
+
+# Install UV package manager
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Set common environment variables
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+# Build and install UCX from source
+RUN rm -rf /usr/lib/ucx /opt/hpcx/ucx && \
+    cd /usr/local/src && \
+    git clone https://github.com/openucx/ucx.git && \
+    cd ucx && \
+    git checkout $UCX_REF && \
+    ./autogen.sh && ./configure \
+        --prefix=/usr \
+        --enable-shared \
+        --disable-static \
+        --disable-doxygen-doc \
+        --enable-optimizations \
+        --enable-cma \
+        --enable-devel-headers \
+        --with-cuda=/usr/local/cuda \
+        --with-verbs \
+        --with-dm \
+        --with-gdrcopy=/usr/local \
+        --with-efa \
+        --enable-mt && \
+    make -j${NPROC} && \
+    make -j${NPROC} install-strip && \
+    ldconfig
+
+# Install Rust
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH \
+    RUST_VERSION=1.86.0
+
+# Install Rust for the appropriate architecture
+RUN case "${ARCH}" in \
+        aarch64) RUSTARCH="aarch64-unknown-linux-gnu" ;; \
+        x86_64) RUSTARCH="x86_64-unknown-linux-gnu" ;; \
+    esac && \
+    wget --tries=3 --waitretry=5 \
+        "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" \
+        "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init.sha256" && \
+    sha256sum -c rustup-init.sha256 && \
+    chmod +x rustup-init && \
+    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
+    rm rustup-init* && \
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+
+# Clean up workspace and package cache
+RUN rm -rf etcd-cpp-apiv3 aws-sdk-cpp aws_sdk_build /usr/local/src/ucx && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# =============================================================================
+# Target: nixl - NIXL build from base image
+# =============================================================================
+FROM base AS nixl
+
+# Redeclare args for this stage (inherit from global)
+ARG ARCH
+ARG DEFAULT_PYTHON_VERSION
+ARG NPROC
+
+# Copy nixl source and build
+WORKDIR /workspace/nixl
+COPY --from=nixl-src . /workspace/nixl
+
+# Set up Python environment and build nixl
+ENV VIRTUAL_ENV=/workspace/nixl/.venv
+ENV NIXL_PREFIX=/usr/local/nixl
+ENV NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
+ENV UCX_PLUGIN_DIR="/usr/lib/ucx"
+
+# Set up Python environment
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
+    uv pip install --upgrade "meson>=0.64.0" pybind11 patchelf
+
+# Build C++ components
+RUN rm -rf build && mkdir build && \
+    uv run meson setup build/ --prefix=$NIXL_PREFIX
+
+WORKDIR /workspace/nixl/build
+RUN ninja && ninja install && \
+    echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \
+    ldconfig
+
+# Build Rust components
+WORKDIR /workspace/nixl/src/bindings/rust
+RUN cargo build --release --locked
+
+# Build Python wheel and install
+WORKDIR /workspace/nixl
+RUN ./contrib/build-wheel.sh \
+        --python-version $DEFAULT_PYTHON_VERSION \
+        --platform manylinux_2_39_$ARCH \
+        --ucx-plugins-dir $UCX_PLUGIN_DIR \
+        --nixl-plugins-dir $NIXL_PLUGIN_DIR \
+        --output-dir /workspace/nixl/dist && \
+    uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl && \
+    rm -rf build src/bindings/rust/target
+
+# =============================================================================
+# Target: nixlbench - NIXLBench build from base image (includes nixl)
+# =============================================================================
+FROM base AS nixlbench
+
+# Redeclare args for this stage (inherit from global)
+ARG ARCH
+ARG DEFAULT_PYTHON_VERSION
+ARG NPROC
+
+# Rust is now inherited from base target
+
+# Copy source code using build contexts
+COPY --from=nixl-src . /workspace/nixl
+COPY --from=nixlbench-src . /workspace/nixlbench
+
+# Build nixl first
+WORKDIR /workspace/nixl
+
+ENV VIRTUAL_ENV=/workspace/nixl/.venv
+ENV NIXL_PREFIX=/usr/local/nixl
+ENV NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
+ENV UCX_PLUGIN_DIR="/usr/lib/ucx"
+
+# Set up Python environment (includes additional packages for NIXLBench)
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
+    uv pip install --upgrade "meson>=0.64.0" pybind11 patchelf pyYAML click tabulate
+
+# Build C++ components
+RUN rm -rf build && mkdir build && \
+    uv run meson setup build/ --prefix=$NIXL_PREFIX
+
+WORKDIR /workspace/nixl/build
+RUN ninja && ninja install && \
+    echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \
+    ldconfig
+
+# Build Rust components
+WORKDIR /workspace/nixl/src/bindings/rust
+RUN cargo build --release --locked
+
+# Build Python wheel and install
+WORKDIR /workspace/nixl
+RUN ./contrib/build-wheel.sh \
+        --python-version $DEFAULT_PYTHON_VERSION \
+        --platform manylinux_2_39_$ARCH \
+        --ucx-plugins-dir $UCX_PLUGIN_DIR \
+        --nixl-plugins-dir $NIXL_PLUGIN_DIR \
+        --output-dir /workspace/nixl/dist && \
+    uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl && \
+    rm -rf build src/bindings/rust/target
+
+# Build NIXLBench components
+WORKDIR /workspace/nixlbench
+RUN rm -rf build && mkdir build && \
+    VIRTUAL_ENV=/workspace/nixl/.venv uv run --python-preference only-managed meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench
+
+WORKDIR /workspace/nixlbench/build
+RUN ninja && ninja install
+
+# Install NIXLBench Python dependencies
+WORKDIR /workspace/nixl
+RUN uv pip install -e benchmark/kvbench
+
+# Clean up build artifacts
+RUN rm -rf /workspace/nixlbench/build
+
+# Set up nixlbench runtime environment
+ENV PATH=/usr/local/nixlbench/bin:$PATH \
+    LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH \
+    PYTHON_PATH=/usr/local/nixlbench/lib/python3/dist-packages/nixlbench/ \
+    PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+
+WORKDIR /workspace/nixl/benchmark/kvbench
