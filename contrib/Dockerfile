@@ -17,7 +17,8 @@ ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
 ARG OS
 
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+# Use the common base image
+FROM nixl-base:latest
 
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
@@ -31,51 +32,7 @@ ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 
-RUN apt-get update -y && \
-    apt-get install -y ubuntu-keyring && \
-    apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install \
-    ninja-build \
-    libclang-dev \
-    cmake \
-    libgflags-dev \
-    libgrpc-dev \
-    libgrpc++-dev \
-    libprotobuf-dev \
-    libaio-dev \
-    liburing-dev \
-    protobuf-compiler-grpc \
-    libcpprest-dev \
-    etcd-server \
-    etcd-client \
-    autotools-dev \
-    automake \
-    libtool \
-    libz-dev \
-    flex \
-    libgtest-dev \
-    build-essential \
-    python3.12-dev \
-    libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
-
-RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
-    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
-    libnuma-dev librdmacm-dev ibverbs-providers
-
-WORKDIR /workspace
-RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
-    cd etcd-cpp-apiv3 && \
-    sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
-    mkdir build && cd build && \
-    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
-
-RUN git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
-    mkdir aws_sdk_build && cd aws_sdk_build && \
-    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    make -j${NPROC:-$(nproc)} && make install
-
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
+# Install Rust (specific to nixl build)
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH \
@@ -92,29 +49,11 @@ RUN wget --tries=3 --waitretry=5 \
     rm rustup-init* && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-# Add Mellanox repository and install packages
-RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else echo "${ARCH}"; fi) && \
-    # Map OS names to Mellanox repository format
-    MELLANOX_OS=$(if [ "${OS}" = "ubuntu22" ]; then echo "ubuntu22.04"; elif [ "${OS}" = "ubuntu24" ]; then echo "ubuntu24.04"; else echo "${OS}"; fi) && \
-    export PKG_CONFIG_PATH="/opt/mellanox/doca/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:/opt/mellanox/dpdk/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" && \
-    curl -fsSL https://linux.mellanox.com/public/repo/doca/3.0.0/${MELLANOX_OS}/${ARCH_SUFFIX}/GPG-KEY-Mellanox.pub | \
-    gpg --dearmor | tee /usr/share/keyrings/mellanox-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/mellanox-archive-keyring.gpg] https://linux.mellanox.com/public/repo/doca/3.0.0/${MELLANOX_OS}/${ARCH_SUFFIX} ./" | \
-    tee /etc/apt/sources.list.d/mellanox.list && \
-    apt-get update -y && \
-    apt-get install -y --no-install-recommends \
-        mlnx-dpdk mlnx-dpdk-dev \
-        doca-sdk-common doca-sdk-dma doca-sdk-dpdk-bridge \
-        doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all
-
-RUN if [ "$OS" = "ubuntu24" ]; then \
-        apt-get install -y --no-install-recommends \
-            doca-sdk-gpunetio libdoca-sdk-gpunetio-dev; \
-    fi
-
+# Remove pre-existing UCX installations
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
+# Build UCX from source
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && 			     \
@@ -140,15 +79,10 @@ RUN cd /usr/local/src && \
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
     uv pip install --upgrade "meson>=0.64.0" pybind11 patchelf
-
-# Install pybind11 via apt
-RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 
 ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
