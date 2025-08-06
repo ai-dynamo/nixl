@@ -189,7 +189,7 @@ nixlUcxMoEngine::nixlUcxMoEngine(const nixlBackendInitParams* init_params):
     setEngCnt(num_ucx_engines);
     // Initialize required number of engines
     for (uint32_t i = 0; i < getEngCnt(); i++) {
-        auto e = std::make_unique<nixlUcxEngine>(init_params);
+        auto e = nixlUcxEngine::create(*init_params);
         if (e->getInitErr()) {
             this->initErr = true;
             // TODO: Log error

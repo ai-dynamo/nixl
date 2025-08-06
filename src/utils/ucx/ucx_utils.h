@@ -28,6 +28,8 @@ extern "C"
 #include <nixl_types.h>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/numbers.h"
+
 
 enum class nixl_ucx_mt_t {
     SINGLE,
@@ -55,6 +57,24 @@ template<typename Enum>
             return "WORKER";
     }
     return "INVALID";  // It is not a to_string function's job to validate.
+}
+
+template<typename T>
+[[nodiscard]] T
+nixl_b_params_get(const nixl_b_params_t *custom_params, const std::string &key, T default_value) {
+    if (!custom_params) {
+        return default_value;
+    }
+
+    auto it = custom_params->find(key);
+    if (it == custom_params->end()) {
+        return default_value;
+    }
+
+    if constexpr (std::is_same_v<T, int>) {
+        T result;
+        return absl::SimpleAtoi(it->second, &result) ? result : default_value;
+    }
 }
 
 using nixlUcxReq = void*;

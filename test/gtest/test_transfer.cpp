@@ -93,12 +93,17 @@ private:
     const size_t size;
 };
 
-class TestTransfer : public testing::TestWithParam<std::string> {
+class TestTransfer :
+    // Tuple fields are: backend_name, enable_progress_thread, num_workers
+    public testing::TestWithParam<std::tuple<std::string, bool, size_t>> {
 protected:
-    static nixlAgentConfig getConfig(int listen_port)
-    {
-        return nixlAgentConfig(true, listen_port > 0, listen_port,
-                               nixl_thread_sync_t::NIXL_THREAD_SYNC_RW, 0,
+    nixlAgentConfig
+    getConfig(int listen_port) {
+        return nixlAgentConfig(isProgressThreadEnabled(),
+                               listen_port > 0,
+                               listen_port,
+                               nixl_thread_sync_t::NIXL_THREAD_SYNC_RW,
+                               0,
                                100000);
     }
 
@@ -112,7 +117,7 @@ protected:
         nixl_b_params_t params;
 
         if (getBackendName() == "UCX" || getBackendName() == "UCX_MO") {
-            params["num_workers"] = "2";
+            params["num_workers"] = std::to_string(getNumWorkers());
         }
 
         return params;
@@ -144,7 +149,17 @@ protected:
 
     std::string getBackendName() const
     {
-        return GetParam();
+        return std::get<0>(GetParam());
+    }
+
+    bool
+    isProgressThreadEnabled() const {
+        return std::get<1>(GetParam());
+    }
+
+    size_t
+    getNumWorkers() const {
+        return std::get<2>(GetParam());
     }
 
     nixl_opt_args_t
@@ -266,10 +281,11 @@ protected:
         agent.deregisterMem(desc_list);
     }
 
-    void verifyNotifs(nixlAgent &agent, const std::string &from_name, size_t expected_count)
-    {
-        nixl_notifs_t notif_map;
-
+    void
+    verifyNotifs(nixlAgent &agent,
+                 const std::string &from_name,
+                 size_t expected_count,
+                 nixl_notifs_t notif_map = {}) {
         for (int i = 0; i < retry_count; i++) {
             nixl_status_t status = agent.getNotifs(notif_map);
             ASSERT_EQ(status, NIXL_SUCCESS);
@@ -300,11 +316,17 @@ protected:
         exchangeMD();
 
         std::vector<std::thread> threads;
+        nixl_notifs_t notif_map;
         for (size_t thread = 0; thread < num_threads; ++thread) {
             threads.emplace_back([&]() {
                 for (size_t i = 0; i < repeat; ++i) {
                     nixl_status_t status = from.genNotif(to_name, NOTIF_MSG);
                     ASSERT_EQ(status, NIXL_SUCCESS);
+
+                    if (!isProgressThreadEnabled()) {
+                        ASSERT_EQ(NIXL_SUCCESS, from.getNotifs(notif_map));
+                        ASSERT_EQ(NIXL_SUCCESS, to.getNotifs(notif_map));
+                    }
                 }
             });
         }
@@ -313,8 +335,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, total_notifs);
-
+        verifyNotifs(to, from_name, total_notifs, std::move(notif_map));
         invalidateMD();
     }
 
@@ -328,6 +349,7 @@ protected:
     {
         std::mutex logger_mutex;
         std::vector<std::thread> threads;
+        nixl_notifs_t notif_map;
         for (size_t thread = 0; thread < num_threads; ++thread) {
             threads.emplace_back([&, thread]() {
                 nixl_opt_args_t extra_params;
@@ -355,6 +377,9 @@ protected:
                         if (status == NIXL_SUCCESS) {
                             break;
                         }
+                        if (!isProgressThreadEnabled()) {
+                            ASSERT_EQ(NIXL_SUCCESS, to.getNotifs(notif_map));
+                        }
                         std::this_thread::sleep_for(retry_timeout);
                     }
                     EXPECT_TRUE(status == NIXL_SUCCESS);
@@ -379,8 +404,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, repeat * num_threads);
-
+        verifyNotifs(to, from_name, repeat * num_threads, std::move(notif_map));
         invalidateMD();
     }
 
@@ -492,7 +516,10 @@ TEST_P(TestTransfer, ListenerCommSize) {
     deregisterMem(getAgent(1), buffers, DRAM_SEG);
 }
 
-INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values("UCX"));
-INSTANTIATE_TEST_SUITE_P(ucx_mo, TestTransfer, testing::Values("UCX_MO"));
+INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values(std::make_tuple("UCX", true, 2)));
+INSTANTIATE_TEST_SUITE_P(ucx_no_pt,
+                         TestTransfer,
+                         testing::Values(std::make_tuple("UCX", false, 2)));
+INSTANTIATE_TEST_SUITE_P(ucx_mo, TestTransfer, testing::Values(std::make_tuple("UCX_MO", true, 2)));
 
 } // namespace gtest
