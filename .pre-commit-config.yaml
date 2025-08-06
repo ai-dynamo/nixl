@@ -44,7 +44,7 @@ repos:
     rev: v3.3.7
     hooks:
       - id: pylint
-        args: ["--source-roots=src/api/python,src/bindings/python,examples/python,tests/python"]
+        args: ["--init-hook=import sys; import os; sys.path.insert(0, os.getcwd())"]
         additional_dependencies: [torch, numpy, pytest, .]
         types_or: [python, cython]
 
