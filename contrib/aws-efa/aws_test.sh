@@ -68,7 +68,7 @@ build_cmd=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${UCX_INSTALL_DIR}"
 
 # Add timeout only if TEST_TIMEOUT is set
 if [ -n "$TEST_TIMEOUT" ]; then
-    test_cmd="timeout ${TEST_TIMEOUT}m ${test_cmd}"
+    test_cmd="timeout ${TEST_TIMEOUT} ${test_cmd}"
 fi
 
 export AWS_CMD="${setup_cmd} && ${build_cmd} && ${test_cmd}"
