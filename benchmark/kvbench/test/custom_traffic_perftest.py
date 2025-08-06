@@ -389,7 +389,8 @@ class CTPerftest:
                 ]
             ]
             logger.info(
-                f"Performance metrics:\n{tabulate(data, headers=headers, floatfmt='.6f')}"
+                "Performance metrics:\n%s",
+                tabulate(data, headers=headers, floatfmt=".6f"),
             )
 
         if verify_buffers:
