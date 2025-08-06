@@ -22,10 +22,9 @@ import sys
 import numpy as np
 import torch
 
-import nixl._utils as nixl_utils
-from nixl._api import nixl_agent, nixl_agent_config
-
 from examples.python import util
+from nixl._api import nixl_agent, nixl_agent_config
+import nixl._utils as nixl_utils
 
 
 class NixlApiExampleErrCodes(enum.Enum):
