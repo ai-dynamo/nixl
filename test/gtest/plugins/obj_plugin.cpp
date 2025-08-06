@@ -50,29 +50,35 @@ protected:
 };
 
 TEST_P(setupObjTestFixture, XferTest) {
+    transferMemConfig mem_cfg;
     transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, false, 1);
-    transfer.setLocalMem();
+        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, mem_cfg);
+    transfer.setupMems();
+    transfer.setSrcMem();
     transfer.testTransfer(NIXL_WRITE);
-    transfer.resetLocalMem();
+    transfer.resetSrcMem();
     transfer.testTransfer(NIXL_READ);
-    transfer.checkLocalMem();
+    transfer.checkSrcMem();
 }
 
 TEST_P(setupObjTestFixture, XferMultiBufsTest) {
+    transferMemConfig mem_cfg{.numBufs_ = 3};
     transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, false, 3);
-    transfer.setLocalMem();
+        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, mem_cfg);
+    transfer.setupMems();
+    transfer.setSrcMem();
     transfer.testTransfer(NIXL_WRITE);
-    transfer.resetLocalMem();
+    transfer.resetSrcMem();
     transfer.testTransfer(NIXL_READ);
-    transfer.checkLocalMem();
+    transfer.checkSrcMem();
 }
 
 TEST_P(setupObjTestFixture, queryMemTest) {
+    transferMemConfig mem_cfg{.numBufs_ = 3};
     transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, false, 3);
-    transfer.setLocalMem();
+        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, mem_cfg);
+    transfer.setupMems();
+    transfer.setSrcMem();
     transfer.testTransfer(NIXL_WRITE);
 
     nixl_reg_dlist_t descs(OBJ_SEG);
