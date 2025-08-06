@@ -139,11 +139,11 @@ export CMAKE_PREFIX_PATH=${INSTALL_DIR}:${CMAKE_PREFIX_PATH}
 export UCX_TLS=^cuda_ipc
 
 meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true ${EXTRA_BUILD_ARGS}
-ninja -C nixl_build && $SUDO ninja -C nixl_build install
+ninja -C nixl_build && ninja -C nixl_build install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
 # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
 
 cd benchmark/nixlbench
 meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dprefix=${INSTALL_DIR}
-ninja -C nixlbench_build && $SUDO ninja -C nixlbench_build install
+ninja -C nixlbench_build && ninja -C nixlbench_build install
