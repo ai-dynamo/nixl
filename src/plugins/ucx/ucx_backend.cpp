@@ -19,7 +19,6 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
-
 #include <optional>
 #include <limits>
 #include <string.h>
@@ -42,6 +41,10 @@ namespace {
         }
     }
 }
+
+// Static member definitions
+std::unordered_set<nixlUcxEngine *> nixlUcxEngine::engineSet;
+std::mutex nixlUcxEngine::engineSetMutex;
 
 /****************************************
  * CUDA related code
@@ -459,8 +462,9 @@ void nixlUcxEngine::progressFunc()
             } while (status == NIXL_IN_PROG);
             NIXL_ASSERT(status == NIXL_SUCCESS) << ", status: " << status;
 
-            if (made_progress && !wid)
+            if (made_progress && wid == recvNotifWorkerId) {
                 notifProgress();
+            }
         }
         timeout = false;
 
@@ -528,7 +532,7 @@ void nixlUcxEngine::progressThreadRestart()
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       pthrControlPipe{0, 0} {
-    size_t numWorkers;
+    size_t numDedicatedWorkers;
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t* custom_params = init_params->customParams;
 
@@ -556,8 +560,21 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
         devs = str_split((*custom_params)["device_list"], ", ");
 
     const auto num_workers_iter = custom_params->find("num_workers");
-    if (num_workers_iter == custom_params->end() || !absl::SimpleAtoi(num_workers_iter->second, &numWorkers))
-        numWorkers = 1;
+    if (num_workers_iter == custom_params->end() ||
+        !absl::SimpleAtoi(num_workers_iter->second, &numSharedWorkers)) {
+        // Default to have 1 shared worker and 0 dedicated worker
+        numSharedWorkers = 1;
+    }
+
+    const auto num_shared_iter = custom_params->find("num_dedicated_workers");
+    if (num_shared_iter == custom_params->end() ||
+        !absl::SimpleAtoi(num_shared_iter->second, &numDedicatedWorkers)) {
+        numDedicatedWorkers = 0;
+    }
+
+    if (numDedicatedWorkers + numSharedWorkers == 0) {
+        throw std::invalid_argument("Total number of workers must be greater than 0");
+    }
 
     ucp_err_handling_mode_t err_handling_mode;
     const auto err_handling_mode_it =
@@ -573,14 +590,32 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
                                           _internalRequestInit,
                                           _internalRequestFini,
                                           pthrOn,
-                                          numWorkers,
+                                          numDedicatedWorkers + numSharedWorkers,
                                           init_params->syncMode);
 
-    for (size_t i = 0; i < numWorkers; i++) {
-        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
+    for (size_t i = 0; i < numSharedWorkers; i++) {
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, true));
     }
 
-    workerAddr = uws.front()->epAddr();
+    for (size_t i = 0; i < numDedicatedWorkers; i++) {
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, false));
+        freeWorkers.push(i + numSharedWorkers);
+    }
+
+    const auto &uw = uws.front();
+    workerAddr = uw->epAddr();
+    recvNotifWorkerId = 0; // First worker from the list
+
+    if (workerAddr.empty()) {
+        NIXL_ERROR << "Failed to get UCX worker address";
+        initErr = true;
+        return;
+    }
+
+    if (initThreadMapping() != NIXL_SUCCESS) {
+        initErr = true;
+        return;
+    }
 
     if (pthrOn) {
         for (auto &uw: uws) {
@@ -591,7 +626,6 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
 
     // TODO: in case of UCX error handling is enabled, we can clean up AM based connections error
     //       handling, if user requested disabled error handling, we dont care about it.
-    auto &uw = uws.front();
     uw->regAmCallback(CONN_CHECK, connectionCheckAmCb, this);
     uw->regAmCallback(DISCONNECT, connectionTermAmCb, this);
     uw->regAmCallback(NOTIF_STR, notifAmCb, this);
@@ -607,6 +641,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams *init_params)
     m_cudaPrimaryCtx = std::make_shared<nixlUcxCudaDevicePrimaryCtx>();
     vramInitCtx();
     progressThreadStart();
+
+    nixlUcxEngine::addEngine(this);
 }
 
 nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
@@ -617,7 +653,17 @@ nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
 }
 
 // Through parent destructor the unregister will be called.
-nixlUcxEngine::~nixlUcxEngine() {
+nixlUcxEngine::~nixlUcxEngine () {
+    // per registered memory deregisters it, which removes the corresponding metadata too
+    // parent destructor takes care of the desc list
+    // For remote metadata, they should be removed here
+    if (this->initErr) {
+        // Nothing to do
+        return;
+    }
+
+    nixlUcxEngine::removeEngine(this);
+
     progressThreadStop();
     if (pthrOn) {
         for (const auto pthr_control_pipe : pthrControlPipe) {
@@ -628,6 +674,7 @@ nixlUcxEngine::~nixlUcxEngine() {
     }
 
     vramFiniCtx();
+    destroyThreadMapping();
 }
 
 /****************************************
@@ -932,8 +979,14 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
+    size_t worker_id;
+    nixl_status_t status = getWorkerIdWithPreference(false, worker_id);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
     /* TODO: try to get from a pool first */
-    nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, getWorkerId());
+    nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, worker_id);
 
     handle = (nixlBackendReqH*)intHandle;
     return NIXL_SUCCESS;
@@ -1205,14 +1258,19 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
 {
     nixl_status_t ret;
     nixlUcxReq req;
-    size_t wid = getWorkerId();
 
-    ret = notifSendPriv(remote_agent, msg, req, wid);
+    size_t worker_id;
+    ret = getWorkerIdWithPreference(true, worker_id);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
+
+    ret = notifSendPriv(remote_agent, msg, req, worker_id);
 
     switch(ret) {
     case NIXL_IN_PROG:
         /* do not track the request */
-        getWorker(wid)->reqRelease(req);
+        uws[worker_id]->reqRelease(req);
     case NIXL_SUCCESS:
         break;
     default:
@@ -1220,4 +1278,118 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
         return ret;
     }
     return NIXL_SUCCESS;
+}
+
+/****************************************
+ * Thread to worker mapping
+ *****************************************/
+
+void
+nixlUcxEngine::threadMapDestructor(void *arg) {
+    auto engine = static_cast<nixlUcxEngine *>(arg);
+
+    std::lock_guard<std::mutex> lock(nixlUcxEngine::engineSetMutex);
+    if (!nixlUcxEngine::isEngineExist(engine)) {
+        NIXL_DEBUG << "Engine not found in threadMapDestructor, engine:" << engine;
+        return;
+    }
+
+    /* When a thread exits, disassociate it from the worker,
+     * so that the worker could be reused by another thread.
+     */
+    engine->pushFreeWorker(reinterpret_cast<size_t>(pthread_getspecific(engine->pKeyWorkerId)));
+}
+
+nixl_status_t
+nixlUcxEngine::initThreadMapping() {
+    int err = pthread_key_create(&pKeyEngine, threadMapDestructor);
+    if (err) {
+        NIXL_ERROR << "Failed to create pKeyEngine, err:" << err;
+        return NIXL_ERR_BACKEND;
+    }
+
+    err = pthread_key_create(&pKeyWorkerId, NULL);
+    if (err) {
+        NIXL_ERROR << "Failed to create pKeyWorkerId, err:" << err;
+        pthread_key_delete(pKeyEngine);
+        return NIXL_ERR_BACKEND;
+    }
+    return NIXL_SUCCESS;
+}
+
+void
+nixlUcxEngine::destroyThreadMapping() {
+    int err = pthread_key_delete(pKeyEngine);
+    if (err) {
+        NIXL_WARN << "Failed to delete pKeyEngine, err:" << err;
+    }
+
+    err = pthread_key_delete(pKeyWorkerId);
+    if (err) {
+        NIXL_WARN << "Failed to delete pKeyWorkerId, err:" << err;
+    }
+}
+
+nixl_status_t
+nixlUcxEngine::getFreeDedicatedWorkerId(size_t &worker_id) const {
+    const std::lock_guard<std::mutex> lock(workersMutex);
+    if (freeWorkers.empty()) {
+        return NIXL_ERR_BACKEND;
+    }
+
+    worker_id = freeWorkers.front();
+    freeWorkers.pop();
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::getDedicatedWorkerId(size_t &worker_id) const {
+    auto engine = static_cast<nixlUcxEngine *>(pthread_getspecific(pKeyEngine));
+    if (engine != nullptr) {
+        worker_id = reinterpret_cast<size_t>(pthread_getspecific(pKeyWorkerId));
+        return NIXL_SUCCESS;
+    }
+
+    nixl_status_t status = getFreeDedicatedWorkerId(worker_id);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
+    int err = pthread_setspecific(pKeyWorkerId, reinterpret_cast<void *>(worker_id));
+    if (err) {
+        pushFreeWorker(worker_id);
+        NIXL_ERROR << "Failed to set pKeyWorkerId, workerId:" << worker_id << "err:" << err;
+        return NIXL_ERR_BACKEND;
+    }
+    err = pthread_setspecific(pKeyEngine, this);
+    if (err) {
+        pushFreeWorker(worker_id);
+        NIXL_ERROR << "Failed to set pKeyEngine, workerId:" << worker_id << "err:" << err;
+        return NIXL_ERR_BACKEND;
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::getSharedWorkerId(size_t &worker_id) const {
+    if (numSharedWorkers == 0) {
+        /* no shared workers */
+        return NIXL_ERR_BACKEND;
+    }
+
+    worker_id = std::hash<std::thread::id>{}(std::this_thread::get_id()) % numSharedWorkers;
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::getWorkerIdWithPreference(bool prefer_shared, size_t &worker_id) const {
+    nixl_status_t status =
+        prefer_shared ? getSharedWorkerId(worker_id) : getDedicatedWorkerId(worker_id);
+    if (status == NIXL_SUCCESS) {
+        return status;
+    }
+
+    // If the preferred worker type is not available, get the other type
+    return prefer_shared ? getDedicatedWorkerId(worker_id) : getSharedWorkerId(worker_id);
 }
