@@ -261,28 +261,6 @@ protected:
         }
     }
 
-    void waitForXfer(nixlAgent &from, const std::string &from_name,
-                     nixlAgent &to, nixlXferReqH *xfer_req)
-    {
-        nixl_notifs_t notif_map;
-        bool xfer_done;
-        do {
-            // progress on "from" agent while waiting for notification
-            nixl_status_t status = from.getXferStatus(xfer_req);
-            EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-            xfer_done = (status == NIXL_SUCCESS);
-
-            // Get notifications and progress all agents to avoid deadlocks
-            status = to.getNotifs(notif_map);
-            ASSERT_EQ(status, NIXL_SUCCESS);
-        } while (notif_map.empty() || !xfer_done);
-
-        // Expect the notification from the right agent
-        auto &notif_list = notif_map[from_name];
-        EXPECT_EQ(notif_list.size(), 1u);
-        EXPECT_EQ(notif_list.front(), NOTIF_MSG);
-    }
-
     void createRegisteredMem(nixlAgent& agent,
                              size_t size, size_t count,
                              nixl_mem_t mem_type,
