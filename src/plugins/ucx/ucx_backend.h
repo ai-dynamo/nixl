@@ -221,9 +221,12 @@ protected:
         return uws[worker_id];
     }
 
+    size_t
+    getWorkerId() const;
+
     virtual size_t
-    getWorkerId() const {
-        return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
+    getSharedWorkersSize() const {
+        return uws.size();
     }
 
     void
@@ -234,6 +237,15 @@ protected:
 
     virtual void
     appendNotif(std::string remote_name, std::string msg);
+
+    virtual nixl_status_t
+    sendXferRange(const nixl_xfer_op_t &operation,
+                  const nixl_meta_dlist_t &local,
+                  const nixl_meta_dlist_t &remote,
+                  const std::string &remote_agent,
+                  nixlBackendReqH *handle,
+                  size_t start_idx,
+                  size_t end_idx) const;
 
     nixlUcxEngine(const nixlBackendInitParams &init_params);
 
@@ -285,6 +297,7 @@ private:
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
     std::string workerAddr;
+    mutable std::atomic<size_t> sharedWorkerIndex_;
 
     /* CUDA data*/
     std::unique_ptr<nixlUcxCudaCtx> cudaCtx; // Context matching specific device
@@ -330,6 +343,61 @@ private:
     std::unique_ptr<nixlUcxThread> thread_;
     std::mutex notifMtx_;
     notif_list_t notifPthr_;
+};
+
+namespace asio {
+class io_context;
+}
+
+class nixlUcxThreadPoolEngine : public nixlUcxEngine {
+public:
+    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params);
+    ~nixlUcxThreadPoolEngine();
+
+    nixl_status_t
+    prepXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
+
+    bool
+    supportsProgTh() const override {
+        return true;
+    }
+
+    size_t
+    getSharedWorkersSize() const override {
+        return numSharedWorkers_;
+    }
+
+    nixl_status_t
+    getNotifs(notif_list_t &notif_list) override;
+
+protected:
+    int
+    vramApplyCtx() override;
+
+    void
+    appendNotif(std::string remote_name, std::string msg) override;
+
+    nixl_status_t
+    sendXferRange(const nixl_xfer_op_t &operation,
+                  const nixl_meta_dlist_t &local,
+                  const nixl_meta_dlist_t &remote,
+                  const std::string &remote_agent,
+                  nixlBackendReqH *handle,
+                  size_t start_idx,
+                  size_t end_idx) const override;
+
+private:
+    std::unique_ptr<asio::io_context> io_;
+    std::unique_ptr<nixlUcxThread> sharedThread_;
+    std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
+    size_t numSharedWorkers_;
+    std::mutex notifMutex_;
+    notif_list_t notifThread_;
 };
 
 #endif
