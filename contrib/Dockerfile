@@ -112,18 +112,6 @@ RUN if [ "$OS" = "ubuntu24" ]; then \
             doca-sdk-gpunetio libdoca-sdk-gpunetio-dev; \
     fi
 
-WORKDIR /workspace/nixl
-COPY . /workspace/nixl
-
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    uv pip install --upgrade "meson>=0.64.0" patchelf
-
-# Install pybind11 via apt
-RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
-
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
@@ -148,6 +136,19 @@ RUN cd /usr/local/src && \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
+
+WORKDIR /workspace/nixl
+COPY . /workspace/nixl
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+ENV VIRTUAL_ENV=/workspace/nixl/.venv
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
+    # pybind11 pip install needed for ubuntu 22.04
+    uv pip install --upgrade "meson>=0.64.0" pybind11 patchelf
+
+# Install pybind11 via apt
+RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 
 ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
