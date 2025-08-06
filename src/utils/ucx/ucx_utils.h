@@ -60,20 +60,21 @@ template<typename Enum>
 }
 
 template<typename T>
-[[nodiscard]] constexpr T
-nixl_b_params_get(const nixl_b_params_t *customParams, const std::string &key, T defaultValue) {
-    if (!customParams) {
-        return defaultValue;
+[[nodiscard]] T
+nixl_b_params_get(const nixl_b_params_t *custom_params, const std::string &key, T default_value) {
+    if (!custom_params) {
+        return default_value;
     }
 
-    auto it = customParams->find(key);
-    if (it == customParams->end()) {
-        return defaultValue;
+    auto it = custom_params->find(key);
+    if (it == custom_params->end()) {
+        return default_value;
     }
 
-    T result;
-    if constexpr (std::is_same_v<T, int>)
-        return absl::SimpleAtoi(it->second, &result) ? result : defaultValue;
+    if constexpr (std::is_same_v<T, int>) {
+        T result;
+        return absl::SimpleAtoi(it->second, &result) ? result : default_value;
+    }
 }
 
 using nixlUcxReq = void*;

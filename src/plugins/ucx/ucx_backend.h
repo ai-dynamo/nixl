@@ -200,7 +200,7 @@ public:
     progress() override;
 
     nixl_status_t
-    getNotifs(notif_list_t &notif_list);
+    getNotifs(notif_list_t &notif_list) override;
     nixl_status_t
     genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
@@ -243,7 +243,7 @@ private:
     void
     vramFiniCtx();
     int
-    vramUpdateCtx(void *address, uint64_t devId, bool &restart_reqd);
+    vramUpdateCtx(void *address, uint64_t dev_id, bool &restart_reqd);
 
     // Connection helper
     static ucs_status_t
@@ -327,9 +327,9 @@ protected:
     appendNotif(std::string remote_name, std::string msg) override;
 
 private:
-    std::unique_ptr<nixlUcxThread> thread;
-    std::mutex notifMtx;
-    notif_list_t notifPthr;
+    std::unique_ptr<nixlUcxThread> thread_;
+    std::mutex notifMtx_;
+    notif_list_t notifPthr_;
 };
 
 #endif
