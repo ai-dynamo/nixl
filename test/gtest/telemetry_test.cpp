@@ -155,7 +155,7 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_NO_THROW(telemetry.updateMemoryRegistered(1024));
     EXPECT_NO_THROW(telemetry.updateMemoryDeregistered(1024));
     EXPECT_NO_THROW(telemetry.addTransactionTime(std::chrono::microseconds(100)));
-    EXPECT_NO_THROW(telemetry.addGeneralTelemetry("test_event", 100));
+    EXPECT_NO_THROW(telemetry.addBackendTelemetry("test_event", 100));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
     auto path = fs::path(test_dir) / test_file;
@@ -212,7 +212,7 @@ TEST_F(telemetryTest, EmptyEventNames) {
     std::string test_file = "test_empty_eventName_s";
     nixlTelemetry telemetry(test_file);
 
-    EXPECT_NO_THROW(telemetry.addGeneralTelemetry("", 100));
+    EXPECT_NO_THROW(telemetry.addBackendTelemetry("", 100));
 }
 
 TEST_F(telemetryTest, ShortRunInterval) {
@@ -395,7 +395,7 @@ TEST_F(telemetryTest, CleanupOnDisable) {
     EXPECT_NO_THROW(telemetry.updateMemoryRegistered(1024));
     EXPECT_NO_THROW(telemetry.updateMemoryDeregistered(512));
     EXPECT_NO_THROW(telemetry.addTransactionTime(std::chrono::microseconds(100)));
-    EXPECT_NO_THROW(telemetry.addGeneralTelemetry("test_event", 100));
+    EXPECT_NO_THROW(telemetry.addBackendTelemetry("test_event", 100));
 }
 
 TEST_F(telemetryTest, ConcurrentAccessWithRuntimeChanges) {

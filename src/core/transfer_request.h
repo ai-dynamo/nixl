@@ -63,7 +63,7 @@ class nixlXferReqH {
         }
 
         void
-        updateRequestStats(std::shared_ptr<nixlTelemetry> telemetry);
+        updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry);
 
         friend class nixlAgent;
 };

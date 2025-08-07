@@ -255,6 +255,22 @@ nixlTelemetry::addTransactionTime(std::chrono::microseconds transaction_time) {
 }
 
 void
-nixlTelemetry::addGeneralTelemetry(const std::string &event_name, uint64_t value) {
+nixlTelemetry::addBackendTelemetry(const std::string &event_name, uint64_t value) {
     updateData(event_name, nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND, value);
+}
+
+std::string
+nixlEnumStrings::telemetryCategoryStr(const nixl_telemetry_category_t &category) {
+    static std::array<std::string, 9> nixl_telemetry_category_str = {"NIXL_TELEMETRY_MEMORY",
+                                                                     "NIXL_TELEMETRY_TRANSFER",
+                                                                     "NIXL_TELEMETRY_CONNECTION",
+                                                                     "NIXL_TELEMETRY_BACKEND",
+                                                                     "NIXL_TELEMETRY_ERROR",
+                                                                     "NIXL_TELEMETRY_PERFORMANCE",
+                                                                     "NIXL_TELEMETRY_SYSTEM",
+                                                                     "NIXL_TELEMETRY_CUSTOM",
+                                                                     "NIXL_TELEMETRY_MAX"};
+    size_t category_int = static_cast<size_t>(category);
+    if (category_int >= nixl_telemetry_category_str.size()) return "BAD_CATEGORY";
+    return nixl_telemetry_category_str[category_int];
 }

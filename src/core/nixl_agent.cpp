@@ -69,24 +69,8 @@ nixlEnumStrings::statusStr(const nixl_status_t &status) {
     }
 }
 
-std::string
-nixlEnumStrings::telemetryCategoryStr(const nixl_telemetry_category_t &category) {
-    static std::array<std::string, 9> nixl_telemetry_category_str = {"NIXL_TELEMETRY_MEMORY",
-                                                                     "NIXL_TELEMETRY_TRANSFER",
-                                                                     "NIXL_TELEMETRY_CONNECTION",
-                                                                     "NIXL_TELEMETRY_BACKEND",
-                                                                     "NIXL_TELEMETRY_ERROR",
-                                                                     "NIXL_TELEMETRY_PERFORMANCE",
-                                                                     "NIXL_TELEMETRY_SYSTEM",
-                                                                     "NIXL_TELEMETRY_CUSTOM",
-                                                                     "NIXL_TELEMETRY_MAX"};
-    size_t category_int = static_cast<size_t>(category);
-    if (category_int >= nixl_telemetry_category_str.size()) return "BAD_CATEGORY";
-    return nixl_telemetry_category_str[category_int];
-}
-
 void
-nixlXferReqH::updateRequestStats(std::shared_ptr<nixlTelemetry> telemetry_pub) {
+nixlXferReqH::updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry_pub) {
     std::chrono::microseconds duration;
 
     if (status == NIXL_SUCCESS) {
@@ -119,7 +103,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
     : name(name),
       config(cfg),
       lock(cfg.syncMode),
-      telemetry_(std::make_shared<nixlTelemetry>(name)) {
+      telemetry_(std::make_unique<nixlTelemetry>(name)) {
 #if HAVE_ETCD
     if (getenv("NIXL_ETCD_ENDPOINTS")) {
         useEtcd = true;
@@ -413,11 +397,14 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
 
     if (count > 0) {
         // sum all the sizes of the descriptors using std::accumulate
-        uint64_t total_size = std::accumulate(
-            descs.begin(), descs.end(), uint64_t{0}, [](uint64_t sum, const nixlBlobDesc &desc) {
-                return sum + desc.len;
-            });
-        data->telemetry_->updateMemoryRegistered(total_size);
+        if (data->telemetry_->isEnabled()) {
+            uint64_t total_size = std::accumulate(
+                descs.begin(),
+                descs.end(),
+                uint64_t{0},
+                [](uint64_t sum, const nixlBlobDesc &desc) { return sum + desc.len; });
+            data->telemetry_->updateMemoryRegistered(total_size);
+        }
         return NIXL_SUCCESS;
     }
     return NIXL_ERR_BACKEND;
@@ -452,11 +439,14 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
             bad_ret = ret;
     }
     if (bad_ret == NIXL_SUCCESS) {
-        uint64_t total_size = std::accumulate(
-            descs.begin(), descs.end(), uint64_t{0}, [](uint64_t sum, const nixlBlobDesc &desc) {
-                return sum + desc.len;
-            });
-        data->telemetry_->updateMemoryDeregistered(total_size);
+        if (data->telemetry_->isEnabled()) {
+            uint64_t total_size = std::accumulate(
+                descs.begin(),
+                descs.end(),
+                uint64_t{0},
+                [](uint64_t sum, const nixlBlobDesc &desc) { return sum + desc.len; });
+            data->telemetry_->updateMemoryDeregistered(total_size);
+        }
     }
     return bad_ret;
 }
