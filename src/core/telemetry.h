@@ -73,22 +73,15 @@ private:
     void
     initializeTelemetry();
     void
-    cleanupTelemetry();
-    void
     registerPeriodicTask(periodicTask &task);
     void
     updateData(const std::string &event_name, nixl_telemetry_category_t category, uint64_t value);
-    bool
-    checkTelemetryEnabled();
-    bool
-    checkTelemetryDisabled();
     bool
     writeEventHelper();
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
     std::mutex mutex_;
     asio::thread_pool pool_;
-    periodicTask checkTask_;
     periodicTask writeTask_;
     bool enabled_;
     std::string file_;

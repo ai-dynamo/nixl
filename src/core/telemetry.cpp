@@ -31,13 +31,11 @@
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
 
-constexpr std::chrono::milliseconds TELEMETRY_CHECK_INTERVAL = 2s;
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 
 nixlTelemetry::nixlTelemetry(const std::string &name, backend_map_t &backend_map)
     : pool_(1),
-      checkTask_(pool_.get_executor(), TELEMETRY_CHECK_INTERVAL),
       writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL),
       file_(name),
       backendMap_(backend_map) {
@@ -52,19 +50,21 @@ nixlTelemetry::nixlTelemetry(const std::string &name, backend_map_t &backend_map
     }
 
     NIXL_INFO << "Telemetry disabled via " << TELEMETRY_ENABLED_VAR << " environment variable";
-    checkTask_.callback_ = [this]() { return checkTelemetryEnabled(); };
-    registerPeriodicTask(checkTask_);
 }
 
 nixlTelemetry::~nixlTelemetry() {
     try {
-        checkTask_.timer_.cancel();
+        writeTask_.callback_ = nullptr;
+        writeTask_.timer_.cancel();
     }
     catch (const asio::system_error &e) {
-        NIXL_DEBUG << "Failed to cancel telemetry check timer: " << e.what();
+        NIXL_DEBUG << "Failed to cancel telemetry write timer: " << e.what();
         // continue anyway since it's not critical
     }
-    cleanupTelemetry();
+    if (buffer_) {
+        writeEventHelper();
+        buffer_.reset();
+    }
 }
 
 void
@@ -95,52 +95,6 @@ nixlTelemetry::initializeTelemetry() {
     writeTask_.callback_ = [this]() { return writeEventHelper(); };
     writeTask_.interval_ = run_interval;
     registerPeriodicTask(writeTask_);
-    checkTask_.callback_ = [this]() { return checkTelemetryDisabled(); };
-    registerPeriodicTask(checkTask_);
-}
-
-void
-nixlTelemetry::cleanupTelemetry() {
-    try {
-        writeTask_.callback_ = nullptr;
-        writeTask_.timer_.cancel();
-    }
-    catch (const asio::system_error &e) {
-        NIXL_DEBUG << "Failed to cancel telemetry write timer: " << e.what();
-        // continue anyway since it's not critical
-    }
-    if (buffer_) {
-        writeEventHelper();
-        buffer_.reset();
-    }
-    enabled_ = false;
-    events_.clear();
-
-    NIXL_INFO << "Telemetry disabled and cleaned up";
-}
-
-bool
-nixlTelemetry::checkTelemetryEnabled() {
-    bool should_enable = std::getenv(TELEMETRY_ENABLED_VAR) != nullptr;
-    if (should_enable && !enabled_) {
-        NIXL_INFO << "Telemetry enabled during runtime";
-        enabled_ = true;
-        initializeTelemetry();
-    }
-    return !enabled_;
-}
-
-bool
-nixlTelemetry::checkTelemetryDisabled() {
-    bool should_disable = std::getenv(TELEMETRY_ENABLED_VAR) == nullptr;
-    if (should_disable && enabled_) {
-        NIXL_INFO << "Telemetry disabled during runtime";
-        enabled_ = false;
-        cleanupTelemetry();
-        checkTask_.callback_ = [this]() { return checkTelemetryEnabled(); };
-        registerPeriodicTask(checkTask_);
-    }
-    return enabled_;
 }
 
 bool
