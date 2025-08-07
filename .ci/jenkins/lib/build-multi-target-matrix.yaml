@@ -37,12 +37,30 @@ kubernetes:
 
 
 runs_on_dockers:
-  # Base image - contains all dependencies: UCX, AWS SDK, etcd-cpp-apiv3, Rust, Python tools
+  # Base images - pre-built for each OS/arch combination
   - {
       file: 'contrib/Dockerfile.multi-target',
-      name: "nixl-base",
+      name: "nixl-base-u24-x64",
       category: 'tool',
-      build_args: '--build-arg OS=${os} --build-arg ARCH=${arch} --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base --build-arg BASE_IMAGE_TAG=25.06-cuda12.9-devel-${os} --build-arg UCX_REF=v1.19.x --build-arg NPROC=16 --build-arg DEFAULT_PYTHON_VERSION=3.12 --target base'
+      build_args: '--build-arg OS=ubuntu24.04 --build-arg ARCH=x86_64 --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base --build-arg BASE_IMAGE_TAG=25.06-cuda12.9-devel-ubuntu24.04 --build-arg UCX_REF=v1.19.x --build-arg NPROC=16 --build-arg DEFAULT_PYTHON_VERSION=3.12 --target base'
+    }
+  - {
+      file: 'contrib/Dockerfile.multi-target',
+      name: "nixl-base-u24-arm",
+      category: 'tool',
+      build_args: '--build-arg OS=ubuntu24.04 --build-arg ARCH=aarch64 --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base --build-arg BASE_IMAGE_TAG=25.06-cuda12.9-devel-ubuntu24.04 --build-arg UCX_REF=v1.19.x --build-arg NPROC=16 --build-arg DEFAULT_PYTHON_VERSION=3.12 --target base'
+    }
+  - {
+      file: 'contrib/Dockerfile.multi-target',
+      name: "nixl-base-u22-x64",
+      category: 'tool',
+      build_args: '--build-arg OS=ubuntu22.04 --build-arg ARCH=x86_64 --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base --build-arg BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04 --build-arg UCX_REF=v1.19.x --build-arg NPROC=16 --build-arg DEFAULT_PYTHON_VERSION=3.12 --target base'
+    }
+  - {
+      file: 'contrib/Dockerfile.multi-target',
+      name: "nixl-base-u22-arm",
+      category: 'tool',
+      build_args: '--build-arg OS=ubuntu22.04 --build-arg ARCH=aarch64 --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base --build-arg BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04 --build-arg UCX_REF=v1.19.x --build-arg NPROC=16 --build-arg DEFAULT_PYTHON_VERSION=3.12 --target base'
     }
 
 matrix:
@@ -51,7 +69,13 @@ matrix:
       - x86_64
       - aarch64
     os:
+      - ubuntu22.04
       - ubuntu24.04
+  include:
+    - {arch: x86_64, os: ubuntu24.04, name: 'nixl-base-u24-x64'}
+    - {arch: aarch64, os: ubuntu24.04, name: 'nixl-base-u24-arm'}
+    - {arch: x86_64, os: ubuntu22.04, name: 'nixl-base-u22-x64'}
+    - {arch: aarch64, os: ubuntu22.04, name: 'nixl-base-u22-arm'}
 
 env:
   NIXL_INSTALL_DIR: "/usr/local/nixl"
@@ -66,12 +90,14 @@ credentials:
 
 steps:
   - name: DEBUG
-    containerSelector: "{ name: 'nixl-base.*' }"
+    containerSelector: "{ name: '${name}' }"
     run: |
-      # Fail fast if matrix variables are not properly resolved
+      # Validate matrix variables and container selection
       echo "Matrix variables check:"
       echo "  os: '${os}'"
       echo "  arch: '${arch}'"
+      echo "  name: '${name}'"
+      echo "  Architecture detected: $(uname -m)"
 
       if [ -z "${os}" ] || [ "${os}" = "\${os}" ]; then
         echo "ERROR: Matrix variable 'os' is not defined or not resolved!"
@@ -86,10 +112,10 @@ steps:
       fi
 
       echo "Matrix variables validated successfully"
-      echo "Building for: ${os}/${arch}"
+      echo "Building for: ${os}/${arch} using container: ${name}"
 
   - name: Build NIXL
-    containerSelector: "{ name: 'nixl-base.*' }"
+    containerSelector: "{ name: '${name}' }"
     run: |
       # Set up environment
       export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
@@ -111,12 +137,12 @@ steps:
       sudo ldconfig
 
   - name: Test CPP
-    containerSelector: "{ name: 'nixl-base.*' }"
+    containerSelector: "{ name: '${name}' }"
     run: |
       .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
 
   - name: Test Python
-    containerSelector: "{ name: 'nixl-base.*' }"
+    containerSelector: "{ name: '${name}' }"
     run: |
       .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
 
