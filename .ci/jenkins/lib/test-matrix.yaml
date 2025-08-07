@@ -36,7 +36,7 @@ matrix:
 env:
   INSTALL_DIR: ${WORKSPACE}/nixl_install
   UCX_VERSION: v1.19.x
-  # Use manual timeout - ci-demo timeout only works on Jenkins master, not agents
+  # Manual timeout - ci-demo doesn't handle docker exec
   TEST_TIMEOUT: timeout 30m
 
 steps:
