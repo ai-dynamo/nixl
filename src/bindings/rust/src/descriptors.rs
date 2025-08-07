@@ -15,13 +15,15 @@
 
 use super::*;
 
+mod handles;
 mod query;
 mod reg;
 mod xfer;
 
 pub use query::{QueryResponse, QueryResponseIterator, QueryResponseList};
 pub use reg::RegDescList;
-pub use xfer::{XferDescList, XferDescListHandle};
+pub use xfer::XferDescList;
+pub use handles::XferDescListHandle;
 
 /// Memory types supported by NIXL
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
