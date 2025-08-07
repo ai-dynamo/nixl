@@ -45,3 +45,5 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 
 cargo test -- --test-threads=1
+
+cargo package

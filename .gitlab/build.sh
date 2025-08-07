@@ -120,7 +120,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
   cd etcd-cpp-apiv3 && \
   mkdir build && cd build && \
   cmake .. && \
-  make -j"$(nproc)" && \
+  make -j"${NPROC:-$(nproc)}" && \
   $SUDO make install && \
   $SUDO ldconfig \
 )
@@ -130,7 +130,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
   mkdir aws_sdk_build && \
   cd aws_sdk_build && \
   cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-  make -j"$(nproc)" && \
+  make -j"${NPROC:-$(nproc)}" && \
   $SUDO make install
 )
 
