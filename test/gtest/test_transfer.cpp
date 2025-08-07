@@ -119,6 +119,7 @@ protected:
         if (getBackendName() == "UCX" || getBackendName() == "UCX_MO") {
             params["num_workers"] = std::to_string(getNumWorkers());
             params["num_threads"] = std::to_string(getNumThreads());
+            params["split_batch_size"] = "32";
         }
 
         return params;
@@ -440,10 +441,6 @@ const std::string TestTransfer::NOTIF_MSG = "notification";
 
 TEST_P(TestTransfer, RandomSizes)
 {
-    // TODO: pass as backend params?
-    setenv("NIXL_MIN_CHUNK_SIZE", "32", 1);
-    setenv("NIXL_MAX_CHUNK_SIZE", "128", 1);
-
     // Tuple fields are: size, count, repeat, num_threads
     constexpr std::array<std::tuple<size_t, size_t, size_t, size_t>, 4> test_cases = {
         {{4096, 8, 3, 1},
@@ -532,10 +529,10 @@ INSTANTIATE_TEST_SUITE_P(ucx_no_pt,
                          testing::Values(std::make_tuple("UCX", false, 2, 0)));
 INSTANTIATE_TEST_SUITE_P(ucx_threadpool,
                          TestTransfer,
-                         testing::Values(std::make_tuple("UCX", true, 4, 2)));
+                         testing::Values(std::make_tuple("UCX", true, 6, 4)));
 INSTANTIATE_TEST_SUITE_P(ucx_threadpool_no_pt,
                          TestTransfer,
-                         testing::Values(std::make_tuple("UCX", false, 4, 2)));
+                         testing::Values(std::make_tuple("UCX", false, 6, 4)));
 INSTANTIATE_TEST_SUITE_P(ucx_mo,
                          TestTransfer,
                          testing::Values(std::make_tuple("UCX_MO", true, 2, 0)));

@@ -398,6 +398,7 @@ private:
     size_t numSharedWorkers_;
     std::mutex notifMutex_;
     notif_list_t notifThread_;
+    size_t splitBatchSize_;
 };
 
 #endif

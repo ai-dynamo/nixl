@@ -803,6 +803,8 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
     numSharedWorkers_ = getWorkers().size() - num_threads;
     NIXL_ASSERT(numSharedWorkers_ > 0);
 
+    splitBatchSize_ = nixl_b_params_get(init_params.customParams, "split_batch_size", 1024);
+
     auto init = [this]() { nixlUcxEngine::vramApplyCtx(); };
 
     if (init_params.enableProgTh) {
@@ -847,20 +849,12 @@ nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
                                   const std::string &remote_agent,
                                   nixlBackendReqH *&handle,
                                   const nixl_opt_b_args_t *opt_args) const {
-    // TODO: find the best split strategy based on batchSize and numThreads
-    // Maybe make it configurable
-    const char *min_env = getenv("NIXL_MIN_CHUNK_SIZE");
-    const char *max_env = getenv("NIXL_MAX_CHUNK_SIZE");
-    size_t min_chunk_size = (min_env != NULL) ? atoi(min_env) : 1024;
-    size_t max_chunk_size = (max_env != NULL) ? atoi(max_env) : 8192;
-
     size_t batch_size = local.descCount();
-    if (batch_size <= min_chunk_size) {
+    if (batch_size < splitBatchSize_) {
         return nixlUcxEngine::prepXfer(operation, local, remote, remote_agent, handle, opt_args);
     }
 
-    size_t chunk_size =
-        std::clamp(batch_size / dedicatedThreads_.size(), min_chunk_size, max_chunk_size);
+    size_t chunk_size = std::max(batch_size / dedicatedThreads_.size(), splitBatchSize_);
     size_t num_chunks = (batch_size + chunk_size - 1) / chunk_size;
 
     size_t worker_id = getWorkerId();
