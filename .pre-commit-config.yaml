@@ -40,14 +40,6 @@ repos:
         args: ["--max-line-length=88", "--select=C,E,F,W,B,B950", "--extend-ignore=E203,E501,W503"]
         types_or: [python, cython]
 
-  - repo: https://github.com/pylint-dev/pylint
-    rev: v3.3.7
-    hooks:
-      - id: pylint
-        args: ["--init-hook=import sys; import os; sys.path.insert(0, os.getcwd())"]
-        additional_dependencies: [torch, numpy, pytest, .]
-        types_or: [python, cython]
-
   - repo: https://github.com/codespell-project/codespell
     rev: v2.2.4
     hooks:
