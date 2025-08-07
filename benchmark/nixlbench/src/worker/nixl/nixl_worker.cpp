@@ -100,7 +100,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         xferBenchConfig::isStorageBackend()) {
         backend_name = xferBenchConfig::backend;
     } else {
-        std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
+        std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
     }
 
@@ -142,7 +142,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS_MT)) {
         std::cout << "GDS_MT backend" << std::endl;
         backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
-        std::cout << "GDS MT Num threads: " << xferBenchConfig::gds_mt_num_threads;
+        std::cout << "GDS MT Num threads: " << xferBenchConfig::gds_mt_num_threads << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
         // Set API type parameter for POSIX backend
         if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
@@ -182,7 +182,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
         std::cout << "OBJ backend" << std::endl;
     } else {
-        std::cerr << "Unsupported backend: " << xferBenchConfig::backend << std::endl;
+        std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
     }
 
