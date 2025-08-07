@@ -31,6 +31,8 @@ ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 
+RUN echo "TEST POINT FAILURE" && false
+
 RUN apt-get update -y && \
     apt-get install -y ubuntu-keyring && \
     apt-get update -y && \
