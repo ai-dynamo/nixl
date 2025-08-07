@@ -84,8 +84,6 @@ protected:
     size_t mask_ = 4096 - 1;
 };
 
-#ifdef NIXL_TELEMETRY_ENABLE
-
 TEST_F(telemetryTest, BasicInitialization) {
     EXPECT_NO_THROW({
         nixlTelemetry telemetry(test_file);
@@ -465,12 +463,3 @@ TEST_F(telemetryTest, ConcurrentAccessWithRuntimeChanges) {
         telemetry.updateRxBytes(2000);
     });
 }
-
-#else
-TEST_F(telemetryTest, TelemetryDisabledAtCompileTime) {
-    std::string test_file = "test_compile_time_disabled";
-    nixlTelemetry telemetry(test_file);
-    EXPECT_FALSE(telemetry.isEnabled());
-    EXPECT_TRUE(fs::is_empty(test_dir));
-}
-#endif

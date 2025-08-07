@@ -30,8 +30,6 @@
 
 #include <asio.hpp>
 
-#ifdef NIXL_TELEMETRY_ENABLE
-
 struct periodicTask {
     asio::steady_timer timer_;
     std::function<bool()> callback_;
@@ -70,7 +68,7 @@ public:
     void
     addTransactionTime(std::chrono::microseconds transaction_time);
     void
-    addGeneralTelemetry(const std::string &event_name, uint64_t value);
+    addBackendTelemetry(const std::string &event_name, uint64_t value);
 
 private:
     void
@@ -97,51 +95,4 @@ private:
     std::string file_;
 };
 
-#else // Telemetry disabled
-
-// Telemetry disabled at compile time - provide no-op implementations
-class nixlTelemetry {
-public:
-    nixlTelemetry(const std::string file) {}
-
-    ~nixlTelemetry() = default;
-
-    void
-    writeEvent() {}
-
-    bool
-    isEnabled() const {
-        return false;
-    }
-
-    void
-    updateTxBytes(uint64_t) {}
-
-    void
-    updateRxBytes(uint64_t) {}
-
-    void
-    updateTxRequestsNum(uint32_t) {}
-
-    void
-    updateRxRequestsNum(uint32_t) {}
-
-    void
-    updateErrorCount(nixl_status_t error_type) {}
-
-    void
-    updateMemoryRegistered(uint64_t memory_registered) {}
-
-    void
-    updateMemoryDeregistered(uint64_t memory_deregistered) {}
-
-    void
-    addTransactionTime(std::chrono::microseconds transaction_time) {}
-
-    void
-    addGeneralTelemetry(const std::string &event_name, uint64_t value) {}
-};
-
-#endif // Telemetry enabled/disabled
-
-#endif // _NIXL_TELEMETRY_H
+#endif // _TELEMETRY_H

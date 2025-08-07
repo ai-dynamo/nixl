@@ -173,7 +173,6 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
-    echo "Enable Telemetry: ${ENABLE_TELEMETRY}"
 }
 
 show_help() {
@@ -187,7 +186,6 @@ show_help() {
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--tag tag for image]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
-    echo "  [--enable-telemetry [true|false] to enable/disable telemetry, default false]"
     exit 0
 }
 
@@ -207,7 +205,6 @@ BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
-BUILD_ARGS+=" --build-arg ENABLE_TELEMETRY=$ENABLE_TELEMETRY"
 
 show_build_options
 
