@@ -41,9 +41,10 @@ DEFINE_string(benchmark_group,
               "(Default: default)");
 DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
-DEFINE_string(backend,
-              XFERBENCH_BACKEND_UCX,
-              "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] \
+DEFINE_string(
+    backend,
+    XFERBENCH_BACKEND_UCX,
+    "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]");
@@ -85,7 +86,7 @@ DEFINE_bool (storage_enable_direct, false, "Enable direct I/O for storage operat
 // GDS options - only used when backend is GDS
 DEFINE_int32(gds_batch_pool_size, 32, "Batch pool size for GDS operations (default: 32, only used with GDS backend)");
 DEFINE_int32(gds_batch_limit, 128, "Batch limit for GDS operations (default: 128, only used with GDS backend)");
-DEFINE_int32 (gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (Default: 1)");
+DEFINE_int32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (Default: 1)");
 
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
@@ -358,7 +359,8 @@ void xferBenchConfig::printConfig() {
     }
     printOption ("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,UCX_MO,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])", backend);
+        printOption("Backend (--backend=[UCX,UCX_MO,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])",
+                    backend);
         printOption ("Enable pt (--enable_pt=[0,1])", std::to_string (enable_pt));
         printOption ("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption ("Enable VMM (--enable_vmm=[0,1])", std::to_string (enable_vmm));
@@ -371,8 +373,8 @@ void xferBenchConfig::printConfig() {
         }
 
         if (backend == XFERBENCH_BACKEND_GDS_MT) {
-            printOption ("GDS MT Number of threads (--gds_mt_num_threads=N)",
-                         std::to_string (gds_mt_num_threads));
+            printOption("GDS MT Number of threads (--gds_mt_num_threads=N)",
+                        std::to_string(gds_mt_num_threads));
         }
 
         // Print POSIX options if backend is POSIX
