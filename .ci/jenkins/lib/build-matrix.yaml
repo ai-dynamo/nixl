@@ -46,6 +46,7 @@ matrix:
 
 env:
   NIXL_INSTALL_DIR: /opt/nixl
+  NPROC: "16"
 
 steps:
   - name: Build

@@ -36,6 +36,7 @@ matrix:
 env:
   INSTALL_DIR: ${WORKSPACE}/nixl_install
   UCX_VERSION: v1.19.x
+  NPROC: "16"
 
 steps:
   - name: Get Environment Info
