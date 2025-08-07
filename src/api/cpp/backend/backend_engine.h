@@ -20,8 +20,12 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
+#include <mutex>
+
 #include "nixl_types.h"
 #include "backend_aux.h"
+#include "nixl_telemetry.h"
 
 // Base backend engine class for different backend implementations
 class nixlBackendEngine {
@@ -29,11 +33,30 @@ class nixlBackendEngine {
         // Members that cannot be modified by a child backend and parent bookkeep
         nixl_backend_t  backendType;
         nixl_b_params_t customParams;
+        std::vector<nixlTelemetryEvent> telemetryEvents_;
+        std::mutex telemetryEventsMutex_;
 
     protected:
         // Members that can be accessed by the child (localAgent cannot be modified)
         bool              initErr = false;
         const std::string localAgent;
+
+        void
+        addTelemetryEvent(const std::string &event_name, uint64_t value) {
+            std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
+            telemetryEvents_.emplace_back(std::chrono::duration_cast<std::chrono::microseconds>(
+                                              std::chrono::system_clock::now().time_since_epoch())
+                                              .count(),
+                                          nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND,
+                                          event_name,
+                                          value);
+        }
+
+        std::vector<nixlTelemetryEvent>
+        getTelemetryEvents() {
+            std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
+            return std::move(telemetryEvents_);
+        }
 
         [[nodiscard]] nixl_status_t
         setInitParam(const std::string &key, const std::string &value) {
@@ -213,5 +236,6 @@ class nixlBackendEngine {
                          const nixl_opt_args_t *extra_params = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
+        friend class nixlTelemetry;
 };
 #endif

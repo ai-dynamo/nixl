@@ -29,32 +29,47 @@
 #include <atomic>
 
 #include "telemetry.h"
+#include "nixl_telemetry.h"
 #include "nixl_types.h"
 #include "common.h"
+#include "backend/backend_engine.h"
+#include "mocks/gmock_engine.h"
 
 namespace fs = std::filesystem;
+
+// Custom mock backend class for testing backend telemetry events
+class telemetryTestBackend : public mocks::GMockBackendEngine {
+public:
+    telemetryTestBackend() : mocks::GMockBackendEngine() {}
+
+    // Method to add telemetry events for testing
+    void
+    addTestTelemetryEvent(const std::string &event_name, uint64_t value) {
+        addTelemetryEvent(event_name, value);
+    }
+};
 
 class telemetryTest : public ::testing::Test {
 protected:
     void
     SetUp() override {
-        test_dir = "./telemetry_test_files";
-        test_file = "test_telemetry";
-        if (!fs::exists(test_dir)) {
-            fs::create_directory(test_dir);
+        testDir_ = "./telemetry_test_files";
+        testFile_ = "test_telemetry";
+        if (!fs::exists(testDir_)) {
+            fs::create_directory(testDir_);
         }
 
-        env_helper.addVar(TELEMETRY_ENABLED_VAR, "1");
-        env_helper.addVar(TELEMETRY_DIR_VAR, test_dir.string());
+        envHelper_.addVar(TELEMETRY_ENABLED_VAR, "1");
+        envHelper_.addVar(TELEMETRY_DIR_VAR, testDir_.string());
     }
 
     void
     TearDown() override {
-        env_helper.popVar();
-        env_helper.popVar();
-        if (fs::exists(test_dir)) {
+        envHelper_.popVar();
+        envHelper_.popVar();
+        if (fs::exists(testDir_)) {
             try {
-                fs::remove_all(test_dir);
+                fs::remove_all(testDir_);
             }
             catch (const fs::filesystem_error &e) {
                 // ignore can fail due to nsf
@@ -64,7 +79,7 @@ protected:
 
     void
     validateState() {
-        auto path = fs::path(test_dir) / test_file;
+        auto path = fs::path(testDir_) / testFile_;
         auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
             path.string(), false, TELEMETRY_VERSION);
         EXPECT_EQ(buffer->version(), TELEMETRY_VERSION);
@@ -74,34 +89,35 @@ protected:
         EXPECT_EQ(buffer->full(), size_ == capacity_);
     }
 
-    fs::path test_dir;
-    std::string test_file;
-    gtest::ScopedEnv env_helper;
+    fs::path testDir_;
+    std::string testFile_;
+    gtest::ScopedEnv envHelper_;
     size_t capacity_ = 4096;
     size_t size_ = 0;
-    size_t read_pos_ = 0;
-    size_t write_pos_ = 0;
+    size_t readPos_ = 0;
+    size_t writePos_ = 0;
     size_t mask_ = 4096 - 1;
+    backend_map_t backendMap_;
 };
 
 TEST_F(telemetryTest, BasicInitialization) {
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(test_file);
+        nixlTelemetry telemetry(testFile_, backendMap_);
         EXPECT_TRUE(telemetry.isEnabled());
         validateState();
     });
 }
 
 TEST_F(telemetryTest, InitializationWithEmptyFileName) {
-    auto tmp_file = test_file;
-    test_file = TELEMETRY_PREFIX + std::string(".") + std::to_string(getpid());
+    auto tmp_file = testFile_;
+    testFile_ = TELEMETRY_PREFIX + std::string(".") + std::to_string(getpid());
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry("");
+        nixlTelemetry telemetry("", backendMap_);
         validateState();
         EXPECT_TRUE(telemetry.isEnabled());
     });
 
-    test_file = tmp_file;
+    testFile_ = tmp_file;
 }
 
 TEST_F(telemetryTest, TelemetryDisabled) {
@@ -109,9 +125,9 @@ TEST_F(telemetryTest, TelemetryDisabled) {
 
     unsetenv(TELEMETRY_ENABLED_VAR);
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(test_file);
+        nixlTelemetry telemetry(test_file, backendMap_);
         EXPECT_FALSE(telemetry.isEnabled());
-        EXPECT_TRUE(fs::is_empty(test_dir));
+        EXPECT_TRUE(fs::is_empty(testDir_));
     });
 
     // Restore environment variable
@@ -121,31 +137,31 @@ TEST_F(telemetryTest, TelemetryDisabled) {
 TEST_F(telemetryTest, CustomBufferSize) {
     auto tmp_capacity = capacity_;
     capacity_ = 32;
-    env_helper.addVar(TELEMETRY_BUFFER_SIZE_VAR, "32");
+    envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "32");
 
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(test_file);
+        nixlTelemetry telemetry(testFile_, backendMap_);
         validateState();
         EXPECT_TRUE(telemetry.isEnabled());
     });
     capacity_ = tmp_capacity;
-    env_helper.popVar();
+    envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, InvalidBufferSize) {
-    env_helper.addVar(TELEMETRY_BUFFER_SIZE_VAR, "0");
+    envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "0");
 
-    EXPECT_THROW({ nixlTelemetry telemetry(test_file); }, std::invalid_argument);
-    env_helper.popVar();
-    env_helper.addVar(TELEMETRY_BUFFER_SIZE_VAR, "1023");
-    EXPECT_THROW({ nixlTelemetry telemetry(test_file); }, std::invalid_argument);
-    env_helper.popVar();
+    EXPECT_THROW({ nixlTelemetry telemetry(testFile_, backendMap_); }, std::invalid_argument);
+    envHelper_.popVar();
+    envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "1023");
+    EXPECT_THROW({ nixlTelemetry telemetry(testFile_, backendMap_); }, std::invalid_argument);
+    envHelper_.popVar();
 }
 
 // Test transfer bytes tracking
 TEST_F(telemetryTest, TransferBytesTracking) {
-    env_helper.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
-    nixlTelemetry telemetry(test_file);
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    nixlTelemetry telemetry(testFile_, backendMap_);
 
     EXPECT_NO_THROW(telemetry.updateTxBytes(1024));
     EXPECT_NO_THROW(telemetry.updateRxBytes(1024));
@@ -155,13 +171,12 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_NO_THROW(telemetry.updateMemoryRegistered(1024));
     EXPECT_NO_THROW(telemetry.updateMemoryDeregistered(1024));
     EXPECT_NO_THROW(telemetry.addTransactionTime(std::chrono::microseconds(100)));
-    EXPECT_NO_THROW(telemetry.addBackendTelemetry("test_event", 100));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    auto path = fs::path(test_dir) / test_file;
+    auto path = fs::path(testDir_) / testFile_;
     auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
         path.string(), false, TELEMETRY_VERSION);
-    EXPECT_EQ(buffer->size(), 9);
+    EXPECT_EQ(buffer->size(), 8);
     EXPECT_EQ(buffer->version(), TELEMETRY_VERSION);
     EXPECT_EQ(buffer->capacity(), capacity_);
     EXPECT_EQ(buffer->empty(), false);
@@ -193,9 +208,7 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_STREQ(event.eventName_, "agent_transaction_time");
     EXPECT_EQ(event.value_, 100);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "test_event");
-    EXPECT_EQ(event.value_, 100);
-    env_helper.popVar();
+    envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, TelemetryEventStructure) {
@@ -208,64 +221,51 @@ TEST_F(telemetryTest, TelemetryEventStructure) {
     EXPECT_STREQ(event1.eventName_, "test_event");
 }
 
-TEST_F(telemetryTest, EmptyEventNames) {
-    std::string test_file = "test_empty_eventName_s";
-    nixlTelemetry telemetry(test_file);
-
-    EXPECT_NO_THROW(telemetry.addBackendTelemetry("", 100));
-}
-
 TEST_F(telemetryTest, ShortRunInterval) {
-    env_helper.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
-
-    std::string test_file = "test_short_interval";
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(test_file);
+        nixlTelemetry telemetry(testFile_, backendMap_);
         EXPECT_TRUE(telemetry.isEnabled());
     });
-    env_helper.popVar();
+    envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, LargeRunInterval) {
-    env_helper.addVar(TELEMETRY_RUN_INTERVAL_VAR, "10000");
-
-    std::string test_file = "test_large_interval";
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "10000");
 
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(test_file);
+        nixlTelemetry telemetry(testFile_, backendMap_);
         EXPECT_TRUE(telemetry.isEnabled());
     });
-    env_helper.popVar();
+    envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, BufferOverflowHandling) {
-    env_helper.addVar(TELEMETRY_BUFFER_SIZE_VAR, "4");
+    envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "4");
 
-    std::string test_file = "test_buffer_overflow";
-    nixlTelemetry telemetry(test_file);
+    nixlTelemetry telemetry(testFile_, backendMap_);
 
     for (int i = 0; i < 10; ++i) {
         EXPECT_NO_THROW(telemetry.updateTxBytes(i * 100));
     }
 
-    env_helper.popVar();
+    envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, CustomTelemetryDirectory) {
-    fs::path custom_dir = test_dir / "custom_telemetry";
+    fs::path custom_dir = testDir_ / "custom_telemetry";
     fs::create_directory(custom_dir);
-    env_helper.addVar(TELEMETRY_DIR_VAR, custom_dir.string());
+    envHelper_.addVar(TELEMETRY_DIR_VAR, custom_dir.string());
 
-    std::string test_file = "test_custom_dir";
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(test_file);
+        nixlTelemetry telemetry(testFile_, backendMap_);
         EXPECT_TRUE(telemetry.isEnabled());
 
-        fs::path telemetry_file = custom_dir / test_file;
+        fs::path telemetry_file = custom_dir / testFile_;
         EXPECT_TRUE(fs::exists(telemetry_file));
     });
-    env_helper.popVar();
+    envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, TelemetryCategoryStringConversion) {
@@ -284,9 +284,9 @@ TEST_F(telemetryTest, TelemetryCategoryStringConversion) {
 
 // Test concurrent access (basic thread safety)
 TEST_F(telemetryTest, ConcurrentAccess) {
-    env_helper.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
-    test_file = "test_concurrent_access";
-    nixlTelemetry telemetry(test_file);
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    testFile_ = "test_concurrent_access";
+    nixlTelemetry telemetry(testFile_, backendMap_);
 
     const int num_threads = 4;
     const int operations_per_thread = 100;
@@ -321,18 +321,18 @@ TEST_F(telemetryTest, ConcurrentAccess) {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
     size_ = operations_per_thread * num_threads;
-    read_pos_ = 0;
-    write_pos_ = size_;
+    readPos_ = 0;
+    writePos_ = size_;
     validateState();
-    env_helper.popVar();
+    envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, RuntimeEnableDisable) {
-    env_helper.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
     // start with telemetry disabled
     unsetenv(TELEMETRY_ENABLED_VAR);
 
-    nixlTelemetry telemetry(test_file);
+    nixlTelemetry telemetry(testFile_, backendMap_);
     EXPECT_FALSE(telemetry.isEnabled());
 
     // enable telemetry
@@ -344,7 +344,7 @@ TEST_F(telemetryTest, RuntimeEnableDisable) {
     telemetry.updateTxBytes(1024);
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
-    auto path = fs::path(test_dir) / test_file;
+    auto path = fs::path(testDir_) / testFile_;
     auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
         path.string(), false, TELEMETRY_VERSION);
     EXPECT_EQ(buffer->size(), 1);
@@ -370,11 +370,11 @@ TEST_F(telemetryTest, RuntimeEnableDisable) {
         path.string(), false, TELEMETRY_VERSION);
     // buffer is reset so it will be 1
     EXPECT_EQ(buffer->size(), initial_size);
-    env_helper.popVar();
+    envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, CleanupOnDisable) {
-    nixlTelemetry telemetry(test_file);
+    nixlTelemetry telemetry(testFile_, backendMap_);
     EXPECT_TRUE(telemetry.isEnabled());
 
     // Add some events
@@ -395,11 +395,10 @@ TEST_F(telemetryTest, CleanupOnDisable) {
     EXPECT_NO_THROW(telemetry.updateMemoryRegistered(1024));
     EXPECT_NO_THROW(telemetry.updateMemoryDeregistered(512));
     EXPECT_NO_THROW(telemetry.addTransactionTime(std::chrono::microseconds(100)));
-    EXPECT_NO_THROW(telemetry.addBackendTelemetry("test_event", 100));
 }
 
 TEST_F(telemetryTest, ConcurrentAccessWithRuntimeChanges) {
-    nixlTelemetry telemetry(test_file);
+    nixlTelemetry telemetry(testFile_, backendMap_);
     EXPECT_TRUE(telemetry.isEnabled());
 
     const int num_threads = 4;
@@ -451,8 +450,8 @@ TEST_F(telemetryTest, ConcurrentAccessWithRuntimeChanges) {
     }
     EXPECT_EQ(size, operations_per_thread * num_threads);
     size_ = size;
-    read_pos_ = 0;
-    write_pos_ = size;
+    readPos_ = 0;
+    writePos_ = size;
     validateState();
     stop_threads = true;
     state_change_thread.join();
@@ -462,4 +461,206 @@ TEST_F(telemetryTest, ConcurrentAccessWithRuntimeChanges) {
         telemetry.updateTxBytes(1000);
         telemetry.updateRxBytes(2000);
     });
+}
+
+TEST_F(telemetryTest, BackendTelemetryEventsCollection) {
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "3");
+
+    // Create mock backends and add them to the backend map
+    auto mock_backend1 = std::make_unique<telemetryTestBackend>();
+    auto mock_backend2 = std::make_unique<telemetryTestBackend>();
+
+    backendMap_["CUSTOM"] = mock_backend1.get();
+    backendMap_["GPUNETIO"] = mock_backend2.get();
+
+    nixlTelemetry telemetry(testFile_, backendMap_);
+    EXPECT_TRUE(telemetry.isEnabled());
+
+    // Add some telemetry events to the backends
+    mock_backend1->addTestTelemetryEvent("backend1_event1", 100);
+    mock_backend1->addTestTelemetryEvent("backend1_event2", 200);
+    mock_backend2->addTestTelemetryEvent("backend2_event1", 300);
+
+    // Wait for the telemetry to be written
+    std::this_thread::sleep_for(std::chrono::milliseconds(6));
+
+    // Verify that backend events are collected and written to buffer
+    auto path = fs::path(testDir_) / testFile_;
+    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+        path.string(), false, TELEMETRY_VERSION);
+
+    EXPECT_EQ(buffer->size(), 3); // Should have 3 backend events
+
+    nixlTelemetryEvent event;
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "backend1_event1");
+    EXPECT_EQ(event.value_, 100);
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND);
+
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "backend1_event2");
+    EXPECT_EQ(event.value_, 200);
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND);
+
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "backend2_event1");
+    EXPECT_EQ(event.value_, 300);
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND);
+
+    envHelper_.popVar();
+}
+
+TEST_F(telemetryTest, BackendTelemetryEventsEmptyBackendMap) {
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+
+    // Create telemetry with empty backend map
+    backend_map_t empty_backend_map;
+    nixlTelemetry telemetry(testFile_, empty_backend_map);
+    EXPECT_TRUE(telemetry.isEnabled());
+
+    // Add some agent events
+    telemetry.updateTxBytes(1024);
+    telemetry.updateRxBytes(2048);
+
+    // Wait for the telemetry to be written
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    // Verify that only agent events are written (no backend events)
+    auto path = fs::path(testDir_) / testFile_;
+    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+        path.string(), false, TELEMETRY_VERSION);
+
+    EXPECT_EQ(buffer->size(), 2); // Only agent events
+
+    nixlTelemetryEvent event;
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "agent_tx_bytes");
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
+
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "agent_rx_bytes");
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
+
+    envHelper_.popVar();
+}
+
+TEST_F(telemetryTest, BackendTelemetryEventsMixedWithAgentEvents) {
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+
+    auto mock_backend = std::make_unique<telemetryTestBackend>();
+    backendMap_["CUSTOM"] = mock_backend.get();
+
+    nixlTelemetry telemetry(testFile_, backendMap_);
+    EXPECT_TRUE(telemetry.isEnabled());
+
+    // Add agent events
+    telemetry.updateTxBytes(1024);
+    telemetry.updateErrorCount(nixl_status_t::NIXL_ERR_BACKEND);
+
+    // Add backend events
+    mock_backend->addTestTelemetryEvent("backend_event1", 100);
+    mock_backend->addTestTelemetryEvent("backend_event2", 200);
+
+    // Wait for the telemetry to be written
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    // Verify that both agent and backend events are written
+    auto path = fs::path(testDir_) / testFile_;
+    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+        path.string(), false, TELEMETRY_VERSION);
+
+    EXPECT_EQ(buffer->size(), 4); // 2 agent events + 2 backend events
+
+    nixlTelemetryEvent event;
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "agent_tx_bytes");
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
+
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_,
+                 nixlEnumStrings::statusStr(nixl_status_t::NIXL_ERR_BACKEND).c_str());
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR);
+
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "backend_event1");
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND);
+
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "backend_event2");
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND);
+
+    envHelper_.popVar();
+}
+
+TEST_F(telemetryTest, BackendTelemetryEventsDisabledTelemetry) {
+    // Disable telemetry
+    unsetenv(TELEMETRY_ENABLED_VAR);
+
+    auto mock_backend = std::make_unique<telemetryTestBackend>();
+    backendMap_["CUSTOM"] = mock_backend.get();
+
+    nixlTelemetry telemetry(testFile_, backendMap_);
+    EXPECT_FALSE(telemetry.isEnabled());
+
+    // Add backend events (should be ignored)
+    mock_backend->addTestTelemetryEvent("backend_event_disabled", 100);
+
+    // Wait a bit
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    // Verify that no events are written
+    auto path = fs::path(testDir_) / testFile_;
+    EXPECT_FALSE(fs::exists(path));
+
+    // Restore environment variable
+    setenv(TELEMETRY_ENABLED_VAR, "1", 1);
+}
+
+TEST_F(telemetryTest, BackendTelemetryEventsMultipleBackends) {
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+
+    // Create multiple mock backends
+    auto mock_backend1 = std::make_unique<telemetryTestBackend>();
+    auto mock_backend2 = std::make_unique<telemetryTestBackend>();
+    auto mock_backend3 = std::make_unique<telemetryTestBackend>();
+
+    backendMap_["CUSTOM"] = mock_backend1.get();
+    backendMap_["GPUNETIO"] = mock_backend2.get();
+    backendMap_["GDS_MT"] = mock_backend3.get();
+
+    nixlTelemetry telemetry(testFile_, backendMap_);
+    EXPECT_TRUE(telemetry.isEnabled());
+
+    // Add events to each backend
+    mock_backend1->addTestTelemetryEvent("backend1_event", 100);
+    mock_backend2->addTestTelemetryEvent("backend2_event", 200);
+    mock_backend3->addTestTelemetryEvent("backend3_event", 300);
+
+    // Wait for the telemetry to be written
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // Verify that events from all backends are collected
+    auto path = fs::path(testDir_) / testFile_;
+    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+        path.string(), false, TELEMETRY_VERSION);
+
+    EXPECT_EQ(buffer->size(), 3);
+
+    nixlTelemetryEvent event;
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "backend1_event");
+    EXPECT_EQ(event.value_, 100);
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND);
+
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "backend2_event");
+    EXPECT_EQ(event.value_, 200);
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND);
+
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "backend3_event");
+    EXPECT_EQ(event.value_, 300);
+    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND);
+
+    envHelper_.popVar();
 }

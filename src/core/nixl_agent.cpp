@@ -102,8 +102,7 @@ nixlXferReqH::updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry_pub) 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg)
     : name(name),
       config(cfg),
-      lock(cfg.syncMode),
-      telemetry_(std::make_unique<nixlTelemetry>(name)) {
+      lock(cfg.syncMode) {
 #if HAVE_ETCD
     if (getenv("NIXL_ETCD_ENDPOINTS")) {
         useEtcd = true;
@@ -117,6 +116,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
         throw std::invalid_argument("Agent needs a name");
 
     memorySection = new nixlLocalSection();
+    telemetry_ = std::make_unique<nixlTelemetry>(name, backendEngines);
 }
 
 nixlAgentData::~nixlAgentData() {

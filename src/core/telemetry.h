@@ -19,6 +19,7 @@
 
 #include "common/cyclic_buffer.h"
 #include "nixl_telemetry.h"
+#include "mem_section.h"
 #include "nixl_types.h"
 
 #include <string>
@@ -42,7 +43,7 @@ struct periodicTask {
 
 class nixlTelemetry {
 public:
-    nixlTelemetry(const std::string file);
+    nixlTelemetry(const std::string &name, backend_map_t &backend_map);
 
     ~nixlTelemetry();
 
@@ -67,8 +68,6 @@ public:
     updateMemoryDeregistered(uint64_t memory_deregistered);
     void
     addTransactionTime(std::chrono::microseconds transaction_time);
-    void
-    addBackendTelemetry(const std::string &event_name, uint64_t value);
 
 private:
     void
@@ -93,6 +92,7 @@ private:
     periodicTask writeTask_;
     bool enabled_;
     std::string file_;
+    backend_map_t &backendMap_;
 };
 
 #endif // _TELEMETRY_H

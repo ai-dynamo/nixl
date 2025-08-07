@@ -35,11 +35,12 @@ constexpr std::chrono::milliseconds TELEMETRY_CHECK_INTERVAL = 2s;
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 
-nixlTelemetry::nixlTelemetry(const std::string file)
+nixlTelemetry::nixlTelemetry(const std::string &name, backend_map_t &backend_map)
     : pool_(1),
       checkTask_(pool_.get_executor(), TELEMETRY_CHECK_INTERVAL),
       writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL),
-      file_(file) {
+      file_(name),
+      backendMap_(backend_map) {
     enabled_ = std::getenv(TELEMETRY_ENABLED_VAR) != nullptr;
 
     if (enabled_) {
@@ -154,6 +155,25 @@ nixlTelemetry::writeEventHelper() {
         // if full, ignore
         buffer_->push(event);
     }
+    // collect all events and sort them by timestamp
+    std::vector<nixlTelemetryEvent> all_events;
+    for (auto &backend : backendMap_) {
+        auto backend_events = backend.second->getTelemetryEvents();
+        for (auto &event : backend_events) {
+            // don't trust enum value comming from backend,
+            // as it might be different from the one in agent
+            event.category_ = nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND;
+            all_events.push_back(event);
+        }
+    }
+    std::sort(all_events.begin(),
+              all_events.end(),
+              [](const nixlTelemetryEvent &a, const nixlTelemetryEvent &b) {
+                  return a.timestampUs_ < b.timestampUs_;
+              });
+    for (auto &event : all_events) {
+        buffer_->push(event);
+    }
     return true;
 }
 
@@ -252,11 +272,6 @@ nixlTelemetry::addTransactionTime(std::chrono::microseconds transaction_time) {
     updateData("agent_transaction_time",
                nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
                transaction_time.count());
-}
-
-void
-nixlTelemetry::addBackendTelemetry(const std::string &event_name, uint64_t value) {
-    updateData(event_name, nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND, value);
 }
 
 std::string

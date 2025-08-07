@@ -30,7 +30,6 @@
 #include "common/nixl_log.h"
 #include "util.h"
 
-
 template<typename T> class sharedRingBuffer {
 public:
     sharedRingBuffer(const std::string &name, bool create, int version, size_t size = 0)

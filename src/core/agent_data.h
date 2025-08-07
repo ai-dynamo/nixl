@@ -21,7 +21,7 @@
 #include "mem_section.h"
 #include "stream/metadata_stream.h"
 #include "sync.h"
-#include "telemetry.h"
+
 
 #if HAVE_ETCD
 #include <etcd/SyncClient.hpp>
@@ -32,6 +32,8 @@ class SyncClient;
 
 #define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"
 #endif // HAVE_ETCD
+
+class nixlTelemetry;
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
