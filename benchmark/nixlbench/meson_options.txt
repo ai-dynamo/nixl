@@ -21,4 +21,3 @@ option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD C+
 option('nixl_path', type: 'string', value: '/usr/local', description: 'Path to NiXL')
 option('nvshmem_inc_path', type: 'string', value: '', description: 'Path to NVSHMEM include directory')
 option('nvshmem_lib_path', type: 'string', value: '', description: 'Path to NVSHMEM library directory')
-option('ucx_path', type: 'string', value: '', description: 'Path to UCX install')
