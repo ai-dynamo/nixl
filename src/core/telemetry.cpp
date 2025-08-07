@@ -25,7 +25,7 @@
 
 #include "common/nixl_log.h"
 #include "telemetry.h"
-#include "nixl_telemetry.h"
+#include "telemetry_event.h"
 #include "util.h"
 
 using namespace std::chrono_literals;
@@ -41,6 +41,9 @@ nixlTelemetry::nixlTelemetry(const std::string &name, backend_map_t &backend_map
       writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL),
       file_(name),
       backendMap_(backend_map) {
+    if (name.empty()) {
+        throw std::invalid_argument("Telemetry file name cannot be empty");
+    }
     enabled_ = std::getenv(TELEMETRY_ENABLED_VAR) != nullptr;
 
     if (enabled_) {
@@ -72,10 +75,7 @@ nixlTelemetry::initializeTelemetry() {
 
     auto folder_path = std::getenv(TELEMETRY_DIR_VAR) ? std::getenv(TELEMETRY_DIR_VAR) : "/tmp";
 
-    auto file_name =
-        file_.empty() ? TELEMETRY_PREFIX + std::string(".") + std::to_string(getpid()) : file_;
-
-    auto full_file_path = fs::path(folder_path) / file_name;
+    auto full_file_path = fs::path(folder_path) / file_;
 
     if (buffer_size == 0) {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");

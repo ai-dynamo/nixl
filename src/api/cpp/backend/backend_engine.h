@@ -25,7 +25,7 @@
 
 #include "nixl_types.h"
 #include "backend_aux.h"
-#include "nixl_telemetry.h"
+#include "telemetry_event.h"
 
 // Base backend engine class for different backend implementations
 class nixlBackendEngine {
@@ -40,23 +40,6 @@ class nixlBackendEngine {
         // Members that can be accessed by the child (localAgent cannot be modified)
         bool              initErr = false;
         const std::string localAgent;
-
-        void
-        addTelemetryEvent(const std::string &event_name, uint64_t value) {
-            std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
-            telemetryEvents_.emplace_back(std::chrono::duration_cast<std::chrono::microseconds>(
-                                              std::chrono::system_clock::now().time_since_epoch())
-                                              .count(),
-                                          nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND,
-                                          event_name,
-                                          value);
-        }
-
-        std::vector<nixlTelemetryEvent>
-        getTelemetryEvents() {
-            std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
-            return std::move(telemetryEvents_);
-        }
 
         [[nodiscard]] nixl_status_t
         setInitParam(const std::string &key, const std::string &value) {
@@ -75,6 +58,17 @@ class nixlBackendEngine {
             return NIXL_ERR_INVALID_PARAM;
         }
 
+        void
+        addTelemetryEvent(const std::string &event_name, uint64_t value) {
+            std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
+            telemetryEvents_.emplace_back(std::chrono::duration_cast<std::chrono::microseconds>(
+                                              std::chrono::system_clock::now().time_since_epoch())
+                                              .count(),
+                                          nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND,
+                                          event_name,
+                                          value);
+        }
+
     public:
         explicit nixlBackendEngine (const nixlBackendInitParams* init_params)
             : backendType(init_params->type),
@@ -89,6 +83,12 @@ class nixlBackendEngine {
         void operator=(const nixlBackendEngine&) = delete;
 
         virtual ~nixlBackendEngine() = default;
+
+        std::vector<nixlTelemetryEvent>
+        getTelemetryEvents() {
+            std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
+            return std::move(telemetryEvents_);
+        }
 
         bool getInitErr() const noexcept { return initErr; }
         const nixl_backend_t& getType() const noexcept { return backendType; }
@@ -236,6 +236,5 @@ class nixlBackendEngine {
                          const nixl_opt_args_t *extra_params = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
-        friend class nixlTelemetry;
 };
 #endif

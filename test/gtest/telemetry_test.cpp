@@ -29,7 +29,7 @@
 #include <atomic>
 
 #include "telemetry.h"
-#include "nixl_telemetry.h"
+#include "telemetry_event.h"
 #include "nixl_types.h"
 #include "common.h"
 #include "backend/backend_engine.h"
@@ -109,15 +109,9 @@ TEST_F(telemetryTest, BasicInitialization) {
 }
 
 TEST_F(telemetryTest, InitializationWithEmptyFileName) {
-    auto tmp_file = testFile_;
-    testFile_ = TELEMETRY_PREFIX + std::string(".") + std::to_string(getpid());
-    EXPECT_NO_THROW({
+    EXPECT_THROW({
         nixlTelemetry telemetry("", backendMap_);
-        validateState();
-        EXPECT_TRUE(telemetry.isEnabled());
-    });
-
-    testFile_ = tmp_file;
+    }, std::invalid_argument);
 }
 
 TEST_F(telemetryTest, TelemetryDisabled) {
@@ -633,7 +627,9 @@ TEST_F(telemetryTest, BackendTelemetryEventsMultipleBackends) {
 
     // Add events to each backend
     mock_backend1->addTestTelemetryEvent("backend1_event", 100);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
     mock_backend2->addTestTelemetryEvent("backend2_event", 200);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
     mock_backend3->addTestTelemetryEvent("backend3_event", 300);
 
     // Wait for the telemetry to be written

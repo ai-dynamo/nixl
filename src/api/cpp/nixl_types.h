@@ -20,8 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <optional>
-#include <cstdint>
-#include <cstring>
+
 
 /*** Forward declarations ***/
 class nixlSerDes;
@@ -75,7 +74,6 @@ enum class nixl_thread_sync_t {
     NIXL_THREAD_SYNC_RW,
     NIXL_THREAD_SYNC_DEFAULT = NIXL_THREAD_SYNC_NONE,
 };
-
 
 /**
  * @namespace nixlEnumStrings
@@ -137,6 +135,7 @@ extern const std::string default_metadata_label;
  *        Appended to the agent's key prefix to form the full key for partial metadata.
  */
 extern const std::string default_partial_metadata_label;
+
 
 /**
  * @enum nixl_cost_t

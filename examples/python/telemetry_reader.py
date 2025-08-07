@@ -26,7 +26,6 @@ import time
 from datetime import datetime
 
 # Constants from nixl_types.h
-TELEMETRY_PREFIX = "nixl_telemetry"
 TELEMETRY_VERSION = 1
 TELEMETRY_BUFFER_SIZE = 4096
 MAX_EVENT_NAME_LEN = 32

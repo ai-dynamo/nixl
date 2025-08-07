@@ -17,9 +17,6 @@
 #ifndef __STR_TOOLS_H
 #define __STR_TOOLS_H
 #include <regex>
-#include <vector>
-#include <string>
-#include <cstdint>
 
 inline std::vector<std::string> str_split(const std::string& str, const std::string& delims) {
     std::regex re(delims);

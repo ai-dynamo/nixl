@@ -71,19 +71,11 @@ nixlEnumStrings::statusStr(const nixl_status_t &status) {
 
 void
 nixlXferReqH::updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry_pub) {
-    std::chrono::microseconds duration;
-
-    if (status == NIXL_SUCCESS) {
-        duration = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::high_resolution_clock::now() - telemetry.startTime);
-        NIXL_DEBUG << "[NIXL TELEMETRY]: From backend " << engine->getType()
-                   << " Posted and completed "
-                   << " Xfer with " << initiatorDescs->descCount() << " descriptors of total size "
-                   << telemetry.totalBytes << "B in " << duration.count() << "us.";
-    }
     if (!telemetry_pub->isEnabled()) return;
 
     if (status == NIXL_SUCCESS) {
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - telemetry.startTime);
         telemetry_pub->addTransactionTime(duration);
         if (backendOp == NIXL_WRITE) {
             telemetry_pub->updateTxBytes(telemetry.totalBytes);
@@ -92,6 +84,10 @@ nixlXferReqH::updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry_pub) 
             telemetry_pub->updateRxBytes(telemetry.totalBytes);
             telemetry_pub->updateRxRequestsNum(1);
         }
+        NIXL_DEBUG << "[NIXL TELEMETRY]: From backend " << engine->getType()
+                   << " Posted and completed "
+                   << " Xfer with " << initiatorDescs->descCount() << " descriptors of total size "
+                   << telemetry.totalBytes << "B in " << duration.count() << "us.";
     } else if (status != NIXL_IN_PROG) {
         // don't count NIXL_IN_PROG since there are a lot
         telemetry_pub->updateErrorCount(status);
@@ -121,6 +117,9 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
 
 nixlAgentData::~nixlAgentData() {
     delete memorySection;
+
+    // explicitly reset telemetry so i can publish backend events before destroying backends
+    telemetry_.reset();
 
     for (auto & elm: remoteSections)
         delete elm.second;
@@ -748,7 +747,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          nixlXferReqH* &req_hndl,
                          const nixl_opt_args_t* extra_params) const {
     nixl_status_t     ret1, ret2;
-    size_t total_bytes = 0;
     nixl_opt_b_args_t opt_args;
 
     std::unique_ptr<backend_set_t> backend_set = std::make_unique<backend_set_t>();
@@ -762,6 +760,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_NOT_FOUND;
     }
 
+    size_t total_bytes = 0;
     // Check the correspondence between descriptor lists
     if (local_descs.descCount() != remote_descs.descCount())
         return NIXL_ERR_INVALID_PARAM;
@@ -913,8 +912,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         data->telemetry_->updateErrorCount(NIXL_ERR_INVALID_PARAM);
         return NIXL_ERR_INVALID_PARAM;
     }
-
-    req_hndl->telemetry.startTime = std::chrono::high_resolution_clock::now();
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // Check if the remote was invalidated before post/repost

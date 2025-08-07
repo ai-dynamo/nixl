@@ -29,8 +29,8 @@ if etcd_dep.found()
                install: true)
 endif
 
-telemetry_reader_example = executable('telemetry_reader_example',
-           'telemetry_reader_example.cpp',
+telemetry_reader_example = executable('telemetry_reader',
+           'telemetry_reader.cpp',
            dependencies: [nixl_dep, nixl_common_deps],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            install: true)

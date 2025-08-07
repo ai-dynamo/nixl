@@ -18,7 +18,7 @@
 #define _TELEMETRY_H
 
 #include "common/cyclic_buffer.h"
-#include "nixl_telemetry.h"
+#include "telemetry_event.h"
 #include "mem_section.h"
 #include "nixl_types.h"
 
