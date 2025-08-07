@@ -116,7 +116,9 @@ int xferBenchNvshmemWorker::exchangeMetadata() {
     return 0;
 }
 
-std::vector<std::vector<xferBenchIOV>> xferBenchNvshmemWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &iov_lists) {
+std::vector<std::vector<xferBenchIOV>>
+xferBenchNvshmemWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &iov_lists,
+                                    size_t block_size) {
     // For NVSHMEM, we don't need to exchange IOV lists
     // This will just return local IOV list
     return iov_lists;

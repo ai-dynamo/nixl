@@ -49,8 +49,9 @@ class xferBenchWorker {
 
         // Communication and synchronization
         virtual int exchangeMetadata() = 0;
-        virtual std::vector<std::vector<xferBenchIOV>> exchangeIOV(const std::vector<std::vector<xferBenchIOV>>
-                                                                   &local_iov_lists) = 0;
+        virtual std::vector<std::vector<xferBenchIOV>>
+        exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                    size_t block_size) = 0;
         virtual void poll(size_t block_size) = 0;
 	virtual int synchronizeStart() = 0;
 
