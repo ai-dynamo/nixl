@@ -17,4 +17,4 @@ jobs:
       with:
         extra_args: --files ${{ steps.modified-files.outputs.modified_files }}
       env:
-        PYTHONPATH: ${{ env.PWD }}
+        PYTHONPATH: ${{ github.workspace }}
