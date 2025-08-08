@@ -888,7 +888,7 @@ execTransfer(nixlAgent *agent,
             std::cout << "NIXL releaseXferReq failed" << std::endl;
             ret = -1;
         }
-        #pragma omp critical
+#pragma omp critical
         { stats.add(thread_stats); }
     }
     long long total_duration = total_timer.lap();
