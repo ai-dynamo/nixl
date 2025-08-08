@@ -145,6 +145,7 @@ RUN rm -rf build && \
     ninja && \
     ninja install
 
+RUN cp build/examples/cpp/telemetry_reader_example /usr/local/bin
 ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/$ARCH-linux-gnu/plugins
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \

@@ -61,13 +61,14 @@ gtest_sources = [
     'test_transfer.cpp',
     'metadata_exchange.cpp',
     'common.cpp',
-    'query_mem.cpp'
+    'query_mem.cpp',
+    'telemetry_test.cpp'
     ]
 test_exe = executable('gtest',
     sources : gtest_sources,
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, cuda_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, file_utils_interface],
+    dependencies : [nixl_dep, nixl_common_dep, cuda_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, file_utils_interface],
     link_with: [nixl_build_lib],
     install : true
 )

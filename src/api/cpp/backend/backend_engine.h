@@ -20,8 +20,12 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
+#include <mutex>
+
 #include "nixl_types.h"
 #include "backend_aux.h"
+#include "telemetry_event.h"
 
 // Base backend engine class for different backend implementations
 class nixlBackendEngine {
@@ -29,6 +33,8 @@ class nixlBackendEngine {
         // Members that cannot be modified by a child backend and parent bookkeep
         nixl_backend_t  backendType;
         nixl_b_params_t customParams;
+        std::vector<nixlTelemetryEvent> telemetryEvents_;
+        std::mutex telemetryEventsMutex_;
 
     protected:
         // Members that can be accessed by the child (localAgent cannot be modified)
@@ -52,6 +58,17 @@ class nixlBackendEngine {
             return NIXL_ERR_INVALID_PARAM;
         }
 
+        void
+        addTelemetryEvent(const std::string &event_name, uint64_t value) {
+            std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
+            telemetryEvents_.emplace_back(std::chrono::duration_cast<std::chrono::microseconds>(
+                                              std::chrono::system_clock::now().time_since_epoch())
+                                              .count(),
+                                          nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND,
+                                          event_name,
+                                          value);
+        }
+
     public:
         explicit nixlBackendEngine (const nixlBackendInitParams* init_params)
             : backendType(init_params->type),
@@ -66,6 +83,12 @@ class nixlBackendEngine {
         void operator=(const nixlBackendEngine&) = delete;
 
         virtual ~nixlBackendEngine() = default;
+
+        std::vector<nixlTelemetryEvent>
+        getTelemetryEvents() {
+            std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
+            return std::move(telemetryEvents_);
+        }
 
         bool getInitErr() const noexcept { return initErr; }
         const nixl_backend_t& getType() const noexcept { return backendType; }
