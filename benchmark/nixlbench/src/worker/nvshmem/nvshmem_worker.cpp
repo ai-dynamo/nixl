@@ -188,7 +188,7 @@ xferBenchNvshmemWorker::transfer(size_t block_size,
 
     ret = execTransfer(local_trans_lists, remote_trans_lists, skip, stream, stats);
     if (ret < 0) {
-        return std::variant<double, int>(ret);
+        return std::variant<xferBenchStats, int>(ret);
     }
     stats.reset();
     nvshmemx_barrier_all_on_stream(stream);
