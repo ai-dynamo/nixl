@@ -850,6 +850,12 @@ protected:
                 }
             }
         }
+
+        // Drop remaining requests
+        for (auto it = requests_.begin(); it != requests_.end();) {
+            (*it)->complete(NIXL_ERR_BACKEND);
+        }
+        requests_.clear();
     }
 
 private:
