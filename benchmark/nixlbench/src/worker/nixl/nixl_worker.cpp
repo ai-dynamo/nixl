@@ -889,9 +889,7 @@ execTransfer(nixlAgent *agent,
             ret = -1;
         }
         #pragma omp critical
-        {
-            stats.add(thread_stats);
-        }
+        { stats.add(thread_stats); }
     }
     long long total_duration = total_timer.lap();
     stats.total_duration.add(total_duration);

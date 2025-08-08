@@ -676,10 +676,11 @@ xferBenchUtils::printStats(bool is_target,
                   << transfer_p99_duration << std::endl;
     } else {
         std::cout << std::left << std::setw(20) << block_size << std::setw(15) << batch_size
-                  << std::setw(15) << avg_latency << std::setw(15) << throughput_gb << std::setw(15)
-                  << prepare_duration << std::setw(15) << post_duration << std::setw(15)
-                  << post_p99_duration << std::setw(15) << transfer_duration << std::setw(15)
-                  << transfer_p99_duration << std::endl;
+                  << std::setw(15) << avg_latency << std::setw(15) << throughput_gb << std::setw(25)
+                  << totalbw << std::setw(20) << (totalbw / (rt->getSize() / 2 * MAXBW)) * 100
+                  << std::setw(15) << prepare_duration << std::setw(15) << post_duration
+                  << std::setw(15) << post_p99_duration << std::setw(15) << transfer_duration
+                  << std::setw(15) << transfer_p99_duration << std::endl;
     }
 }
 
@@ -908,10 +909,10 @@ xferBenchStats::reserve(size_t n) {
  * xferBenchTimer
  */
 
-xferBenchTimer::xferBenchTimer()
-    : start_(nixlTime::getUs()) {}
+xferBenchTimer::xferBenchTimer() : start_(nixlTime::getUs()) {}
 
-nixlTime::us_t xferBenchTimer::lap() {
+nixlTime::us_t
+xferBenchTimer::lap() {
     nixlTime::us_t now = nixlTime::getUs();
     nixlTime::us_t duration = now - start_;
     start_ = now;
