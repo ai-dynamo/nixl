@@ -321,7 +321,6 @@ private:
     nixlUcxIntReq head;
     nixlUcxWorker *worker;
     size_t worker_id;
-    std::atomic<size_t> *pendingReqs_;
 
     // Notification to be sent after completion of all requests
     struct Notif {
@@ -337,40 +336,16 @@ public:
         return notif;
     }
 
-    nixlUcxBackendH(std::atomic<size_t> *pending_reqs)
-        : worker(nullptr),
-          worker_id(UINT64_MAX),
-          pendingReqs_(pending_reqs) {}
+    nixlUcxBackendH(nixlUcxWorker *worker, size_t worker_id)
+        : worker(worker), worker_id(worker_id) {}
 
-    nixlUcxBackendH(nixlUcxWorker *worker,
-                    size_t worker_id,
-                    std::atomic<size_t> *pending_reqs = nullptr)
-        : worker(worker),
-          worker_id(worker_id),
-          pendingReqs_(pending_reqs) {}
-
-    void
-    init(nixlUcxWorker *worker, size_t worker_id) {
-        NIXL_ASSERT(this->worker == nullptr);
-        this->worker = worker;
-        this->worker_id = worker_id;
-    }
-
-    void
-    append(nixlUcxIntReq *req) {
+    void append(nixlUcxIntReq *req) {
         head.link(req);
     }
 
-    bool
+    virtual bool
     isComposite() const {
-        return pendingReqs_ != nullptr;
-    }
-
-    void
-    complete() {
-        pendingReqs_->fetch_sub(1);
-        worker = nullptr;
-        worker_id = UINT64_MAX;
+        return false;
     }
 
     virtual nixl_status_t
@@ -389,9 +364,6 @@ public:
             }
             _internalRequestReset(cur);
             worker->reqRelease((nixlUcxReq)cur);
-        }
-        if (isComposite() && worker) {
-            complete();
         }
         return NIXL_SUCCESS;
     }
@@ -447,6 +419,13 @@ public:
         }
 
         return out_ret;
+    }
+
+    void
+    setWorker(nixlUcxWorker *worker, size_t worker_id) {
+        NIXL_ASSERT(this->worker == nullptr || worker == nullptr);
+        this->worker = worker;
+        this->worker_id = worker_id;
     }
 
     nixlUcxWorker *
@@ -681,6 +660,72 @@ nixlUcxThreadEngine::getNotifs(notif_list_t &notif_list) {
  * Threadpool engine
  ****************************************/
 
+struct nixlUcxBackendSharedState;
+
+/*
+ * This class represents a chunk of a composite request.
+ * It is used to encapsulate a batch of requests (subset of the larger batch)
+ * performed by a dedicated worker thread of threadpool. It holds a shared state
+ * with the main request to track its completion status and control the lifetime.
+ */
+class nixlUcxChunkBackendH : public nixlUcxBackendH {
+public:
+    nixlUcxChunkBackendH() : nixlUcxBackendH(nullptr, UINT64_MAX) {}
+
+    void
+    startXfer(const std::shared_ptr<nixlUcxBackendSharedState> &shared_state,
+              nixlUcxWorker *worker,
+              size_t worker_id) {
+        NIXL_ASSERT(sharedState_.get() == nullptr);
+        sharedState_ = shared_state;
+        setWorker(worker, worker_id);
+    }
+
+    void
+    complete(nixl_status_t status);
+
+    nixl_status_t
+    status() override;
+
+private:
+    std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
+};
+
+/*
+ * This class represents a shared state between a main request and all of its
+ * chunks. It is used to track the completion status of the request and the
+ * number of pending requests, and to control the lifetime of the chunks.
+ */
+struct nixlUcxBackendSharedState {
+    std::atomic<nixl_status_t> status;
+    std::atomic<size_t> pendingReqs;
+    std::vector<nixlUcxChunkBackendH> chunks;
+
+    nixlUcxBackendSharedState() : status(NIXL_SUCCESS), pendingReqs(0) {}
+};
+
+void
+nixlUcxChunkBackendH::complete(nixl_status_t status) {
+    NIXL_ASSERT(sharedState_.get() != nullptr);
+    if (status != NIXL_SUCCESS) {
+        nixlUcxBackendH::release();
+        sharedState_->status.store(status);
+    }
+    sharedState_->pendingReqs.fetch_sub(1);
+    setWorker(nullptr, UINT64_MAX);
+    sharedState_.reset();
+}
+
+nixl_status_t
+nixlUcxChunkBackendH::status() {
+    // First check if entire request was cancelled or failed
+    nixl_status_t status = sharedState_->status.load();
+    if (status == NIXL_SUCCESS) {
+        status = nixlUcxBackendH::status();
+    }
+    return status;
+}
+
 /*
  * This class represents a composite request handle for a UCX backend.
  * It is used to encapsulate multiple parallel requests performed by dedicated
@@ -693,13 +738,10 @@ public:
                              size_t worker_id,
                              size_t chunk_size,
                              size_t num_chunks)
-        : nixlUcxBackendH(worker, worker_id, &pendingReqs_),
-          chunkSize_(chunk_size),
-          pendingReqs_(0) {
-        chunks_.reserve(num_chunks);
-        for (size_t i = 0; i < num_chunks; i++) {
-            chunks_.emplace_back(&pendingReqs_);
-        }
+        : nixlUcxBackendH(worker, worker_id),
+          sharedState_(std::make_shared<nixlUcxBackendSharedState>()),
+          chunkSize_(chunk_size) {
+        sharedState_->chunks.resize(num_chunks);
     }
 
     size_t
@@ -709,27 +751,38 @@ public:
 
     size_t
     getNumChunks() const {
-        return chunks_.size();
+        return sharedState_->chunks.size();
     }
 
     void
     startXfer() {
-        NIXL_ASSERT(pendingReqs_.load() == 0);
-        pendingReqs_.store(chunks_.size());
+        NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
+        sharedState_->status.store(NIXL_SUCCESS);
+        sharedState_->pendingReqs.store(getNumChunks());
     }
 
-    nixlUcxBackendH *
-    getChunk(size_t idx) {
-        return &chunks_[idx];
+    nixlUcxChunkBackendH *
+    startChunk(size_t idx, nixlUcxWorker *worker, size_t worker_id) {
+        nixlUcxChunkBackendH *chunk = &sharedState_->chunks[idx];
+        chunk->startXfer(sharedState_, worker, worker_id);
+        return chunk;
+    }
+
+    bool
+    isComposite() const override {
+        return true;
     }
 
     nixl_status_t
     release() override {
-        for (auto &chunk : chunks_) {
-            chunk.release();
-        }
-        chunks_.clear();
-        return NIXL_SUCCESS;
+        nixl_status_t status = nixlUcxBackendH::release();
+        // Set failed status to stop progress chunks
+        sharedState_->status.store(NIXL_ERR_NOT_FOUND);
+
+        // Reset shared state - it will be effectively released when the last chunk
+        // resets the shared state pointer
+        sharedState_.reset();
+        return status;
     }
 
     nixl_status_t
@@ -737,16 +790,21 @@ public:
         while (getWorker()->progress())
             ;
 
-        if (pendingReqs_.load()) {
+        if (sharedState_->pendingReqs.load()) {
             return NIXL_IN_PROG;
         }
-        return nixlUcxBackendH::status();
+
+        nixl_status_t status = nixlUcxBackendH::status();
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+
+        return sharedState_->status.load();
     }
 
 private:
-    std::vector<nixlUcxBackendH> chunks_;
+    std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
     size_t chunkSize_;
-    std::atomic<size_t> pendingReqs_;
 };
 
 class nixlUcxDedicatedThread : public nixlUcxThread {
@@ -761,7 +819,7 @@ public:
     }
 
     void
-    addRequest(nixlUcxBackendH *handle) {
+    addRequest(nixlUcxChunkBackendH *handle) {
         requests_.push_back(handle);
     }
 
@@ -782,8 +840,9 @@ protected:
             }
 
             for (auto it = requests_.begin(); it != requests_.end();) {
-                if ((*it)->status() == NIXL_SUCCESS) {
-                    (*it)->complete();
+                nixl_status_t status = (*it)->status();
+                if (status != NIXL_IN_PROG) {
+                    (*it)->complete(status);
                     it = requests_.erase(it);
                 } else {
                     ++it;
@@ -794,7 +853,7 @@ protected:
 
 private:
     asio::io_context &io_;
-    std::vector<nixlUcxBackendH *> requests_;
+    std::vector<nixlUcxChunkBackendH *> requests_;
 };
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params)
@@ -891,18 +950,16 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
             auto thread = nixlUcxDedicatedThread::getDedicatedThread();
             NIXL_ASSERT(thread != nullptr);
 
-            nixlUcxBackendH *chunk_handle = comp_handle->getChunk(i);
-            chunk_handle->init(thread->getWorkers()[0], thread->getWorkerId());
+            nixlUcxChunkBackendH *chunk_handle =
+                comp_handle->startChunk(i, thread->getWorkers()[0], thread->getWorkerId());
 
             size_t start_idx = i * chunk_size;
             size_t end_idx = std::min(start_idx + chunk_size, (size_t)local.descCount());
-            nixl_status_t ret;
-            ret = nixlUcxEngine::sendXferRange(
+            nixl_status_t ret = nixlUcxEngine::sendXferRange(
                 operation, local, remote, remote_agent, chunk_handle, start_idx, end_idx);
             if (ret != NIXL_SUCCESS) {
-                // TODO: test error handling
                 status.store(ret);
-                chunk_handle->release();
+                chunk_handle->complete(ret);
             } else {
                 thread->addRequest(chunk_handle);
             }

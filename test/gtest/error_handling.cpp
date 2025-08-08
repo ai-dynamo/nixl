@@ -46,6 +46,8 @@ namespace nixl {
         EXPECT_EQ(ucx_err_handling_mode_peer, params[ucx_err_handling_mode_key]);
         params["num_workers"] = std::to_string(num_workers);
         params["num_threads"] = std::to_string(num_threads);
+        // If threadpool is configured always force split
+        params["split_batch_size"] = "0";
         status = agent.createBackend(*it, params, backend_handle);
         EXPECT_EQ(NIXL_SUCCESS, status);
         EXPECT_NE(nullptr, backend_handle);
