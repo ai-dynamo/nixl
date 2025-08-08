@@ -26,6 +26,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
+#include "absl/strings/str_join.h"
 #include <asio.hpp>
 
 #ifdef HAVE_CUDA
@@ -513,6 +514,12 @@ public:
         return thread && thread->engine_ == engine;
     }
 
+    friend std::ostream &
+    operator<<(std::ostream &os, const nixlUcxThread &thread) {
+        return os << "thread " << &thread << "{engine: " << thread.engine_ << ", worker_ids: ["
+                  << absl::StrJoin(thread.workerIds_, ",") << "]}";
+    }
+
 protected:
     virtual void
     run() = 0;
@@ -571,6 +578,7 @@ public:
 protected:
     void
     run() override {
+        NIXL_DEBUG << "shared " << *this << " running";
         // Set timeout event so that the main loop would progress all workers on first iteration
         bool timeout = true;
         bool pthr_stop = false;
@@ -602,6 +610,8 @@ protected:
                 pthr_stop = true;
             }
         }
+
+        NIXL_DEBUG << "shared " << *this << " exiting";
     }
 
 private:
@@ -688,6 +698,12 @@ public:
     nixl_status_t
     status() override;
 
+    friend std::ostream &
+    operator<<(std::ostream &os, const nixlUcxChunkBackendH &chunk) {
+        return os << "chunk " << &chunk << "{worker_id: " << chunk.getWorkerId()
+                  << ", state: " << chunk.sharedState_.get() << "}";
+    }
+
 private:
     std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
 };
@@ -703,6 +719,12 @@ struct nixlUcxBackendSharedState {
     std::vector<nixlUcxChunkBackendH> chunks;
 
     nixlUcxBackendSharedState() : status(NIXL_SUCCESS), pendingReqs(0) {}
+
+    friend std::ostream &
+    operator<<(std::ostream &os, const nixlUcxBackendSharedState &state) {
+        return os << "state " << &state << "{status: " << state.status.load()
+                  << ", pending=" << state.pendingReqs.load() << "}";
+    }
 };
 
 void
@@ -711,9 +733,11 @@ nixlUcxChunkBackendH::complete(nixl_status_t status) {
     if (status != NIXL_SUCCESS) {
         nixlUcxBackendH::release();
         sharedState_->status.store(status);
+        NIXL_TRACE << *this << " completed with error: " << status;
     }
     sharedState_->pendingReqs.fetch_sub(1);
     setWorker(nullptr, UINT64_MAX);
+    NIXL_TRACE << *this << " completed, " << *sharedState_;
     sharedState_.reset();
 }
 
@@ -776,6 +800,7 @@ public:
 
     nixl_status_t
     release() override {
+        NIXL_DEBUG << "composite " << *this << " releasing";
         nixl_status_t status = nixlUcxBackendH::release();
         // Set failed status to stop progress chunks
         sharedState_->status.store(NIXL_ERR_NOT_FOUND);
@@ -803,6 +828,17 @@ public:
         return sharedState_->status.load();
     }
 
+    friend std::ostream &
+    operator<<(std::ostream &os, const nixlUcxCompositeBackendH &handle) {
+        os << "composite handle " << &handle << "{chunks: " << handle.getNumChunks();
+        if (handle.sharedState_) {
+            os << ", " << *handle.sharedState_;
+        } else {
+            os << ", state: nullptr";
+        }
+        return os << "}}";
+    }
+
 private:
     std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
     size_t chunkSize_;
@@ -828,11 +864,13 @@ protected:
     void
     run() override {
         auto guard = asio::make_work_guard(io_);
+        NIXL_DEBUG << "dedicated " << *this << " running";
 
         while (!io_.stopped()) {
             if (!requests_.empty()) {
                 io_.poll_one();
             } else {
+                NIXL_TRACE << "dedicated " << *this << " waiting for requests";
                 io_.run_one();
             }
 
@@ -843,6 +881,8 @@ protected:
             for (auto it = requests_.begin(); it != requests_.end();) {
                 nixl_status_t status = (*it)->status();
                 if (status != NIXL_IN_PROG) {
+                    NIXL_TRACE << "dedicated " << *this << " completing " << *(*it)
+                               << " with status: " << status;
                     (*it)->complete(status);
                     it = requests_.erase(it);
                 } else {
@@ -851,11 +891,17 @@ protected:
             }
         }
 
-        // Drop remaining requests
-        for (auto it = requests_.begin(); it != requests_.end();) {
-            (*it)->complete(NIXL_ERR_BACKEND);
+        if (!requests_.empty()) {
+            NIXL_WARN << "dedicated " << *this << " dropping " << requests_.size()
+                      << " requests on exit";
+            for (auto it = requests_.begin(); it != requests_.end();) {
+                NIXL_INFO << "dropping " << *(*it);
+                (*it)->complete(NIXL_ERR_BACKEND);
+            }
+            requests_.clear();
         }
-        requests_.clear();
+
+        NIXL_DEBUG << "dedicated " << *this << " exiting";
     }
 
 private:
@@ -924,8 +970,10 @@ nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
     size_t num_chunks = (batch_size + chunk_size - 1) / chunk_size;
 
     size_t worker_id = getWorkerId();
-    handle =
+    nixlUcxCompositeBackendH *comp_handle =
         new nixlUcxCompositeBackendH(getWorker(worker_id).get(), worker_id, chunk_size, num_chunks);
+    NIXL_DEBUG << "created " << *comp_handle;
+    handle = comp_handle;
     return NIXL_SUCCESS;
 }
 
@@ -946,6 +994,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     nixlUcxCompositeBackendH *comp_handle = (nixlUcxCompositeBackendH *)int_handle;
     comp_handle->startXfer();
     size_t chunk_size = comp_handle->getChunkSize();
+    NIXL_DEBUG << "sending " << *comp_handle;
 
     std::promise<void> promise;
     std::future<void> future = promise.get_future();
@@ -959,6 +1008,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
             nixlUcxChunkBackendH *chunk_handle =
                 comp_handle->startChunk(i, thread->getWorkers()[0], thread->getWorkerId());
+            NIXL_TRACE << "dedicated " << *thread << " starting " << *chunk_handle;
 
             size_t start_idx = i * chunk_size;
             size_t end_idx = std::min(start_idx + chunk_size, (size_t)local.descCount());
@@ -968,6 +1018,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
                 status.store(ret);
                 chunk_handle->complete(ret);
             } else {
+                NIXL_TRACE << "dedicated " << *thread << " sent " << *chunk_handle;
                 thread->addRequest(chunk_handle);
             }
 
@@ -978,6 +1029,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     }
 
     future.wait();
+    NIXL_DEBUG << "sent " << *comp_handle << " with status: " << status.load();
     return status.load();
 }
 
