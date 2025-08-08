@@ -50,6 +50,7 @@ $SUDO apt-get -qq install -y curl \
                              numactl \
                              autotools-dev \
                              automake \
+                             git \
                              libtool \
                              libz-dev \
                              libiberty-dev \
@@ -117,6 +118,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 )
 
 ( \
+  cd /tmp && \
   git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
   mkdir aws_sdk_build && \
   cd aws_sdk_build && \
@@ -137,7 +139,11 @@ export CMAKE_PREFIX_PATH=${INSTALL_DIR}:${CMAKE_PREFIX_PATH}
 export UCX_TLS=^cuda_ipc
 
 meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true ${EXTRA_BUILD_ARGS}
-cd nixl_build && ninja && ninja install
+ninja -C nixl_build && ninja -C nixl_build install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
 # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
+
+cd benchmark/nixlbench
+meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
+ninja -C nixlbench_build && ninja -C nixlbench_build install
