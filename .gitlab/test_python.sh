@@ -52,6 +52,9 @@ pip3 install --break-system-packages .
 pip3 install --break-system-packages pytest
 pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
+pip3 install --break-system-packages pylint
+
+pylint src/api/python examples/python test/python
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
@@ -75,11 +78,10 @@ python3 test/python/prep_xfer_perf.py array
 echo "==== Running python examples ===="
 blocking_send_recv_port=$(get_next_tcp_port)
 
-cd examples/python
-python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
+python3 examples/python/blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
 sleep 5
-python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
+python3 examples/python/blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
 
-python3 query_mem_example.py
+python3 examples/python/query_mem_example.py
 
 pkill etcd

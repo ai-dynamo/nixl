@@ -16,10 +16,18 @@
 # limitations under the License.
 
 import argparse
+import enum
+import sys
 
 import torch
 
 from nixl._api import nixl_agent, nixl_agent_config
+
+
+class BlockingSendRecvErrCodes(enum.Enum):
+    MEM_REG_FAILED = 1
+    TRANSFER_FAILED = 2
+    DATA_VERIFICATION_FAILED = 3
 
 
 def parse_args():
@@ -63,7 +71,7 @@ if __name__ == "__main__":
     reg_descs = agent.register_memory(tensors)
     if not reg_descs:  # Same as reg_descs if successful
         print("Memory registration failed.")
-        exit()
+        sys.exit(BlockingSendRecvErrCodes.MEM_REG_FAILED.value)
 
     # Target code
     if args.mode == "target":
@@ -113,17 +121,17 @@ if __name__ == "__main__":
 
         if not xfer_handle:
             print("Creating transfer failed.")
-            exit()
+            sys.exit(BlockingSendRecvErrCodes.TRANSFER_FAILED.value)
 
         state = agent.transfer(xfer_handle)
         if state == "ERR":
             print("Posting transfer failed.")
-            exit()
+            sys.exit(BlockingSendRecvErrCodes.TRANSFER_FAILED.value)
         while True:
             state = agent.check_xfer_state(xfer_handle)
             if state == "ERR":
                 print("Transfer got to Error state.")
-                exit()
+                sys.exit(BlockingSendRecvErrCodes.TRANSFER_FAILED.value)
             elif state == "DONE":
                 break
 
@@ -131,7 +139,7 @@ if __name__ == "__main__":
         for i, tensor in enumerate(tensors):
             if not torch.allclose(tensor, torch.ones(10)):
                 print(f"Data verification failed for tensor {i}.")
-                exit()
+                sys.exit(BlockingSendRecvErrCodes.DATA_VERIFICATION_FAILED.value)
         print(f"{args.mode} Data verification passed - {tensors}")
 
     if args.mode != "target":

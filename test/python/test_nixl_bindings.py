@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# pylint: disable=broad-exception-caught
+
 import os
 import pickle
 import tempfile
@@ -23,7 +25,7 @@ import nixl._utils as nixl_utils
 # These should automatically be run by pytest because of function names
 
 
-def test_list():
+def test_xfer_list():
     descs = [(1000, 105, 0), (2000, 30, 0), (1010, 20, 0)]
     test_list = nixl.nixlXferDList(nixl.DRAM_SEG, descs, False)
 
@@ -122,7 +124,7 @@ def test_agent():
     print(handle)
 
     status = agent1.postXferReq(handle)
-    assert status == nixl.NIXL_SUCCESS or status == nixl.NIXL_IN_PROG
+    assert status in (nixl.NIXL_SUCCESS, nixl.NIXL_IN_PROG)
 
     print("Transfer posted")
 
@@ -135,7 +137,7 @@ def test_agent():
         if len(notifMap) == 0:
             notifMap = agent2.getNotifs(notifMap)
 
-        assert status == nixl.NIXL_SUCCESS or status == nixl.NIXL_IN_PROG
+        assert status in (nixl.NIXL_SUCCESS, nixl.NIXL_IN_PROG)
 
     nixl_utils.verify_transfer(addr1 + offset, addr2 + offset, req_size)
     assert len(notifMap[name1]) == 1
@@ -165,13 +167,11 @@ def test_query_mem():
 
     os.makedirs("files_for_query", exist_ok=True)
     # Create temporary test files
-    temp_file1 = tempfile.NamedTemporaryFile(dir="files_for_query", delete=False)
-    temp_file1.write(b"Test content for queryMem file 1")
-    temp_file1.close()
+    with tempfile.NamedTemporaryFile(dir="files_for_query", delete=False) as temp_file1:
+        temp_file1.write(b"Test content for queryMem file 1")
 
-    temp_file2 = tempfile.NamedTemporaryFile(dir="files_for_query", delete=False)
-    temp_file2.write(b"Test content for queryMem file 2")
-    temp_file2.close()
+    with tempfile.NamedTemporaryFile(dir="files_for_query", delete=False) as temp_file2:
+        temp_file2.write(b"Test content for queryMem file 2")
 
     # Create a non-existent file path
     non_existent_file = "./nixl_test_nonexistent_file_12345.txt"
@@ -182,7 +182,7 @@ def test_query_mem():
         agent = nixl.nixlAgent("test_agent", config)
 
         try:
-            params, mems = agent.getPluginParams("POSIX")
+            params, _ = agent.getPluginParams("POSIX")
             backend = agent.createBackend("POSIX", params)
 
             descs = nixl.nixlRegDList(nixl.FILE_SEG, False)
@@ -233,7 +233,7 @@ def test_query_mem():
             print(f"Backend creation failed: {e}")
             # Try MOCK_DRAM as fallback
             try:
-                params, mems = agent.getPluginParams("MOCK_DRAM")
+                params, _ = agent.getPluginParams("MOCK_DRAM")
                 backend = agent.createBackend("MOCK_DRAM", params)
                 print("Using MOCK_DRAM backend")
             except Exception as e2:
