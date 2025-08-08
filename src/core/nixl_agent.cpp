@@ -1240,8 +1240,6 @@ nixl_status_t
 nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
                          std::string &agent_name) {
     nixlSerDes sd;
-    size_t count;
-    size_t conn_cnt;
     nixl_blob_t conn_info;
     nixl_backend_t nixl_backend;
     nixl_status_t ret;
@@ -1253,7 +1251,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     }
 
     std::string remote_agent = sd.getStr("Agent");
-    if (remote_agent.size() == 0) {
+    if (remote_agent.empty()) {
         return NIXL_ERR_MISMATCH;
     }
 
@@ -1263,21 +1261,22 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
 
+    size_t conn_cnt;
     ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
     if(ret) {
         NIXL_ERROR << "Error getting connection count: " << nixlEnumStrings::statusStr(ret);
         return ret;
     }
 
-    count = 0;
+    size_t count = 0;
     for (size_t i = 0; i < conn_cnt; ++i) {
         nixl_backend = sd.getStr("t");
-        if (nixl_backend.size() == 0) {
+        if (nixl_backend.empty()) {
             return NIXL_ERR_MISMATCH;
         }
 
         conn_info = sd.getStr("c");
-        if (conn_info.size() == 0) {
+        if (conn_info.empty()) {
             return NIXL_ERR_MISMATCH;
         }
 
