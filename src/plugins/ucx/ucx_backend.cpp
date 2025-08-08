@@ -1474,6 +1474,8 @@ nixlUcxEngine::getWorkerId() const {
     if (it == tlsSharedWorkerMap().end()) {
         size_t index = sharedWorkerIndex_.fetch_add(1) % getSharedWorkersSize();
         it = tlsSharedWorkerMap().emplace(this, index).first;
+        NIXL_DEBUG << "engine " << this << " bound shared worker " << index << " to thread "
+                   << std::this_thread::get_id();
     }
     return it->second;
 }
