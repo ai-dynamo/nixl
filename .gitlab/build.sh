@@ -108,7 +108,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 
 ( \
   cd /tmp && \
-  git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+  git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
   cd etcd-cpp-apiv3 && \
   mkdir build && cd build && \
   cmake .. && \
@@ -119,7 +119,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 
 ( \
   cd /tmp && \
-  git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+  git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
   mkdir aws_sdk_build && \
   cd aws_sdk_build && \
   cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
