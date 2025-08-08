@@ -337,7 +337,8 @@ public:
     }
 
     nixlUcxBackendH(nixlUcxWorker *worker, size_t worker_id)
-        : worker(worker), worker_id(worker_id) {}
+        : worker(worker),
+          worker_id(worker_id) {}
 
     void append(nixlUcxIntReq *req) {
         head.link(req);
