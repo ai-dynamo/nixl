@@ -328,8 +328,10 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
             }
             resp->addDesc((*base)[index]);
         }
-        if (ret != NIXL_SUCCESS)
+        if (ret != NIXL_SUCCESS) {
+            delete resp;
             break;
+        }
         mem_elms_to_serialize.emplace(sec_key, resp);
     }
 
