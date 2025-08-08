@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 
@@ -45,4 +48,5 @@ uname -a || true
 
 echo "==== Running Plugins Gtest tests ===="
 cd ${INSTALL_DIR}
-./bin/plugins_gtest
+# shellcheck disable=SC2154
+./bin/plugins_gtest --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
