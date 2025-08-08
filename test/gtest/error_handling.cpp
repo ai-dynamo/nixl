@@ -80,7 +80,10 @@ class TestErrorHandling : public testing::TestWithParam<std::string> {
 
     public:
         void init(const std::string& name, const std::string& backend_name);
-        void destroy();
+        void
+        destroy(bool after_failure);
+        void
+        disconnect(bool after_failure);
         void fillRegList(nixl_xfer_dlist_t& dlist, nixlBasicDesc& desc) const;
         std::string getLocalMD() const;
         void loadRemoteMD(const std::string& remote_name);
@@ -95,6 +98,7 @@ class TestErrorHandling : public testing::TestWithParam<std::string> {
         bool dataCmp(const Agent& other) const;
 
     private:
+        std::string m_name;
         nixlBackendH*              m_backend = nullptr;
         std::unique_ptr<nixlAgent> m_priv    = nullptr;
         std::string                m_MetaRemote;
@@ -106,6 +110,7 @@ protected:
         BASIC_XFER,
         LOAD_REMOTE_THEN_FAIL,
         XFER_THEN_FAIL,
+        XFER_FAIL_RESTORE,
     };
 
     TestErrorHandling();
@@ -114,8 +119,10 @@ protected:
 private:
     template<TestType test_type> bool isFailure(size_t iter);
     template<TestType test_type> size_t numIter();
-    void exchangeMetaData();
-    nixlXferReqH* postXfer(enum nixl_xfer_op_t op, bool target_failure);
+    void
+    exchangeMetaData();
+    std::variant<nixlXferReqH *, nixl_status_t>
+    postXfer(enum nixl_xfer_op_t op, bool target_failure);
 
     ScopedEnv    m_env;
     Agent        m_Initiator;
@@ -124,20 +131,40 @@ private:
 };
 
 void TestErrorHandling::Agent::init(const std::string& name, const std::string& backend_name) {
+    m_name = name;
     m_priv    = std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
     // At the moment, only UCX backend is tested for error handling support.
     m_backend = nixl::createUcxBackend(*m_priv, backend_name);
     m_mem.init(m_backend);
     m_mem.fillData();
 
-    EXPECT_EQ(NIXL_SUCCESS,
-              m_priv->registerMem(m_mem.m_dlist, &m_mem.m_params));
+    EXPECT_EQ(NIXL_SUCCESS, m_priv->registerMem(m_mem.m_dlist, &m_mem.m_params));
 }
 
-void TestErrorHandling::Agent::destroy() {
-    m_MetaRemote.clear();
+void
+TestErrorHandling::Agent::destroy(bool after_failure) {
+    disconnect(after_failure);
     m_priv->deregisterMem(m_mem.m_dlist, &m_mem.m_params);
+    m_backend = nullptr;
     m_priv.reset();
+}
+
+void
+TestErrorHandling::Agent::disconnect(bool after_failure) {
+    ASSERT_FALSE(m_MetaRemote.empty());
+
+    const nixl_status_t status = m_priv->invalidateRemoteMD(m_MetaRemote);
+    if (after_failure) {
+        ASSERT_EQ(NIXL_ERR_NOT_FOUND, status)
+            << "Agent " << m_name << " has un-invalidated metadata of " << m_MetaRemote
+            << ", status: " << nixlEnumStrings::statusStr(status);
+    } else {
+        ASSERT_EQ(NIXL_SUCCESS, status)
+            << "Agent " << m_name << " failed to invalidate remote metadata, status: "
+            << nixlEnumStrings::statusStr(status);
+    }
+
+    m_MetaRemote.clear();
 }
 
 void TestErrorHandling::Agent::fillRegList(nixl_xfer_dlist_t& dlist,
@@ -152,7 +179,8 @@ std::string TestErrorHandling::Agent::getLocalMD() const {
 }
 
 void TestErrorHandling::Agent::loadRemoteMD(const std::string& remote_name) {
-    EXPECT_EQ(NIXL_SUCCESS, m_priv->loadRemoteMD(remote_name, m_MetaRemote));
+    EXPECT_EQ(NIXL_SUCCESS, m_priv->loadRemoteMD(remote_name, m_MetaRemote))
+        << "Agent " << m_name << " failed to load remote metadata";
 }
 
 nixl_status_t
@@ -168,19 +196,23 @@ TestErrorHandling::Agent::createXferReq(const nixl_xfer_op_t& op,
 }
 
 nixl_status_t
-TestErrorHandling::Agent::postXferReq(nixlXferReqH* req_handle) const {
+TestErrorHandling::Agent::postXferReq(nixlXferReqH *req_handle) const {
     return m_priv->postXferReq(req_handle);
 }
 
 nixl_status_t
-TestErrorHandling::Agent::waitForCompletion(nixlXferReqH* req_handle) {
+TestErrorHandling::Agent::waitForCompletion(nixlXferReqH *req_handle) {
     nixl_status_t status;
 
     do {
         status = m_priv->getXferStatus(req_handle);
+        EXPECT_NE(NIXL_ERR_NOT_POSTED, status);
     } while (status == NIXL_IN_PROG);
 
-    m_priv->releaseXferReq(req_handle);
+    if (status == NIXL_SUCCESS) {
+        m_priv->releaseXferReq(req_handle);
+    }
+
     return status;
 }
 
@@ -216,17 +248,33 @@ TestErrorHandling::TestErrorHandling() : m_backend_name(GetParam())
 
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
 void TestErrorHandling::testXfer() {
-    m_Initiator.init("initiator", m_backend_name);
-    m_Target.init("target", m_backend_name);
+    const std::string initiator_name = "initiator";
+    const std::string target_name = "target";
+    m_Initiator.init(initiator_name, m_backend_name);
+    m_Target.init(target_name, m_backend_name);
 
     exchangeMetaData();
 
     for (size_t i = 0; i < numIter<test_type>(); ++i) {
-        nixlXferReqH* req_handle = postXfer(op, isFailure<test_type>(i));
-        nixl_status_t status     = m_Initiator.waitForCompletion(req_handle);
+        auto result = postXfer(op, isFailure<test_type>(i));
+        nixl_status_t status;
+
+        if (std::holds_alternative<nixl_status_t>(result)) {
+            // Transfer failed immediately
+            status = std::get<nixl_status_t>(result);
+        } else {
+            // Transfer was posted, wait for completion
+            nixlXferReqH *req_handle = std::get<nixlXferReqH *>(result);
+            status = m_Initiator.waitForCompletion(req_handle);
+        }
 
         if (isFailure<test_type>(i)) {
             EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, status);
+            if (test_type == TestType::XFER_FAIL_RESTORE) {
+                m_Initiator.disconnect(true);
+                m_Target.init(target_name, m_backend_name);
+                exchangeMetaData();
+            }
         } else {
             EXPECT_EQ(NIXL_SUCCESS, status);
             EXPECT_EQ(NIXL_SUCCESS, m_Target.waitForNotif("notification"));
@@ -240,13 +288,14 @@ void TestErrorHandling::testXfer() {
 
     switch (test_type) {
     case TestType::BASIC_XFER:
-        m_Target.destroy();
+    case TestType::XFER_FAIL_RESTORE:
+        m_Target.destroy(false);
+        m_Initiator.destroy(false);
+        return;
     case TestType::LOAD_REMOTE_THEN_FAIL:
     case TestType::XFER_THEN_FAIL:
-        m_Initiator.destroy();
-        break;
-    default:
-        EXPECT_TRUE(false) << "Invalid test type";
+        m_Initiator.destroy(true);
+        return;
     }
 }
 
@@ -255,12 +304,24 @@ bool TestErrorHandling::isFailure(size_t iter) {
     switch (test_type) {
     case TestType::BASIC_XFER:            return false;
     case TestType::LOAD_REMOTE_THEN_FAIL: return iter == 0;
-    case TestType::XFER_THEN_FAIL:        return iter == 1;
+    case TestType::XFER_THEN_FAIL:
+    case TestType::XFER_FAIL_RESTORE:
+        return iter == 1;
     }
 }
 
-template<TestErrorHandling::TestType test_type> size_t TestErrorHandling::numIter() {
-    return (test_type == TestType::XFER_THEN_FAIL) ? 2 : 1;
+template<TestErrorHandling::TestType test_type>
+size_t
+TestErrorHandling::numIter() {
+    switch (test_type) {
+    case TestType::BASIC_XFER:
+    case TestType::LOAD_REMOTE_THEN_FAIL:
+        return 1;
+    case TestType::XFER_THEN_FAIL:
+        return 2;
+    case TestType::XFER_FAIL_RESTORE:
+        return 3;
+    }
 }
 
 void TestErrorHandling::exchangeMetaData() {
@@ -268,7 +329,7 @@ void TestErrorHandling::exchangeMetaData() {
     m_Target.loadRemoteMD(m_Initiator.getLocalMD());
 }
 
-nixlXferReqH*
+std::variant<nixlXferReqH *, nixl_status_t>
 TestErrorHandling::postXfer(enum nixl_xfer_op_t op, bool target_failure) {
     EXPECT_TRUE(op == NIXL_WRITE || op == NIXL_READ);
 
@@ -285,19 +346,22 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, bool target_failure) {
 
     status = m_Initiator.createXferReq(op, sReq_descs, rReq_descs, req_handle);
     EXPECT_EQ(NIXL_SUCCESS, status)
-        << "createXferReq failed with unexpected error: "
-        << nixlEnumStrings::statusStr(status);
+        << "createXferReq failed with unexpected error: " << nixlEnumStrings::statusStr(status);
 
     if (target_failure) {
-        m_Target.destroy();
+        m_Target.destroy(false);
     }
 
     status = m_Initiator.postXferReq(req_handle);
     if (target_failure) {
         // If the target is destroyed, the transfer may fail immediately
         // or later
-        EXPECT_TRUE((status == NIXL_ERR_REMOTE_DISCONNECT) ||
-                    (status == NIXL_IN_PROG));
+        if (status == NIXL_ERR_REMOTE_DISCONNECT) {
+            // failed handle destroyed on post
+            return status;
+        }
+
+        EXPECT_EQ(NIXL_IN_PROG, status) << "status: " << nixlEnumStrings::statusStr(status);
     } else {
         EXPECT_LE(0, status) << "status: "
                              << nixlEnumStrings::statusStr(status);
@@ -319,6 +383,11 @@ TEST_P(TestErrorHandling, LoadRemoteThenFail) {
 TEST_P(TestErrorHandling, XferThenFail) {
     testXfer<TestType::XFER_THEN_FAIL, NIXL_WRITE>();
     testXfer<TestType::XFER_THEN_FAIL, NIXL_READ>();
+}
+
+TEST_P(TestErrorHandling, XferFailRestore) {
+    testXfer<TestType::XFER_FAIL_RESTORE, NIXL_WRITE>();
+    testXfer<TestType::XFER_FAIL_RESTORE, NIXL_READ>();
 }
 
 INSTANTIATE_TEST_SUITE_P(UCX, TestErrorHandling, testing::Values("UCX", "UCX_MO"));
