@@ -147,7 +147,7 @@ $global:copyright_results = @{
 
 $ignored_files = @('.clang-format', '.gitattributes', '.gitignore', '.gitkeep', '.patch', 'Cargo.lock', 'LICENSE', 'uv.lock', 'rust-toolchain.toml', 'codespell.txt', 'aws_job_def.json')
 write-debug "<copyright-check> ignored_files = ['$($ignored_files -join "','")']."
-$ignored_paths = @('.github', '.mypy_cache', '.pytest_cache', '.ci/jenkins')
+$ignored_paths = @('.github', '.mypy_cache', '.pytest_cache', '.ci/jenkins', '.ci/assets')
 write-debug "<copyright-check> ignored_paths = ['$($ignored_paths -join "','")']."
 $ignored_types = @('.bat', '.gif', '.ico', '.ipynb', '.jpg', '.jpeg', '.patch', '.png', '.pyc', '.pyi', '.rst', '.zip', '.md')
 write-debug "<copyright-check> ignored_types = ['$($ignored_types -join "', '")']."
