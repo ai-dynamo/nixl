@@ -22,6 +22,7 @@
 #[cfg(test)]
 mod unit_tests {
     use crate::*;
+    use super::descriptors::handles::XferDescListHandle;
     use std::env;
     use std::time::Duration;
 

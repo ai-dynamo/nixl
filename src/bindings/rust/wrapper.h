@@ -16,12 +16,16 @@
  */
 #pragma once
 
+
+#ifdef __cplusplus
+#include <cstdbool>
+#include <cstddef>
+#include <cstdint>
+extern "C" {
+#else
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-#ifdef __cplusplus
-extern "C" {
 #endif
 
 // Status codes for our C API
