@@ -47,6 +47,7 @@ class nixl_agent_config:
         enable_prog_thread: bool = True,
         enable_listen_thread: bool = False,
         listen_port: int = 0,
+        num_threads: int = 0,
         backends: list[str] = ["UCX"],
     ):
         # TODO: add backend init parameters
@@ -54,6 +55,7 @@ class nixl_agent_config:
         self.enable_pthread = enable_prog_thread
         self.enable_listen = enable_listen_thread
         self.port = listen_port
+        self.num_threads = num_threads
 
 
 """
@@ -117,6 +119,8 @@ class nixl_agent:
 
         # TODO: populate init from default parameters, or define a set of params in python
         init: dict[str, str] = {}
+        if nixl_conf.num_threads > 0:
+            init["num_threads"] = str(nixl_conf.num_threads)
 
         if instantiate_all:
             for plugin in self.plugin_list:
