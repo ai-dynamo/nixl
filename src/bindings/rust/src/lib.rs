@@ -62,7 +62,7 @@ use bindings::{
     nixl_capi_reg_dlist_resize, nixl_capi_register_mem, nixl_capi_string_list_get,
     nixl_capi_string_list_size, nixl_capi_xfer_dlist_add_desc, nixl_capi_xfer_dlist_clear,
     nixl_capi_xfer_dlist_has_overlaps, nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize,
-    nixl_capi_agent_make_connection, nixl_capi_agent_prep_xfer_dlist, nixl_capi_agent_make_xfer_req,
+    nixl_capi_agent_make_connection, nixl_capi_agent_prep_xfer_dlist,
     nixl_capi_reg_dlist_get_type, nixl_capi_reg_dlist_desc_count, nixl_capi_reg_dlist_verify_sorted,
     nixl_capi_reg_dlist_trim, nixl_capi_reg_dlist_rem_desc, nixl_capi_reg_dlist_print,
     nixl_capi_xfer_dlist_get_type, nixl_capi_xfer_dlist_verify_sorted, nixl_capi_xfer_dlist_desc_count,
