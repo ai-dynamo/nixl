@@ -35,7 +35,7 @@ matrix:
 
 env:
   INSTALL_DIR: ${WORKSPACE}/nixl_install
-  UCX_VERSION: v1.19.x
+  UCX_VERSION: v1.19.0
 
 steps:
   - name: Get Environment Info
