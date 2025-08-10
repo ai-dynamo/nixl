@@ -1056,24 +1056,24 @@ nixl_capi_status_t nixl_capi_create_xfer_dlist_handle(nixl_capi_xfer_dlist_handl
   }
 }
 
-nixl_capi_status_t nixl_capi_destroy_xfer_dlist_handle(nixl_capi_agent_t agent, nixl_capi_xfer_dlist_handle_t handle)
-{
-  if (!handle) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    nixl_status_t ret = agent->inner->releasedDlistH(handle->dlist);
-
-    if (ret != NIXL_SUCCESS) {
-      return NIXL_CAPI_ERROR_BACKEND;
+nixl_capi_status_t
+nixl_capi_destroy_xfer_dlist_handle(nixl_capi_agent_t agent, nixl_capi_xfer_dlist_handle_t handle) {
+    if (!handle) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
 
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
+    try {
+        nixl_status_t ret = agent->inner->releasedDlistH(handle->dlist);
+
+        if (ret != NIXL_SUCCESS) {
+            return NIXL_CAPI_ERROR_BACKEND;
+        }
+
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 // Registration descriptor list functions
