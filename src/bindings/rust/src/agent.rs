@@ -364,9 +364,11 @@ impl Agent {
 
     pub fn make_connection(&self, remote_agent: &str) -> Result<(), NixlError> {
         let remote_agent = CString::new(remote_agent)?;
+        let inner_guard = self.inner.write().unwrap();
+
         let status = unsafe {
             nixl_capi_agent_make_connection(
-                self.inner.write().unwrap().handle.as_ptr(),
+                inner_guard.handle.as_ptr(),
                 remote_agent.as_ptr(),
                 std::ptr::null_mut(),
             )
@@ -382,9 +384,11 @@ impl Agent {
     pub fn prep_xfer_dlist(&self, agent_name: &str, descs: &XferDescList, handle: &mut XferDescListHandle,
                            opt_args: &OptArgs) -> Result<(), NixlError> {
         let agent_name = CString::new(agent_name)?;
+        let inner_guard = self.inner.write().unwrap();
+
         let status = unsafe {
             nixl_capi_agent_prep_xfer_dlist(
-                self.inner.write().unwrap().handle.as_ptr(),
+                inner_guard.handle.as_ptr(),
                 agent_name.as_ptr(),
                 descs.as_ptr(),
                 handle.as_ptr(),
@@ -394,32 +398,6 @@ impl Agent {
 
         match status {
             NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    pub fn make_xfer_req(&self, operation: XferOp, local_descs: &XferDescList, remote_descs: &XferDescList, remote_agent: &str, opt_args: &OptArgs) -> Result<XferRequest, NixlError> {
-        let remote_agent = CString::new(remote_agent)?;
-        let mut req = std::ptr::null_mut();
-
-        let status = unsafe {
-            nixl_capi_agent_make_xfer_req(
-                self.inner.write().unwrap().handle.as_ptr(),
-                operation as bindings::nixl_capi_xfer_op_t,
-                local_descs.as_ptr(),
-                remote_descs.as_ptr(),
-                remote_agent.as_ptr(),
-                &mut req,
-                opt_args.inner.as_ptr(),
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => {
-                let inner = NonNull::new(req).ok_or(NixlError::FailedToCreateXferRequest)?;
-                Ok(XferRequest::new(inner, self.inner.clone()))
-            }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }
@@ -494,9 +472,10 @@ impl Agent {
     /// * `opt_args` - Optional arguments for sending metadata
     pub fn send_local_md(&self, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
         tracing::trace!("Sending local metadata to etcd");
+        let inner_guard = self.inner.write().unwrap();
         let status = unsafe {
             bindings::nixl_capi_send_local_md(
-                self.inner.write().unwrap().handle.as_ptr(),
+                inner_guard.handle.as_ptr(),
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             )
         };
@@ -539,9 +518,11 @@ impl Agent {
         tracing::trace!(remote_agent = %remote_name, "Fetching remote metadata from etcd");
 
         let c_remote_name = CString::new(remote_name)?;
+        let inner_guard = self.inner.write().unwrap();
+
         let status = unsafe {
             bindings::nixl_capi_fetch_remote_md(
-                self.inner.write().unwrap().handle.as_ptr(),
+                inner_guard.handle.as_ptr(),
                 c_remote_name.as_ptr(),
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             )
@@ -576,9 +557,10 @@ impl Agent {
     /// * `opt_args` - Optional arguments for invalidating metadata
     pub fn invalidate_local_md(&self, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
         tracing::trace!("Invalidating local metadata in etcd");
+        let inner_guard = self.inner.write().unwrap();
         let status = unsafe {
             bindings::nixl_capi_invalidate_local_md(
-                self.inner.write().unwrap().handle.as_ptr(),
+                inner_guard.handle.as_ptr(),
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             )
         };
@@ -623,6 +605,7 @@ impl Agent {
         tracing::trace!(remote_agent = %remote_agent, "Sending notification");
 
         let c_remote_name = CString::new(remote_agent)?;
+        let inner_guard = self.inner.write().unwrap();
 
         let opt_args = if backend.is_some() {
             let mut args = OptArgs::new()?;
@@ -636,7 +619,7 @@ impl Agent {
 
         let status = unsafe {
             nixl_capi_gen_notif(
-                self.inner.write().unwrap().handle.as_ptr(),
+                inner_guard.handle.as_ptr(),
                 c_remote_name.as_ptr(),
                 message.as_ptr() as *const std::ffi::c_void,
                 message.len(),

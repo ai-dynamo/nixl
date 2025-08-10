@@ -170,12 +170,6 @@ nixl_capi_status_t nixl_capi_agent_prep_xfer_dlist(
     nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs,
     nixl_capi_xfer_dlist_handle_t handle, nixl_capi_opt_args_t opt_args);
 
-nixl_capi_status_t nixl_capi_agent_make_xfer_req(
-    nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation, nixl_capi_xfer_dlist_t local_descs,
-    nixl_capi_xfer_dlist_t remote_descs, const char* remote_agent, nixl_capi_xfer_req_t* req_hndl,
-    nixl_capi_opt_args_t opt_args);
-
-
 // Notification functions
 nixl_capi_status_t nixl_capi_get_notifs(
     nixl_capi_agent_t agent, nixl_capi_notif_map_t notif_map, nixl_capi_opt_args_t opt_args);
