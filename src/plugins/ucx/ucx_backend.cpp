@@ -279,6 +279,8 @@ void nixlUcxEngine::vramFiniCtx()
 class nixlUcxIntReq : public nixlLinkElem<nixlUcxIntReq> {
     private:
         int _completed;
+        ucx_connection_ptr_t _conn;
+
     public:
         std::unique_ptr<std::string> amBuffer;
 
@@ -286,9 +288,33 @@ class nixlUcxIntReq : public nixlLinkElem<nixlUcxIntReq> {
             _completed = 0;
         }
 
-        bool is_complete() const { return _completed; }
-        void completed() { _completed = 1; }
+        bool
+        is_complete() const {
+            return _completed;
+        }
+
+        void
+        completed() {
+            _completed = 1;
+        }
+
+        void
+        setConnection(ucx_connection_ptr_t conn) {
+            _conn = conn;
+        }
+
+        nixl_status_t
+        checkConnection(size_t ep_id) const {
+            NIXL_ASSERT(_conn) << "Connection is not set";
+            return _conn->getEp(ep_id)->checkTxState();
+        }
 };
+
+static void
+nixlUcxReqSetConnection(nixlUcxReq req, ucx_connection_ptr_t conn) {
+    nixlUcxIntReq *req_int = reinterpret_cast<nixlUcxIntReq *>(req);
+    req_int->setConnection(conn);
+}
 
 static void _internalRequestInit(void *request)
 {
@@ -387,16 +413,17 @@ public:
             if (!req->is_complete()) {
                 ret = ucx_status_to_nixl(ucp_request_check_status((nixlUcxReq)req));
                 switch (ret) {
-                    case NIXL_SUCCESS:
-                        /* Mark as completed */
-                        req->completed();
-                        break;
-                    case NIXL_IN_PROG:
-                        out_ret = NIXL_IN_PROG;
-                        break;
-                    default:
-                        /* Any other ret value is ERR and will be returned */
-                        return ret;
+                case NIXL_SUCCESS:
+                    /* Mark as completed */
+                    req->completed();
+                    break;
+                case NIXL_IN_PROG:
+                    out_ret = NIXL_IN_PROG;
+                    break;
+                default:
+                    // Any other ret value is ERR and will be returned
+                    nixl_status_t conn_status = req->checkConnection(worker_id);
+                    return (conn_status == NIXL_SUCCESS) ? ret : conn_status;
                 }
             }
             req = req->next();
@@ -972,14 +999,18 @@ nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
  * Data movement
 *****************************************/
 
-static nixl_status_t _retHelper(nixl_status_t ret,  nixlUcxBackendH *hndl, nixlUcxReq &req)
-{
+static nixl_status_t
+_retHelper(nixl_status_t ret,
+           nixlUcxBackendH *hndl,
+           nixlUcxReq &req,
+           ucx_connection_ptr_t conn = nullptr) {
     /* if transfer wasn't immediately completed */
     switch(ret) {
         case NIXL_IN_PROG:
             // TODO: this cast does not look safe
             // We need to allocate a vector of nixlUcxIntReq and set nixlUcxReqt
-            hndl->append((nixlUcxIntReq*)req);
+            hndl->append((nixlUcxIntReq *)req);
+            nixlUcxReqSetConnection(req, conn);
         case NIXL_SUCCESS:
             // Nothing to do
             break;
@@ -1115,7 +1146,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        if (_retHelper(ret, intHandle, req)) {
+        if (_retHelper(ret, intHandle, req, rmd->conn)) {
             return ret;
         }
     }
@@ -1123,11 +1154,11 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     /*
      * Flush keeps intHandle non-empty until the operation is actually
      * completed, which can happen after local requests completion.
-     * TODO: should we flush all distinct endpoints?
      */
-    rmd = (nixlUcxPublicMetadata*) remote[0].metadataP;
+    rmd = (nixlUcxPublicMetadata *)remote[0].metadataP;
     ret = rmd->conn->getEp(workerId)->flushEp(req);
-    if (_retHelper(ret, intHandle, req)) {
+
+    if (_retHelper(ret, intHandle, req, rmd->conn)) {
         return ret;
     }
 
@@ -1135,7 +1166,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     if (opt_args && opt_args->hasNotif) {
         if (ret == NIXL_SUCCESS) {
             ret = notifSendPriv(remote_agent, opt_args->notifMsg, req, workerId);
-            if (_retHelper(ret, intHandle, req)) {
+            if (_retHelper(ret, intHandle, req, rmd->conn)) {
                 return ret;
             }
 
@@ -1159,7 +1190,8 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
         nixlUcxReq req;
         status = notifSendPriv(notif->agent, notif->payload, req, workerId);
         notif.reset();
-        if (_retHelper(status, intHandle, req)) {
+        // TODO: conn lookup
+        if (_retHelper(status, intHandle, req, nullptr)) {
             return status;
         }
 
