@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '0.4.0',
+project('nixlbench', 'CPP', version: '0.5.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -47,7 +47,7 @@ if host_system != 'linux' or host_cpu_family not in ['x86_64', 'aarch64']
     error('This build only supports Linux on x86_64 or aarch64 architectures.')
 endif
 
-nixl_lib_path = nixl_path + '/lib/' + host_cpu_family + '-linux-gnu'
+nixl_lib_path = join_paths(nixl_path, get_option('libdir'))
 nixl_lib = cpp.find_library('nixl', dirs: [nixl_lib_path])
 nixl_build = cpp.find_library('nixl_build', dirs: [nixl_lib_path])
 nixl_serdes = cpp.find_library('serdes', dirs: [nixl_lib_path])

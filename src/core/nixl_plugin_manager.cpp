@@ -26,6 +26,7 @@
 #include <fstream>
 #include <string>
 #include <map>
+#include <dlfcn.h>
 
 using lock_guard = const std::lock_guard<std::mutex>;
 
@@ -170,6 +171,25 @@ void nixlPluginManager::loadPluginsFromList(const std::string& filename) {
     }
 }
 
+namespace {
+static std::string
+getPluginDir() {
+    // Environment variable takes precedence
+    const char *plugin_dir = getenv("NIXL_PLUGIN_DIR");
+    if (plugin_dir) {
+        return plugin_dir;
+    }
+    // By default, use the plugin directory relative to the binary
+    Dl_info info;
+    int ok = dladdr(reinterpret_cast<void *>(&getPluginDir), &info);
+    if (!ok) {
+        NIXL_ERROR << "Failed to get plugin directory from dladdr";
+        return "";
+    }
+    return (std::filesystem::path(info.dli_fname).parent_path() / "plugins").string();
+}
+} // namespace
+
 // PluginManager implementation
 nixlPluginManager::nixlPluginManager() {
     // Force levels right before logging
@@ -181,11 +201,10 @@ nixlPluginManager::nixlPluginManager() {
     }
 #endif
 
-    // Check for NIXL_PLUGIN_DIR environment variable
-    const char* plugin_dir = getenv("NIXL_PLUGIN_DIR");
-    if (plugin_dir) {
-        NIXL_DEBUG << "Loading plugins from directory: " << plugin_dir;
-        plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);  // Insert at the beginning for priority
+    std::string plugin_dir = getPluginDir();
+    if (!plugin_dir.empty()) {
+        NIXL_DEBUG << "Loading plugins from: " << plugin_dir;
+        plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);
         discoverPluginsFromDir(plugin_dir);
     }
 

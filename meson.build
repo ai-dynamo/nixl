@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.4.0',
+project('nixl', 'CPP', version: '0.5.0',
     default_options: ['buildtype=debug',
                 'werror=true',
                 'cpp_std=c++17',
@@ -91,7 +91,7 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 etcd_inc_path = get_option('etcd_inc_path')
 etcd_lib_path = get_option('etcd_lib_path')
 if not etcd_dep.found() and etcd_lib_path != ''
-    etcd_lib = cpp.find_library('etcd-cpp-api')
+    etcd_lib = cpp.find_library('etcd-cpp-api', dirs: etcd_lib_path)
     if etcd_lib.found()
         if cpp.has_header('Client.hpp', args : '-I' + etcd_inc_path)
             etcd_inc = include_directories(etcd_inc_path, is_system: true)
@@ -116,9 +116,16 @@ ucx_path = get_option('ucx_path')
 if ucx_path != ''
   ucx_lib_path = ucx_path + '/lib'
   ucx_inc_path = ucx_path + '/include'
-  ucx_dep = declare_dependency(
-    link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
-    include_directories : include_directories(ucx_inc_path))
+  # Check if path is absolute
+  if ucx_inc_path.startswith('/')
+    ucx_dep = declare_dependency(
+      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+      compile_args : ['-I' + ucx_inc_path])
+  else
+    ucx_dep = declare_dependency(
+      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+      include_directories : include_directories(ucx_inc_path))
+  endif
 else
   ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'])
 endif
@@ -155,7 +162,8 @@ if get_option('buildtype') == 'debug'
     run_command('truncate', '-s 0', plugfile, check: true)
 endif
 
-nixl_inc_dirs = include_directories('src/api/cpp', 'src/infra', 'src/core')
+nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core')
+plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')

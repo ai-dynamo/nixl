@@ -35,20 +35,21 @@ class nixlBackendEngine {
         bool              initErr = false;
         const std::string localAgent;
 
-        [[nodiscard]] nixl_status_t setInitParam(const std::string &key, const std::string &value) {
-	    if (customParams.try_emplace(key,value).second) {
+        [[nodiscard]] nixl_status_t
+        setInitParam(const std::string &key, const std::string &value) {
+            if (customParams.emplace(key, value).second) {
                 return NIXL_SUCCESS;
             }
-	    return NIXL_ERR_NOT_ALLOWED;
+            return NIXL_ERR_NOT_ALLOWED;
         }
 
         [[nodiscard]] nixl_status_t getInitParam(const std::string &key, std::string &value) const {
-	    const auto iter = customParams.find(key);
+            const auto iter = customParams.find(key);
             if (iter != customParams.end()) {
                 value = iter->second;
                 return NIXL_SUCCESS;
-	    }
-	    return NIXL_ERR_INVALID_PARAM;
+            }
+            return NIXL_ERR_INVALID_PARAM;
         }
 
     public:
@@ -114,20 +115,6 @@ class nixlBackendEngine {
                                         nixlBackendReqH* &handle,
                                         const nixl_opt_b_args_t* opt_args=nullptr
                                        ) const = 0;
-
-        // Estimate the cost (duration) of a transfer operation.
-        virtual nixl_status_t estimateXferCost(const nixl_xfer_op_t &operation,
-                                               const nixl_meta_dlist_t &local,
-                                               const nixl_meta_dlist_t &remote,
-                                               const std::string &remote_agent,
-                                               nixlBackendReqH* const &handle,
-                                               std::chrono::microseconds &duration,
-                                               std::chrono::microseconds &err_margin,
-                                               nixl_cost_t &method,
-                                               const nixl_opt_args_t* extra_params = nullptr) const
-        {
-            return NIXL_ERR_NOT_SUPPORTED;
-        }
 
         // Posting a request, which completes the async handle creation and posts it
         virtual nixl_status_t postXfer (const nixl_xfer_op_t &operation,
@@ -197,6 +184,34 @@ class nixlBackendEngine {
         // *** Needs to be implemented if supportsProgTh() is true *** //
 
         // Force backend engine worker to progress.
-        virtual int progress() { return 0; }
+        virtual int
+        progress() {
+            return 0;
+        }
+
+        // *** Optional virtual methods that are good to be implemented in any backend *** //
+
+        // Query information about a list of memory/storage
+        virtual nixl_status_t
+        queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const {
+            // Default implementation for file backends
+            // File backends can override this to provide custom implementation
+            // For now, return not supported - for object backends
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        // Estimate the cost (duration) of a transfer operation.
+        virtual nixl_status_t
+        estimateXferCost(const nixl_xfer_op_t &operation,
+                         const nixl_meta_dlist_t &local,
+                         const nixl_meta_dlist_t &remote,
+                         const std::string &remote_agent,
+                         nixlBackendReqH *const &handle,
+                         std::chrono::microseconds &duration,
+                         std::chrono::microseconds &err_margin,
+                         nixl_cost_t &method,
+                         const nixl_opt_args_t *extra_params = nullptr) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
 };
 #endif

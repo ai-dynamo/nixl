@@ -59,6 +59,7 @@ class NIXLBench:
         total_buffer_size=None,
         warmup_iter=100,
         worker_type="nixl",
+        benchmark_group="default",
     ):
         """
         Initialize a NIXLBench instance with benchmark configuration.
@@ -66,6 +67,7 @@ class NIXLBench:
         Args:
             model (BaseModelArch): Model architecture specification.
             model_config (ModelConfig): Model runtime and system configuration.
+            benchmark_group (str, optional): Name of benchmark group. Defaults to "default".
             backend (str, optional): Communication backend. Defaults to "UCX".
             check_consistency (bool, optional): Whether to check consistency. Defaults to False.
             device_list (str, optional): List of devices to use. Defaults to "all".
@@ -98,6 +100,7 @@ class NIXLBench:
         """
         self.model = model
         self.model_config = model_config
+        self.benchmark_group = benchmark_group
         self.backend = backend
         self.check_consistency = check_consistency
         self.device_list = device_list
@@ -155,11 +158,31 @@ class NIXLBench:
         else:
             raise ValueError(f"Invalid source for POSIX: {source}")
 
+    def _configure_ucx(self, source: str, destination: str):
+        arg_to_seg_type = {
+            "memory": "DRAM",
+            "gpu": "VRAM",
+        }
+        try:
+            self.initiator_seg_type = arg_to_seg_type[source]
+        except KeyError:
+            raise ValueError(
+                f"Invalid source for UCX: {source}, valid sources are: {arg_to_seg_type.keys()}"
+            )
+        try:
+            self.target_seg_type = arg_to_seg_type[destination]
+        except KeyError:
+            raise ValueError(
+                f"Invalid destination for UCX: {destination}, valid destinations are: {arg_to_seg_type.keys()}"
+            )
+
     def configure_segment_type(self, backend: str, source: str, destination: str):
         if backend.lower() == "gds":
             self._configure_gds(source, destination)
         elif backend.lower() == "posix":
             self._configure_posix(source, destination)
+        elif backend.lower() == "ucx":
+            self._configure_ucx(source, destination)
         else:
             raise ValueError(f"Invalid backend: {backend}")
 
@@ -223,6 +246,7 @@ class NIXLBench:
             dict: Dictionary containing all benchmark parameters.
         """
         return {
+            "benchmark_group": self.benchmark_group,
             "backend": self.backend,
             "check_consistency": self.check_consistency,
             "device_list": self.device_list,
@@ -295,6 +319,7 @@ class NIXLBench:
             "total_buffer_size": 8589934592,
             "warmup_iter": 100,
             "worker_type": "nixl",
+            "benchmark_group": "default",
         }
 
     def plan(self, format: str = "text"):
