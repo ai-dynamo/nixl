@@ -119,7 +119,7 @@ nixlBackendEngine *createEngine(std::string name, bool p_thread)
     init.customParams = &custom_params;
     init.type         = "UCX";
 
-    ucx = (nixlBackendEngine*) new nixlUcxEngine (&init);
+    ucx = nixlUcxEngine::create(init).release();
     assert(!ucx->getInitErr());
     if (ucx->getInitErr()) {
         std::cout << "Failed to initialize worker1" << std::endl;
