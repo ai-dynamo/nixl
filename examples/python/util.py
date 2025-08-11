@@ -13,6 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from nixl.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def wait_for_transfer_completion(init_agent, target_agent, xfer_handle, uuid):
     """Wait for both initiator and target to complete transfer."""
@@ -26,8 +30,8 @@ def wait_for_transfer_completion(init_agent, target_agent, xfer_handle, uuid):
                 raise RuntimeError("Transfer got to Error state.")
             if state == "DONE":
                 init_done = True
-                print("Initiator done")
+                logger.info("Initiator done")
 
         if (not target_done) and target_agent.check_remote_xfer_done("initiator", uuid):
             target_done = True
-            print("Target done")
+            logger.info("Target done")

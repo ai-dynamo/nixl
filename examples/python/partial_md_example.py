@@ -23,6 +23,10 @@ import nixl._utils as nixl_utils
 from examples.python import util
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl._bindings import nixlNotFoundError
+from nixl.logging import get_logger
+
+# Configure logging
+logger = get_logger(__name__)
 
 
 class PartialMdExampleErrCodes(enum.Enum):
@@ -97,13 +101,14 @@ def main():
     )
     args = parser.parse_args()
 
-    print("Using NIXL Plugins from:")
-    print(os.environ["NIXL_PLUGIN_DIR"])
+    logger.info("Using NIXL Plugins from: %s", os.environ["NIXL_PLUGIN_DIR"])
 
     if args.etcd:
         etcd_endpoints = os.getenv("NIXL_ETCD_ENDPOINTS", "")
         if etcd_endpoints:
-            print("NIXL_ETCD_ENDPOINTS is set, using endpoints: ", etcd_endpoints)
+            logger.info(
+                "NIXL_ETCD_ENDPOINTS is set, using endpoints: %s", etcd_endpoints
+            )
         else:
             raise ValueError(
                 "NIXL_ETCD_ENDPOINTS is not set, but --etcd flag is provided"
@@ -111,7 +116,7 @@ def main():
     else:
         etcd_endpoints = ""
         del os.environ["NIXL_ETCD_ENDPOINTS"]
-        print("NIXL_ETCD_ENDPOINTS is not set, using socket exchange")
+        logger.info("NIXL_ETCD_ENDPOINTS is not set, using socket exchange")
 
     # Needed for socket exchange
     ip_addr = "127.0.0.1"
@@ -171,15 +176,16 @@ def main():
     )
 
     xfer(init_agent, xfer_handle_1, target_agent)
+
     # Second set of descs was not sent, should fail
     try:
         xfer_handle_2 = init_agent.initialize_xfer(
             "READ", init_xfer_descs, target_xfer_descs2, "target", b"UUID1"
         )
     except nixlNotFoundError:
-        print("Correct exception")
+        logger.info("Correct exception")
     else:
-        print("Incorrect success")
+        logger.error("Incorrect success")
         os.abort()
 
     # Now send rest of descs
@@ -223,7 +229,7 @@ def main():
     del init_agent
     del target_agent
 
-    print("Test Complete.")
+    logger.info("Test Complete.")
 
 
 if __name__ == "__main__":

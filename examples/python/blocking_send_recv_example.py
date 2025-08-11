@@ -22,6 +22,9 @@ import sys
 import torch
 
 from nixl._api import nixl_agent, nixl_agent_config
+from nixl.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class BlockingSendRecvErrCodes(enum.Enum):
@@ -66,11 +69,11 @@ if __name__ == "__main__":
     else:
         tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]
 
-    print(f"{args.mode} Tensors: {tensors}")
+    logger.info("Running test with %s tensors in mode %s", tensors, args.mode)
 
     reg_descs = agent.register_memory(tensors)
     if not reg_descs:  # Same as reg_descs if successful
-        print("Memory registration failed.")
+        logger.error("Memory registration failed.")
         sys.exit(BlockingSendRecvErrCodes.MEM_REG_FAILED.value)
 
     # Target code
@@ -86,7 +89,7 @@ if __name__ == "__main__":
 
         agent.send_notif("initiator", target_desc_str)
 
-        print("Waiting for transfer")
+        logger.info("Waiting for transfer")
 
         # Waiting for transfer
         # For now the notification is just UUID, could be any python bytes.
@@ -96,7 +99,7 @@ if __name__ == "__main__":
             continue
     # Initiator code
     else:
-        print("Initiator sending to " + args.ip)
+        logger.info("Initiator sending to %s", args.ip)
         agent.fetch_remote_metadata("target", args.ip, args.port)
         agent.send_local_metadata(args.ip, args.port)
 
@@ -113,24 +116,24 @@ if __name__ == "__main__":
         while not ready:
             ready = agent.check_remote_metadata("target")
 
-        print("Ready for transfer")
+        logger.info("Ready for transfer")
 
         xfer_handle = agent.initialize_xfer(
             "READ", initiator_descs, target_descs, "target", "UUID"
         )
 
         if not xfer_handle:
-            print("Creating transfer failed.")
+            logger.error("Creating transfer failed.")
             sys.exit(BlockingSendRecvErrCodes.TRANSFER_FAILED.value)
 
         state = agent.transfer(xfer_handle)
         if state == "ERR":
-            print("Posting transfer failed.")
+            logger.error("Posting transfer failed.")
             sys.exit(BlockingSendRecvErrCodes.TRANSFER_FAILED.value)
         while True:
             state = agent.check_xfer_state(xfer_handle)
             if state == "ERR":
-                print("Transfer got to Error state.")
+                logger.error("Transfer got to Error state.")
                 sys.exit(BlockingSendRecvErrCodes.TRANSFER_FAILED.value)
             elif state == "DONE":
                 break
@@ -138,9 +141,9 @@ if __name__ == "__main__":
         # Verify data after read
         for i, tensor in enumerate(tensors):
             if not torch.allclose(tensor, torch.ones(10)):
-                print(f"Data verification failed for tensor {i}.")
+                logger.error("Data verification failed for tensor %d.", i)
                 sys.exit(BlockingSendRecvErrCodes.DATA_VERIFICATION_FAILED.value)
-        print(f"{args.mode} Data verification passed - {tensors}")
+        logger.info("%s Data verification passed", args.mode)
 
     if args.mode != "target":
         agent.remove_remote_agent("target")
@@ -149,4 +152,4 @@ if __name__ == "__main__":
 
     agent.deregister_memory(reg_descs)
 
-    print("Test Complete.")
+    logger.info("Test Complete.")

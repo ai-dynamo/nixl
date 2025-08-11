@@ -103,165 +103,233 @@ class nixlUcxCudaCtx;
 class nixlUcxCudaDevicePrimaryCtx;
 using nixlUcxCudaDevicePrimaryCtxPtr = std::shared_ptr<nixlUcxCudaDevicePrimaryCtx>;
 
-class nixlUcxEngine
-    : public nixlBackendEngine {
-    private:
-        /* UCX data */
-        std::unique_ptr<nixlUcxContext> uc;
-        std::vector<std::unique_ptr<nixlUcxWorker>> uws;
-        std::string workerAddr;
+class nixlUcxEngine : public nixlBackendEngine {
+public:
+    static std::unique_ptr<nixlUcxEngine>
+    create(const nixlBackendInitParams &init_params);
 
-        /* Progress thread data */
-        std::mutex pthrActiveLock;
-        std::condition_variable pthrActiveCV;
-        bool pthrActive;
-        bool pthrOn;
-        std::thread pthr;
-        std::chrono::milliseconds pthrDelay;
-        int pthrControlPipe[2];
-        std::vector<pollfd> pollFds;
+    ~nixlUcxEngine();
 
-        /* CUDA data*/
-        std::unique_ptr<nixlUcxCudaCtx> cudaCtx; // Context matching specific device
-        bool cuda_addr_wa;
+    bool
+    supportsRemote() const override {
+        return true;
+    }
 
-        // Context to use when current context is missing
-        nixlUcxCudaDevicePrimaryCtxPtr m_cudaPrimaryCtx;
+    bool
+    supportsLocal() const override {
+        return true;
+    }
 
-        /* Notifications */
-        notif_list_t notifMainList;
-        std::mutex  notifMtx;
-        notif_list_t notifPthrPriv, notifPthr;
+    bool
+    supportsNotif() const override {
+        return true;
+    }
 
-        // Map of agent name to saved nixlUcxConnection info
-        std::unordered_map<std::string, ucx_connection_ptr_t,
-                           std::hash<std::string>, strEqual> remoteConnMap;
+    bool
+    supportsProgTh() const override {
+        return false;
+    }
 
+    nixl_mem_list_t
+    getSupportedMems() const override;
 
-        void vramInitCtx();
-        void vramFiniCtx();
-        int vramUpdateCtx(void *address, uint64_t devId, bool &restart_reqd);
-        int vramApplyCtx();
+    /* Object management */
+    nixl_status_t
+    getPublicData(const nixlBackendMD *meta, std::string &str) const override;
+    nixl_status_t
+    getConnInfo(std::string &str) const override;
+    nixl_status_t
+    loadRemoteConnInfo(const std::string &remote_agent,
+                       const std::string &remote_conn_info) override;
 
-        // Threading infrastructure
-        //   TODO: move the thread management one outside of NIXL common infra
-        void progressFunc();
-        void progressThreadStart();
-        void progressThreadStop();
-        void progressThreadRestart();
-        bool isProgressThread() const noexcept {
-            return std::this_thread::get_id() == pthr.get_id();
-        }
+    nixl_status_t
+    connect(const std::string &remote_agent) override;
+    nixl_status_t
+    disconnect(const std::string &remote_agent) override;
 
-        // Connection helper
-        static ucs_status_t
-        connectionCheckAmCb(void *arg, const void *header,
-                            size_t header_length, void *data,
-                            size_t length,
-                            const ucp_am_recv_param_t *param);
+    nixl_status_t
+    registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
+    nixl_status_t
+    deregisterMem(nixlBackendMD *meta) override;
 
-        static ucs_status_t
-        connectionTermAmCb(void *arg, const void *header,
-                           size_t header_length, void *data,
-                           size_t length,
-                           const ucp_am_recv_param_t *param);
+    nixl_status_t
+    loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override;
 
-        // Memory management helpers
-        nixl_status_t internalMDHelper (const nixl_blob_t &blob,
-                                        const std::string &agent,
-                                        nixlBackendMD* &output);
+    nixl_status_t
+    loadRemoteMD(const nixlBlobDesc &input,
+                 const nixl_mem_t &nixl_mem,
+                 const std::string &remote_agent,
+                 nixlBackendMD *&output) override;
+    nixl_status_t
+    unloadMD(nixlBackendMD *input) override;
 
-        // Notifications
-        static ucs_status_t notifAmCb(void *arg, const void *header,
-                                      size_t header_length, void *data,
-                                      size_t length,
-                                      const ucp_am_recv_param_t *param);
-        nixl_status_t notifSendPriv(const std::string &remote_agent,
-                                    const std::string &msg,
-                                    nixlUcxReq &req,
-                                    size_t worker_id) const;
-        void notifProgress();
-        void notifProgressCombineHelper(notif_list_t &src, notif_list_t &tgt);
+    // Data transfer
+    nixl_status_t
+    prepXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
-    public:
-        nixlUcxEngine(const nixlBackendInitParams* init_params);
-        ~nixlUcxEngine();
+    nixl_status_t
+    estimateXferCost(const nixl_xfer_op_t &operation,
+                     const nixl_meta_dlist_t &local,
+                     const nixl_meta_dlist_t &remote,
+                     const std::string &remote_agent,
+                     nixlBackendReqH *const &handle,
+                     std::chrono::microseconds &duration,
+                     std::chrono::microseconds &err_margin,
+                     nixl_cost_t &method,
+                     const nixl_opt_args_t *opt_args = nullptr) const override;
 
-        bool supportsRemote() const override { return true; }
-        bool supportsLocal() const override { return true; }
-        bool supportsNotif() const override { return true; }
-        bool supportsProgTh() const override { return pthrOn; }
+    nixl_status_t
+    postXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
-        nixl_mem_list_t getSupportedMems() const override;
+    nixl_status_t
+    checkXfer(nixlBackendReqH *handle) const override;
+    nixl_status_t
+    releaseReqH(nixlBackendReqH *handle) const override;
 
-        /* Object management */
-        nixl_status_t getPublicData (const nixlBackendMD* meta,
-                                     std::string &str) const override;
-        nixl_status_t getConnInfo(std::string &str) const override;
-        nixl_status_t loadRemoteConnInfo (const std::string &remote_agent,
-                                          const std::string &remote_conn_info) override;
+    int
+    progress() override;
 
-        nixl_status_t connect(const std::string &remote_agent) override;
-        nixl_status_t disconnect(const std::string &remote_agent) override;
+    nixl_status_t
+    getNotifs(notif_list_t &notif_list) override;
+    nixl_status_t
+    genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
-        nixl_status_t registerMem (const nixlBlobDesc &mem,
-                                   const nixl_mem_t &nixl_mem,
-                                   nixlBackendMD* &out) override;
-        nixl_status_t deregisterMem (nixlBackendMD* meta) override;
+    // public function for UCX worker to mark connections as connected
+    nixl_status_t
+    checkConn(const std::string &remote_agent);
+    nixl_status_t
+    endConn(const std::string &remote_agent);
 
-        nixl_status_t loadLocalMD (nixlBackendMD* input,
-                                   nixlBackendMD* &output) override;
+protected:
+    const std::vector<std::unique_ptr<nixlUcxWorker>> &
+    getWorkers() const {
+        return uws;
+    }
 
-        nixl_status_t loadRemoteMD (const nixlBlobDesc &input,
-                                    const nixl_mem_t &nixl_mem,
-                                    const std::string &remote_agent,
-                                    nixlBackendMD* &output) override;
-        nixl_status_t unloadMD (nixlBackendMD* input) override;
+    const std::unique_ptr<nixlUcxWorker> &
+    getWorker(size_t worker_id) const {
+        return uws[worker_id];
+    }
 
-        // Data transfer
-        nixl_status_t prepXfer (const nixl_xfer_op_t &operation,
-                                const nixl_meta_dlist_t &local,
-                                const nixl_meta_dlist_t &remote,
-                                const std::string &remote_agent,
-                                nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr) const override;
+    virtual size_t
+    getWorkerId() const {
+        return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
+    }
 
-        nixl_status_t estimateXferCost(const nixl_xfer_op_t &operation,
-                                       const nixl_meta_dlist_t &local,
-                                       const nixl_meta_dlist_t &remote,
-                                       const std::string &remote_agent,
-                                       nixlBackendReqH* const &handle,
-                                       std::chrono::microseconds &duration,
-                                       std::chrono::microseconds &err_margin,
-                                       nixl_cost_t &method,
-                                       const nixl_opt_args_t* opt_args=nullptr) const override;
+    void
+    getNotifsImpl(notif_list_t &notif_list);
 
-        nixl_status_t postXfer (const nixl_xfer_op_t &operation,
-                                const nixl_meta_dlist_t &local,
-                                const nixl_meta_dlist_t &remote,
-                                const std::string &remote_agent,
-                                nixlBackendReqH* &handle,
-                                const nixl_opt_b_args_t* opt_args=nullptr) const override;
+    virtual int
+    vramApplyCtx();
 
-        nixl_status_t checkXfer (nixlBackendReqH* handle) const override;
-        nixl_status_t releaseReqH(nixlBackendReqH* handle) const override;
+    virtual void
+    appendNotif(std::string remote_name, std::string msg);
 
-        int progress() override;
+    nixlUcxEngine(const nixlBackendInitParams &init_params);
 
-        nixl_status_t getNotifs(notif_list_t &notif_list);
-        nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const override;
+private:
+    void
+    vramInitCtx();
+    void
+    vramFiniCtx();
+    int
+    vramUpdateCtx(void *address, uint64_t dev_id, bool &restart_reqd);
 
-        //public function for UCX worker to mark connections as connected
-        nixl_status_t checkConn(const std::string &remote_agent);
-        nixl_status_t endConn(const std::string &remote_agent);
+    // Connection helper
+    static ucs_status_t
+    connectionCheckAmCb(void *arg,
+                        const void *header,
+                        size_t header_length,
+                        void *data,
+                        size_t length,
+                        const ucp_am_recv_param_t *param);
 
-        const std::unique_ptr<nixlUcxWorker> &getWorker(size_t worker_id) const {
-            return uws[worker_id];
-        }
+    static ucs_status_t
+    connectionTermAmCb(void *arg,
+                       const void *header,
+                       size_t header_length,
+                       void *data,
+                       size_t length,
+                       const ucp_am_recv_param_t *param);
 
-        size_t getWorkerId() const {
-            return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
-        }
+    // Memory management helpers
+    nixl_status_t
+    internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);
+
+    // Notifications
+    static ucs_status_t
+    notifAmCb(void *arg,
+              const void *header,
+              size_t header_length,
+              void *data,
+              size_t length,
+              const ucp_am_recv_param_t *param);
+
+    nixl_status_t
+    notifSendPriv(const std::string &remote_agent,
+                  const std::string &msg,
+                  nixlUcxReq &req,
+                  size_t worker_id) const;
+
+    /* UCX data */
+    std::unique_ptr<nixlUcxContext> uc;
+    std::vector<std::unique_ptr<nixlUcxWorker>> uws;
+    std::string workerAddr;
+
+    /* CUDA data*/
+    std::unique_ptr<nixlUcxCudaCtx> cudaCtx; // Context matching specific device
+    bool cuda_addr_wa;
+
+    // Context to use when current context is missing
+    nixlUcxCudaDevicePrimaryCtxPtr m_cudaPrimaryCtx;
+
+    /* Notifications */
+    notif_list_t notifMainList;
+
+    // Map of agent name to saved nixlUcxConnection info
+    std::unordered_map<std::string, ucx_connection_ptr_t, std::hash<std::string>, strEqual>
+        remoteConnMap;
+};
+
+class nixlUcxThread;
+
+/**
+ * Represents an engine with a single progress thread for all shared workers
+ */
+class nixlUcxThreadEngine : public nixlUcxEngine {
+public:
+    nixlUcxThreadEngine(const nixlBackendInitParams &init_params);
+    ~nixlUcxThreadEngine();
+
+    bool
+    supportsProgTh() const override {
+        return true;
+    }
+
+    nixl_status_t
+    getNotifs(notif_list_t &notif_list) override;
+
+protected:
+    int
+    vramApplyCtx() override;
+
+    void
+    appendNotif(std::string remote_name, std::string msg) override;
+
+private:
+    std::unique_ptr<nixlUcxThread> thread_;
+    std::mutex notifMtx_;
+    notif_list_t notifPthr_;
 };
 
 #endif

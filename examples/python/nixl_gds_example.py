@@ -21,6 +21,11 @@ import sys
 
 import nixl._utils as nixl_utils
 from nixl._api import nixl_agent, nixl_agent_config
+from nixl.logging import get_logger
+
+# Configure logging
+logger = get_logger(__name__)
+
 
 
 class NixlGdsExampleErrCodes(enum.Enum):
@@ -36,11 +41,10 @@ if __name__ == "__main__":
     # Allocate memory and register with NIXL
 
     if len(sys.argv) < 2:
-        print("Please specify file path in argv")
+        logger.error("Please specify file path in argv")
         sys.exit(NixlGdsExampleErrCodes.MISSING_FILE_PATH.value)
 
-    print("Using NIXL Plugins from:")
-    print(os.environ["NIXL_PLUGIN_DIR"])
+    logger.info("Using NIXL Plugins from:\n%s", os.environ["NIXL_PLUGIN_DIR"])
 
     agent_config = nixl_agent_config(backends=[])
     nixl_agent1 = nixl_agent("GDSTester", agent_config)
@@ -48,16 +52,19 @@ if __name__ == "__main__":
     plugin_list = nixl_agent1.get_plugin_list()
     assert "GDS" in plugin_list
 
-    print("Plugin parameters")
-    print(nixl_agent1.get_plugin_mem_types("GDS"))
-    print(nixl_agent1.get_plugin_params("GDS"))
+    logger.info(
+        "Plugin parameters:\n%s\n%s\n",
+        nixl_agent1.get_plugin_mem_types("GDS"),
+        nixl_agent1.get_plugin_params("GDS"),
+    )
 
     nixl_agent1.create_backend("GDS")
 
-    print("\nLoaded backend parameters")
-    print(nixl_agent1.get_backend_mem_types("GDS"))
-    print(nixl_agent1.get_backend_params("GDS"))
-    print()
+    logger.info(
+        "Backend parameters:\n%s\n%s\n",
+        nixl_agent1.get_backend_mem_types("GDS"),
+        nixl_agent1.get_backend_params("GDS"),
+    )
 
     # get DRAM buf and initialize it to 0xba for verification
     addr1 = nixl_utils.malloc_passthru(buf_size)
@@ -88,7 +95,7 @@ if __name__ == "__main__":
         "WRITE", agent1_xfer1_descs, agent1_xfer_files, "GDSTester"
     )
     if not xfer_handle_1:
-        print("Creating transfer failed.")
+        logger.error("Creating transfer failed.")
         sys.exit(NixlGdsExampleErrCodes.CREATE_TRANSFER_FAILED.value)
 
     state = nixl_agent1.transfer(xfer_handle_1)
@@ -99,18 +106,18 @@ if __name__ == "__main__":
     while not done:
         state = nixl_agent1.check_xfer_state(xfer_handle_1)
         if state == "ERR":
-            print("Transfer got to Error state.")
+            logger.error("Transfer got to Error state.")
             sys.exit(NixlGdsExampleErrCodes.TRANSFER_FAILED.value)
         elif state == "DONE":
             done = True
-            print("Initiator done")
+            logger.info("Initiator done")
 
     # read file data back into second buffer
     xfer_handle_2 = nixl_agent1.initialize_xfer(
         "READ", agent1_xfer2_descs, agent1_xfer_files, "GDSTester"
     )
     if not xfer_handle_2:
-        print("Creating transfer failed.")
+        logger.error("Creating transfer failed.")
         sys.exit(NixlGdsExampleErrCodes.INIT_XFER_FAILED.value)
 
     state = nixl_agent1.transfer(xfer_handle_2)
@@ -121,11 +128,11 @@ if __name__ == "__main__":
     while not done:
         state = nixl_agent1.check_xfer_state(xfer_handle_2)
         if state == "ERR":
-            print("Transfer got to Error state.")
+            logger.error("Transfer got to Error state.")
             sys.exit(NixlGdsExampleErrCodes.TRANSFER_FAILED.value)
         elif state == "DONE":
             done = True
-            print("Initiator done")
+            logger.info("Initiator done")
 
     # transfer verification
     nixl_utils.verify_transfer(addr1, addr2, buf_size)
@@ -140,4 +147,4 @@ if __name__ == "__main__":
 
     os.close(agent1_fd)
 
-    print("Test Complete.")
+    logger.info("Test Complete.")
