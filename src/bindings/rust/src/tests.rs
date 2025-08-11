@@ -22,7 +22,6 @@
 #[cfg(test)]
 mod unit_tests {
     use crate::*;
-    use super::descriptors::handles::XferDescListHandle;
     use std::env;
     use std::time::Duration;
 
@@ -300,37 +299,6 @@ mod unit_tests {
         let agent = Agent::new("test_agent").expect("Failed to create agent");
         // Null bytes in the name should trigger InvalidParam or StringConversionError
         let result = agent.make_connection("remote\0agent");
-        assert!(
-            matches!(result, Err(NixlError::StringConversionError(_))) ||
-            matches!(result, Err(NixlError::InvalidParam)),
-            "Expected StringConversionError or InvalidParam, got: {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_prep_xfer_dlist_success() {
-        let agent = Agent::new("test_agent").expect("Failed to create agent");
-        let descs = XferDescList::new(MemType::Dram).unwrap();
-        let opt_args = OptArgs::new().unwrap();
-        let mut handle = XferDescListHandle::new().unwrap();
-        let result = agent.prep_xfer_dlist("remote_agent", &descs, &mut handle, &opt_args);
-        // Accept Ok or BackendError if no real remote exists
-        assert!(
-            result.is_ok() || matches!(result, Err(NixlError::BackendError)),
-            "Expected Ok or BackendError, got: {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_prep_xfer_dlist_invalid_param() {
-        let agent = Agent::new("test_agent").expect("Failed to create agent");
-        let descs = XferDescList::new(MemType::Dram).unwrap();
-        let opt_args = OptArgs::new().unwrap();
-        let mut handle = XferDescListHandle::new().unwrap();
-        // Null byte in agent name should trigger error
-        let result = agent.prep_xfer_dlist("remote\0agent", &descs, &mut handle, &opt_args);
         assert!(
             matches!(result, Err(NixlError::StringConversionError(_))) ||
             matches!(result, Err(NixlError::InvalidParam)),

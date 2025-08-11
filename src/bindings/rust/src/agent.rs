@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use super::*;
-use crate::descriptors::{QueryResponseList, RegDescList, XferDescListHandle};
+use crate::descriptors::{QueryResponseList, RegDescList};
 
 /// A NIXL agent that can create backends and manage memory
 #[derive(Debug, Clone)]
@@ -371,28 +371,6 @@ impl Agent {
                 inner_guard.handle.as_ptr(),
                 remote_agent.as_ptr(),
                 std::ptr::null_mut(),
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    pub fn prep_xfer_dlist(&self, agent_name: &str, descs: &XferDescList, handle: &mut XferDescListHandle,
-                           opt_args: &OptArgs) -> Result<(), NixlError> {
-        let agent_name = CString::new(agent_name)?;
-        let inner_guard = self.inner.write().unwrap();
-
-        let status = unsafe {
-            nixl_capi_agent_prep_xfer_dlist(
-                inner_guard.handle.as_ptr(),
-                agent_name.as_ptr(),
-                descs.as_ptr(),
-                handle.as_ptr(),
-                opt_args.inner.as_ptr(),
             )
         };
 

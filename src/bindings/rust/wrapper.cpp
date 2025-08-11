@@ -67,11 +67,6 @@ struct nixl_capi_xfer_dlist_s {
   nixl_xfer_dlist_t* dlist;
 };
 
-// Internal struct for descriptor list handle
-struct nixl_capi_xfer_dlist_handle_s {
-  nixlDlistH* dlist;
-};
-
 struct nixl_capi_reg_dlist_s {
   nixl_reg_dlist_t* dlist;
 };
@@ -1041,36 +1036,6 @@ nixl_capi_xfer_dlist_resize(nixl_capi_xfer_dlist_t dlist, size_t new_size)
   }
 }
 
-nixl_capi_status_t nixl_capi_create_xfer_dlist_handle(nixl_capi_xfer_dlist_handle_t* handle)
-{
-  if (!handle) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    *handle = new nixl_capi_xfer_dlist_handle_s;
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
-nixl_capi_status_t nixl_capi_destroy_xfer_dlist_handle(nixl_capi_xfer_dlist_handle_t handle)
-{
-  if (!handle) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    delete handle;
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
 // Registration descriptor list functions
 nixl_capi_status_t
 nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist, bool sorted)
@@ -1370,32 +1335,6 @@ nixl_capi_status_t nixl_capi_agent_make_connection(
   try {
     nixl_status_t ret = agent->inner->makeConnection(std::string(remote_agent),
                                                     opt_args ? &opt_args->args : nullptr);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
-nixl_capi_status_t nixl_capi_agent_prep_xfer_dlist(
-    nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs,
-    nixl_capi_xfer_dlist_handle_t handle, nixl_capi_opt_args_t opt_args)
-{
-  auto backends = opt_args->args.backends;
-
-  nixl_opt_args_t extra_params;
-
-  if (!agent || !agent_name || !descs) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    for (nixlBackendH* backend : backends) {
-      extra_params.backends.push_back(backend);
-    }
-
-    nixl_status_t ret = agent->inner->prepXferDlist(std::string(agent_name), *descs->dlist,
-                                                    handle->dlist, &extra_params);
     return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
   }
   catch (...) {

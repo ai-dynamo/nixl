@@ -366,37 +366,6 @@ fn test_make_connection_invalid_param() {
 }
 
 #[test]
-fn test_prep_xfer_dlist_success() {
-    let agent = Agent::new("test_agent").expect("Failed to create agent");
-    let descs = XferDescList::new(MemType::Dram, false).unwrap();
-    let opt_args = OptArgs::new().unwrap();
-    let mut handle = XferDescListHandle::new().unwrap();
-    let result = agent.prep_xfer_dlist("remote_agent", &descs, &mut handle, &opt_args);
-    // Accept Ok or BackendError if no real remote exists
-    assert!(
-        result.is_ok() || matches!(result, Err(NixlError::BackendError)),
-        "Expected Ok or BackendError, got: {:?}",
-        result
-    );
-}
-
-#[test]
-fn test_prep_xfer_dlist_invalid_param() {
-    let agent = Agent::new("test_agent").expect("Failed to create agent");
-    let descs = XferDescList::new(MemType::Dram, false).unwrap();
-    let opt_args = OptArgs::new().unwrap();
-    let mut handle = XferDescListHandle::new().unwrap();
-    // Null byte in agent name should trigger error
-    let result = agent.prep_xfer_dlist("remote\0agent", &descs, &mut handle, &opt_args);
-    assert!(
-        matches!(result, Err(NixlError::StringConversionError(_))) ||
-        matches!(result, Err(NixlError::InvalidParam)),
-        "Expected StringConversionError or InvalidParam, got: {:?}",
-        result
-    );
-}
-
-#[test]
 fn test_get_local_md() {
     let agent = Agent::new("test_agent").unwrap();
 
