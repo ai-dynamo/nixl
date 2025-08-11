@@ -20,9 +20,10 @@ import enum
 import os
 
 import nixl._utils as nixl_utils
-from examples.python import util
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl._bindings import nixlNotFoundError
+
+from . import util
 
 
 class PartialMdExampleErrCodes(enum.Enum):
