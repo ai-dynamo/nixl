@@ -47,7 +47,6 @@ RUN apt-get update -y && \
     libtool \
     libz-dev \
     flex \
-    valgrind \
     libgtest-dev \
     build-essential
 
