@@ -228,9 +228,7 @@ class nixl_agent:
         if backend in self.backend_options:
             return self.backend_options[backend]
 
-        logger.warning(
-            "Backend %s not instantiated to get its parameters.", backend
-        )
+        logger.warning("Backend %s not instantiated to get its parameters.", backend)
         return {}
 
     """

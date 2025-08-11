@@ -120,7 +120,6 @@ def main():
 
     except Exception as e:
         logger.exception("Error in example: %s", e)
-        import traceback
         traceback.print_exc()
 
     finally:

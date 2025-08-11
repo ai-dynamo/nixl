@@ -23,14 +23,12 @@ import numpy as np
 import torch
 
 import nixl._utils as nixl_utils
-
 from examples.python import util
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl.logging import get_logger
 
 # Configure logging
 logger = get_logger(__name__)
-
 
 
 class NixlApiExampleErrCodes(enum.Enum):

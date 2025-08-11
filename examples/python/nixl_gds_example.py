@@ -27,7 +27,6 @@ from nixl.logging import get_logger
 logger = get_logger(__name__)
 
 
-
 class NixlGdsExampleErrCodes(enum.Enum):
     MISSING_FILE_PATH = 1
     CREATE_TRANSFER_FAILED = 2
