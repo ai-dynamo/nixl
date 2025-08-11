@@ -537,7 +537,7 @@ test_intra_agent_transfer(bool p_thread, nixlBackendEngine *mooncake, nixl_mem_t
     populateDescs(req_dst_descs, 0, addr2, desc_cnt, desc_size, rmd2);
 
     nixl_xfer_op_t ops[] = {NIXL_READ, NIXL_WRITE};
-    bool use_notifs[] = {true};
+    bool use_notifs[] = {true, false};
 
     for (size_t i = 0; i < sizeof(ops) / sizeof(ops[i]); i++) {
 
@@ -651,7 +651,7 @@ test_inter_agent_transfer(bool p_thread,
     populateDescs(req_dst_descs, dst_dev_id, addr2, desc_cnt, desc_size, rmd1);
 
     nixl_xfer_op_t ops[] = {NIXL_READ, NIXL_WRITE};
-    bool use_notifs[] = {mooncake1->supportsNotif()};
+    bool use_notifs[] = {true, false};
 
     for (size_t i = 0; i < sizeof(ops) / sizeof(ops[i]); i++) {
 
