@@ -170,15 +170,23 @@ pip install .
 For Python examples, see [examples/python/](examples/python/).
 
 ### Rust Bindings
+#### Build
+- Use `-Drust=true` meson option to build rust bindings.
+- Use `-Ddebug=false` for a release build.
+- Or build manually:
+    ```bash
+    $ cargo build --release
+    ```
+#### Install
+The bindings will be installed under `nixl-sys` in the configured installation prefix.
+Can be done using ninja, from project build directory:
 ```bash
-# Build with default NIXL installation (/opt/nvidia/nvda_nixl)
-$ cd src/bindings/rust
-$ cargo build --release
+$ ninja install
+```
 
-# Or specify custom NIXL location
-$ NIXL_PREFIX=/path/to/nixl cargo build --release
-
-# Run tests
+#### Test
+```
+# Rust bindings tests
 $ cargo test
 ```
 
