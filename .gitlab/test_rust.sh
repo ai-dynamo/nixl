@@ -14,9 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# shellcheck disable=SC1091
-. "$(dirname "$0")/../.ci/scripts/common.sh"
-
 set -e
 set -x
 
@@ -31,22 +28,22 @@ fi
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
-export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 
+export PATH=$HOME/.cargo/bin:$PATH
+
+which cargo
+
+cargo --version
+
+export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
+export PKG_CONFIG_PATH=${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}/lib:${UCX_INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib/$ARCH-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
+export NIXL_PREFIX=${INSTALL_DIR}
 
-echo "==== Show system info ===="
-env
-nvidia-smi topo -m || true
-ibv_devinfo || true
-uname -a || true
+cargo test -- --test-threads=1
 
-echo "==== Running Plugins Gtest tests ===="
-cd ${INSTALL_DIR}
-# shellcheck disable=SC2154
-./bin/plugins_gtest --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+cargo package

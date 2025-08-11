@@ -16,8 +16,8 @@
  */
 #include "wrapper.h"
 
-#include <nixl.h>
-#include <nixl_types.h>
+#include "nixl.h"
+#include "nixl_types.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -67,11 +67,6 @@ struct nixl_capi_xfer_dlist_s {
   nixl_xfer_dlist_t* dlist;
 };
 
-// Internal struct for descriptor list handle
-struct nixl_capi_xfer_dlist_handle_s {
-  nixlDlistH* dlist;
-};
-
 struct nixl_capi_reg_dlist_s {
   nixl_reg_dlist_t* dlist;
 };
@@ -83,6 +78,10 @@ struct nixl_capi_xfer_req_s {
 
 struct nixl_capi_notif_map_s {
   nixl_notifs_t notif_map;
+};
+
+struct nixl_capi_query_resp_list_s {
+    std::vector<nixl_query_resp_t> responses;
 };
 
 nixl_capi_status_t
@@ -1037,36 +1036,6 @@ nixl_capi_xfer_dlist_resize(nixl_capi_xfer_dlist_t dlist, size_t new_size)
   }
 }
 
-nixl_capi_status_t nixl_capi_create_xfer_dlist_handle(nixl_capi_xfer_dlist_handle_t* handle)
-{
-  if (!handle) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    *handle = new nixl_capi_xfer_dlist_handle_s;
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
-nixl_capi_status_t nixl_capi_destroy_xfer_dlist_handle(nixl_capi_xfer_dlist_handle_t handle)
-{
-  if (!handle) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    delete handle;
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
 // Registration descriptor list functions
 nixl_capi_status_t
 nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist, bool sorted)
@@ -1136,25 +1105,33 @@ nixl_capi_reg_dlist_verify_sorted(nixl_capi_reg_dlist_t dlist, bool* is_sorted)
 }
 
 nixl_capi_status_t
-nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist, uintptr_t addr, size_t len, uint64_t dev_id)
-{
-  if (!dlist) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
+nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist,
+                             uintptr_t addr,
+                             size_t len,
+                             uint64_t dev_id,
+                             const void *metadata,
+                             size_t metadata_len) {
+    if (!dlist) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
 
-  try {
-    nixlBlobDesc desc(addr, len, dev_id);  // Empty metadata
-    dlist->dlist->addDesc(desc);
+    try {
+        nixl_blob_t meta_blob;
+        if (metadata && metadata_len > 0) {
+            meta_blob.assign((const char *)metadata, metadata_len);
+        }
+        nixlBlobDesc desc(addr, len, dev_id, meta_blob);
+        dlist->dlist->addDesc(desc);
 #ifdef NIXL_DEBUG
-    printf("** Adding descriptor\n");
-    dlist->dlist->print();
-    printf("** Added descriptor\n");
+        printf("** Adding descriptor\n");
+        dlist->dlist->print();
+        printf("** Added descriptor\n");
 #endif
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 nixl_capi_status_t
@@ -1365,60 +1342,6 @@ nixl_capi_status_t nixl_capi_agent_make_connection(
   }
 }
 
-nixl_capi_status_t nixl_capi_agent_prep_xfer_dlist(
-    nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs,
-    nixl_capi_xfer_dlist_handle_t handle, nixl_capi_opt_args_t opt_args)
-{
-  auto backends = opt_args->args.backends;
-
-  nixl_opt_args_t extra_params;
-
-  if (!agent || !agent_name || !descs) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    for (nixlBackendH* backend : backends) {
-      extra_params.backends.push_back(backend);
-    }
-
-    nixl_status_t ret = agent->inner->prepXferDlist(std::string(agent_name), *descs->dlist,
-                                                    handle->dlist, &extra_params);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
-
-nixl_capi_status_t nixl_capi_agent_make_xfer_req(
-    nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation, nixl_capi_xfer_dlist_t local_descs,
-    nixl_capi_xfer_dlist_t remote_descs, const char* remote_agent, nixl_capi_xfer_req_t* req_hndl,
-    nixl_capi_opt_args_t opt_args)
-{
-  if (!agent || !local_descs || !remote_descs || !remote_agent || !req_hndl) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    auto req = new nixl_capi_xfer_req_s;
-    nixl_status_t ret = agent->inner->createXferReq(
-        static_cast<nixl_xfer_op_t>(operation), *local_descs->dlist, *remote_descs->dlist,
-        std::string(remote_agent), req->req, opt_args ? &opt_args->args : nullptr);
-
-    if (ret != NIXL_SUCCESS) {
-      delete req;
-      return NIXL_CAPI_ERROR_BACKEND;
-    }
-
-    *req_hndl = req;
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
 nixl_capi_status_t
 nixl_capi_create_xfer_req(
     nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation, nixl_capi_xfer_dlist_t local_descs,
@@ -1713,6 +1636,113 @@ nixl_capi_notif_map_clear(nixl_capi_notif_map_t map)
   catch (const std::exception& e) {
     return NIXL_CAPI_ERROR_BACKEND;
   }
+}
+
+// Query response list functions
+nixl_capi_status_t
+nixl_capi_create_query_resp_list(nixl_capi_query_resp_list_t *list) {
+    if (!list) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        auto resp_list = new nixl_capi_query_resp_list_s;
+        *list = resp_list;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_destroy_query_resp_list(nixl_capi_query_resp_list_t list) {
+    if (!list) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        delete list;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_query_resp_list_size(nixl_capi_query_resp_list_t list, size_t *size) {
+    if (!list || !size) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        *size = list->responses.size();
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_query_resp_list_has_value(nixl_capi_query_resp_list_t list,
+                                    size_t index,
+                                    bool *has_value) {
+    if (!list || !has_value || index >= list->responses.size()) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        *has_value = list->responses[index].has_value();
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_query_resp_list_get_params(nixl_capi_query_resp_list_t list,
+                                     size_t index,
+                                     nixl_capi_params_t *params) {
+    if (!list || !params || index >= list->responses.size()) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        if (!list->responses[index].has_value()) {
+            return NIXL_CAPI_ERROR_INVALID_PARAM;
+        }
+
+        auto param_list = new nixl_capi_params_s;
+        param_list->params = list->responses[index].value();
+        *params = param_list;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+// Query memory function
+nixl_capi_status_t
+nixl_capi_query_mem(nixl_capi_agent_t agent,
+                    nixl_capi_reg_dlist_t descs,
+                    nixl_capi_query_resp_list_t resp,
+                    nixl_capi_opt_args_t opt_args) {
+    if (!agent || !descs || !resp) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        nixl_opt_args_t *args = opt_args ? &opt_args->args : nullptr;
+        nixl_status_t ret = agent->inner->queryMem(*descs->dlist, resp->responses, args);
+        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 }  // extern "C"
