@@ -25,6 +25,7 @@
 #include "agent_data.h"
 #include "plugin_manager.h"
 #include "common/nixl_log.h"
+#include "common/util.h"
 
 static const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
@@ -921,12 +922,14 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     // If status is not NIXL_IN_PROG we can repost,
+    NVTXRangePush("NixlAgent::postXferReq");
     ret = req_hndl->engine->postXfer (req_hndl->backendOp,
                                      *req_hndl->initiatorDescs,
                                      *req_hndl->targetDescs,
                                       req_hndl->remoteAgent,
                                       req_hndl->backendHandle,
                                       &opt_args);
+    NVTXRangePop();
     req_hndl->status = ret;
 
     if (data->telemetryEnabled) {
