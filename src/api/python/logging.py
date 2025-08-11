@@ -85,7 +85,7 @@ def set_log_level_by_env(nixl_logger: logging.Logger) -> None:
 
 
 def setup_logging() -> None:
-    global _logging_configured
+    global _logging_configured  # pylint: disable=global-statement
 
     if _logging_configured:
         return
