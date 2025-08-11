@@ -56,7 +56,7 @@ pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
 pip3 install --break-system-packages pylint
 
-pylint src/api/python examples/python test/python
+pylint src/ examples/ test/python
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
