@@ -20,6 +20,10 @@ from typing import Any, Dict, List, Optional
 
 import yaml  # type: ignore
 
+from nixl.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class StrategyConfig:
@@ -121,7 +125,7 @@ class ModelConfig:
                     config_dict = yaml.safe_load(f)
                 config = config.update(config_dict)
             else:
-                print(f"Warning: Config file not found: {path}")
+                logger.warning("Config file not found: %s", path)
 
         return config
 
