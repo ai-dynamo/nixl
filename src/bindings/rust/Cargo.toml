@@ -15,16 +15,16 @@
 
 [package]
 name = "nixl-sys"
-version = "0.5.0"
-edition = "2021"
 description = "Low-level bindings to the nixl library"
-license = "Apache-2.0"
-homepage = "https://github.com/ai-dynamo/nixl"
-repository = "https://github.com/ai-dynamo/nixl.git"
-authors = ["NIXL Developers <nixl-developers@nvidia.com>"]
-readme = "README.md"
 links = "nixl"
 build = "build.rs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
 
 [features]
 stub-api = []
@@ -33,7 +33,6 @@ stub-api = []
 thiserror = { version = "2" }
 tracing = { version = "0.1" }
 serde = { version = "1", features = ["derive"] }
-
 libc = "0.2"
 
 [build-dependencies]

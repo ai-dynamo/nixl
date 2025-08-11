@@ -46,6 +46,21 @@ impl<'a> RegDescList<'a> {
         }
     }
 
+    /// Creates a new sorted registration descriptor list for the given memory type
+    pub fn new_sorted(mem_type: MemType) -> Result<Self, NixlError> {
+        Self::new(mem_type, true)
+    }
+
+    pub fn get_type(&self) -> Result<MemType, NixlError> {
+        let mut mem_type = 0;
+        let status = unsafe { nixl_capi_reg_dlist_get_type(self.inner.as_ptr(), &mut mem_type) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(MemType::from(mem_type)),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
     /// Adds a descriptor to the list
     pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
         self.add_desc_with_meta(addr, len, dev_id, &[])
@@ -83,12 +98,48 @@ impl<'a> RegDescList<'a> {
     }
 
     /// Returns the number of descriptors in the list
+    pub fn desc_count(&self) -> Result<usize, NixlError> {
+        let mut count = 0;
+        let status = unsafe { nixl_capi_reg_dlist_desc_count(self.inner.as_ptr(), &mut count) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(count),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns the number of descriptors in the list
     pub fn len(&self) -> Result<usize, NixlError> {
         let mut len = 0;
         let status = unsafe { nixl_capi_reg_dlist_len(self.inner.as_ptr(), &mut len) };
 
         match status {
             NIXL_CAPI_SUCCESS => Ok(len),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if the list is sorted
+    fn verify_sorted_inner(inner: NonNull<bindings::nixl_capi_reg_dlist_s>) -> Result<bool, NixlError> {
+        let mut is_sorted = false;
+        let status = unsafe { nixl_capi_reg_dlist_verify_sorted(inner.as_ptr(), &mut is_sorted) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(is_sorted),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Returns true if the list is sorted
+    pub fn verify_sorted(&self) -> Result<bool, NixlError> {
+        Self::verify_sorted_inner(self.inner)
+    }
+
+    pub fn is_sorted(&self) -> Result<bool, NixlError> {
+        let mut is_sorted = false;
+        let status = unsafe { nixl_capi_reg_dlist_is_sorted(self.inner.as_ptr(), &mut is_sorted) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(is_sorted),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }
@@ -102,6 +153,39 @@ impl<'a> RegDescList<'a> {
 
         match status {
             NIXL_CAPI_SUCCESS => Ok(has_overlaps),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Trims the list to the given size
+    pub fn trim(&mut self) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_reg_dlist_trim(self.inner.as_ptr()) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Removes the descriptor at the given index
+    pub fn rem_desc(&mut self, index: i32) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_reg_dlist_rem_desc(self.inner.as_ptr(), index) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Prints the list contents
+    pub fn print(&self) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_reg_dlist_print(self.inner.as_ptr()) };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }

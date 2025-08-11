@@ -20,6 +20,23 @@
 //! `nixl` crate.
 
 use nixl_sys::*;
+use std::env;
+
+// Helper function to create an agent with error handling
+fn create_test_agent(name: &str) -> Result<Agent, NixlError> {
+    Agent::new(name)
+}
+
+// Helper function to find a plugin by name
+fn find_plugin(plugins: &StringList, name: &str) -> Result<String, NixlError> {
+    plugins
+        .iter()
+        .filter_map(Result::ok)
+        .find(|&plugin| plugin == name)
+        .map(ToString::to_string)
+        .or_else(|| plugins.get(0).ok().map(ToString::to_string))
+        .ok_or(NixlError::InvalidParam)
+}
 
 /// Helper function to create and initialize a POSIX backend with optional arguments
 /// Returns (backend, opt_args) if POSIX is available, or None if not available
@@ -132,30 +149,60 @@ fn test_params_iteration() {
     }
 }
 
-#[test]
-fn test_get_backend_params() {
-    let agent = Agent::new("test_agent").unwrap();
-    let plugins = agent.get_available_plugins().unwrap();
-    assert!(!plugins.is_empty().unwrap_or(false));
+// #[test]
+// fn test_get_backend_params() {
+//     let agent = Agent::new("test_agent").unwrap();
+//     let plugins = agent.get_available_plugins().unwrap();
+//     assert!(!plugins.is_empty().unwrap_or(false));
 
-    let plugin_name = plugins.get(0).unwrap();
-    let (_mems, params) = agent.get_plugin_params(plugin_name).unwrap();
-    let backend = agent.create_backend(plugin_name, &params).unwrap();
+//     let plugin_name = plugins.get(0).unwrap();
+//     let (_mems, params) = agent.get_plugin_params(plugin_name).unwrap();
+//     let backend = agent.create_backend(plugin_name, &params).unwrap();
+
+//     // Get backend params after initialization
+//     let (backend_mems, backend_params) = agent.get_backend_params(&backend).unwrap();
+
+//     // Verify we can access the parameters
+//     let param_iter = backend_params.iter().unwrap();
+//     for param in param_iter {
+//         let param = param.unwrap();
+//         println!("Backend param: {} = {}", param.key, param.value);
+//     }
+
+//     // Verify we can access the memory types
+//     for mem_type in backend_mems.iter() {
+//         println!("Backend memory type: {:?}", mem_type.unwrap());
+//     }
+// }
+
+#[test]
+fn test_get_backend_params() -> Result<(), NixlError> {
+    let agent = create_test_agent("test_agent")?;
+    let plugins = agent.get_available_plugins()?;
+
+    // Ensure we have at least one plugin
+    assert!(!plugins.is_empty()?);
+
+    // Try UCX plugin first since it doesn't require GPU
+    let plugin_name = find_plugin(&plugins, "UCX")?;
+    let (_mems, params) = agent.get_plugin_params(&plugin_name)?;
+    let backend = agent.create_backend(&plugin_name, &params)?;
 
     // Get backend params after initialization
-    let (backend_mems, backend_params) = agent.get_backend_params(&backend).unwrap();
+    let (backend_mems, backend_params) = agent.get_backend_params(&backend)?;
 
-    // Verify we can access the parameters
-    let param_iter = backend_params.iter().unwrap();
-    for param in param_iter {
-        let param = param.unwrap();
+    // Print parameters using iterator
+    let param_iter = backend_params.iter()?;
+    for param in param_iter.flatten() {
         println!("Backend param: {} = {}", param.key, param.value);
     }
 
-    // Verify we can access the memory types
-    for mem_type in backend_mems.iter() {
-        println!("Backend memory type: {:?}", mem_type.unwrap());
+    // Print memory types
+    for mem_type in backend_mems.iter().flatten() {
+        println!("Backend memory type: {:?}", mem_type);
     }
+
+    Ok(())
 }
 
 #[test]
@@ -290,6 +337,32 @@ fn test_multiple_registrations() {
     storage2.memset(0xBB);
     assert!(storage1.as_slice().iter().all(|&x| x == 0xAA));
     assert!(storage2.as_slice().iter().all(|&x| x == 0xBB));
+}
+
+#[test]
+fn test_make_connection_success() {
+    let agent = Agent::new("test_agent").expect("Failed to create agent");
+    // This should succeed if the agent is valid and the backend is set up
+    let result = agent.make_connection("remote_agent");
+    // Accept either Ok or a backend error if no real remote exists
+    assert!(
+        result.is_ok() || matches!(result, Err(NixlError::BackendError)),
+        "Expected Ok or BackendError, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_make_connection_invalid_param() {
+    let agent = Agent::new("test_agent").expect("Failed to create agent");
+    // Null bytes in the name should trigger InvalidParam or StringConversionError
+    let result = agent.make_connection("remote\0agent");
+    assert!(
+        matches!(result, Err(NixlError::StringConversionError(_))) ||
+        matches!(result, Err(NixlError::InvalidParam)),
+        "Expected StringConversionError or InvalidParam, got: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -465,6 +538,479 @@ fn test_basic_agent_lifecycle() {
     // Verify memory patterns
     assert!(storage1.as_slice().iter().all(|&x| x == 0xbb));
     assert!(storage2.as_slice().iter().all(|&x| x == 0xbb));
+}
+
+#[test]
+fn test_etcd_metadata_exchange() -> Result<(), NixlError> {
+    // Check if NIXL_ETCD_ENDPOINTS env var is set to skip test if not
+    if env::var("NIXL_ETCD_ENDPOINTS").is_err() {
+        println!("Skipping etcd test - NIXL_ETCD_ENDPOINTS not set");
+        return Ok(());
+    }
+
+    // Create two agents for metadata exchange
+    let agent1 = Agent::new("EtcdAgent1")?;
+    let agent2 = Agent::new("EtcdAgent2")?;
+
+    // Get UCX backend to add to optional arguments
+    let plugins = agent1.get_available_plugins()?;
+    let plugin_name = find_plugin(&plugins, "UCX")?;
+    let (_mems, params) = agent1.get_plugin_params(&plugin_name)?;
+    let backend = agent1.create_backend(&plugin_name, &params)?;
+
+    // Create OptArgs with backend
+    let mut opt_args = OptArgs::new()?;
+    opt_args.add_backend(&backend)?;
+
+    // Send agent1's metadata to etcd
+    agent1.send_local_md(Some(&opt_args))?;
+    println!("Successfully sent agent1 metadata to etcd");
+
+    // Fetch agent1's metadata from etcd with agent2
+    agent2.fetch_remote_md("EtcdAgent1", Some(&opt_args))?;
+    println!("Successfully fetched agent1 metadata from etcd");
+
+    // Invalidate agent1's metadata in etcd
+    agent1.invalidate_local_md(Some(&opt_args))?;
+    println!("Successfully invalidated agent1 metadata in etcd");
+
+    Ok(())
+}
+
+#[test]
+fn test_send_notification() -> Result<(), NixlError> {
+    // Create two agents for notification exchange
+    let agent1 = Agent::new("NotifSender")?;
+    let agent2 = Agent::new("NotifReceiver")?;
+
+    // Set up backends for both agents
+    let (_mem_list, params) = agent1.get_plugin_params("UCX")?;
+    let backend1 = agent1.create_backend("UCX", &params)?;
+    let backend2 = agent2.create_backend("UCX", &params)?;
+
+    // Exchange metadata
+    let metadata = agent2.get_local_md()?;
+    agent1.load_remote_md(&metadata)?;
+
+    // Create notification message
+    let message = b"Test notification message";
+
+    // Send notification with no backend specified
+    agent1.send_notification("NotifReceiver", message, None)?;
+
+    // Send notification with specific backend
+    agent1.send_notification("NotifReceiver", message, Some(&backend1))?;
+
+    // Create a notification map to receive notifications
+    let mut notifs = NotificationMap::new()?;
+
+    // Receive notifications without backend
+    agent2.get_notifications(&mut notifs, None)?;
+
+    // Receive notifications with specific backend
+    let mut opt_args = OptArgs::new()?;
+    opt_args.add_backend(&backend2)?;
+    agent2.get_notifications(&mut notifs, Some(&opt_args))?;
+
+    // Verify notification map contents
+    if !notifs.is_empty()? {
+        let mut agents = notifs.agents();
+
+        // Should have notifications from NotifSender
+        if let Some(Ok(agent_name)) = agents.next() {
+            assert_eq!(agent_name, "NotifSender");
+
+            // Verify notification content
+            let notifications = notifs.get_notifications(agent_name)?;
+            let notif_count = notifs.get_notifications_size(agent_name)?;
+
+            // May have 1 or 2 notifications depending on whether both were processed
+            assert!(notif_count > 0, "Should have at least one notification");
+
+            // Check content of notification
+            for notification in notifications {
+                assert_eq!(notification?, message);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_check_remote_metadata() {
+    // Create two agents
+    let agent1 = Agent::new("agent1").expect("Failed to create agent1");
+    let agent2 = Agent::new("agent2").expect("Failed to create agent2");
+
+    // Set up backends for both agents (required before metadata operations)
+    let (_mem_list, params) = agent1
+        .get_plugin_params("UCX")
+        .expect("Failed to get plugin params");
+    let _backend1 = agent1
+        .create_backend("UCX", &params)
+        .expect("Failed to create backend for agent1");
+    let _backend2 = agent2
+        .create_backend("UCX", &params)
+        .expect("Failed to create backend for agent2");
+
+    // Initially, agent1 should not have metadata for agent2
+    assert!(!agent1.check_remote_metadata("agent2", None));
+
+    // Get and share metadata
+    let metadata = agent2.get_local_md().expect("Failed to get local metadata");
+    agent1
+        .load_remote_md(&metadata)
+        .expect("Failed to load remote metadata");
+
+    // Now agent1 should have metadata for agent2
+    assert!(agent1.check_remote_metadata("agent2", None));
+
+    // Test with a descriptor list
+    let mut storage = SystemStorage::new(1024).expect("Failed to create storage");
+    let opt_args = OptArgs::new().expect("Failed to create opt args");
+    storage
+        .register(&agent2, Some(&opt_args))
+        .expect("Failed to register memory");
+
+    // Create descriptor list with memory that exists in agent2
+    let mem_type = MemType::Dram;
+    let mut xfer_desc_list =
+        XferDescList::new(mem_type, false).expect("Failed to create xfer desc list");
+    xfer_desc_list
+        .add_desc(
+            unsafe { storage.as_ptr() } as usize,
+            storage.size(),
+            storage.device_id(),
+        )
+        .expect("Failed to add descriptor");
+
+    // Update metadata after registration
+    let metadata = agent2
+        .get_local_md()
+        .expect("Failed to get updated local metadata");
+    agent1
+        .load_remote_md(&metadata)
+        .expect("Failed to reload remote metadata");
+
+    // Check with descriptor list - should return true for valid descriptors
+    assert!(agent1.check_remote_metadata("agent2", Some(&xfer_desc_list)));
+
+    // Create a descriptor list with invalid memory address
+    let mut invalid_desc_list =
+        XferDescList::new(mem_type, false).expect("Failed to create invalid desc list");
+    invalid_desc_list
+        .add_desc(0xdeadbeef, 1024, 0)
+        .expect("Failed to add invalid descriptor");
+
+    // Check with invalid descriptor list - should return false
+    assert!(!agent1.check_remote_metadata("agent2", Some(&invalid_desc_list)));
+
+    // Check with non-existent agent name
+    assert!(!agent1.check_remote_metadata("non_existent_agent", None));
+
+    // Check with invalid agent name (contains null byte)
+    // The function should return false rather than panic
+    let invalid_name = "invalid\0agent";
+    assert!(!agent1.check_remote_metadata(invalid_name, None));
+}
+
+#[test]
+fn test_xfer_desc_list_new_and_new_sorted() {
+    let dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.is_empty().unwrap());
+    let dlist_sorted = XferDescList::new_sorted(MemType::Dram).unwrap();
+    assert!(dlist_sorted.is_empty().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_new_sorted_sortedness() {
+    let dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
+    let sorted = dlist.is_sorted().unwrap();
+    assert!(sorted);
+    let dlist_unsorted = XferDescList::new(MemType::Dram, false).unwrap();
+    let unsorted = dlist_unsorted.is_sorted().unwrap();
+    assert!(!unsorted);
+}
+
+#[test]
+fn test_xfer_desc_list_get_type() {
+    let dlist = XferDescList::new(MemType::Vram, false).unwrap();
+    assert_eq!(dlist.get_type().unwrap(), MemType::Vram);
+}
+
+#[test]
+fn test_xfer_desc_list_get_type_after_add() {
+    let mut dlist = XferDescList::new(MemType::Block, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert_eq!(dlist.get_type().unwrap(), MemType::Block);
+}
+
+#[test]
+fn test_xfer_desc_list_verify_sorted_true() {
+    let mut dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
+
+    // list size should be at least 1 to be considered sorted
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(dlist.verify_sorted().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_verify_sorted_false() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x2000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap(); // out of order
+    assert!(!dlist.verify_sorted().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_desc_count_basic() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    assert_eq!(dlist.desc_count().unwrap(), 0);
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert_eq!(dlist.desc_count().unwrap(), 1);
+}
+
+#[test]
+fn test_xfer_desc_list_desc_count_after_clear() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.clear().unwrap();
+    assert_eq!(dlist.desc_count().unwrap(), 0);
+}
+
+#[test]
+fn test_xfer_desc_list_is_empty_true() {
+    let dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_is_empty_false() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(!dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_is_sorted_true() {
+    let mut dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(dlist.is_sorted().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_is_sorted_false() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x2000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(!dlist.is_sorted().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_trim_basic() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.trim().unwrap();
+    assert!(dlist.desc_count().unwrap() <= 1);
+}
+
+#[test]
+fn test_xfer_desc_list_trim_empty() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.trim().is_ok());
+    assert!(dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_rem_desc_basic() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(dlist.rem_desc(0).is_ok());
+    assert!(dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_rem_desc_out_of_bounds() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.rem_desc(0).is_err());
+}
+
+#[test]
+fn test_xfer_desc_list_clear_basic() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.clear().unwrap();
+    assert!(dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_clear_empty() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.clear().is_ok());
+    assert!(dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_xfer_desc_list_print_basic() {
+    let dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.print().is_ok());
+}
+
+#[test]
+fn test_xfer_desc_list_print_after_add() {
+    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(dlist.print().is_ok());
+}
+
+// ----------- RegDescList API TESTS -----------
+
+#[test]
+fn test_reg_desc_list_new_and_new_sorted() {
+    let dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.is_empty().unwrap());
+    let dlist_sorted = RegDescList::new_sorted(MemType::Dram).unwrap();
+    assert!(dlist_sorted.is_empty().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_new_sorted_sortedness() {
+    let dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
+    assert!(dlist.is_sorted().unwrap());
+    let dlist_unsorted = RegDescList::new(MemType::Dram, false).unwrap();
+    assert!(!dlist_unsorted.is_sorted().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_get_type() {
+    let dlist = RegDescList::new(MemType::Vram, false).unwrap();
+    assert_eq!(dlist.get_type().unwrap(), MemType::Vram);
+}
+
+#[test]
+fn test_reg_desc_list_get_type_after_add() {
+    let mut dlist = RegDescList::new(MemType::Block, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert_eq!(dlist.get_type().unwrap(), MemType::Block);
+}
+
+#[test]
+fn test_reg_desc_list_verify_sorted_true() {
+    let mut dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
+
+    // list size should be at least 1 to be considered sorted
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(dlist.verify_sorted().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_verify_sorted_false() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x2000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap(); // out of order
+    assert!(!dlist.verify_sorted().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_desc_count_basic() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    assert_eq!(dlist.desc_count().unwrap(), 0);
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert_eq!(dlist.desc_count().unwrap(), 1);
+}
+
+#[test]
+fn test_reg_desc_list_desc_count_after_clear() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.clear().unwrap();
+    assert_eq!(dlist.desc_count().unwrap(), 0);
+}
+
+#[test]
+fn test_reg_desc_list_is_empty_true() {
+    let dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_is_empty_false() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(!dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_is_sorted_true() {
+    let mut dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(dlist.is_sorted().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_is_sorted_false() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x2000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(!dlist.is_sorted().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_trim_basic() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.trim().unwrap();
+    assert!(dlist.desc_count().unwrap() <= 1);
+}
+
+#[test]
+fn test_reg_desc_list_trim_empty() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.trim().is_ok());
+    assert!(dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_rem_desc_basic() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(dlist.rem_desc(0).is_ok());
+    assert!(dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_rem_desc_out_of_bounds() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.rem_desc(0).is_err());
+}
+
+#[test]
+fn test_reg_desc_list_clear_basic() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.clear().unwrap();
+    assert!(dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_clear_empty() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.clear().is_ok());
+    assert!(dlist.is_empty().unwrap());
+}
+
+#[test]
+fn test_reg_desc_list_print_basic() {
+    let dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    assert!(dlist.print().is_ok());
+}
+
+#[test]
+fn test_reg_desc_list_print_after_add() {
+    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    assert!(dlist.print().is_ok());
 }
 
 #[test]

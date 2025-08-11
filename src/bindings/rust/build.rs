@@ -15,6 +15,7 @@
 
 use std::env;
 use std::path::PathBuf;
+use os_info;
 
 fn get_lib_path(nixl_root_path: &str, arch: &str) -> String {
     let os_info = os_info::get();
@@ -64,20 +65,69 @@ fn get_arch() -> String {
     }
 }
 
+fn get_nixl_libs() -> Option<Vec<pkg_config::Library>> {
+    // Try to get all libraries, but return None if any fails
+    match (
+        pkg_config::probe_library("nixl"),
+        pkg_config::probe_library("nixl_build"),
+        pkg_config::probe_library("nixl_common"),
+        pkg_config::probe_library("stream"),
+        pkg_config::probe_library("serdes"),
+        pkg_config::probe_library("ucx_utils"),
+        pkg_config::probe_library("etcd-cpp-api"),
+        pkg_config::probe_library("ucx"),
+    ) {
+        (Ok(nixl), Ok(nixl_build), Ok(nixl_common), Ok(stream), Ok(serdes), Ok(ucx_utils), Ok(etcd), Ok(ucx)) => {
+            Some(vec![nixl, nixl_build, nixl_common, stream, serdes, ucx_utils, etcd, ucx])
+        }
+        _ => None,
+    }
+}
+
 fn build_nixl(cc_builder: &mut cc::Build) {
     let nixl_root_path =
         env::var("NIXL_PREFIX").unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
-    let nixl_include_path = format!("{}/include", nixl_root_path);
 
-    cc_builder
-        .file("wrapper.cpp")
-        .include(&nixl_include_path)
-        .include("../../api/cpp")
-        .include("../../infra")
-        .include("../../core");
+    // Print the NIXL_PREFIX for debugging
+    println!("cargo:warning=Using NIXL_PREFIX: {}", nixl_root_path);
+
+    let nixl_include_path = format!("{}/include", nixl_root_path);
+    let nixl_include_paths = [
+        &nixl_include_path,
+        "../../api/cpp",
+        "../../infra",
+        "../../core",
+        "/usr/include",
+    ];
 
     let arch = get_arch();
     let nixl_lib_path = get_lib_path(&nixl_root_path, &arch);
+
+    // Print the library path for debugging
+    println!("cargo:warning=Using library path: {}", nixl_lib_path);
+
+    // Add all possible library paths
+    println!("cargo:rustc-link-search=native={}", nixl_lib_path);
+    println!("cargo:rustc-link-search=native={}/lib", nixl_root_path);
+    println!("cargo:rustc-link-search=native={}/lib64", nixl_root_path);
+    println!("cargo:rustc-link-search=native={}/lib/x86_64-linux-gnu", nixl_root_path);
+
+    // Try to use pkg-config if available
+    if let Some(libs) = get_nixl_libs() {
+        println!("cargo:warning=Using pkg-config paths");
+        for lib in libs {
+            for path in lib.link_paths {
+                println!("cargo:rustc-link-search=native={}", path.display());
+            }
+        }
+    } else {
+        println!("cargo:warning=pkg-config not available, using manual library paths");
+    }
+
+    cc_builder
+        .file("wrapper.cpp")
+        .includes(nixl_include_paths);
+
 
     println!("cargo:rustc-link-search={}", nixl_lib_path);
 
@@ -87,30 +137,54 @@ fn build_nixl(cc_builder: &mut cc::Build) {
         cc_builder.define("HAVE_ETCD", "1");
     }
 
-    cc_builder.compile("wrapper");
+    // Compile the wrapper C++ code
+    cc_builder.compile("nixl_wrapper");
 
-    // Link against NIXL libraries in correct order
-    // Only link against etcd-cpp-api if it's enabled
-    if etcd_enabled {
-        println!("cargo:rustc-link-lib=dylib=etcd-cpp-api");
+    // Get the output path for bindings
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    // Generate bindings with minimal configuration
+    let mut builder = bindgen::Builder::default()
+        .header("wrapper.h")
+        .clang_arg("-std=c++17")
+        .clang_arg(format!("-I{}", nixl_include_path))
+        .clang_arg("-I../../api/cpp")
+        .clang_arg("-I../../infra")
+        .clang_arg("-I../../core")
+        .clang_arg("-x")
+        .clang_arg("c++");
+
+    // Add system include paths if needed
+    if let Ok(cpp_include) = env::var("CPLUS_INCLUDE_PATH") {
+        for path in cpp_include.split(':') {
+            builder = builder.clang_arg(format!("-I{}", path));
+        }
     }
-    println!("cargo:rustc-link-lib=dylib=stream");
-    println!("cargo:rustc-link-lib=dylib=nixl_common");
+
+    // Link against required libraries
+    println!("cargo:rustc-link-lib=stdc++");
+
+    // Add NIXL libraries
     println!("cargo:rustc-link-lib=dylib=nixl");
     println!("cargo:rustc-link-lib=dylib=nixl_build");
     println!("cargo:rustc-link-lib=dylib=nixl_common");
-    println!("cargo:rustc-link-lib=dylib=serdes");
-    println!("cargo:rustc-link-lib=dylib=stream");
-    println!("cargo:rustc-link-lib=dylib=ucx_utils");
 
-    // Link against C++ standard library
-    println!("cargo:rustc-link-lib=dylib=stdc++");
+    if etcd_enabled {
+        println!("cargo:rustc-link-lib=dylib=etcd-cpp-api");
+    }
 
     // Tell cargo to invalidate the built crate whenever the wrapper changes
     println!("cargo:rustc-link-search=native={}", nixl_lib_path);
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=wrapper.cpp");
     println!("cargo:rerun-if-env-changed=HAVE_ETCD");
+
+    builder
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .generate()
+        .expect("Unable to generate bindings")
+        .write_to_file(out_path.join("bindings.rs"))
+        .expect("Couldn't write bindings!");
 }
 
 fn build_stubs(cc_builder: &mut cc::Build) {
@@ -143,17 +217,6 @@ fn run_build(use_stub_api: bool) {
     } else {
         build_stubs(&mut cc_builder);
     }
-
-    // Get the output path for bindings
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-
-    // Generate bindings
-    bindgen::Builder::default()
-        .header("wrapper.h")
-        .generate()
-        .expect("Unable to generate bindings")
-        .write_to_file(out_path.join("bindings.rs"))
-        .expect("Couldn't write bindings!");
 }
 
 fn main() {

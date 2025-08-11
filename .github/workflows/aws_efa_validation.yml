@@ -25,6 +25,9 @@ jobs:
           - test_name: "Python Tests"
             test_scripts:
               - .gitlab/test_python.sh $NIXL_INSTALL_DIR
+          - test_name: "Rust Tests"
+            test_scripts:
+              - .gitlab/test_rust.sh $NIXL_INSTALL_DIR
 
     steps:
       - name: Checkout repository
