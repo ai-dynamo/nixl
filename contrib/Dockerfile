@@ -56,6 +56,7 @@ RUN apt-get update -y && \
     libgtest-dev \
     build-essential \
     python3.12-dev \
+    clang \
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
