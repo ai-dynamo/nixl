@@ -46,6 +46,7 @@ matrix:
 
 env:
   NIXL_INSTALL_DIR: /opt/nixl
+  TEST_TIMEOUT: 30
   NPROC: "16"
 
 steps:
@@ -60,21 +61,25 @@ steps:
 
   - name: Test CPP
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
       .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
 
   - name: Test Python
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
       .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
 
   - name: Test Nixlbench
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
       .gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}
 
   - name: Test Rust
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
       .gitlab/test_rust.sh ${NIXL_INSTALL_DIR}
 

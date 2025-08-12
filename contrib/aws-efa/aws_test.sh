@@ -31,6 +31,7 @@ usage() {
     echo ""
     echo "Optional environment variables:"
     echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/pytorch:25.02-py3)"
+    echo "  TEST_TIMEOUT      - Timeout for test execution in minutes"
     exit 1
 }
 
@@ -64,6 +65,12 @@ setup_cmd="set -x && \
     cd nixl && \
     ${GIT_CHECKOUT_CMD}"
 build_cmd=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${UCX_INSTALL_DIR}"
+
+# Add timeout only if TEST_TIMEOUT is set (expects minutes)
+if [ -n "$TEST_TIMEOUT" ]; then
+    test_cmd="timeout ${TEST_TIMEOUT}m ${test_cmd}"
+fi
+
 export AWS_CMD="${setup_cmd} && ${build_cmd} && ${test_cmd}"
 
 # Generate AWS job properties json from template
