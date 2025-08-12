@@ -24,6 +24,7 @@ NIXL_BENCH_BUILD_CONTEXT_ARGS="--build-context nixlbench=$BUILD_CONTEXT/"
 DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
 UCX_SRC=""
 UCX_BUILD_CONTEXT_ARGS=""
+BUILD_TYPE="release"
 commit_id=$(git rev-parse --short HEAD)
 
 # Get latest TAG and add COMMIT_ID for dev
@@ -61,6 +62,14 @@ get_options() {
         --base-image-tag)
             if [ "$2" ]; then
                 BASE_IMAGE_TAG=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --build-type)
+            if [ "$2" ]; then
+                BUILD_TYPE=$2
                 shift
             else
                 missing_requirement $1
@@ -156,6 +165,7 @@ show_build_options() {
     echo "Building NIXLBench Image"
     echo "NIXL Source: ${NIXL_SRC}"
     echo "UCX Source: ${UCX_SRC} (optional)"
+    echo "Build Type: ${BUILD_TYPE}"
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
     echo "Build Context Args: ${BUILD_CONTEXT_ARGS}"
@@ -171,6 +181,7 @@ show_help() {
     echo "  [--base-image-tag base image tag]"
     echo "  [--nixlbench path/to/nixlbench/source/dir]"
     echo "  [--ucx path/to/ucx/source/dir]"
+    echo "  [--build-type [debug|release] to select build type]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--python-versions python versions to build for, comma separated]"
@@ -194,6 +205,7 @@ BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BAS
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
+BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 
 show_build_options
