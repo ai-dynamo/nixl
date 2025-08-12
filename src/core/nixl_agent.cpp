@@ -1255,6 +1255,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     std::string remote_agent = sd.getStr("Agent");
     if (remote_agent.size() == 0)
         return NIXL_ERR_MISMATCH;
+
     if (remote_agent == data->name)
         return NIXL_ERR_INVALID_PARAM;
 
@@ -1270,7 +1271,6 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
         nixl_backend = sd.getStr("t");
         if (nixl_backend.size() == 0)
             return NIXL_ERR_MISMATCH;
-
         conn_info = sd.getStr("c");
         if (conn_info.size() == 0)
             return NIXL_ERR_MISMATCH;
