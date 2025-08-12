@@ -121,24 +121,24 @@ class nixl_agent:
             self.plugin_b_options[plugin] = backend_options
             self.plugin_mem_types[plugin] = mem_types
 
-        # TODO: populate init from default parameters, or define a set of params in python
-        init: dict[str, str] = {}
-        if nixl_conf.num_threads > 0:
-            init["num_threads"] = str(nixl_conf.num_threads)
-
         if instantiate_all:
-            for plugin in self.plugin_list:
-                self.create_backend(plugin, init)
-        else:
-            for bknd in nixl_conf.backends:
-                # TODO: populate init from nixl_conf when added
-                if bknd not in self.plugin_list:
-                    logger.warning(
-                        "Skipping backend registration %s due to the missing plugin.",
-                        bknd,
-                    )
-                else:
-                    self.create_backend(bknd, init)
+            nixl_conf.backends = self.plugin_list
+
+        for bknd in nixl_conf.backends:
+            if bknd not in self.plugin_list:
+                logger.warning(
+                    "Skipping backend registration %s due to the missing plugin.",
+                    bknd,
+                )
+            else:
+                # TODO: improve population of init from nixl_conf
+                init: dict[str, str] = {}
+                if nixl_conf.num_threads > 0:
+                    if bknd == "UCX" or bknd == "OBJ":
+                        init["num_threads"] = str(nixl_conf.num_threads)
+                    elif bknd == "GDS_MT":
+                        init["thread_count"] = str(nixl_conf.num_threads)
+                self.create_backend(bknd, init)
 
         self.nixl_mems = {
             "DRAM": nixlBind.DRAM_SEG,
