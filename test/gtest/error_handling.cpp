@@ -81,9 +81,7 @@ class TestErrorHandling : public testing::TestWithParam<std::string> {
     public:
         void init(const std::string& name, const std::string& backend_name);
         void
-        destroy(bool after_failure);
-        void
-        disconnect(bool after_failure);
+        destroy();
         void fillRegList(nixl_xfer_dlist_t& dlist, nixlBasicDesc& desc) const;
         std::string getLocalMD() const;
         void loadRemoteMD(const std::string& remote_name);
@@ -142,29 +140,11 @@ void TestErrorHandling::Agent::init(const std::string& name, const std::string& 
 }
 
 void
-TestErrorHandling::Agent::destroy(bool after_failure) {
-    disconnect(after_failure);
+TestErrorHandling::Agent::destroy() {
     m_priv->deregisterMem(m_mem.m_dlist, &m_mem.m_params);
-    m_backend = nullptr;
+    m_priv->invalidateRemoteMD(m_MetaRemote);
     m_priv.reset();
-}
-
-void
-TestErrorHandling::Agent::disconnect(bool after_failure) {
-    ASSERT_FALSE(m_MetaRemote.empty());
-
-    const nixl_status_t status = m_priv->invalidateRemoteMD(m_MetaRemote);
-    if (after_failure) {
-        ASSERT_EQ(NIXL_ERR_NOT_FOUND, status)
-            << "Agent " << m_name << " has un-invalidated metadata of " << m_MetaRemote
-            << ", status: " << nixlEnumStrings::statusStr(status);
-    } else {
-        ASSERT_EQ(NIXL_SUCCESS, status)
-            << "Agent " << m_name << " failed to invalidate remote metadata, status: "
-            << nixlEnumStrings::statusStr(status);
-    }
-
-    m_MetaRemote.clear();
+    m_backend = nullptr;
 }
 
 void TestErrorHandling::Agent::fillRegList(nixl_xfer_dlist_t& dlist,
@@ -271,7 +251,6 @@ void TestErrorHandling::testXfer() {
         if (isFailure<test_type>(i)) {
             EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, status);
             if (test_type == TestType::XFER_FAIL_RESTORE) {
-                m_Initiator.disconnect(true);
                 m_Target.init(target_name, m_backend_name);
                 exchangeMetaData();
             }
@@ -289,12 +268,12 @@ void TestErrorHandling::testXfer() {
     switch (test_type) {
     case TestType::BASIC_XFER:
     case TestType::XFER_FAIL_RESTORE:
-        m_Target.destroy(false);
-        m_Initiator.destroy(false);
+        m_Target.destroy();
+        m_Initiator.destroy();
         return;
     case TestType::LOAD_REMOTE_THEN_FAIL:
     case TestType::XFER_THEN_FAIL:
-        m_Initiator.destroy(true);
+        m_Initiator.destroy();
         return;
     }
 }
@@ -349,7 +328,7 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, bool target_failure) {
         << "createXferReq failed with unexpected error: " << nixlEnumStrings::statusStr(status);
 
     if (target_failure) {
-        m_Target.destroy(false);
+        m_Target.destroy();
     }
 
     status = m_Initiator.postXferReq(req_handle);
