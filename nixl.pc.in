@@ -1,0 +1,13 @@
+prefix=@prefix@
+exec_prefix=@prefix@
+libdir=@prefix@/@libdir@
+includedir=@prefix@/@includedir@
+
+Name: nixl
+Description: NVIDIA Inference Xfer Library
+Version: @version@
+Requires: ucx
+Requires.private: etcd-cpp-api
+Libs: -L${libdir} -lnixl -lnixl_build -lnixl_common -lstream -lserdes -lucx_utils -lstdc++
+Libs.private: -ldl -lrt -lpthread
+Cflags: -I${includedir} -I${includedir}/utils/serdes -I${includedir}/utils/common -I${includedir}/backend

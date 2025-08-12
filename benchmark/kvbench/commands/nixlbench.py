@@ -353,7 +353,6 @@ class NIXLBench:
             for key, value in params.items():
                 if value is not None:
                     merged_params[key] = value
-            # print(json.dumps(merged_params))
             return merged_params
         else:  # for text format, exclude defaults to keep command concise
             for name, value in params.items():

@@ -47,6 +47,7 @@ matrix:
 env:
   NIXL_INSTALL_DIR: /opt/nixl
   TEST_TIMEOUT: 30
+  NPROC: "16"
 
 steps:
   - name: Build
@@ -69,6 +70,11 @@ steps:
     timeout: "${TEST_TIMEOUT}"
     run: |
       .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
+
+  - name: Test Rust
+    parallel: false
+    run: |
+      .gitlab/test_rust.sh ${NIXL_INSTALL_DIR}
 
   - name: Build Docker Image
     parallel: false
