@@ -73,6 +73,7 @@ steps:
 
   - name: Test Rust
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
       .gitlab/test_rust.sh ${NIXL_INSTALL_DIR}
 

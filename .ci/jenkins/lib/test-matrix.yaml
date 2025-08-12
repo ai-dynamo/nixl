@@ -114,7 +114,7 @@ steps:
   - name: Test Rust
     parallel: false
     run: |
-      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_rust.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_rust.sh ${INSTALL_DIR}"
     always: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
