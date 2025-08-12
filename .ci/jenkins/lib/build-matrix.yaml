@@ -71,6 +71,12 @@ steps:
     run: |
       .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
 
+  - name: Test Nixlbench
+    parallel: false
+    timeout: "${TEST_TIMEOUT}"
+    run: |
+      .gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}
+
   - name: Test Rust
     parallel: false
     timeout: "${TEST_TIMEOUT}"
