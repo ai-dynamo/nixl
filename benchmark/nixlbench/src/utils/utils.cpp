@@ -873,7 +873,7 @@ xferMetricStats::reserve(size_t n) {
 }
 
 void
-xferMetricStats::reset() {
+xferMetricStats::clear() {
     samples.clear();
 }
 
@@ -882,11 +882,11 @@ xferMetricStats::reset() {
  */
 
 void
-xferBenchStats::reset() {
-    total_duration.reset();
-    prepare_duration.reset();
-    post_duration.reset();
-    transfer_duration.reset();
+xferBenchStats::clear() {
+    total_duration.clear();
+    prepare_duration.clear();
+    post_duration.clear();
+    transfer_duration.clear();
 }
 
 void

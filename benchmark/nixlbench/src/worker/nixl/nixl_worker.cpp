@@ -813,7 +813,7 @@ execTransfer(nixlAgent *agent,
              const int num_threads,
              xferBenchStats &stats) {
     int ret = 0;
-    stats.reset();
+    stats.clear();
 
     xferBenchTimer total_timer;
 #pragma omp parallel num_threads(num_threads)
@@ -859,12 +859,12 @@ execTransfer(nixlAgent *agent,
         CHECK_NIXL_ERROR(agent->createXferReq(op, local_desc, remote_desc, target, req, &params),
                          "createTransferReq failed");
 
-        long long prepare_duration = timer.lap();
+        const nixlTime::us_t prepare_duration = timer.lap();
         thread_stats.prepare_duration.add(prepare_duration);
 
         for (int i = 0; i < num_iter && !error; i++) {
             rc = agent->postXferReq(req);
-            long long post_duration = timer.lap();
+            const nixlTime::us_t post_duration = timer.lap();
             thread_stats.post_duration.add(post_duration);
             if (NIXL_ERR_BACKEND == rc) {
                 std::cout << "NIXL postRequest failed" << std::endl;
@@ -879,7 +879,7 @@ execTransfer(nixlAgent *agent,
                         break;
                     }
                 } while (NIXL_SUCCESS != rc);
-                long long transfer_duration = timer.lap();
+                const nixlTime::us_t transfer_duration = timer.lap();
                 thread_stats.transfer_duration.add(transfer_duration);
             }
         }
@@ -891,7 +891,7 @@ execTransfer(nixlAgent *agent,
 #pragma omp critical
         { stats.add(thread_stats); }
     }
-    long long total_duration = total_timer.lap();
+    const nixlTime::us_t total_duration = total_timer.lap();
     stats.total_duration.add(total_duration);
     return ret;
 }
@@ -925,7 +925,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
     // Synchronize to ensure all processes have completed the warmup (iter and polling)
     synchronize();
 
-    stats.reset();
+    stats.clear();
 
     ret = execTransfer(
         agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);

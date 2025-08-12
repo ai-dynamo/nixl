@@ -152,11 +152,11 @@ execTransfer(const std::vector<std::vector<xferBenchIOV>> &local_iovs,
             }
         }
         nvshmemx_quiet_on_stream(stream);
-        long long transfer_duration = timer.lap();
+        nixlTime::us_t transfer_duration = timer.lap();
         stats.transfer_duration.add(transfer_duration);
     }
 
-    long long total_duration = total_timer.lap();
+    nixlTime::us_t total_duration = total_timer.lap();
     stats.total_duration.add(total_duration);
 
     return ret;
@@ -190,7 +190,7 @@ xferBenchNvshmemWorker::transfer(size_t block_size,
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
     }
-    stats.reset();
+    stats.clear();
     nvshmemx_barrier_all_on_stream(stream);
     CHECK_CUDA_ERROR(cudaStreamSynchronize(stream), "Failed to synchronize CUDA stream");
 

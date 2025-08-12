@@ -214,22 +214,21 @@ public:
     void
     reserve(size_t n);
     void
-    reset();
+    clear();
 
 private:
     std::vector<double> samples;
 };
 
 // Stats class for measuring benchmark metrics
-class xferBenchStats {
-public:
+struct xferBenchStats {
     xferMetricStats total_duration;
     xferMetricStats prepare_duration;
     xferMetricStats post_duration;
     xferMetricStats transfer_duration;
 
     void
-    reset();
+    clear();
     void
     add(const xferBenchStats &other);
     void
