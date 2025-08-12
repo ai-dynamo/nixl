@@ -59,7 +59,7 @@ nixl_lib = library('nixl',
                    'nixl_listener.cpp',
                    'signalhandler.cpp',
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-                   link_args: ['-lstdc++fs'],
+                   link_args: ['-lstdc++fs', '-lbacktrace'],
                    dependencies: nixl_lib_deps,
                    install: true)
 
