@@ -278,35 +278,31 @@ void nixlUcxEngine::vramFiniCtx()
 
 class nixlUcxIntReq : public nixlLinkElem<nixlUcxIntReq> {
     private:
-        int _completed;
-        ucx_connection_ptr_t _conn;
+        bool completed_ = false;
+        ucx_connection_ptr_t conn_;
 
     public:
         std::unique_ptr<std::string> amBuffer;
 
-        nixlUcxIntReq() : nixlLinkElem() {
-            _completed = 0;
-        }
-
         bool
         is_complete() const {
-            return _completed;
+            return completed_;
         }
 
         void
         completed() {
-            _completed = 1;
+            completed_ = true;
         }
 
         void
         setConnection(ucx_connection_ptr_t conn) {
-            _conn = conn;
+            conn_ = conn;
         }
 
         nixl_status_t
         checkConnection(size_t ep_id) const {
-            NIXL_ASSERT(_conn) << "Connection is not set";
-            return _conn->getEp(ep_id)->checkTxState();
+            NIXL_ASSERT(conn_) << "Connection is not set";
+            return conn_->getEp(ep_id)->checkTxState();
         }
 };
 
