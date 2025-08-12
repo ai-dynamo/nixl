@@ -69,7 +69,8 @@ use bindings::{
     nixl_capi_xfer_dlist_print, nixl_capi_reg_dlist_is_sorted, nixl_capi_gen_notif, nixl_capi_estimate_xfer_cost,
     nixl_capi_query_mem, nixl_capi_create_query_resp_list, nixl_capi_destroy_query_resp_list,
     nixl_capi_query_resp_list_size, nixl_capi_query_resp_list_has_value,
-    nixl_capi_query_resp_list_get_params,
+    nixl_capi_query_resp_list_get_params, nixl_capi_prep_xfer_dlist, nixl_capi_release_xfer_dlist_handle,
+    nixl_capi_make_xfer_req
 };
 
 // Re-export status codes
@@ -111,6 +112,8 @@ pub enum NixlError {
     RegDescListCreationFailed,
     #[error("Failed to add registration descriptor")]
     RegDescAddFailed,
+    #[error("Failed to create XferDlistHandle")]
+    FailedToCreateXferDlistHandle,
 }
 
 /// A safe wrapper around NIXL memory list

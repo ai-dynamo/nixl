@@ -381,6 +381,68 @@ impl Agent {
         }
     }
 
+    pub fn prepare_xfer_dlist(
+        &self,
+        agent_name: &str,
+        descs: &XferDescList,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<XferDlistHandle, NixlError> {
+        let c_agent_name = CString::new(agent_name)?;
+        let mut dlist_hndl = std::ptr::null_mut();
+        let inner_guard = self.inner.read().unwrap();
+
+        let status = unsafe {
+            nixl_capi_prep_xfer_dlist(
+                inner_guard.handle.as_ptr(),
+                c_agent_name.as_ptr(),
+                descs.handle(),
+                &mut dlist_hndl,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(XferDlistHandle::new(NonNull::new(dlist_hndl)
+                .ok_or(NixlError::FailedToCreateXferDlistHandle)?,
+                inner_guard.handle,
+            )),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    pub fn make_xfer_req(&self, operation: XferOp,
+                         local_descs: &XferDlistHandle, local_indices: &[i32],
+                         remote_descs: &XferDlistHandle, remote_indices: &[i32],
+                         opt_args: Option<&OptArgs>) -> Result<XferRequest, NixlError> {
+        let mut req = std::ptr::null_mut();
+        let inner_guard = self.inner.read().unwrap();
+
+        let status = unsafe {
+            nixl_capi_make_xfer_req(
+                inner_guard.handle.as_ptr(),
+                operation,
+                local_descs.handle(),
+                local_indices.as_ptr(),
+                local_indices.len() as usize,
+                remote_descs.handle(),
+                remote_indices.as_ptr(),
+                remote_indices.len() as usize,
+                &mut req,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr())
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(XferRequest::new(NonNull::new(req)
+                .ok_or(NixlError::FailedToCreateXferRequest)?,
+                self.inner.clone(),
+            )),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
     /// Check if remote metadata for a specific agent is available
     ///
     /// This function checks if the metadata for the specified remote agent has been
