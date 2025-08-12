@@ -98,12 +98,6 @@ class nixlAgentData {
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
         nixl_status_t
-        loadConnInfo(const std::string &remote_name,
-                     const nixl_backend_t &backend,
-                     const nixl_blob_t &conn_info);
-        nixl_status_t
-        loadRemoteSections(const std::string &remote_name, nixlSerDes &sd);
-        nixl_status_t
         invalidateRemoteData(const std::string &remote_name);
 
     public:
