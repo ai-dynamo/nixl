@@ -343,7 +343,7 @@ fn test_multiple_registrations() {
 fn test_make_connection_success() {
     let agent = Agent::new("test_agent").expect("Failed to create agent");
     // This should succeed if the agent is valid and the backend is set up
-    let result = agent.make_connection("remote_agent");
+    let result = agent.make_connection("remote_agent", None);
     // Accept either Ok or a backend error if no real remote exists
     assert!(
         result.is_ok() || matches!(result, Err(NixlError::BackendError)),
@@ -356,7 +356,7 @@ fn test_make_connection_success() {
 fn test_make_connection_invalid_param() {
     let agent = Agent::new("test_agent").expect("Failed to create agent");
     // Null bytes in the name should trigger InvalidParam or StringConversionError
-    let result = agent.make_connection("remote\0agent");
+    let result = agent.make_connection("remote\0agent", None);
     assert!(
         matches!(result, Err(NixlError::StringConversionError(_))) ||
         matches!(result, Err(NixlError::InvalidParam)),
