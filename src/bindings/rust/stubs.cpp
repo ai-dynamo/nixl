@@ -39,6 +39,7 @@ struct nixl_capi_reg_dlist_s { /* empty */ };
 struct nixl_capi_xfer_req_s { /* empty */ };
 struct nixl_capi_notif_map_s { /* empty */ };
 struct nixl_capi_xfer_dlist_handle_s { /* empty */ };
+
 // clang-format on
 
 nixl_capi_status_t
