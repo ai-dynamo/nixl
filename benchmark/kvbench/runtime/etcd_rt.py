@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 import pickle
 import re
@@ -23,9 +22,11 @@ from typing import Any, List, Optional
 
 import etcd3
 
+from nixl.logging import get_logger
+
 from .rt_base import ReduceOp, _RTUtils
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def int_to_bytes(val: int) -> bytes:
@@ -75,7 +76,7 @@ class _EtcdDistUtils(_RTUtils):
                 f"Invalid etcd endpoint format: {etcd_endpoints}, expected format is [http://]host[:port]"
             )
 
-        log.info(f"ETCD client initialized with host {host} & port {port}")
+        logger.info("ETCD client initialized with host %s & port %d", host, port)
 
         try:
             self.client = etcd3.client(host=host, port=port)
@@ -83,7 +84,7 @@ class _EtcdDistUtils(_RTUtils):
             raise ValueError(f"Failed to initialize ETCD client: {e}")
 
         if self.rank == 0:
-            log.info(f"Wiping ETCD prefix {self.prefix}")
+            logger.info("Wiping ETCD prefix %s", self.prefix)
             self.client.delete_prefix(self.prefix)
 
     def destroy_dist(self):
@@ -124,7 +125,13 @@ class _EtcdDistUtils(_RTUtils):
             ):
                 if timeout_sec and time.time() - start_time > timeout_sec:
                     raise TimeoutError(
-                        f"[Rank {self.rank}] ROOT - Barrier {key} timed out after {timeout_sec} seconds, current value: {self.client.get(key)}, waiting for val={len(ranks)} (i.e all the ranks have entered the barrier), (ranks: {ranks})"
+                        "[Rank %d] ROOT - Barrier %s timed out after %.3f seconds, current value: %s, waiting for val=%d (i.e all the ranks have entered the barrier), (ranks: %s)",
+                        self.rank,
+                        key,
+                        timeout_sec,
+                        self.client.get(key),
+                        len(ranks),
+                        ranks,
                     )
         else:
             my_index = ranks.index(self.rank)
@@ -207,7 +214,7 @@ class _EtcdDistUtils(_RTUtils):
                 val = self.client.get(f"{self.prefix}/all_reduce/{dest_rank}")[0]
                 vals.append(pickle.loads(val))
 
-            print(vals)
+            logger.debug("All reduce values: %s", vals)
             if op == ReduceOp.SUM:
                 final_val = [sum(col) for col in zip(*vals)]
             elif op == ReduceOp.AVG:
@@ -235,7 +242,7 @@ class _EtcdDistUtils(_RTUtils):
 
 
 if not os.environ.get("NIXL_ETCD_NAMESPACE"):
-    log.warning(
+    logger.warning(
         "Environment variable NIXL_ETCD_NAMESPACE is not set, using default prefix /nixl/kvbench. "
         "Note that it can lead to conflicts if multiple instances of KVBench are running. "
         "To avoid this, set NIXL_ETCD_NAMESPACE to a unique value for each instance of KVBench. "

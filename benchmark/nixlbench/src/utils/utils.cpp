@@ -44,9 +44,10 @@ DEFINE_string(benchmark_group,
               "(Default: default)");
 DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
-DEFINE_string(backend,
-              XFERBENCH_BACKEND_UCX,
-              "Name of communication backend [UCX, UCX_MO, GDS, POSIX, GPUNETIO, OBJ] \
+DEFINE_string(
+    backend,
+    XFERBENCH_BACKEND_UCX,
+    "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]");
@@ -80,7 +81,7 @@ DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 DEFINE_bool(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 
-// Storage backend(GDS, POSIX, HF3FS, OBJ) options
+// Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
 DEFINE_string (filepath, "", "File path for storage operations");
 DEFINE_int32 (num_files, 1, "Number of files used by benchmark");
 DEFINE_bool (storage_enable_direct, false, "Enable direct I/O for storage operations");
@@ -88,6 +89,7 @@ DEFINE_bool (storage_enable_direct, false, "Enable direct I/O for storage operat
 // GDS options - only used when backend is GDS
 DEFINE_int32(gds_batch_pool_size, 32, "Batch pool size for GDS operations (default: 32, only used with GDS backend)");
 DEFINE_int32(gds_batch_limit, 128, "Batch limit for GDS operations (default: 128, only used with GDS backend)");
+DEFINE_int32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (Default: 1)");
 
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
@@ -145,6 +147,7 @@ std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::benchmark_group = "default";
 int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
+int xferBenchConfig::gds_mt_num_threads = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
 std::vector<std::string> devices = { };
 int xferBenchConfig::num_files = 0;
@@ -186,6 +189,10 @@ xferBenchConfig::loadFromFlags() {
             gds_batch_pool_size = FLAGS_gds_batch_pool_size;
             gds_batch_limit = FLAGS_gds_batch_limit;
             storage_enable_direct = FLAGS_storage_enable_direct;
+        }
+
+        if (backend == XFERBENCH_BACKEND_GDS_MT) {
+            gds_mt_num_threads = FLAGS_gds_mt_num_threads;
         }
 
         // Load POSIX-specific configurations if backend is POSIX
@@ -361,7 +368,8 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,UCX_MO,GDS,POSIX,OBJ])", backend);
+        printOption("Backend (--backend=[UCX,UCX_MO,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])",
+                    backend);
         printOption ("Enable pt (--enable_pt=[0,1])", std::to_string (enable_pt));
         printOption ("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption ("Enable VMM (--enable_vmm=[0,1])", std::to_string (enable_vmm));
@@ -371,6 +379,11 @@ xferBenchConfig::printConfig() {
             printOption ("GDS batch pool size (--gds_batch_pool_size=N)",
                          std::to_string (gds_batch_pool_size));
             printOption ("GDS batch limit (--gds_batch_limit=N)", std::to_string (gds_batch_limit));
+        }
+
+        if (backend == XFERBENCH_BACKEND_GDS_MT) {
+            printOption("GDS MT Number of threads (--gds_mt_num_threads=N)",
+                        std::to_string(gds_mt_num_threads));
         }
 
         // Print POSIX options if backend is POSIX
@@ -459,6 +472,7 @@ std::vector<std::string> xferBenchConfig::parseDeviceList() {
 bool
 xferBenchConfig::isStorageBackend() {
     return (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_GDS_MT == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend);
