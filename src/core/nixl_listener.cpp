@@ -27,6 +27,7 @@
 #include <future>
 #endif // HAVE_ETCD
 #include <absl/strings/str_format.h>
+#include <poll.h>
 
 const std::string default_metadata_label = "metadata";
 
@@ -451,7 +452,12 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                 socklen_t client_addrlen = sizeof(client_address);
                 if (getpeername(new_fd, (sockaddr*)&client_address, &client_addrlen) == 0) {
                     char client_ip[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
+                    if (inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN) ==
+                        nullptr) {
+                        NIXL_PERROR << "inet_ntop failed for client address";
+                        close(new_fd);
+                        throw std::runtime_error("inet_ntop failed for client address");
+                    }
                     accepted_client.first = std::string(client_ip);
                     accepted_client.second = client_address.sin_port;
                 } else {
