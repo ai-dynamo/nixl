@@ -344,7 +344,7 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => {
                 let bytes = unsafe {
-                    let slice = std::slice::from_raw_parts(data, len);
+                    let slice = std::slice::from_raw_parts(data as *const u8, len);
                     let vec = slice.to_vec();
                     libc::free(data as *mut libc::c_void);
                     vec
@@ -426,7 +426,7 @@ impl Agent {
         opt_args: Option<&OptArgs>,
     ) -> Result<XferDlistHandle, NixlError> {
         let c_agent_name = CString::new(agent_name)?;
-        let mut dlist_hndl = std::ptr::null_mut();
+        let dlist_hndl = std::ptr::null_mut();
         let inner_guard = self.inner.read().unwrap();
 
         let status = unsafe {
