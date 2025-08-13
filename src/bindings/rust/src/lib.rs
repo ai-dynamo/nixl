@@ -115,6 +115,8 @@ pub enum NixlError {
     RegDescAddFailed,
     #[error("Failed to create XferDlistHandle")]
     FailedToCreateXferDlistHandle,
+    #[error("Failed to create backend")]
+    FailedToCreateBackend,
 }
 
 /// A safe wrapper around NIXL memory list
