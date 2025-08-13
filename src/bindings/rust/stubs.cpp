@@ -24,6 +24,7 @@
 
 extern "C" {
 
+// clang-format off
 // Internal struct definitions to match our opaque types
 // These are now stubs as their internal details are no longer used.
 struct nixl_capi_agent_s { /* empty */ };
@@ -35,15 +36,10 @@ struct nixl_capi_opt_args_s { /* empty */ };
 struct nixl_capi_param_iter_s { /* empty */ };
 struct nixl_capi_xfer_dlist_s { /* empty */ };
 struct nixl_capi_reg_dlist_s { /* empty */ };
-struct nixl_capi_xfer_req_s { /* empty */ 
-};
-
-struct nixl_capi_notif_map_s { /* empty */
-};
-
-struct nixl_capi_xfer_dlist_handle_s { /* empty */
-};
-
+struct nixl_capi_xfer_req_s { /* empty */ };
+struct nixl_capi_notif_map_s { /* empty */ };
+struct nixl_capi_xfer_dlist_handle_s { /* empty */ };
+// clang-format on
 
 nixl_capi_status_t
 nixl_capi_stub_abort()
