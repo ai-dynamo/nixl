@@ -89,8 +89,8 @@ nixl_capi_release_xfer_dlist_handle(nixl_capi_agent_t agent, nixl_capi_xfer_dlis
 nixl_capi_status_t
 nixl_capi_make_xfer_req(
     nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation,
-    nixl_capi_xfer_dlist_handle_t local_descs, const int* local_indices, size_t local_indices_count, 
-    nixl_capi_xfer_dlist_handle_t remote_descs, const int* remote_indices, size_t remote_indices_count, 
+    nixl_capi_xfer_dlist_handle_t local_descs, const int* local_indices, size_t local_indices_count,
+    nixl_capi_xfer_dlist_handle_t remote_descs, const int* remote_indices, size_t remote_indices_count,
     nixl_capi_xfer_req_t* req_hndl, nixl_capi_opt_args_t opt_args)
 {
   return nixl_capi_stub_abort();

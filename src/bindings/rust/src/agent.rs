@@ -327,7 +327,7 @@ impl Agent {
 
     pub fn get_local_partial_md(&self, descs: &RegDescList, opt_args: Option<&OptArgs>) -> Result<Vec<u8>, NixlError> {
         tracing::trace!("Getting local partial metadata");
-        let mut data: *mut u8 = std::ptr::null_mut();
+        let mut data = std::ptr::null_mut();
         let mut len: usize = 0;
         let inner_guard = self.inner.write().unwrap();
 
@@ -577,6 +577,30 @@ impl Agent {
                 );
                 Err(NixlError::BackendError)
             }
+        }
+    }
+
+    pub fn send_local_partial_md(&self, descs: &RegDescList, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
+        tracing::trace!("Sending local partial metadata to etcd");
+        let inner_guard = self.inner.write().unwrap();
+        let status = unsafe {
+            nixl_capi_send_local_partial_md(
+                inner_guard.handle.as_ptr(),
+                descs.handle(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!("Successfully sent local partial metadata to etcd");
+                Ok(())
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::error!(error = "invalid_param", "Failed to send local partial metadata to etcd");
+                Err(NixlError::InvalidParam)
+            }
+            _ => Err(NixlError::BackendError)
         }
     }
 
@@ -894,7 +918,7 @@ impl Agent {
 
         match status {
             NIXL_CAPI_SUCCESS => {
-                Ok(Backend::new(backend))
+                Ok(Backend{ inner: NonNull::new(backend).ok_or(NixlError::FailedToCreateBackend)? })
             }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),

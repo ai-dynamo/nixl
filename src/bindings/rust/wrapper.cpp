@@ -1393,7 +1393,7 @@ nixl_capi_status_t nixl_capi_agent_make_connection(
 }
 
 nixl_capi_status_t nixl_capi_prep_xfer_dlist(
-  nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs, 
+  nixl_capi_agent_t agent, const char* agent_name, nixl_capi_xfer_dlist_t descs,
   nixl_capi_xfer_dlist_handle_t dlist_handle, nixl_capi_opt_args_t opt_args)
 {
   if (!agent || !agent_name || !descs || !dlist_handle) {
@@ -1402,9 +1402,9 @@ nixl_capi_status_t nixl_capi_prep_xfer_dlist(
 
   try {
     nixl_status_t ret = agent->inner->prepXferDlist(
-      std::string(agent_name), 
-      *descs->dlist, 
-      dlist_handle->handle, 
+      std::string(agent_name),
+      *descs->dlist,
+      dlist_handle->handle,
       opt_args ? &opt_args->args : nullptr
     );
     return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
@@ -1431,8 +1431,8 @@ nixl_capi_status_t nixl_capi_release_xfer_dlist_handle(nixl_capi_agent_t agent, 
 
 nixl_capi_status_t nixl_capi_make_xfer_req(
     nixl_capi_agent_t agent, nixl_capi_xfer_op_t operation,
-    nixl_capi_xfer_dlist_handle_t local_descs, const int* local_indices, size_t local_indices_count, 
-    nixl_capi_xfer_dlist_handle_t remote_descs, const int* remote_indices, size_t remote_indices_count, 
+    nixl_capi_xfer_dlist_handle_t local_descs, const int* local_indices, size_t local_indices_count,
+    nixl_capi_xfer_dlist_handle_t remote_descs, const int* remote_indices, size_t remote_indices_count,
     nixl_capi_xfer_req_t* req_hndl, nixl_capi_opt_args_t opt_args)
 {
   if (!agent || !local_descs || !remote_descs || !req_hndl) {
