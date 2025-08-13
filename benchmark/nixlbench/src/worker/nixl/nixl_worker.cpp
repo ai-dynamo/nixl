@@ -81,13 +81,16 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     std::string backend_name;
     nixl_b_params_t backend_params;
     bool enable_pt = xferBenchConfig::enable_pt;
+    nixl_thread_sync_t sync_mode = xferBenchConfig::num_threads > 1 ?
+        nixl_thread_sync_t::NIXL_THREAD_SYNC_RW :
+        nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
     char hostname[256];
     nixl_mem_list_t mems;
     std::vector<nixl_backend_t> plugins;
 
     rank = rt->getRank();
 
-    nixlAgentConfig dev_meta(enable_pt);
+    nixlAgentConfig dev_meta(enable_pt, false, 0, sync_mode);
 
     agent = new nixlAgent(name, dev_meta);
 
