@@ -669,7 +669,6 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     //       handling, if user requested disabled error handling, we dont care about it.
     auto &uw = uws.front();
     uw->regAmCallback(CONN_CHECK, connectionCheckAmCb, this);
-    uw->regAmCallback(DISCONNECT, connectionTermAmCb, this);
     uw->regAmCallback(NOTIF_STR, notifAmCb, this);
 
     // Temp fixup
@@ -704,20 +703,6 @@ nixl_status_t nixlUcxEngine::checkConn(const std::string &remote_agent) {
     return remoteConnMap.count(remote_agent) ? NIXL_SUCCESS : NIXL_ERR_NOT_FOUND;
 }
 
-nixl_status_t nixlUcxEngine::endConn(const std::string &remote_agent) {
-
-    auto search = remoteConnMap.find(remote_agent);
-
-    if(search == remoteConnMap.end()) {
-        return NIXL_ERR_NOT_FOUND;
-    }
-
-    //thread safety?
-    remoteConnMap.erase(search);
-
-    return NIXL_SUCCESS;
-}
-
 nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
     str = workerAddr;
     return NIXL_SUCCESS;
@@ -740,28 +725,6 @@ nixlUcxEngine::connectionCheckAmCb(void *arg, const void *header,
         return UCS_OK;
     }
 
-    return UCS_OK;
-}
-
-ucs_status_t
-nixlUcxEngine::connectionTermAmCb (void *arg, const void *header,
-                                   size_t header_length, void *data,
-                                   size_t length,
-                                   const ucp_am_recv_param_t *param)
-{
-    std::string remote_agent( (char*) data, length);
-
-    NIXL_ASSERT(!(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV));
-    NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
-
-/*
-    // TODO: research UCX connection logic and fix.
-    nixlUcxEngine* engine = (nixlUcxEngine*) arg;
-    if(NIXL_SUCCESS != engine->endConn(remote_agent)) {
-        //TODO: received connect AM from agent we don't recognize
-        return UCS_ERR_INVALID_PARAM;
-    }
-*/
     return UCS_OK;
 }
 
@@ -799,29 +762,14 @@ nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
 }
 
 nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
-    if (remote_agent != localAgent) {
-        auto search = remoteConnMap.find(remote_agent);
+    auto search = remoteConnMap.find(remote_agent);
 
-        if(search == remoteConnMap.end()) {
-            return NIXL_ERR_NOT_FOUND;
-        }
-
-        nixl_status_t ret = NIXL_SUCCESS;
-        for (size_t i = 0; i < uws.size(); i++) {
-            if (search->second->getEp(i)->checkTxState() == NIXL_SUCCESS) {
-                nixlUcxReq req;
-                ret = search->second->getEp(i)->sendAm(DISCONNECT, NULL, 0,
-                                                       (void*) localAgent.data(), localAgent.size(),
-                                                       UCP_AM_SEND_FLAG_EAGER, req);
-                //don't care
-                if (ret == NIXL_IN_PROG)
-                    getWorker(i)->reqRelease(req);
-            }
-        }
+    if(search == remoteConnMap.end()) {
+        return NIXL_ERR_NOT_FOUND;
     }
 
-    endConn(remote_agent);
-
+    //thread safety?
+    remoteConnMap.erase(search);
     return NIXL_SUCCESS;
 }
 

@@ -38,7 +38,7 @@
 #include "ucx/ucx_utils.h"
 #include "common/list_elem.h"
 
-enum ucx_cb_op_t {CONN_CHECK, NOTIF_STR, DISCONNECT};
+enum ucx_cb_op_t {CONN_CHECK, NOTIF_STR};
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
@@ -207,8 +207,6 @@ public:
     // public function for UCX worker to mark connections as connected
     nixl_status_t
     checkConn(const std::string &remote_agent);
-    nixl_status_t
-    endConn(const std::string &remote_agent);
 
 protected:
     const std::vector<std::unique_ptr<nixlUcxWorker>> &
@@ -253,14 +251,6 @@ private:
                         void *data,
                         size_t length,
                         const ucp_am_recv_param_t *param);
-
-    static ucs_status_t
-    connectionTermAmCb(void *arg,
-                       const void *header,
-                       size_t header_length,
-                       void *data,
-                       size_t length,
-                       const ucp_am_recv_param_t *param);
 
     // Memory management helpers
     nixl_status_t
