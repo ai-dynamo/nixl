@@ -38,7 +38,7 @@
 #include "ucx/ucx_utils.h"
 #include "common/list_elem.h"
 
-enum ucx_cb_op_t {NOTIF_STR};
+enum ucx_cb_op_t { NOTIF_STR };
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:

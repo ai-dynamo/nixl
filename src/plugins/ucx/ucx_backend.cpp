@@ -709,17 +709,18 @@ nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
         return loadRemoteConnInfo(remote_agent, workerAddr);
     }
 
-    return (remoteConnMap.find(remote_agent) == remoteConnMap.end()) ? NIXL_ERR_NOT_FOUND : NIXL_SUCCESS;
+    return (remoteConnMap.find(remote_agent) == remoteConnMap.end()) ? NIXL_ERR_NOT_FOUND :
+                                                                       NIXL_SUCCESS;
 }
 
 nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
     auto search = remoteConnMap.find(remote_agent);
 
-    if(search == remoteConnMap.end()) {
+    if (search == remoteConnMap.end()) {
         return NIXL_ERR_NOT_FOUND;
     }
 
-    //thread safety?
+    // thread safety?
     remoteConnMap.erase(search);
     return NIXL_SUCCESS;
 }
