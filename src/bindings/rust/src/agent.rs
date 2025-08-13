@@ -434,7 +434,7 @@ impl Agent {
                 inner_guard.handle.as_ptr(),
                 c_agent_name.as_ptr(),
                 descs.handle(),
-                &mut dlist_hndl as *mut bindings::nixl_capi_xfer_dlist_handle_s,
+                &mut dlist_hndl,
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             )
         };
@@ -912,7 +912,7 @@ impl Agent {
             nixl_capi_query_xfer_backend(
                 inner_guard.handle.as_ptr(),
                 req.handle(),
-                &mut backend as *mut bindings::nixl_capi_backend_s
+                &mut backend
             )
         };
 
