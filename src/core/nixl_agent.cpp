@@ -1263,32 +1263,11 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
             return NIXL_ERR_MISMATCH;
         }
 
-        // Current agent might not support a remote backend
-        if (data->backendEngines.count(nixl_backend) != 0) {
-
-            // No need to reload same conn info, error if it changed
-            if (data->remoteBackends.count(remote_agent) != 0 &&
-                data->remoteBackends[remote_agent].count(nixl_backend) != 0) {
-                if (data->remoteBackends[remote_agent][nixl_backend] != conn_info)
-                    return NIXL_ERR_NOT_ALLOWED;
-                count++;
-                continue;
-            }
-
-            nixlBackendEngine *eng = data->backendEngines[nixl_backend];
-            if (eng->supportsRemote()) {
-                ret = eng->loadRemoteConnInfo(remote_agent, conn_info);
-                if (ret != NIXL_SUCCESS) {
-                    return ret; // Error in load
-                }
-
-                count++;
-                data->remoteBackends[remote_agent].emplace(nixl_backend, conn_info);
-            } else {
-                // If there was an issue and we return error while some connections
-                // are loaded, they will be deleted in the backend destructor.
-                return NIXL_ERR_UNKNOWN; // This is an erroneous case
-            }
+        ret = data->loadConnInfo(remote_agent, nixl_backend, conn_info);
+        if (ret == NIXL_SUCCESS) {
+            count++;
+        } else if (ret != NIXL_ERR_NOT_SUPPORTED) {
+            return ret;
         }
     }
 
@@ -1301,17 +1280,8 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
         return NIXL_ERR_MISMATCH;
     }
 
-    if (data->remoteSections.count(remote_agent) == 0) {
-        data->remoteSections[remote_agent] = new nixlRemoteSection(remote_agent);
-    }
-
-    ret = data->remoteSections[remote_agent]->loadRemoteData(&sd, data->backendEngines);
-
-    // TODO: can be more graceful, if just the new MD blob was improper
+    ret = data->loadRemoteSections(remote_agent, sd);
     if (ret != NIXL_SUCCESS) {
-        delete data->remoteSections[remote_agent];
-        data->remoteSections.erase(remote_agent);
-        data->remoteBackends.erase(remote_agent);
         return ret;
     }
 
