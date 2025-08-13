@@ -325,6 +325,44 @@ impl Agent {
         }
     }
 
+    pub fn get_local_partial_md(&self, descs: &RegDescList, opt_args: Option<&OptArgs>) -> Result<Vec<u8>, NixlError> {
+        tracing::trace!("Getting local partial metadata");
+        let mut data: *mut u8 = std::ptr::null_mut();
+        let mut len: usize = 0;
+        let inner_guard = self.inner.write().unwrap();
+
+        let status = unsafe {
+            nixl_capi_get_local_partial_md(
+                inner_guard.handle.as_ptr(),
+                descs.handle(),
+                &mut data as *mut *mut _,
+                &mut len,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                let bytes = unsafe {
+                    let slice = std::slice::from_raw_parts(data, len);
+                    let vec = slice.to_vec();
+                    libc::free(data as *mut libc::c_void);
+                    vec
+                };
+                tracing::trace!(metadata.size = len, "Successfully retrieved local partial metadata");
+                Ok(bytes)
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::error!(error = "invalid_param", "Failed to get local partial metadata");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::error!(error = "backend_error", "Failed to get local partial metadata");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
     /// Loads remote metadata from a byte slice
     pub fn load_remote_md(&self, metadata: &[u8]) -> Result<String, NixlError> {
         tracing::trace!(metadata.size = metadata.len(), "Loading remote metadata");
@@ -362,7 +400,7 @@ impl Agent {
         }
     }
 
-    pub fn make_connection(&self, remote_agent: &str) -> Result<(), NixlError> {
+    pub fn make_connection(&self, remote_agent: &str, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
         let remote_agent = CString::new(remote_agent)?;
         let inner_guard = self.inner.write().unwrap();
 
@@ -370,7 +408,7 @@ impl Agent {
             nixl_capi_agent_make_connection(
                 inner_guard.handle.as_ptr(),
                 remote_agent.as_ptr(),
-                std::ptr::null_mut(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             )
         };
 
@@ -396,7 +434,7 @@ impl Agent {
                 inner_guard.handle.as_ptr(),
                 c_agent_name.as_ptr(),
                 descs.handle(),
-                &mut dlist_hndl,
+                &mut dlist_hndl as *mut bindings::nixl_capi_xfer_dlist_handle_s,
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             )
         };
@@ -421,7 +459,7 @@ impl Agent {
         let status = unsafe {
             nixl_capi_make_xfer_req(
                 inner_guard.handle.as_ptr(),
-                operation,
+                operation as bindings::nixl_capi_xfer_op_t,
                 local_descs.handle(),
                 local_indices.as_ptr(),
                 local_indices.len() as usize,
@@ -837,6 +875,27 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok(false), // Transfer completed
             NIXL_CAPI_IN_PROG => Ok(true),  // Transfer in progress
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    pub fn query_xfer_backend(&self, req: &XferRequest) -> Result<Backend, NixlError> {
+        let mut backend = std::ptr::null_mut();
+        let inner_guard = self.inner.write().unwrap();
+
+        let status = unsafe {
+            nixl_capi_query_xfer_backend(
+                inner_guard.handle.as_ptr(),
+                req.handle(),
+                &mut backend as *mut bindings::nixl_capi_backend_s
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                Ok(Backend::new(backend))
+            }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }

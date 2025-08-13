@@ -16,21 +16,26 @@
 use super::*;
 
 pub struct XferDlistHandle {
-    inner: NonNull<bindings::nixl_capi_xfer_dlist_s>,
+    inner: NonNull<bindings::nixl_capi_xfer_dlist_handle_s>,
     agent: NonNull<bindings::nixl_capi_agent_s>
 }
 
 impl XferDlistHandle {
-    pub(crate) fn new(inner: NonNull<bindings::nixl_capi_xfer_dlist_s>, 
+    pub(crate) fn new(inner: NonNull<bindings::nixl_capi_xfer_dlist_handle_s>,
                       agent: NonNull<bindings::nixl_capi_agent_s>) -> Self {
         Self { inner, agent }
+    }
+
+    pub(crate) fn handle(&self) -> *mut bindings::nixl_capi_xfer_dlist_handle_s {
+        self.inner.as_ptr()
     }
 }
 
 impl Drop for XferDlistHandle {
     fn drop(&mut self) {
         unsafe {
-            bindings::nixl_capi_release_xfer_dlist_handle(self.agent.as_ptr(), self.inner.as_ptr());
+            nixl_capi_release_xfer_dlist_handle(self.agent.as_ptr(),
+                                               self.inner.as_ptr());
         }
     }
 }
