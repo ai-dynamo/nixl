@@ -18,15 +18,7 @@
 #include "backend/backend_plugin.h"
 #include "gds_backend.h"
 
-namespace {
-nixl_b_params_t
-get_gds_options() {
-    nixl_b_params_t params;
-    return params;
-}
 
-
-} // namespace
 
 // Plugin type alias for convenience
 using GdsPlugin = nixlBackendPluginTemplate<nixlGdsEngine>;
@@ -36,14 +28,14 @@ using GdsPlugin = nixlBackendPluginTemplate<nixlGdsEngine>;
 extern "C" nixlBackendPlugin *
 createStaticGDSPlugin() {
     return GdsPlugin::initialize_plugin(
-        "GDS", "0.1.1", get_gds_options, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+        "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return GdsPlugin::initialize_plugin(
-        "GDS", "0.1.1", get_gds_options, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+        "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

@@ -38,14 +38,14 @@ using UcxMoPlugin = nixlBackendPluginTemplate<nixlUcxMoEngine>;
 extern "C" nixlBackendPlugin *
 createStaticUCX_MOPlugin() {
     return UcxMoPlugin::initialize_plugin(
-        "UCX_MO", "0.1.0", get_ucx_mo_options, {DRAM_SEG, VRAM_SEG});
+        "UCX_MO", "0.1.0", get_ucx_mo_options(), {DRAM_SEG, VRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return UcxMoPlugin::initialize_plugin(
-        "UCX_MO", "0.1.0", get_ucx_mo_options, {DRAM_SEG, VRAM_SEG});
+        "UCX_MO", "0.1.0", get_ucx_mo_options(), {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

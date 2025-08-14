@@ -19,13 +19,7 @@
 #include "posix_backend.h"
 #include "backend/backend_plugin.h"
 
-namespace {
-nixl_b_params_t
-get_posix_options() {
-    nixl_b_params_t params;
-    return params;
-}
-} // namespace
+
 
 // Plugin type alias for convenience
 using PosixPlugin = nixlBackendPluginTemplate<nixlPosixEngine>;
@@ -35,14 +29,14 @@ using PosixPlugin = nixlBackendPluginTemplate<nixlPosixEngine>;
 extern "C" nixlBackendPlugin *
 createStaticPOSIXPlugin() {
     return PosixPlugin::initialize_plugin(
-        "POSIX", "0.1.0", get_posix_options, {DRAM_SEG, FILE_SEG});
+        "POSIX", "0.1.0", {}, {DRAM_SEG, FILE_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return PosixPlugin::initialize_plugin(
-        "POSIX", "0.1.0", get_posix_options, {DRAM_SEG, FILE_SEG});
+        "POSIX", "0.1.0", {}, {DRAM_SEG, FILE_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

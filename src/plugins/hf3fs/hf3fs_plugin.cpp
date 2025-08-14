@@ -19,15 +19,7 @@
 #include "hf3fs_backend.h"
 #include <iostream>
 
-namespace {
-nixl_b_params_t
-get_hf3fs_options() {
-    nixl_b_params_t params;
-    return params;
-}
 
-
-} // namespace
 
 // Plugin type alias for convenience
 using Hf3fsPlugin = nixlBackendPluginTemplate<nixlHf3fsEngine>;
@@ -37,14 +29,14 @@ using Hf3fsPlugin = nixlBackendPluginTemplate<nixlHf3fsEngine>;
 extern "C" nixlBackendPlugin *
 createStaticHF3FSPlugin() {
     return Hf3fsPlugin::initialize_plugin(
-        "HF3FS", "0.1.0", get_hf3fs_options, {FILE_SEG, DRAM_SEG});
+        "HF3FS", "0.1.0", {}, {FILE_SEG, DRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return Hf3fsPlugin::initialize_plugin(
-        "HF3FS", "0.1.0", get_hf3fs_options, {FILE_SEG, DRAM_SEG});
+        "HF3FS", "0.1.0", {}, {FILE_SEG, DRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

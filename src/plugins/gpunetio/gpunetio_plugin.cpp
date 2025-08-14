@@ -39,14 +39,14 @@ using GpunetioPlugin = nixlBackendPluginTemplate<nixlDocaEngine>;
 extern "C" nixlBackendPlugin *
 createStaticGPUNETIOPlugin() {
     return GpunetioPlugin::initialize_plugin(
-        "GPUNETIO", "0.1.0", get_gpunetio_options, {DRAM_SEG, VRAM_SEG});
+        "GPUNETIO", "0.1.0", get_gpunetio_options(), {DRAM_SEG, VRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return GpunetioPlugin::initialize_plugin(
-        "GPUNETIO", "0.1.0", get_gpunetio_options, {DRAM_SEG, VRAM_SEG});
+        "GPUNETIO", "0.1.0", get_gpunetio_options(), {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

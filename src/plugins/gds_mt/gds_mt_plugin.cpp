@@ -20,12 +20,7 @@
 #include "common/nixl_log.h"
 #include <exception>
 
-namespace {
-nixl_b_params_t
-get_gds_mt_options() {
-    return {};
-}
-} // namespace
+
 
 // Plugin type alias for convenience
 using GdsMtPlugin = nixlBackendPluginTemplate<nixlGdsMtEngine>;
@@ -35,14 +30,14 @@ using GdsMtPlugin = nixlBackendPluginTemplate<nixlGdsMtEngine>;
 extern "C" nixlBackendPlugin *
 createStaticGDS_MTPlugin() {
     return GdsMtPlugin::initialize_plugin(
-        "GDS_MT", "0.1.0", get_gds_mt_options, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+        "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return GdsMtPlugin::initialize_plugin(
-        "GDS_MT", "0.1.0", get_gds_mt_options, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+        "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
