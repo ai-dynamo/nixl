@@ -800,7 +800,7 @@ public:
 
     nixl_status_t
     release() override {
-        NIXL_DEBUG << "composite " << *this << " releasing";
+        NIXL_TRACE << "composite " << *this << " releasing";
         nixl_status_t status = nixlUcxBackendH::release();
         // Set failed status to stop progress chunks
         sharedState_->status.store(NIXL_ERR_NOT_FOUND);
@@ -972,7 +972,7 @@ nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
     size_t worker_id = getWorkerId();
     nixlUcxCompositeBackendH *comp_handle =
         new nixlUcxCompositeBackendH(getWorker(worker_id).get(), worker_id, chunk_size, num_chunks);
-    NIXL_DEBUG << "created " << *comp_handle;
+    NIXL_TRACE << "created " << *comp_handle;
     handle = comp_handle;
     return NIXL_SUCCESS;
 }
@@ -994,7 +994,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     nixlUcxCompositeBackendH *comp_handle = (nixlUcxCompositeBackendH *)int_handle;
     comp_handle->startXfer();
     size_t chunk_size = comp_handle->getChunkSize();
-    NIXL_DEBUG << "sending " << *comp_handle;
+    NIXL_TRACE << "sending " << *comp_handle;
 
     std::promise<void> promise;
     std::future<void> future = promise.get_future();
@@ -1029,7 +1029,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     }
 
     future.wait();
-    NIXL_DEBUG << "sent " << *comp_handle << " with status: " << status.load();
+    NIXL_TRACE << "sent " << *comp_handle << " with status: " << status.load();
     return status.load();
 }
 
