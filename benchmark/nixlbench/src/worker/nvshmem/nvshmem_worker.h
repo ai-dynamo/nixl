@@ -47,18 +47,24 @@ class xferBenchNvshmemWorker: public xferBenchWorker {
 
         // Communication and synchronization
         int exchangeMetadata() override;
-        std::vector<std::vector<xferBenchIOV>> exchangeIOV(const std::vector<std::vector<xferBenchIOV>>
-                                                           &local_iov_lists) override;
-        void poll(size_t block_size) override;
-	    int synchronizeStart();
+        std::vector<std::vector<xferBenchIOV>>
+        exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists) override;
+        void
+        poll(size_t block_size) override;
+        int
+        synchronizeStart();
 
         // Data operations
-        std::variant<double, int> transfer(size_t block_size,
-                                           const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
-                                           const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+        std::variant<xferBenchStats, int>
+        transfer(size_t block_size,
+                 const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                 const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+
     private:
-        std::optional<xferBenchIOV> initBasicDescNvshmem(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescNvshmem(xferBenchIOV &iov);
+        std::optional<xferBenchIOV>
+        initBasicDescNvshmem(size_t buffer_size, int mem_dev_id);
+        void
+        cleanupBasicDescNvshmem(xferBenchIOV &iov);
 };
 #endif
 
