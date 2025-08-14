@@ -126,9 +126,8 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
     , queue_depth_(loc.descCount())
     , queue_type_(getQueueType(params)) {
     if (queue_type_ == nixlPosixQueue::queue_t::UNSUPPORTED) {
-        throw exception(
-            absl::StrFormat("Unsupported backend type: %s", to_string(queue_type_)),
-            NIXL_ERR_NOT_SUPPORTED);
+        throw exception(absl::StrFormat("Unsupported backend type: %s", to_string(queue_type_)),
+                        NIXL_ERR_NOT_SUPPORTED);
     }
 
     if (local.descCount() == 0 || remote.descCount() == 0) {
@@ -139,9 +138,8 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
 
     nixl_status_t status = initQueues();
     if (status != NIXL_SUCCESS) {
-        throw exception(
-            absl::StrFormat("Failed to initialize queues: %s", to_string(queue_type_)),
-            status);
+        throw exception(absl::StrFormat("Failed to initialize queues: %s", to_string(queue_type_)),
+                        status);
     }
 }
 
@@ -206,11 +204,13 @@ nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams* init_params)
     , queue_type_(getQueueType(init_params->customParams)) {
     if (queue_type_ == nixlPosixQueue::queue_t::UNSUPPORTED) {
         initErr = true;
-        NIXL_ERROR << absl::StrFormat("Failed to initialize POSIX backend - requested backend not available: %s",
-                                      to_string(queue_type_));
+        NIXL_ERROR << absl::StrFormat(
+            "Failed to initialize POSIX backend - requested backend not available: %s",
+            to_string(queue_type_));
         return;
     }
-    NIXL_INFO << absl::StrFormat("POSIX backend initialized using %s backend", to_string(queue_type_));
+    NIXL_INFO << absl::StrFormat("POSIX backend initialized using %s backend",
+                                 to_string(queue_type_));
 }
 
 nixl_status_t nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
