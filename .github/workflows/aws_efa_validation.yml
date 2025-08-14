@@ -15,7 +15,7 @@ jobs:
       AWS_DEFAULT_REGION: eu-central-1
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      UCX_VERSION: d1db972ad478644ba9af369e1d07665ebf11826e
+      UCX_VERSION: v1.18.0
     strategy:
       fail-fast: false
       matrix:
