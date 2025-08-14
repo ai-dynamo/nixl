@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../.ci/scripts/common.sh"
 
@@ -28,33 +29,23 @@ if [ -z "$INSTALL_DIR" ]; then
     exit 1
 fi
 
-# For running as user - check if running as root, if not set sudo variable
-if [ "$(id -u)" -ne 0 ]; then
-    SUDO=sudo
-else
-    SUDO=""
-fi
-
-$SUDO apt-get -qq install liburing-dev
-
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
 export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
+
 export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
-export NIXL_PREFIX=${INSTALL_DIR}
-# Raise exceptions for logging errors
-export NIXL_DEBUG_LOGGING=yes
 
-pip3 install --break-system-packages .
-pip3 install --break-system-packages pytest
-pip3 install --break-system-packages pytest-timeout
-pip3 install --break-system-packages zmq
+echo "==== Show system info ===="
+env
+nvidia-smi topo -m || true
+ibv_devinfo || true
+uname -a || true
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
@@ -66,23 +57,33 @@ etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
 sleep 5
 
-echo "==== Running python tests ===="
-python3 examples/python/nixl_api_example.py
-python3 examples/python/partial_md_example.py
-python3 examples/python/partial_md_example.py --etcd
-pytest test/python
+echo "==== Running Nixlbench tests ===="
+cd ${INSTALL_DIR}
 
-python3 test/python/prep_xfer_perf.py list
-python3 test/python/prep_xfer_perf.py array
+run_nixlbench() {
+    args="$@"
+    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} --initiator_seg_type DRAM --target_seg_type DRAM --filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
+}
 
-echo "==== Running python examples ===="
-blocking_send_recv_port=$(get_next_tcp_port)
+run_nixlbench_one_worker() {
+    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    args="$@"
+    run_nixlbench --benchmark_group $benchmark_group $args
+}
 
-cd examples/python
-python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
-sleep 5
-python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
+run_nixlbench_two_workers() {
+    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    args="$@"
+    run_nixlbench --benchmark_group $benchmark_group $args &
+    pid=$!
+    sleep 1
+    run_nixlbench --benchmark_group $benchmark_group $args
+    wait $pid
+}
 
-python3 query_mem_example.py
+run_nixlbench_two_workers --backend UCX --op_type READ
+run_nixlbench_two_workers --backend UCX --op_type WRITE
+run_nixlbench_one_worker --backend POSIX --op_type READ
+run_nixlbench_one_worker --backend POSIX --op_type WRITE
 
 pkill etcd

@@ -25,6 +25,9 @@ jobs:
           - test_name: "Python Tests"
             test_scripts:
               - .gitlab/test_python.sh $NIXL_INSTALL_DIR
+          - test_name: "Rust Tests"
+            test_scripts:
+              - .gitlab/test_rust.sh $NIXL_INSTALL_DIR
 
     steps:
       - name: Checkout repository
@@ -53,6 +56,8 @@ jobs:
       - name: Run AWS tests
         working-directory: ./contrib/aws-efa
         timeout-minutes: 180
+        env:
+          TEST_TIMEOUT: 30
         run: |
           set -o pipefail
           test_cmd='${{ join(matrix.test_scripts, ' && ') }}'
