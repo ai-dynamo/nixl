@@ -14,6 +14,10 @@
                         "value": "${UCX_VERSION}"
                     },
                     {
+                        "name": "UCX_TLS",
+                        "value": "${UCX_TLS}"
+                    },
+                    {
                         "name": "UCX_INSTALL_DIR",
                         "value": "/usr/local"
                     },
