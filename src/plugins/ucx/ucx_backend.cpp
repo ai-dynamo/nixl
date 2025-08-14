@@ -1114,8 +1114,11 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
         default:
             return NIXL_ERR_INVALID_PARAM;
         }
-
         if (_retHelper(ret, intHandle, req)) {
+            // if ret is NIXL_IN_PROG and have notification, store it
+            if (ret == NIXL_IN_PROG && opt_args && opt_args->hasNotif) {
+                intHandle->notification().emplace(remote_agent, opt_args->notifMsg);
+            }
             return ret;
         }
     }
