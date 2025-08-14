@@ -55,16 +55,20 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<std::vector<xferBenchIOV>>
         exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                     size_t block_size) override;
-        void poll(size_t block_size) override;
-        int synchronizeStart();
+        void
+        poll(size_t block_size) override;
+        int
+        synchronizeStart();
 
         // Data operations
-        std::variant<double, int> transfer(size_t block_size,
-                                           const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
-                                           const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+        std::variant<xferBenchStats, int>
+        transfer(size_t block_size,
+                 const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                 const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
     private:
-        std::optional<xferBenchIOV> initBasicDescDram(size_t buffer_size, int mem_dev_id);
+        std::optional<xferBenchIOV>
+        initBasicDescDram(size_t buffer_size, int mem_dev_id);
         void cleanupBasicDescDram(xferBenchIOV &basic_desc);
 #if HAVE_CUDA
         std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);

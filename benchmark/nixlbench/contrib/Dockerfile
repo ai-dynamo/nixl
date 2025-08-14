@@ -74,6 +74,7 @@ RUN echo "INFO: Using UCX from base image (UCX=${UCX})."
 
 # --- Stage 2b: Represents building UCX from source ---
 FROM os_setup_stage AS ucx_custom_image
+ARG BUILD_TYPE="release"
 ARG NPROC
 RUN mkdir -p /workspace/ucx
 COPY --from=ucx . /workspace/ucx
@@ -90,6 +91,7 @@ RUN echo "INFO: Starting custom UCX build..." && \
     ./autogen.sh && \
     echo "INFO: Building UCX..." && \
     ./contrib/configure-release --with-cuda=/usr/local/cuda \
+                                $(if [ "$BUILD_TYPE" = "debug" ]; then echo "--enable-debug"; fi) \
                                 --enable-mt \
                                 --without-go && \
     make -j${NPROC:-$(nproc)} && \
@@ -107,6 +109,7 @@ ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
+ARG BUILD_TYPE="release"
 ARG NPROC
 
 WORKDIR /workspace
@@ -140,7 +143,7 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl && \
+    uv run meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install
@@ -173,7 +176,7 @@ RUN ls -ll /workspace/nixlbench
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench && \
+    uv run meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
     cd build && ninja && ninja install
 
 WORKDIR /workspace/nixl
