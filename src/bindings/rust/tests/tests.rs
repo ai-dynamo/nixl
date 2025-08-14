@@ -503,7 +503,7 @@ fn test_basic_agent_lifecycle() {
     loop {
         let status = agent1.get_xfer_status(&xfer_req).unwrap();
 
-        if !status {
+        if status.is_success() {
             println!("Xfer req completed");
             break;
         } else {

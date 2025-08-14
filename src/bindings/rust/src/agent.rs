@@ -22,6 +22,18 @@ pub struct Agent {
     inner: Arc<RwLock<AgentInner>>,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum XferStatus {
+    Success,
+    InProgress,
+}
+
+impl XferStatus {
+    pub fn is_success(&self) -> bool {
+        return *self == XferStatus::Success;
+    }
+}
+
 impl Agent {
     /// Creates a new agent with the given name
     pub fn new(name: &str) -> Result<Self, NixlError> {
@@ -767,14 +779,14 @@ impl Agent {
     ///
     /// # Arguments
     /// * `req` - Transfer request handle after `post_xfer_req`
-    pub fn get_xfer_status(&self, req: &XferRequest) -> Result<bool, NixlError> {
+    pub fn get_xfer_status(&self, req: &XferRequest) -> Result<XferStatus, NixlError> {
         let status = unsafe {
             nixl_capi_get_xfer_status(self.inner.write().unwrap().handle.as_ptr(), req.handle())
         };
 
         match status {
-            NIXL_CAPI_SUCCESS => Ok(false), // Transfer completed
-            NIXL_CAPI_IN_PROG => Ok(true),  // Transfer in progress
+            NIXL_CAPI_SUCCESS => Ok(XferStatus::Success), // Transfer completed
+            NIXL_CAPI_IN_PROG => Ok(XferStatus::InProgress),  // Transfer in progress
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }
