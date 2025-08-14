@@ -22,6 +22,14 @@
                         "value": "^srd"
                     },
                     {
+                        "name": "UCX_LOG_LEVEL",
+                        "value": "debug"
+                    },
+                    {
+                        "name": "UCX_PROTO_INFO",
+                        "value": "y"
+                    },
+                    {
                         "name": "NIXL_INSTALL_DIR",
                         "value": "/opt/nixl"
                     },
