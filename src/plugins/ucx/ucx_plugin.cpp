@@ -31,14 +31,17 @@ using UcxPlugin = nixlBackendPluginTemplate<nixlUcxEngine>;
 
 #ifdef STATIC_PLUGIN_UCX
 // Function for static loading
-extern "C" nixlBackendPlugin *createStaticUCXPlugin() {
+extern "C" nixlBackendPlugin *
+createStaticUCXPlugin() {
     return UcxPlugin::initialize_plugin("UCX", "0.1.0", get_ucx_options, {DRAM_SEG, VRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
     return UcxPlugin::initialize_plugin("UCX", "0.1.0", get_ucx_options, {DRAM_SEG, VRAM_SEG});
 }
 
-extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
 #endif

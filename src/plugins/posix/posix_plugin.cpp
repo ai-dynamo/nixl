@@ -32,14 +32,19 @@ using PosixPlugin = nixlBackendPluginTemplate<nixlPosixEngine>;
 
 #ifdef STATIC_PLUGIN_POSIX
 // Function for static loading
-extern "C" nixlBackendPlugin *createStaticPOSIXPlugin() {
-    return PosixPlugin::initialize_plugin("POSIX", "0.1.0", get_posix_options, {DRAM_SEG, FILE_SEG});
+extern "C" nixlBackendPlugin *
+createStaticPOSIXPlugin() {
+    return PosixPlugin::initialize_plugin(
+        "POSIX", "0.1.0", get_posix_options, {DRAM_SEG, FILE_SEG});
 }
 #else
 // Export functions for dynamic loading
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
-    return PosixPlugin::initialize_plugin("POSIX", "0.1.0", get_posix_options, {DRAM_SEG, FILE_SEG});
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
+    return PosixPlugin::initialize_plugin(
+        "POSIX", "0.1.0", get_posix_options, {DRAM_SEG, FILE_SEG});
 }
 
-extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
 #endif

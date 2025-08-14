@@ -68,11 +68,11 @@ public:
         delete engine;
     }
 
-        static nixlBackendPlugin *
+    static nixlBackendPlugin *
     initialize_plugin(const char *name,
-                     const char *version,
-                     nixl_b_params_t (*get_options)(),
-                     const nixl_mem_list_t &mem_list) {
+                      const char *version,
+                      nixl_b_params_t (*get_options)(),
+                      const nixl_mem_list_t &mem_list) {
 
         static const char *plugin_name = name;
         static const char *plugin_version = version;

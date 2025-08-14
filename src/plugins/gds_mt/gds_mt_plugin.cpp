@@ -32,14 +32,19 @@ using GdsMtPlugin = nixlBackendPluginTemplate<nixlGdsMtEngine>;
 
 #ifdef STATIC_PLUGIN_GDS_MT
 // Function for static loading
-extern "C" nixlBackendPlugin *createStaticGDS_MTPlugin() {
-    return GdsMtPlugin::initialize_plugin("GDS_MT", "0.1.0", get_gds_mt_options, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+extern "C" nixlBackendPlugin *
+createStaticGDS_MTPlugin() {
+    return GdsMtPlugin::initialize_plugin(
+        "GDS_MT", "0.1.0", get_gds_mt_options, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 #else
 // Export functions for dynamic loading
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
-    return GdsMtPlugin::initialize_plugin("GDS_MT", "0.1.0", get_gds_mt_options, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
+    return GdsMtPlugin::initialize_plugin(
+        "GDS_MT", "0.1.0", get_gds_mt_options, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 
-extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
 #endif

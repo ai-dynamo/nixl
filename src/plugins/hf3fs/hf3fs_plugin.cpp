@@ -34,14 +34,19 @@ using Hf3fsPlugin = nixlBackendPluginTemplate<nixlHf3fsEngine>;
 
 #ifdef STATIC_PLUGIN_HF3FS
 // Function for static loading
-extern "C" nixlBackendPlugin *createStaticHF3FSPlugin() {
-    return Hf3fsPlugin::initialize_plugin("HF3FS", "0.1.0", get_hf3fs_options, {FILE_SEG, DRAM_SEG});
+extern "C" nixlBackendPlugin *
+createStaticHF3FSPlugin() {
+    return Hf3fsPlugin::initialize_plugin(
+        "HF3FS", "0.1.0", get_hf3fs_options, {FILE_SEG, DRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
-    return Hf3fsPlugin::initialize_plugin("HF3FS", "0.1.0", get_hf3fs_options, {FILE_SEG, DRAM_SEG});
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
+    return Hf3fsPlugin::initialize_plugin(
+        "HF3FS", "0.1.0", get_hf3fs_options, {FILE_SEG, DRAM_SEG});
 }
 
-extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
 #endif
