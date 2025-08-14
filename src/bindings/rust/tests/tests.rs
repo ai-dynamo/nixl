@@ -1153,7 +1153,7 @@ fn test_query_mem_empty_list() {
     );
 }
 
-fn create_dlist(num_descs: usize, start_address: usize) -> Result<XferDescList, NixlError> {
+fn create_dlist<'a>(num_descs: usize, start_address: usize) -> Result<XferDescList<'a>, NixlError> {
     // Create descriptor list
     let mut dlist = XferDescList::new(MemType::Dram, false)
                                 .expect("Failed to create XferDescList");
@@ -1170,7 +1170,7 @@ fn test_prep_xfer_dlist_success() {
     let dlist = create_dlist(1, 0x1000)?;
 
     // Prepare transfer descriptor list
-    let result = agent.prep_xfer_dlist("remote_agent", &dlist, None)?;
+    let result = agent.prepare_xfer_dlist("remote_agent", &dlist, None)?;
 
     assert!(result.is_ok(), "prep_xfer_dlist should succeed");
 }
@@ -1181,7 +1181,7 @@ fn test_prep_xfer_dlist_invalid_agent() {
     let dlist = create_dlist(1, 0x1000)?;
 
     // Try with invalid agent name (null byte)
-    let result = agent.prep_xfer_dlist("invalid\0agent", &dlist, None)?;
+    let result = agent.prepare_xfer_dlist("invalid\0agent", &dlist, None)?;
 
     assert!(
         matches!(result, Err(NixlError::InvalidParam)),
@@ -1218,8 +1218,8 @@ fn test_make_xfer_req_success() -> Result<(), NixlError> {
     let remote_dlist = create_dlist(dlist_size, 0x2000);
 
     // Prepare descriptor list handles
-    let local_handle = agent1.prep_xfer_dlist(agent2.name(), &local_dlist, None)?;
-    let remote_handle = agent1.prep_xfer_dlist(agent2.name(), &remote_dlist, None)?;
+    let local_handle = agent1.prepare_xfer_dlist(agent2.name(), &local_dlist, None)?;
+    let remote_handle = agent1.prepare_xfer_dlist(agent2.name(), &remote_dlist, None)?;
 
     // Create transfer request using prepared handles with indices
     let local_indices = (0..dlist_size).step_by(2).collect::<Vec<_>>();
@@ -1250,8 +1250,8 @@ fn test_make_xfer_req_invalid_indices() -> Result<(), NixlError> {
     let remote_dlist = create_dlist(dlist_size, 0x2000);
 
     // Prepare descriptor list handles
-    let local_handle = agent1.prep_xfer_dlist(agent2.name(), &local_dlist, None)?;
-    let remote_handle = agent1.prep_xfer_dlist(agent2.name(), &remote_dlist, None)?;
+    let local_handle = agent1.prepare_xfer_dlist(agent2.name(), &local_dlist, None)?;
+    let remote_handle = agent1.prepare_xfer_dlist(agent2.name(), &remote_dlist, None)?;
 
     // Test with out-of-bounds indices (should fail)
     let invalid_indices = [999i32];  // Index 999 doesn't exist
