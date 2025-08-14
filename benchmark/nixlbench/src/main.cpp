@@ -125,14 +125,13 @@ static int processBatchSizes(xferBenchWorker &worker,
             if (IS_PAIRWISE_AND_SG()) {
                 // TODO: This is here just to call throughput reduction
                 // Separate reduction and print
-                xferBenchUtils::printStats(true, block_size, batch_size, 0);
+                xferBenchUtils::printStats(true, block_size, batch_size, xferBenchStats());
             }
         } else if (worker.isInitiator()) {
-            std::vector<std::vector<xferBenchIOV>> remote_trans_lists(worker.exchangeIOV(local_trans_lists));
+            std::vector<std::vector<xferBenchIOV>> remote_trans_lists(
+                worker.exchangeIOV(local_trans_lists));
 
-            auto result = worker.transfer(block_size,
-                                          local_trans_lists,
-                                          remote_trans_lists);
+            auto result = worker.transfer(block_size, local_trans_lists, remote_trans_lists);
             if (std::holds_alternative<int>(result)) {
                 return 1;
             }
@@ -148,8 +147,8 @@ static int processBatchSizes(xferBenchWorker &worker,
                 }
             }
 
-            xferBenchUtils::printStats(false, block_size, batch_size,
-                                    std::get<double>(result));
+            xferBenchUtils::printStats(
+                false, block_size, batch_size, std::get<xferBenchStats>(result));
         }
     }
 
