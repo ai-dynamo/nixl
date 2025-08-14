@@ -15,10 +15,8 @@ jobs:
       AWS_DEFAULT_REGION: eu-central-1
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      UCX_VERSION: v1.19.0
-      # Temp workaround: disable SRD for EFA; awaiting full UCX 1.19 support.
-      UCX_TLS: ^srd,ud
-      UCX_LOG_LEVEL: info
+      # tmp workaround: pin UCX ver to 1.18 until EFA support is available in UCX 1.19.
+      UCX_VERSION: v1.18.0
     strategy:
       fail-fast: false
       matrix:

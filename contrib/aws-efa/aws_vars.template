@@ -14,14 +14,6 @@
                         "value": "${UCX_VERSION}"
                     },
                     {
-                        "name": "UCX_TLS",
-                        "value": "${UCX_TLS}"
-                    },
-                    {
-                        "name": "UCX_LOG_LEVEL",
-                        "value": "${UCX_LOG_LEVEL}"
-                    },
-                    {
                         "name": "UCX_INSTALL_DIR",
                         "value": "/usr/local"
                     },
