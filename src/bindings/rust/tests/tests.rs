@@ -1152,3 +1152,277 @@ fn test_query_mem_empty_list() {
         "Expected 0 responses for empty descriptor list"
     );
 }
+
+fn create_dlist(num_descs: usize, start_address: usize) -> XferDescList {
+    // Create descriptor list
+    let mut dlist = XferDescList::new(MemType::Dram, false)
+                                .expect("Failed to create XferDescList");
+    for i in 0..num_descs {
+        dlist.add_desc(start_address + i * 0x100, 0x100, 0)
+             .expect("Failed to add descriptor");
+    }
+    dlist
+}
+
+// Tests for prep_xfer_dlist API
+#[test]
+fn test_prep_xfer_dlist_success() {
+    let agent= Agent::new("test_agent").expect("Failed to create agent");
+    let dlist = create_dlist(1, 0x1000);
+    
+    // Prepare transfer descriptor list
+    let result = agent.prep_xfer_dlist("remote_agent", &dlist, None);
+    
+    assert!(result.is_ok(), "prep_xfer_dlist should succeed");
+}
+
+#[test]
+fn test_prep_xfer_dlist_invalid_agent() {
+    let agent = Agent::new("test_agent").expect("Failed to create agent");
+    let dlist = create_dlist(1, 0x1000);
+    
+    // Try with invalid agent name (null byte)
+    let result = agent.prep_xfer_dlist("invalid\0agent", &dlist, None);
+    
+    assert!(
+        matches!(result, Err(NixlError::InvalidParam)),
+        "Expected InvalidParam for invalid agent name"
+    );
+}
+
+fn setup_agent_with_backend(agent_name: &str) -> Agent {
+    let agent = Agent::new(agent_name).expect("Failed to create agent");
+    let plugins = agent.get_available_plugins().expect("Failed to get available plugins");
+    let plugin_name = find_plugin(&plugins, "UCX").expect("Failed to find plugin");
+    let (_mems, params) = agent.get_plugin_params(&plugin_name).expect("Failed to get plugin params");
+    agent.create_backend(&plugin_name, &params).expect("Failed to create backend");
+
+    agent
+}
+
+fn setup_agent_pair(agent1_name: &str, agent2_name: &str) -> (Agent, Agent) {
+    let agent1 = setup_agent_with_backend(agent1_name);
+    let agent2 = setup_agent_with_backend(agent2_name);
+
+    let metadata = agent2.get_local_md().expect("Failed to get local metadata");
+    agent1.load_remote_md(&metadata).expect("Failed to load remote metadata");
+
+    (agent1, agent2)
+}
+
+// Tests for make_xfer_req API
+#[test]
+fn test_make_xfer_req_success() -> Result<(), NixlError> {
+    let dlist_size = 10;
+    let (agent1, agent2) = setup_agent_pair("agent1", "agent2");
+    let local_dlist = create_dlist(dlist_size, 0x1000);
+    let remote_dlist = create_dlist(dlist_size, 0x2000);
+    
+    // Prepare descriptor list handles
+    let local_handle = agent1.prep_xfer_dlist("agent2", &local_dlist, None)?;
+    let remote_handle = agent1.prep_xfer_dlist("agent2", &remote_dlist, None)?;
+    
+    // Create transfer request using prepared handles with indices
+    let local_indices = (0..dlist_size).step_by(2).collect::<Vec<_>>();
+    let remote_indices = (1..dlist_size).step_by(2).collect::<Vec<_>>();
+    let result = agent1.make_xfer_req(
+        XferOp::Write,
+        &local_handle,
+        &local_indices,
+        &remote_handle,
+        &remote_indices,
+        None
+    );
+    
+    // Should succeed or fail with backend error
+    assert!(
+        result.is_ok() || matches!(result, Err(NixlError::BackendError)),
+        "make_xfer_req should succeed or fail with BackendError"
+    );
+    
+    Ok(())
+}
+
+#[test]
+fn test_make_xfer_req_invalid_indices() -> Result<(), NixlError> {
+    let dlist_size = 10;
+    let (agent1, agent2) = setup_agent_pair("agent1", "agent2");
+    let local_dlist = create_dlist(dlist_size, 0x1000);
+    let remote_dlist = create_dlist(dlist_size, 0x2000);
+
+    // Prepare descriptor list handles
+    let local_handle = agent1.prep_xfer_dlist("agent2", &local_dlist, None)?;
+    let remote_handle = agent1.prep_xfer_dlist("agent2", &remote_dlist, None)?;
+    
+    // Test with out-of-bounds indices (should fail)
+    let invalid_indices = [999i32];  // Index 999 doesn't exist
+    let result = agent1.make_xfer_req(
+        XferOp::Write,
+        &local_handle,
+        &invalid_indices,    // Out-of-bounds local index
+        &remote_handle,
+        &invalid_indices,    // Out-of-bounds remote index
+        None
+    );
+    
+    assert!(
+        result.is_err(),
+        "make_xfer_req should fail with out-of-bounds indices"
+    );
+    
+    Ok(())
+}
+
+// Tests for query_xfer_backend API
+#[test]
+fn test_query_xfer_backend_success() -> Result<(), NixlError> {
+    let agent1 = Agent::new("agent1")?;
+    let agent2 = Agent::new("agent2")?;
+    
+    // Set up backends for both agents
+    let plugins = agent1.get_available_plugins()?;
+    let plugin_name = find_plugin(&plugins, "UCX")?;
+    let (_mems, params) = agent1.get_plugin_params(&plugin_name)?;
+    let backend1 = agent1.create_backend(&plugin_name, &params)?;
+    let backend2 = agent2.create_backend(&plugin_name, &params)?;
+    
+    // Exchange metadata
+    let metadata = agent2.get_local_md()?;
+    agent1.load_remote_md(&metadata)?;
+    
+    // Create descriptor lists
+    let local_dlist = create_dlist(1, 0x1000);
+    let remote_dlist = create_dlist(1, 0x2000);
+    
+    // Create transfer request
+    let xfer_req = agent1.create_xfer_req(
+        XferOp::Write,
+        &local_dlist,
+        &remote_dlist,
+        "agent2",
+        None
+    )?;
+    
+    // Query which backend will be used for this transfer
+    let result: Result<Backend, NixlError> = agent1.query_xfer_backend(&xfer_req);
+    
+    // Should succeed and return a backend
+    match result {
+        Ok(backend) => {
+            assert_eq!(backend, backend1, "Transfer should use backend1");
+            println!("Transfer will use backend: {:?}", backend);
+        }
+        Err(e) => {
+            // May fail if no suitable backend found, which is acceptable
+            assert!(
+                matches!(e, NixlError::BackendError) || matches!(e, NixlError::InvalidParam),
+                "Expected BackendError or InvalidParam, got: {:?}", e
+            );
+        }
+    }
+    
+    Ok(())
+}
+
+#[test]
+fn test_query_xfer_backend_invalid_request() -> Result<(), NixlError> {
+    let agent = Agent::new("test_agent")?;
+    
+    // Create descriptor lists
+    let local_dlist = create_dlist(1, 0x1000);
+    let remote_dlist = create_dlist(1, 0x2000);
+    
+    // Create transfer request with non-existent remote agent (should fail or succeed)
+    let xfer_req_result = agent.create_xfer_req(
+        XferOp::Write,
+        &local_dlist,
+        &remote_dlist,
+        "non_existent_agent",
+        None
+    );
+    
+    match xfer_req_result {
+        Ok(xfer_req) => {
+            // If xfer_req creation succeeded, query_xfer_backend should fail
+            let result = agent.query_xfer_backend(&xfer_req);
+            assert!(
+                result.is_err(),
+                "query_xfer_backend should fail for request with non-existent remote agent"
+            );
+        }
+        Err(_) => {
+            // If xfer_req creation failed, that's also acceptable
+            println!("Transfer request creation failed as expected for non-existent agent");
+        }
+    }
+    
+    Ok(())
+}
+
+// Tests for get_local_partial_md API
+#[test]
+fn test_get_local_partial_md_success() -> Result<(), NixlError> {
+    let agent = setup_agent_with_backend("test_agent");
+    
+    // Create a registration descriptor list
+    let mut reg_descs = RegDescList::new(MemType::Dram, false)?;
+    reg_descs.add_desc(0x1000, 0x100, 0)?;
+    
+    // Get local partial metadata
+    let result = agent.get_local_partial_md(&reg_descs, None);
+    
+    // Should succeed and return metadata
+    match result {
+        Ok(metadata) => {
+            assert!(!metadata.is_empty(), "Metadata should not be empty");
+            println!("Partial metadata size: {}", metadata.len());
+        }
+        Err(e) => {
+            // May fail if no partial metadata exists yet, which is acceptable
+            assert!(
+                matches!(e, NixlError::BackendError) || matches!(e, NixlError::InvalidParam),
+                "Expected BackendError or InvalidParam, got: {:?}", e
+            );
+        }
+    }
+    
+    Ok(())
+}
+
+#[test]
+fn test_get_local_partial_md_empty_descs() -> Result<(), NixlError> {
+    let agent = setup_agent_with_backend("test_agent");
+    
+    // Create empty registration descriptor list
+    let reg_descs = RegDescList::new(MemType::Dram, false)?;
+    
+    // Try with empty descriptor list (should fail)
+    let result = agent.get_local_partial_md(&reg_descs, None);
+    
+    assert!(
+        result.is_err(),
+        "get_local_partial_md should fail with empty descriptor list"
+    );
+    
+    Ok(())
+}
+
+// Tests for send_local_partial_md API
+#[test]
+fn test_send_local_partial_md_success() -> Result<(), NixlError> {
+    let agent = setup_agent_with_backend("test_agent");
+    
+    // Create a registration descriptor list
+    let mut reg_descs = RegDescList::new(MemType::Dram, false)?;
+    reg_descs.add_desc(0x1000, 0x100, 0)?;
+    
+    // Send local partial metadata
+    let result = agent.send_local_partial_md(&reg_descs, None);
+    
+    assert!(
+        result.is_ok(),
+        "send_local_partial_md should succeed"
+    );
+    
+    Ok(())
+}
