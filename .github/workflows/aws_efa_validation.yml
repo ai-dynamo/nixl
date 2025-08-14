@@ -17,7 +17,8 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       UCX_VERSION: v1.19.0
       # Temp workaround: disable SRD for EFA; awaiting full UCX 1.19 support.
-      UCX_TLS: ^srd
+      UCX_TLS: ^srd,ud
+      UCX_LOG_LEVEL: info
     strategy:
       fail-fast: false
       matrix:
