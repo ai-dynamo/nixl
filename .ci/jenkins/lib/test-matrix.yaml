@@ -37,6 +37,8 @@ env:
   INSTALL_DIR: ${WORKSPACE}/nixl_install
   UCX_VERSION: v1.19.x
   NPROC: "16"
+  # Manual timeout - ci-demo doesn't handle docker exec
+  TEST_TIMEOUT: 30
 
 steps:
   - name: Get Environment Info
@@ -96,7 +98,7 @@ steps:
   - name: Test CPP
     parallel: false
     run: |
-      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -104,7 +106,15 @@ steps:
   - name: Test Python
     parallel: false
     run: |
-      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
+    onfail: |
+      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+
+  - name: Test Nixlbench
+    parallel: false
+    run: |
+      timeout ${TEST_TIMEOUT}m docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_nixlbench.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -112,7 +122,7 @@ steps:
   - name: Test Rust
     parallel: false
     run: |
-      docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_rust.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_rust.sh ${INSTALL_DIR}"
     always: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
