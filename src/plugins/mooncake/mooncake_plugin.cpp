@@ -26,13 +26,7 @@ get_mooncake_options() {
     return params;
 }
 
-nixl_mem_list_t
-get_mooncake_mems() {
-    nixl_mem_list_t mems;
-    mems.push_back(DRAM_SEG);
-    mems.push_back(VRAM_SEG);
-    return mems;
-}
+
 } // namespace
 
 // Plugin type alias for convenience
@@ -41,12 +35,12 @@ using MooncakePlugin = nixlBackendPluginTemplate<nixlMooncakeEngine>;
 #ifdef STATIC_PLUGIN_MOONCAKE
 // Function for static loading
 extern "C" nixlBackendPlugin *createStaticMOONCAKEPlugin() {
-    return MooncakePlugin::initialize_plugin("MOONCAKE", "0.1.0", get_mooncake_options, get_mooncake_mems);
+    return MooncakePlugin::initialize_plugin("MOONCAKE", "0.1.0", get_mooncake_options, {DRAM_SEG, VRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
-    return MooncakePlugin::initialize_plugin("MOONCAKE", "0.1.0", get_mooncake_options, get_mooncake_mems);
+    return MooncakePlugin::initialize_plugin("MOONCAKE", "0.1.0", get_mooncake_options, {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}

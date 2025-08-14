@@ -24,11 +24,6 @@ nixl_b_params_t
 get_ucx_options() {
     return get_ucx_backend_common_options();
 }
-
-nixl_mem_list_t
-get_ucx_mems() {
-    return {DRAM_SEG, VRAM_SEG};
-}
 } // namespace
 
 // Plugin type alias for convenience
@@ -37,12 +32,12 @@ using UcxPlugin = nixlBackendPluginTemplate<nixlUcxEngine>;
 #ifdef STATIC_PLUGIN_UCX
 // Function for static loading
 extern "C" nixlBackendPlugin *createStaticUCXPlugin() {
-    return UcxPlugin::initialize_plugin("UCX", "0.1.0", get_ucx_options, get_ucx_mems);
+    return UcxPlugin::initialize_plugin("UCX", "0.1.0", get_ucx_options, {DRAM_SEG, VRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
-    return UcxPlugin::initialize_plugin("UCX", "0.1.0", get_ucx_options, get_ucx_mems);
+    return UcxPlugin::initialize_plugin("UCX", "0.1.0", get_ucx_options, {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}

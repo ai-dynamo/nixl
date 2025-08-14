@@ -52,10 +52,6 @@ public:
 
 // Template for creating backend plugins with minimal boilerplate
 template<typename EngineType> class nixlBackendPluginTemplate {
-private:
-    static nixlBackendPlugin plugin_instance;
-    static bool initialized;
-
 public:
     [[nodiscard]] static nixlBackendEngine *
     create_engine_impl(const nixlBackendInitParams *init_params) {
@@ -72,41 +68,27 @@ public:
         delete engine;
     }
 
-    static nixlBackendPlugin *
+        static nixlBackendPlugin *
     initialize_plugin(const char *name,
                      const char *version,
                      nixl_b_params_t (*get_options)(),
-                     nixl_mem_list_t (*get_mems)()) {
+                     const nixl_mem_list_t &mem_list) {
 
-        if (!initialized) {
-            static const char *plugin_name = name;
-            static const char *plugin_version = version;
+        static const char *plugin_name = name;
+        static const char *plugin_version = version;
+        static const nixl_mem_list_t plugin_mems = mem_list;
 
-            plugin_instance = {NIXL_PLUGIN_API_VERSION,
-                              create_engine_impl,
-                              destroy_engine_impl,
-                              []() { return plugin_name; },
-                              []() { return plugin_version; },
-                              get_options,
-                              get_mems};
-            initialized = true;
-        }
-        return &plugin_instance;
-    }
+        static nixlBackendPlugin plugin_instance = {NIXL_PLUGIN_API_VERSION,
+                                                    create_engine_impl,
+                                                    destroy_engine_impl,
+                                                    []() { return plugin_name; },
+                                                    []() { return plugin_version; },
+                                                    get_options,
+                                                    []() { return plugin_mems; }};
 
-    // Get the plugin instance (for use by exported functions)
-    static nixlBackendPlugin *get_instance() {
         return &plugin_instance;
     }
 };
-
-// Static member definitions
-template<typename EngineType>
-nixlBackendPlugin nixlBackendPluginTemplate<EngineType>::plugin_instance = {};
-
-template<typename EngineType>
-bool nixlBackendPluginTemplate<EngineType>::initialized = false;
-
 
 
 // Creator Function type for static plugins

@@ -25,14 +25,7 @@ get_gds_options() {
     return params;
 }
 
-nixl_mem_list_t
-get_gds_mems() {
-    nixl_mem_list_t mems;
-    mems.push_back(DRAM_SEG);
-    mems.push_back(VRAM_SEG);
-    mems.push_back(FILE_SEG);
-    return mems;
-}
+
 } // namespace
 
 // Plugin type alias for convenience
@@ -41,12 +34,12 @@ using GdsPlugin = nixlBackendPluginTemplate<nixlGdsEngine>;
 #ifdef STATIC_PLUGIN_GDS
 // Function for static loading
 extern "C" nixlBackendPlugin *createStaticGDSPlugin() {
-    return GdsPlugin::initialize_plugin("GDS", "0.1.1", get_gds_options, get_gds_mems);
+    return GdsPlugin::initialize_plugin("GDS", "0.1.1", get_gds_options, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
-    return GdsPlugin::initialize_plugin("GDS", "0.1.1", get_gds_options, get_gds_mems);
+    return GdsPlugin::initialize_plugin("GDS", "0.1.1", get_gds_options, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}

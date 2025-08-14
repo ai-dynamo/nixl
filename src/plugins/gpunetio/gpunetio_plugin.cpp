@@ -28,13 +28,7 @@ get_gpunetio_options() {
     return params;
 }
 
-nixl_mem_list_t
-get_gpunetio_mems() {
-    nixl_mem_list_t mems;
-    mems.push_back(DRAM_SEG);
-    mems.push_back(VRAM_SEG);
-    return mems;
-}
+
 } // namespace
 
 // Plugin type alias for convenience
@@ -43,12 +37,12 @@ using GpunetioPlugin = nixlBackendPluginTemplate<nixlDocaEngine>;
 #ifdef STATIC_PLUGIN_GPUNETIO
 // Function for static loading
 extern "C" nixlBackendPlugin *createStaticGPUNETIOPlugin() {
-    return GpunetioPlugin::initialize_plugin("GPUNETIO", "0.1.0", get_gpunetio_options, get_gpunetio_mems);
+    return GpunetioPlugin::initialize_plugin("GPUNETIO", "0.1.0", get_gpunetio_options, {DRAM_SEG, VRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
-    return GpunetioPlugin::initialize_plugin("GPUNETIO", "0.1.0", get_gpunetio_options, get_gpunetio_mems);
+    return GpunetioPlugin::initialize_plugin("GPUNETIO", "0.1.0", get_gpunetio_options, {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
