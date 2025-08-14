@@ -19,12 +19,14 @@
 #define __UTILS_H
 
 #include "config.h"
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <string>
 #include <variant>
 #include <vector>
 #include <optional>
+#include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
 
 #if HAVE_CUDA
@@ -165,13 +167,75 @@ class xferBenchConfig {
         static std::string obj_endpoint_override;
         static std::string obj_req_checksum;
 
-        static int loadFromFlags();
-        static void printConfig();
+        static int
+        loadFromFlags();
         static void
-        printOption (const std::string &desc, const std::string &value);
-        static std::vector<std::string> parseDeviceList();
+        printConfig();
+        static void
+        printOption(const std::string &desc, const std::string &value);
+        static void
+        printSeparator(const char sep = '-');
+        static std::vector<std::string>
+        parseDeviceList();
         static bool
         isStorageBackend();
+};
+
+// Timer class for measuring durations at high resolution
+class xferBenchTimer {
+public:
+    xferBenchTimer();
+
+    // Return the elapsed time in microseconds
+    nixlTime::us_t
+    lap();
+
+private:
+    nixlTime::us_t start_;
+};
+
+// Stats class for measuring arbitrary numeric metrics with multiple samples
+class xferMetricStats {
+public:
+    double
+    min() const;
+    double
+    max() const;
+    double
+    avg() const;
+    double
+    p90();
+    double
+    p95();
+    double
+    p99();
+
+    void
+    add(double value);
+    void
+    add(const xferMetricStats &other);
+    void
+    reserve(size_t n);
+    void
+    clear();
+
+private:
+    std::vector<double> samples;
+};
+
+// Stats class for measuring benchmark metrics
+struct xferBenchStats {
+    xferMetricStats total_duration;
+    xferMetricStats prepare_duration;
+    xferMetricStats post_duration;
+    xferMetricStats transfer_duration;
+
+    void
+    clear();
+    void
+    add(const xferBenchStats &other);
+    void
+    reserve(size_t n);
 };
 
 // Generic IOV descriptor class independent of NIXL
@@ -184,8 +248,12 @@ public:
     unsigned long long handle;
     std::string metaInfo;
 
-    xferBenchIOV(uintptr_t a, size_t l, int d) :
-        addr(a), len(l), devId(d), padded_size(len), handle(0) {}
+    xferBenchIOV(uintptr_t a, size_t l, int d)
+        : addr(a),
+          len(l),
+          devId(d),
+          padded_size(len),
+          handle(0) {}
 
     xferBenchIOV(uintptr_t a, size_t l, int d, size_t p, unsigned long long h) :
         addr(a), len(l), devId(d), padded_size(p), handle(h) {}
@@ -216,10 +284,12 @@ class xferBenchUtils {
         static bool
         rmObjS3(const std::string &name);
 
-        static void checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
-        static void printStatsHeader();
-        static void printStats(bool is_target, size_t block_size, size_t batch_size,
-			                   double total_duration);
+        static void
+        checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
+        static void
+        printStatsHeader();
+        static void
+        printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
 };
 
 #endif // __UTILS_H

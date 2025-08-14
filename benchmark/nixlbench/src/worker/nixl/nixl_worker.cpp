@@ -819,11 +819,17 @@ execTransfer(nixlAgent *agent,
              const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
              const nixl_xfer_op_t op,
              const int num_iter,
-             const int num_threads) {
+             const int num_threads,
+             xferBenchStats &stats) {
     int ret = 0;
+    stats.clear();
 
+    xferBenchTimer total_timer;
 #pragma omp parallel num_threads(num_threads)
     {
+        xferBenchStats thread_stats;
+        thread_stats.reserve(num_iter);
+        xferBenchTimer timer;
         const int tid = omp_get_thread_num();
         const auto &local_iov = local_iovs[tid];
         const auto &remote_iov = remote_iovs[tid];
@@ -862,8 +868,13 @@ execTransfer(nixlAgent *agent,
         CHECK_NIXL_ERROR(agent->createXferReq(op, local_desc, remote_desc, target, req, &params),
                          "createTransferReq failed");
 
+        const nixlTime::us_t prepare_duration = timer.lap();
+        thread_stats.prepare_duration.add(prepare_duration);
+
         for (int i = 0; i < num_iter && !error; i++) {
             rc = agent->postXferReq(req);
+            const nixlTime::us_t post_duration = timer.lap();
+            thread_stats.post_duration.add(post_duration);
             if (NIXL_ERR_BACKEND == rc) {
                 std::cout << "NIXL postRequest failed" << std::endl;
                 error = true;
@@ -877,27 +888,30 @@ execTransfer(nixlAgent *agent,
                         break;
                     }
                 } while (NIXL_SUCCESS != rc);
+                const nixlTime::us_t transfer_duration = timer.lap();
+                thread_stats.transfer_duration.add(transfer_duration);
             }
         }
-
         agent->releaseXferReq(req);
         if (error) {
             std::cout << "NIXL releaseXferReq failed" << std::endl;
             ret = -1;
         }
+#pragma omp critical
+        { stats.add(thread_stats); }
     }
-
+    const nixlTime::us_t total_duration = total_timer.lap();
+    stats.total_duration.add(total_duration);
     return ret;
 }
 
-std::variant<double, int>
+std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
                               const std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
     int num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
     int skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
-    struct timeval t_start, t_end;
-    double total_duration = 0.0;
+    xferBenchStats stats;
     int ret = 0;
     nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == xferBenchConfig::op_type ? NIXL_READ : NIXL_WRITE;
     // int completion_flag = 1;
@@ -911,25 +925,25 @@ xferBenchNixlWorker::transfer(size_t block_size,
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
-    ret = execTransfer(agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads);
+    ret = execTransfer(
+        agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats);
     if (ret < 0) {
-        return std::variant<double, int>(ret);
+        return std::variant<xferBenchStats, int>(ret);
     }
 
     // Synchronize to ensure all processes have completed the warmup (iter and polling)
     synchronize();
 
-    gettimeofday(&t_start, nullptr);
+    stats.clear();
 
     ret = execTransfer(
-        agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads);
-
-    gettimeofday(&t_end, nullptr);
-    total_duration +=
-        (((t_end.tv_sec - t_start.tv_sec) * 1e6) + (t_end.tv_usec - t_start.tv_usec)); // In us
+        agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);
 
     synchronize();
-    return ret < 0 ? std::variant<double, int>(ret) : std::variant<double, int>(total_duration);
+    if (ret < 0) {
+        return std::variant<xferBenchStats, int>(ret);
+    }
+    return std::variant<xferBenchStats, int>(stats);
 }
 
 void
