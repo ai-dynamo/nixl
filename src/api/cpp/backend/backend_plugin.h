@@ -52,6 +52,10 @@ public:
 
 // Template for creating backend plugins with minimal boilerplate
 template<typename EngineType> class nixlBackendPluginTemplate {
+private:
+    static nixlBackendPlugin plugin_instance;
+    static bool initialized;
+
 public:
     [[nodiscard]] static nixlBackendEngine *
     create_engine_impl(const nixlBackendInitParams *init_params) {
@@ -68,88 +72,42 @@ public:
         delete engine;
     }
 
-    [[nodiscard]] static nixlBackendPlugin
-    create_plugin(const char *name,
-                  const char *version,
-                  nixl_b_params_t (*get_options)(),
-                  nixl_mem_list_t (*get_mems)()) {
+    static nixlBackendPlugin *
+    initialize_plugin(const char *name,
+                     const char *version,
+                     nixl_b_params_t (*get_options)(),
+                     nixl_mem_list_t (*get_mems)()) {
 
-        static const char *plugin_name = name;
-        static const char *plugin_version = version;
+        if (!initialized) {
+            static const char *plugin_name = name;
+            static const char *plugin_version = version;
 
-        return {NIXL_PLUGIN_API_VERSION,
-                create_engine_impl,
-                destroy_engine_impl,
-                []() { return plugin_name; },
-                []() { return plugin_version; },
-                get_options,
-                get_mems};
+            plugin_instance = {NIXL_PLUGIN_API_VERSION,
+                              create_engine_impl,
+                              destroy_engine_impl,
+                              []() { return plugin_name; },
+                              []() { return plugin_version; },
+                              get_options,
+                              get_mems};
+            initialized = true;
+        }
+        return &plugin_instance;
+    }
+
+    // Get the plugin instance (for use by exported functions)
+    static nixlBackendPlugin *get_instance() {
+        return &plugin_instance;
     }
 };
 
-#define NIXL_DEFINE_PLUGIN(PluginName, EngineType, PluginVersion, GetOptionsFunc, GetMemsFunc) \
-    namespace {                                                                                \
-        /* Core implementation functions */                                                    \
-        nixlBackendEngine *                                                                    \
-        create_engine_impl(const nixlBackendInitParams *init_params) {                         \
-            try {                                                                              \
-                return new EngineType(init_params);                                            \
-            }                                                                                  \
-            catch (const std::exception &e) {                                                  \
-                return nullptr;                                                                \
-            }                                                                                  \
-        }                                                                                      \
-                                                                                               \
-        void                                                                                   \
-        destroy_engine_impl(nixlBackendEngine *engine) {                                       \
-            delete engine;                                                                     \
-        }                                                                                      \
-                                                                                               \
-        /* [[nodiscard]] wrapper functions */                                                  \
-        [[nodiscard]] nixlBackendEngine *                                                      \
-        create_engine_wrapper(const nixlBackendInitParams *init_params) {                      \
-            return create_engine_impl(init_params);                                            \
-        }                                                                                      \
-                                                                                               \
-        [[nodiscard]] const char *                                                             \
-        get_name_wrapper() {                                                                   \
-            return #PluginName;                                                                \
-        }                                                                                      \
-                                                                                               \
-        [[nodiscard]] const char *                                                             \
-        get_version_wrapper() {                                                                \
-            return PluginVersion;                                                              \
-        }                                                                                      \
-                                                                                               \
-        [[nodiscard]] nixl_b_params_t                                                          \
-        get_options_wrapper() {                                                                \
-            return GetOptionsFunc();                                                           \
-        }                                                                                      \
-                                                                                               \
-        [[nodiscard]] nixl_mem_list_t                                                          \
-        get_mems_wrapper() {                                                                   \
-            return GetMemsFunc();                                                              \
-        }                                                                                      \
-                                                                                               \
-        /* Plugin structure using [[nodiscard]] wrapper functions */                           \
-        nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,                                   \
-                                    create_engine_wrapper,                                     \
-                                    destroy_engine_impl,                                       \
-                                    get_name_wrapper,                                          \
-                                    get_version_wrapper,                                       \
-                                    get_options_wrapper,                                       \
-                                    get_mems_wrapper};                                         \
-    }                                                                                          \
-                                                                                               \
-    extern "C" nixlBackendPlugin *createStatic##PluginName##Plugin() {                         \
-        return &plugin;                                                                        \
-    }                                                                                          \
-                                                                                               \
-    extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {                      \
-        return &plugin;                                                                        \
-    }                                                                                          \
-                                                                                               \
-    extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
+// Static member definitions
+template<typename EngineType>
+nixlBackendPlugin nixlBackendPluginTemplate<EngineType>::plugin_instance = {};
+
+template<typename EngineType>
+bool nixlBackendPluginTemplate<EngineType>::initialized = false;
+
+
 
 // Creator Function type for static plugins
 typedef nixlBackendPlugin* (*nixlStaticPluginCreatorFunc)();

@@ -31,5 +31,19 @@ get_ucx_mems() {
 }
 } // namespace
 
-// Define the complete UCX plugin using the template
-NIXL_DEFINE_PLUGIN(UCX, nixlUcxEngine, "0.1.0", get_ucx_options, get_ucx_mems)
+// Plugin type alias for convenience
+using UcxPlugin = nixlBackendPluginTemplate<nixlUcxEngine>;
+
+#ifdef STATIC_PLUGIN_UCX
+// Function for static loading
+extern "C" nixlBackendPlugin *createStaticUCXPlugin() {
+    return UcxPlugin::initialize_plugin("UCX", "0.1.0", get_ucx_options, get_ucx_mems);
+}
+#else
+// Export functions for dynamic loading
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
+    return UcxPlugin::initialize_plugin("UCX", "0.1.0", get_ucx_options, get_ucx_mems);
+}
+
+extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
+#endif

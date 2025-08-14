@@ -37,5 +37,19 @@ get_gpunetio_mems() {
 }
 } // namespace
 
-// Define the complete GPUNETIO plugin using the template
-NIXL_DEFINE_PLUGIN(GPUNETIO, nixlDocaEngine, "0.1.0", get_gpunetio_options, get_gpunetio_mems)
+// Plugin type alias for convenience
+using GpunetioPlugin = nixlBackendPluginTemplate<nixlDocaEngine>;
+
+#ifdef STATIC_PLUGIN_GPUNETIO
+// Function for static loading
+extern "C" nixlBackendPlugin *createStaticGPUNETIOPlugin() {
+    return GpunetioPlugin::initialize_plugin("GPUNETIO", "0.1.0", get_gpunetio_options, get_gpunetio_mems);
+}
+#else
+// Export functions for dynamic loading
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
+    return GpunetioPlugin::initialize_plugin("GPUNETIO", "0.1.0", get_gpunetio_options, get_gpunetio_mems);
+}
+
+extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
+#endif

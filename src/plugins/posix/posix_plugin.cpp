@@ -32,5 +32,19 @@ get_posix_mems() {
 }
 } // namespace
 
-// Define the complete POSIX plugin using the template
-NIXL_DEFINE_PLUGIN(POSIX, nixlPosixEngine, "0.1.0", get_posix_options, get_posix_mems)
+// Plugin type alias for convenience
+using PosixPlugin = nixlBackendPluginTemplate<nixlPosixEngine>;
+
+#ifdef STATIC_PLUGIN_POSIX
+// Function for static loading
+extern "C" nixlBackendPlugin *createStaticPOSIXPlugin() {
+    return PosixPlugin::initialize_plugin("POSIX", "0.1.0", get_posix_options, get_posix_mems);
+}
+#else
+// Export functions for dynamic loading
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
+    return PosixPlugin::initialize_plugin("POSIX", "0.1.0", get_posix_options, get_posix_mems);
+}
+
+extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
+#endif

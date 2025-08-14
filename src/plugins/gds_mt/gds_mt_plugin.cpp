@@ -32,5 +32,19 @@ get_gds_mt_mems() {
 }
 } // namespace
 
-// Define the complete GDS_MT plugin using the template
-NIXL_DEFINE_PLUGIN(GDS_MT, nixlGdsMtEngine, "0.1.0", get_gds_mt_options, get_gds_mt_mems)
+// Plugin type alias for convenience
+using GdsMtPlugin = nixlBackendPluginTemplate<nixlGdsMtEngine>;
+
+#ifdef STATIC_PLUGIN_GDS_MT
+// Function for static loading
+extern "C" nixlBackendPlugin *createStaticGDS_MTPlugin() {
+    return GdsMtPlugin::initialize_plugin("GDS_MT", "0.1.0", get_gds_mt_options, get_gds_mt_mems);
+}
+#else
+// Export functions for dynamic loading
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
+    return GdsMtPlugin::initialize_plugin("GDS_MT", "0.1.0", get_gds_mt_options, get_gds_mt_mems);
+}
+
+extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
+#endif

@@ -35,5 +35,19 @@ get_mooncake_mems() {
 }
 } // namespace
 
-// Define the complete MOONCAKE plugin using the template
-NIXL_DEFINE_PLUGIN(MOONCAKE, nixlMooncakeEngine, "0.1.0", get_mooncake_options, get_mooncake_mems)
+// Plugin type alias for convenience
+using MooncakePlugin = nixlBackendPluginTemplate<nixlMooncakeEngine>;
+
+#ifdef STATIC_PLUGIN_MOONCAKE
+// Function for static loading
+extern "C" nixlBackendPlugin *createStaticMOONCAKEPlugin() {
+    return MooncakePlugin::initialize_plugin("MOONCAKE", "0.1.0", get_mooncake_options, get_mooncake_mems);
+}
+#else
+// Export functions for dynamic loading
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() {
+    return MooncakePlugin::initialize_plugin("MOONCAKE", "0.1.0", get_mooncake_options, get_mooncake_mems);
+}
+
+extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
+#endif
