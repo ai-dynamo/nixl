@@ -17,6 +17,7 @@
 #ifndef __TRANSFER_HANDLER_H
 #define __TRANSFER_HANDLER_H
 
+#include <random>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 #include "backend_engine.h"
@@ -26,41 +27,58 @@
 
 namespace gtest::plugins {
 
+int
+getRandomInt(int min, int max) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dist(min, max);
+    return dist(gen);
+}
+
+struct transferMemConfig {
+    const size_t numEntries_ = 1;
+    const size_t entrySize_ = 64;
+    const size_t numBufs_ = 1;
+    const uint8_t srcBufByte_ = getRandomInt(0, 255);
+    const uint8_t dstBufByte_ = getRandomInt(0, 255);
+
+    size_t
+    bufSize() const {
+        return numEntries_ * entrySize_;
+    }
+};
+
 template<nixl_mem_t srcMemType, nixl_mem_t dstMemType> class transferHandler {
 public:
     transferHandler(std::shared_ptr<nixlBackendEngine> src_engine,
                     std::shared_ptr<nixlBackendEngine> dst_engine,
                     std::string src_agent_name,
                     std::string dst_agent_name,
-                    bool split_buf,
-                    int num_bufs)
+                    transferMemConfig mem_cfg = transferMemConfig())
         : srcBackendEngine_(src_engine),
           dstBackendEngine_(dst_engine),
+          srcDescs_(std::make_unique<nixl_meta_dlist_t>(srcMemType)),
+          dstDescs_(std::make_unique<nixl_meta_dlist_t>(dstMemType)),
+          memConfig_(std::move(mem_cfg)),
           srcAgentName_(src_agent_name),
           dstAgentName_(dst_agent_name),
-          srcDevId_(0) {
-
-        bool remote_xfer = srcAgentName_ != dstAgentName_;
-        if (remote_xfer) {
-            CHECK(src_engine->supportsRemote()) << "Local engine does not support remote transfers";
-            dstDevId_ = 1;
-            verifyConnInfo();
-        } else {
-            CHECK(src_engine->supportsLocal()) << "Local engine does not support local transfers";
-            dstDevId_ = srcDevId_;
-        }
-
-        for (int i = 0; i < num_bufs; i++) {
-            srcMem_.emplace_back(
-                std::make_unique<memoryHandler<srcMemType>>(BUF_SIZE, srcDevId_ + i));
-            dstMem_.emplace_back(
-                std::make_unique<memoryHandler<dstMemType>>(BUF_SIZE, dstDevId_ + i));
-        }
-
+          isRemoteXfer_(srcAgentName_ != dstAgentName_),
+          srcDevId_(0),
+          dstDevId_(isRemoteXfer_ ? 1 : 0) {
         if (dstBackendEngine_->supportsNotif()) setupNotifs("Test");
+    }
+
+    void
+    setupMems() {
+        for (size_t i = 0; i < memConfig_.numBufs_; i++) {
+            srcMem_.emplace_back(
+                std::make_unique<memoryHandler<srcMemType>>(memConfig_.bufSize(), srcDevId_ + i));
+            dstMem_.emplace_back(
+                std::make_unique<memoryHandler<dstMemType>>(memConfig_.bufSize(), dstDevId_ + i));
+        }
 
         registerMems();
-        prepMems(split_buf, remote_xfer);
+        prepareMems();
     }
 
     ~transferHandler() {
@@ -71,47 +89,89 @@ public:
 
     void
     testTransfer(nixl_xfer_op_t op) {
-        performTransfer(op);
+        verifyConnInfo();
+        ASSERT_EQ(prepareTransfer(op), NIXL_SUCCESS);
+        ASSERT_EQ(postTransfer(op), NIXL_SUCCESS);
+        ASSERT_EQ(waitForTransfer(), NIXL_SUCCESS);
+        ASSERT_EQ(srcBackendEngine_->releaseReqH(xferHandle_), NIXL_SUCCESS);
         verifyTransfer(op);
     }
 
-    void
-    setLocalMem() {
-        for (size_t i = 0; i < srcMem_.size(); i++)
-            srcMem_[i]->setIncreasing(LOCAL_BUF_BYTE + i);
+    nixl_status_t
+    prepareTransfer(nixl_xfer_op_t op) {
+        return srcBackendEngine_->prepXfer(
+            op, *srcDescs_, *dstDescs_, dstAgentName_, xferHandle_, &xferOptArgs_);
+    }
+
+    nixl_status_t
+    postTransfer(nixl_xfer_op_t op) {
+        nixl_status_t ret;
+        ret = srcBackendEngine_->postXfer(
+            op, *srcDescs_, *dstDescs_, dstAgentName_, xferHandle_, &xferOptArgs_);
+        return (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG) ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
+    }
+
+    nixl_status_t
+    waitForTransfer() {
+        nixl_status_t ret = NIXL_IN_PROG;
+        auto end_time = absl::Now() + absl::Seconds(3);
+
+        NIXL_INFO << "\t\tWaiting for transfer to complete...";
+        while (ret == NIXL_IN_PROG && absl::Now() < end_time) {
+            ret = srcBackendEngine_->checkXfer(xferHandle_);
+            if (ret != NIXL_SUCCESS && ret != NIXL_IN_PROG) return ret;
+
+            if (dstBackendEngine_->supportsProgTh()) dstBackendEngine_->progress();
+        }
+        NIXL_INFO << "\nTransfer complete";
+
+        return NIXL_SUCCESS;
     }
 
     void
-    resetLocalMem() {
+    addSrcDesc(nixlMetaDesc &meta_desc) {
+        srcDescs_->addDesc(meta_desc);
+    }
+
+    void
+    addDstDesc(nixlMetaDesc &meta_desc) {
+        dstDescs_->addDesc(meta_desc);
+    }
+
+    void
+    setSrcMem() {
+        for (size_t i = 0; i < srcMem_.size(); i++)
+            srcMem_[i]->setIncreasing(memConfig_.srcBufByte_ + i);
+    }
+
+    void
+    resetSrcMem() {
         for (const auto &mem : srcMem_)
             mem->reset();
     }
 
     void
-    checkLocalMem() {
+    checkSrcMem() {
         for (size_t i = 0; i < srcMem_.size(); i++)
-            EXPECT_TRUE(srcMem_[i]->checkIncreasing(LOCAL_BUF_BYTE + i));
+            EXPECT_TRUE(srcMem_[i]->checkIncreasing(memConfig_.srcBufByte_ + i));
     }
 
 private:
-    static constexpr uint8_t LOCAL_BUF_BYTE = 0x11;
-    static constexpr uint8_t XFER_BUF_BYTE = 0x22;
-    static constexpr size_t NUM_ENTRIES = 4;
-    static constexpr size_t ENTRY_SIZE = 16;
-    static constexpr size_t BUF_SIZE = NUM_ENTRIES * ENTRY_SIZE;
-
     std::vector<std::unique_ptr<memoryHandler<srcMemType>>> srcMem_;
     std::vector<std::unique_ptr<memoryHandler<dstMemType>>> dstMem_;
-    std::shared_ptr<nixlBackendEngine> srcBackendEngine_;
-    std::shared_ptr<nixlBackendEngine> dstBackendEngine_;
-    std::unique_ptr<nixl_meta_dlist_t> srcDescs_;
-    std::unique_ptr<nixl_meta_dlist_t> dstDescs_;
+    const std::shared_ptr<nixlBackendEngine> srcBackendEngine_;
+    const std::shared_ptr<nixlBackendEngine> dstBackendEngine_;
+    const std::unique_ptr<nixl_meta_dlist_t> srcDescs_;
+    const std::unique_ptr<nixl_meta_dlist_t> dstDescs_;
+    const transferMemConfig memConfig_;
+    const std::string srcAgentName_;
+    const std::string dstAgentName_;
     nixl_opt_b_args_t xferOptArgs_;
     nixlBackendMD *xferLoadedMd_;
-    std::string srcAgentName_;
-    std::string dstAgentName_;
-    int srcDevId_;
-    int dstDevId_;
+    nixlBackendReqH *xferHandle_;
+    const bool isRemoteXfer_;
+    const int srcDevId_;
+    const int dstDevId_;
 
     void
     registerMems() {
@@ -139,8 +199,8 @@ private:
     }
 
     void
-    prepMems(bool split_buf, bool remote_xfer) {
-        if (remote_xfer) {
+    prepareMems() {
+        if (isRemoteXfer_) {
             nixlBlobDesc info;
             dstMem_[0]->populateBlobDesc(&info);
             ASSERT_EQ(srcBackendEngine_->getPublicData(dstMem_[0]->getMD(), info.metaInfo),
@@ -154,49 +214,15 @@ private:
                       NIXL_SUCCESS);
         }
 
-        srcDescs_ = std::make_unique<nixl_meta_dlist_t>(srcMemType);
-        dstDescs_ = std::make_unique<nixl_meta_dlist_t>(dstMemType);
-
-        int num_entries = split_buf ? NUM_ENTRIES : 1;
-        int entry_size = split_buf ? ENTRY_SIZE : BUF_SIZE;
         for (size_t i = 0; i < srcMem_.size(); i++) {
-            for (int entry_i = 0; entry_i < num_entries; entry_i++) {
+            for (size_t entry_i = 0; entry_i < memConfig_.numEntries_; entry_i++) {
                 nixlMetaDesc desc;
-                srcMem_[i]->populateMetaDesc(&desc, entry_i, entry_size);
+                srcMem_[i]->populateMetaDesc(&desc, entry_i, memConfig_.entrySize_);
                 srcDescs_->addDesc(desc);
-                dstMem_[i]->populateMetaDesc(&desc, entry_i, entry_size);
+                dstMem_[i]->populateMetaDesc(&desc, entry_i, memConfig_.entrySize_);
                 dstDescs_->addDesc(desc);
             }
         }
-    }
-
-    void
-    performTransfer(nixl_xfer_op_t op) {
-        nixlBackendReqH *handle;
-        nixl_status_t ret;
-
-        ASSERT_EQ(srcBackendEngine_->prepXfer(
-                      op, *srcDescs_, *dstDescs_, dstAgentName_, handle, &xferOptArgs_),
-                  NIXL_SUCCESS);
-
-        ret = srcBackendEngine_->postXfer(
-            op, *srcDescs_, *dstDescs_, dstAgentName_, handle, &xferOptArgs_);
-        ASSERT_TRUE(ret == NIXL_SUCCESS || ret == NIXL_IN_PROG);
-
-        NIXL_INFO << "\t\tWaiting for transfer to complete...";
-
-        auto end_time = absl::Now() + absl::Seconds(3);
-
-        while (ret == NIXL_IN_PROG && absl::Now() < end_time) {
-            ret = srcBackendEngine_->checkXfer(handle);
-            ASSERT_TRUE(ret == NIXL_SUCCESS || ret == NIXL_IN_PROG);
-
-            if (dstBackendEngine_->supportsProgTh()) dstBackendEngine_->progress();
-        }
-
-        NIXL_INFO << "\nTransfer complete";
-
-        ASSERT_EQ(srcBackendEngine_->releaseReqH(handle), NIXL_SUCCESS);
     }
 
     void
@@ -245,8 +271,9 @@ private:
 
     void
     verifyConnInfo() {
-        std::string conn_info;
+        if (!isRemoteXfer_) return;
 
+        std::string conn_info;
         ASSERT_EQ(srcBackendEngine_->getConnInfo(conn_info), NIXL_SUCCESS);
         ASSERT_EQ(dstBackendEngine_->getConnInfo(conn_info), NIXL_SUCCESS);
         ASSERT_EQ(srcBackendEngine_->loadRemoteConnInfo(dstAgentName_, conn_info), NIXL_SUCCESS);
