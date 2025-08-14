@@ -736,11 +736,10 @@ nixlUcxChunkBackendH::complete(nixl_status_t status) {
     if (status != NIXL_SUCCESS) {
         nixlUcxBackendH::release();
         sharedState_->status.store(status);
-        NIXL_TRACE << *this << " completed with error: " << status;
     }
     sharedState_->pendingReqs.fetch_sub(1);
     setWorker(nullptr, UINT64_MAX);
-    NIXL_TRACE << *this << " completed, " << *sharedState_;
+    NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
     sharedState_.reset();
 }
 
