@@ -367,6 +367,9 @@ public:
             _internalRequestReset(cur);
             worker->reqRelease((nixlUcxReq)cur);
         }
+        // BUG: nixlUcxIntReq does not clean the head node
+        // TODO: Replace with std::list
+        head.unlink();
         return NIXL_SUCCESS;
     }
 
@@ -800,7 +803,7 @@ public:
 
     nixl_status_t
     release() override {
-        NIXL_TRACE << "composite " << *this << " releasing";
+        NIXL_TRACE << *this << " releasing";
         nixl_status_t status = nixlUcxBackendH::release();
         // Set failed status to stop progress chunks
         sharedState_->status.store(NIXL_ERR_NOT_FOUND);
@@ -1463,7 +1466,7 @@ static nixl_status_t _retHelper(nixl_status_t ret,  nixlUcxBackendH *hndl, nixlU
         default:
             // Error. Release all previously initiated ops and exit:
             hndl->release();
-            return NIXL_ERR_BACKEND;
+            return ret;
     }
     return NIXL_SUCCESS;
 }

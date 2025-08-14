@@ -52,6 +52,7 @@ nixl_status_t ucx_status_to_nixl(ucs_status_t status)
     case UCS_INPROGRESS:
     case UCS_ERR_BUSY:
         return NIXL_IN_PROG;
+    case UCS_ERR_CANCELED:
     case UCS_ERR_NOT_CONNECTED:
     case UCS_ERR_CONNECTION_RESET:
     case UCS_ERR_ENDPOINT_TIMEOUT:
