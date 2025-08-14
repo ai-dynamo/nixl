@@ -431,7 +431,11 @@ protected:
 private:
     static constexpr uint64_t DEV_ID = 0;
     static const std::string NOTIF_MSG;
-    static constexpr int retry_count{1000};
+    // TODO: with error handling enabled by default we get poor performance with UCX1.18.
+    // Before we upgrade to UCX1.19, we need to temporarily increase the retry count,
+    // in order to pass threadpool tests.
+    // TODO: revert this to 1000 once we upgrade to UCX1.19.
+    static constexpr int retry_count{10000};
     static constexpr std::chrono::milliseconds retry_timeout{1};
 
     std::vector<std::unique_ptr<nixlAgent>> agents;
