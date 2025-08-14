@@ -68,18 +68,19 @@ public:
         delete engine;
     }
 
-        static nixlBackendPlugin *
-    initialize_plugin(const char *name,
-                     const char *version,
-                     const nixl_b_params_t &params,
-                     const nixl_mem_list_t &mem_list) {
+    static nixlBackendPlugin *
+    initialize_plugin(int api_version,
+                      const char *name,
+                      const char *version,
+                      const nixl_b_params_t &params,
+                      const nixl_mem_list_t &mem_list) {
 
         static const char *plugin_name = name;
         static const char *plugin_version = version;
         static const nixl_b_params_t plugin_params = params;
         static const nixl_mem_list_t plugin_mems = mem_list;
 
-        static nixlBackendPlugin plugin_instance = {NIXL_PLUGIN_API_VERSION,
+        static nixlBackendPlugin plugin_instance = {api_version,
                                                     create_engine_impl,
                                                     destroy_engine_impl,
                                                     []() { return plugin_name; },

@@ -40,13 +40,15 @@ using ObjPlugin = nixlBackendPluginTemplate<nixlObjEngine>;
 // Function for static loading
 extern "C" nixlBackendPlugin *
 createStaticOBJPlugin() {
-    return ObjPlugin::initialize_plugin("OBJ", "0.1.0", get_obj_options, {DRAM_SEG, OBJ_SEG});
+    return ObjPlugin::initialize_plugin(
+        NIXL_PLUGIN_API_VERSION, "OBJ", "0.1.0", get_obj_options, {DRAM_SEG, OBJ_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return ObjPlugin::initialize_plugin("OBJ", "0.1.0", get_obj_options, {DRAM_SEG, OBJ_SEG});
+    return ObjPlugin::initialize_plugin(
+        NIXL_PLUGIN_API_VERSION, "OBJ", "0.1.0", get_obj_options, {DRAM_SEG, OBJ_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

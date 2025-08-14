@@ -37,14 +37,14 @@ using MooncakePlugin = nixlBackendPluginTemplate<nixlMooncakeEngine>;
 extern "C" nixlBackendPlugin *
 createStaticMOONCAKEPlugin() {
     return MooncakePlugin::initialize_plugin(
-        "MOONCAKE", "0.1.0", get_mooncake_options, {DRAM_SEG, VRAM_SEG});
+        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options, {DRAM_SEG, VRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return MooncakePlugin::initialize_plugin(
-        "MOONCAKE", "0.1.0", get_mooncake_options, {DRAM_SEG, VRAM_SEG});
+        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options, {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

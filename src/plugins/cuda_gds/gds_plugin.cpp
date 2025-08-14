@@ -28,14 +28,14 @@ using GdsPlugin = nixlBackendPluginTemplate<nixlGdsEngine>;
 extern "C" nixlBackendPlugin *
 createStaticGDSPlugin() {
     return GdsPlugin::initialize_plugin(
-        "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+        NIXL_PLUGIN_API_VERSION, "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return GdsPlugin::initialize_plugin(
-        "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+        NIXL_PLUGIN_API_VERSION, "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
