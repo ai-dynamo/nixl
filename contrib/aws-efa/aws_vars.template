@@ -14,6 +14,10 @@
                         "value": "/usr/local"
                     },
                     {
+                        "name": "UCX_VERSION",
+                        "value": "881a4199a93d290b0cc5a695eca53881f5dd5877"
+                    },
+                    {
                         "name": "NIXL_INSTALL_DIR",
                         "value": "/opt/nixl"
                     },
