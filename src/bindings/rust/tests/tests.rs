@@ -1276,15 +1276,7 @@ fn test_make_xfer_req_invalid_indices() -> Result<(), NixlError> {
 // Tests for query_xfer_backend API
 #[test]
 fn test_query_xfer_backend_success() -> Result<(), NixlError> {
-    let agent1 = Agent::new("agent1")?;
-    let agent2 = Agent::new("agent2")?;
-    
-    // Set up backends for both agents
-    let plugins = agent1.get_available_plugins()?;
-    let plugin_name = find_plugin(&plugins, "UCX")?;
-    let (_mems, params) = agent1.get_plugin_params(&plugin_name)?;
-    let backend1 = agent1.create_backend(&plugin_name, &params)?;
-    let backend2 = agent2.create_backend(&plugin_name, &params)?;
+    let (agent1, agent2) = setup_agent_pair("agent1", "agent2");
     
     // Exchange metadata
     let metadata = agent2.get_local_md()?;
