@@ -94,8 +94,8 @@ private:
 };
 
 class TestTransfer :
-    // Tuple fields are: backend_name, enable_progress_thread, num_workers
-    public testing::TestWithParam<std::tuple<std::string, bool, size_t>> {
+    // Tuple fields are: backend_name, enable_progress_thread, num_workers, num_threads
+    public testing::TestWithParam<std::tuple<std::string, bool, size_t, size_t>> {
 protected:
     nixlAgentConfig
     getConfig(int listen_port) {
@@ -119,6 +119,8 @@ protected:
 
         if (getBackendName() == "UCX" || getBackendName() == "UCX_MO") {
             params["num_workers"] = std::to_string(getNumWorkers());
+            params["num_threads"] = std::to_string(getNumThreads());
+            params["split_batch_size"] = "32";
         }
 
         return params;
@@ -161,6 +163,11 @@ protected:
     size_t
     getNumWorkers() const {
         return std::get<2>(GetParam());
+    }
+
+    size_t
+    getNumThreads() const {
+        return std::get<3>(GetParam());
     }
 
     nixl_opt_args_t
@@ -424,7 +431,11 @@ protected:
 private:
     static constexpr uint64_t DEV_ID = 0;
     static const std::string NOTIF_MSG;
-    static constexpr int retry_count{1000};
+    // TODO: with error handling enabled by default we get poor performance with UCX1.18.
+    // Before we upgrade to UCX1.19, we need to temporarily increase the retry count,
+    // in order to pass threadpool tests.
+    // TODO: revert this to 1000 once we upgrade to UCX1.19.
+    static constexpr int retry_count{10000};
     static constexpr std::chrono::milliseconds retry_timeout{1};
 
     std::vector<std::unique_ptr<nixlAgent>> agents;
@@ -517,10 +528,18 @@ TEST_P(TestTransfer, ListenerCommSize) {
     deregisterMem(getAgent(1), buffers, DRAM_SEG);
 }
 
-INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values(std::make_tuple("UCX", true, 2)));
+INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values(std::make_tuple("UCX", true, 2, 0)));
 INSTANTIATE_TEST_SUITE_P(ucx_no_pt,
                          TestTransfer,
-                         testing::Values(std::make_tuple("UCX", false, 2)));
-INSTANTIATE_TEST_SUITE_P(ucx_mo, TestTransfer, testing::Values(std::make_tuple("UCX_MO", true, 2)));
+                         testing::Values(std::make_tuple("UCX", false, 2, 0)));
+INSTANTIATE_TEST_SUITE_P(ucx_threadpool,
+                         TestTransfer,
+                         testing::Values(std::make_tuple("UCX", true, 6, 4)));
+INSTANTIATE_TEST_SUITE_P(ucx_threadpool_no_pt,
+                         TestTransfer,
+                         testing::Values(std::make_tuple("UCX", false, 6, 4)));
+INSTANTIATE_TEST_SUITE_P(ucx_mo,
+                         TestTransfer,
+                         testing::Values(std::make_tuple("UCX_MO", true, 2, 0)));
 
 } // namespace gtest
