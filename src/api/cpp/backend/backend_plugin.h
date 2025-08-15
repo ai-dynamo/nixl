@@ -20,6 +20,9 @@
 
 #include "backend/backend_engine.h"
 
+// Forward declarations for special engine types
+class nixlUcxEngine;
+
 // Define the plugin API version
 #define NIXL_PLUGIN_API_VERSION 1
 
@@ -56,7 +59,14 @@ public:
     [[nodiscard]] static nixlBackendEngine *
     create_engine_impl(const nixlBackendInitParams *init_params) {
         try {
-            return new EngineType(init_params);
+            if constexpr (std::is_same_v<EngineType, nixlUcxEngine>) {
+                // UCX engine uses a factory pattern
+                auto engine = EngineType::create(*init_params);
+                return engine.release();
+            } else {
+                // Other engines use direct constructor
+                return new EngineType(init_params);
+            }
         }
         catch (const std::exception &e) {
             return nullptr;
