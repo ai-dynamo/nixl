@@ -52,13 +52,14 @@ nixl_status_t ucx_status_to_nixl(ucs_status_t status)
     case UCS_INPROGRESS:
     case UCS_ERR_BUSY:
         return NIXL_IN_PROG;
-    case UCS_ERR_CANCELED:
     case UCS_ERR_NOT_CONNECTED:
     case UCS_ERR_CONNECTION_RESET:
     case UCS_ERR_ENDPOINT_TIMEOUT:
         return NIXL_ERR_REMOTE_DISCONNECT;
     case UCS_ERR_INVALID_PARAM:
         return NIXL_ERR_INVALID_PARAM;
+    case UCS_ERR_CANCELED:
+        return NIXL_ERR_CANCELED;
     default:
         NIXL_WARN << "Unexpected UCX error: " << ucs_status_string(status);
         return NIXL_ERR_BACKEND;
