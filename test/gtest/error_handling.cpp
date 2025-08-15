@@ -26,8 +26,11 @@ namespace nixl {
     constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
     constexpr const char* ucx_err_handling_mode_peer = "peer";
 
-    static nixlBackendH* createUcxBackend(nixlAgent& agent, const std::string& backend_name)
-    {
+    static nixlBackendH *
+    createUcxBackend(nixlAgent &agent,
+                     const std::string &backend_name,
+                     size_t num_workers,
+                     size_t num_threads) {
         std::vector<nixl_backend_t> plugins;
         nixl_status_t status = agent.getAvailPlugins(plugins);
         EXPECT_EQ(status, NIXL_SUCCESS);
@@ -41,6 +44,10 @@ namespace nixl {
 
         nixlBackendH* backend_handle = nullptr;
         EXPECT_EQ(ucx_err_handling_mode_peer, params[ucx_err_handling_mode_key]);
+        params["num_workers"] = std::to_string(num_workers);
+        params["num_threads"] = std::to_string(num_threads);
+        // If threadpool is configured always force split
+        params["split_batch_size"] = "0";
         status = agent.createBackend(*it, params, backend_handle);
         EXPECT_EQ(NIXL_SUCCESS, status);
         EXPECT_NE(nullptr, backend_handle);
@@ -57,7 +64,8 @@ namespace nixl {
     }
 } // namespace nixl
 
-class TestErrorHandling : public testing::TestWithParam<std::string> {
+// Tuple fields are: backend_name, num_workers, num_threads
+class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, size_t, size_t>> {
     class Agent {
         struct MemDesc {
             MemDesc() : m_dlist(DRAM_SEG), m_desc() {}
@@ -79,7 +87,12 @@ class TestErrorHandling : public testing::TestWithParam<std::string> {
         };
 
     public:
-        void init(const std::string& name, const std::string& backend_name);
+        void
+        init(const std::string &name,
+             const std::string &backend_name,
+             size_t num_workers,
+             size_t num_threads);
+
         void
         destroy();
         void fillRegList(nixl_xfer_dlist_t& dlist, nixlBasicDesc& desc) const;
@@ -126,13 +139,18 @@ private:
     Agent        m_Initiator;
     Agent        m_Target;
     std::string  m_backend_name;
+    size_t numWorkers_;
+    size_t numThreads_;
 };
 
-void TestErrorHandling::Agent::init(const std::string& name, const std::string& backend_name) {
-    m_name = name;
+void
+TestErrorHandling::Agent::init(const std::string &name,
+                               const std::string &backend_name,
+                               size_t num_workers,
+                               size_t num_threads) {
     m_priv    = std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
     // At the moment, only UCX backend is tested for error handling support.
-    m_backend = nixl::createUcxBackend(*m_priv, backend_name);
+    m_backend = nixl::createUcxBackend(*m_priv, backend_name, num_workers, num_threads);
     m_mem.init(m_backend);
     m_mem.fillData();
 
@@ -218,8 +236,10 @@ bool TestErrorHandling::Agent::dataCmp(const TestErrorHandling::Agent& other) co
     return m_mem.m_data == other.m_mem.m_data;
 }
 
-TestErrorHandling::TestErrorHandling() : m_backend_name(GetParam())
-{
+TestErrorHandling::TestErrorHandling()
+    : m_backend_name(std::get<0>(GetParam())),
+      numWorkers_(std::get<1>(GetParam())),
+      numThreads_(std::get<2>(GetParam())) {
     m_env.addVar("UCX_RC_TIMEOUT", "100us");
     m_env.addVar("UCX_RC_RETRY_COUNT", "4");
     m_env.addVar("UCX_UD_TIMEOUT", "3s");
@@ -230,8 +250,8 @@ template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
 void TestErrorHandling::testXfer() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    m_Initiator.init(initiator_name, m_backend_name);
-    m_Target.init(target_name, m_backend_name);
+    m_Initiator.init(initiator_name, m_backend_name, numWorkers_, numThreads_);
+    m_Target.init(target_name, m_backend_name, numWorkers_, numThreads_);
 
     exchangeMetaData();
 
@@ -251,7 +271,7 @@ void TestErrorHandling::testXfer() {
         if (isFailure<test_type>(i)) {
             EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, status);
             if (test_type == TestType::XFER_FAIL_RESTORE) {
-                m_Target.init(target_name, m_backend_name);
+                m_Target.init(target_name, m_backend_name, numWorkers_, numThreads_);
                 exchangeMetaData();
             }
         } else {
@@ -369,6 +389,12 @@ TEST_P(TestErrorHandling, XferFailRestore) {
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_READ>();
 }
 
-INSTANTIATE_TEST_SUITE_P(UCX, TestErrorHandling, testing::Values("UCX", "UCX_MO"));
+INSTANTIATE_TEST_SUITE_P(ucx, TestErrorHandling, testing::Values(std::make_tuple("UCX", 1, 0)));
+INSTANTIATE_TEST_SUITE_P(ucx_mo,
+                         TestErrorHandling,
+                         testing::Values(std::make_tuple("UCX_MO", 1, 0)));
+INSTANTIATE_TEST_SUITE_P(ucx_threadpool,
+                         TestErrorHandling,
+                         testing::Values(std::make_tuple("UCX", 2, 1)));
 
 } // namespace gtest

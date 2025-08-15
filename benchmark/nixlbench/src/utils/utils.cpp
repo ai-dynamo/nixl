@@ -79,6 +79,7 @@ DEFINE_int32 (
 DEFINE_int32(num_initiator_dev, 1, "Number of device in initiator process");
 DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
+DEFINE_uint64(progress_threads, 0, "Number of progress threads (default: 0)");
 DEFINE_bool(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
@@ -141,6 +142,7 @@ int xferBenchConfig::large_blk_iter_ftr = 16;
 int xferBenchConfig::warmup_iter = 0;
 int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
+size_t xferBenchConfig::progress_threads = 0;
 bool xferBenchConfig::enable_vmm = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
@@ -175,6 +177,7 @@ xferBenchConfig::loadFromFlags() {
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         backend = FLAGS_backend;
         enable_pt = FLAGS_enable_pt;
+        progress_threads = FLAGS_progress_threads;
         device_list = FLAGS_device_list;
         enable_vmm = FLAGS_enable_vmm;
 
@@ -371,6 +374,7 @@ xferBenchConfig::printConfig() {
         printOption("Backend (--backend=[UCX,UCX_MO,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])",
                     backend);
         printOption ("Enable pt (--enable_pt=[0,1])", std::to_string (enable_pt));
+        printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption ("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption ("Enable VMM (--enable_vmm=[0,1])", std::to_string (enable_vmm));
 
