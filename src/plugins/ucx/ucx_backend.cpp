@@ -972,7 +972,7 @@ nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
     size_t num_chunks = (batch_size + chunk_size - 1) / chunk_size;
 
     size_t worker_id = getWorkerId();
-    nixlUcxCompositeBackendH *comp_handle =
+    auto comp_handle =
         new nixlUcxCompositeBackendH(getWorker(worker_id).get(), worker_id, chunk_size, num_chunks);
     NIXL_TRACE << "created " << *comp_handle;
     handle = comp_handle;
@@ -987,13 +987,13 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
                                        nixlBackendReqH *handle,
                                        size_t start_idx,
                                        size_t end_idx) const {
-    nixlUcxBackendH *int_handle = (nixlUcxBackendH *)handle;
+    nixlUcxBackendH *int_handle = static_cast<nixlUcxBackendH *>(handle);
     if (!int_handle->isComposite()) {
         return nixlUcxEngine::sendXferRange(
             operation, local, remote, remote_agent, handle, start_idx, end_idx);
     }
 
-    nixlUcxCompositeBackendH *comp_handle = (nixlUcxCompositeBackendH *)int_handle;
+    nixlUcxCompositeBackendH *comp_handle = static_cast<nixlUcxCompositeBackendH *>(int_handle);
     comp_handle->startXfer();
     size_t chunk_size = comp_handle->getChunkSize();
     NIXL_TRACE << "sending " << *comp_handle;

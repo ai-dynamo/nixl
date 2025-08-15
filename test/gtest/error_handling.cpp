@@ -271,7 +271,7 @@ void TestErrorHandling::testXfer() {
         if (isFailure<test_type>(i)) {
             EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, status);
             if (test_type == TestType::XFER_FAIL_RESTORE) {
-                m_Target.init(target_name, m_backend_name);
+                m_Target.init(target_name, m_backend_name, numWorkers_, numThreads_);
                 exchangeMetaData();
             }
         } else {
