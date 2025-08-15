@@ -996,25 +996,23 @@ nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
 *****************************************/
 
 static nixl_status_t
-_retHelper(nixl_status_t ret,
-           nixlUcxBackendH *hndl,
-           nixlUcxReq &req,
-           ucx_connection_ptr_t conn = nullptr) {
+_retHelper(nixl_status_t ret, nixlUcxBackendH *hndl, nixlUcxReq &req, ucx_connection_ptr_t conn) {
     /* if transfer wasn't immediately completed */
     switch(ret) {
-        case NIXL_IN_PROG:
-            // TODO: this cast does not look safe
-            // We need to allocate a vector of nixlUcxIntReq and set nixlUcxReqt
-            hndl->append((nixlUcxIntReq *)req);
-            nixlUcxReqSetConnection(req, conn);
-        case NIXL_SUCCESS:
-            // Nothing to do
-            break;
-        default:
-            // Error. Release all previously initiated ops and exit:
-            hndl->release();
-            return NIXL_ERR_BACKEND;
+    case NIXL_IN_PROG:
+        // TODO: this cast does not look safe
+        // We need to allocate a vector of nixlUcxIntReq and set nixlUcxReqt
+        hndl->append((nixlUcxIntReq *)req);
+        nixlUcxReqSetConnection(req, conn);
+    case NIXL_SUCCESS:
+        // Nothing to do
+        break;
+    default:
+        // Error. Release all previously initiated ops and exit:
+        hndl->release();
+        return NIXL_ERR_BACKEND;
     }
+
     return NIXL_SUCCESS;
 }
 
@@ -1161,7 +1159,7 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
     ret = intHandle->status();
     if (opt_args && opt_args->hasNotif) {
         if (ret == NIXL_SUCCESS) {
-            ret = notifSendPriv(remote_agent, opt_args->notifMsg, req, workerId);
+            ret = notifSendPriv(remote_agent, opt_args->notifMsg, req, rmd->conn->getEp(workerId));
             if (_retHelper(ret, intHandle, req, rmd->conn)) {
                 return ret;
             }
@@ -1178,23 +1176,28 @@ nixl_status_t nixlUcxEngine::postXfer (const nixl_xfer_op_t &operation,
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
-    size_t workerId = intHandle->getWorkerId();
-
-    nixl_status_t status = intHandle->status();
     auto& notif = intHandle->notification();
-    if (status == NIXL_SUCCESS && notif.has_value()) {
-        nixlUcxReq req;
-        status = notifSendPriv(notif->agent, notif->payload, req, workerId);
-        notif.reset();
-        // TODO: conn lookup
-        if (_retHelper(status, intHandle, req, nullptr)) {
-            return status;
-        }
+    nixl_status_t handle_status = intHandle->status();
 
-        status = intHandle->status();
+    if ((handle_status != NIXL_SUCCESS) || !notif.has_value()) {
+        return handle_status;
     }
 
-    return status;
+    ucx_connection_ptr_t conn = getConnection(notif->agent);
+    if (!conn) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    nixlUcxReq req;
+    nixl_status_t status =
+        notifSendPriv(notif->agent, notif->payload, req, conn->getEp(intHandle->getWorkerId()));
+    notif.reset();
+    status = _retHelper(status, intHandle, req, conn);
+    if (status != NIXL_SUCCESS) {
+        return handle_status;
+    }
+
+    return intHandle->status();
 }
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
@@ -1221,35 +1224,32 @@ int nixlUcxEngine::progress() {
 *****************************************/
 
 //agent will provide cached msg
-nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
-                                           const std::string &msg,
-                                           nixlUcxReq &req,
-                                           size_t worker_id) const
-{
+nixl_status_t
+nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
+                             const std::string &msg,
+                             nixlUcxReq &req,
+                             const std::unique_ptr<nixlUcxEp> &ep) const {
     nixlSerDes ser_des;
     nixl_status_t ret;
-
-    auto search = remoteConnMap.find(remote_agent);
-
-    if(search == remoteConnMap.end()) {
-        //TODO: err: remote connection not found
-        return NIXL_ERR_NOT_FOUND;
-    }
 
     ser_des.addStr("name", localAgent);
     ser_des.addStr("msg", msg);
     // TODO: replace with mpool for performance
 
     auto buffer = std::make_unique<std::string>(ser_des.exportStr());
-    ret = search->second->getEp(worker_id)->sendAm(NOTIF_STR, NULL, 0,
-                                                   (void*)buffer->data(), buffer->size(),
-                                                   UCP_AM_SEND_FLAG_EAGER, req);
-
+    ret = ep->sendAm(
+        NOTIF_STR, NULL, 0, (void *)buffer->data(), buffer->size(), UCP_AM_SEND_FLAG_EAGER, req);
     if (ret == NIXL_IN_PROG) {
         nixlUcxIntReq* nReq = (nixlUcxIntReq*)req;
         nReq->amBuffer = std::move(buffer);
     }
     return ret;
+}
+
+ucx_connection_ptr_t
+nixlUcxEngine::getConnection(const std::string &remote_agent) const {
+    auto search = remoteConnMap.find(remote_agent);
+    return (search != remoteConnMap.end()) ? search->second : nullptr;
 }
 
 void
@@ -1301,7 +1301,7 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
     nixlUcxReq req;
     size_t wid = getWorkerId();
 
-    ret = notifSendPriv(remote_agent, msg, req, wid);
+    ret = notifSendPriv(remote_agent, msg, req, getConnection(remote_agent)->getEp(wid));
 
     switch(ret) {
     case NIXL_IN_PROG:
