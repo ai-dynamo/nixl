@@ -79,6 +79,16 @@
                 if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
                   currentBuild.result = build.result
                   error("Test CI failed")
+                ]
+            }}, wheel: {{
+                def build = build job: 'nixl-ci-build-wheel', parameters: [
+                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
+                    string(name: 'githubData', value: VARIABLE_FROM_POST)
+                ], propagate: false
+                currentBuild.description += "<br>Job: <a href='${{build.absoluteUrl}}'>nixl-ci-build-wheel</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
+                if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
+                  currentBuild.result = build.result
+                  error("Build Wheel CI failed")
                 }}
             }},
             failFast: false  // Continue even if some parallel jobs fail
@@ -144,7 +154,7 @@
                 shallow-clone: false
                 do-not-fetch-tags: false
                 # Configure refspec to handle branches, PRs, and tags
-                refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+                refspec: "{jjb_gh_refspec}"
                 browser: githubweb
                 browser-url: "{jjb_git}"
                 # Handle git submodules
@@ -207,7 +217,7 @@
                 shallow-clone: false
                 do-not-fetch-tags: false
                 # Configure refspec to handle branches, PRs, and tags
-                refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+                refspec: "{jjb_gh_refspec}"
                 browser: githubweb
                 browser-url: "{jjb_git}"
                 # Handle git submodules
@@ -306,7 +316,7 @@
             branches: ['$NIXL_VERSION']
             shallow-clone: false
             do-not-fetch-tags: false
-            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+            refspec: "{jjb_gh_refspec}"
             browser: githubweb
             browser-url: "{jjb_git}"
             submodule:
@@ -315,6 +325,66 @@
               tracking: true
               parent-credentials: true
       script-path: "{jjb_jenkinsfile}"
+
+# Template for the main build wheel job that performs the actual build wheel process
+- job-template:
+    name: "{jjb_proj}-build-wheel"      # Will be expanded to 'nixl-ci-build-wheel'
+    project-type: pipeline
+    folder: "{jjb_folder}"
+    disabled: false
+    properties:
+        # Similar properties as dispatcher job
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 50
+            num-to-keep: 20
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-build-wheel
+              conf_file=.ci/jenkins/lib/build-wheel-matrix.yaml
+    description: Do NOT edit this job through the Web GUI !
+    concurrent: true
+    sandbox: true
+    # Build job parameters
+    parameters:
+        - string:
+            name: "sha1"
+            default: "{jjb_branch}"    # Default to 'main' branch
+            description: "Commit to be checked, usually set by PR"
+        - string:
+            name: "githubData"
+            default: ""
+            description: "Variables from post"
+        - bool:
+            name: "build_dockers"
+            default: false
+            description: "Force rebuild docker containers"
+        - string:
+            name: "DEBUG"
+            default: 0
+            description: "Enable debug prints and traces, valid values are 0-9"
+    # SCM configuration for the build job
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                credentials-id: ''
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                # Configure refspec to handle branches, PRs, and tags
+                refspec: "{jjb_gh_refspec}"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                # Handle git submodules
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
@@ -326,8 +396,10 @@
     jjb_folder: 'NIXL'
     jjb_branch: 'main'            # Default branch
     jjb_gh_url: 'https://github.com/ai-dynamo/nixl'  # GitHub web URL
+    jjb_gh_refspec: '+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*'
     jobs:
         - "{jjb_proj}-dispatcher"  # Create dispatcher job
         - "{jjb_proj}-build"       # Create build job
         - "{jjb_proj}-build-container"  # Create container builder job
         - "{jjb_proj}-test"        # Create test job
+        - "{jjb_proj}-build-wheel"  # Create build wheel job

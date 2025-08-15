@@ -13,15 +13,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# =============================================================================
+# Multi-Stage Docker Build for NixL
+# =============================================================================
+#
+# This Dockerfile uses a multi-stage build approach:
+#
+# STAGE 1 (base): Build environment with all dependencies
+#   - Used by CI pipeline with --target base
+#   - Contains all system packages, libraries, and build tools
+#   - Does NOT build NixL or generate wheels
+#
+# STAGE 2 (default): Complete environment with NixL build and wheels
+#   - Used by users building the full image
+#   - Inherits from base stage
+#   - Builds NixL from source and generates wheels for all Python versions
+#
+# Usage:
+#   CI Pipeline: docker build --target base -f contrib/Dockerfile.manylinux .
+#   User Build:  docker build -f contrib/Dockerfile.manylinux .
+#
+# =============================================================================
 
+# Stage 1: Base environment with all dependencies (used by CI)
+# This stage provides a clean build environment with all required dependencies
+# but does not build NixL or generate wheels
 ARG BASE_IMAGE
 ARG BASE_IMAGE_TAG
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} as base
 
+# Build arguments for the base stage
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG ARCH="x86_64"
 ARG UCX_REF="v1.19.x"
+ARG NPROC=8
 
+# Install system packages and development tools
+# These packages provide the foundation for building NixL and its dependencies
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
     dnf config-manager --set-enabled powertools && \
@@ -56,7 +84,11 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     wget \
     zlib
 
-# Build OpenSSL 3.x
+# =============================================================================
+# Build and install OpenSSL 3.x from source
+# =============================================================================
+# OpenSSL 3.x is required for modern security features and compatibility
+# We build it from source to ensure consistent behavior across environments
 RUN yum install -y perl-IPC-Cmd perl-Test-Simple perl-Data-Dumper
 RUN cd /tmp && \
     wget -q https://www.openssl.org/source/openssl-3.0.16.tar.gz && \
@@ -64,22 +96,31 @@ RUN cd /tmp && \
     cd openssl-3.0.16 && \
     ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3 \
         shared zlib linux-$ARCH && \
-    make -j$(nproc) && \
+    make -j${NPROC} && \
     make install_sw && \
     echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
     echo "/usr/local/openssl3/lib" >> /etc/ld.so.conf.d/openssl3.conf && \
     ldconfig && \
     rm -rf /tmp/openssl-3.0.16*
 
-# Set environment variables to use the new OpenSSL
+# =============================================================================
+# Configure environment to use the custom OpenSSL 3.x installation
+# =============================================================================
+# These environment variables ensure that all subsequent builds use our custom
+# OpenSSL installation instead of the system version
 ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:/usr/local/openssl3/lib/pkgconfig:$PKG_CONFIG_PATH"
 ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:/usr/local/openssl3/lib:$LD_LIBRARY_PATH"
 ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
 ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64:/usr/local/openssl3/lib"
 ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
 
+# =============================================================================
+# Build and install gRPC and related networking libraries
+# =============================================================================
+# gRPC is required for high-performance networking in NixL
 WORKDIR /workspace
 
+# Build gRPC v1.73.0 with SSL support and shared libraries
 RUN git clone --recurse-submodules -b v1.73.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
     mkdir -p cmake/build && \
@@ -91,11 +132,12 @@ RUN git clone --recurse-submodules -b v1.73.0 --depth 1 --shallow-submodules htt
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr/local \
     -DgRPC_SSL_PROVIDER=package ../.. && \
-    make -j$(nproc) && \
+    make -j${NPROC} && \
     make install
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
 
+# Build etcd-cpp-apiv3 for distributed coordination
 RUN cd /workspace && \
     git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
@@ -103,8 +145,13 @@ RUN cd /workspace && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install
 
+# =============================================================================
+# Install UV package manager and Rust toolchain
+# =============================================================================
+# UV is used for Python package management and building wheels
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# Set up Rust environment for native dependencies
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH \
@@ -123,18 +170,23 @@ RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.
     rm rustup-init && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
+# Update library path for Rust-built libraries
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
+# Set CUDA path for GPU support
 ENV CUDA_PATH=/usr/local/cuda
 
-WORKDIR /workspace/nixl
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    uv pip install --upgrade meson pybind11 patchelf
+# =============================================================================
+# Build and install UCX (Unified Communication X) and gdrcopy
+# =============================================================================
+# UCX provides high-performance networking primitives
+# gdrcopy enables GPU memory access from CPU
 
+# Remove any existing UCX installations to avoid conflicts
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
+# Build and install gdrcopy for GPU memory access
 RUN cd /workspace && \
     git clone --depth 1 https://github.com/NVIDIA/gdrcopy.git && \
     cd gdrcopy/packages && \
@@ -143,6 +195,8 @@ RUN cd /workspace && \
     rpm -Uvh gdrcopy-2.5-1.el8.$ARCH.rpm && \
     rpm -Uvh gdrcopy-devel-2.5-1.el8.noarch.rpm
 
+# Build and install UCX with CUDA, verbs, and gdrcopy support
+# This provides the networking primitives needed for high-performance communication
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && 			     \
@@ -164,8 +218,37 @@ RUN cd /usr/local/src && \
      make -j install-strip &&        \
      ldconfig
 
+# =============================================================================
+# Stage 2: Default stage with NixL build and wheel generation
+# =============================================================================
+# This stage is used by users who want a complete environment with NixL built
+# and wheels generated. It inherits all dependencies from the base stage.
+#
+# Usage: docker build -f contrib/Dockerfile.manylinux .
+# (No --target flag needed, this is the default stage)
+FROM base
+
+# Build arguments for the default stage
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG ARCH="x86_64"
+
+# Copy NixL source code into the container
 COPY . /workspace/nixl
 
+# Set working directory to NixL source
+WORKDIR /workspace/nixl
+
+# =============================================================================
+# Set up Python virtual environment and build tools
+# =============================================================================
+ENV VIRTUAL_ENV=/workspace/nixl/.venv
+RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
+    uv pip install --upgrade meson pybind11 patchelf
+
+# =============================================================================
+# Build NixL from source using meson build system
+# =============================================================================
+# This step compiles NixL with CUDA support and installs it to /usr/local/nixl
 RUN rm -rf build && \
     mkdir build && \
     uv run meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
@@ -175,18 +258,31 @@ RUN rm -rf build && \
     ninja && \
     ninja install
 
+# =============================================================================
+# Configure library paths and system configuration for NixL
+# =============================================================================
+# Set up environment variables for NixL libraries and plugins
 ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/:$LD_LIBRARY_PATH
 ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/plugins:$LD_LIBRARY_PATH
 ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib64/plugins
 
+# Configure system to find NixL libraries at runtime
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-# Create the wheel
-# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
+# =============================================================================
+# Generate Python wheels for distribution
+# =============================================================================
+# This section creates Python wheels for all supported Python versions
+# The wheels include all necessary native libraries and plugins
+#
+# Note: No need to specifically add path to libcuda.so here, meson finds
+# the stubs and links them automatically during the build process
 ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
+# Build wheels for each Python version
+# This creates distributable wheels that can be installed on compatible systems
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         ./contrib/build-wheel.sh \
@@ -197,4 +293,6 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --output-dir dist ; \
     done
 
+# Install the default Python version wheel for testing
+# This ensures the wheel can be imported and used correctly
 RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl

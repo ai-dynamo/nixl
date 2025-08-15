@@ -1,0 +1,195 @@
+# Build Matrix Configuration for NixL CI Pipeline
+#
+# This file defines the build matrix configuration for the NixL CI pipeline in Jenkins.
+# It specifies the build environment, resources, and test matrix for continuous integration.
+#
+# =============================================================================
+# Multi-Stage Docker Build Integration
+# =============================================================================
+# This CI pipeline uses the multi-stage Dockerfile.manylinux with --target base
+# to get a clean build environment without pre-built wheels. This allows the CI
+# to build wheels for specific Python versions and architectures in each matrix
+# combination, rather than having wheels baked into the Docker image.
+#
+# CI Usage: --target base (build environment only)
+# User Usage: Full image (includes NixL build and wheel generation)
+#
+# =============================================================================
+# Key Components:
+# =============================================================================
+# - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
+# - Docker Images: Specifies the container images used for different build stages
+#   - Uses contrib/Dockerfile.manylinux with --target base
+#   - Base image: harbor.mellanox.com/ucx/$arch/cuda:12.8-devel-manylinux--25.03
+# - Matrix Axes: Defines build variations (Python versions and architectures)
+# - Build Steps: Sequential steps for building, testing, and wheel generation
+#
+# =============================================================================
+# When Modified:
+# =============================================================================
+# - Adding/removing Docker images: Affects available build environments
+# - Modifying matrix axes: Changes build variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts build performance and resource allocation
+# - Adding/removing steps: Changes the build pipeline sequence
+# - Changing build_args: Affects Docker build behavior and target stage
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+---
+# =============================================================================
+# Job Configuration
+# =============================================================================
+job: nixl-ci-build-wheel
+
+# Fail job if one of the steps fails or continue
+# Set to false to allow matrix builds to continue even if some combinations fail
+failFast: false
+
+# Build timeout - 4 hours for complex multi-architecture builds
+timeout_minutes: 240
+
+# =============================================================================
+# Container Registry Configuration
+# =============================================================================
+# Harbor registry for storing build artifacts and base images
+registry_host: harbor.mellanox.com
+registry_path: /swx-infra/nixl
+registry_auth: swx-infra_harbor_credentials
+
+# =============================================================================
+# Kubernetes Resource Configuration
+# =============================================================================
+# High-performance build environment with substantial resources for complex builds
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  # 10GB memory and 10 CPU cores for parallel compilation and large builds
+  limits: '{memory: 10Gi, cpu: 10000m}'
+  requests: '{memory: 10Gi, cpu: 10000m}'
+
+# =============================================================================
+# Docker Build Configuration
+# =============================================================================
+# Multi-stage Docker build using only the 'base' stage for CI
+# This provides a clean build environment without pre-built wheels
+runs_on_dockers:
+  - {
+      # Use the multi-stage Dockerfile with base stage only
+      file: 'contrib/Dockerfile.manylinux',
+      # url: 'harbor.mellanox.com/swx-infra/nixl/ci/x86_64/manylinux_2_28_base:20250701',
+      name: 'manylinux_2_28',
+      uri: 'ci/$arch/$name_base',
+      tag: '20250701',
+      # Key build arguments:
+      # --target base: Use only the base stage (no wheel generation)
+      # --no-cache: Ensure fresh builds for each matrix combination
+      # NPROC=10: Parallel compilation with 10 processes
+      # ARCH=$arch: Architecture-specific build (x86_64 or aarch64)
+      # BASE_IMAGE: UCX-enabled CUDA base image for each architecture
+      build_args: '--no-cache --target base --build-arg NPROC=$NPROC --build-arg ARCH=$arch --build-arg BASE_IMAGE=harbor.mellanox.com/ucx/$arch/cuda --build-arg BASE_IMAGE_TAG=12.8-devel-manylinux--25.03'
+    }
+
+# =============================================================================
+# Build Matrix Configuration
+# =============================================================================
+# Defines the combinations of Python versions and architectures to build
+# Each combination runs in parallel, creating 8 total build jobs
+matrix:
+  axes:
+    # Python versions supported by NixL
+    # Each version gets its own wheel with appropriate ABI tags
+    python_version:
+      - "3.9"
+      - "3.10"
+      - "3.11"
+      - "3.12"
+    # Target architectures for wheel distribution
+    # x86_64: Intel/AMD 64-bit processors
+    # aarch64: ARM 64-bit processors (Apple Silicon, ARM servers)
+    arch:
+      - x86_64
+      - aarch64
+
+# =============================================================================
+# Environment and Build Steps
+# =============================================================================
+# Global environment variables for the build process
+env:
+  VIRTUAL_ENV: $WORKSPACE/.venv
+  NPROC: 10
+
+# =============================================================================
+# Step 1: Environment Preparation
+# =============================================================================
+# Set up Python virtual environment and install build tools
+# This step runs sequentially (not in parallel) to avoid conflicts
+steps:
+  - name: Prepare
+    parallel: false
+    run: |
+      # Create Python virtual environment for the specific Python version
+      uv venv $VIRTUAL_ENV --python $python_version
+      # Install essential build tools for native compilation
+      uv pip install --upgrade meson pybind11 patchelf
+
+  # =============================================================================
+  # Step 2: NixL Native Library Build
+  # =============================================================================
+  # Compile NixL C++ libraries using meson build system
+  # This step builds the native components that will be bundled into Python wheels
+  - name: Build Nixl
+    parallel: false
+    run: |
+      # Create build directory for meson
+      mkdir build
+      # Configure build with CUDA support and release optimization
+      uv run meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
+        -Dcudapath_lib="/usr/local/cuda/lib64" -Dcudapath_inc="/usr/local/cuda/include"
+      # Compile native libraries
+      ninja -C build -j${NPROC}
+      # Install libraries to system paths
+      ninja -C build -j${NPROC} install
+      # Configure system to find NixL libraries at runtime
+      echo "/usr/local/nixl/lib/$arch-linux-gnu" > /etc/ld.so.conf.d/nixl.conf
+      echo "/usr/local/nixl/lib/$arch-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf
+      # Update shared library cache
+      ldconfig
+
+  # =============================================================================
+  # Step 3: Python Wheel Generation
+  # =============================================================================
+  # Create distributable Python wheels that bundle native libraries
+  # This step uses the build-wheel.sh script to package everything into wheels
+  - name: Build Wheel
+    parallel: false
+    run: |
+      # Set library paths for wheel building process
+      export LD_LIBRARY_PATH=/usr/local/nixl/lib64/:/usr/local/nixl/lib64/plugins:$LD_LIBRARY_PATH
+      export NIXL_PLUGIN_DIR=/usr/local/nixl/lib64/plugins
+      # Build wheel for specific Python version and architecture
+      # The wheel will include all native libraries and plugins
+      ./contrib/build-wheel.sh \
+        --python-version $python_version \
+        --platform "${name}_${arch}" \
+        --ucx-plugins-dir /usr/lib64/ucx \
+        --nixl-plugins-dir $NIXL_PLUGIN_DIR \
+        --output-dir dist
+
+  # =============================================================================
+  # Step 4: Wheel Installation Test
+  # =============================================================================
+  # Verify that the generated wheel can be installed and imported correctly
+  # This ensures the wheel is properly packaged and compatible
+  - name: Test Wheel Install
+    parallel: false
+    run: |
+      # Install the wheel for the specific Python version
+      # This tests that all dependencies are properly bundled
+      uv pip install dist/nixl-*cp"${python_version//./}"*.whl
+
+# =============================================================================
+# Task Naming Convention
+# =============================================================================
+# Unique identifier for each matrix combination
+# Format: {docker_name}/{architecture}/{python_version}/{matrix_index}
+taskName: '${name}/${arch}/${python_version}/${axis_index}'
