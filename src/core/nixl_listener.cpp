@@ -27,6 +27,7 @@
 #include <future>
 #endif // HAVE_ETCD
 #include <absl/strings/str_format.h>
+#include <poll.h>
 
 const std::string default_metadata_label = "metadata";
 
@@ -59,22 +60,26 @@ int connectToIP(std::string ip_addr, int port) {
         return -1;
     }
 
-    // Use select to wait for connection with timeout
-    fd_set write_fds;
-    FD_ZERO(&write_fds);
-    FD_SET(ret_fd, &write_fds);
+    // Use poll to wait for connection with timeout
+    struct pollfd pfd;
+    pfd.fd = ret_fd;
+    pfd.events = POLLOUT;
+    pfd.revents = 0;
 
-    struct timeval tv;
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
-
-    ret = select(ret_fd + 1, NULL, &write_fds, NULL, &tv);
+    ret = poll(&pfd, 1, 1000); // 1000ms timeout
     if (ret <= 0) {
         if (ret < 0) {
-            NIXL_PERROR << "select failed for ip_addr: " << ip_addr << " and port: " << port;
+            NIXL_PERROR << "poll failed for ip_addr: " << ip_addr << " and port: " << port;
         } else {
-            NIXL_ERROR << "select timed out for ip_addr: " << ip_addr << " and port: " << port;
+            NIXL_ERROR << "poll timed out for ip_addr: " << ip_addr << " and port: " << port;
         }
+        close(ret_fd);
+        return -1;
+    }
+
+    if (!(pfd.revents & POLLOUT)) {
+        NIXL_ERROR << "poll returned but socket not ready for write for ip_addr: " << ip_addr
+                   << " and port: " << port;
         close(ret_fd);
         return -1;
     }
@@ -447,7 +452,12 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                 socklen_t client_addrlen = sizeof(client_address);
                 if (getpeername(new_fd, (sockaddr*)&client_address, &client_addrlen) == 0) {
                     char client_ip[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
+                    if (inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN) ==
+                        nullptr) {
+                        NIXL_PERROR << "inet_ntop failed for client address";
+                        close(new_fd);
+                        throw std::runtime_error("inet_ntop failed for client address");
+                    }
                     accepted_client.first = std::string(client_ip);
                     accepted_client.second = client_address.sin_port;
                 } else {
@@ -651,4 +661,32 @@ void nixlAgentData::getCommWork(std::vector<nixl_comm_req_t> &req_list){
     std::lock_guard<std::mutex> lock(commLock);
     req_list = std::move(commQueue);
     commQueue.clear();
+}
+
+nixl_status_t
+nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
+    if (remote_name == name) {
+        NIXL_ERROR << "Agent " << name << " cannot invalidate itself";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    nixl_status_t ret = NIXL_ERR_NOT_FOUND;
+    auto it_section = remoteSections.find(remote_name);
+    if (it_section != remoteSections.end()) {
+        delete it_section->second;
+        remoteSections.erase(it_section);
+        ret = NIXL_SUCCESS;
+    }
+
+    auto it_backends = remoteBackends.find(remote_name);
+    if (it_backends != remoteBackends.end()) {
+        for (auto &it : it_backends->second) {
+            backendEngines[it.first]->disconnect(remote_name);
+        }
+
+        remoteBackends.erase(it_backends);
+        ret = NIXL_SUCCESS;
+    }
+
+    return ret;
 }
