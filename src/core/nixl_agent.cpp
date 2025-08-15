@@ -894,6 +894,12 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
             delete req_hndl;
             return NIXL_ERR_REPOST_ACTIVE;
         }
+
+        if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
+            data->invalidateRemoteData(req_hndl->remoteAgent);
+            delete req_hndl;
+            return NIXL_ERR_REMOTE_DISCONNECT;
+        }
     }
 
     // Carrying over notification from xfer handle creation time
@@ -927,6 +933,12 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                       req_hndl->remoteAgent,
                                       req_hndl->backendHandle,
                                       &opt_args);
+    if (ret == NIXL_ERR_REMOTE_DISCONNECT) {
+        data->invalidateRemoteData(req_hndl->remoteAgent);
+        delete req_hndl;
+        return NIXL_ERR_REMOTE_DISCONNECT;
+    }
+
     req_hndl->status = ret;
 
     if (data->telemetryEnabled) {
@@ -951,8 +963,13 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
             delete req_hndl;
             return NIXL_ERR_NOT_FOUND;
         }
-        req_hndl->status = req_hndl->engine->checkXfer(
-                                     req_hndl->backendHandle);
+
+        req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
+        if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
+            data->invalidateRemoteData(req_hndl->remoteAgent);
+            delete req_hndl;
+            return NIXL_ERR_REMOTE_DISCONNECT;
+        }
     }
 
     if (data->telemetryEnabled && req_hndl->status == NIXL_SUCCESS)
@@ -1246,7 +1263,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     size_t conn_cnt;
     ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if(ret) {
+    if (ret != NIXL_SUCCESS) {
         NIXL_ERROR << "Error getting connection count: " << nixlEnumStrings::statusStr(ret);
         return ret;
     }

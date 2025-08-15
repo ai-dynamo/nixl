@@ -103,6 +103,8 @@ class nixlAgentData {
                      const nixl_blob_t &conn_info);
         nixl_status_t
         loadRemoteSections(const std::string &remote_name, nixlSerDes &sd);
+        nixl_status_t
+        invalidateRemoteData(const std::string &remote_name);
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
