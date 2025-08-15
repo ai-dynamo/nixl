@@ -35,7 +35,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
         nixlBackendH* backend_engine;
         nixl_mem_t seg_type;
         std::vector<int> remote_fds;
-        std::vector<std::vector<xferBenchIOV>> remote_iovs;
+        std::vector<std::vector<xferBenchIOV>> storage_iovs;
+
     public:
         xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices);
         ~xferBenchNixlWorker();  // Custom destructor to clean up resources
@@ -67,7 +68,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
         void cleanupBasicDescVram(xferBenchIOV &basic_desc);
 #endif
-        std::optional<xferBenchIOV> initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id);
+        std::optional<xferBenchIOV>
+        initBasicDescFile(size_t buffer_size, int fd);
         void cleanupBasicDescFile(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
         initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);

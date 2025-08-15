@@ -37,7 +37,6 @@
 #define ROUND_UP(value, granularity) \
     ((((value) + (granularity) - 1) / (granularity)) * (granularity))
 
-static uintptr_t gds_running_ptr = 0x0;
 static std::vector<std::vector<xferBenchIOV>> gds_remote_iovs;
 static std::vector<std::vector<xferBenchIOV>> storage_remote_iovs;
 
@@ -445,9 +444,8 @@ createFileFds(std::string name) {
 }
 
 std::optional<xferBenchIOV>
-xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id) {
-    auto ret =
-        std::optional<xferBenchIOV>(std::in_place, (uintptr_t)gds_running_ptr, buffer_size, fd);
+xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd) {
+    auto ret = std::optional<xferBenchIOV>(std::in_place, (uintptr_t)0, buffer_size, fd);
     // Fill up with data
     void *buf;
     AllocationType type = AllocationType::MALLOC;
@@ -463,14 +461,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_i
 
     // File is always initialized with XFERBENCH_TARGET_BUFFER_ELEMENT
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
-    if (xferBenchConfig::storage_enable_direct) {
-        gds_running_ptr =
-            ((gds_running_ptr + xferBenchConfig::page_size - 1) / xferBenchConfig::page_size) *
-            xferBenchConfig::page_size;
-    } else {
-        gds_running_ptr += (buffer_size * mem_dev_id);
-    }
-    int rc = pwrite(fd, buf, buffer_size, gds_running_ptr);
+    int rc = pwrite(fd, buf, buffer_size, 0);
     if (rc < 0) {
         std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
                   << std::endl;
@@ -573,7 +564,7 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
             nixl_reg_dlist_t desc_list(OBJ_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_iovs.push_back(iov_list);
+            storage_iovs.push_back(iov_list);
         }
     } else if (xferBenchConfig::isStorageBackend()) {
 
@@ -582,29 +573,36 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
             std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
             exit(EXIT_FAILURE);
         }
-        for (int list_idx = 0; list_idx < num_lists; list_idx++) {
-            std::vector<xferBenchIOV> iov_list;
-            for (i = 0; i < num_devices; i++) {
-                std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(buffer_size, remote_fds[0], i);
-                if (basic_desc) {
-                    iov_list.push_back(basic_desc.value());
-                }
+
+        size_t num_files = xferBenchConfig::num_files;
+        size_t file_size = xferBenchConfig::total_buffer_size / num_files;
+        std::vector<xferBenchIOV> iov_list;
+        for (size_t f = 0; f < num_files; f++) {
+            std::optional<xferBenchIOV> basic_desc;
+            basic_desc = initBasicDescFile(file_size, remote_fds[f]);
+            if (basic_desc) {
+                iov_list.push_back(basic_desc.value());
             }
-            nixl_reg_dlist_t desc_list(FILE_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_iovs.push_back(iov_list);
         }
-        // Reset the running pointer to 0
-        gds_running_ptr = 0x0;
+        nixl_reg_dlist_t desc_list(FILE_SEG);
+        iovListToNixlRegDlist(iov_list, desc_list);
+        CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+
+        storage_iovs.push_back(iov_list);
+        num_devices = 1;
+    } else {
+        if (isInitiator()) {
+            num_devices = xferBenchConfig::num_initiator_dev;
+        } else if (isTarget()) {
+            num_devices = xferBenchConfig::num_target_dev;
+        }
     }
+    buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_lists);
 
     for (int list_idx = 0; list_idx < num_lists; list_idx++) {
         std::vector<xferBenchIOV> iov_list;
         for (i = 0; i < num_devices; i++) {
             std::optional<xferBenchIOV> basic_desc;
-
             switch (seg_type) {
             case DRAM_SEG:
                 basic_desc = initBasicDescDram(buffer_size, i);
@@ -620,8 +618,8 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
             }
 
             if (basic_desc) {
-                if (!remote_iovs.empty()) {
-                    basic_desc.value().metaInfo = remote_iovs[list_idx][i].metaInfo;
+                if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+                    basic_desc.value().metaInfo = storage_iovs[list_idx][i].metaInfo;
                 }
                 iov_list.push_back(basic_desc.value());
             }
@@ -664,7 +662,7 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
     }
 
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
-        for (auto &iov_list : remote_iovs) {
+        for (auto &iov_list : storage_iovs) {
             for (auto &iov : iov_list) {
                 cleanupBasicDescObj(iov);
             }
@@ -673,7 +671,7 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
     } else if (xferBenchConfig::isStorageBackend()) {
-        for (auto &iov_list : remote_iovs) {
+        for (auto &iov_list : storage_iovs) {
             for (auto &iov : iov_list) {
                 cleanupBasicDescFile(iov);
             }
@@ -742,21 +740,65 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
+    // Special case for Storage
     if (xferBenchConfig::isStorageBackend()) {
-        for (auto &iov_list : local_iovs) {
-            std::vector<xferBenchIOV> remote_iov_list;
-            for (auto &iov : iov_list) {
-                std::optional<xferBenchIOV> basic_desc;
-                if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
+        if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
+            for (auto &iov_list : local_iovs) {
+                std::vector<xferBenchIOV> remote_iov_list;
+                for (auto &iov : iov_list) {
+                    std::optional<xferBenchIOV> basic_desc;
                     basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
-                } else {
-                    basic_desc = initBasicDescFile(iov.len, remote_fds[0], iov.devId);
+                    if (basic_desc) {
+                        remote_iov_list.push_back(basic_desc.value());
+                    }
                 }
-                if (basic_desc) {
-                    remote_iov_list.push_back(basic_desc.value());
+                res.push_back(remote_iov_list);
+            }
+        } else {
+            size_t num_files = xferBenchConfig::num_files;
+            size_t batch_size;
+
+            if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
+                size_t num_list = local_iovs.size();
+                size_t unit_size = xferBenchConfig::total_buffer_size / (num_list * num_files);
+                size_t base_offset = 0;
+                for (auto &iov_list : local_iovs) {
+                    std::vector<xferBenchIOV> remote_iov_list;
+                    batch_size = iov_list.size() / num_files;
+                    for (size_t i = 0; i < num_files; i++) {
+                        size_t batch_offset = 0;
+                        for (size_t j = 0; j < batch_size; j++) {
+                            size_t iov_idx = i * batch_size + j;
+
+                            remote_iov_list.emplace_back((uintptr_t)(base_offset + batch_offset),
+                                                         iov_list[iov_idx].len,
+                                                         remote_fds[i]);
+                            batch_offset += iov_list[iov_idx].len;
+                        }
+                    }
+                    res.push_back(remote_iov_list);
+                    base_offset += unit_size;
+                }
+            } else {
+                size_t files_per_list = num_files / local_iovs.size();
+                size_t i = 0;
+                for (auto &iov_list : local_iovs) {
+                    std::vector<xferBenchIOV> remote_iov_list;
+                    batch_size = iov_list.size() / files_per_list;
+                    for (size_t j = 0; j < files_per_list; j++) {
+                        size_t batch_offset = 0;
+                        for (size_t k = 0; k < batch_size; k++) {
+                            size_t iov_idx = j * batch_size + k;
+                            remote_iov_list.emplace_back((uintptr_t)batch_offset,
+                                                         iov_list[iov_idx].len,
+                                                         remote_fds[j + i * files_per_list]);
+                            batch_offset += iov_list[iov_idx].len;
+                        }
+                    }
+                    res.push_back(remote_iov_list);
+                    i++;
                 }
             }
-            res.push_back(remote_iov_list);
         }
     } else {
         for (const auto &local_iov : local_iovs) {
