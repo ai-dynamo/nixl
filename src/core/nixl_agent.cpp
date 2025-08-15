@@ -61,6 +61,8 @@ std::string nixlEnumStrings::statusStr (const nixl_status_t &status) {
         case NIXL_ERR_UNKNOWN:           return "NIXL_ERR_UNKNOWN";
         case NIXL_ERR_NOT_SUPPORTED:     return "NIXL_ERR_NOT_SUPPORTED";
         case NIXL_ERR_REMOTE_DISCONNECT: return "NIXL_ERR_REMOTE_DISCONNECT";
+        case NIXL_ERR_CANCELED:
+            return "NIXL_ERR_CANCELED";
         default:                         return "BAD_STATUS";
     }
 }
