@@ -15,6 +15,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
+import os
 import time
 
 import numpy as np
@@ -92,9 +94,7 @@ def perf_test_list(num_descs: int, addr_base: int, length: int):
     assert reg_dlist.descCount() == num_descs
     logger.info("get_reg_descs:\t\t%.4f sec", elapsed)
 
-    local_prep_handle, remote_prep_handle, xfer_handle = prep_handles(
-        agent, xfer_dlist, reg_dlist, indices
-    )
+    prep_handles(agent, xfer_dlist, reg_dlist, indices)
 
     del agent
 
@@ -122,17 +122,12 @@ def perf_test_array(num_descs: int, addr_base: int, length: int):
     assert reg_dlist.descCount() == num_descs
     logger.info("get_reg_descs:\t\t%.4f sec", elapsed)
 
-    local_prep_handle, remote_prep_handle, xfer_handle = prep_handles(
-        agent, xfer_dlist, reg_dlist, indices
-    )
+    prep_handles(agent, xfer_dlist, reg_dlist, indices)
 
     del agent
 
 
-if __name__ == "__main__":
-    import argparse
-    import os
-
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "mode",
@@ -142,9 +137,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     logger.info("Using NIXL Plugins from:\n%s", os.environ["NIXL_PLUGIN_DIR"])
-
-    # Example using nixl_agent_config
-    agent = init_agent()
 
     num_descs = 2**8
     length = 1024
@@ -157,3 +149,7 @@ if __name__ == "__main__":
         perf_test_list(num_descs, addr_base, length)
     elif args.mode == "array":
         perf_test_array(num_descs, addr_base, length)
+
+
+if __name__ == "__main__":
+    main()
