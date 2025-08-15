@@ -10,6 +10,10 @@
                 "image": "${CONTAINER_IMAGE}",
                 "env": [
                     {
+                        "name": "UCX_VERSION",
+                        "value": "${UCX_VERSION}"
+                    },
+                    {
                         "name": "UCX_INSTALL_DIR",
                         "value": "/usr/local"
                     },

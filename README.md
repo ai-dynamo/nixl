@@ -46,14 +46,14 @@ pip install nixl
 
 ### UCX
 
-NIXL was tested with UCX version 1.18.0.
+NIXL was tested with UCX version 1.19.0.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
-$ wget https://github.com/openucx/ucx/releases/download/v1.18.0/ucx-1.18.0.tar.gz
-$ tar xzf ucx-1.18.0.tar.gz
-$ cd ucx-1.18.0
+$ wget https://github.com/openucx/ucx/releases/download/v1.19.0/ucx-1.19.0.tar.gz
+$ tar xzf ucx-1.19.0.tar.gz
+$ cd ucx-1.19.0
 $ ./configure                          \
     --enable-shared                    \
     --disable-static                   \
