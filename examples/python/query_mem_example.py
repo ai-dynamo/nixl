@@ -59,7 +59,9 @@ if __name__ == "__main__":
 
         # Create an NIXL agent
         logger.info("Creating NIXL agent...")
-        config = nixl_agent_config(False, False, 0, [])
+        config = nixl_agent_config(
+            enable_prog_thread=False, enable_listen_thread=False, backends=[]
+        )
         agent = nixl_agent("example_agent", config)
 
         # Prepare a list of tuples as file paths in metaInfo field for querying.
