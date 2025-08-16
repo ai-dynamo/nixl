@@ -130,16 +130,22 @@ struct nixlDocaMem {
 };
 
 struct nixlDocaNotif {
-    uint32_t elems_num;
-    uint32_t elems_size;
-    uint8_t *send_addr;
-    std::atomic<uint32_t> send_pi;
-    struct nixlDocaMmap *send_mmap;
-    struct nixlDocaBarr *send_barr;
-    uint8_t *recv_addr;
-    std::atomic<uint32_t> recv_pi;
-    struct nixlDocaMmap *recv_mmap;
-    struct nixlDocaBarr *recv_barr;
+    nixlDocaNotif(uint32_t elems_num,
+                  uint32_t elems_size,
+                  struct doca_dev *dev,
+                  struct doca_gpu *gpu);
+    ~nixlDocaNotif();
+
+    uint32_t elemsNum_;
+    uint32_t elemsSize_;
+    uint8_t *sendAddr_;
+    std::atomic<uint32_t> sendPi_;
+    struct nixlDocaMmap *sendMmap_;
+    struct nixlDocaBarr *sendBarr_;
+    uint8_t *recvAddr_;
+    std::atomic<uint32_t> recvPi_;
+    struct nixlDocaMmap *recvMmap_;
+    struct nixlDocaBarr *recvBarr_;
 };
 
 struct docaXferCompletion {
