@@ -26,8 +26,10 @@ Mooncake transfer engine is a high-performance, zero-copy data transfer library.
 
 3. To test the Mooncake backend, you can run the unit test in `test/unit/plugins/mooncake/mooncake_backend_test`.
 
+4. To use the Notify feature, you need to download the latest main branch of Mooncake.
+
 ## Known Issues
-1. The `Notif[ication]` and `ProgTh[read]` features are not supported.
+1. The `ProgTh[read]` features are not supported.
 2. The current version of Mooncake Transfer Engine manages metadata exchange by itself, which is different from NIXL.
 3. The sum of the number of release requests for each handle allocated by `prepXfer()` should be less than `kMaxRequestCount(1024)`.
 
