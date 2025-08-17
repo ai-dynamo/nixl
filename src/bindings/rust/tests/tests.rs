@@ -1170,7 +1170,7 @@ fn test_prep_xfer_dlist_success() {
     let dlist = create_dlist(1, 0x1000).expect("Failed to create descriptor list");
 
     // Prepare transfer descriptor list
-    let result = agent.prepare_xfer_dlist("remote_agent", &dlist, None)?;
+    let result = agent.prepare_xfer_dlist("remote_agent", &dlist, None);
 
     assert!(result.is_ok(), "prep_xfer_dlist should succeed");
 }
@@ -1180,11 +1180,11 @@ fn test_prep_xfer_dlist_invalid_agent() {
     let agent = Agent::new("test_agent").expect("Failed to create agent");
     let dlist = create_dlist(1, 0x1000).expect("Failed to create descriptor list");
 
-    // Try with invalid agent name (null byte)
-    let result = agent.prepare_xfer_dlist("invalid\0agent", &dlist, None)?;
+    // Try with invalid agent name
+    let result = agent.prepare_xfer_dlist("invalid_agent", &dlist, None);
 
     assert!(
-        matches!(result, Err(NixlError::InvalidParam)),
+        result.is_err_and(|e| matches!(e, NixlError::InvalidParam)),
         "Expected InvalidParam for invalid agent name"
     );
 }
@@ -1220,9 +1220,9 @@ fn test_make_xfer_req_success() {
                                                 .expect("Failed to create descriptor list");
 
     // Prepare descriptor list handles
-    let local_handle = agent1.prepare_xfer_dlist(agent2.name(), &local_dlist, None)
+    let local_handle = agent1.prepare_xfer_dlist(agent2.name().as_str(), &local_dlist, None)
         .expect("Failed to prepare local descriptor list");
-    let remote_handle = agent1.prepare_xfer_dlist(agent2.name(), &remote_dlist, None)
+    let remote_handle = agent1.prepare_xfer_dlist(agent2.name().as_str(), &remote_dlist, None)
         .expect("Failed to prepare remote descriptor list");
 
     // Create transfer request using prepared handles with indices
@@ -1231,9 +1231,9 @@ fn test_make_xfer_req_success() {
     let result = agent1.make_xfer_req(
         XferOp::Write,
         &local_handle,
-        &local_indices,
+        &local_indices.as_slice(),
         &remote_handle,
-        &remote_indices,
+        &remote_indices.as_slice(),
         None
     );
 
@@ -1254,9 +1254,10 @@ fn test_make_xfer_req_invalid_indices() {
         .expect("Failed to create descriptor list");
 
     // Prepare descriptor list handles
-    let local_handle = agent1.prepare_xfer_dlist(agent2.name(), &local_dlist, None)
+    let local_handle = agent1.prepare_xfer_dlist(agent2.name().as_str(), &local_dlist, None)
         .expect("Failed to prepare local descriptor list");
-    let remote_handle = agent1.prepare_xfer_dlist(agent2.name(), &remote_dlist, None)?;
+    let remote_handle = agent1.prepare_xfer_dlist(agent2.name().as_str(), &remote_dlist, None)
+        .expect("Failed to prepare remote descriptor list");
 
     // Test with out-of-bounds indices (should fail)
     let invalid_indices = [999i32];  // Index 999 doesn't exist
@@ -1319,8 +1320,6 @@ fn test_query_xfer_backend_success() {
             );
         }
     }
-
-    Ok(())
 }
 
 #[test]
@@ -1389,8 +1388,6 @@ fn test_get_local_partial_md_success() {
             );
         }
     }
-
-    Ok(())
 }
 
 #[test]
