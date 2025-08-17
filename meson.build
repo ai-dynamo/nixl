@@ -71,6 +71,7 @@ if cuda_dep.found()
     nvcc_flags = []
     nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
     nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
+    nvcc_flags += ['-Wno-error=unused-but-set-variable']
     add_project_arguments(nvcc_flags, language: 'cuda')
 
     # Refer to https://mesonbuild.com/Cuda-module.html
@@ -81,10 +82,25 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
+    add_project_arguments('-dopt=on', language: 'cuda')
 endif
 
 # DOCA
-doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
+doca_gpunetio_path = get_option('doca_gpunetio_path')
+if doca_gpunetio_path != ''
+    gpu_netio_inc_dir = join_paths(doca_gpunetio_path, 'include')
+    doca_gpunetio_dep = declare_dependency(
+        include_directories : include_directories(gpu_netio_inc_dir),
+        link_args : ['-L' + join_paths(doca_gpunetio_path, get_option('libdir')),
+                     '-ldoca-gpunetio'])
+else
+    doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
+    if doca_gpunetio_dep.found()
+        gpu_netio_inc_dir = doca_gpunetio_dep.get_variable('includedir')
+    else
+        gpu_netio_inc_dir = ''
+    endif
+endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
 etcd_dep = dependency('etcd-cpp-api', required : false)

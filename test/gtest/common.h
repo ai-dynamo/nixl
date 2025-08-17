@@ -41,6 +41,7 @@ public:
     }
 };
 
+#ifndef __NVCC__
 class ScopedEnv {
 public:
     void addVar(const std::string &name, const std::string &value);
@@ -62,7 +63,7 @@ private:
 
     std::stack<Variable> m_vars;
 };
+#endif
 
 } // namespace gtest
-
 #endif /* TEST_GTEST_COMMON_H */

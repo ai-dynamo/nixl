@@ -667,10 +667,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlXferReqH* &req_hndl,
                          const nixl_opt_args_t* extra_params) const {
-    nixl_status_t     ret1, ret2;
-    nixl_opt_b_args_t opt_args;
+    nixl_status_t     ret1, ret2, ret3;
+    nixl_opt_b_args_t opt_args = {};
     backend_set_t*    backend_set = new backend_set_t();
-
     req_hndl = nullptr;
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
@@ -725,6 +724,11 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->targetDescs    = new nixl_meta_dlist_t (
                                      remote_descs.getType(),
                                      remote_descs.isSorted());
+    if (extra_params && extra_params->signal_addr) {
+        opt_args.signal_meta_dlist = new nixl_meta_dlist_t (
+            VRAM_SEG, false);
+    }
+    // TODO: delete signal_meta_dlist
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -734,8 +738,16 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                      local_descs, backend, *handle->initiatorDescs);
         ret2 = data->remoteSections[remote_agent]->populate(
                      remote_descs, backend, *handle->targetDescs);
+        if (extra_params && extra_params->signal_addr) {
+            nixl_xfer_dlist_t signal_descs(VRAM_SEG);
+            signal_descs.addDesc(nixlBasicDesc(extra_params->signal_addr, sizeof(uint64_t), extra_params->signal_dev_id));
+            ret3 = data->remoteSections[remote_agent]->populate(
+                   signal_descs, backend, *opt_args.signal_meta_dlist);
+        } else {
+            ret3 = NIXL_SUCCESS;
+        }
 
-        if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
+        if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS) && (ret3 == NIXL_SUCCESS)) {
             NIXL_INFO << "Selected backend: " << backend->getType();
             handle->engine = backend;
             break;
@@ -779,6 +791,91 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     if (ret1 != NIXL_SUCCESS) {
         delete handle;
         return ret1;
+    }
+
+    req_hndl = handle;
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::createSignalXferReq(const std::string &remote_agent,
+                               nixlXferReqH* &req_hndl,
+                               const nixl_opt_args_t* extra_params) const {
+    nixl_status_t ret;
+    nixl_opt_b_args_t opt_args = {};
+    backend_set_t*    backend_set = new backend_set_t();
+    req_hndl = nullptr;
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    if (data->remoteSections.count(remote_agent) == 0) {
+        delete backend_set;
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    if (!extra_params || !extra_params->signal_addr) {
+        NIXL_ERROR << "Invalid signal parameters";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (!extra_params || extra_params->backends.size() == 0) {
+        NIXL_ERROR << "No backends found";
+        return NIXL_ERR_NOT_FOUND;
+    } else {
+        for (auto & elm : extra_params->backends)
+            backend_set->insert(elm->engine);
+    }
+
+    nixlXferReqH *handle   = new nixlXferReqH;
+    handle->initiatorDescs = new nixl_meta_dlist_t(static_cast<nixl_mem_t>(VRAM_SEG), false);
+
+    handle->targetDescs = new nixl_meta_dlist_t(static_cast<nixl_mem_t>(VRAM_SEG), false);
+    if (extra_params && extra_params->signal_addr) {
+        opt_args.signal_meta_dlist = new nixl_meta_dlist_t (
+            static_cast<nixl_mem_t>(VRAM_SEG), false);
+    }
+    // TODO: delete signal_meta_dlist
+
+    for (auto & backend : *backend_set) {
+        // If populate fails, it clears the resp before return
+
+        if (extra_params && extra_params->signal_addr) {
+            nixl_xfer_dlist_t signal_descs(VRAM_SEG);
+            signal_descs.addDesc(nixlBasicDesc(extra_params->signal_addr,
+                                               sizeof(uint64_t),
+                                               extra_params->signal_dev_id));
+            ret = data->remoteSections[remote_agent]->populate(
+                   signal_descs, backend, *opt_args.signal_meta_dlist);
+        }
+
+        if (ret == NIXL_SUCCESS) {
+            NIXL_INFO << "Selected backend: " << backend->getType();
+            handle->engine = backend;
+            break;
+        }
+    }
+
+    delete backend_set;
+
+    if (!handle->engine) {
+        delete handle;
+        NIXL_ERROR << "No backends found";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    handle->remoteAgent   = remote_agent;
+    handle->backendOp     = NIXL_WRITE;
+    handle->status        = NIXL_ERR_NOT_POSTED;
+
+    ret = handle->engine->prepXfer (handle->backendOp,
+                                    *handle->initiatorDescs,
+                                     *handle->targetDescs,
+                                    handle->remoteAgent,
+                                    handle->backendHandle,
+                                    &opt_args);
+    if (ret != NIXL_SUCCESS) {
+        delete handle;
+        NIXL_ERROR << "Failed to prep xfer request";
+        return ret;
     }
 
     req_hndl = handle;
@@ -932,6 +1029,26 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
     }
     delete req_hndl;
     return NIXL_SUCCESS;
+}
+
+void*
+nixlAgent::exportXferReqtoGPU(nixlXferReqH *req_hndl) const {
+    if (!req_hndl || !req_hndl->engine) {
+        return nullptr;
+    }
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    return req_hndl->engine->exportXferReqtoGPU(req_hndl->backendHandle);
+}
+
+nixl_status_t
+nixlAgent::releaseXferReqtoGPU(nixlXferReqH *req_hndl) const {
+    if (!req_hndl || !req_hndl->engine) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    return req_hndl->engine->releaseXferReqtoGPU(req_hndl->backendHandle);
 }
 
 nixl_status_t

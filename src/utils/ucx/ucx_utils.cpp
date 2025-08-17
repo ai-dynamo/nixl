@@ -38,7 +38,7 @@ get_ucx_backend_common_options() {
     nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
 
     params.emplace(nixl_ucx_err_handling_param_name,
-                   ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
+                   ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_NONE));
     return params;
 }
 
@@ -348,6 +348,83 @@ nixl_status_t nixlUcxEp::flushEp(nixlUcxReq &req)
     }
 
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
+}
+
+nixl_status_t nixlUcxEp::prepareBatch(const std::vector<nixlUcxRmaIov> &input_iovs,
+                                      nixlUcxSignal *signal,
+                                      nixlUcxReq &req)
+{
+    ucp_ep_prepare_batch_param_t params = {0};
+    std::vector<ucp_rma_iov_t> ucx_iovs;
+    ucp_rkey_h signal_rkey = nullptr;
+    uint64_t signal_addr = 0;
+
+    // Handle signal if provided
+    if (signal) {
+        signal_rkey = signal->rkey->get();
+        signal_addr = signal->addr;
+    }
+
+    // Handle iovs if provided
+    for (const auto &iov : input_iovs) {
+        ucp_rma_opcode_t ucx_opcode = (iov.opcode == nixlUcxRmaOpcode::PUT) ? UCP_RMA_PUT : UCP_RMA_GET;
+        ucp_rma_iov_t ucx_iov;
+        ucx_iov.opcode = ucx_opcode;
+        ucx_iov.local_va = (void*)iov.local_va;
+        ucx_iov.remote_va = (uint64_t)iov.remote_va;
+        ucx_iov.length = iov.length;
+        ucx_iov.rkey = iov.rkey->get();
+        ucx_iov.memh = iov.mem.memh;
+        ucx_iovs.push_back(ucx_iov);
+    }
+
+    ucs_status_ptr_t request = ucp_ep_rma_batch_prepare(eph, ucx_iovs.data(),
+                                                        ucx_iovs.size(),
+                                                        signal_addr,
+                                                        signal_rkey,
+                                                        &params);
+    if (UCS_PTR_IS_PTR(request)) {
+        req = (void*)request;
+        return NIXL_SUCCESS;
+    }
+
+    NIXL_ERROR << "Failed to prepare batch request";
+    return ucx_status_to_nixl(UCS_PTR_STATUS(request));
+}
+
+nixl_status_t nixlUcxEp::exportBatch(nixlUcxReq &req)
+{
+    if (!req) {
+        NIXL_ERROR << "NULL request";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // Clear any existing batch
+    exported_batch = nullptr;
+
+    ucs_status_t status = ucp_ep_rma_batch_export((void*)req, (ucp_batch_h*)&exported_batch);
+    if (status != UCS_OK) {
+        NIXL_ERROR << "Failed to export batch request: " << ucs_status_string(status);
+        exported_batch = nullptr;
+        return ucx_status_to_nixl(status);
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t nixlUcxEp::releaseBatch(nixlUcxReq &req)
+{
+    if (!exported_batch) {
+        NIXL_ERROR << "No batch to release";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    ucs_status_t status = ucp_ep_rma_batch_release((void*)req, (ucp_batch_h)exported_batch);
+    if (status != UCS_OK) {
+        NIXL_ERROR << "Failed to release UCX batch: " << ucs_status_string(status);
+    }
+
+    return ucx_status_to_nixl(status);
 }
 
 bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept

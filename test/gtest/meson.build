@@ -59,13 +59,14 @@ gtest_sources = [
     'error_handling.cpp',
     'test_transfer.cpp',
     'metadata_exchange.cpp',
-    'common.cpp'
+    'common.cpp',
+    'test_gdaki_transfer.cu'
     ]
 test_exe = executable('gtest',
     sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, gpu_netio_inc_dir],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, cuda_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep],
+    dependencies : [ucx_dep, nixl_dep, cuda_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep],
     link_with: [nixl_build_lib],
     install : true
 )
@@ -79,7 +80,7 @@ if get_option('b_sanitize').split(',').contains('thread')
 
     mt_test_exe = executable('mt_test',
         sources : ['main.cpp', 'mocks/gmock_engine.cpp', 'multi_threading.cpp'],
-        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, gpu_netio_inc_dir],
         cpp_args : cpp_flags,
         dependencies : [nixl_dep, nixl_infra, cuda_dep, gtest_dep, gmock_dep],
         link_with: [nixl_build_lib],

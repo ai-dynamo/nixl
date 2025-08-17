@@ -173,6 +173,7 @@ bool nixlMDStreamClient::setupClient() {
     setupStream();
 
     struct sockaddr_in listenerAddr;
+    memset(&listenerAddr, 0, sizeof(listenerAddr));
     listenerAddr.sin_family = AF_INET;
     listenerAddr.sin_port   = htons(port);
 

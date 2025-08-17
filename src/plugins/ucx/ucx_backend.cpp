@@ -19,6 +19,7 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
+#include "nixl_descriptors.h"
 
 #include <optional>
 #include <limits>
@@ -338,6 +339,10 @@ public:
         head.link(req);
     }
 
+    nixlUcxIntReq* getFirstRequest() {
+        return head.next();
+    }
+
     nixl_status_t release()
     {
         nixlUcxIntReq *req = head.next();
@@ -422,6 +427,8 @@ public:
         return worker_id;
     }
 };
+
+
 
 /****************************************
  * Progress thread management
@@ -564,7 +571,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     const auto err_handling_mode_it =
         custom_params->find(std::string(nixl_ucx_err_handling_param_name));
     if (err_handling_mode_it == custom_params->end()) {
-        err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+        err_handling_mode = UCP_ERR_HANDLING_MODE_NONE;
     } else {
         try {
             err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
@@ -949,8 +956,80 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
 {
     /* TODO: try to get from a pool first */
     nixlUcxBackendH *intHandle = new nixlUcxBackendH(*this, getWorkerId());
+    int workerId = intHandle->getWorkerId();
+    nixlUcxReq req;
+    std::vector<nixlUcxRmaIov> iovs;
 
-    handle = (nixlBackendReqH*)intHandle;
+    if (operation == NIXL_READ) {
+        printf("prepXfer read operation not supported\n");
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    bool has_signal =
+        (opt_args->signal_meta_dlist != nullptr) && opt_args->signal_meta_dlist->descCount() > 0;
+    bool has_iovs = remote.descCount() > 0 || local.descCount() > 0;
+
+    if (!has_signal && !has_iovs) {
+        NIXL_ERROR << "Both signal descriptor list and remote descriptor list are empty";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (has_iovs && local.descCount() != remote.descCount()) {
+        NIXL_ERROR << "Local (" << local.descCount() << ") and remote (" << remote.descCount()
+                   << ") descriptor lists differ in size";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    nixlUcxSignal signal;
+    nixlUcxEp *ep = nullptr;
+
+    if (has_signal) {
+        nixlUcxPublicMetadata *signal_rmd = static_cast<nixlUcxPublicMetadata*>((*opt_args->signal_meta_dlist)[0].metadataP);
+        if (!signal_rmd || !signal_rmd->conn) {
+            NIXL_ERROR << "No signal remote metadata or connection found";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
+        signal.rkey = &signal_rmd->getRkey(workerId);
+        signal.addr = (uint64_t)(*opt_args->signal_meta_dlist)[0].addr;
+        ep = signal_rmd->conn->getEp(workerId).get();
+    }
+
+    if (has_iovs) {
+        nixlUcxPublicMetadata *rmd = static_cast<nixlUcxPublicMetadata*>(remote[0].metadataP);
+        if (!rmd || !rmd->conn) {
+            NIXL_ERROR << "No remote metadata or connection found";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
+        if (!ep) {
+            ep = rmd->conn->getEp(workerId).get();
+        }
+
+        for (int i = 0; i < remote.descCount(); i++) {
+            nixlUcxPrivateMetadata *lmd = static_cast<nixlUcxPrivateMetadata*>(local[i].metadataP);
+            nixlUcxPublicMetadata *rmd_i = static_cast<nixlUcxPublicMetadata*>(remote[i].metadataP);
+
+            nixlUcxRmaIov iov;
+            iov.opcode = nixlUcxRmaOpcode::PUT;
+            iov.local_va = (void*)local[i].addr;
+            iov.remote_va = (uint64_t)remote[i].addr;
+            iov.length = local[i].len;
+            iov.rkey = &rmd_i->getRkey(workerId);
+            iov.mem = lmd->mem;
+            iovs.push_back(iov);
+        }
+    }
+
+    nixl_status_t ret = ep->prepareBatch(iovs, has_signal ? &signal : nullptr, req);
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to prepare batch request";
+        return ret;
+    }
+
+    // only ever append one request to the backend handle
+    intHandle->append((nixlUcxIntReq*)req);
+    handle = intHandle;
     return NIXL_SUCCESS;
 }
 
@@ -1234,5 +1313,66 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
         /* error case */
         return ret;
     }
+    return NIXL_SUCCESS;
+}
+
+void* nixlUcxEngine::exportXferReqtoGPU(nixlBackendReqH* handle) const {
+    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    size_t workerId = intHandle->getWorkerId();
+    nixlUcxIntReq *req = intHandle->getFirstRequest();
+    nixl_status_t ret;
+
+    if (remoteConnMap.empty()) {
+        NIXL_ERROR << "No remote connections found";
+        return nullptr;
+    }
+
+    std::string remote_agent = remoteConnMap.begin()->second->getRemoteAgent();
+    auto search = remoteConnMap.find(remote_agent);
+
+    if(search == remoteConnMap.end()) {
+        NIXL_ERROR << "Remote connection not found";
+        return nullptr;
+    }
+
+    nixlUcxEp *ep = search->second->getEp(workerId).get();
+
+    nixlUcxReq ucx_req = reinterpret_cast<nixlUcxReq>(req);
+    ret = ep->exportBatch(ucx_req);
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to export batch request";
+        return nullptr;
+    }
+
+    return ep->exported_batch;
+}
+
+nixl_status_t nixlUcxEngine::releaseXferReqtoGPU(nixlBackendReqH* handle) const {
+    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    size_t workerId = intHandle->getWorkerId();
+    nixlUcxIntReq *req = intHandle->getFirstRequest();
+    nixl_status_t ret;
+
+    if (remoteConnMap.empty()) {
+        NIXL_ERROR << "No remote connections found";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    std::string remote_agent = remoteConnMap.begin()->second->getRemoteAgent();
+    auto search = remoteConnMap.find(remote_agent);
+
+    if(search == remoteConnMap.end()) {
+        NIXL_ERROR << "Remote connection not found";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    nixlUcxEp *ep = search->second->getEp(workerId).get();
+    nixlUcxReq ucx_req = reinterpret_cast<nixlUcxReq>(req);
+    ret = ep->releaseBatch(ucx_req);
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to release batch request";
+        return ret;
+    }
+
     return NIXL_SUCCESS;
 }

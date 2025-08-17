@@ -19,6 +19,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <cstdint>
 
 
 /*** Forward declarations ***/
@@ -206,12 +207,28 @@ struct nixlAgentOptionalArgs {
      * @var Backend custom parameter
      */
     nixl_blob_t customParam;
+
+    /**
+     * @var signal_addr Address of the signal buffer for signaling operations
+     */
+    uintptr_t signal_addr = 0;
+
+    /**
+     * @var signal_dev_id Device ID of the signal buffer for signaling operations
+     */
+    uint64_t signal_dev_id = 0;
 };
+
 /**
  * @brief A typedef for a nixlAgentOptionalArgs
  *        for providing extra optional arguments
  */
 using nixl_opt_args_t = nixlAgentOptionalArgs;
+
+/**
+ * @brief A typedef for a nixlGpuXferReqH
+ */
+using nixlGpuXferReqH = void;
 
 /**
  * @brief A define for an empty string, that indicates the descriptor list is being

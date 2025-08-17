@@ -316,8 +316,8 @@ namespace agent {
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);
-        EXPECT_EQ(notif_map.size(), 1);
-        EXPECT_EQ(notif_map[local_agent_name].size(), 1);
+        EXPECT_EQ(notif_map.size(), 1u);
+        EXPECT_EQ(notif_map[local_agent_name].size(), 1u);
         EXPECT_EQ(notif_map[local_agent_name].front(), msg);
 
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
@@ -383,8 +383,8 @@ namespace agent {
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);
-        EXPECT_EQ(notif_map.size(), 1);
-        EXPECT_EQ(notif_map[local_agent_name].size(), 1);
+        EXPECT_EQ(notif_map.size(), 1u);
+        EXPECT_EQ(notif_map[local_agent_name].size(), 1u);
         EXPECT_EQ(notif_map[local_agent_name].front(), msg);
 
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
@@ -414,8 +414,8 @@ namespace agent {
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);
-        EXPECT_EQ(notif_map.size(), 1);
-        EXPECT_EQ(notif_map[local_agent_name].size(), 1);
+        EXPECT_EQ(notif_map.size(), 1u);
+        EXPECT_EQ(notif_map[local_agent_name].size(), 1u);
         EXPECT_EQ(notif_map[local_agent_name].front(), msg);
     }
 

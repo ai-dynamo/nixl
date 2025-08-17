@@ -36,7 +36,8 @@ class nixlBackendEngine {
         const std::string localAgent;
 
         [[nodiscard]] nixl_status_t setInitParam(const std::string &key, const std::string &value) {
-	    if (customParams.try_emplace(key,value).second) {
+	        auto result = customParams.emplace(key, value);
+            if (result.second) {
                 return NIXL_SUCCESS;
             }
 	    return NIXL_ERR_NOT_ALLOWED;
@@ -144,6 +145,15 @@ class nixlBackendEngine {
         //Backend aborts the transfer if necessary, and destructs the relevant objects
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
+        // Export transfer request to GPU memory for device-side execution
+        virtual void* exportXferReqtoGPU(nixlBackendReqH* handle) const {
+            return nullptr; // Default implementation returns null
+        }
+
+        // Release transfer request from GPU memory
+        virtual nixl_status_t releaseXferReqtoGPU(nixlBackendReqH* handle) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
 
         // *** Needs to be implemented if supportsRemote() is true *** //
 

@@ -230,6 +230,21 @@ class nixlAgent {
                        nixlXferReqH* &req_hndl,
                        const nixl_opt_args_t* extra_params = nullptr) const;
 
+
+        /**
+         * @brief  Create a transfer request for signaling operations.
+         *
+         * @param  remote_agent  Remote agent name as string
+         * @param  req_hndl [out] Transfer request handle output
+         * @param  extra_params Optional extra parameters used in creating a transfer request
+         *                      The signal_addr and signal_dev_id and backends are required in extra_params.
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        createSignalXferReq (const std::string &remote_agent,
+                             nixlXferReqH* &req_hndl,
+                             const nixl_opt_args_t* extra_params = nullptr) const;
+
         /*** Operations on prepared Transfer Request ***/
 
         /**
@@ -295,6 +310,24 @@ class nixlAgent {
          */
         nixl_status_t
         releaseXferReq (nixlXferReqH* req_hndl) const;
+
+        /**
+         * @brief  Export transfer request to GPU memory for device-side execution
+         *
+         * @param  req_hndl      Transfer request handle to export to GPU
+         * @return void*         GPU batch handle, nullptr on error
+         */
+        nixlGpuXferReqH*
+        exportXferReqtoGPU (nixlXferReqH* req_hndl) const;
+
+        /**
+         * @brief  Release transfer request from GPU memory
+         *
+         * @param  req_hndl      Transfer request handle to release from GPU
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        releaseXferReqtoGPU (nixlXferReqH* req_hndl) const;
 
         /**
          * @brief  Release the prepared descriptor list handle `dlist_hndl`

@@ -26,7 +26,7 @@ extern "C"
 }
 
 #include <nixl_types.h>
-
+#include "backend/backend_aux.h"
 #include "absl/status/statusor.h"
 
 enum class nixl_ucx_mt_t {
@@ -34,6 +34,8 @@ enum class nixl_ucx_mt_t {
     CTX,
     WORKER
 };
+
+enum class nixlUcxRmaOpcode {PUT, GET};
 
 constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 
@@ -59,11 +61,12 @@ template<typename Enum>
 
 using nixlUcxReq = void*;
 
+struct nixlUcxRmaIov;
+struct nixlUcxSignal;
 namespace nixl::ucx {
 class rkey;
 }
 class nixlUcxMem;
-
 class nixlUcxEp {
     enum nixl_ucx_ep_state_t {
         NIXL_UCX_EP_STATE_NULL,
@@ -82,6 +85,7 @@ private:
     nixl_status_t disconnect_nb();
 public:
     void err_cb(ucp_ep_h ucp_ep, ucs_status_t status);
+    void* exported_batch{nullptr};
 
     nixl_status_t checkTxState() const {
         switch (state) {
@@ -127,6 +131,11 @@ public:
                                std::chrono::microseconds &err_margin,
                                nixl_cost_t &method);
     nixl_status_t flushEp(nixlUcxReq &req);
+    nixl_status_t prepareBatch(const std::vector<nixlUcxRmaIov> &input_iovs,
+                               nixlUcxSignal *signal,
+                               nixlUcxReq &req);
+    nixl_status_t exportBatch(nixlUcxReq &request);
+    nixl_status_t releaseBatch(nixlUcxReq &request);
 
     [[nodiscard]] ucp_ep_h
     getEp() const noexcept {
@@ -143,6 +152,20 @@ public:
     friend class nixlUcxWorker;
     friend class nixlUcxContext;
     friend class nixlUcxEp;
+};
+
+struct nixlUcxRmaIov {
+    nixlUcxRmaOpcode opcode;
+    void*            local_va;
+    uint64_t         remote_va;
+    size_t           length;
+    const nixl::ucx::rkey  *rkey;
+    nixlUcxMem       mem;
+};
+
+struct nixlUcxSignal {
+    uint64_t addr;
+    const nixl::ucx::rkey *rkey;
 };
 
 class nixlUcxContext {

@@ -50,6 +50,10 @@ class nixlUcxConnection : public nixlBackendConnMD {
             return eps[ep_id];
         }
 
+        [[nodiscard]] const std::string& getRemoteAgent() const noexcept {
+            return remoteAgent;
+        }
+
     friend class nixlUcxEngine;
 };
 
@@ -262,6 +266,10 @@ class nixlUcxEngine
         size_t getWorkerId() const {
             return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
         }
+
+        void* exportXferReqtoGPU(nixlBackendReqH* handle) const override;
+
+        nixl_status_t releaseXferReqtoGPU(nixlBackendReqH* handle) const override;
 };
 
 #endif
