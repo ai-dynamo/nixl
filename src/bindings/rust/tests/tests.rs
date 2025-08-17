@@ -1152,3 +1152,64 @@ fn test_query_mem_empty_list() {
         "Expected 0 responses for empty descriptor list"
     );
 }
+
+// Tests for get_local_partial_md API
+#[test]
+fn test_get_local_partial_md_success() {
+    let agent = setup_agent_with_backend("test_agent")
+        .expect("Failed to setup agent with backend");
+    // Create a registration descriptor list
+    let mut reg_descs = RegDescList::new(MemType::Dram, false)
+        .expect("Failed to create registration descriptor list");
+    reg_descs.add_desc(0x1000, 0x100, 0)
+        .expect("Failed to add descriptor");
+    // Get local partial metadata
+    let result = agent.get_local_partial_md(&reg_descs, None);
+    // Should succeed and return metadata
+    match result {
+        Ok(metadata) => {
+            assert!(!metadata.is_empty(), "Metadata should not be empty");
+            println!("Partial metadata size: {}", metadata.len());
+        }
+        Err(e) => {
+            // May fail if no partial metadata exists yet, which is acceptable
+            assert!(
+                matches!(e, NixlError::BackendError) || matches!(e, NixlError::InvalidParam),
+                "Expected BackendError or InvalidParam, got: {:?}", e
+            );
+        }
+    }
+}
+
+#[test]
+fn test_get_local_partial_md_empty_descs() {
+    let agent = setup_agent_with_backend("test_agent")
+        .expect("Failed to setup agent with backend");
+    // Create empty registration descriptor list
+    let reg_descs = RegDescList::new(MemType::Dram, false)
+        .expect("Failed to create registration descriptor list");
+    // Try with empty descriptor list (should fail)
+    let result = agent.get_local_partial_md(&reg_descs, None);
+    assert!(
+        result.is_err(),
+        "get_local_partial_md should fail with empty descriptor list"
+    );
+}
+
+// Tests for send_local_partial_md API
+#[test]
+fn test_send_local_partial_md_success() {
+    let agent = setup_agent_with_backend("test_agent")
+        .expect("Failed to setup agent with backend");
+    // Create a registration descriptor list
+    let mut reg_descs = RegDescList::new(MemType::Dram, false)
+        .expect("Failed to create registration descriptor list");
+    reg_descs.add_desc(0x1000, 0x100, 0)
+        .expect("Failed to add descriptor");
+    // Send local partial metadata
+    let result = agent.send_local_partial_md(&reg_descs, None);
+    assert!(
+        result.is_ok(),
+        "send_local_partial_md should succeed"
+    );
+}
