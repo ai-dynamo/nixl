@@ -1226,14 +1226,14 @@ fn test_make_xfer_req_success() {
         .expect("Failed to prepare remote descriptor list");
 
     // Create transfer request using prepared handles with indices
-    let local_indices = (0..dlist_size).step_by(2).collect::<Vec<_>>();
-    let remote_indices = (1..dlist_size).step_by(2).collect::<Vec<_>>();
+    let local_indices = (0..dlist_size).step_by(2).map(|i| i as i32).collect::<Vec<i32>>();
+    let remote_indices = (1..dlist_size).step_by(2).map(|i| i as i32).collect::<Vec<i32>>();
     let result = agent1.make_xfer_req(
         XferOp::Write,
         &local_handle,
-        &local_indices.as_slice(),
+        &local_indices,
         &remote_handle,
-        &remote_indices.as_slice(),
+        &remote_indices,
         None
     );
 
