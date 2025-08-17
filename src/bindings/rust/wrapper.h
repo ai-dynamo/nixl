@@ -115,7 +115,7 @@ nixl_capi_status_t nixl_capi_send_local_md(nixl_capi_agent_t agent, nixl_capi_op
 // Send local partial metadata to etcd
 nixl_capi_status_t
 nixl_capi_send_local_partial_md(nixl_capi_agent_t agent,
-	                            nixl_capi_reg_dlist_t descs,
+                                nixl_capi_reg_dlist_t descs,
                                 nixl_capi_opt_args_t opt_args);
 
 // Fetch remote metadata from etcd
