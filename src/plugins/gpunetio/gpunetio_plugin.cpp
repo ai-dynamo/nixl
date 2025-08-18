@@ -35,14 +35,12 @@ get_gpunetio_options() {
 using gpunetio_plugin_t = nixlBackendPluginCreator<nixlDocaEngine>;
 
 #ifdef STATIC_PLUGIN_GPUNETIO
-// Function for static loading (C++ linkage for static)
 nixlBackendPlugin *
 createStaticGPUNETIOPlugin() {
     return gpunetio_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "GPUNETIO", "0.1.0", get_gpunetio_options(), {DRAM_SEG, VRAM_SEG});
 }
 #else
-// Export functions for dynamic loading (C linkage required for dlsym)
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return gpunetio_plugin_t::create(

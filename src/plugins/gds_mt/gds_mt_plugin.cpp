@@ -25,14 +25,12 @@
 using gds_mt_plugin_t = nixlBackendPluginCreator<nixlGdsMtEngine>;
 
 #ifdef STATIC_PLUGIN_GDS_MT
-// Function for static loading (C++ linkage for static)
 nixlBackendPlugin *
 createStaticGDS_MTPlugin() {
     return gds_mt_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 #else
-// Export functions for dynamic loading (C linkage required for dlsym)
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return gds_mt_plugin_t::create(
