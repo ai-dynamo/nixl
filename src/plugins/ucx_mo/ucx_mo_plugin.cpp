@@ -32,14 +32,14 @@ get_ucx_mo_options() {
 using ucx_mo_plugin_t = nixlBackendPluginCreator<nixlUcxMoEngine>;
 
 #ifdef STATIC_PLUGIN_UCX_MO
-// Function for static loading
-extern "C" nixlBackendPlugin *
+// Function for static loading (C++ linkage for static)
+nixlBackendPlugin *
 createStaticUCX_MOPlugin() {
     return ucx_mo_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "UCX_MO", "0.1.0", get_ucx_mo_options(), {DRAM_SEG, VRAM_SEG});
 }
 #else
-// Export functions for dynamic loading
+// Export functions for dynamic loading (C linkage required for dlsym)
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return ucx_mo_plugin_t::create(

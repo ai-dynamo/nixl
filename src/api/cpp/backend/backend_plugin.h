@@ -109,7 +109,9 @@ private:
 // Creator Function type for static plugins
 typedef nixlBackendPlugin* (*nixlStaticPluginCreatorFunc)();
 
-// Plugin must implement these functions for dynamic loading (C++ linkage)
+// Plugin must implement these functions for dynamic loading
+// Note: extern "C" is required for dynamic loading to avoid C++ name mangling
+extern "C" {
 // Initialize the plugin
 NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init();
@@ -117,5 +119,6 @@ nixl_plugin_init();
 // Cleanup the plugin
 NIXL_PLUGIN_EXPORT void
 nixl_plugin_fini();
+}
 
 #endif // __BACKEND_PLUGIN_H

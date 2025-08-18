@@ -31,14 +31,14 @@ get_mooncake_options() {
 using mooncake_plugin_t = nixlBackendPluginCreator<nixlMooncakeEngine>;
 
 #ifdef STATIC_PLUGIN_MOONCAKE
-// Function for static loading
-extern "C" nixlBackendPlugin *
+// Function for static loading (C++ linkage for static)
+nixlBackendPlugin *
 createStaticMOONCAKEPlugin() {
     return mooncake_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
 }
 #else
-// Export functions for dynamic loading
+// Export functions for dynamic loading (C linkage required for dlsym)
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return mooncake_plugin_t::create(

@@ -35,14 +35,14 @@ get_obj_options() {
 using obj_plugin_t = nixlBackendPluginCreator<nixlObjEngine>;
 
 #ifdef STATIC_PLUGIN_OBJ
-// Function for static loading
-extern "C" nixlBackendPlugin *
+// Function for static loading (C++ linkage for static)
+nixlBackendPlugin *
 createStaticOBJPlugin() {
     return obj_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "OBJ", "0.1.0", get_obj_options(), {DRAM_SEG, OBJ_SEG});
 }
 #else
-// Export functions for dynamic loading
+// Export functions for dynamic loading (C linkage required for dlsym)
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return obj_plugin_t::create(
