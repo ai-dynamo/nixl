@@ -56,6 +56,30 @@ public:
 
 // Template for creating backend plugins with minimal boilerplate
 template<typename EngineType> class nixlBackendPluginCreator {
+public:
+static nixlBackendPlugin *
+create(int api_version,
+       const char *name,
+       const char *version,
+       const nixl_b_params_t &params,
+       const nixl_mem_list_t &mem_list) {
+
+    static const char *plugin_name = name;
+    static const char *plugin_version = version;
+    static const nixl_b_params_t plugin_params = params;
+    static const nixl_mem_list_t plugin_mems = mem_list;
+
+    static nixlBackendPlugin plugin_instance = {api_version,
+                                                createEngine,
+                                                destroyEngine,
+                                                []() { return plugin_name; },
+                                                []() { return plugin_version; },
+                                                []() { return plugin_params; },
+                                                []() { return plugin_mems; }};
+
+    return &plugin_instance;
+}
+
 private:
     [[nodiscard]] static nixlBackendEngine *
     createEngine(const nixlBackendInitParams *init_params) {
@@ -79,43 +103,17 @@ private:
     destroyEngine(nixlBackendEngine *engine) {
         delete engine;
     }
-
-public:
-    static nixlBackendPlugin *
-    create(int api_version,
-           const char *name,
-           const char *version,
-           const nixl_b_params_t &params,
-           const nixl_mem_list_t &mem_list) {
-
-        static const char *plugin_name = name;
-        static const char *plugin_version = version;
-        static const nixl_b_params_t plugin_params = params;
-        static const nixl_mem_list_t plugin_mems = mem_list;
-
-        static nixlBackendPlugin plugin_instance = {api_version,
-                                                    createEngine,
-                                                    destroyEngine,
-                                                    []() { return plugin_name; },
-                                                    []() { return plugin_version; },
-                                                    []() { return plugin_params; },
-                                                    []() { return plugin_mems; }};
-
-        return &plugin_instance;
-    }
 };
 
 
 // Creator Function type for static plugins
 typedef nixlBackendPlugin* (*nixlStaticPluginCreatorFunc)();
 
-// Plugin must implement these functions for dynamic loading
-extern "C" {
-    // Initialize the plugin
-    NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init();
+// Plugin must implement these functions for dynamic loading (C++ linkage)
+// Initialize the plugin
+NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init();
 
-    // Cleanup the plugin
-    NIXL_PLUGIN_EXPORT void nixl_plugin_fini();
-}
+// Cleanup the plugin
+NIXL_PLUGIN_EXPORT void nixl_plugin_fini();
 
 #endif // __BACKEND_PLUGIN_H
