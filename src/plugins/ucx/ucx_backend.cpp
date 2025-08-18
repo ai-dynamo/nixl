@@ -816,12 +816,14 @@ public:
     release() override {
         NIXL_TRACE << *this << " releasing";
         nixl_status_t status = nixlUcxBackendH::release();
-        // Set failed status to stop progress chunks
-        sharedState_->status.store(NIXL_ERR_NOT_FOUND);
+        if (sharedState_) {
+            // Set failed status to stop progress chunks
+            sharedState_->status.store(NIXL_ERR_NOT_FOUND);
+            // Reset shared state - it will be effectively released when the last chunk
+            // resets the shared state pointer
+            sharedState_.reset();
+        }
 
-        // Reset shared state - it will be effectively released when the last chunk
-        // resets the shared state pointer
-        sharedState_.reset();
         return status;
     }
 
