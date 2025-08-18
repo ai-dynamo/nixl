@@ -20,7 +20,6 @@
 #include <iostream>
 
 
-
 // Plugin type alias for convenience
 using hf3fs_plugin_t = nixlBackendPluginCreator<nixlHf3fsEngine>;
 
