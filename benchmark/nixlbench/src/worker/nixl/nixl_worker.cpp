@@ -908,9 +908,6 @@ execTransfer(nixlAgent *agent,
 
         if (xferBenchConfig::isStorageBackend()) {
             target = "initiator";
-        } else if (XFERBENCH_BACKEND_MOONCAKE == xferBenchConfig::backend) {
-            params.hasNotif = false;
-            target = "target";
         } else {
             params.notifMsg = "0xBEEF";
             params.hasNotif = true;

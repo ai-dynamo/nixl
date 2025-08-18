@@ -312,6 +312,11 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
 
         if (backend->supportsRemote()) {
+            if (!backend->supportsNotif()) {
+                delete backend;
+                return NIXL_ERR_BACKEND;
+            }
+
             ret = backend->getConnInfo(str);
             if (ret != NIXL_SUCCESS) {
                 delete backend;
