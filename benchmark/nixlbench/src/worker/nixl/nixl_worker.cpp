@@ -786,7 +786,9 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     int desc_str_sz;
 
     if (xferBenchConfig::isStorageBackend()) {
-        for (auto &iov_list : remote_iovs) {
+        size_t fd_idx = 0;
+        uint64_t file_offset = 0;
+        for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov : iov_list) {
                 if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
@@ -796,9 +798,16 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                         remote_iov_list.push_back(basic_desc.value());
                     }
                 } else {
-                    xferBenchIOV copy(iov);
-                    copy.len = block_size;
-                    remote_iov_list.push_back(copy);
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = file_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = remote_fds[fd_idx].fd;
+                    remote_iov_list.push_back(iov_remote);
+                    fd_idx++;
+                    if (fd_idx >= remote_fds.size()) {
+                        file_offset += block_size;
+                        fd_idx = 0;
+                    }
                 }
             }
             res.push_back(remote_iov_list);
