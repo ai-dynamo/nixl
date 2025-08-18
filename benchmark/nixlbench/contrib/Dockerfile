@@ -186,7 +186,7 @@ RUN ls -ll benchmark/kvbench
 # Install dependencies for benchmarks
 RUN uv pip install -e benchmark/kvbench
 
-ENV PATH=/usr/local/nixlbench/bin:$PATH
+ENV PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 ENV PYTHON_PATH=/usr/local/nixlbench/lib/python3/dist-packages/nixlbench/
 
