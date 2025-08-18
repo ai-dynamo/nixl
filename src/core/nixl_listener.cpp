@@ -668,7 +668,7 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
                             const nixl_backend_t &backend,
                             const nixl_blob_t &conn_info) {
     if (backendEngines.count(backend) == 0) {
-        NIXL_ERROR << "Agent " << name << " does not support a remote backend: " << backend;
+        NIXL_DEBUG << "Agent " << name << " does not support a remote backend: " << backend;
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -684,7 +684,7 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
 
     nixlBackendEngine *eng = backendEngines[backend];
     if (!eng->supportsRemote()) {
-        NIXL_ERROR << backend << " does not support remote operations";
+        NIXL_DEBUG << backend << " does not support remote operations";
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
