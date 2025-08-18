@@ -25,26 +25,24 @@ get_mooncake_options() {
     params["mooncake_devices"] = "";
     return params;
 }
-
-
 } // namespace
 
 // Plugin type alias for convenience
-using MooncakePlugin = nixlBackendPluginTemplate<nixlMooncakeEngine>;
+using mooncake_plugin_t = nixlBackendPluginCreator<nixlMooncakeEngine>;
 
 #ifdef STATIC_PLUGIN_MOONCAKE
 // Function for static loading
 extern "C" nixlBackendPlugin *
 createStaticMOONCAKEPlugin() {
-    return MooncakePlugin::initialize_plugin(
-        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options, {DRAM_SEG, VRAM_SEG});
+    return mooncake_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return MooncakePlugin::initialize_plugin(
-        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options, {DRAM_SEG, VRAM_SEG});
+    return mooncake_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

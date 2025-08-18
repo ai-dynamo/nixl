@@ -19,6 +19,7 @@
 #define __BACKEND_PLUGIN_H
 
 #include "backend/backend_engine.h"
+#include "common/nixl_log.h"
 
 // Forward declarations for special engine types
 class nixlUcxEngine;
@@ -54,10 +55,10 @@ public:
 #define NIXL_PLUGIN_EXPORT __attribute__((visibility("default")))
 
 // Template for creating backend plugins with minimal boilerplate
-template<typename EngineType> class nixlBackendPluginTemplate {
-public:
+template<typename EngineType> class nixlBackendPluginCreator {
+private:
     [[nodiscard]] static nixlBackendEngine *
-    create_engine_impl(const nixlBackendInitParams *init_params) {
+    createEngine(const nixlBackendInitParams *init_params) {
         try {
             if constexpr (std::is_same_v<EngineType, nixlUcxEngine>) {
                 // UCX engine uses a factory pattern
@@ -69,21 +70,23 @@ public:
             }
         }
         catch (const std::exception &e) {
+            NIXL_ERROR << "Failed to create engine: " << e.what();
             return nullptr;
         }
     }
 
     static void
-    destroy_engine_impl(nixlBackendEngine *engine) {
+    destroyEngine(nixlBackendEngine *engine) {
         delete engine;
     }
 
+public:
     static nixlBackendPlugin *
-    initialize_plugin(int api_version,
-                      const char *name,
-                      const char *version,
-                      const nixl_b_params_t &params,
-                      const nixl_mem_list_t &mem_list) {
+    create(int api_version,
+           const char *name,
+           const char *version,
+           const nixl_b_params_t &params,
+           const nixl_mem_list_t &mem_list) {
 
         static const char *plugin_name = name;
         static const char *plugin_version = version;
@@ -91,8 +94,8 @@ public:
         static const nixl_mem_list_t plugin_mems = mem_list;
 
         static nixlBackendPlugin plugin_instance = {api_version,
-                                                    create_engine_impl,
-                                                    destroy_engine_impl,
+                                                    createEngine,
+                                                    destroyEngine,
                                                     []() { return plugin_name; },
                                                     []() { return plugin_version; },
                                                     []() { return plugin_params; },

@@ -17,31 +17,29 @@
 
 #include "backend/backend_plugin.h"
 #include "ucx_backend.h"
-#include "nixl_log.h"
-
-namespace {
-nixl_b_params_t
-get_ucx_options() {
-    return get_ucx_backend_common_options();
-}
-} // namespace
 
 // Plugin type alias for convenience
-using UcxPlugin = nixlBackendPluginTemplate<nixlUcxEngine>;
+using ucx_plugin_t = nixlBackendPluginCreator<nixlUcxEngine>;
 
 #ifdef STATIC_PLUGIN_UCX
 // Function for static loading
 extern "C" nixlBackendPlugin *
 createStaticUCXPlugin() {
-    return UcxPlugin::initialize_plugin(
-        NIXL_PLUGIN_API_VERSION, "UCX", "0.1.0", get_ucx_options(), {DRAM_SEG, VRAM_SEG});
+    return ucx_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                "UCX",
+                                "0.1.0",
+                                get_ucx_backend_common_options(),
+                                {DRAM_SEG, VRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return UcxPlugin::initialize_plugin(
-        NIXL_PLUGIN_API_VERSION, "UCX", "0.1.0", get_ucx_options(), {DRAM_SEG, VRAM_SEG});
+    return ucx_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                "UCX",
+                                "0.1.0",
+                                get_ucx_backend_common_options(),
+                                {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

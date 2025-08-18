@@ -19,23 +19,21 @@
 #include "posix_backend.h"
 #include "backend/backend_plugin.h"
 
-
-
 // Plugin type alias for convenience
-using PosixPlugin = nixlBackendPluginTemplate<nixlPosixEngine>;
+using posix_plugin_t = nixlBackendPluginCreator<nixlPosixEngine>;
 
 #ifdef STATIC_PLUGIN_POSIX
 // Function for static loading
 extern "C" nixlBackendPlugin *
 createStaticPOSIXPlugin() {
-    return PosixPlugin::initialize_plugin(
+    return posix_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", {}, {DRAM_SEG, FILE_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return PosixPlugin::initialize_plugin(
+    return posix_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", {}, {DRAM_SEG, FILE_SEG});
 }
 

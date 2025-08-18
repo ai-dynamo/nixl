@@ -390,46 +390,46 @@ const std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
     return static_plugins_;
 }
 
-#define REGISTER_STATIC_PLUGIN(name)                        \
+#define NIXL_REGISTER_STATIC_PLUGIN(name)                   \
     extern nixlBackendPlugin *createStatic##name##Plugin(); \
     registerStaticPlugin(#name, createStatic##name##Plugin);
 
 void nixlPluginManager::registerBuiltinPlugins() {
 #ifdef STATIC_PLUGIN_UCX
-    REGISTER_STATIC_PLUGIN(UCX)
+    NIXL_REGISTER_STATIC_PLUGIN(UCX)
 #endif
 
 #ifdef STATIC_PLUGIN_UCX_MO
-    REGISTER_STATIC_PLUGIN(UCX_MO)
+    NIXL_REGISTER_STATIC_PLUGIN(UCX_MO)
 #endif
 
 #ifdef STATIC_PLUGIN_GDS
 #ifndef DISABLE_GDS_BACKEND
-    REGISTER_STATIC_PLUGIN(GDS)
+    NIXL_REGISTER_STATIC_PLUGIN(GDS)
 #endif
 #endif
 
 #ifdef STATIC_PLUGIN_GDS_MT
-    REGISTER_STATIC_PLUGIN(GDS_MT)
+    NIXL_REGISTER_STATIC_PLUGIN(GDS_MT)
 #endif
 
 #ifdef STATIC_PLUGIN_POSIX
-    REGISTER_STATIC_PLUGIN(POSIX)
+    NIXL_REGISTER_STATIC_PLUGIN(POSIX)
 #endif
 
 #ifdef STATIC_PLUGIN_GPUNETIO
-    REGISTER_STATIC_PLUGIN(GPUNETIO)
+    NIXL_REGISTER_STATIC_PLUGIN(GPUNETIO)
 #endif
 
 #ifdef STATIC_PLUGIN_OBJ
-    REGISTER_STATIC_PLUGIN(OBJ)
+    NIXL_REGISTER_STATIC_PLUGIN(OBJ)
 #endif
 
 #ifdef STATIC_PLUGIN_MOONCAKE
-    REGISTER_STATIC_PLUGIN(MOONCAKE)
+    NIXL_REGISTER_STATIC_PLUGIN(MOONCAKE)
 #endif
 
 #ifdef STATIC_PLUGIN_HF3FS
-    REGISTER_STATIC_PLUGIN(HF3FS)
+    NIXL_REGISTER_STATIC_PLUGIN(HF3FS)
 #endif
 }

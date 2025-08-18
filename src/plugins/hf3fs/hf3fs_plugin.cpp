@@ -22,20 +22,20 @@
 
 
 // Plugin type alias for convenience
-using Hf3fsPlugin = nixlBackendPluginTemplate<nixlHf3fsEngine>;
+using hf3fs_plugin_t = nixlBackendPluginCreator<nixlHf3fsEngine>;
 
 #ifdef STATIC_PLUGIN_HF3FS
 // Function for static loading
 extern "C" nixlBackendPlugin *
 createStaticHF3FSPlugin() {
-    return Hf3fsPlugin::initialize_plugin(
+    return hf3fs_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "HF3FS", "0.1.0", {}, {FILE_SEG, DRAM_SEG});
 }
 #else
 // Export functions for dynamic loading
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return Hf3fsPlugin::initialize_plugin(
+    return hf3fs_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "HF3FS", "0.1.0", {}, {FILE_SEG, DRAM_SEG});
 }
 
