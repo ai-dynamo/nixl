@@ -28,12 +28,15 @@
 #include "file/file_utils.h"
 
 #define NUM_CQES 1024
+#define HF3FS_DEFAULT_IOPOOL_SIZE 64
+#define HF3FS_MAX_IOPOOL_SIZE (1 << 20)
 
 long nixlHf3fsEngine::page_size = sysconf(_SC_PAGESIZE);
 
 nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
-      mem_config(NIXL_HF3FS_MEM_CONFIG_AUTO) {
+      mem_config(NIXL_HF3FS_MEM_CONFIG_AUTO),
+      iopool_size(HF3FS_DEFAULT_IOPOOL_SIZE) {
     hf3fs_utils = new hf3fsUtil();
 
     this->initErr = false;
@@ -61,6 +64,18 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
                 return;
             }
         }
+        if (init_params->customParams->count("iopool_size") > 0) {
+            int size = atoi(init_params->customParams->at("iopool_size").c_str());
+            if (size > 0) {
+                if (size < HF3FS_MAX_IOPOOL_SIZE) {
+                    iopool_size = size;
+                } else {
+                    iopool_size = HF3FS_MAX_IOPOOL_SIZE;
+                    NIXL_INFO << size << " exceeded max iopool size "
+                              << iopool_size << ", set it to max";
+                }
+            }
+        }
     }
 
     char mount_point_cstr[256];
@@ -72,9 +87,46 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
 
     hf3fs_utils->mount_point = mount_point_cstr;
 
+    for (unsigned int i = 0; i < iopool_size; i++) {
+        auto io = new nixlHf3fsIO();
+        if (io == NULL) {
+            this->initErr = true;
+            // io obj will be free when engine destroyed
+            return;
+        }
+        iopool.push_back(io);
+    }
+
     NIXL_DEBUG << "HF3FS: Page size: " << page_size;
 }
 
+nixlHf3fsIO*
+nixlHf3fsEngine::getFromIOPool() const
+{
+    const std::lock_guard<std::mutex> lock(iopool_lock);
+    if (!iopool.empty()) {
+        auto io = iopool.front();
+        iopool.pop_front();
+        return io;
+    }
+    return nullptr;
+}
+
+void
+nixlHf3fsEngine::returnToIOPool(nixlHf3fsIO *io) const
+{
+    const std::lock_guard<std::mutex> lock(iopool_lock);
+    iopool.push_back(io);
+}
+
+void
+nixlHf3fsEngine::destroyIOPool()
+{
+    for (auto io : iopool) {
+        delete(io);
+    }
+    iopool.clear();
+}
 
 nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
                                             const nixl_mem_t &nixl_mem,
@@ -164,7 +216,7 @@ void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle) const
         if (prev_io->mem_type == NIXL_HF3FS_MEM_TYPE_DRAM) {
             hf3fs_utils->destroyIOV(&prev_io->iov);
         }
-        delete prev_io;
+        returnToIOPool(prev_io);
     }
 
     handle->io_list.clear();
@@ -237,7 +289,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         offset = (size_t) (*file_list)[i].addr;  // Offset in file
         auto mem_md = (nixlHf3fsMetadata *)(*mem_list)[i].metadataP;
 
-        nixlHf3fsIO *io = new nixlHf3fsIO();
+        nixlHf3fsIO *io = getFromIOPool();
         if (io == nullptr) {
             nixl_err = NIXL_ERR_BACKEND;
             nixl_mesg = "Error: Failed to create IO";
@@ -252,7 +304,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
                                           size,
                                           shm_md->uuid.get_data().data());
             if (status != NIXL_SUCCESS) {
-                delete io;
+                returnToIOPool(io);
                 nixl_err = status;
                 nixl_mesg = "Error: Failed to wrap memory as IOV";
                 goto cleanup_handle;
@@ -260,7 +312,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         } else {
             status = hf3fs_utils->createIOV(&io->iov, size, size);
             if (status != NIXL_SUCCESS) {
-                delete io;
+                returnToIOPool(io);
                 nixl_err = status;
                 nixl_mesg = "Error: Failed to create IOV";
                 goto cleanup_handle;
@@ -444,6 +496,7 @@ nixl_status_t nixlHf3fsEngine::releaseReqH(nixlBackendReqH* handle) const
 }
 
 nixlHf3fsEngine::~nixlHf3fsEngine() {
+    destroyIOPool();
     hf3fs_utils->closeHf3fsDriver();
     delete hf3fs_utils;
 }
