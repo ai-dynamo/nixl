@@ -28,6 +28,7 @@ nixl_common_deps = [
     absl_status_dep,
     absl_strings_dep,
     absl_synchronization_dep,
+    dependency('asio', required: true),
 ]
 
 # Define a shared library for common utilities
