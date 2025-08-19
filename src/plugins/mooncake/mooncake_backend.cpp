@@ -16,6 +16,7 @@
  */
 #include "mooncake_backend.h"
 #include "serdes/serdes.h"
+#include "common/nixl_log.h"
 
 #include <arpa/inet.h>
 #include <bits/stdint-uintn.h>
@@ -46,8 +47,7 @@ findLocalIpAddresses() {
 
             // Check if interface is UP and RUNNING
             if (!(ifa->ifa_flags & IFF_UP) || !(ifa->ifa_flags & IFF_RUNNING)) {
-                LOG(INFO) << "Skipping interface " << ifa->ifa_name
-                          << " (not UP or not RUNNING)";
+                NIXL_INFO << "Skipping interface " << ifa->ifa_name << " (not UP or not RUNNING)";
                 continue;
             }
 
