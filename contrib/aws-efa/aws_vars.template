@@ -15,7 +15,11 @@
                     },
                     {
                         "name": "UCX_DEBUG_LEVEL",
-                        "value": "DEBUG"
+                        "value": "debug"
+                    },
+                    {
+                        "name": "UCX_PROTO_INFO",
+                        "value": "y"
                     },
                     {
                         "name": "UCX_INSTALL_DIR",
