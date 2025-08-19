@@ -279,10 +279,6 @@ void nixlUcxEngine::vramFiniCtx()
 
 
 class nixlUcxIntReq {
-private:
-    bool completed_ = false;
-    ucx_connection_ptr_t conn_;
-
 public:
     std::unique_ptr<std::string> amBuffer;
 
@@ -306,6 +302,10 @@ public:
         NIXL_ASSERT(conn_) << "Connection is not set";
         return conn_->getEp(ep_id)->checkTxState();
     }
+
+private:
+    bool completed_ = false;
+    ucx_connection_ptr_t conn_;
 };
 
 static void
