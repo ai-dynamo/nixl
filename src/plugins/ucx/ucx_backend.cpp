@@ -1611,11 +1611,13 @@ nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
     return status;
 }
 
-nixl_status_t nixlUcxEngine::exportXferReqtoGPU(nixlBackendReqH* handle, nixlGpuXferReqH* &gpu_req_hndl) const {
+nixl_status_t
+nixlUcxEngine::exportXferReqtoGPU(nixlBackendReqH *handle, nixlGpuXferReqH *&gpu_req_hndl) const {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
-nixl_status_t nixlUcxEngine::releaseXferReqtoGPU(nixlBackendReqH* handle) const {
+nixl_status_t
+nixlUcxEngine::releaseXferReqtoGPU(nixlBackendReqH *handle) const {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 

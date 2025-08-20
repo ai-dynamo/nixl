@@ -1088,7 +1088,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 }
 
 nixl_status_t
-nixlAgent::exportXferReqtoGPU(nixlXferReqH *req_hndl, nixlGpuXferReqH* &gpu_req_hndl) const {
+nixlAgent::exportXferReqtoGPU(nixlXferReqH *req_hndl, nixlGpuXferReqH *&gpu_req_hndl) const {
     if (!req_hndl || !req_hndl->engine) {
         return NIXL_ERR_INVALID_PARAM;
     }

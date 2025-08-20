@@ -319,7 +319,7 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        exportXferReqtoGPU(nixlXferReqH* req_hndl, nixlGpuXferReqH* &gpu_req_hndl) const;
+        exportXferReqtoGPU(nixlXferReqH *req_hndl, nixlGpuXferReqH *&gpu_req_hndl) const;
 
         /**
          * @brief  Release transfer request from GPU memory
@@ -329,7 +329,7 @@ class nixlAgent {
          * @return nixl_status_t      Error code if call was not successful
          */
         nixl_status_t
-        releaseXferReqtoGPU(nixlXferReqH* req_hndl) const;
+        releaseXferReqtoGPU(nixlXferReqH *req_hndl) const;
 
         /**
          * @brief  Release the prepared descriptor list handle `dlist_hndl`
