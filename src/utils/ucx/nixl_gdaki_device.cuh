@@ -43,11 +43,7 @@ nixlPostSingleGpuXferReq(nixlGpuXferReqH* req_hndl,
      * UCP_DEV_BATCH_FLAG_COMP    : set if xfer_status != nullptr
      * UCP_DEV_BATCH_FLAG_NODELAY : set if is_no_delay is true
      */
-    if (size > 0) {
-        flags |= UCP_DEV_BATCH_FLAG_RMA_IOV;
-    } else {
-        flags |= UCP_DEV_BATCH_FLAG_ATOMIC;
-    }
+    flags |= UCP_DEV_BATCH_FLAG_RMA_IOV;
 
     if (xfer_status != nullptr) {
         flags |= UCP_DEV_BATCH_FLAG_COMP;
@@ -58,6 +54,54 @@ nixlPostSingleGpuXferReq(nixlGpuXferReqH* req_hndl,
 
     status = ucp_dev_batch_execute_single<static_cast<ucp_dev_scale_t>(level)>(
             ucp_batch, flags, src_offset, dst_offset, size, ucp_request);
+
+    switch (status) {
+        case UCS_OK:
+            return NIXL_SUCCESS;
+        case UCS_INPROGRESS:
+            return NIXL_IN_PROG;
+        default:
+            return NIXL_ERR_BACKEND;
+    }
+}
+
+template<nixl_gpu_xfer_coordination_level_t level = NIXL_GPU_XFER_COORDINATION_BLOCK>
+__device__ static inline nixl_status_t
+nixlPostSignalGpuXferReq(nixlGpuXferReqH* req_hndl,
+                         const int signal_inc,
+                         const size_t dst_offset,
+                         nixlGpuXferStatusH* xfer_status,
+                         bool is_no_delay = true)
+{
+    uint64_t flags = is_no_delay ? UCP_DEV_BATCH_FLAG_NODELAY : 0;
+    ucs_status_t status;
+    ucp_dev_request_t* ucp_request = nullptr;
+
+    if (!req_hndl) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (xfer_status != nullptr) {
+        ucp_request = &xfer_status->ucp_request;
+    }
+
+    /*
+     * UCP_DEV_BATCH_FLAG_RMA_IOV : set if size > 0
+     * UCP_DEV_BATCH_FLAG_ATOMIC  : set if size == 0
+     * UCP_DEV_BATCH_FLAG_COMP    : set if xfer_status != nullptr
+     * UCP_DEV_BATCH_FLAG_NODELAY : set if is_no_delay is true
+     */
+    flags |= UCP_DEV_BATCH_FLAG_ATOMIC;
+
+    if (xfer_status != nullptr) {
+        flags |= UCP_DEV_BATCH_FLAG_COMP;
+    }
+
+    // Cast void* to ucp_batch_h in the kernel
+    ucp_batch_h ucp_batch = static_cast<ucp_batch_h>(req_hndl);
+
+    status = ucp_dev_batch_execute_atomic<static_cast<ucp_dev_scale_t>(level)>(
+            ucp_batch, flags, signal_inc, dst_offset, ucp_request);
 
     switch (status) {
         case UCS_OK:
