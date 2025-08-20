@@ -23,7 +23,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
-ARG UCX_REF="v1.19.x"
+ARG UCX_REF="v1.19.0"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
 ARG NIXL_PREFIX="/usr/local/nixl"
@@ -56,6 +56,7 @@ RUN apt-get update -y && \
     libgtest-dev \
     build-essential \
     python3.12-dev \
+    clang \
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \

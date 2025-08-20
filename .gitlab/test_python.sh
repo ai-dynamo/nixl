@@ -47,6 +47,7 @@ export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
+export NIXL_PREFIX=${INSTALL_DIR}
 # Raise exceptions for logging errors
 export NIXL_DEBUG_LOGGING=yes
 
@@ -69,15 +70,19 @@ etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_
 sleep 5
 
 echo "==== Running python tests ===="
-python3 examples/python/nixl_api_example.py
-python3 examples/python/partial_md_example.py
-python3 examples/python/partial_md_example.py --etcd
 pytest test/python
-
 python3 test/python/prep_xfer_perf.py list
 python3 test/python/prep_xfer_perf.py array
 
 echo "==== Running python examples ===="
+cd examples/python
+python3 nixl_api_example.py
+python3 partial_md_example.py
+python3 partial_md_example.py --etcd
+python3 query_mem_example.py
+
+# Running telemetry for the last test
+export NIXL_TELEMETRY_ENABLE=1
 blocking_send_recv_port=$(get_next_tcp_port)
 
 python3 examples/python/blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
@@ -86,4 +91,10 @@ python3 examples/python/blocking_send_recv_example.py --mode="initiator" --ip=12
 
 python3 examples/python/query_mem_example.py
 
+python3 telemetry_reader.py --telemetry_path /tmp/initiator &
+telePID=$!
+sleep 6
+kill -s SIGINT $telePID
+
 pkill etcd
+
