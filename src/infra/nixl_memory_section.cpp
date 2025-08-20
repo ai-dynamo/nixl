@@ -22,6 +22,8 @@
 #include "backend/backend_engine.h"
 #include "nixl_types.h"
 #include "serdes/serdes.h"
+#include "common/nixl_log.h"
+
 
 /*** Class nixlMemSection implementation ***/
 
@@ -47,9 +49,10 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
 
     section_key_t sec_key = std::make_pair(query.getType(), backend);
     auto it = sectionMap.find(sec_key);
-    if (it==sectionMap.end())
+    if (it==sectionMap.end()) {
+        NIXL_ERROR << "sectionMap not found for backend: " << backend->getType();
         return NIXL_ERR_NOT_FOUND;
-
+    }
     nixlBasicDesc *p;
     nixl_sec_dlist_t* base = it->second;
     resp.resize(query.descCount());

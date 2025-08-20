@@ -1352,11 +1352,12 @@ nixl_capi_prep_xfer_dlist(nixl_capi_agent_t agent,
                           nixl_capi_xfer_dlist_t descs,
                           nixl_capi_xfer_dlist_handle_t dlist_handle,
                           nixl_capi_opt_args_t opt_args) {
-    if (!agent || !agent_name || !descs || !dlist_handle) {
+    if (!agent || !agent_name || !descs) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
 
     try {
+        dlist_handle = new nixl_capi_xfer_dlist_handle_s;
         nixl_status_t ret = agent->inner->prepXferDlist(std::string(agent_name),
                                                         *descs->dlist,
                                                         dlist_handle->handle,
