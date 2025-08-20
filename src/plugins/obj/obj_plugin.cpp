@@ -50,17 +50,7 @@ get_plugin_version() {
 
 [[nodiscard]] nixl_b_params_t
 get_backend_options() {
-    nixl_b_params_t params;
-    params["access_key"] = "AWS access key ID (required)";
-    params["secret_key"] = "AWS secret access key (required)";
-    params["session_token"] = "AWS session token (optional)";
-    params["bucket"] = "S3 bucket name (optional)";
-    params["endpoint_override"] = "S3 endpoint override (optional)";
-    params["scheme"] = "S3 scheme (http/https) (optional)";
-    params["region"] = "AWS region (optional)";
-    params["use_virtual_addressing"] = "Use virtual addressing (true/false) (optional)";
-    params["req_checksum"] = "Request checksum (required/supported) (optional)";
-    return params;
+    return nixl_b_params_t();
 }
 
 [[nodiscard]] nixl_mem_list_t
