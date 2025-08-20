@@ -28,11 +28,13 @@ nixl_common_deps = [
     absl_status_dep,
     absl_strings_dep,
     absl_synchronization_dep,
+    dependency('asio', required: true),
 ]
 
 # Define a shared library for common utilities
 nixl_common_lib = shared_library('nixl_common',
     'nixl_log.cpp',
+    'uuid_v4.cpp',
     dependencies: nixl_common_deps,
     include_directories: nixl_common_inc,
     install: true,

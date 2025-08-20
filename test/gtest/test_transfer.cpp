@@ -93,18 +93,24 @@ private:
     const size_t size;
 };
 
-class TestTransfer : public testing::TestWithParam<std::string> {
+class TestTransfer :
+    // Tuple fields are: backend_name, enable_progress_thread, num_workers, num_threads
+    public testing::TestWithParam<std::tuple<std::string, bool, size_t, size_t>> {
 protected:
-    static nixlAgentConfig getConfig(int listen_port)
-    {
-        return nixlAgentConfig(true, listen_port > 0, listen_port,
-                               nixl_thread_sync_t::NIXL_THREAD_SYNC_RW, 0,
+    nixlAgentConfig
+    getConfig(int listen_port) {
+        return nixlAgentConfig(isProgressThreadEnabled(),
+                               listen_port > 0,
+                               listen_port,
+                               nixl_thread_sync_t::NIXL_THREAD_SYNC_RW,
+                               1,
+                               0,
                                100000);
     }
 
-    static int getPort(int i)
-    {
-        return 9000 + i;
+    uint16_t
+    getPort(int i) const {
+        return ports.at(i);
     }
 
     nixl_b_params_t getBackendParams()
@@ -112,7 +118,9 @@ protected:
         nixl_b_params_t params;
 
         if (getBackendName() == "UCX" || getBackendName() == "UCX_MO") {
-            params["num_workers"] = "2";
+            params["num_workers"] = std::to_string(getNumWorkers());
+            params["num_threads"] = std::to_string(getNumThreads());
+            params["split_batch_size"] = "32";
         }
 
         return params;
@@ -126,6 +134,7 @@ protected:
 
         // Create two agents
         for (size_t i = 0; i < 2; i++) {
+            ports.push_back(PortAllocator::next_tcp_port());
             agents.emplace_back(std::make_unique<nixlAgent>(getAgentName(i),
                                                             getConfig(getPort(i))));
             nixlBackendH *backend_handle = nullptr;
@@ -143,11 +152,26 @@ protected:
 
     std::string getBackendName() const
     {
-        return GetParam();
+        return std::get<0>(GetParam());
     }
 
-    static nixl_opt_args_t extra_params_ip(int remote)
-    {
+    bool
+    isProgressThreadEnabled() const {
+        return std::get<1>(GetParam());
+    }
+
+    size_t
+    getNumWorkers() const {
+        return std::get<2>(GetParam());
+    }
+
+    size_t
+    getNumThreads() const {
+        return std::get<3>(GetParam());
+    }
+
+    nixl_opt_args_t
+    extra_params_ip(int remote) {
         nixl_opt_args_t extra_params;
 
         extra_params.ipAddr = "127.0.0.1";
@@ -245,28 +269,6 @@ protected:
         }
     }
 
-    void waitForXfer(nixlAgent &from, const std::string &from_name,
-                     nixlAgent &to, nixlXferReqH *xfer_req)
-    {
-        nixl_notifs_t notif_map;
-        bool xfer_done;
-        do {
-            // progress on "from" agent while waiting for notification
-            nixl_status_t status = from.getXferStatus(xfer_req);
-            EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-            xfer_done = (status == NIXL_SUCCESS);
-
-            // Get notifications and progress all agents to avoid deadlocks
-            status = to.getNotifs(notif_map);
-            ASSERT_EQ(status, NIXL_SUCCESS);
-        } while (notif_map.empty() || !xfer_done);
-
-        // Expect the notification from the right agent
-        auto &notif_list = notif_map[from_name];
-        EXPECT_EQ(notif_list.size(), 1u);
-        EXPECT_EQ(notif_list.front(), NOTIF_MSG);
-    }
-
     void createRegisteredMem(nixlAgent& agent,
                              size_t size, size_t count,
                              nixl_mem_t mem_type,
@@ -287,10 +289,11 @@ protected:
         agent.deregisterMem(desc_list);
     }
 
-    void verifyNotifs(nixlAgent &agent, const std::string &from_name, size_t expected_count)
-    {
-        nixl_notifs_t notif_map;
-
+    void
+    verifyNotifs(nixlAgent &agent,
+                 const std::string &from_name,
+                 size_t expected_count,
+                 nixl_notifs_t notif_map = {}) {
         for (int i = 0; i < retry_count; i++) {
             nixl_status_t status = agent.getNotifs(notif_map);
             ASSERT_EQ(status, NIXL_SUCCESS);
@@ -321,11 +324,17 @@ protected:
         exchangeMD();
 
         std::vector<std::thread> threads;
+        nixl_notifs_t notif_map;
         for (size_t thread = 0; thread < num_threads; ++thread) {
             threads.emplace_back([&]() {
                 for (size_t i = 0; i < repeat; ++i) {
                     nixl_status_t status = from.genNotif(to_name, NOTIF_MSG);
                     ASSERT_EQ(status, NIXL_SUCCESS);
+
+                    if (!isProgressThreadEnabled()) {
+                        ASSERT_EQ(NIXL_SUCCESS, from.getNotifs(notif_map));
+                        ASSERT_EQ(NIXL_SUCCESS, to.getNotifs(notif_map));
+                    }
                 }
             });
         }
@@ -334,8 +343,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, total_notifs);
-
+        verifyNotifs(to, from_name, total_notifs, std::move(notif_map));
         invalidateMD();
     }
 
@@ -349,6 +357,7 @@ protected:
     {
         std::mutex logger_mutex;
         std::vector<std::thread> threads;
+        nixl_notifs_t notif_map;
         for (size_t thread = 0; thread < num_threads; ++thread) {
             threads.emplace_back([&, thread]() {
                 nixl_opt_args_t extra_params;
@@ -376,6 +385,9 @@ protected:
                         if (status == NIXL_SUCCESS) {
                             break;
                         }
+                        if (!isProgressThreadEnabled()) {
+                            ASSERT_EQ(NIXL_SUCCESS, to.getNotifs(notif_map));
+                        }
                         std::this_thread::sleep_for(retry_timeout);
                     }
                     EXPECT_TRUE(status == NIXL_SUCCESS);
@@ -400,8 +412,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, repeat * num_threads);
-
+        verifyNotifs(to, from_name, repeat * num_threads, std::move(notif_map));
         invalidateMD();
     }
 
@@ -420,10 +431,15 @@ protected:
 private:
     static constexpr uint64_t DEV_ID = 0;
     static const std::string NOTIF_MSG;
-    static constexpr int retry_count{1000};
+    // TODO: with error handling enabled by default we get poor performance with UCX1.18.
+    // Before we upgrade to UCX1.19, we need to temporarily increase the retry count,
+    // in order to pass threadpool tests.
+    // TODO: revert this to 1000 once we upgrade to UCX1.19.
+    static constexpr int retry_count{10000};
     static constexpr std::chrono::milliseconds retry_timeout{1};
 
     std::vector<std::unique_ptr<nixlAgent>> agents;
+    std::vector<uint16_t> ports;
 };
 
 const std::string TestTransfer::NOTIF_MSG = "notification";
@@ -512,7 +528,18 @@ TEST_P(TestTransfer, ListenerCommSize) {
     deregisterMem(getAgent(1), buffers, DRAM_SEG);
 }
 
-INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values("UCX"));
-INSTANTIATE_TEST_SUITE_P(ucx_mo, TestTransfer, testing::Values("UCX_MO"));
+INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values(std::make_tuple("UCX", true, 2, 0)));
+INSTANTIATE_TEST_SUITE_P(ucx_no_pt,
+                         TestTransfer,
+                         testing::Values(std::make_tuple("UCX", false, 2, 0)));
+INSTANTIATE_TEST_SUITE_P(ucx_threadpool,
+                         TestTransfer,
+                         testing::Values(std::make_tuple("UCX", true, 6, 4)));
+INSTANTIATE_TEST_SUITE_P(ucx_threadpool_no_pt,
+                         TestTransfer,
+                         testing::Values(std::make_tuple("UCX", false, 6, 4)));
+INSTANTIATE_TEST_SUITE_P(ucx_mo,
+                         TestTransfer,
+                         testing::Values(std::make_tuple("UCX_MO", true, 2, 0)));
 
 } // namespace gtest

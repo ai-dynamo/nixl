@@ -89,8 +89,9 @@ static std::vector<std::vector<xferBenchIOV>> createTransferDescLists(xferBenchW
                         block_offset = 0;
                     }
                     xfer_list.push_back(xferBenchIOV((iov.addr + dev_offset) + block_offset,
-                                                      block_size,
-                                                      iov.devId));
+                                                     block_size,
+                                                     iov.devId,
+                                                     iov.metaInfo));
                 }
             }
         }
@@ -115,7 +116,12 @@ static int processBatchSizes(xferBenchWorker &worker,
                                                          num_threads);
 
         if (worker.isTarget()) {
-            worker.exchangeIOV(local_trans_lists);
+            if (xferBenchConfig::isStorageBackend()) {
+                std::cerr << "storage backend should be always an initiator" << std::endl;
+                return EXIT_FAILURE;
+            }
+
+            worker.exchangeIOV(local_trans_lists, block_size);
             worker.poll(block_size);
 
             if (xferBenchConfig::check_consistency && xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
@@ -124,14 +130,13 @@ static int processBatchSizes(xferBenchWorker &worker,
             if (IS_PAIRWISE_AND_SG()) {
                 // TODO: This is here just to call throughput reduction
                 // Separate reduction and print
-                xferBenchUtils::printStats(true, block_size, batch_size, 0);
+                xferBenchUtils::printStats(true, block_size, batch_size, xferBenchStats());
             }
         } else if (worker.isInitiator()) {
-            std::vector<std::vector<xferBenchIOV>> remote_trans_lists(worker.exchangeIOV(local_trans_lists));
+            std::vector<std::vector<xferBenchIOV>> remote_trans_lists(
+                worker.exchangeIOV(local_trans_lists, block_size));
 
-            auto result = worker.transfer(block_size,
-                                          local_trans_lists,
-                                          remote_trans_lists);
+            auto result = worker.transfer(block_size, local_trans_lists, remote_trans_lists);
             if (std::holds_alternative<int>(result)) {
                 return 1;
             }
@@ -147,8 +152,8 @@ static int processBatchSizes(xferBenchWorker &worker,
                 }
             }
 
-            xferBenchUtils::printStats(false, block_size, batch_size,
-                                    std::get<double>(result));
+            xferBenchUtils::printStats(
+                false, block_size, batch_size, std::get<xferBenchStats>(result));
         }
     }
 

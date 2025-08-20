@@ -46,14 +46,14 @@ pip install nixl
 
 ### UCX
 
-NIXL was tested with UCX version 1.18.0.
+NIXL was tested with UCX version 1.19.0.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
-$ wget https://github.com/openucx/ucx/releases/download/v1.18.0/ucx-1.18.0.tar.gz
-$ tar xzf ucx-1.18.0.tar.gz
-$ cd ucx-1.18.0
+$ wget https://github.com/openucx/ucx/releases/download/v1.19.0/ucx-1.19.0.tar.gz
+$ tar xzf ucx-1.19.0.tar.gz
+$ cd ucx-1.19.0
 $ ./configure                          \
     --enable-shared                    \
     --disable-static                   \
@@ -150,23 +150,43 @@ $ ninja
 # After installation (ninja install), documentation will be available in <prefix>/share/doc/nixl/
 ```
 
-### pybind11 Python Interface
-The pybind11 bindings for the public facing NIXL API are available in src/bindings/python. These bindings implement the headers in the src/api/cpp directory.
+### Python Interface
 
-The preferred way is to build it through meson-python, which will just let it be installed with pip. This can be done from the root nixl directory:
+NIXL provides Python bindings through pybind11. For detailed Python API documentation, see [docs/python_api.md](docs/python_api.md).
 
-` $ pip install .`
+The preferred way to install the Python bindings is through pip:
+
+```bash
+pip install nixl
+```
+
+Or build from source:
+
+```bash
+# From the root nixl directory
+pip install .
+```
+
+For Python examples, see [examples/python/](examples/python/).
 
 ### Rust Bindings
+#### Build
+- Use `-Drust=true` meson option to build rust bindings.
+- Use `-Ddebug=false` for a release build.
+- Or build manually:
+    ```bash
+    $ cargo build --release
+    ```
+#### Install
+The bindings will be installed under `nixl-sys` in the configured installation prefix.
+Can be done using ninja, from project build directory:
 ```bash
-# Build with default NIXL installation (/opt/nvidia/nvda_nixl)
-$ cd src/bindings/rust
-$ cargo build --release
+$ ninja install
+```
 
-# Or specify custom NIXL location
-$ NIXL_PREFIX=/path/to/nixl cargo build --release
-
-# Run tests
+#### Test
+```
+# Rust bindings tests
 $ cargo test
 ```
 

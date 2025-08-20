@@ -20,6 +20,10 @@ import numpy as np
 import torch
 
 import nixl._bindings as nixlBind
+from nixl.logging import get_logger
+
+# Get logger using centralized configuration
+logger = get_logger(__name__)
 
 DEFAULT_COMM_PORT = nixlBind.DEFAULT_COMM_PORT
 
@@ -47,6 +51,7 @@ class nixl_agent_config:
         enable_prog_thread: bool = True,
         enable_listen_thread: bool = False,
         listen_port: int = 0,
+        num_threads: int = 0,
         backends: list[str] = ["UCX"],
     ):
         # TODO: add backend init parameters
@@ -54,6 +59,7 @@ class nixl_agent_config:
         self.enable_pthread = enable_prog_thread
         self.enable_listen = enable_listen_thread
         self.port = listen_port
+        self.num_threads = num_threads
 
 
 """
@@ -76,7 +82,7 @@ class nixl_agent:
     ):
         if nixl_conf and instantiate_all:
             instantiate_all = False
-            print(
+            logger.warning(
                 "Ignoring instantiate_all based on the provided config in agent creation."
             )
         if not nixl_conf:
@@ -105,7 +111,7 @@ class nixl_agent:
 
         self.plugin_list = self.agent.getAvailPlugins()
         if len(self.plugin_list) == 0:
-            print("No plugins available, cannot start transfers!")
+            logger.error("No plugins available, cannot start transfers!")
             raise RuntimeError("No plugins available for NIXL, cannot start transfers!")
 
         self.plugin_b_options: dict[str, dict[str, str]] = {}
@@ -115,23 +121,24 @@ class nixl_agent:
             self.plugin_b_options[plugin] = backend_options
             self.plugin_mem_types[plugin] = mem_types
 
-        # TODO: populate init from default parameters, or define a set of params in python
-        init: dict[str, str] = {}
-
         if instantiate_all:
-            for plugin in self.plugin_list:
-                self.create_backend(plugin, init)
-        else:
-            for bknd in nixl_conf.backends:
-                # TODO: populate init from nixl_conf when added
-                if bknd not in self.plugin_list:
-                    print(
-                        "Skipping backend registration",
-                        bknd,
-                        "due to the missing plugin.",
-                    )
-                else:
-                    self.create_backend(bknd, init)
+            nixl_conf.backends = self.plugin_list
+
+        for bknd in nixl_conf.backends:
+            if bknd not in self.plugin_list:
+                logger.warning(
+                    "Skipping backend registration %s due to the missing plugin.",
+                    bknd,
+                )
+            else:
+                # TODO: improve population of init from nixl_conf
+                init: dict[str, str] = {}
+                if nixl_conf.num_threads > 0:
+                    if bknd == "UCX" or bknd == "OBJ":
+                        init["num_threads"] = str(nixl_conf.num_threads)
+                    elif bknd == "GDS_MT":
+                        init["thread_count"] = str(nixl_conf.num_threads)
+                self.create_backend(bknd, init)
 
         self.nixl_mems = {
             "DRAM": nixlBind.DRAM_SEG,
@@ -147,7 +154,7 @@ class nixl_agent:
             "READ": nixlBind.NIXL_READ,
         }
 
-        print("Initialized NIXL agent:", agent_name)
+        logger.info("Initialized NIXL agent: %s", agent_name)
 
     """
     @brief Get the list of available plugins.
@@ -169,7 +176,9 @@ class nixl_agent:
         if backend in self.plugin_mem_types:
             return self.plugin_mem_types[backend]
         else:
-            print("Plugin", backend, "is not available to get its supported mem types.")
+            logger.warning(
+                "Plugin %s is not available to get its supported mem types.", backend
+            )
             return []
 
     """
@@ -184,7 +193,7 @@ class nixl_agent:
         if backend in self.plugin_b_options:
             return self.plugin_b_options[backend]
         else:
-            print("Plugin", backend, "is not available to get its parameters.")
+            logger.warning("Plugin %s is not available to get its parameters.", backend)
             return {}
 
     """
@@ -201,8 +210,8 @@ class nixl_agent:
         if backend in self.backend_mems:
             return self.backend_mems[backend]
         else:
-            print(
-                "Backend", backend, "not instantiated to get its supported mem types."
+            logger.warning(
+                "Backend %s not instantiated to get its supported mem types.", backend
             )
             return []
 
@@ -220,7 +229,9 @@ class nixl_agent:
         if backend in self.backend_options:
             return self.backend_options[backend]
         else:
-            print("Backend", backend, "not instantiated to get its parameters.")
+            logger.warning(
+                "Backend %s not instantiated to get its parameters.", backend
+            )
             return {}
 
     """
@@ -238,7 +249,7 @@ class nixl_agent:
         )
         self.backend_mems[backend] = mem_types
         self.backend_options[backend] = backend_options
-        print("Backend", backend, "was instantiated")
+        logger.info("Backend %s was instantiated", backend)
 
     """
     @brief Register memory regions, optionally with specified backends.
@@ -282,6 +293,28 @@ class nixl_agent:
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
         self.agent.deregisterMem(dereg_list, handle_list)
+
+    """
+    @brief Query information about memory/storage for a specific backend.
+
+    @param reg_list List of either memory regions, tensors, or nixlRegDList to query.
+    @param backend Backend name for querying.
+    @param mem_type Optional memory type, necessary if specifying a list of memory regions.
+    @return List of query results where each item is either None if not found, or a dictionary with the info
+    """
+
+    def query_memory(
+        self, reg_list, backend: str, mem_type: Optional[str] = None
+    ) -> list[Optional[dict[str, str]]]:
+        reg_descs = self.get_reg_descs(reg_list, mem_type, False)
+
+        # Get the backend handle
+        if backend not in self.backends:
+            raise ValueError(
+                f"Backend '{backend}' not found. Available backends: {list(self.backends.keys())}"
+            )
+
+        return self.agent.queryMem(reg_descs, self.backends[backend])
 
     """
     @brief  Proactively establish a connection with a remote agent,
@@ -771,7 +804,7 @@ class nixl_agent:
         if isinstance(descs, nixlBind.nixlXferDList):
             return descs
         elif isinstance(descs, nixlBind.nixlRegDList):
-            print("RegList type detected for transfer, please use XferList")
+            logger.error("RegList type detected for transfer, please use XferList")
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
@@ -779,10 +812,10 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                print("Please specify a mem type if not using Tensors")
+                logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                print("3-tuple list needed for transfer")
+                logger.error("3-tuple list needed for transfer")
                 new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
@@ -790,31 +823,38 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                print("Please specify a mem type if not using Tensors")
+                logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                print(
+                logger.error(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
-            mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
-            base_addr = descs.data_ptr()
-            region_len = descs.numel() * descs.element_size()
-            gpu_id = descs.get_device()
-            if gpu_id == -1:  # DRAM
-                gpu_id = 0
-            new_descs = nixlBind.nixlXferDList(
-                self.nixl_mems[mem_type],
-                [(base_addr, region_len, gpu_id)],
-                is_sorted,
-            )
+            if descs.is_contiguous():
+                mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+                base_addr = descs.data_ptr()
+                region_len = descs.numel() * descs.element_size()
+                gpu_id = descs.get_device()
+                if gpu_id == -1:  # DRAM
+                    gpu_id = 0
+                new_descs = nixlBind.nixlXferDList(
+                    self.nixl_mems[mem_type],
+                    [(base_addr, region_len, gpu_id)],
+                    is_sorted,
+                )
+            else:
+                logger.error("Please use a list of contiguous Tensors")
+                new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
                 if descs[i].device != tensor_type:
+                    return None
+                if not descs[i].is_contiguous():
+                    logger.error("Please use a list of contiguous Tensors")
                     return None
                 base_addr = descs[i].data_ptr()
                 region_len = descs[i].numel() * descs[i].element_size()
@@ -858,7 +898,7 @@ class nixl_agent:
         if isinstance(descs, nixlBind.nixlRegDList):
             return descs
         elif isinstance(descs, nixlBind.nixlXferDList):
-            print("XferList type detected for registration, please use RegList")
+            logger.error("XferList type detected for registration, please use RegList")
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 4:
@@ -866,10 +906,10 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                print("Please specify a mem type if not using Tensors")
+                logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                print("4-tuple list needed for registration")
+                logger.error("4-tuple list needed for registration")
                 new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
@@ -877,31 +917,38 @@ class nixl_agent:
                     self.nixl_mems[mem_type], descs, is_sorted
                 )
             elif mem_type is None:
-                print("Please specify a mem type if not using Tensors")
+                logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
             else:
-                print(
+                logger.error(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
-            mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
-            base_addr = descs.data_ptr()
-            region_len = descs.numel() * descs.element_size()
-            gpu_id = descs.get_device()
-            if gpu_id == -1:  # DRAM
-                gpu_id = 0
-            new_descs = nixlBind.nixlRegDList(
-                self.nixl_mems[mem_type],
-                [(base_addr, region_len, gpu_id, "")],
-                is_sorted,
-            )
+            if descs.is_contiguous():
+                mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+                base_addr = descs.data_ptr()
+                region_len = descs.numel() * descs.element_size()
+                gpu_id = descs.get_device()
+                if gpu_id == -1:  # DRAM
+                    gpu_id = 0
+                new_descs = nixlBind.nixlRegDList(
+                    self.nixl_mems[mem_type],
+                    [(base_addr, region_len, gpu_id, "")],
+                    is_sorted,
+                )
+            else:
+                logger.error("Please use a list of contiguous Tensors")
+                new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
                 if descs[i].device != tensor_type:
+                    return None
+                if not descs[i].is_contiguous():
+                    logger.error("Please use a list of contiguous Tensors")
                     return None
                 base_addr = descs[i].data_ptr()
                 region_len = descs[i].numel() * descs[i].element_size()

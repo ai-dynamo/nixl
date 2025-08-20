@@ -64,12 +64,18 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else ech
         doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all \
         doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 
+# Install AWS CLI
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws
+
 # --- Stage 2a: Represents using UCX from the base image ---
 FROM os_setup_stage AS ucx_upstream_image
 RUN echo "INFO: Using UCX from base image (UCX=${UCX})."
 
 # --- Stage 2b: Represents building UCX from source ---
 FROM os_setup_stage AS ucx_custom_image
+ARG BUILD_TYPE="release"
+ARG NPROC
 RUN mkdir -p /workspace/ucx
 COPY --from=ucx . /workspace/ucx
 
@@ -85,9 +91,10 @@ RUN echo "INFO: Starting custom UCX build..." && \
     ./autogen.sh && \
     echo "INFO: Building UCX..." && \
     ./contrib/configure-release --with-cuda=/usr/local/cuda \
+                                $(if [ "$BUILD_TYPE" = "debug" ]; then echo "--enable-debug"; fi) \
                                 --enable-mt \
                                 --without-go && \
-    make -j$(nproc) && \
+    make -j${NPROC:-$(nproc)} && \
     make install && \
     cd / && \
     echo "INFO: Finished building and installing UCX."
@@ -102,15 +109,28 @@ ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
+ARG BUILD_TYPE="release"
+ARG NPROC
 
 WORKDIR /workspace
-RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git &&\
-	cd etcd-cpp-apiv3 && mkdir build && cd build && \
-	cmake .. && make -j$(nproc) && make install
+RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+    cd etcd-cpp-apiv3 && \
+    sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
+    mkdir build && cd build && \
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY --from=nixl . /workspace/nixl
 COPY --from=nixlbench . /workspace/nixlbench
+
+# Install AWS SDK C++ dependencies and build
+RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev
+RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+    mkdir sdk_build && \
+    cd sdk_build && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    make -j && \
+    make install
 
 WORKDIR /workspace/nixl
 
@@ -123,7 +143,7 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl && \
+    uv run meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install
@@ -156,7 +176,7 @@ RUN ls -ll /workspace/nixlbench
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench && \
+    uv run meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
     cd build && ninja && ninja install
 
 WORKDIR /workspace/nixl
@@ -166,7 +186,7 @@ RUN ls -ll benchmark/kvbench
 # Install dependencies for benchmarks
 RUN uv pip install -e benchmark/kvbench
 
-ENV PATH=/usr/local/nixlbench/bin:$PATH
+ENV PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 ENV PYTHON_PATH=/usr/local/nixlbench/lib/python3/dist-packages/nixlbench/
 

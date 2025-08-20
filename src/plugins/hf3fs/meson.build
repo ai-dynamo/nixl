@@ -25,7 +25,7 @@ if 'HF3FS' in static_plugins
                     'hf3fs_utils.cpp', 'hf3fs_utils.h',
                     'hf3fs_backend.cpp', 'hf3fs_backend.h',
                     'hf3fs_plugin.cpp',
-                    dependencies: [nixl_infra, threefs_dep, nixl_common_dep],
+                    dependencies: [nixl_infra, threefs_dep, nixl_common_dep, file_utils_interface],
                     include_directories: [nixl_inc_dirs, utils_inc_dirs],
                     install: false,
                     cpp_args : compile_flags,
@@ -35,12 +35,13 @@ else
                     'hf3fs_utils.cpp', 'hf3fs_utils.h',
                     'hf3fs_backend.cpp', 'hf3fs_backend.h',
                     'hf3fs_plugin.cpp',
-                    dependencies: [nixl_infra, threefs_dep, nixl_common_dep],
+                    dependencies: [nixl_infra, threefs_dep, nixl_common_dep, file_utils_interface],
                     include_directories: [nixl_inc_dirs, utils_inc_dirs],
                     install: true,
                     cpp_args : ['-fPIC'],
                     name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
-                    install_dir: plugin_install_dir)
+                    install_dir: plugin_install_dir,
+                    install_rpath: '$ORIGIN/..')
   if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
                     'echo "HF3FS=' + hf3fs_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',

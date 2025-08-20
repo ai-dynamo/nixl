@@ -22,11 +22,12 @@
 #include "agent_data.h"
 #include "common/nixl_log.h"
 #if HAVE_ETCD
-#include <etcd/Client.hpp>
+#include <etcd/SyncClient.hpp>
 #include <etcd/Watcher.hpp>
 #include <future>
 #endif // HAVE_ETCD
 #include <absl/strings/str_format.h>
+#include <poll.h>
 
 const std::string default_metadata_label = "metadata";
 
@@ -59,22 +60,26 @@ int connectToIP(std::string ip_addr, int port) {
         return -1;
     }
 
-    // Use select to wait for connection with timeout
-    fd_set write_fds;
-    FD_ZERO(&write_fds);
-    FD_SET(ret_fd, &write_fds);
+    // Use poll to wait for connection with timeout
+    struct pollfd pfd;
+    pfd.fd = ret_fd;
+    pfd.events = POLLOUT;
+    pfd.revents = 0;
 
-    struct timeval tv;
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
-
-    ret = select(ret_fd + 1, NULL, &write_fds, NULL, &tv);
+    ret = poll(&pfd, 1, 1000); // 1000ms timeout
     if (ret <= 0) {
         if (ret < 0) {
-            NIXL_PERROR << "select failed for ip_addr: " << ip_addr << " and port: " << port;
+            NIXL_PERROR << "poll failed for ip_addr: " << ip_addr << " and port: " << port;
         } else {
-            NIXL_ERROR << "select timed out for ip_addr: " << ip_addr << " and port: " << port;
+            NIXL_ERROR << "poll timed out for ip_addr: " << ip_addr << " and port: " << port;
         }
+        close(ret_fd);
+        return -1;
+    }
+
+    if (!(pfd.revents & POLLOUT)) {
+        NIXL_ERROR << "poll returned but socket not ready for write for ip_addr: " << ip_addr
+                   << " and port: " << port;
         close(ret_fd);
         return -1;
     }
@@ -176,7 +181,7 @@ recvCommMessage(int fd, std::string &msg) {
 #if HAVE_ETCD
 class nixlEtcdClient {
 private:
-    std::unique_ptr<etcd::Client> etcd;
+    std::unique_ptr<etcd::SyncClient> etcd;
     std::string namespace_prefix;
     std::vector<std::string> invalidated_agents;
     std::mutex invalidated_agents_mutex;
@@ -199,8 +204,9 @@ public:
         }
 
         try {
-            etcd = std::make_unique<etcd::Client>(etcd_endpoints);
-        } catch (const std::exception& e) {
+            etcd = std::make_unique<etcd::SyncClient>(etcd_endpoints);
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error creating etcd client: " << e.what();
             return;
         }
@@ -212,7 +218,7 @@ public:
         NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
 
         std::string agent_prefix = makeKey(my_agent_name, "");
-        etcd::Response response = etcd->put(agent_prefix, "").get();
+        etcd::Response response = etcd->put(agent_prefix, "");
         if (!response.is_ok()) {
             throw std::runtime_error("Failed to store agent " + my_agent_name +
                                      " prefix key in etcd: " + response.error_message());
@@ -230,17 +236,19 @@ public:
 
         try {
             std::string metadata_key = makeKey(agent_name, metadata_type);
-            etcd::Response response = etcd->put(metadata_key, metadata).get();
+            etcd::Response response = etcd->put(metadata_key, metadata);
 
             if (response.is_ok()) {
-                NIXL_DEBUG << "Successfully stored " << metadata_type << " in etcd with key: " << metadata_key
-                           << " (rev " << response.value().modified_index() << ")";
+                NIXL_DEBUG << "Successfully stored " << metadata_type
+                           << " in etcd with key: " << metadata_key << " (rev "
+                           << response.value().modified_index() << ")";
                 return NIXL_SUCCESS;
             } else {
                 NIXL_ERROR << "Failed to store " << metadata_type << " in etcd: " << response.error_message();
                 return NIXL_ERR_BACKEND;
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error sending " << metadata_type << " to etcd: " << e.what();
             return NIXL_ERR_BACKEND;
         }
@@ -255,7 +263,7 @@ public:
 
         try {
             std::string agent_prefix = makeKey(agent_name, "");
-            etcd::Response response = etcd->rmdir(agent_prefix, true).get();
+            etcd::Response response = etcd->rmdir(agent_prefix, true);
 
             if (response.is_ok()) {
                 NIXL_DEBUG << "Successfully removed " << response.values().size()
@@ -266,7 +274,8 @@ public:
                            << agent_name << " : " << response.error_message();
                 return NIXL_ERR_BACKEND;
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Exception removing etcd keys for agent: " << agent_name << " : " << e.what();
             return NIXL_ERR_BACKEND;
         }
@@ -283,7 +292,7 @@ public:
 
         std::string metadata_key = makeKey(agent_name, metadata_type);
         try {
-            etcd::Response response = etcd->get(metadata_key).get();
+            etcd::Response response = etcd->get(metadata_key);
 
             if (response.is_ok()) {
                 metadata = response.value().as_string();
@@ -294,7 +303,8 @@ public:
                 NIXL_ERROR << "Failed to fetch key: " << metadata_key << " from etcd: " << response.error_message();
                 return NIXL_ERR_NOT_FOUND;
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error fetching key: " << metadata_key << " from etcd: " << e.what();
             return NIXL_ERR_UNKNOWN;
         }
@@ -305,7 +315,7 @@ public:
         try {
 
             // Get current index to watch from
-            etcd::Response response = etcd->get(metadata_key).get();
+            etcd::Response response = etcd->get(metadata_key);
             int64_t watch_index = response.index();
             std::promise<nixl_status_t> ret_prom;
             auto future = ret_prom.get_future();
@@ -337,8 +347,8 @@ public:
             }
             watcher.Cancel();
             return future.get();
-
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Error watching etcd for key: " << metadata_key << " : " << e.what();
             return NIXL_ERR_BACKEND;
         }
@@ -442,7 +452,12 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                 socklen_t client_addrlen = sizeof(client_address);
                 if (getpeername(new_fd, (sockaddr*)&client_address, &client_addrlen) == 0) {
                     char client_ip[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
+                    if (inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN) ==
+                        nullptr) {
+                        NIXL_PERROR << "inet_ntop failed for client address";
+                        close(new_fd);
+                        throw std::runtime_error("inet_ntop failed for client address");
+                    }
                     accepted_client.first = std::string(client_ip);
                     accepted_client.second = client_address.sin_port;
                 } else {
@@ -646,4 +661,84 @@ void nixlAgentData::getCommWork(std::vector<nixl_comm_req_t> &req_list){
     std::lock_guard<std::mutex> lock(commLock);
     req_list = std::move(commQueue);
     commQueue.clear();
+}
+
+nixl_status_t
+nixlAgentData::loadConnInfo(const std::string &remote_name,
+                            const nixl_backend_t &backend,
+                            const nixl_blob_t &conn_info) {
+    if (backendEngines.count(backend) == 0) {
+        NIXL_DEBUG << "Agent " << name << " does not support a remote backend: " << backend;
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    // No need to reload same conn info, error if it changed
+    if ((remoteBackends.count(remote_name) != 0) &&
+        (remoteBackends[remote_name].count(backend) != 0)) {
+        if (remoteBackends[remote_name][backend] != conn_info) {
+            return NIXL_ERR_NOT_ALLOWED;
+        }
+
+        return NIXL_SUCCESS;
+    }
+
+    nixlBackendEngine *eng = backendEngines[backend];
+    if (!eng->supportsRemote()) {
+        NIXL_DEBUG << backend << " does not support remote operations";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    const nixl_status_t ret = eng->loadRemoteConnInfo(remote_name, conn_info);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
+
+    remoteBackends[remote_name].emplace(backend, conn_info);
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
+    if (remoteSections.count(remote_name) == 0) {
+        remoteSections[remote_name] = new nixlRemoteSection(remote_name);
+    }
+
+    const nixl_status_t ret = remoteSections[remote_name]->loadRemoteData(&sd, backendEngines);
+    // TODO: can be more graceful, if just the new MD blob was improper
+    if (ret != NIXL_SUCCESS) {
+        delete remoteSections[remote_name];
+        remoteSections.erase(remote_name);
+        remoteBackends.erase(remote_name);
+        return ret;
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
+    if (remote_name == name) {
+        NIXL_ERROR << "Agent " << name << " cannot invalidate itself";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    nixl_status_t ret = NIXL_ERR_NOT_FOUND;
+    auto it_section = remoteSections.find(remote_name);
+    if (it_section != remoteSections.end()) {
+        delete it_section->second;
+        remoteSections.erase(it_section);
+        ret = NIXL_SUCCESS;
+    }
+
+    auto it_backends = remoteBackends.find(remote_name);
+    if (it_backends != remoteBackends.end()) {
+        for (auto &it : it_backends->second) {
+            backendEngines[it.first]->disconnect(remote_name);
+        }
+
+        remoteBackends.erase(it_backends);
+        ret = NIXL_SUCCESS;
+    }
+
+    return ret;
 }

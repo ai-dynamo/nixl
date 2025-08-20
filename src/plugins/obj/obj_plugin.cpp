@@ -50,11 +50,7 @@ get_plugin_version() {
 
 [[nodiscard]] nixl_b_params_t
 get_backend_options() {
-    nixl_b_params_t params;
-    params["access_key"] = "AWS access key ID (required)";
-    params["secret_key"] = "AWS secret access key (required)";
-    params["session_token"] = "AWS session token (optional)";
-    return params;
+    return nixl_b_params_t();
 }
 
 [[nodiscard]] nixl_mem_list_t

@@ -15,11 +15,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import os
 
 import nixl._utils as nixl_utils
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl._bindings import nixlNotFoundError
+from nixl.logging import get_logger
+
+# Configure logging
+logger = get_logger(__name__)
 
 
 def exchange_target_metadata(
@@ -66,14 +71,30 @@ if __name__ == "__main__":
     buf_size = 256
     # Allocate memory and register with NIXL
 
-    print("Using NIXL Plugins from:")
-    print(os.environ["NIXL_PLUGIN_DIR"])
+    parser = argparse.ArgumentParser(description="NIXL Partial Metadata Example")
+    parser.add_argument(
+        "--etcd",
+        action="store_true",
+        help="Use ETCD for metadata exchange. Must set NIXL_ETCD_ENDPOINTS environment variable.",
+    )
+    args = parser.parse_args()
 
-    etcd_endpoints = os.getenv("NIXL_ETCD_ENDPOINTS", "")
-    if etcd_endpoints:
-        print("NIXL_ETCD_ENDPOINTS is set, using endpoints: ", etcd_endpoints)
+    logger.info("Using NIXL Plugins from: %s", os.environ["NIXL_PLUGIN_DIR"])
+
+    if args.etcd:
+        etcd_endpoints = os.getenv("NIXL_ETCD_ENDPOINTS", "")
+        if etcd_endpoints:
+            logger.info(
+                "NIXL_ETCD_ENDPOINTS is set, using endpoints: %s", etcd_endpoints
+            )
+        else:
+            raise ValueError(
+                "NIXL_ETCD_ENDPOINTS is not set, but --etcd flag is provided"
+            )
     else:
-        print("NIXL_ETCD_ENDPOINTS is not set, using socket exchange")
+        etcd_endpoints = ""
+        del os.environ["NIXL_ETCD_ENDPOINTS"]
+        logger.info("NIXL_ETCD_ENDPOINTS is not set, using socket exchange")
 
     # Needed for socket exchange
     ip_addr = "127.0.0.1"
@@ -98,8 +119,12 @@ if __name__ == "__main__":
         target_strs2.append((addr1, buf_size, 0, "test"))
         malloc_addrs.append(addr1)
 
-    target_reg_descs1 = target_agent.get_reg_descs(target_strs1, "DRAM", is_sorted=True)
-    target_reg_descs2 = target_agent.get_reg_descs(target_strs2, "DRAM", is_sorted=True)
+    target_reg_descs1 = target_agent.get_reg_descs(
+        target_strs1, "DRAM", is_sorted=False
+    )
+    target_reg_descs2 = target_agent.get_reg_descs(
+        target_strs2, "DRAM", is_sorted=False
+    )
     target_xfer_descs1 = target_reg_descs1.trim()
     target_xfer_descs2 = target_reg_descs2.trim()
 
@@ -116,7 +141,7 @@ if __name__ == "__main__":
         init_strs.append((addr1, buf_size, 0, "test"))
         malloc_addrs.append(addr1)
 
-    init_reg_descs = init_agent.get_reg_descs(init_strs, "DRAM", is_sorted=True)
+    init_reg_descs = init_agent.get_reg_descs(init_strs, "DRAM", is_sorted=False)
     init_xfer_descs = init_reg_descs.trim()
 
     assert init_agent.register_memory(init_reg_descs) is not None
@@ -151,16 +176,16 @@ if __name__ == "__main__":
         if not init_done:
             state = init_agent.check_xfer_state(xfer_handle_1)
             if state == "ERR":
-                print("Transfer got to Error state.")
+                logger.error("Transfer got to Error state.")
                 exit()
             elif state == "DONE":
                 init_done = True
-                print("Initiator done")
+                logger.info("Initiator done")
 
         if not target_done:
             if target_agent.check_remote_xfer_done("initiator", b"UUID1"):
                 target_done = True
-                print("Target done")
+                logger.info("Target done")
 
     # Second set of descs was not sent, should fail
     try:
@@ -168,9 +193,9 @@ if __name__ == "__main__":
             "READ", init_xfer_descs, target_xfer_descs2, "target", b"UUID1"
         )
     except nixlNotFoundError:
-        print("Correct exception")
+        logger.info("Correct exception")
     else:
-        print("Incorrect success")
+        logger.error("Incorrect success")
         os.abort()
 
     # Now send rest of descs
@@ -191,7 +216,7 @@ if __name__ == "__main__":
         try:
             # initialize transfer mode
             xfer_handle_2 = init_agent.initialize_xfer(
-                "READ", init_xfer_descs, target_xfer_descs1, "target", b"UUID1"
+                "READ", init_xfer_descs, target_xfer_descs2, "target", b"UUID1"
             )
         except nixlNotFoundError:
             ready = False
@@ -208,16 +233,16 @@ if __name__ == "__main__":
         if not init_done:
             state = init_agent.check_xfer_state(xfer_handle_2)
             if state == "ERR":
-                print("Transfer got to Error state.")
+                logger.error("Transfer got to Error state.")
                 exit()
             elif state == "DONE":
                 init_done = True
-                print("Initiator done")
+                logger.info("Initiator done")
 
         if not target_done:
             if target_agent.check_remote_xfer_done("initiator", b"UUID1"):
                 target_done = True
-                print("Target done")
+                logger.info("Target done")
 
     init_agent.release_xfer_handle(xfer_handle_1)
     init_agent.release_xfer_handle(xfer_handle_2)
@@ -233,4 +258,4 @@ if __name__ == "__main__":
     del init_agent
     del target_agent
 
-    print("Test Complete.")
+    logger.info("Test Complete.")

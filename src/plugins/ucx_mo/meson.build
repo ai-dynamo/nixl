@@ -39,7 +39,9 @@ else
                install: true,
                cpp_args : compile_flags + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
-               install_dir: plugin_install_dir)
+               install_dir: plugin_install_dir,
+               # FIXME: normally plugins should not depend directly on each other
+               install_rpath: '$ORIGIN:$ORIGIN/..')
 
     if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
