@@ -47,7 +47,7 @@ fn create_dlist<'a>(agent: &Agent, num_descs: usize, opt_args: Option<&OptArgs>)
     Ok(dlist)
 }
 
-fn create_dlist_with_storage<'a>(agent: &Agent, num_descs: usize, storage: &mut SystemStorage, opt_args: Option<&OptArgs>) -> Result<XferDescList<'a>, NixlError> {
+fn create_dlist_with_storage<'a>(agent: &Agent, num_descs: usize, storage: &'a mut SystemStorage, opt_args: Option<&OptArgs>) -> Result<XferDescList<'a>, NixlError> {
     const DESC_SIZE: usize = 1024;
     const DEV_ID: u64 = 0;
 
@@ -55,17 +55,12 @@ fn create_dlist_with_storage<'a>(agent: &Agent, num_descs: usize, storage: &mut 
     let mut dlist = XferDescList::new(MemType::Dram, false)
                                 .expect("Failed to create XferDescList");
 
-    // for i in 0..num_descs {
-        let desc_ptr = unsafe { storage.as_ptr() as usize };
-        let rhandle = agent.register_memory(storage, opt_args)
-            .expect("Failed to register memory");
-        println!("Registered memory with address: 0x{:x}", desc_ptr);
-        dlist.add_desc(desc_ptr, DESC_SIZE, DEV_ID)?;
-    // }
+    storage.register(agent, opt_args).expect("Failed to register storage memory");
+    dlist.add_storage_desc(storage).expect("Failed to add storage descriptor");
     Ok(dlist)
 }
 
-fn setup_agent_with_backend(agent_name: &str) -> Result<Agent, NixlError> {
+fn setup_agent_with_backend<'a>(agent_name: &str) -> Result<Agent, NixlError> {
     let agent = Agent::new(agent_name).expect("Failed to create agent");
     let plugins = agent.get_available_plugins().expect("Failed to get available plugins");
     let plugin_name = find_plugin(&plugins, "UCX").expect("Failed to find plugin");
@@ -78,8 +73,10 @@ fn setup_agent_with_backend(agent_name: &str) -> Result<Agent, NixlError> {
 fn exchange_metadata(agent1: &Agent, agent2: &Agent, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
     // agent2.send_local_md(opt_args).expect("Failed to send local metadata");
     // agent1.send_local_md(opt_args).expect("Failed to send local metadata");
-    agent1.fetch_remote_md(&agent2.name(), opt_args).expect("Failed to fetch remote metadata");
-    agent2.fetch_remote_md(&agent1.name(), opt_args).expect("Failed to fetch remote metadata");
+    // agent1.fetch_remote_md(&agent2.name(), opt_args).expect("Failed to fetch remote metadata");
+    // agent2.fetch_remote_md(&agent1.name(), opt_args).expect("Failed to fetch remote metadata");
+    agent1.load_remote_md(&agent2.get_local_md().expect("Failed to get local metadata")).expect("Failed to load remote metadata");
+    agent2.load_remote_md(&agent1.get_local_md().expect("Failed to get local metadata")).expect("Failed to load remote metadata");
     Ok(())
 }
 
@@ -93,19 +90,22 @@ fn setup_agent_pair(agent1_name: &str, agent2_name: &str) -> Result<(Agent, Agen
     opt_args.add_backend(&agent2.get_backend("UCX").unwrap())
         .expect("Failed to add backend");
 
+    Ok((agent1, agent2, opt_args))
+}
+
+fn load_remote_md(agent1: &Agent, agent2: &Agent,  opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
     let metadata1 = agent1.get_local_md().expect("Failed to get local metadata");
     let metadata2 = agent2.get_local_md().expect("Failed to get local metadata");
     agent1.load_remote_md(&metadata2).expect("Failed to load remote metadata");
     agent2.load_remote_md(&metadata1).expect("Failed to load remote metadata");
 
-    agent1.make_connection(agent2_name, Some(&opt_args))
+
+    agent1.make_connection(agent2.name().as_str(), opt_args)
         .expect("Failed to make connection");
 
-    agent2.make_connection(agent1_name, Some(&opt_args))
+    agent2.make_connection(agent1.name().as_str(), opt_args)
         .expect("Failed to make connection");
-
-
-    Ok((agent1, agent2, opt_args))
+    Ok(())
 }
 
 // Helper function to find a plugin by name
@@ -1246,38 +1246,55 @@ fn test_query_mem_empty_list() {
     );
 }
 
+
+fn setup_agent(agent: &Agent) -> Result<OptArgs, NixlError> {
+    let plugins = agent.get_available_plugins().expect("Failed to get available plugins");
+    let plugin_name = find_plugin(&plugins, "UCX").expect("Failed to find plugin");
+    let (_mems, params) = agent.get_plugin_params(&plugin_name).expect("Failed to get plugin params");
+    agent.create_backend(&plugin_name, &params).expect("Failed to create backend");
+
+    let mut opt_args = OptArgs::new().expect("Failed to create opt args");
+    opt_args.add_backend(&agent.get_backend("UCX").unwrap());
+
+    Ok(opt_args)
+}
+
 // Tests for prep_xfer_dlist API
 #[test]
 fn test_prep_xfer_dlist_success() {
-    const DLIST_SIZE: usize = 1;
-    
-    // First, test just agent creation
-    println!("Creating agents...");
-    let (local_agent, remote_agent, opt_args) = setup_agent_pair("local_agent", "remote_agent")
-        .expect("Failed to setup agent pair");
-    println!("Agents created successfully");
+    // 1. Create agents and backends
+    let local_agent = Agent::new("local_agent").expect("Failed to create agent");
+    let opt_args = setup_agent(&local_agent).expect("Failed to setup agent");
 
-    // Test memory allocation
-    println!("Creating storage...");
+    let remote_agent = Agent::new("remote_agent").expect("Failed to create agent");
+    let opt_args_remote = setup_agent(&remote_agent).expect("Failed to setup agent");
+
+    // 2. Create memory regions and register them
     let mut storage = SystemStorage::new(1024).unwrap();
-    println!("Storage created successfully");
+    storage.register(&local_agent, Some(&opt_args)).expect("Failed to register storage memory");
+    storage.memset(0);
 
-    // Test descriptor list creation
-    println!("Creating descriptor list...");
-    let dlist = create_dlist_with_storage(&local_agent, DLIST_SIZE, &mut storage, Some(&opt_args))
-        .expect("Failed to create descriptor list");
-    println!("Descriptor list created successfully");
+    let mut remote_storage = SystemStorage::new(1024).unwrap();
+    remote_storage.register(&remote_agent, Some(&opt_args_remote)).expect("Failed to register storage memory");
+    remote_storage.memset(0);
 
-    // Test metadata exchange
-    println!("Exchanging metadata...");
-    exchange_metadata(&local_agent, &remote_agent, Some(&opt_args)).expect("Failed to exchange metadata");
-    println!("Metadata exchanged successfully");
+    local_agent.register_memory(&storage, Some(&opt_args)).expect("Failed to register storage memory");
+    remote_agent.register_memory(&remote_storage, Some(&opt_args_remote)).expect("Failed to register storage memory");
 
-    // This is where the segfault likely occurs
-    println!("Preparing transfer descriptor list...");
-    let result = local_agent.prepare_xfer_dlist(&remote_agent.name(), &dlist, Some(&opt_args));
-    println!("prepare_xfer_dlist completed");
+    // 3. Create transfer descriptor list
+    let mut dlist = XferDescList::new(MemType::Dram, false)
+                                .expect("Failed to create XferDescList");
 
+    dlist.add_storage_desc(&storage).expect("Failed to add storage descriptor");
+
+    // 4. Exchange metadata
+    let metadata = local_agent.get_local_md().expect("Failed to get local metadata");
+    let metadata_remote = remote_agent.get_local_md().expect("Failed to get local metadata");
+
+    local_agent.load_remote_md(&metadata_remote).expect("Failed to load remote metadata");
+
+    // 5. Prepare transfer descriptor list
+    let result = local_agent.prepare_xfer_dlist("", &dlist, None);
     assert!(result.is_ok(), "prepare_xfer_dlist failed with error: {:?}", result.err());
 }
 

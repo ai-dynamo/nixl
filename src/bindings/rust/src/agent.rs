@@ -402,10 +402,7 @@ impl Agent {
         };
 
         match status {
-            NIXL_CAPI_SUCCESS => Ok(XferDlistHandle::new(NonNull::new(dlist_hndl)
-                .ok_or(NixlError::FailedToCreateXferDlistHandle)?,
-                inner_guard.handle,
-            )),
+            NIXL_CAPI_SUCCESS => Ok(XferDlistHandle::new(dlist_hndl, inner_guard.handle)),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }

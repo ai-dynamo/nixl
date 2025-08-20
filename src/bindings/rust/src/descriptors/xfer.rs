@@ -218,8 +218,7 @@ impl<'a> XferDescList<'a> {
                 _ => Err(NixlError::BackendError),
             }?;
             if len > 0 {
-                // TODO: Add API to get descriptor memory type
-                MemType::Unknown
+                self.get_type().unwrap()
             } else {
                 desc_mem_type
             }
