@@ -1088,6 +1088,26 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 }
 
 nixl_status_t
+nixlAgent::exportXferReqtoGPU(nixlXferReqH *req_hndl, nixlGpuXferReqH* &gpu_req_hndl) const {
+    if (!req_hndl || !req_hndl->engine) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    return req_hndl->engine->exportXferReqtoGPU(req_hndl->backendHandle, gpu_req_hndl);
+}
+
+nixl_status_t
+nixlAgent::releaseXferReqtoGPU(nixlXferReqH *req_hndl) const {
+    if (!req_hndl || !req_hndl->engine) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    return req_hndl->engine->releaseXferReqtoGPU(req_hndl->backendHandle);
+}
+
+nixl_status_t
 nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
     NIXL_LOCK_GUARD(data->lock);
     delete dlist_hndl;
