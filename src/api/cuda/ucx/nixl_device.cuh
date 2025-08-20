@@ -36,7 +36,7 @@ enum nixl_gpu_coordination_level_t {
 
 /**
  * @brief Post a memory transfer request to the GPU.
- * 
+ *
  * @param req_hndl    [in]  The request handle.
  * @param address     [in]  The local address of the memory to be transferred.
  * @param remote_addr [in]  The remote address of the memory to be transferred.
@@ -45,10 +45,10 @@ enum nixl_gpu_coordination_level_t {
  *
  * @return nixl_status_t    Error code if call was not successful
  */
-template<nixl_gpu_coordination_level_t level = NIXL_GPU_COORDINATION_BLOCK> 
-__device__ static inline nixl_status_t 
-nixlGpuPostMemXferReq(nixlGpuXferReqH* req_hndl, 
-                      void *address, 
+template<nixl_gpu_coordination_level_t level = NIXL_GPU_COORDINATION_BLOCK>
+__device__ static inline nixl_status_t
+nixlGpuPostMemXferReq(nixlGpuXferReqH* req_hndl,
+                      void *address,
                       uint64_t remote_addr,
                       nixlGpuXferStatusH* xfer_status = nullptr,
                       bool is_no_delay = true)
@@ -58,7 +58,7 @@ nixlGpuPostMemXferReq(nixlGpuXferReqH* req_hndl,
 
 /**
  * @brief Post a signal transfer request to the GPU.
- * 
+ *
  * @param req_hndl           [in]  The request handle.
  * @param signal_inc         [in]  The increment of the signal.
  * @param signal_remote_addr [in]  The remote address of the signal.
@@ -67,12 +67,12 @@ nixlGpuPostMemXferReq(nixlGpuXferReqH* req_hndl,
  *
  * @return nixl_status_t    Error code if call was not successful
  */
-template<nixl_gpu_coordination_level_t level = NIXL_GPU_COORDINATION_BLOCK> 
-__device__ static inline nixl_status_t 
-nixlGpuPostSignalXferReq(nixlGpuXferReqH* req_hndl, 
-                         uint64_t signal_inc, 
-                         uint64_t signal_remote_addr, 
-                         nixlGpuXferStatusH* xfer_status = nullptr, 
+template<nixl_gpu_coordination_level_t level = NIXL_GPU_COORDINATION_BLOCK>
+__device__ static inline nixl_status_t
+nixlGpuPostSignalXferReq(nixlGpuXferReqH* req_hndl,
+                         uint64_t signal_inc,
+                         uint64_t signal_remote_addr,
+                         nixlGpuXferStatusH* xfer_status = nullptr,
                          bool is_no_delay = true)
 {
     return NIXL_ERR_NOT_SUPPORTED;
@@ -80,12 +80,12 @@ nixlGpuPostSignalXferReq(nixlGpuXferReqH* req_hndl,
 
 /**
  * @brief Post a partial memory transfer request to the GPU.
- * 
+ *
  * @param req_hndl           [in]  The request handle.
  * @param count              [in]  The number of blocks to send.
  * @param indices            [in]  The indices of the blocks to send.
  * @param sizes              [in]  The sizes of the blocks to send.
- * @param addreses           [in]  The addresses of the blocks to send.
+ * @param addresses          [in]  The addresses of the blocks to send.
  * @param remote_addrs       [in]  The remote addresses of the blocks to send.
  * @param signal_remote_addr [in]  The remote address of the signal. If address is 0, no signal.
  * @param signal_inc         [in]  The increment of the signal.
@@ -94,17 +94,17 @@ nixlGpuPostSignalXferReq(nixlGpuXferReqH* req_hndl,
  *
  * @return nixl_status_t    Error code if call was not successful
  */
-template<nixl_gpu_coordination_level_t level = NIXL_GPU_COORDINATION_BLOCK> 
-__device__ static inline nixl_status_t 
-nixlGpuPostPartialMemXferReq(nixlGpuXferReqH* req_hndl, 
-                             size_t count, 
+template<nixl_gpu_coordination_level_t level = NIXL_GPU_COORDINATION_BLOCK>
+__device__ static inline nixl_status_t
+nixlGpuPostPartialMemXferReq(nixlGpuXferReqH* req_hndl,
+                             size_t count,
                              const int* indices,
-                             const size_t* sizes, 
-                             const void** addreses, 
-                             const uint64_t* remote_addrs, 
+                             const size_t* sizes,
+                             const void** addresses,
+                             const uint64_t* remote_addrs,
                              uint64_t signal_remote_addr,
-                             uint64_t signal_inc, 
-                             nixlGpuXferStatusH* xfer_status = nullptr, 
+                             uint64_t signal_inc,
+                             nixlGpuXferStatusH* xfer_status = nullptr,
                              bool is_no_delay = true)
 {
     return NIXL_ERR_NOT_SUPPORTED;
@@ -112,10 +112,10 @@ nixlGpuPostPartialMemXferReq(nixlGpuXferReqH* req_hndl,
 
 /**
  * @brief Post a memory transfer request to the GPU.
- * 
+ *
  * @param req_hndl           [in]  The request handle.
  * @param sizes              [in]  The sizes of the blocks to send.
- * @param addreses           [in]  The addresses of the blocks to send.
+ * @param addresses          [in]  The addresses of the blocks to send.
  * @param remote_addrs       [in]  The remote addresses of the blocks to send.
  * @param signal_remote_addr [in]  The remote address of the signal. If address is 0, no signal.
  * @param signal_inc         [in]  The increment of the signal.
@@ -124,29 +124,29 @@ nixlGpuPostPartialMemXferReq(nixlGpuXferReqH* req_hndl,
  *
  * @return nixl_status_t    Error code if call was not successful
  */
-template<nixl_gpu_coordination_level_t level = NIXL_GPU_COORDINATION_BLOCK> 
-__device__ static inline nixl_status_t 
-nixlPostGpuXferReq(nixlGpuXferReqH* req_hndl, 
-                   const size_t* sizes, 
-                   const void** addreses, 
-                   const uint64_t* remote_addrs, 
+template<nixl_gpu_coordination_level_t level = NIXL_GPU_COORDINATION_BLOCK>
+__device__ static inline nixl_status_t
+nixlPostGpuXferReq(nixlGpuXferReqH* req_hndl,
+                   const size_t* sizes,
+                   const void** addresses,
+                   const uint64_t* remote_addrs,
                    uint64_t signal_remote_addr,
-                   uint64_t signal_inc, 
-                   nixlGpuXferStatusH* xfer_status = nullptr, 
-                   bool is_no_delay = true) 
+                   uint64_t signal_inc,
+                   nixlGpuXferStatusH* xfer_status = nullptr,
+                   bool is_no_delay = true)
 {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
 /**
  * @brief Get the status of a transfer request.
- * 
+ *
  * @param xfer_status [in]  The status of the transfer.
  *
  * @return nixl_status_t    Error code if call was not successful
  */
-template<nixl_gpu_coordination_level_t level = NIXL_GPU_COORDINATION_BLOCK> 
-__device__ static inline nixl_status_t 
+template<nixl_gpu_coordination_level_t level = NIXL_GPU_COORDINATION_BLOCK>
+__device__ static inline nixl_status_t
 nixlGpuGetXferStatus(nixlGpuXferStatusH* xfer_status)
 {
     return NIXL_ERR_NOT_SUPPORTED;
