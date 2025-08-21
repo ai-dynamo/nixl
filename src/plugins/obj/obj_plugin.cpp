@@ -20,68 +20,20 @@
 #include "backend/backend_plugin.h"
 #include "common/nixl_log.h"
 
-namespace {
-
-[[nodiscard]] nixlBackendEngine *
-create_obj_engine(const nixlBackendInitParams *init_params) {
-    try {
-        return new nixlObjEngine(init_params);
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to create obj engine: " << e.what();
-        return nullptr;
-    }
-}
-
-void
-destroy_obj_engine(nixlBackendEngine *engine) {
-    delete engine;
-}
-
-[[nodiscard]] const char *
-get_plugin_name() {
-    return "OBJ";
-}
-
-[[nodiscard]] const char *
-get_plugin_version() {
-    return "0.1.0";
-}
-
-[[nodiscard]] nixl_b_params_t
-get_backend_options() {
-    return nixl_b_params_t();
-}
-
-[[nodiscard]] nixl_mem_list_t
-get_backend_mems() {
-    return {DRAM_SEG, OBJ_SEG};
-}
-
-nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
-                            create_obj_engine,
-                            destroy_obj_engine,
-                            get_plugin_name,
-                            get_plugin_version,
-                            get_backend_options,
-                            get_backend_mems};
-} // namespace
+// Plugin type alias for convenience
+using obj_plugin_t = nixlBackendPluginCreator<nixlObjEngine>;
 
 #ifdef STATIC_PLUGIN_OBJ
-
 nixlBackendPlugin *
-createStaticObjPlugin() {
-    return &plugin; // Return the static plugin instance
+createStaticOBJPlugin() {
+    return obj_plugin_t::create(NIXL_PLUGIN_API_VERSION, "OBJ", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
 }
-
-#else // !STATIC_PLUGIN_OBJ
-
+#else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return &plugin;
+    return obj_plugin_t::create(NIXL_PLUGIN_API_VERSION, "OBJ", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
 nixl_plugin_fini() {}
-
-#endif // !STATIC_PLUGIN_OBJ
+#endif
