@@ -37,7 +37,7 @@ gdb_signal_handler(int sig) {
     signal(sig, SIG_DFL);
 
     const char *header = "\n!!! Caught signal. Generating backtrace: !!!\n";
-    write(STDERR_FILENO, header, strlen(header));
+    (void)write(STDERR_FILENO, header, strlen(header));
 
     print_backtrace();
 
