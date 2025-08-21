@@ -750,8 +750,8 @@ nixlUcxChunkBackendH::complete(nixl_status_t status) {
         sharedState_->status.store(status);
     }
     sharedState_->pendingReqs.fetch_sub(1);
-    setWorker(nullptr, UINT64_MAX);
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
+    setWorker(nullptr, UINT64_MAX);
     sharedState_.reset();
 }
 
@@ -790,7 +790,7 @@ public:
 
     size_t
     getNumChunks() const {
-        return sharedState_->chunks.size();
+        return sharedState_ ? sharedState_->chunks.size() : 0;
     }
 
     void
@@ -1605,7 +1605,7 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
     notif.reset();
     status = _retHelper(status, intHandle, req, conn);
     if (status != NIXL_SUCCESS) {
-        return handle_status;
+        return status;
     }
 
     return intHandle->status();
@@ -1716,13 +1716,11 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
         return NIXL_ERR_NOT_FOUND;
     }
 
-    size_t wid = getWorkerId();
-    ret = notifSendPriv(remote_agent, msg, req, conn->getEp(wid));
-
+    ret = notifSendPriv(remote_agent, msg, req, conn->getEp(getWorkerId()));
     switch(ret) {
     case NIXL_IN_PROG:
         /* do not track the request */
-        getWorker(wid)->reqRelease(req);
+        getWorker(getWorkerId())->reqRelease(req);
     case NIXL_SUCCESS:
         break;
     default:
