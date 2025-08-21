@@ -21,12 +21,12 @@ pub struct XferDlistHandle {
 }
 
 impl XferDlistHandle {
-    pub(crate) fn new(inner: *mut bindings::nixl_capi_xfer_dlist_handle_s,
+    pub fn new(inner: *mut bindings::nixl_capi_xfer_dlist_handle_s,
                       agent: NonNull<bindings::nixl_capi_agent_s>) -> Self {
         Self { inner, agent }
     }
 
-    pub(crate) fn handle(&self) -> *mut bindings::nixl_capi_xfer_dlist_handle_s {
+    pub fn handle(&self) -> *mut bindings::nixl_capi_xfer_dlist_handle_s {
         self.inner
     }
 }

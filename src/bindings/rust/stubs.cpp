@@ -78,7 +78,7 @@ nixl_capi_status_t
 nixl_capi_prep_xfer_dlist(nixl_capi_agent_t agent,
                           const char *agent_name,
                           nixl_capi_xfer_dlist_t descs,
-                          nixl_capi_xfer_dlist_handle_t dlist_handle,
+                          nixl_capi_xfer_dlist_handle_t *dlist_handle,
                           nixl_capi_opt_args_t opt_args) {
     return nixl_capi_stub_abort();
 }
@@ -397,6 +397,13 @@ nixl_capi_status_t
 nixl_capi_get_xfer_status(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl)
 {
   return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
+                             nixl_capi_xfer_req_t req_hndl,
+                             nixl_capi_backend_t *backend) {
+    return nixl_capi_stub_abort();
 }
 
 nixl_capi_status_t

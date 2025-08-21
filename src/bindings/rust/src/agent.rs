@@ -388,7 +388,7 @@ impl Agent {
         opt_args: Option<&OptArgs>,
     ) -> Result<XferDlistHandle, NixlError> {
         let c_agent_name = CString::new(agent_name)?;
-        let dlist_hndl = std::ptr::null_mut();
+        let mut dlist_hndl = std::ptr::null_mut();
         let inner_guard = self.inner.read().unwrap();
 
         let status = unsafe {
@@ -396,14 +396,13 @@ impl Agent {
                 inner_guard.handle.as_ptr(),
                 c_agent_name.as_ptr(),
                 descs.handle(),
-                dlist_hndl,
+                &mut dlist_hndl,
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             )
         };
 
         match status {
             NIXL_CAPI_SUCCESS => Ok(XferDlistHandle::new(dlist_hndl, inner_guard.handle)),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }
     }

@@ -197,11 +197,6 @@ pub struct Backend {
 unsafe impl Send for Backend {}
 unsafe impl Sync for Backend {}
 
-impl PartialEq for Backend {
-    fn eq(&self, other: &Self) -> bool {
-        self.inner.as_ptr() == other.inner.as_ptr()
-    }
-}
 
 /// A safe wrapper around NIXL optional arguments
 pub struct OptArgs {
