@@ -1397,11 +1397,6 @@ nixl_capi_make_xfer_req(nixl_capi_agent_t agent,
                         nixl_capi_xfer_req_t *req_hndl,
                         nixl_capi_opt_args_t opt_args) {
     if (!agent || !local_descs || !remote_descs || !req_hndl) {
-        printf("** Invalid parameters\n");
-        printf("** agent: %p\n", agent);
-        printf("** local_descs: %p\n", local_descs);
-        printf("** remote_descs: %p\n", remote_descs);
-        printf("** req_hndl: %p\n", req_hndl);
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
 
