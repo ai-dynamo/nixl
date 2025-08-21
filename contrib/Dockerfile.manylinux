@@ -137,11 +137,15 @@ RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /workspace && \
     git clone --depth 1 https://github.com/NVIDIA/gdrcopy.git && \
-    cd gdrcopy/packages && \
+    cd gdrcopy && \
+    git fetch --tags --depth=1 && \
+    latest_tag=$(git describe --tags "$(git rev-list --tags --max-count=1)") && \
+    git checkout "$latest_tag" && \
+    cd packages && \
     CUDA=/usr/local/cuda ./build-rpm-packages.sh && \
-    rpm -Uvh gdrcopy-kmod-2.5-1dkms.el8.noarch.rpm && \
-    rpm -Uvh gdrcopy-2.5-1.el8.$ARCH.rpm && \
-    rpm -Uvh gdrcopy-devel-2.5-1.el8.noarch.rpm
+    rpm -Uvh gdrcopy-kmod-*.el8.noarch.rpm && \
+    rpm -Uvh gdrcopy-*.el8.$ARCH.rpm && \
+    rpm -Uvh gdrcopy-devel-*.el8.noarch.rpm
 
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
