@@ -18,74 +18,28 @@
 #include "backend/backend_plugin.h"
 #include "ucx_backend.h"
 
-#include "nixl_log.h"
-
-namespace
-{
-   const char* ucx_plugin_name = "UCX";
-   const char* ucx_plugin_version = "0.1.0";
-
-   [[nodiscard]] nixlBackendEngine* create_ucx_engine(const nixlBackendInitParams* init_params) {
-       try {
-           return nixlUcxEngine::create(*init_params).release();
-       }
-       catch (const std::exception &e) {
-           NIXL_ERROR << "Failed to create UCX engine: " << e.what();
-           return nullptr;
-       }
-   }
-
-   void destroy_ucx_engine(nixlBackendEngine *engine) {
-       delete engine;
-   }
-
-   [[nodiscard]] const char* get_plugin_name() {
-       return ucx_plugin_name;
-   }
-
-   [[nodiscard]] const char* get_plugin_version() {
-       return ucx_plugin_version;
-   }
-
-   [[nodiscard]] nixl_b_params_t get_backend_options() {
-       return get_ucx_backend_common_options();
-   }
-
-   [[nodiscard]] nixl_mem_list_t get_backend_mems() {
-       return {
-	 DRAM_SEG,
-	 VRAM_SEG
-       };
-   }
-
-   // Static plugin structure
-   nixlBackendPlugin plugin = {
-       NIXL_PLUGIN_API_VERSION,
-       create_ucx_engine,
-       destroy_ucx_engine,
-       get_plugin_name,
-       get_plugin_version,
-       get_backend_options,
-       get_backend_mems
-   };
-
-}  // namespace
+// Plugin type alias for convenience
+using ucx_plugin_t = nixlBackendPluginCreator<nixlUcxEngine>;
 
 #ifdef STATIC_PLUGIN_UCX
-
-nixlBackendPlugin* createStaticUcxPlugin() {
-    return &plugin;
+nixlBackendPlugin *
+createStaticUCXPlugin() {
+    return ucx_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                "UCX",
+                                "0.1.0",
+                                get_ucx_backend_common_options(),
+                                {DRAM_SEG, VRAM_SEG});
 }
-
 #else
-
-// Plugin initialization function
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init() {
-    return &plugin;
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
+    return ucx_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                "UCX",
+                                "0.1.0",
+                                get_ucx_backend_common_options(),
+                                {DRAM_SEG, VRAM_SEG});
 }
 
-// Plugin cleanup function
-extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {
-    // Cleanup any resources if needed
-}
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
 #endif
