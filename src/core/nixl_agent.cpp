@@ -434,7 +434,6 @@ nixlAgent::makeConnection(const std::string &remote_agent,
     if (data->remoteBackends.count(remote_agent) == 0)
         return NIXL_ERR_NOT_FOUND;
 
-
     if (!extra_params || extra_params->backends.size() == 0) {
         if (data->remoteBackends[remote_agent].empty())
             return NIXL_ERR_NOT_FOUND;
@@ -481,7 +480,6 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     // just we can add a call to fetchRemoteMD for next time
     if (!init_side && (data->remoteSections.count(agent_name) == 0))
         return NIXL_ERR_NOT_FOUND;
-
 
     if (!extra_params || extra_params->backends.size() == 0) {
         if (!init_side)
