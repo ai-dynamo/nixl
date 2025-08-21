@@ -18,71 +18,23 @@
 #include "backend/backend_plugin.h"
 #include "gds_backend.h"
 
-// Plugin version information
-static const char* PLUGIN_NAME = "GDS";
-static const char* PLUGIN_VERSION = "0.1.1";
 
-// Function to create a new GDS backend engine instance
-static nixlBackendEngine* create_gds_engine(const nixlBackendInitParams* init_params) {
-    return new nixlGdsEngine(init_params);
-}
-
-static void destroy_gds_engine(nixlBackendEngine* engine) {
-    delete engine;
-}
-
-// Function to get the plugin name
-static const char* get_plugin_name() {
-    return PLUGIN_NAME;
-}
-
-// Function to get the plugin version
-static const char* get_plugin_version() {
-    return PLUGIN_VERSION;
-}
-
-// Function to get backend options
-static nixl_b_params_t get_backend_options() {
-    nixl_b_params_t params;
-    return params;
-}
-
-// Function to get supported backend mem types
-static nixl_mem_list_t get_backend_mems() {
-    nixl_mem_list_t mems;
-    mems.push_back(DRAM_SEG);
-    mems.push_back(VRAM_SEG);
-    mems.push_back(FILE_SEG);
-    return mems;
-}
-
-// Static plugin structure
-static nixlBackendPlugin plugin = {
-    NIXL_PLUGIN_API_VERSION,
-    create_gds_engine,
-    destroy_gds_engine,
-    get_plugin_name,
-    get_plugin_version,
-    get_backend_options,
-    get_backend_mems
-};
+// Plugin type alias for convenience
+using gds_plugin_t = nixlBackendPluginCreator<nixlGdsEngine>;
 
 #ifdef STATIC_PLUGIN_GDS
-
-nixlBackendPlugin* createStaticGdsPlugin() {
-    return &plugin; // Return the static plugin instance
+nixlBackendPlugin *
+createStaticGDSPlugin() {
+    return gds_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
-
 #else
-
-// Plugin initialization function
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init() {
-    return &plugin;
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
+    return gds_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 
-// Plugin cleanup function
-extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {
-    // Cleanup any resources if needed
-}
-
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
 #endif

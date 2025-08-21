@@ -15,8 +15,11 @@
  * limitations under the License.
  */
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <gflags/gflags.h>
+#include <numeric>
 #include <sstream>
 #include <sys/time.h>
 #include <unistd.h>
@@ -76,6 +79,7 @@ DEFINE_int32 (
 DEFINE_int32(num_initiator_dev, 1, "Number of device in initiator process");
 DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
+DEFINE_uint64(progress_threads, 0, "Number of progress threads (default: 0)");
 DEFINE_bool(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
@@ -138,6 +142,7 @@ int xferBenchConfig::large_blk_iter_ftr = 16;
 int xferBenchConfig::warmup_iter = 0;
 int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
+size_t xferBenchConfig::progress_threads = 0;
 bool xferBenchConfig::enable_vmm = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
@@ -172,6 +177,7 @@ xferBenchConfig::loadFromFlags() {
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         backend = FLAGS_backend;
         enable_pt = FLAGS_enable_pt;
+        progress_threads = FLAGS_progress_threads;
         device_list = FLAGS_device_list;
         enable_vmm = FLAGS_enable_vmm;
 
@@ -345,23 +351,30 @@ xferBenchConfig::loadFromFlags() {
 }
 
 void
-xferBenchConfig::printOption (const std::string &desc, const std::string &value) {
-    std::cout << std::left << std::setw (60) << desc << ": " << value << std::endl;
+xferBenchConfig::printOption(const std::string &desc, const std::string &value) {
+    std::cout << std::left << std::setw(60) << desc << ": " << value << std::endl;
 }
 
-void xferBenchConfig::printConfig() {
-    std::cout << std::string(70, '*') << std::endl;
+void
+xferBenchConfig::printSeparator(const char sep) {
+    std::cout << std::string(160, sep) << std::endl;
+}
+
+void
+xferBenchConfig::printConfig() {
+    printSeparator('*');
     std::cout << "NIXLBench Configuration" << std::endl;
-    std::cout << std::string(70, '*') << std::endl;
-    printOption ("Runtime (--runtime_type=[etcd])", runtime_type);
+    printSeparator('*');
+    printOption("Runtime (--runtime_type=[etcd])", runtime_type);
     if (runtime_type == XFERBENCH_RT_ETCD) {
-        printOption ("ETCD Endpoint ", etcd_endpoints);
+        printOption("ETCD Endpoint ", etcd_endpoints);
     }
-    printOption ("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
+    printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         printOption("Backend (--backend=[UCX,UCX_MO,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])",
                     backend);
         printOption ("Enable pt (--enable_pt=[0,1])", std::to_string (enable_pt));
+        printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption ("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption ("Enable VMM (--enable_vmm=[0,1])", std::to_string (enable_vmm));
 
@@ -430,7 +443,7 @@ void xferBenchConfig::printConfig() {
     printOption("Large block iter factor (--large_blk_iter_ftr=N)",
                 std::to_string(large_blk_iter_ftr));
     printOption ("Num threads (--num_threads=N)", std::to_string (num_threads));
-    std::cout << std::string(80, '-') << std::endl;
+    printSeparator('-');
     std::cout << std::endl;
 }
 
@@ -601,32 +614,51 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
     }
 }
 
-void xferBenchUtils::printStatsHeader() {
+void
+xferBenchUtils::printStatsHeader() {
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
-        std::cout << std::left << std::setw(20) << "Block Size (B)"
+        // clang-format off
+        std::cout << std::left
+                  << std::setw(20) << "Block Size (B)"
                   << std::setw(15) << "Batch Size"
-                  << std::setw(15) << "Avg Lat. (us)"
-                  << std::setw(15) << "B/W (MiB/Sec)"
-                  << std::setw(15) << "B/W (GiB/Sec)"
                   << std::setw(15) << "B/W (GB/Sec)"
                   << std::setw(25) << "Aggregate B/W (GB/Sec)"
                   << std::setw(20) << "Network Util (%)"
-                  << std::endl;
-    } else {
-        std::cout << std::left << std::setw(20) << "Block Size (B)"
-                  << std::setw(15) << "Batch Size"
                   << std::setw(15) << "Avg Lat. (us)"
-                  << std::setw(15) << "B/W (MiB/Sec)"
-                  << std::setw(15) << "B/W (GiB/Sec)"
-                  << std::setw(15) << "B/W (GB/Sec)"
+                  << std::setw(15) << "Avg Prep (us)"
+                  << std::setw(15) << "P99 Prep (us)"
+                  << std::setw(15) << "Avg Post (us)"
+                  << std::setw(15) << "P99 Post (us)"
+                  << std::setw(15) << "Avg Tx (us)"
+                  << std::setw(15) << "P99 Tx (us)"
                   << std::endl;
+        // clang-format on
+    } else {
+        // clang-format off
+        std::cout << std::left
+                  << std::setw(20) << "Block Size (B)"
+                  << std::setw(15) << "Batch Size"
+                  << std::setw(15) << "B/W (GB/Sec)"
+                  << std::setw(15) << "Avg Lat. (us)"
+                  << std::setw(15) << "Avg Prep (us)"
+                  << std::setw(15) << "P99 Prep (us)"
+                  << std::setw(15) << "Avg Post (us)"
+                  << std::setw(15) << "P99 Post (us)"
+                  << std::setw(15) << "Avg Tx (us)"
+                  << std::setw(15) << "P99 Tx (us)"
+                  << std::endl;
+        // clang-format on
     }
-    std::cout << std::string(80, '-') << std::endl;
+    xferBenchConfig::printSeparator('-');
 }
 
-void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_size, double total_duration) {
+void
+xferBenchUtils::printStats(bool is_target,
+                           size_t block_size,
+                           size_t batch_size,
+                           xferBenchStats stats) {
     size_t total_data_transferred = 0;
-    double avg_latency = 0, throughput = 0, throughput_gib = 0, throughput_gb = 0;
+    double avg_latency = 0, throughput_gb = 0;
     double totalbw = 0;
 
     int num_iter = xferBenchConfig::num_iter;
@@ -636,11 +668,14 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
     }
 
     // TODO: We can avoid this by creating a sub-communicator across initiator ranks
-    // if (isTarget() && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) { - Fix this isTarget can not be called here
+    // if (isTarget() && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) { - Fix this isTarget can not be
+    // called here
     if (is_target && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         rt->reduceSumDouble(&throughput_gb, &totalbw, 0);
         return;
     }
+
+    double total_duration = stats.total_duration.avg();
 
     total_data_transferred = ((block_size * batch_size) * num_iter); // In Bytes
     avg_latency = (total_duration / (num_iter * batch_size)); // In microsec
@@ -649,9 +684,6 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
         avg_latency /= xferBenchConfig::num_initiator_dev; // In microsec
     }
 
-    throughput = (((double) total_data_transferred / (1024 * 1024)) /
-                   (total_duration / 1e6));   // In MiB/Sec
-    throughput_gib = (throughput / 1024);   // In GiB/Sec
     throughput_gb = (((double) total_data_transferred / (1000 * 1000 * 1000)) /
                    (total_duration / 1e6));   // In GB/Sec
 
@@ -665,25 +697,48 @@ void xferBenchUtils::printStats(bool is_target, size_t block_size, size_t batch_
         return;
     }
 
+    double prepare_duration = stats.prepare_duration.avg();
+    double prepare_p99_duration = stats.prepare_duration.p99();
+    double post_duration = stats.post_duration.avg();
+    double post_p99_duration = stats.post_duration.p99();
+    double transfer_duration = stats.transfer_duration.avg();
+    double transfer_p99_duration = stats.transfer_duration.p99();
+
     // Tabulate print with fixed width for each string
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
-        std::cout << std::left << std::setw(20) << block_size
+        // clang-format off
+        std::cout << std::left << std::fixed << std::setprecision(6)
+                  << std::setw(20) << block_size
                   << std::setw(15) << batch_size
-                  << std::setw(15) << avg_latency
-                  << std::setw(15) << throughput
-                  << std::setw(15) << throughput_gib
                   << std::setw(15) << throughput_gb
                   << std::setw(25) << totalbw
-                  << std::setw(20) << (totalbw / (rt->getSize()/2 * MAXBW))*100
-                  << std::endl;
-    } else {
-        std::cout << std::left << std::setw(20) << block_size
-                  << std::setw(15) << batch_size
+                  << std::setw(20) << (totalbw / (rt->getSize() / 2 * MAXBW)) * 100
+                  << std::setprecision(1)
                   << std::setw(15) << avg_latency
-                  << std::setw(15) << throughput
-                  << std::setw(15) << throughput_gib
-                  << std::setw(15) << throughput_gb
+                  << std::setw(15) << prepare_duration
+                  << std::setw(15) << prepare_p99_duration
+                  << std::setw(15) << post_duration
+                  << std::setw(15) << post_p99_duration
+                  << std::setw(15) << transfer_duration
+                  << std::setw(15) << transfer_p99_duration
                   << std::endl;
+        // clang-format on
+    } else {
+        // clang-format off
+        std::cout << std::left << std::fixed << std::setprecision(6)
+                  << std::setw(20) << block_size
+                  << std::setw(15) << batch_size
+                  << std::setw(15) << throughput_gb
+                  << std::setprecision(1)
+                  << std::setw(15) << avg_latency
+                  << std::setw(15) << prepare_duration
+                  << std::setw(15) << prepare_p99_duration
+                  << std::setw(15) << post_duration
+                  << std::setw(15) << post_p99_duration
+                  << std::setw(15) << transfer_duration
+                  << std::setw(15) << transfer_p99_duration
+                  << std::endl;
+        // clang-format on
     }
 }
 
@@ -812,4 +867,112 @@ xferBenchUtils::rmObjS3(const std::string &name) {
         return false;
     }
     return true;
+}
+
+/*
+ * xferMetricStats
+ */
+
+double
+xferMetricStats::min() const {
+    if (samples.empty()) return 0;
+    return *std::min_element(samples.begin(), samples.end());
+}
+
+double
+xferMetricStats::max() const {
+    if (samples.empty()) return 0;
+    return *std::max_element(samples.begin(), samples.end());
+}
+
+double
+xferMetricStats::avg() const {
+    if (samples.empty()) return 0;
+    return std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size();
+}
+
+double
+xferMetricStats::p90() {
+    if (samples.empty()) return 0;
+    std::sort(samples.begin(), samples.end());
+    size_t index = samples.size() * 0.9;
+    return samples[std::min(index, samples.size() - 1)];
+}
+
+double
+xferMetricStats::p95() {
+    if (samples.empty()) return 0;
+    std::sort(samples.begin(), samples.end());
+    size_t index = samples.size() * 0.95;
+    return samples[std::min(index, samples.size() - 1)];
+}
+
+double
+xferMetricStats::p99() {
+    if (samples.empty()) return 0;
+    std::sort(samples.begin(), samples.end());
+    size_t index = samples.size() * 0.99;
+    return samples[std::min(index, samples.size() - 1)];
+}
+
+void
+xferMetricStats::add(double value) {
+    samples.push_back(value);
+}
+
+void
+xferMetricStats::add(const xferMetricStats &other) {
+    samples.insert(samples.end(), other.samples.begin(), other.samples.end());
+}
+
+void
+xferMetricStats::reserve(size_t n) {
+    samples.reserve(n);
+}
+
+void
+xferMetricStats::clear() {
+    samples.clear();
+}
+
+/*
+ * xferBenchStats
+ */
+
+void
+xferBenchStats::clear() {
+    total_duration.clear();
+    prepare_duration.clear();
+    post_duration.clear();
+    transfer_duration.clear();
+}
+
+void
+xferBenchStats::add(const xferBenchStats &other) {
+    total_duration.add(other.total_duration);
+    prepare_duration.add(other.prepare_duration);
+    post_duration.add(other.post_duration);
+    transfer_duration.add(other.transfer_duration);
+}
+
+void
+xferBenchStats::reserve(size_t n) {
+    total_duration.reserve(n);
+    prepare_duration.reserve(n);
+    post_duration.reserve(n);
+    transfer_duration.reserve(n);
+}
+
+/*
+ * xferBenchTimer
+ */
+
+xferBenchTimer::xferBenchTimer() : start_(nixlTime::getUs()) {}
+
+nixlTime::us_t
+xferBenchTimer::lap() {
+    nixlTime::us_t now = nixlTime::getUs();
+    nixlTime::us_t duration = now - start_;
+    start_ = now;
+    return duration;
 }

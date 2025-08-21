@@ -18,71 +18,31 @@
 #include "backend/backend_plugin.h"
 #include "mooncake_backend.h"
 
-// Plugin version information
-static const char* PLUGIN_NAME = "Mooncake";
-static const char* PLUGIN_VERSION = "0.1.0";
-
-// Function to create a new Mooncake backend engine instance
-static nixlBackendEngine* create_mooncake_engine(const nixlBackendInitParams* init_params) {
-    return new nixlMooncakeEngine(init_params);
-}
-
-static void destroy_mooncake_engine(nixlBackendEngine *engine) {
-    delete engine;
-}
-
-// Function to get the plugin name
-static const char* get_plugin_name() {
-    return PLUGIN_NAME;
-}
-
-// Function to get the plugin version
-static const char* get_plugin_version() {
-    return PLUGIN_VERSION;
-}
-
-// Function to get backend options
-static nixl_b_params_t get_backend_options() {
+namespace {
+nixl_b_params_t
+get_mooncake_options() {
     nixl_b_params_t params;
     params["mooncake_devices"] = "";
     return params;
 }
+} // namespace
 
-// Function to get supported backend mem types
-static nixl_mem_list_t get_backend_mems() {
-    nixl_mem_list_t mems;
-    mems.push_back(DRAM_SEG);
-    mems.push_back(VRAM_SEG);
-    return mems;
-}
-
-// Static plugin structure
-static nixlBackendPlugin plugin = {
-    NIXL_PLUGIN_API_VERSION,
-    create_mooncake_engine,
-    destroy_mooncake_engine,
-    get_plugin_name,
-    get_plugin_version,
-    get_backend_options,
-    get_backend_mems
-};
+// Plugin type alias for convenience
+using mooncake_plugin_t = nixlBackendPluginCreator<nixlMooncakeEngine>;
 
 #ifdef STATIC_PLUGIN_MOONCAKE
-
 nixlBackendPlugin *
-createStaticMooncakePlugin() {
-    return &plugin; // Return the static plugin instance
+createStaticMOONCAKEPlugin() {
+    return mooncake_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
 }
-
 #else
-
-// Plugin initialization function
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init() {
-    return &plugin;
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
+    return mooncake_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
 }
 
-// Plugin cleanup function
-extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {
-    // Cleanup any resources if needed
-}
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
 #endif

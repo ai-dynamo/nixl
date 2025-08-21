@@ -22,7 +22,7 @@ if etcd_dep.found()
 endif
 
 if 'UCX' in static_plugins
-    nixl_lib_deps += [ ucx_backend_interface, cuda_dep ]
+    nixl_lib_deps += [ ucx_backend_interface, asio_dep, cuda_dep ]
 endif
 
 if 'UCX_MO' in static_plugins
@@ -57,7 +57,7 @@ nixl_lib = library('nixl',
                    'nixl_agent.cpp',
                    'nixl_plugin_manager.cpp',
                    'nixl_listener.cpp',
-                   'signalhandler.cpp',
+                   'telemetry.cpp',
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
                    link_args: ['-lstdc++fs', '-lbacktrace'],
                    dependencies: nixl_lib_deps,

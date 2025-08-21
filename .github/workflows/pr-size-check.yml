@@ -1,0 +1,30 @@
+name: PR Size Check
+
+on: [pull_request]
+
+jobs:
+  check-pr-size:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 2  # Need full history to compare with base branch
+
+    - name: Check PR size
+      run: |
+        # Calculate detailed breakdown of changes
+        echo "📊 Analyzing PR changes..."
+        echo ""
+
+        # Lines added to existing files (excluding subprojects)
+        LINES_CHANGED=$(git show --numstat --pretty="" --diff-filter=M -- . ':(exclude)subprojects/*' | awk '{s+=$1} END {print s}')
+
+        if [[ "$LINES_CHANGED" -gt 500 ]]; then
+          echo "❌ PR size check failed!"
+          echo "This PR adds $LINES_CHANGED lines (excluding subprojects), which exceeds the maximum of 500 lines."
+          exit 1
+        else
+          echo "✅ PR size check passed!"
+          echo "This PR adds $LINES_CHANGED lines (excluding subprojects), which is within the 500 line limit."
+        fi

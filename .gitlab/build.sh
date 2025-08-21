@@ -83,6 +83,7 @@ $SUDO apt-get -qq install -y curl \
                              pybind11-dev \
                              etcd-server \
                              net-tools \
+                             iproute2 \
                              pciutils \
                              libpci-dev \
                              uuid-dev \
