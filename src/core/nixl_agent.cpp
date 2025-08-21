@@ -431,10 +431,9 @@ nixlAgent::makeConnection(const std::string &remote_agent,
     int count = 0;
 
     NIXL_LOCK_GUARD(data->lock);
-    if (data->remoteBackends.count(remote_agent) == 0) {
-        NIXL_ERROR << "No remote backends found for " << remote_agent;
+    if (data->remoteBackends.count(remote_agent) == 0)
         return NIXL_ERR_NOT_FOUND;
-    }
+
 
     if (!extra_params || extra_params->backends.size() == 0) {
         if (data->remoteBackends[remote_agent].empty())
@@ -459,10 +458,8 @@ nixlAgent::makeConnection(const std::string &remote_agent,
 
     if (ret)
         return ret;
-    else if (count == 0) { // No common backend
-        NIXL_ERROR << "No common backend found for " << remote_agent;
+    else if (count == 0) // No common backend
         return NIXL_ERR_BACKEND;
-    }
     else
         return NIXL_SUCCESS;
 }
@@ -482,10 +479,9 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     NIXL_LOCK_GUARD(data->lock);
     // When central KV is supported, still it should return error,
     // just we can add a call to fetchRemoteMD for next time
-    if (!init_side && (data->remoteSections.count(agent_name) == 0)) {
-        NIXL_ERROR << "Remote agent " << agent_name << " not found";
+    if (!init_side && (data->remoteSections.count(agent_name) == 0))
         return NIXL_ERR_NOT_FOUND;
-    }
+
 
     if (!extra_params || extra_params->backends.size() == 0) {
         if (!init_side)
@@ -495,10 +491,8 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
             backend_set = data->memorySection->
                                 queryBackends(descs.getType());
 
-        if (!backend_set || backend_set->empty()) {
-            NIXL_ERROR << "No backend found for " << descs.getType();
+        if (!backend_set || backend_set->empty())
             return NIXL_ERR_NOT_FOUND;
-        }
     } else {
         backend_set = new backend_set_t();
         for (auto & elm : extra_params->backends)
@@ -529,7 +523,6 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         if (ret == NIXL_SUCCESS) {
             count++;
         } else {
-            NIXL_ERROR << "populate failed for backend: " << backend->getType() << " with error: " << ret;
             delete handle->descs[backend];
             handle->descs.erase(backend);
         }
@@ -539,7 +532,6 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         delete backend_set;
 
     if (count == 0) {
-        NIXL_ERROR << "count == 0: No backend found for " << descs.getType();
         delete handle;
         dlist_hndl = nullptr;
         return NIXL_ERR_NOT_FOUND;
