@@ -78,7 +78,7 @@ cd ${INSTALL_DIR}
 ./bin/nixl_etcd_example
 ./bin/ucx_backend_test
 ./bin/ucx_mo_backend_test
-NIXL_TELEMETRY_ENABLE=1 ./bin/agent_example &
+NIXL_TELEMETRY_ENABLE=y ./bin/agent_example &
 sleep 1
 ./bin/telemetry_reader /tmp/Agent001 &
 telePID=$!

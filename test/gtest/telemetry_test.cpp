@@ -54,13 +54,18 @@ class telemetryTest : public ::testing::Test {
 protected:
     void
     SetUp() override {
-        testDir_ = "./telemetry_test_files";
+        testDir_ = "/tmp/telemetry_test_files";
         testFile_ = "test_telemetry";
-        if (!fs::exists(testDir_)) {
-            fs::create_directory(testDir_);
+        try {
+            if (!fs::exists(testDir_)) {
+                fs::create_directory(testDir_);
+            }
+        }
+        catch (const fs::filesystem_error &e) {
+            throw std::runtime_error("Could not create the directory for telemetry test.");
         }
 
-        envHelper_.addVar(TELEMETRY_ENABLED_VAR, "1");
+        envHelper_.addVar(TELEMETRY_ENABLED_VAR, "y");
         envHelper_.addVar(TELEMETRY_DIR_VAR, testDir_.string());
     }
 
@@ -463,7 +468,7 @@ TEST_F(telemetryTest, BackendTelemetryEventsDisabledTelemetry) {
     EXPECT_EQ(buffer->size(), 0);
 
     // Restore environment variable
-    setenv(TELEMETRY_ENABLED_VAR, "1", 1);
+    setenv(TELEMETRY_ENABLED_VAR, "y", 1);
 }
 
 TEST_F(telemetryTest, BackendTelemetryEventsMultipleBackends) {
