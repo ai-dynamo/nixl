@@ -1024,8 +1024,8 @@ xferBenchNixlWorker::poll(size_t block_size) {
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
         skip /= xferBenchConfig::large_blk_iter_ftr;
-        if (skip < MIN_WARMUP_ITERS) {
-            skip = MIN_WARMUP_ITERS;
+        if (skip < MIN_WARMUP_ITERS * xferBenchConfig::num_threads) {
+            skip = MIN_WARMUP_ITERS * xferBenchConfig::num_threads;
         }
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
