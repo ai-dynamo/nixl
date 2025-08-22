@@ -79,7 +79,7 @@ python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
 # Running telemetry for the last test
-export NIXL_TELEMETRY_ENABLE=1
+export NIXL_TELEMETRY_ENABLE=y
 blocking_send_recv_port=$(get_next_tcp_port)
 
 python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
