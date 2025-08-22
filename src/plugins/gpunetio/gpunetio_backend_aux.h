@@ -44,7 +44,6 @@
 #include "nixl.h"
 
 // Local includes
-#include "common/list_elem.h"
 #include "common/nixl_time.h"
 
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
