@@ -26,6 +26,9 @@ EXTRA_BUILD_ARGS=${3:-""}
 # UCX_VERSION is the version of UCX to build override default with env variable.
 UCX_VERSION=${UCX_VERSION:-v1.19.0}
 
+cat /etc/os-release
+echo "TEST POINT FAILURE" && exit 1
+
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
     exit 1
