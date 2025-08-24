@@ -30,7 +30,6 @@
 
 // Local includes
 #include <common/nixl_time.h>
-#include <common/list_elem.h>
 #include <ucx/ucx_utils.h>
 
 class nixlUcxMoConnection : public nixlBackendConnMD {

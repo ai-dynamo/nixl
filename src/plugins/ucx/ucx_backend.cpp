@@ -278,34 +278,34 @@ void nixlUcxEngine::vramFiniCtx()
 *****************************************/
 
 
-class nixlUcxIntReq : public nixlLinkElem<nixlUcxIntReq> {
-    private:
-        bool completed_ = false;
-        ucx_connection_ptr_t conn_;
+class nixlUcxIntReq {
+public:
+    std::unique_ptr<std::string> amBuffer;
 
-    public:
-        std::unique_ptr<std::string> amBuffer;
+    bool
+    is_complete() const {
+        return completed_;
+    }
 
-        bool
-        is_complete() const {
-            return completed_;
-        }
+    void
+    completed() {
+        completed_ = true;
+    }
 
-        void
-        completed() {
-            completed_ = true;
-        }
+    void
+    setConnection(ucx_connection_ptr_t conn) {
+        conn_ = conn;
+    }
 
-        void
-        setConnection(ucx_connection_ptr_t conn) {
-            conn_ = conn;
-        }
+    nixl_status_t
+    checkConnection(size_t ep_id) const {
+        NIXL_ASSERT(conn_) << "Connection is not set";
+        return conn_->getEp(ep_id)->checkTxState();
+    }
 
-        nixl_status_t
-        checkConnection(size_t ep_id) const {
-            NIXL_ASSERT(conn_) << "Connection is not set";
-            return conn_->getEp(ep_id)->checkTxState();
-        }
+private:
+    bool completed_ = false;
+    ucx_connection_ptr_t conn_;
 };
 
 static void
@@ -339,9 +339,7 @@ static void _internalRequestReset(nixlUcxIntReq *req) {
 
 class nixlUcxBackendH : public nixlBackendReqH {
 private:
-    // TODO: use std::vector here for a single allocation and cache friendly
-    // traversal
-    nixlUcxIntReq head;
+    std::vector<nixlUcxIntReq *> requests_;
     nixlUcxWorker *worker;
     size_t worker_id;
 
@@ -363,8 +361,14 @@ public:
         : worker(worker),
           worker_id(worker_id) {}
 
-    void append(nixlUcxIntReq *req) {
-        head.link(req);
+    void
+    reserve(size_t size) {
+        requests_.reserve(size);
+    }
+
+    void
+    append(nixlUcxIntReq *req) {
+        requests_.push_back(req);
     }
 
     virtual bool
@@ -374,33 +378,23 @@ public:
 
     virtual nixl_status_t
     release() {
-        nixlUcxIntReq *req = head.next();
-
         // TODO: Error log: uncompleted requests found! Cancelling ...
-        while (req) {
-            nixlUcxIntReq *cur = req;
-            bool done = cur->is_complete();
-            req = cur->unlink();
-            if (!done) {
+        for (nixlUcxIntReq *req : requests_) {
+            if (!req->is_complete()) {
                 // TODO: Need process this properly.
                 // it may not be enough to cancel UCX request
-                worker->reqCancel((nixlUcxReq)cur);
+                worker->reqCancel((nixlUcxReq)req);
             }
-            _internalRequestReset(cur);
-            worker->reqRelease((nixlUcxReq)cur);
+            _internalRequestReset(req);
+            worker->reqRelease((nixlUcxReq)req);
         }
-        // BUG: nixlUcxIntReq does not clean the head node
-        // TODO: Replace with std::list
-        head.unlink();
+        requests_.clear();
         return NIXL_SUCCESS;
     }
 
     virtual nixl_status_t
     status() {
-        nixlUcxIntReq *req = head.next();
-        nixl_status_t out_ret = NIXL_SUCCESS;
-
-        if (NULL == req) {
+        if (requests_.empty()) {
             /* No pending transmissions */
             return NIXL_SUCCESS;
         }
@@ -410,7 +404,8 @@ public:
             ;
 
         /* Go over all request updating their status */
-        while (req) {
+        nixl_status_t out_ret = NIXL_SUCCESS;
+        for (nixlUcxIntReq *req : requests_) {
             nixl_status_t ret;
             if (!req->is_complete()) {
                 ret = ucx_status_to_nixl(ucp_request_check_status((nixlUcxReq)req));
@@ -428,24 +423,18 @@ public:
                     return (conn_status == NIXL_SUCCESS) ? ret : conn_status;
                 }
             }
-            req = req->next();
         }
 
-        /* Remove completed requests keeping the first one as
-        request representative */
-        req = head.unlink();
-        while (req) {
-            nixlUcxIntReq *next_req = req->unlink();
+        size_t incomplete_reqs = 0;
+        for (nixlUcxIntReq *req : requests_) {
             if (req->is_complete()) {
                 _internalRequestReset(req);
                 worker->reqRelease((nixlUcxReq)req);
             } else {
-                /* Enqueue back */
-                append(req);
+                requests_[incomplete_reqs++] = req;
             }
-            req = next_req;
         }
-
+        requests_.resize(incomplete_reqs);
         return out_ret;
     }
 
@@ -1497,6 +1486,9 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
     nixl_status_t ret;
     nixlUcxReq req;
     size_t workerId = intHandle->getWorkerId();
+
+    // Reserve space for the requests, +2 for flush and completion
+    intHandle->reserve(end_idx - start_idx + 2);
 
     for (size_t i = start_idx; i < end_idx; i++) {
         void *laddr = (void*) local[i].addr;

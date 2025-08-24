@@ -18,70 +18,24 @@
 #include "backend/backend_plugin.h"
 #include "hf3fs_backend.h"
 #include <iostream>
-// Plugin version information
-static const char* PLUGIN_NAME = "HF3FS";
-static const char* PLUGIN_VERSION = "0.1.0";
 
-// Function to create a new HF3FS backend engine instance
-static nixlBackendEngine* create_hf3fs_engine(const nixlBackendInitParams* init_params) {
-    return new nixlHf3fsEngine(init_params);
-}
 
-static void destroy_hf3fs_engine(nixlBackendEngine *engine) {
-    delete engine;
-}
-
-// Function to get the plugin name
-static const char* get_plugin_name() {
-    return PLUGIN_NAME;
-}
-
-// Function to get the plugin version
-static const char* get_plugin_version() {
-    return PLUGIN_VERSION;
-}
-
-// Function to get backend options
-static nixl_b_params_t get_backend_options() {
-    nixl_b_params_t params;
-    return params;
-}
-
-// Function to get supported backend mem types
-static nixl_mem_list_t get_backend_mems() {
-    nixl_mem_list_t mems;
-    mems.push_back(FILE_SEG);
-    mems.push_back(DRAM_SEG);
-    return mems;
-}
-
-// Static plugin structure
-static nixlBackendPlugin plugin = {
-    NIXL_PLUGIN_API_VERSION,
-    create_hf3fs_engine,
-    destroy_hf3fs_engine,
-    get_plugin_name,
-    get_plugin_version,
-    get_backend_options,
-    get_backend_mems
-};
+// Plugin type alias for convenience
+using hf3fs_plugin_t = nixlBackendPluginCreator<nixlHf3fsEngine>;
 
 #ifdef STATIC_PLUGIN_HF3FS
-
-nixlBackendPlugin* createStaticHf3fsPlugin() {
-    return &plugin; // Return the static plugin instance
+nixlBackendPlugin *
+createStaticHF3FSPlugin() {
+    return hf3fs_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "HF3FS", "0.1.0", {}, {FILE_SEG, DRAM_SEG});
 }
-
 #else
-
-// Plugin initialization function
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init() {
-    return &plugin;
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
+    return hf3fs_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "HF3FS", "0.1.0", {}, {FILE_SEG, DRAM_SEG});
 }
 
-// Plugin cleanup function
-extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {
-    // Cleanup any resources if needed
-}
-
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
 #endif
