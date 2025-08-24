@@ -22,7 +22,6 @@ import logging
 import mmap
 import os
 import signal
-import sys
 import time
 from datetime import datetime
 
@@ -109,8 +108,8 @@ class SharedRingBuffer:
             self.file_fd = os.open(self.file_path, os.O_RDWR)
         except OSError as e:
             raise RuntimeError(
-                f"Failed to open file for shared memory: {errno.strerror(e.errno)}"
-            )
+                f"Failed to open file for shared memory: {os.strerror(e.errno)}"
+            ) from e
 
     def _map_memory(self):
         """Map the file into memory"""
@@ -265,8 +264,7 @@ def main():
     logger.info("Telemetry path: %s", args.telemetry_path)
     telemetry_file_name = args.telemetry_path
     if not os.path.exists(telemetry_file_name):
-        logger.error("Telemetry file %s does not exist", telemetry_file_name)
-        return 1
+        raise FileNotFoundError(f"Telemetry file {telemetry_file_name} does not exist")
 
     signal.signal(signal.SIGINT, signal_handler)
 
