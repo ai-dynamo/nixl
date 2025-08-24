@@ -130,6 +130,23 @@ else
   ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'])
 endif
 
+# UCX GPU device API detection
+ucx_gpu_device_api_available = false
+if ucx_dep.found() and cuda_dep.found() and nvcc.found() and get_option('enable_ucx_gpu_device_api')
+  if cpp.has_header('ucp/api/ucp.cuh') and \
+     cpp.has_function('ucp_gpu_dlist_export', prefix : '#include <ucp/api/ucp.h>')
+    ucx_gpu_device_api_available = true
+    add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
+    message('UCX GPU device API support detected and enabled')
+  endif
+endif
+
+if not get_option('enable_ucx_gpu_device_api')
+  message('UCX GPU device API support explicitly disabled by user')
+elif not ucx_gpu_device_api_available
+  message('UCX GPU device API support not available - GPU device API features will be disabled')
+endif
+
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
