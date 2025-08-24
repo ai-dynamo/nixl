@@ -137,7 +137,7 @@ class nixl_agent:
                 # TODO: improve population of init from nixl_conf
                 init: dict[str, str] = {}
                 if nixl_conf.num_threads > 0:
-                    if bknd == "UCX" or bknd == "OBJ":
+                    if bknd in {"UCX", "OBJ"}:
                         init["num_threads"] = str(nixl_conf.num_threads)
                     elif bknd == "GDS_MT":
                         init["thread_count"] = str(nixl_conf.num_threads)
