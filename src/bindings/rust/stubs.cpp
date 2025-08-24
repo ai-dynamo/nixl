@@ -267,12 +267,6 @@ nixl_capi_xfer_dlist_len(nixl_capi_xfer_dlist_t dlist, size_t* len)
 }
 
 nixl_capi_status_t
-nixl_capi_xfer_dlist_has_overlaps(nixl_capi_xfer_dlist_t dlist, bool* has_overlaps)
-{
-  return nixl_capi_stub_abort();
-}
-
-nixl_capi_status_t
 nixl_capi_xfer_dlist_clear(nixl_capi_xfer_dlist_t dlist)
 {
   return nixl_capi_stub_abort();
@@ -309,12 +303,6 @@ nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist,
 
 nixl_capi_status_t
 nixl_capi_reg_dlist_len(nixl_capi_reg_dlist_t dlist, size_t* len)
-{
-  return nixl_capi_stub_abort();
-}
-
-nixl_capi_status_t
-nixl_capi_reg_dlist_has_overlaps(nixl_capi_reg_dlist_t dlist, bool* has_overlaps)
 {
   return nixl_capi_stub_abort();
 }

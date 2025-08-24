@@ -163,28 +163,22 @@ int main()
     nixlMetaDesc meta4 (10070, 42, 0);
     meta3.metadataP = nullptr;
     meta4.metadataP = nullptr;
-    int dummy;
 
     nixl_meta_dlist_t dlist1 (DRAM_SEG);
     dlist1.addDesc(meta1);
-    assert (dlist1.overlaps(meta2, dummy));
     dlist1.addDesc(meta3);
 
     nixl_meta_dlist_t dlist2 (VRAM_SEG, false, false);
     dlist2.addDesc(meta3);
     dlist2.addDesc(meta2);
-    assert (dlist2.overlaps(meta1, dummy));
 
     nixl_meta_dlist_t dlist3 (VRAM_SEG, false, true);
     dlist3.addDesc(meta3);
     dlist3.addDesc(meta2);
-    assert (dlist3.overlaps(meta1, dummy));
 
     nixl_meta_dlist_t dlist4 (dlist1);
     nixl_meta_dlist_t dlist5 (VRAM_SEG);
     dlist5 = dlist3;
-
-    // TODO: test overlap_check flag
 
     dlist1.print();
     dlist2.print();

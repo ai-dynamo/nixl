@@ -958,22 +958,6 @@ nixl_capi_status_t nixl_capi_xfer_dlist_rem_desc(nixl_capi_xfer_dlist_t dlist, i
 }
 
 nixl_capi_status_t
-nixl_capi_xfer_dlist_has_overlaps(nixl_capi_xfer_dlist_t dlist, bool* has_overlaps)
-{
-  if (!dlist || !has_overlaps) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    *has_overlaps = dlist->dlist->hasOverlaps();
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
-nixl_capi_status_t
 nixl_capi_xfer_dlist_verify_sorted(nixl_capi_xfer_dlist_t dlist, bool* is_sorted)
 {
   if (!dlist || !is_sorted) {
@@ -1180,22 +1164,6 @@ nixl_capi_status_t nixl_capi_reg_dlist_is_sorted(nixl_capi_reg_dlist_t dlist, bo
 
   try {
     *is_sorted = dlist->dlist->isSorted();
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
-nixl_capi_status_t
-nixl_capi_reg_dlist_has_overlaps(nixl_capi_reg_dlist_t dlist, bool* has_overlaps)
-{
-  if (!dlist || !has_overlaps) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    *has_overlaps = dlist->dlist->hasOverlaps();
     return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
