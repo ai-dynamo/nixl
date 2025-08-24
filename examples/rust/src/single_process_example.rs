@@ -182,8 +182,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         if !completed {
             match agent1.get_xfer_status(&xfer_req) {
                 Ok(status) => {
-                    completed = !status;
-                    if completed {
+                    if status.is_success() {
                         debug!("Transfer completed!");
                     }
                 }
