@@ -838,27 +838,6 @@ impl Agent {
         }
     }
 
-    pub fn query_xfer_backend(&self, req: &XferRequest) -> Result<Backend, NixlError> {
-        let mut backend = std::ptr::null_mut();
-        let inner_guard = self.inner.write().unwrap();
-
-        let status = unsafe {
-            nixl_capi_query_xfer_backend(
-                inner_guard.handle.as_ptr(),
-                req.handle(),
-                &mut backend
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => {
-                Ok(Backend{ inner: NonNull::new(backend).ok_or(NixlError::FailedToCreateBackend)? })
-            }
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
     /// Gets notifications from other agents
     ///
     /// # Arguments
