@@ -23,7 +23,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
-ARG UCX_REF="v1.19.x"
+ARG UCX_REF="v1.19.0"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
 ARG NIXL_PREFIX="/usr/local/nixl"
@@ -56,6 +56,7 @@ RUN apt-get update -y && \
     libgtest-dev \
     build-essential \
     python3.12-dev \
+    clang \
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
@@ -63,13 +64,13 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     libnuma-dev librdmacm-dev ibverbs-providers
 
 WORKDIR /workspace
-RUN git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
 
-RUN git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install

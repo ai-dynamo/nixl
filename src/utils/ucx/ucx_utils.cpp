@@ -58,6 +58,8 @@ nixl_status_t ucx_status_to_nixl(ucs_status_t status)
         return NIXL_ERR_REMOTE_DISCONNECT;
     case UCS_ERR_INVALID_PARAM:
         return NIXL_ERR_INVALID_PARAM;
+    case UCS_ERR_CANCELED:
+        return NIXL_ERR_CANCELED;
     default:
         NIXL_WARN << "Unexpected UCX error: " << ucs_status_string(status);
         return NIXL_ERR_BACKEND;
@@ -233,14 +235,17 @@ nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
                                 void* buffer, size_t len,
                                 uint32_t flags, nixlUcxReq &req)
 {
-    ucs_status_ptr_t request;
+    nixl_status_t status = checkTxState();
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
     ucp_request_param_t param = {0};
 
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
     param.flags         = flags;
 
-    request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
-
+    ucs_status_ptr_t request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = (void*)request;
         return NIXL_IN_PROG;

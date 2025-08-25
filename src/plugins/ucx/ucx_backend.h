@@ -36,9 +36,8 @@
 #include "common/nixl_time.h"
 #include "ucx/rkey.h"
 #include "ucx/ucx_utils.h"
-#include "common/list_elem.h"
 
-enum ucx_cb_op_t {CONN_CHECK, NOTIF_STR, DISCONNECT};
+enum ucx_cb_op_t { NOTIF_STR };
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
@@ -207,8 +206,6 @@ public:
     // public function for UCX worker to mark connections as connected
     nixl_status_t
     checkConn(const std::string &remote_agent);
-    nixl_status_t
-    endConn(const std::string &remote_agent);
 
 protected:
     const std::vector<std::unique_ptr<nixlUcxWorker>> &
@@ -221,9 +218,12 @@ protected:
         return uws[worker_id];
     }
 
+    size_t
+    getWorkerId() const;
+
     virtual size_t
-    getWorkerId() const {
-        return std::hash<std::thread::id>{}(std::this_thread::get_id()) % uws.size();
+    getSharedWorkersSize() const {
+        return uws.size();
     }
 
     void
@@ -235,6 +235,15 @@ protected:
     virtual void
     appendNotif(std::string remote_name, std::string msg);
 
+    virtual nixl_status_t
+    sendXferRange(const nixl_xfer_op_t &operation,
+                  const nixl_meta_dlist_t &local,
+                  const nixl_meta_dlist_t &remote,
+                  const std::string &remote_agent,
+                  nixlBackendReqH *handle,
+                  size_t start_idx,
+                  size_t end_idx) const;
+
     nixlUcxEngine(const nixlBackendInitParams &init_params);
 
 private:
@@ -244,23 +253,6 @@ private:
     vramFiniCtx();
     int
     vramUpdateCtx(void *address, uint64_t dev_id, bool &restart_reqd);
-
-    // Connection helper
-    static ucs_status_t
-    connectionCheckAmCb(void *arg,
-                        const void *header,
-                        size_t header_length,
-                        void *data,
-                        size_t length,
-                        const ucp_am_recv_param_t *param);
-
-    static ucs_status_t
-    connectionTermAmCb(void *arg,
-                       const void *header,
-                       size_t header_length,
-                       void *data,
-                       size_t length,
-                       const ucp_am_recv_param_t *param);
 
     // Memory management helpers
     nixl_status_t
@@ -279,12 +271,16 @@ private:
     notifSendPriv(const std::string &remote_agent,
                   const std::string &msg,
                   nixlUcxReq &req,
-                  size_t worker_id) const;
+                  const std::unique_ptr<nixlUcxEp> &ep) const;
+
+    ucx_connection_ptr_t
+    getConnection(const std::string &remote_agent) const;
 
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
     std::string workerAddr;
+    mutable std::atomic<size_t> sharedWorkerIndex_;
 
     /* CUDA data*/
     std::unique_ptr<nixlUcxCudaCtx> cudaCtx; // Context matching specific device
@@ -330,6 +326,62 @@ private:
     std::unique_ptr<nixlUcxThread> thread_;
     std::mutex notifMtx_;
     notif_list_t notifPthr_;
+};
+
+namespace asio {
+class io_context;
+}
+
+class nixlUcxThreadPoolEngine : public nixlUcxEngine {
+public:
+    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params);
+    ~nixlUcxThreadPoolEngine();
+
+    nixl_status_t
+    prepXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
+
+    bool
+    supportsProgTh() const override {
+        return true;
+    }
+
+    size_t
+    getSharedWorkersSize() const override {
+        return numSharedWorkers_;
+    }
+
+    nixl_status_t
+    getNotifs(notif_list_t &notif_list) override;
+
+protected:
+    int
+    vramApplyCtx() override;
+
+    void
+    appendNotif(std::string remote_name, std::string msg) override;
+
+    nixl_status_t
+    sendXferRange(const nixl_xfer_op_t &operation,
+                  const nixl_meta_dlist_t &local,
+                  const nixl_meta_dlist_t &remote,
+                  const std::string &remote_agent,
+                  nixlBackendReqH *handle,
+                  size_t start_idx,
+                  size_t end_idx) const override;
+
+private:
+    std::unique_ptr<asio::io_context> io_;
+    std::unique_ptr<nixlUcxThread> sharedThread_;
+    std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
+    size_t numSharedWorkers_;
+    std::mutex notifMutex_;
+    notif_list_t notifThread_;
+    size_t splitBatchSize_;
 };
 
 #endif

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '0.5.0',
+project('nixlbench', 'CPP', version: '0.5.1',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -81,10 +81,6 @@ if cuda_available
         cuda_fabric_available = true
     endif
 endif
-
-
-# UCX
-ucx_dep = dependency('ucx')
 
 # GFlags
 gflags_dep = dependency('gflags', required: true)
@@ -206,7 +202,7 @@ if nvshmem_available
                  ]
 
     if etcd_available
-        nvcc_args += ['-letcd-cpp-api', '-lcpprest']
+        nvcc_args += ['-letcd-cpp-api-core', '-lcpprest']
         etcd_rt = meson.current_build_dir() + '/src/runtime/etcd/libetcd_rt.a.p/etcd_rt.cpp.o'
         nvcc_cmd_files += etcd_rt
     endif
