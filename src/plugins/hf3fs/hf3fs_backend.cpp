@@ -71,8 +71,8 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
                     iopool_size = size;
                 } else {
                     iopool_size = HF3FS_MAX_IOPOOL_SIZE;
-                    NIXL_INFO << size << " exceeded max iopool size "
-                              << iopool_size << ", set it to max";
+                    NIXL_INFO << size << " exceeded max iopool size " << iopool_size
+                              << ", set it to max";
                 }
             }
         }
@@ -100,9 +100,8 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
     NIXL_DEBUG << "HF3FS: Page size: " << page_size;
 }
 
-nixlHf3fsIO*
-nixlHf3fsEngine::getFromIOPool() const
-{
+nixlHf3fsIO *
+nixlHf3fsEngine::getFromIOPool() const {
     const std::lock_guard<std::mutex> lock(iopool_lock);
     if (!iopool.empty()) {
         auto io = iopool.front();
@@ -113,17 +112,15 @@ nixlHf3fsEngine::getFromIOPool() const
 }
 
 void
-nixlHf3fsEngine::returnToIOPool(nixlHf3fsIO *io) const
-{
+nixlHf3fsEngine::returnToIOPool(nixlHf3fsIO *io) const {
     const std::lock_guard<std::mutex> lock(iopool_lock);
     iopool.push_back(io);
 }
 
 void
-nixlHf3fsEngine::destroyIOPool()
-{
+nixlHf3fsEngine::destroyIOPool() {
     for (auto io : iopool) {
-        delete(io);
+        delete (io);
     }
     iopool.clear();
 }
