@@ -16,15 +16,22 @@
 # limitations under the License.
 
 import argparse
+import enum
 import os
 
+# pylint: disable=import-error,no-name-in-module
 import nixl._utils as nixl_utils
+from examples.python import util
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl._bindings import nixlNotFoundError
 from nixl.logging import get_logger
 
 # Configure logging
 logger = get_logger(__name__)
+
+
+class PartialMdExampleErrCodes(enum.Enum):
+    TRANSFER_FAILED = 1
 
 
 def exchange_target_metadata(
@@ -67,7 +74,23 @@ def invalidate_target_metadata(
         target_agent.invalidate_local_metadata(ip_addr, init_port)
 
 
-if __name__ == "__main__":
+def allocate_strings(malloc_addrs: list, buf_size: int, num_strings: int):
+    target_strs = []
+    for _ in range(num_strings):
+        addr1 = nixl_utils.malloc_passthru(buf_size)
+        target_strs.append((addr1, buf_size, 0, "test"))
+        malloc_addrs.append(addr1)
+
+    return target_strs
+
+
+def xfer(init_agent, xfer_handle, target_agent):
+    state = init_agent.transfer(xfer_handle)
+    assert state != "ERR"
+    util.wait_for_transfer_completion(init_agent, target_agent, xfer_handle, b"UUID1")
+
+
+def main():
     buf_size = 256
     # Allocate memory and register with NIXL
 
@@ -107,17 +130,8 @@ if __name__ == "__main__":
 
     malloc_addrs = []
 
-    target_strs1 = []
-    for _ in range(10):
-        addr1 = nixl_utils.malloc_passthru(buf_size)
-        target_strs1.append((addr1, buf_size, 0, "test"))
-        malloc_addrs.append(addr1)
-
-    target_strs2 = []
-    for _ in range(10):
-        addr1 = nixl_utils.malloc_passthru(buf_size)
-        target_strs2.append((addr1, buf_size, 0, "test"))
-        malloc_addrs.append(addr1)
+    target_strs1 = allocate_strings(malloc_addrs, buf_size, 10)
+    target_strs2 = allocate_strings(malloc_addrs, buf_size, 10)
 
     target_reg_descs1 = target_agent.get_reg_descs(
         target_strs1, "DRAM", is_sorted=False
@@ -135,11 +149,7 @@ if __name__ == "__main__":
     agent_config2 = nixl_agent_config(True, True, init_port)
     init_agent = nixl_agent("initiator", agent_config2)
 
-    init_strs = []
-    for _ in range(10):
-        addr1 = nixl_utils.malloc_passthru(buf_size)
-        init_strs.append((addr1, buf_size, 0, "test"))
-        malloc_addrs.append(addr1)
+    init_strs = allocate_strings(malloc_addrs, buf_size, 10)
 
     init_reg_descs = init_agent.get_reg_descs(init_strs, "DRAM", is_sorted=False)
     init_xfer_descs = init_reg_descs.trim()
@@ -166,26 +176,7 @@ if __name__ == "__main__":
         "READ", init_xfer_descs, target_xfer_descs1, "target", b"UUID1"
     )
 
-    state = init_agent.transfer(xfer_handle_1)
-    assert state != "ERR"
-
-    target_done = False
-    init_done = False
-
-    while (not init_done) or (not target_done):
-        if not init_done:
-            state = init_agent.check_xfer_state(xfer_handle_1)
-            if state == "ERR":
-                logger.error("Transfer got to Error state.")
-                exit()
-            elif state == "DONE":
-                init_done = True
-                logger.info("Initiator done")
-
-        if not target_done:
-            if target_agent.check_remote_xfer_done("initiator", b"UUID1"):
-                target_done = True
-                logger.info("Target done")
+    xfer(init_agent, xfer_handle_1, target_agent)
 
     # Second set of descs was not sent, should fail
     try:
@@ -223,26 +214,7 @@ if __name__ == "__main__":
         else:
             ready = True
 
-    state = init_agent.transfer(xfer_handle_2)
-    assert state != "ERR"
-
-    target_done = False
-    init_done = False
-
-    while (not init_done) or (not target_done):
-        if not init_done:
-            state = init_agent.check_xfer_state(xfer_handle_2)
-            if state == "ERR":
-                logger.error("Transfer got to Error state.")
-                exit()
-            elif state == "DONE":
-                init_done = True
-                logger.info("Initiator done")
-
-        if not target_done:
-            if target_agent.check_remote_xfer_done("initiator", b"UUID1"):
-                target_done = True
-                logger.info("Target done")
+    xfer(init_agent, xfer_handle_2, target_agent)
 
     init_agent.release_xfer_handle(xfer_handle_1)
     init_agent.release_xfer_handle(xfer_handle_2)
@@ -259,3 +231,7 @@ if __name__ == "__main__":
     del target_agent
 
     logger.info("Test Complete.")
+
+
+if __name__ == "__main__":
+    main()

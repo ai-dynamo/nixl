@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 import os
 import sys
 
@@ -26,13 +27,21 @@ from nixl.logging import get_logger
 logger = get_logger(__name__)
 
 
+class NixlGdsExampleErrCodes(enum.Enum):
+    MISSING_FILE_PATH = 1
+    CREATE_TRANSFER_FAILED = 2
+    TRANSFER_FAILED = 3
+    INIT_XFER_FAILED = 4
+    DATA_VERIFICATION_FAILED = 5
+
+
 if __name__ == "__main__":
     buf_size = 16 * 4096
     # Allocate memory and register with NIXL
 
     if len(sys.argv) < 2:
         logger.error("Please specify file path in argv")
-        exit(0)
+        sys.exit(NixlGdsExampleErrCodes.MISSING_FILE_PATH.value)
 
     logger.info("Using NIXL Plugins from:\n%s", os.environ["NIXL_PLUGIN_DIR"])
 
@@ -86,7 +95,7 @@ if __name__ == "__main__":
     )
     if not xfer_handle_1:
         logger.error("Creating transfer failed.")
-        exit()
+        sys.exit(NixlGdsExampleErrCodes.CREATE_TRANSFER_FAILED.value)
 
     state = nixl_agent1.transfer(xfer_handle_1)
     assert state != "ERR"
@@ -97,7 +106,7 @@ if __name__ == "__main__":
         state = nixl_agent1.check_xfer_state(xfer_handle_1)
         if state == "ERR":
             logger.error("Transfer got to Error state.")
-            exit()
+            sys.exit(NixlGdsExampleErrCodes.TRANSFER_FAILED.value)
         elif state == "DONE":
             done = True
             logger.info("Initiator done")
@@ -108,7 +117,7 @@ if __name__ == "__main__":
     )
     if not xfer_handle_2:
         logger.error("Creating transfer failed.")
-        exit()
+        sys.exit(NixlGdsExampleErrCodes.INIT_XFER_FAILED.value)
 
     state = nixl_agent1.transfer(xfer_handle_2)
     assert state != "ERR"
@@ -119,7 +128,7 @@ if __name__ == "__main__":
         state = nixl_agent1.check_xfer_state(xfer_handle_2)
         if state == "ERR":
             logger.error("Transfer got to Error state.")
-            exit()
+            sys.exit(NixlGdsExampleErrCodes.TRANSFER_FAILED.value)
         elif state == "DONE":
             done = True
             logger.info("Initiator done")

@@ -15,17 +15,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 import os
+import sys
 
 import numpy as np
 import torch
 
+# pylint: disable=import-error,no-name-in-module
 import nixl._utils as nixl_utils
+from examples.python import util
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl.logging import get_logger
 
 # Configure logging
 logger = get_logger(__name__)
+
+
+class NixlApiExampleErrCodes(enum.Enum):
+    CREATE_TRANSFER_FAILED = 1
+    PREP_TRANSFER_SIDE_HANDLES_FAILED = 2
+    MAKE_PREPPED_TRANSFER_FAILED = 3
+    TRANSFER_FAILED = 4
 
 
 if __name__ == "__main__":
@@ -113,30 +124,15 @@ if __name__ == "__main__":
     )
     if not xfer_handle_1:
         logger.error("Creating transfer failed.")
-        exit()
+        sys.exit(NixlApiExampleErrCodes.CREATE_TRANSFER_FAILED.value)
 
     # test multiple postings
     for _ in range(2):
         state = nixl_agent2.transfer(xfer_handle_1)
         assert state != "ERR"
-
-        target_done = False
-        init_done = False
-
-        while (not init_done) or (not target_done):
-            if not init_done:
-                state = nixl_agent2.check_xfer_state(xfer_handle_1)
-                if state == "ERR":
-                    logger.error("Transfer got to Error state.")
-                    exit()
-                elif state == "DONE":
-                    init_done = True
-                    logger.info("Initiator done")
-
-            if not target_done:
-                if nixl_agent1.check_remote_xfer_done("initiator", b"UUID1"):
-                    target_done = True
-                    logger.info("Target done")
+        util.wait_for_transfer_completion(
+            nixl_agent2, nixl_agent1, xfer_handle_1, b"UUID1"
+        )
 
     # prep transfer mode
     local_prep_handle = nixl_agent2.prep_xfer_dlist(
@@ -173,11 +169,11 @@ if __name__ == "__main__":
     )
     if not local_prep_handle or not remote_prep_handle:
         logger.error("Preparing transfer side handles failed.")
-        exit()
+        sys.exit(NixlApiExampleErrCodes.PREP_TRANSFER_SIDE_HANDLES_FAILED.value)
 
     if not xfer_handle_2:
         logger.error("Make prepped transfer failed.")
-        exit()
+        sys.exit(NixlApiExampleErrCodes.MAKE_PREPPED_TRANSFER_FAILED.value)
 
     state = nixl_agent2.transfer(xfer_handle_2)
     assert state != "ERR"
@@ -192,7 +188,7 @@ if __name__ == "__main__":
             state = nixl_agent2.check_xfer_state(xfer_handle_2)
             if state == "ERR":
                 logger.error("Transfer got to Error state.")
-                exit()
+                sys.exit(NixlApiExampleErrCodes.TRANSFER_FAILED.value)
             elif state == "DONE":
                 init_done = True
                 logger.info("Initiator done")
