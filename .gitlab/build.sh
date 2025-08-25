@@ -51,6 +51,7 @@ $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
 $SUDO apt-get -qq install -y curl \
+                             wget \
                              libnuma-dev \
                              numactl \
                              autotools-dev \
