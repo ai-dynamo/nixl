@@ -16,6 +16,7 @@
 """Sequential is different from multi in that every rank processes only one TP at a time, but they can process different ones"""
 
 import json
+import os
 import time
 from collections import defaultdict
 from itertools import chain
@@ -64,6 +65,12 @@ class SequentialCTPerftest(CTPerftest):
 
         for tp in self.traffic_patterns:
             self._check_tp_config(tp)
+        if not os.environ.get("CUDA_VISIBLE_DEVICES") and any(
+            tp.mem_type == "cuda" for tp in self.traffic_patterns
+        ):
+            logger.warning(
+                "Cuda buffers detected, but the env var CUDA_VISIBLE_DEVICES is not set, this will cause every process in the same host to use the same GPU device."
+            )
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
 
         # NixlBuffer caches buffers and reuse them if they are big enough, let's initialize them once, with the largest needed size

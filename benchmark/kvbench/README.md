@@ -205,11 +205,13 @@ Benchmark the performance of a continuum of traffic patterns one after the other
          0.129                2.147                    2.386              4
 ```
 
-#### CT Perftest
+#### CT Perftest {#ct-perftest}
 
 Benchmark the performance of one traffic pattern. The pattern is run in multiple iterations and then metrics are reported. Useful for optimizing specific patterns.
 
 **Reports**: CT Perftest reports total latency (time elapsed between the first rank started until the last rank finished), average time per iteration, total size sent over the network, and average bandwidth by rank.
+
+**Important note**: GPU memory is allocated with pytorch on the GPU specified by the `CUDA_VISIBLE_DEVICE` environment variable, make sure that each process sets this variable to the right device.
 
 ## Examples
 
@@ -325,7 +327,7 @@ traffic_patterns:
 **Traffic Pattern Parameters**:
 - `matrix_file`: File containing the transfer matrix (required)
 - `shards`: Number of chunks to shard the buffer into (default: 1)
-- `mem_type`: Memory type, currently supports "cuda" (default: "cuda")
+- `mem_type`: Memory type, currently supports "cuda" (default: "cuda") (Use `CUDA_VISIBLE_DEVICES` to control the GPU device)
 - `xfer_op`: Transfer operation, "READ" or "WRITE" (default: "WRITE")
 - `sleep_after_launch_sec`: Seconds to sleep before running pattern (default: 0)
 
@@ -360,6 +362,8 @@ python test/inference_workload_matgen.py generate \
 
 #### Running CTP Tests
 
+Please read the important note about setting `CUDA_VISIBLE_DEVICES` in [CT Perftest section](#ct-perftest).
+
 **Sequential CT Perftest**:
 ```bash
 # Basic usage
@@ -376,9 +380,12 @@ python main.py --debug sequential-ct-perftest ./config.yaml \
     --json-output-path ./results.json
 
 # With Slurm
-srun <params> python main.py sequential-ct-perftest ./config.yaml \
+srun <params> bash -c "
+  CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
+  python main.py sequential-ct-perftest ./config.yaml \
     --verify-buffers \
     --json-output-path ./results.json
+"
 ```
 
 **CT Perftest**:
