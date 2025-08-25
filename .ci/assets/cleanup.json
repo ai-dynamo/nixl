@@ -1,0 +1,32 @@
+{
+  "files": [
+    {
+      "deleteParent": true,
+      "aql": {
+        "items.find": {
+          "repo": "sw-nbu-swx-nixl-docker-local",
+          "$and": [
+            {"path": "verification/nixlbench"},
+            {"name": {"$nmatch": "*-latest"}},
+            {"type": "folder"}
+          ],
+          "created": {"$before": "30d"}
+        }
+      }
+    },
+    {
+      "deleteParent": true,
+      "aql": {
+        "items.find": {
+          "repo": "sw-nbu-swx-nixl-docker-local",
+          "$and": [
+            {"path": "verification/nixl"},
+            {"name": {"$nmatch": "*-latest"}},
+            {"type": "folder"}
+          ],
+          "created": {"$before": "30d"}
+        }
+      }
+    }
+  ]
+}
