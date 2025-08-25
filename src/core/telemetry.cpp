@@ -34,7 +34,9 @@ namespace fs = std::filesystem;
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 
-nixlTelemetry::nixlTelemetry(const std::string &name, backend_map_t &backend_map)
+nixlTelemetry::nixlTelemetry(const std::string &name,
+                             const std::string &dir_path,
+                             backend_map_t &backend_map)
     : pool_(1),
       writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL),
       file_(name),
@@ -42,7 +44,7 @@ nixlTelemetry::nixlTelemetry(const std::string &name, backend_map_t &backend_map
     if (name.empty()) {
         throw std::invalid_argument("Telemetry file name cannot be empty");
     }
-    initializeTelemetry();
+    initializeTelemetry(dir_path);
 }
 
 nixlTelemetry::~nixlTelemetry() {
@@ -61,14 +63,12 @@ nixlTelemetry::~nixlTelemetry() {
 }
 
 void
-nixlTelemetry::initializeTelemetry() {
+nixlTelemetry::initializeTelemetry(const std::string &dir_path) {
     auto buffer_size = std::getenv(TELEMETRY_BUFFER_SIZE_VAR) ?
         std::stoul(std::getenv(TELEMETRY_BUFFER_SIZE_VAR)) :
         DEFAULT_TELEMETRY_BUFFER_SIZE;
 
-    auto folder_path = std::getenv(TELEMETRY_DIR_VAR) ? std::getenv(TELEMETRY_DIR_VAR) : "/tmp";
-
-    auto full_file_path = fs::path(folder_path) / file_;
+    auto full_file_path = fs::path(dir_path) / file_;
 
     if (buffer_size == 0) {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");

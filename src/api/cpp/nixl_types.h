@@ -20,6 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <optional>
+#include <chrono>
 
 
 /*** Forward declarations ***/
@@ -62,7 +63,8 @@ enum nixl_status_t {
     NIXL_ERR_UNKNOWN = -8,
     NIXL_ERR_NOT_SUPPORTED = -9,
     NIXL_ERR_REMOTE_DISCONNECT = -10,
-    NIXL_ERR_CANCELED = -11
+    NIXL_ERR_CANCELED = -11,
+    NIXL_ERR_NO_TELEMETRY = -12
 };
 
 /**
@@ -222,6 +224,60 @@ struct nixlAgentOptionalArgs {
  *        for providing extra optional arguments
  */
 using nixl_opt_args_t = nixlAgentOptionalArgs;
+
+/**
+ * @brief A typedefs for a point in time
+ */
+using chrono_point_t = std::chrono::steady_clock::time_point;
+
+/**
+ * @brief A constant indicating min chrono_point_t value
+ */
+constexpr auto min_chrono_time = std::chrono::steady_clock::time_point::min();
+
+/**
+ * @brief A typedefs for a period of time in microseconds
+ */
+using chrono_period_us_t = std::chrono::microseconds;
+
+/**
+ * @struct nixlXferTelemetry
+ * @brief A structure for telemetry output from agent API
+ */
+struct nixlXferTelemetry {
+    /**
+     * @var startTime Time that the transfer was posted
+     */
+    chrono_point_t startTime = min_chrono_time;
+
+    /**
+     * @var postDuration Time it took to do the post operation
+     */
+    chrono_period_us_t postDuration = chrono_period_us_t(0);
+
+    /**
+     * @var xferDuration Time it took to complete the transfer
+     *      if checkXferReq is called late, that might impact this result
+     */
+    chrono_period_us_t xferDuration = chrono_period_us_t(0);
+
+    /**
+     * @var totalBytes Amount of bytes transferred in the request
+     */
+    size_t totalBytes = 0;
+
+    /**
+     * @var descCount Number of descriptors in the transfer request.
+     *      If any merging of descriptors were performed, it will be reflected here.
+     */
+    size_t descCount = 0;
+};
+
+/**
+ * @brief A typedef for a nixlXferTelemetry
+ *        for telemetry output.
+ */
+using nixl_xfer_telem_t = nixlXferTelemetry;
 
 /**
  * @brief A define for an empty string, that indicates the descriptor list is being
