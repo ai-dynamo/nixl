@@ -93,7 +93,9 @@ $SUDO apt-get -qq install -y curl \
                              clang \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.86.0
+curl --proto '=https' --tlsv1.2 -sSf --retry 10 --connect-timeout 20 --retry-delay 10 --retry-all-errors --remove-on-error --fail --output rustup-init https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
+chmod +x rustup-init
+./rustup-init -y --default-toolchain 1.86.0
 export PATH="$HOME/.cargo/bin:$PATH"
 
 curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
