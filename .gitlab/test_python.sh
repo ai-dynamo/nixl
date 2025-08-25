@@ -89,7 +89,7 @@ python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="
 python3 telemetry_reader.py --telemetry_path /tmp/initiator &
 telePID=$!
 sleep 6
-kill -s SIGINT $telePID
+kill -s INT $telePID
 
 pkill etcd
 
