@@ -23,7 +23,7 @@ nixl_status_t gdsUtil::registerFileHandle(int fd,
                                           gdsFileHandle& gds_handle)
 {
     CUfileError_t status;
-    CUfileDescr_t descr;
+    CUfileDescr_t descr = {};
     CUfileHandle_t handle;
 
     descr.handle.fd = fd;
