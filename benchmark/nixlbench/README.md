@@ -94,6 +94,7 @@ meson configure /path/to/build/dir
 --num_initiator_dev NUM    # Number of devices in initiator processes (default: 1)
 --num_target_dev NUM       # Number of devices in target processes (default: 1)
 --enable_pt                # Enable progress thread
+--progress_threads         # Number of progress threads (default: 0)
 --device_list LIST         # Comma-separated device names (default: all)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --etcd-endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)

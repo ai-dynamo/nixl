@@ -137,6 +137,7 @@ These arguments are used by both `plan` and `profile` commands:
 | `--num_initiator_dev` | Number of devices in initiator processes (default: 1) |
 | `--num_target_dev` | Number of devices in target processes (default: 1) |
 | `--enable_pt` | Enable progress thread |
+| `--progress_threads` |  Number of progress threads (default: 0) |
 | `--device_list` | Comma-separated device names (default: all) |
 | `--runtime_type` | Type of runtime to use [ETCD] (default: ETCD) |
 | `--etcd-endpoints` | ETCD server URL for coordination (default: http://localhost:2379) |
