@@ -319,7 +319,7 @@ testLongString() {
         assert(sd1.exportStr() == enc);
         testBufString(sd1.exportStr(), key, val);
     }
-    // Test shortest with 3 lengh bytes.
+    // Test shortest with 3 length bytes.
     {
         nixlSerDes sd1;
         constexpr size_t ds = 131334;
