@@ -51,6 +51,7 @@ $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
 $SUDO apt-get -qq install -y curl \
+                             wget \
                              libnuma-dev \
                              numactl \
                              autotools-dev \
@@ -93,7 +94,9 @@ $SUDO apt-get -qq install -y curl \
                              clang \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.86.0
+wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
+chmod +x rustup-init
+./rustup-init -y --default-toolchain 1.86.0
 export PATH="$HOME/.cargo/bin:$PATH"
 
 curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
