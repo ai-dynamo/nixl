@@ -51,12 +51,10 @@ The key/value parameters are a map of strings to byte arrays that are passed fro
 * supportsLocal(): Indicates if the backend supports transfers within a node
 * supportsRemote(): Indicates if the backend supports transfers across nodes
 * supportsNotif(): Indicates if the backend supports notifications
-* supportsProgressThread(): Indicates if the backend supports progress() method. That method should call the underlying procedure of progressing transfers for this backend.
 * getSupportedMems(): Indicates memory types supported by the backend
 
-Based on the first 4 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend should have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn’t need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional. supportsProgressThread is optional for both cases. Additionally, a backend that supportsRemote must also support supportNotifs.
+Based on the first 3 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend must have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional.
 
-Note that supportProgressThread is an indicator whether a backend has implemented the progress() method, but does not imply how the progress thread is implemented. During creation of a backend, the provided init params indicate how the progress thread is intended to be used. For instance, if the enablement of progress thread is set to false, while a backend cannot work without a separate progress thread, the backend creation would fail. This flag is useful for the NIXL agent if we want to provide some agent level guarantees, such as minimum time between calls to progress for backends, or if a central progress method is implemented (for future proofing, not currently implemented).
 ### Connection Management:
 
 * connect(): Initiates connection to a remote agent.
@@ -106,12 +104,6 @@ Finally, note that a call to releaseXferReq should not block and be asynchronous
 
 Note that getNotif does not know which agent it should look for to receive the notification. So there should be a method to extract the agent name from the notification received, corresponding to a transfer. genNotif generates a notification which is not bound to any transfers, and does not provide any ordering guarantees. If a backend does not set supportsNotifications, these two methods are not needed.
 
-### Progress Thread:
-
-* progress(): Makes progress on transfers and notifications.
-
-If a backend requires a progress call, such as UCX, to proceed with the transfers, for both check of transfer status or received notification, they can implement a progress thread, and a frequency of waking up that thread will be passed during backend creation. In addition, each time a user calls to check a transfer status, or check received notifications, this method is called, enabling progress if a progress thread is not implemented.
-
 ## Descriptor List Abstraction
 
 A key underlying abstraction for NIXL library is a descriptor list, that is made of a memory space (host/GPU/block/File/Obj-Store) and a list of descriptors. There are 2 types of descriptors used for the SB API.
@@ -142,9 +134,9 @@ The plugin manager maintains API versioning of these above APIs. This can allow 
 
 ## Comparing two plugins as an example
 
-NIXL UCX plugin provides networking across different nodes, while GDS plugin provides storage access. Moreover, UCX plugin sets all of the “supports” flags, while GDS only has the supportsLocal flag set. The reason being UCX requires a progress thread and provides notifications, and can do transfers within an Agent, for instance from GPU to CPU, and across Agents. Therefore, it should implement all of the methods mentioned previously.
+NIXL UCX plugin provides networking across different nodes, while GDS plugin provides storage access. UCX plugin sets all of the “supports” flags, while GDS only has the supportsLocal flag set. The reason being UCX is a network plugin that should support inter-agent communication and notifications, and it also supports intra-agent transfers, for instance from GPU to CPU.
 
-However, for NIXL storage backends, there is no need to run a NIXL agent on a remote storage node. Instead, a distributed storage client on the local agent talks to the remote distributed storage, and therefore from NIXL agent point of view for all storage, whether local or remote, it has to talk to this local storage client. In other words, all the transfers are loopback to the agent itself. For the current use case, there is no need for notifications within the same agent, or a progress thread either.
+However, for NIXL storage backends, there is no need to run a NIXL agent on a remote storage node. Instead, a distributed storage client on the local agent talks to the remote distributed storage, and therefore from NIXL agent point of view for all storage, whether local or remote, it has to talk to this local storage client. In other words, all the transfers are loopback to the agent itself. For the current use case, there is no need for notifications within the same agent.
 
 Moreover, the GDS plugin does not require a local connection to itself, so it returns SUCCESS for connect and disconnect, and for loadLocal simply returns back the input pointer as its output. The only 6 remaining methods that it has to implement are:
 
@@ -213,7 +205,7 @@ Note that inside a transfer, a backend might provide methods for network resilie
 
 ### Get transfer status:
 
-The agent will call the backend specific transfer handle that is stored within the agent transfer handle, and check the status of the transfer. This is achieved through a call to **checkXfer** in the SB API. Internal to the backend, they can call the **progress** method in SB API, if that’s necessary to get the latest status of the transfers. If the agent is run in progress thread mode, the agent will call that periodically, and therefore reduce the load on this internal call.
+The agent will call the backend specific transfer handle that is stored within the agent transfer handle, and check the status of the transfer. This is achieved through a call to **checkXfer** in the SB API. Internal to the backend, they can call their internal progress method, if that’s necessary to get the latest status of the transfers.
 
 ### Invalidate transfer request:
 
@@ -221,7 +213,7 @@ The agent will call the **releaseReqH** from the SB API on the backend specific 
 
 ### Get notifications:
 
-The agent will iterate over all the backends that support notification, and call their **getNotifs** from the SB API, which will return a list of notifications received from each remote node between the previous call to this method and this time. Then the agent will merge the results from all such backends, and append them to the map that the user has provided. Similar to get transfer status, Internal to the backend, they can call the **progress** method in SB API, if that’s necessary to get the latest notifications received from the transfers initiated by the other agents towards them. If the agent is run in progress thread mode, the agent will call that periodically, and therefore reduce the load on this internal call.
+The agent will iterate over all the backends that support notification, and call their **getNotifs** from the SB API, which will return a list of notifications received from each remote node between the previous call to this method and this time. Then the agent will merge the results from all such backends, and append them to the map that the user has provided. Similar to get transfer status, Internal to the backend, they can call their internal progress method, if that’s necessary to get the latest notifications received from the transfers initiated by the other agents towards them.
 
 ### Generate notification:
 

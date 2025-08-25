@@ -112,9 +112,6 @@ class nixlBackendEngine {
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
         virtual bool supportsNotif() const = 0;
 
-        // Determines if a backend supports progress thread.
-        virtual bool supportsProgTh() const = 0;
-
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 
 
@@ -208,14 +205,6 @@ class nixlBackendEngine {
             return NIXL_ERR_BACKEND;
         }
 
-
-        // *** Needs to be implemented if supportsProgTh() is true *** //
-
-        // Force backend engine worker to progress.
-        virtual int
-        progress() {
-            return 0;
-        }
 
         // *** Optional virtual methods that are good to be implemented in any backend *** //
 

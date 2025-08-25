@@ -138,9 +138,6 @@ class nixlHf3fsEngine : public nixlBackendEngine {
         bool supportsLocal   () const {
             return true;
         }
-        bool supportsProgTh  () const {
-            return false;
-        }
 
         nixl_mem_list_t getSupportedMems () const {
             nixl_mem_list_t mems;

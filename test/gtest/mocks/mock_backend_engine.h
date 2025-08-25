@@ -44,10 +44,6 @@ public:
     assert(sharedState > 0);
     return gmock_backend_engine->supportsNotif();
   }
-  bool supportsProgTh() const override {
-    assert(sharedState > 0);
-    return gmock_backend_engine->supportsProgTh();
-  }
   nixl_mem_list_t getSupportedMems() const override {
     assert(sharedState > 0);
     return gmock_backend_engine->getSupportedMems();
@@ -90,7 +86,6 @@ public:
   nixl_status_t getNotifs(notif_list_t &notif_list) override;
   nixl_status_t genNotif(const std::string &remote_agent,
                          const std::string &msg) const override;
-  int progress() override;
 
 private:
   // This represents an engine shared state that is read in every const method and modified in non-cost ones

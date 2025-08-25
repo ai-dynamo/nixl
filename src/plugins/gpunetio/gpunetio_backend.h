@@ -46,9 +46,6 @@ public:
     bool supportsNotif() const {
         return true;
     }
-    bool supportsProgTh() const {
-        return false;
-    }
 
     nixl_mem_list_t
     getSupportedMems() const;

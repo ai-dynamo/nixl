@@ -130,7 +130,6 @@ class nixlBackendH {
         bool supportsRemote () const { return engine->supportsRemote(); }
         bool supportsLocal  () const { return engine->supportsLocal (); }
         bool supportsNotif  () const { return engine->supportsNotif (); }
-        bool supportsProgTh () const { return engine->supportsProgTh(); }
 
     friend class nixlAgentData;
     friend class nixlAgent;
