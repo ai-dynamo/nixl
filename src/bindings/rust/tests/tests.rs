@@ -27,6 +27,61 @@ fn create_test_agent(name: &str) -> Result<Agent, NixlError> {
     Agent::new(name)
 }
 
+fn setup_agent_with_backend(agent: &Agent) -> Result<OptArgs, NixlError> {
+    let plugins = agent.get_available_plugins().expect("Failed to get available plugins");
+    let plugin_name = find_plugin(&plugins, "UCX").expect("Failed to find plugin");
+    let (_mems, params) = agent.get_plugin_params(&plugin_name).expect("Failed to get plugin params");
+    agent.create_backend(&plugin_name, &params).expect("Failed to create backend");
+
+    let mut opt_args = OptArgs::new().expect("Failed to create opt args");
+    let _ = opt_args.add_backend(&agent.get_backend("UCX").unwrap());
+
+    Ok(opt_args)
+}
+
+fn create_agent_with_backend(name: &str) -> Result<(Agent, OptArgs), NixlError> {
+    let agent = Agent::new(name).expect("Failed to create agent");
+    let plugins = agent.get_available_plugins().expect("Failed to get available plugins");
+    let plugin_name = find_plugin(&plugins, "UCX").expect("Failed to find plugin");
+    let (_mems, params) = agent.get_plugin_params(&plugin_name).expect("Failed to get plugin params");
+    agent.create_backend(&plugin_name, &params).expect("Failed to create backend");
+
+    let mut opt_args = OptArgs::new().expect("Failed to create opt args");
+    let _ = opt_args.add_backend(&agent.get_backend("UCX").unwrap());
+
+    Ok((agent, opt_args))
+}
+
+
+fn create_storage_list(agent: &Agent, opt_args: &OptArgs, size: usize) -> Vec<SystemStorage> {
+    const STORAGE_SIZE: usize = 1024;
+    let mut storage_list = Vec::new();
+    for _ in 0..size {
+        let mut storage = SystemStorage::new(1024).unwrap();
+        storage.register(agent, Some(opt_args)).expect("Failed to register storage memory");
+        storage.memset(0);
+        agent.register_memory(&storage, Some(opt_args)).expect("Failed to register storage memory");
+        storage_list.push(storage);
+    }
+    storage_list
+}
+
+fn create_dlist<'a>(storage_list: &'a mut Vec<SystemStorage>) -> Result<XferDescList<'a>, NixlError> {
+    let mut dlist = XferDescList::new(MemType::Dram, false).expect("Failed to create XferDescList");
+    for storage in storage_list.iter_mut() {
+        dlist.add_storage_desc(storage).expect(&format!("Failed to add storage descriptor for storage"));
+    }
+    Ok(dlist)
+}
+
+fn exchange_metadata(agent1: &Agent, agent2: &Agent) -> Result<(), NixlError> {
+    let metadata1 = agent1.get_local_md().expect("Failed to get local metadata");
+    let metadata2 = agent2.get_local_md().expect("Failed to get local metadata");
+    agent1.load_remote_md(&metadata2).expect("Failed to load remote metadata");
+    agent2.load_remote_md(&metadata1).expect("Failed to load remote metadata");
+    Ok(())
+}
+
 // Helper function to find a plugin by name
 fn find_plugin(plugins: &StringList, name: &str) -> Result<String, NixlError> {
     plugins
@@ -323,12 +378,18 @@ fn test_multiple_registrations() {
 #[test]
 fn test_make_connection_success() {
     let agent = Agent::new("test_agent").expect("Failed to create agent");
+    let remote_agent = Agent::new("remote_agent").expect("Failed to create remote agent");
+    let opt_args = setup_agent_with_backend(&agent).expect("Failed to setup agent");
+    let _opt_args_remote = setup_agent_with_backend(&remote_agent).expect("Failed to setup agent");
+
+    exchange_metadata(&agent, &remote_agent).expect("Failed to exchange metadata");
+
     // This should succeed if the agent is valid and the backend is set up
-    let result = agent.make_connection("remote_agent");
-    // Accept either Ok or a backend error if no real remote exists
+    let result = agent.make_connection(&remote_agent.name(), Some(&opt_args));
+
     assert!(
-        result.is_ok() || matches!(result, Err(NixlError::BackendError)),
-        "Expected Ok or BackendError, got: {:?}",
+        result.is_ok(),
+        "Expected Ok got: {:?}",
         result
     );
 }
@@ -337,7 +398,7 @@ fn test_make_connection_success() {
 fn test_make_connection_invalid_param() {
     let agent = Agent::new("test_agent").expect("Failed to create agent");
     // Null bytes in the name should trigger InvalidParam or StringConversionError
-    let result = agent.make_connection("remote\0agent");
+    let result = agent.make_connection("remote\0agent", None);
     assert!(
         matches!(result, Err(NixlError::StringConversionError(_))) ||
         matches!(result, Err(NixlError::InvalidParam)),
@@ -1132,4 +1193,130 @@ fn test_query_mem_empty_list() {
         num_responses, EXPECTED_EMPTY_RESPONSES,
         "Expected 0 responses for empty descriptor list"
     );
+}
+
+// Tests for prep_xfer_dlist API
+#[test]
+fn test_prep_xfer_dlist_success() {
+    const DLIST_SIZE: usize = 10;
+
+    // 1. Create agents and backends
+    let (local_agent, opt_args) = create_agent_with_backend("local_agent").expect("Failed to create agent");
+    let (remote_agent, opt_args_remote) = create_agent_with_backend("remote_agent").expect("Failed to create agent");
+
+    // 2. Create memory regions and register them
+    let mut storage_list = create_storage_list(&local_agent, &opt_args, DLIST_SIZE);
+    let remote_storage_list = create_storage_list(&remote_agent, &opt_args_remote, DLIST_SIZE);
+
+    {
+        // 3. Create transfer descriptor list
+        let dlist = create_dlist(&mut storage_list).expect("Failed to create XferDescList");
+
+        // 4. Exchange metadata
+        exchange_metadata(&local_agent, &remote_agent).expect("Failed to exchange metadata");
+
+        // 5. Prepare transfer descriptor list
+        let result = local_agent.prepare_xfer_dlist("", &dlist, None);
+        assert!(result.is_ok(), "prepare_xfer_dlist failed with error: {:?}", result.err());
+    }
+}
+
+#[test]
+fn test_prep_xfer_dlist_invalid_agent() {
+    const DLIST_SIZE: usize = 10;
+
+    let agent = Agent::new("test_agent").expect("Failed to create agent");
+    let opt_args = setup_agent_with_backend(&agent).expect("Failed to setup agent");
+    let mut storage_list = create_storage_list(&agent, &opt_args, DLIST_SIZE);
+    {
+        let dlist = create_dlist(&mut storage_list).expect("Failed to create XferDescList");
+
+        // Try with invalid agent name
+        let result = agent.prepare_xfer_dlist("invalid_agent", &dlist, None);
+
+        assert!(
+            result.is_err_and(|e| matches!(e, NixlError::BackendError)),
+            "Expected InvalidParam for invalid agent name"
+        );
+    }
+}
+
+// Tests for make_xfer_req API
+#[test]
+fn test_make_xfer_req_success() {
+    const DLIST_SIZE: usize = 10;
+
+    let (local_agent, opt_args) = create_agent_with_backend("local_agent").expect("Failed to create agent");
+    let (remote_agent, opt_args_remote) = create_agent_with_backend("remote_agent").expect("Failed to create agent");
+
+    // 2. Create memory regions and register them
+    let mut storage_list = create_storage_list(&local_agent, &opt_args, DLIST_SIZE);
+    let mut remote_storage_list = create_storage_list(&remote_agent, &opt_args_remote, DLIST_SIZE);
+
+    {
+        let dlist = create_dlist(&mut storage_list).expect("Failed to create XferDescList");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create XferDescList");
+
+        // 4. Exchange metadata
+        exchange_metadata(&local_agent, &remote_agent).expect("Failed to exchange metadata");
+
+        // Prepare descriptor list handles
+        let local_handle: XferDlistHandle = local_agent.prepare_xfer_dlist("", &dlist, Some(&opt_args))
+            .expect("Failed to prepare local descriptor list");
+
+        let remote_handle: XferDlistHandle = local_agent.prepare_xfer_dlist(remote_agent.name().as_str(), &remote_dlist, Some(&opt_args))
+            .expect("Failed to prepare local descriptor list");
+
+        // Create transfer request using prepared handles with indices
+        let local_indices = (0..DLIST_SIZE).step_by(2).map(|i| i as i32).collect::<Vec<i32>>();
+        let remote_indices = (1..DLIST_SIZE).step_by(2).map(|i| i as i32).collect::<Vec<i32>>();
+        let result = local_agent.make_xfer_req(
+            XferOp::Write,
+            &local_handle,
+            &local_indices,
+            &remote_handle,
+            &remote_indices,
+            Some(&opt_args)
+        );
+
+        assert!(
+            result.is_ok(),
+            "make_xfer_req failed with error: {:?}", result.err()
+        );
+    }
+}
+
+#[test]
+fn test_make_xfer_req_invalid_indices() {
+    const DLIST_SIZE: usize = 10;
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+
+    let mut storage_list = create_storage_list(&agent1, &opt_args, DLIST_SIZE);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, DLIST_SIZE);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        // Prepare descriptor list handles
+        let local_handle = agent1.prepare_xfer_dlist("", &local_dlist, Some(&opt_args))
+            .expect("Failed to prepare local descriptor list");
+        let remote_handle = agent1.prepare_xfer_dlist(agent2.name().as_str(), &remote_dlist, Some(&opt_args))
+            .expect("Failed to prepare remote descriptor list");
+
+        // Test with out-of-bounds indices (should fail)
+        let invalid_indices = [999i32];  // Index 999 doesn't exist
+        let result = agent1.make_xfer_req(
+            XferOp::Write,
+            &local_handle,
+            &invalid_indices,    // Out-of-bounds local index
+            &remote_handle,
+            &invalid_indices,    // Out-of-bounds remote index
+            None
+        );
+        assert!(result.is_err_and(|e| matches!(e, NixlError::BackendError)), "Expected InvalidParam for out-of-bounds indices");
+    }
 }
