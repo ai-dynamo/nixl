@@ -544,7 +544,7 @@ xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
 }
 
 std::vector<std::vector<xferBenchIOV>>
-xferBenchNixlWorker::allocateMemory(int num_lists) {
+xferBenchNixlWorker::allocateMemory(int num_threads) {
     std::vector<std::vector<xferBenchIOV>> iov_lists;
     size_t i, buffer_size, num_devices = 0;
     nixl_opt_args_t opt_args;
@@ -554,7 +554,7 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
     } else if (isTarget()) {
         num_devices = xferBenchConfig::num_target_dev;
     }
-    buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_lists);
+    buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_threads);
 
     if (xferBenchConfig::storage_enable_direct) {
         if (xferBenchConfig::page_size == 0) {
@@ -573,7 +573,7 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
 
-        for (int list_idx = 0; list_idx < num_lists; list_idx++) {
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
@@ -599,7 +599,7 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
             remote_iovs.push_back(iov_list);
         }
     } else if (xferBenchConfig::isStorageBackend()) {
-        int num_buffers = num_lists * num_devices;
+        int num_buffers = num_threads * num_devices;
         int num_files = xferBenchConfig::num_files;
         int remainder_buffers = num_buffers % num_files;
 
@@ -624,7 +624,7 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
         }
 
         int file_idx = 0;
-        for (int list_idx = 0; list_idx < num_lists; list_idx++) {
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
@@ -642,7 +642,7 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
         }
     }
 
-    for (int list_idx = 0; list_idx < num_lists; list_idx++) {
+    for (int list_idx = 0; list_idx < num_threads; list_idx++) {
         std::vector<xferBenchIOV> iov_list;
         for (i = 0; i < num_devices; i++) {
             std::optional<xferBenchIOV> basic_desc;
