@@ -125,10 +125,14 @@ class nixlHf3fsEngine : public nixlBackendEngine {
 
         nixlHf3fsIO *
         getFromIOPool() const;
-        void
+        bool
         returnToIOPool(nixlHf3fsIO *io) const;
         void
         destroyIOPool();
+        nixlHf3fsIO *
+        getIOObj() const;
+        void
+        putIOObj(nixlHf3fsIO *io) const;
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
         void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;

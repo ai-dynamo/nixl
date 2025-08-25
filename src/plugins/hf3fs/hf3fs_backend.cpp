@@ -111,10 +111,14 @@ nixlHf3fsEngine::getFromIOPool() const {
     return nullptr;
 }
 
-void
+bool
 nixlHf3fsEngine::returnToIOPool(nixlHf3fsIO *io) const {
     const std::lock_guard<std::mutex> lock(iopool_lock);
-    iopool.push_back(io);
+    if (iopool.size() < iopool_size) {
+        iopool.push_back(io);
+        return true;
+    }
+    return false;
 }
 
 void
@@ -123,6 +127,23 @@ nixlHf3fsEngine::destroyIOPool() {
         delete (io);
     }
     iopool.clear();
+}
+
+nixlHf3fsIO *
+nixlHf3fsEngine::getIOObj() const {
+    auto io_obj = getFromIOPool();
+    if (io_obj != nullptr) {
+        return io_obj;
+    }
+    return new nixlHf3fsIO();
+}
+
+void
+nixlHf3fsEngine::putIOObj(nixlHf3fsIO *io) const {
+    if (returnToIOPool(io)) {
+        return;
+    }
+    delete io;
 }
 
 nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
@@ -213,7 +234,7 @@ void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle) const
         if (prev_io->mem_type == NIXL_HF3FS_MEM_TYPE_DRAM) {
             hf3fs_utils->destroyIOV(&prev_io->iov);
         }
-        returnToIOPool(prev_io);
+        putIOObj(prev_io);
     }
 
     handle->io_list.clear();
@@ -286,10 +307,10 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         offset = (size_t) (*file_list)[i].addr;  // Offset in file
         auto mem_md = (nixlHf3fsMetadata *)(*mem_list)[i].metadataP;
 
-        nixlHf3fsIO *io = getFromIOPool();
+        nixlHf3fsIO *io = getIOObj();
         if (io == nullptr) {
             nixl_err = NIXL_ERR_BACKEND;
-            nixl_mesg = "Error: Failed to create IO";
+            nixl_mesg = "Error: Failed to get IO Object";
             goto cleanup_handle;
         }
 
@@ -301,7 +322,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
                                           size,
                                           shm_md->uuid.get_data().data());
             if (status != NIXL_SUCCESS) {
-                returnToIOPool(io);
+                putIOObj(io);
                 nixl_err = status;
                 nixl_mesg = "Error: Failed to wrap memory as IOV";
                 goto cleanup_handle;
@@ -309,7 +330,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         } else {
             status = hf3fs_utils->createIOV(&io->iov, size, size);
             if (status != NIXL_SUCCESS) {
-                returnToIOPool(io);
+                putIOObj(io);
                 nixl_err = status;
                 nixl_mesg = "Error: Failed to create IOV";
                 goto cleanup_handle;
@@ -571,7 +592,7 @@ nixlHf3fsDramZCMetadata::nixlHf3fsDramZCMetadata(uint8_t *addr, size_t len, hf3f
     // Close the file descriptor as it's no longer needed after mmap
     close(shm_fd);
 
-    NIXL_INFO << "Created POSIX shared memory: " << shm_name << " with size: " << len;
+    NIXL_INFO << "Created shared memory: " << shm_name << " with size: " << len;
 }
 
 nixlHf3fsDramZCMetadata::~nixlHf3fsDramZCMetadata() {
@@ -583,5 +604,5 @@ nixlHf3fsDramZCMetadata::~nixlHf3fsDramZCMetadata() {
         NIXL_PERROR << "Failed to unlink shared memory";
     }
 
-    NIXL_INFO << "Cleaned up POSIX shared memory: " << shm_name;
+    NIXL_INFO << "Cleaned up shared memory: " << shm_name;
 }
