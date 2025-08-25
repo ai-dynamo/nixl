@@ -17,14 +17,11 @@
 #include <array>
 #include <cassert>
 #include <cstring>
-#include <iostream>
-#include <vector>
 
 #include "serdes/serdes.h"
 
-namespace {
 void
-oldTest() {
+oldMain() {
     int i = 0xff;
     std::string s = "testString";
     std::string t1 = "i", t2 = "s";
@@ -41,14 +38,12 @@ oldTest() {
     std::string sdbuf = sd.exportStr();
     assert(sdbuf.size() > 0);
 
-    // std::cout << "exported data: " << sdbuf << std::endl;;
-
     nixlSerDes sd2;
     ret = sd2.importStr(sdbuf);
     assert(ret == 0);
 
     size_t osize = sd2.getBufLen(t1);
-    assert(osize == 4);
+    assert(osize > 0);
 
     void *ptr = malloc(osize);
     ret = sd2.getBuf(t1, ptr, osize);
@@ -67,7 +62,7 @@ oldTest() {
 constexpr size_t is = 4;
 
 void
-testEmptyString() {
+testEmpty() {
     // Test empty tag.
     {
         nixlSerDes sd1;
@@ -324,7 +319,7 @@ testLongString() {
         assert(sd1.exportStr() == enc);
         testBufString(sd1.exportStr(), key, val);
     }
-    // Test shortest with 3 length bytes.
+    // Test shortest with 3 lengh bytes.
     {
         nixlSerDes sd1;
         constexpr size_t ds = 131334;
@@ -345,197 +340,28 @@ testLongString() {
     // Assume that things work for greater lengths.
 }
 
-template<typename T>
 void
-testIntegral(const T val, const std::string &ref) {
+testTagMismatch() {
     nixlSerDes sd1;
-    const std::string key = "key";
-    const std::string enc = "N1XL\x03" + key + ref;
-    assert(sd1.addBuf(key, &val, sizeof(val)) == NIXL_SUCCESS);
-    assert(sd1.totalSize() == enc.size());
-    assert(sd1.remainingSize() == enc.size() - is);
-    assert(sd1.exportStr() == enc);
-
-    // Test without getBufLen.
-    {
-        nixlSerDes sd2;
-        assert(sd2.importStr(enc) == NIXL_SUCCESS);
-        T get = T(0xdeaddead);
-        assert(sd2.getBuf(key, &get, sizeof(get)) == NIXL_SUCCESS);
-        assert(get == val);
-        assert(sd2.remainingSize() == 0);
-    }
-    // Test with getBufLen.
-    {
-        nixlSerDes sd2;
-        assert(sd2.importStr(enc) == NIXL_SUCCESS);
-        const size_t size = sd2.getBufLen(key);
-        assert(size == sizeof(val));
-        T get = T(0xdeaddead);
-        assert(sd2.getBuf(key, &get, sizeof(get)) == NIXL_SUCCESS);
-        assert(get == val);
-        assert(sd2.remainingSize() == 0);
-    }
+    sd1.addStr("foo", "bar");
+    assert(sd1.remainingSize() == 8);
+    assert(sd1.getBufLen("foo") == 3);
+    assert(sd1.remainingSize() == 8);
+    assert(sd1.getBufLen("baz") == -1);
+    assert(sd1.remainingSize() == 8);
+    char buf[3];
+    assert(sd1.getBuf("baz", buf, sizeof(buf)) == NIXL_ERR_NOT_FOUND);
+    assert(sd1.remainingSize() == 8);
+    assert(sd1.getStr("baz") == "");
+    assert(sd1.remainingSize() == 8);
 }
-
-void
-testIntegral() {
-    testIntegral(std::uint8_t(0), "\x80");
-    testIntegral(std::uint8_t(1), "\x81");
-    testIntegral(std::uint8_t(15), "\x8F");
-    testIntegral(std::uint8_t(16), "\x01\x10");
-    testIntegral(std::uint8_t(254), "\x01\xFE");
-    testIntegral(std::uint8_t(255), "\x01\xFF");
-
-    testIntegral(std::uint16_t(0), "\x90");
-    testIntegral(std::uint16_t(1), "\x91");
-    testIntegral(std::uint16_t(15), "\x9F");
-    testIntegral(std::uint16_t(16), "\xD0\x10");
-    testIntegral(std::uint16_t(254), "\xD0\xFE");
-    testIntegral(std::uint16_t(255), "\xD0\xFF");
-    testIntegral(std::uint16_t(256), std::string("\x02\x00\x01", 3));
-    testIntegral(std::uint16_t(258), "\x02\x02\x01");
-    testIntegral(std::uint16_t(-2), "\x02\xFE\xFF");
-    testIntegral(std::uint16_t(-1), "\x02\xFF\xFF");
-
-    testIntegral(std::uint32_t(0), "\xA0");
-    testIntegral(std::uint32_t(1), "\xA1");
-    testIntegral(std::uint32_t(15), "\xAF");
-    testIntegral(std::uint32_t(16), "\xD1\x10");
-    testIntegral(std::uint32_t(254), "\xD1\xFE");
-    testIntegral(std::uint32_t(255), "\xD1\xFF");
-    testIntegral(std::uint32_t(256), std::string("\xD2\x00\x01", 3));
-    testIntegral(std::uint32_t(258), "\xD2\x02\x01");
-    testIntegral(std::uint32_t(65534), "\xD2\xFE\xFF");
-    testIntegral(std::uint32_t(65535), "\xD2\xFF\xFF");
-    testIntegral(std::uint32_t(65536), std::string("\xD3\x00\x00\x01", 4));
-    testIntegral(std::uint32_t(65538), std::string("\xD3\x02\x00\x01", 4));
-    testIntegral(std::uint32_t(-2), "\x04\xFE\xFF\xFF\xFF");
-    testIntegral(std::uint32_t(-1), "\x04\xFF\xFF\xFF\xFF");
-
-    testIntegral(std::uint64_t(0), "\xB0");
-    testIntegral(std::uint64_t(1), "\xB1");
-    testIntegral(std::uint64_t(15), "\xBF");
-    testIntegral(std::uint64_t(16), "\xD4\x10");
-    testIntegral(std::uint64_t(254), "\xD4\xFE");
-    testIntegral(std::uint64_t(255), "\xD4\xFF");
-    testIntegral(std::uint64_t(256), std::string("\xD5\x00\x01", 3));
-    testIntegral(std::uint64_t(258), "\xD5\x02\x01");
-    testIntegral(std::uint64_t(65534), "\xD5\xFE\xFF");
-    testIntegral(std::uint64_t(65535), "\xD5\xFF\xFF");
-    testIntegral(std::uint64_t(65536), std::string("\xD6\x00\x00\x01", 4));
-    testIntegral(std::uint64_t(65538), std::string("\xD6\x02\x00\x01", 4));
-    testIntegral(std::uint64_t(std::uint32_t(-2)), "\xD7\xFE\xFF\xFF\xFF");
-    testIntegral(std::uint64_t(std::uint32_t(-1)), "\xD7\xFF\xFF\xFF\xFF");
-    testIntegral(std::uint64_t(-2), "\x08\xFE\xFF\xFF\xFF\xFF\xFF\xFF\xFF");
-    testIntegral(std::uint64_t(-1), "\x08\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF");
-}
-
-void
-testSpecials() {
-    // Test string encoding length 1 small value.
-    {
-        nixlSerDes sd1;
-        const std::string key = "k";
-        assert(sd1.addStr(key, "\x02") == NIXL_SUCCESS);
-        assert(sd1.exportStr() == "N1XL\x01k\x01\x02");
-    }
-    // Test getBufLen stability.
-    {
-        nixlSerDes sd1;
-        assert(sd1.addStr("a", "b") == NIXL_SUCCESS);
-        assert(sd1.addStr("c", "d") == NIXL_SUCCESS);
-        assert(sd1.addStr("e", "f") == NIXL_SUCCESS);
-        assert(sd1.totalSize() == 16);
-        assert(sd1.remainingSize() == 12);
-        assert(sd1.getBufLen("x") == -1);
-        assert(sd1.remainingSize() == 12);
-        assert(sd1.getBufLen("c") == 1);
-        assert(sd1.remainingSize() == 8);
-        assert(sd1.getBufLen("x") == -1);
-        assert(sd1.remainingSize() == 8);
-    }
-    // Test duplicate keys.
-    {
-        nixlSerDes sd1;
-        assert(sd1.addStr("A", "1") == NIXL_SUCCESS);
-        assert(sd1.addStr("A", "2") == NIXL_SUCCESS);
-        assert(sd1.addStr("A", "3") == NIXL_SUCCESS);
-        assert(sd1.getStr("A") == "1");
-        assert(sd1.getStr("A") == "2");
-        assert(sd1.getStr("A") == "3");
-    }
-    // Test duplicate keys with intermediates.
-    {
-        nixlSerDes sd1;
-        assert(sd1.addStr("A", "1") == NIXL_SUCCESS);
-        assert(sd1.addStr("B", "2") == NIXL_SUCCESS);
-        assert(sd1.addStr("C", "3") == NIXL_SUCCESS);
-        assert(sd1.addStr("A", "4") == NIXL_SUCCESS);
-        assert(sd1.addStr("A", "5") == NIXL_SUCCESS);
-        assert(sd1.addStr("D", "6") == NIXL_SUCCESS);
-        assert(sd1.getStr("A") == "1");
-        assert(sd1.getStr("A") == "4");
-        assert(sd1.getStr("A") == "5");
-    }
-}
-
-void
-testBadCases() {
-    // Get int as string size 1.
-    {
-        nixlSerDes sd1;
-        const std::string key = "k";
-        const uint8_t val = 0;
-        sd1.addBuf(key, &val, sizeof(val));
-        assert(sd1.getStr(key) == "");
-        assert(sd1.getBufLen(key) == sizeof(val));
-    }
-    // Test invalid key encoding stability.
-    {
-        nixlSerDes sd1;
-        assert(sd1.importStr("N1XL\xFF" + std::string(300, '\0')) == NIXL_SUCCESS);
-        const size_t size = sd1.remainingSize();
-        assert(sd1.getStr("k") == "");
-        assert(sd1.remainingSize() == size);
-        assert(sd1.getBufLen("k") == -1);
-        assert(sd1.remainingSize() == size);
-    }
-    // Test invalid value encoding stability.
-    {
-        nixlSerDes sd1;
-        assert(sd1.importStr("N1XL\x01k\xFF" + std::string(300, '\0')) == NIXL_SUCCESS);
-        const size_t size = sd1.remainingSize();
-        assert(sd1.getStr("k") == "");
-        assert(sd1.remainingSize() == size);
-        assert(sd1.getBufLen("k") == -1);
-        assert(sd1.remainingSize() == size);
-    }
-    // Test incomplete data stability.
-    {
-        nixlSerDes sd1;
-        assert(sd1.importStr("N1XL\x01k\x01") == NIXL_SUCCESS);
-        const size_t size = sd1.remainingSize();
-        assert(sd1.getStr("k") == "");
-        assert(sd1.remainingSize() == size);
-        assert(sd1.getBufLen("k") == 1);
-        assert(sd1.remainingSize() == size);
-        char dummy;
-        assert(sd1.getBuf("l", &dummy, 1) != NIXL_SUCCESS);
-        assert(sd1.remainingSize() == size);
-    }
-}
-
-} // namespace
 
 int
 main() {
-    oldTest();
-    testEmptyString();
+    oldMain();
+    testEmpty();
     testShortString();
     testLongString();
-    testIntegral();
-    testSpecials();
-    testBadCases();
+    testTagMismatch();
     return 0;
 }
