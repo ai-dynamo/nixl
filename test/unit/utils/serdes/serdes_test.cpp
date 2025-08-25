@@ -20,45 +20,6 @@
 
 #include "serdes/serdes.h"
 
-void
-oldMain() {
-    int i = 0xff;
-    std::string s = "testString";
-    std::string t1 = "i", t2 = "s";
-    int ret;
-
-    nixlSerDes sd;
-
-    ret = sd.addBuf(t1, &i, sizeof(i));
-    assert(ret == 0);
-
-    ret = sd.addStr(t2, s);
-    assert(ret == 0);
-
-    std::string sdbuf = sd.exportStr();
-    assert(sdbuf.size() > 0);
-
-    nixlSerDes sd2;
-    ret = sd2.importStr(sdbuf);
-    assert(ret == 0);
-
-    size_t osize = sd2.getBufLen(t1);
-    assert(osize > 0);
-
-    void *ptr = malloc(osize);
-    ret = sd2.getBuf(t1, ptr, osize);
-    assert(ret == 0);
-
-    std::string s2 = sd2.getStr(t2);
-    assert(s2.size() > 0);
-
-    assert(*((int *)ptr) == 0xff);
-
-    assert(s2.compare("testString") == 0);
-
-    free(ptr);
-}
-
 constexpr size_t is = 4;
 
 void
@@ -212,136 +173,85 @@ testBufString(const std::string &buffer, const std::string &key, const std::stri
 }
 
 void
-testShortString() {
-    // Test shortest.
-    {
-        nixlSerDes sd1;
-        constexpr size_t ds = 4;
-        sd1.addStr("k", "v");
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == ds);
-        const auto str = sd1.getStr("k");
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == 0);
-        assert(str == "v");
-        const std::string enc("N1XL\x01"
-                              "k\x01v");
-        assert(sd1.exportStr() == enc);
-        testBufString(sd1.exportStr(), "k", "v");
-    }
-    // Test longest.
-    {
-        nixlSerDes sd1;
-        constexpr size_t ds = 256;
-        const std::string key = "Kabcdefghijklmnopqrstuvwxyz" + std::string(100, 'k');
-        const std::string val = "vABCDEFGHIJKLMNOPQRSTUVWXYZ" + std::string(100, 'V');
-        sd1.addStr(key, val);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == ds);
-        const auto str = sd1.getStr(key);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == 0);
-        assert(str == val);
-        const std::string enc("N1XL\x7f" + key + "\x7f" + val);
-        assert(sd1.exportStr() == enc);
-        testBufString(sd1.exportStr(), key, val);
-    }
+testString(const std::string &key,
+           const std::string &val,
+           const size_t ds,
+           const std::string &enc) {
+    nixlSerDes sd1;
+    sd1.addStr(key, val);
+    assert(sd1.totalSize() == is + ds);
+    assert(sd1.remainingSize() == ds);
+    const auto str = sd1.getStr(key);
+    assert(sd1.totalSize() == is + ds);
+    assert(sd1.remainingSize() == 0);
+    assert(str == val);
+    assert(sd1.exportStr() == enc);
+    testBufString(sd1.exportStr(), key, val);
 }
 
 void
-testLongString() {
+testString() {
+    // Test size 1 string.
+    {
+        const std::string enc("N1XL\x01"
+                              "k\x01v");
+        testString("k", "v", 4, enc);
+    }
+    // Test longest short string.
+    {
+        constexpr size_t ds = 256;
+        const std::string key = "Kabcdefghijklmnopqrstuvwxyz" + std::string(100, 'k');
+        const std::string val = "vABCDEFGHIJKLMNOPQRSTUVWXYZ" + std::string(100, 'V');
+        const std::string enc("N1XL\x7f" + key + "\x7f" + val);
+        testString(key, val, ds, enc);
+    }
     // Test shortest with 1 length byte.
     {
-        nixlSerDes sd1;
         constexpr size_t ds = 260;
         const std::string key = "Kabcdefghijklmnopqrstuvwxyz" + std::string(101, 'k');
         const std::string val = "vABCDEFGHIJKLMNOPQRSTUVWXYZ" + std::string(101, 'V');
-        sd1.addStr(key, val);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == ds);
-        const auto str = sd1.getStr(key);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == 0);
-        assert(str == val);
         const std::string enc("N1XL\xC1\x01" + key + "\xC1\x01" + val);
-        assert(sd1.exportStr() == enc);
-        testBufString(sd1.exportStr(), key, val);
+        testString(key, val, ds, enc);
     }
     // Test longest with 1 length byte.
     {
-        nixlSerDes sd1;
         constexpr size_t ds = 768;
         const std::string key = "Kabcdefghijklmnopqrstuvwxyz" + std::string(355, 'k');
         const std::string val = "vABCDEFGHIJKLMNOPQRSTUVWXYZ" + std::string(355, 'V');
-        sd1.addStr(key, val);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == ds);
-        const auto str = sd1.getStr(key);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == 0);
-        assert(str == val);
         const std::string enc("N1XL\xC1\xFF" + key + "\xC1\xFF" + val);
-        assert(sd1.exportStr() == enc);
-        testBufString(sd1.exportStr(), key, val);
+        testString(key, val, ds, enc);
     }
     // Test shortest with 2 length bytes.
     {
-        nixlSerDes sd1;
         constexpr size_t ds = 772;
         const std::string key = "Kabcdefghijklmnopqrstuvwxyz" + std::string(356, 'k');
         const std::string val = "vABCDEFGHIJKLMNOPQRSTUVWXYZ" + std::string(356, 'V');
-        sd1.addStr(key, val);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == ds);
-        const auto str = sd1.getStr(key);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == 0);
-        assert(str == val);
         const std::string enc(std::string("N1XL\xC2\x00\x01", 7) + key +
                               std::string("\xC2\x00\x01", 3) + val);
-        assert(sd1.exportStr() == enc);
-        testBufString(sd1.exportStr(), key, val);
+        testString(key, val, ds, enc);
     }
     // Test longest with 2 length bytes.
     {
-        nixlSerDes sd1;
         constexpr size_t ds = 131330;
         const std::string key = "Kabcdefghijklmnopqrstuvwxyz" + std::string(65635, 'k');
         const std::string val = "vABCDEFGHIJKLMNOPQRSTUVWXYZ" + std::string(65635, 'V');
-        sd1.addStr(key, val);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == ds);
-        const auto str = sd1.getStr(key);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == 0);
-        assert(str == val);
         const std::string enc("N1XL\xC2\xFF\xFF" + key + "\xC2\xFF\xFF" + val);
-        assert(sd1.exportStr() == enc);
-        testBufString(sd1.exportStr(), key, val);
+        testString(key, val, ds, enc);
     }
     // Test shortest with 3 length bytes.
     {
-        nixlSerDes sd1;
         constexpr size_t ds = 131334;
         const std::string key = "Kabcdefghijklmnopqrstuvwxyz" + std::string(65636, 'k');
         const std::string val = "vABCDEFGHIJKLMNOPQRSTUVWXYZ" + std::string(65636, 'V');
-        sd1.addStr(key, val);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == ds);
-        const auto str = sd1.getStr(key);
-        assert(sd1.totalSize() == is + ds);
-        assert(sd1.remainingSize() == 0);
-        assert(str == val);
         const std::string enc(std::string("N1XL\xC3\x00\x00\x01", 8) + key +
                               std::string("\xC3\x00\x00\x01", 4) + val);
-        assert(sd1.exportStr() == enc);
-        testBufString(sd1.exportStr(), key, val);
+        testString(key, val, ds, enc);
     }
     // Assume that things work for greater lengths.
 }
 
 void
-testTagMismatch() {
+testMismatch() {
     nixlSerDes sd1;
     sd1.addStr("foo", "bar");
     assert(sd1.remainingSize() == 8);
@@ -358,10 +268,8 @@ testTagMismatch() {
 
 int
 main() {
-    oldMain();
     testEmpty();
-    testShortString();
-    testLongString();
-    testTagMismatch();
+    testString();
+    testMismatch();
     return 0;
 }
