@@ -300,13 +300,17 @@ class SequentialCTPerftest(CTPerftest):
                 else:
                     tp_latencies_ms.append((max(ends) - min(starts)) * 1e3)
 
-                    mean_bw = 0
+                    mean_bw = 0.0
                     for rank in tp.senders_ranks():
                         rank_start = tp_starts_by_ranks[rank][i]
-                        rank_end = tp_ends_by_ranks[rank][i]    
+                        rank_end = tp_ends_by_ranks[rank][i]
                         if not rank_start or not rank_end:
-                            raise ValueError(f"Rank {rank} has no start or end time, but participated in TP, this is not normal.")
-                        mean_bw += tp.total_src_size(rank)*1e-9 / (rank_end - rank_start)
+                            raise ValueError(
+                                f"Rank {rank} has no start or end time, but participated in TP, this is not normal."
+                            )
+                        mean_bw += (
+                            tp.total_src_size(rank) * 1e-9 / (rank_end - rank_start)
+                        )
 
                     mean_bw /= len(tp.senders_ranks())
 
@@ -316,13 +320,14 @@ class SequentialCTPerftest(CTPerftest):
                     "Latency (ms)",
                     "Isolated Latency (ms)",
                     "Num Senders",
-                    "Mean BW (GB/s)",    # Bandwidth
+                    "Mean BW (GB/s)",  # Bandwidth
                 ]
                 data = [
                     [
                         tp_sizes_gb[i],
                         tp_latencies_ms[i],
                         isolated_tp_latencies_ms[i],
+                        len(tp.senders_ranks()),
                         mean_bw,
                     ]
                     for i, tp in enumerate(self.traffic_patterns)
