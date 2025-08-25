@@ -15,10 +15,44 @@
 
 ucx_utils_dep = declare_dependency(link_with: ucx_utils_lib, include_directories: utils_inc_dirs )
 asio_dep = [dependency('asio', required: true)]
+cpp  = meson.get_compiler('cpp')
 
 compile_flags = []
 if cuda_dep.found()
     compile_flags = [ '-DHAVE_CUDA' ]
+
+    cuda = meson.get_compiler('cuda')
+
+    # UCX GPU device API detection
+    ucx_gpu_device_api_available = false
+    if get_option('enable_ucx_gpu_device_api')
+        have_ucp_cuh = cuda.compiles('''
+            #include <ucp/api/device/inline/cuda/ucp.cuh>
+            int main() { return 0; }
+        ''', dependencies : ucx_dep)
+
+        have_gpu_dlist_export = cpp.has_function(
+            'ucp_gpu_dlist_export',
+            prefix: '#include <ucp/api/ucp.h>',
+            dependencies: ucx_dep
+        )
+
+        if have_ucp_cuh and have_gpu_dlist_export
+            ucx_gpu_device_api_available = true
+            compile_flags += ['-DHAVE_UCX_GPU_DEVICE_API']
+            message('UCX GPU device API support detected and enabled')
+        endif
+    endif
+else
+    ucx_gpu_device_api_available = false
+endif
+
+if not get_option('enable_ucx_gpu_device_api')
+    message('UCX GPU device API support explicitly disabled by user')
+elif not cuda_dep.found()
+    message('UCX GPU device API support not available - CUDA not found')
+elif not ucx_gpu_device_api_available
+    message('UCX GPU device API support not available - GPU device API features will be disabled')
 endif
 
 if 'UCX' in static_plugins
