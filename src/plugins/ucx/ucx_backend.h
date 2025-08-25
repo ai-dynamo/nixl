@@ -36,7 +36,6 @@
 #include "common/nixl_time.h"
 #include "ucx/rkey.h"
 #include "ucx/ucx_utils.h"
-#include "common/list_elem.h"
 
 enum ucx_cb_op_t { NOTIF_STR };
 
