@@ -67,20 +67,20 @@ if cuda_dep.found()
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
 
-    # Please extend with your arch if not present in the list
     nvcc_flags = []
-    nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
-    nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
+    nvcc_flags_link = []
+    if get_option('nvcc_gencode') != ''
+      foreach p : get_option('nvcc_gencode').split(' ')
+        nvcc_flags += p
+        nvcc_flags_link += p
+      endforeach
+    endif
     add_project_arguments(nvcc_flags, language: 'cuda')
+    add_project_link_arguments(nvcc_flags_link, language: 'cuda')
 
     # Refer to https://mesonbuild.com/Cuda-module.html
     add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
     add_project_arguments('-rdc=true', language: 'cuda')
-
-    nvcc_flags_link = []
-    nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
-    nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
-    add_project_link_arguments(nvcc_flags_link, language: 'cuda')
 endif
 
 # DOCA

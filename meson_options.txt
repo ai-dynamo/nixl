@@ -23,6 +23,8 @@ option('gds_path', type: 'string', value: '/usr/local/cuda/', description: 'Path
 option('cudapath_inc', type: 'string', value: '', description: 'Include path for CUDA')
 option('cudapath_lib', type: 'string', value: '', description: 'Library path for CUDA')
 option('cudapath_stub', type: 'string', value: '', description: 'Extra Stub path for CUDA')
+option('nvcc_gencode', type: 'string', value: '-gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_90,code=sm_90',
+       description: 'NVCC GPU architectures to target (space-separated -gencode flags)')
 option('static_plugins', type: 'string', value: '', description: 'Plugins to be built-in, comma-separated')
 option('build_docs', type: 'boolean', value: false, description: 'Build Doxygen documentation')
 option('log_level', type: 'combo', choices: ['trace', 'debug', 'info', 'warning', 'error', 'fatal', 'auto'], value: 'auto', description: 'Log Level (auto: auto-detect based on build type: trace for debug builds, info for release builds)')
