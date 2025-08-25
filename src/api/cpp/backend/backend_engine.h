@@ -159,6 +159,17 @@ class nixlBackendEngine {
         //Backend aborts the transfer if necessary, and destructs the relevant objects
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
+        // Export transfer request to GPU memory for GPU transfer.
+        virtual nixl_status_t
+        exportXferReqtoGPU(nixlBackendReqH *req_hndl, nixlGpuXferReqH *&gpu_req_hndl) const {
+            return NIXL_ERR_NOT_SUPPORTED; // Default implementation for file backends
+        }
+
+        // Release transfer request from GPU memory
+        virtual nixl_status_t
+        releaseXferReqtoGPU(nixlBackendReqH *req_hndl) const {
+            return NIXL_ERR_NOT_SUPPORTED; // Default implementation for file backends
+        }
 
         // *** Needs to be implemented if supportsRemote() is true *** //
 
