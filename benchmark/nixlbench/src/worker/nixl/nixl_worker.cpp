@@ -131,6 +131,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             exit(EXIT_FAILURE);
         }
 
+        backend_params["num_workers"] = std::to_string(xferBenchConfig::num_threads + 1);
+
         std::cout << "Init nixl worker, dev "
                   << (("all" == devices[0]) ? "all" : backend_params["device_list"]) << " rank "
                   << rank << ", type " << name << ", hostname " << hostname << std::endl;
