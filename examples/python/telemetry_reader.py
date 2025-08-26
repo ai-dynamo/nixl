@@ -17,7 +17,6 @@
 
 import argparse
 import ctypes
-import errno
 import logging
 import mmap
 import os
