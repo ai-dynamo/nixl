@@ -128,14 +128,17 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
         throw std::invalid_argument("Agent needs a name");
 
     memorySection = new nixlLocalSection();
-    auto telemetry_env_val = std::getenv(TELEMETRY_ENABLED_VAR);
-    auto telemetry_enabled = (telemetry_env_val != nullptr &&
-                              (telemetry_env_val[0] == 'y' || telemetry_env_val[0] == 'Y' ||
-                               telemetry_env_val[0] == '1'));
-    if (telemetry_enabled) {
-        telemetry_ = std::make_unique<nixlTelemetry>(name, backendEngines);
-    } else if (telemetry_env_val != nullptr) {
-        NIXL_WARN << "Invalid NIXL_TELEMETRY_ENABLE environment variable, not enabling telemetry.";
+    const char *telemetry_env_val = std::getenv(TELEMETRY_ENABLED_VAR);
+
+    if (telemetry_env_val != nullptr) {
+        if (!strcasecmp(telemetry_env_val, "y") || !strcasecmp(telemetry_env_val, "1") ||
+            !strcasecmp(telemetry_env_val, "yes") || !strcasecmp(telemetry_env_val, "on")) {
+            telemetry_ = std::make_unique<nixlTelemetry>(name, backendEngines);
+        } else if (strcasecmp(telemetry_env_val, "n") && strcasecmp(telemetry_env_val, "0") &&
+                   strcasecmp(telemetry_env_val, "no") && strcasecmp(telemetry_env_val, "off")) {
+            NIXL_WARN
+                << "Invalid NIXL_TELEMETRY_ENABLE environment variable, not enabling telemetry.";
+        }
     }
 }
 
@@ -1334,7 +1337,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
 
     size_t conn_cnt;
     ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if(ret) {
+    if (ret != NIXL_SUCCESS) {
         NIXL_ERROR << "Error getting connection count: " << nixlEnumStrings::statusStr(ret);
         return ret;
     }
@@ -1351,32 +1354,11 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
             return NIXL_ERR_MISMATCH;
         }
 
-        // Current agent might not support a remote backend
-        if (data->backendEngines.count(nixl_backend) != 0) {
-
-            // No need to reload same conn info, error if it changed
-            if (data->remoteBackends.count(remote_agent) != 0 &&
-                data->remoteBackends[remote_agent].count(nixl_backend) != 0) {
-                if (data->remoteBackends[remote_agent][nixl_backend] != conn_info)
-                    return NIXL_ERR_NOT_ALLOWED;
-                count++;
-                continue;
-            }
-
-            nixlBackendEngine *eng = data->backendEngines[nixl_backend];
-            if (eng->supportsRemote()) {
-                ret = eng->loadRemoteConnInfo(remote_agent, conn_info);
-                if (ret != NIXL_SUCCESS) {
-                    return ret; // Error in load
-                }
-
-                count++;
-                data->remoteBackends[remote_agent].emplace(nixl_backend, conn_info);
-            } else {
-                // If there was an issue and we return error while some connections
-                // are loaded, they will be deleted in the backend destructor.
-                return NIXL_ERR_UNKNOWN; // This is an erroneous case
-            }
+        ret = data->loadConnInfo(remote_agent, nixl_backend, conn_info);
+        if (ret == NIXL_SUCCESS) {
+            count++;
+        } else if (ret != NIXL_ERR_NOT_SUPPORTED) {
+            return ret;
         }
     }
 
@@ -1389,17 +1371,8 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
         return NIXL_ERR_MISMATCH;
     }
 
-    if (data->remoteSections.count(remote_agent) == 0) {
-        data->remoteSections[remote_agent] = new nixlRemoteSection(remote_agent);
-    }
-
-    ret = data->remoteSections[remote_agent]->loadRemoteData(&sd, data->backendEngines);
-
-    // TODO: can be more graceful, if just the new MD blob was improper
+    ret = data->loadRemoteSections(remote_agent, sd);
     if (ret != NIXL_SUCCESS) {
-        delete data->remoteSections[remote_agent];
-        data->remoteSections.erase(remote_agent);
-        data->remoteBackends.erase(remote_agent);
         return ret;
     }
 

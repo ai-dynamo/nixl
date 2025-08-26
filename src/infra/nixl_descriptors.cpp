@@ -242,50 +242,6 @@ void nixlDescList<T>::addDesc (const T &desc) {
 }
 
 template <class T>
-bool nixlDescList<T>::overlaps (const T &desc, int &index) const {
-    if (!sorted) {
-        for (size_t i=0; i<descs.size(); ++i) {
-            if (descs[i].overlaps(desc)) {
-                index = i;
-                return true;
-            }
-        }
-        index = descs.size();
-        return false;
-    } else {
-        // Since desc vector is kept sorted, we can use upper_bound
-        auto itr = std::upper_bound(descs.begin(), descs.end(), desc);
-        if (itr == descs.end()) {
-            index = descs.size();
-            return false;
-        } else {
-            index = itr - descs.begin();
-            // If between 2 descriptors, index can be used for insertion
-            return ((*itr).overlaps(desc));
-        }
-    }
-}
-
-template <class T>
-bool nixlDescList<T>::hasOverlaps () const {
-    if ((descs.size()==0) || (descs.size()==1))
-        return false;
-
-    if (!sorted) {
-        for (size_t i=0; i<descs.size()-1; ++i)
-            for (size_t j=i+1; j<descs.size(); ++j)
-                if (descs[i].overlaps(descs[j]))
-                    return true;
-    } else {
-        for (size_t i=0; i<descs.size()-1; ++i)
-            if (descs[i].overlaps(descs[i+1]))
-                return true;
-    }
-
-    return false;
-}
-
-template <class T>
 void nixlDescList<T>::remDesc (const int &index){
     if (((size_t) index >= descs.size()) || (index < 0))
         throw std::out_of_range("Index is out of range");

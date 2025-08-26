@@ -145,19 +145,6 @@ impl<'a> RegDescList<'a> {
         }
     }
 
-    /// Returns true if any descriptors in the list overlap
-    pub fn has_overlaps(&self) -> Result<bool, NixlError> {
-        let mut has_overlaps = false;
-        let status =
-            unsafe { nixl_capi_reg_dlist_has_overlaps(self.inner.as_ptr(), &mut has_overlaps) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(has_overlaps),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
     /// Trims the list to the given size
     pub fn trim(&mut self) -> Result<(), NixlError> {
         let status = unsafe { nixl_capi_reg_dlist_trim(self.inner.as_ptr()) };

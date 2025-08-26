@@ -216,24 +216,12 @@ fn test_xfer_dlist() {
     // Check length
     assert_eq!(dlist.len().unwrap(), 2);
 
-    // Check overlaps
-    assert!(!dlist.has_overlaps().unwrap());
-
-    // Add overlapping descriptor
-    dlist.add_desc(0x1050, 0x100, 0).unwrap();
-    assert!(dlist.has_overlaps().unwrap());
-
     // Clear list
     dlist.clear().unwrap();
     assert_eq!(dlist.len().unwrap(), 0);
 
     // Resize list
     dlist.resize(5).unwrap();
-
-    // add descriptors with overlaps
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    dlist.add_desc(0x1050, 0x100, 0).unwrap();
-    assert!(dlist.has_overlaps().unwrap());
 }
 
 #[test]
@@ -246,13 +234,6 @@ fn test_reg_dlist() {
 
     // Check length
     assert_eq!(dlist.len().unwrap(), 2);
-
-    // Check overlaps
-    assert!(!dlist.has_overlaps().unwrap());
-
-    // Add overlapping descriptor
-    dlist.add_desc(0x1050, 0x100, 0).unwrap();
-    assert!(dlist.has_overlaps().unwrap());
 
     // Clear list
     dlist.clear().unwrap();
@@ -503,7 +484,7 @@ fn test_basic_agent_lifecycle() {
     loop {
         let status = agent1.get_xfer_status(&xfer_req).unwrap();
 
-        if !status {
+        if status.is_success() {
             println!("Xfer req completed");
             break;
         } else {

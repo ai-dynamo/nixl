@@ -36,7 +36,6 @@
 #include "common/nixl_time.h"
 #include "ucx/rkey.h"
 #include "ucx/ucx_utils.h"
-#include "common/list_elem.h"
 
 enum ucx_cb_op_t { NOTIF_STR };
 
@@ -272,7 +271,10 @@ private:
     notifSendPriv(const std::string &remote_agent,
                   const std::string &msg,
                   nixlUcxReq &req,
-                  size_t worker_id) const;
+                  const std::unique_ptr<nixlUcxEp> &ep) const;
+
+    ucx_connection_ptr_t
+    getConnection(const std::string &remote_agent) const;
 
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
