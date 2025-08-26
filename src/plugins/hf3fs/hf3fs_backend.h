@@ -28,6 +28,7 @@
 #include <thread>
 #include "hf3fs_utils.h"
 #include "backend/backend_engine.h"
+#include <asio.hpp>
 
 class nixlHf3fsShmException : public std::runtime_error {
 public:
@@ -90,33 +91,28 @@ class nixlHf3fsIO {
         nixlHf3fsIO() = default;
 };
 
-class nixlH3fsThreadStatus {
-    public:
-        std::thread *thread = nullptr;
-        nixl_status_t error_status = NIXL_SUCCESS;
-        std::string error_message = "";
-        bool stop_thread = false;
-
-        nixlH3fsThreadStatus() = default;
-};
-
 class nixlHf3fsBackendReqH : public nixlBackendReqH {
     public:
         std::list<nixlHf3fsIO *> io_list;
         hf3fs_ior ior;
         uint32_t completed_ios = 0; // Number of completed IOs
         uint32_t num_ios = 0; // Number of submitted IOs
-        nixlH3fsThreadStatus io_status;
+        nixl_status_t error_status = NIXL_SUCCESS;
+        std::string error_message = "";
+        bool is_posted = false;
+        bool stopped = false;
 
         nixlHf3fsBackendReqH() = default;
 };
-
 
 class nixlHf3fsEngine : public nixlBackendEngine {
     private:
         hf3fsUtil *hf3fs_utils;
         std::unordered_set<int> hf3fs_file_set;
         nixl_hf3fs_mem_config mem_config;
+        asio::io_context *io_ctx;
+        asio::executor_work_guard<asio::io_context::executor_type> *wg;
+        std::vector<std::thread> tpool;
         static long page_size;
 
         mutable std::mutex iopool_lock;
@@ -135,8 +131,11 @@ class nixlHf3fsEngine : public nixlBackendEngine {
         putIOObj(nixlHf3fsIO *io) const;
 
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
-        void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;
-        static void waitForIOsThread(void* handle, void *utils);
+        static void
+        waitForIOsAsync(asio::io_context *ctx, nixlHf3fsBackendReqH *handle, hf3fsUtil *utils);
+        static void
+        ioThread(asio::io_context *io_ctx);
+
     public:
         nixlHf3fsEngine(const nixlBackendInitParams* init_params);
         ~nixlHf3fsEngine();
