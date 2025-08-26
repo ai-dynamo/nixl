@@ -24,6 +24,7 @@
 
 extern "C" {
 
+// clang-format off
 // Internal struct definitions to match our opaque types
 // These are now stubs as their internal details are no longer used.
 struct nixl_capi_agent_s { /* empty */ };
@@ -37,6 +38,9 @@ struct nixl_capi_xfer_dlist_s { /* empty */ };
 struct nixl_capi_reg_dlist_s { /* empty */ };
 struct nixl_capi_xfer_req_s { /* empty */ };
 struct nixl_capi_notif_map_s { /* empty */ };
+struct nixl_capi_xfer_dlist_handle_s { /* empty */ };
+
+// clang-format on
 
 nixl_capi_status_t
 nixl_capi_stub_abort()
@@ -68,6 +72,35 @@ nixl_capi_status_t
 nixl_capi_load_remote_md(nixl_capi_agent_t agent, const void* data, size_t len, char** agent_name)
 {
   return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_prep_xfer_dlist(nixl_capi_agent_t agent,
+                          const char *agent_name,
+                          nixl_capi_xfer_dlist_t descs,
+                          nixl_capi_xfer_dlist_handle_t *dlist_handle,
+                          nixl_capi_opt_args_t opt_args) {
+    return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_release_xfer_dlist_handle(nixl_capi_agent_t agent,
+                                    nixl_capi_xfer_dlist_handle_t dlist_handle) {
+    return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_make_xfer_req(nixl_capi_agent_t agent,
+                        nixl_capi_xfer_op_t operation,
+                        nixl_capi_xfer_dlist_handle_t local_descs,
+                        const int *local_indices,
+                        size_t local_indices_count,
+                        nixl_capi_xfer_dlist_handle_t remote_descs,
+                        const int *remote_indices,
+                        size_t remote_indices_count,
+                        nixl_capi_xfer_req_t *req_hndl,
+                        nixl_capi_opt_args_t opt_args) {
+    return nixl_capi_stub_abort();
 }
 
 nixl_capi_status_t
