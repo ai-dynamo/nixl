@@ -19,6 +19,10 @@
 #define __BACKEND_PLUGIN_H
 
 #include "backend/backend_engine.h"
+#include "common/nixl_log.h"
+
+// Forward declarations for special engine types
+class nixlUcxEngine;
 
 // Define the plugin API version
 #define NIXL_PLUGIN_API_VERSION 1
@@ -50,16 +54,71 @@ public:
 // Macro to define exported C functions for the plugin
 #define NIXL_PLUGIN_EXPORT __attribute__((visibility("default")))
 
+// Template for creating backend plugins with minimal boilerplate
+template<typename EngineType> class nixlBackendPluginCreator {
+public:
+    static nixlBackendPlugin *
+    create(int api_version,
+           const char *name,
+           const char *version,
+           const nixl_b_params_t &params,
+           const nixl_mem_list_t &mem_list) {
+
+        static const char *plugin_name = name;
+        static const char *plugin_version = version;
+        static const nixl_b_params_t plugin_params = params;
+        static const nixl_mem_list_t plugin_mems = mem_list;
+
+        static nixlBackendPlugin plugin_instance = {api_version,
+                                                    createEngine,
+                                                    destroyEngine,
+                                                    []() { return plugin_name; },
+                                                    []() { return plugin_version; },
+                                                    []() { return plugin_params; },
+                                                    []() { return plugin_mems; }};
+
+        return &plugin_instance;
+    }
+
+private:
+    [[nodiscard]] static nixlBackendEngine *
+    createEngine(const nixlBackendInitParams *init_params) {
+        try {
+            if constexpr (std::is_same_v<EngineType, nixlUcxEngine>) {
+                // UCX engine uses a factory pattern
+                auto engine = EngineType::create(*init_params);
+                return engine.release();
+            } else {
+                // Other engines use direct constructor
+                return new EngineType(init_params);
+            }
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << "Failed to create engine: " << e.what();
+            return nullptr;
+        }
+    }
+
+    static void
+    destroyEngine(nixlBackendEngine *engine) {
+        delete engine;
+    }
+};
+
+
 // Creator Function type for static plugins
 typedef nixlBackendPlugin* (*nixlStaticPluginCreatorFunc)();
 
 // Plugin must implement these functions for dynamic loading
+// Note: extern "C" is required for dynamic loading to avoid C++ name mangling
 extern "C" {
-    // Initialize the plugin
-    NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init();
+// Initialize the plugin
+NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init();
 
-    // Cleanup the plugin
-    NIXL_PLUGIN_EXPORT void nixl_plugin_fini();
+// Cleanup the plugin
+NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini();
 }
 
 #endif // __BACKEND_PLUGIN_H

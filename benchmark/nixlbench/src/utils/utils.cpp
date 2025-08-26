@@ -307,9 +307,10 @@ xferBenchConfig::loadFromFlags() {
                   << std::endl;
         return -1;
     }
-    if (max_block_size > (total_buffer_size / num_threads)) {
-        std::cerr << "Incorrect buffer size configuration" << " max_block_size(" << max_block_size
-                  << ") >" << " (total_buffer_size / num_threads)("
+    if ((max_block_size * max_batch_size) > (total_buffer_size / num_threads)) {
+        std::cerr << "Incorrect buffer size configuration " << "(max_block_size * max_batch_size) "
+                  << "(" << (max_block_size * max_batch_size) << ")"
+                  << " is > (total_buffer_size / num_threads) ("
                   << (total_buffer_size / num_threads) << ")" << std::endl;
         return -1;
     }

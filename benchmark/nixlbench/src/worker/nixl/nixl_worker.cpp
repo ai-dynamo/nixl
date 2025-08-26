@@ -31,15 +31,12 @@
 #include <unistd.h>
 #include <utility>
 #include <sys/time.h>
+#include <sys/stat.h>
 #include <utils/serdes/serdes.h>
 #include <omp.h>
 
 #define ROUND_UP(value, granularity) \
     ((((value) + (granularity) - 1) / (granularity)) * (granularity))
-
-static uintptr_t gds_running_ptr = 0x0;
-static std::vector<std::vector<xferBenchIOV>> gds_remote_iovs;
-static std::vector<std::vector<xferBenchIOV>> storage_remote_iovs;
 
 #define CHECK_NIXL_ERROR(result, message)                                                       \
     do {                                                                                        \
@@ -133,6 +130,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             std::cerr << "Failed to get hostname" << std::endl;
             exit(EXIT_FAILURE);
         }
+
+        backend_params["num_workers"] = std::to_string(xferBenchConfig::num_threads + 1);
 
         std::cout << "Init nixl worker, dev "
                   << (("all" == devices[0]) ? "all" : backend_params["device_list"]) << " rank "
@@ -406,11 +405,10 @@ xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
 }
 #endif /* HAVE_CUDA */
 
-static std::vector<int>
-createFileFds(std::string name) {
-    std::vector<int> fds;
+static std::vector<xferFileState>
+createFileFds(std::string name, int num_files) {
+    std::vector<xferFileState> fds;
     int flags = O_RDWR | O_CREAT;
-    int num_files = xferBenchConfig::num_files;
 
     if (!xferBenchConfig::isStorageBackend()) {
         std::cerr << "Unknown storage backend: " << xferBenchConfig::backend << std::endl;
@@ -430,26 +428,48 @@ createFileFds(std::string name) {
 
     for (int i = 0; i < num_files; i++) {
         std::string file_name = file_path + file_name_prefix + name + "_" + std::to_string(i);
-        std::cout << "Creating "
-                  << " file: " << file_name << std::endl;
+        std::cout << "Creating file: " << file_name << std::endl;
+
+        uint64_t file_size = 0;
+        if (XFERBENCH_OP_READ == xferBenchConfig::op_type) {
+            struct stat st;
+            if (::stat(file_name.c_str(), &st) == 0) {
+                std::cout << "File " << file_name << " exists, size: " << st.st_size << std::endl;
+                file_size = st.st_size;
+            } else {
+                std::cout << "File " << file_name << " does not exist, will be created."
+                          << std::endl;
+            }
+        }
+
         int fd = open(file_name.c_str(), flags, 0744);
         if (fd < 0) {
             std::cerr << "Failed to open file: " << file_name << " with error: " << strerror(errno)
                       << std::endl;
             for (int j = 0; j < i; j++) {
-                close(fds[j]);
+                close(fds[j].fd);
             }
             return {};
         }
-        fds.push_back(fd);
+        fds.emplace_back(xferFileState{fd, file_size, 0});
     }
     return fds;
 }
 
 std::optional<xferBenchIOV>
-xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id) {
-    auto ret =
-        std::optional<xferBenchIOV>(std::in_place, (uintptr_t)gds_running_ptr, buffer_size, fd);
+xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id) {
+    int fd = fstate.fd;
+    uint64_t start_offset = fstate.offset;
+    uint64_t end_offset = fstate.offset + buffer_size;
+    auto ret = std::optional<xferBenchIOV>(std::in_place, fstate.offset, buffer_size, fd);
+
+    fstate.offset = end_offset;
+
+    // If in READ mode, only write if the region is not already present in the file
+    if (XFERBENCH_OP_READ == xferBenchConfig::op_type && end_offset <= fstate.file_size) {
+        return ret;
+    }
+
     // Fill up with data
     void *buf;
     AllocationType type = AllocationType::MALLOC;
@@ -465,20 +485,23 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, int fd, int mem_dev_i
 
     // File is always initialized with XFERBENCH_TARGET_BUFFER_ELEMENT
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
-    if (xferBenchConfig::storage_enable_direct) {
-        gds_running_ptr =
-            ((gds_running_ptr + xferBenchConfig::page_size - 1) / xferBenchConfig::page_size) *
-            xferBenchConfig::page_size;
-    } else {
-        gds_running_ptr += (buffer_size * mem_dev_id);
+
+    size_t offset = start_offset;
+    while (buffer_size > 0) {
+        ssize_t rc = pwrite(fd, buf, buffer_size, offset);
+        if (rc < 0) {
+            std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
+                      << std::endl;
+            return std::nullopt;
+        }
+
+        buffer_size -= rc;
+        offset += rc;
     }
-    int rc = pwrite(fd, buf, buffer_size, gds_running_ptr);
-    if (rc < 0) {
-        std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
-                  << std::endl;
-        return std::nullopt;
-    }
+
     free(buf);
+
+    if (end_offset > fstate.file_size) fstate.file_size = end_offset;
 
     return ret;
 }
@@ -523,7 +546,7 @@ xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
 }
 
 std::vector<std::vector<xferBenchIOV>>
-xferBenchNixlWorker::allocateMemory(int num_lists) {
+xferBenchNixlWorker::allocateMemory(int num_threads) {
     std::vector<std::vector<xferBenchIOV>> iov_lists;
     size_t i, buffer_size, num_devices = 0;
     nixl_opt_args_t opt_args;
@@ -533,7 +556,7 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
     } else if (isTarget()) {
         num_devices = xferBenchConfig::num_target_dev;
     }
-    buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_lists);
+    buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_threads);
 
     if (xferBenchConfig::storage_enable_direct) {
         if (xferBenchConfig::page_size == 0) {
@@ -552,7 +575,7 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
 
-        for (int list_idx = 0; list_idx < num_lists; list_idx++) {
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
@@ -578,31 +601,50 @@ xferBenchNixlWorker::allocateMemory(int num_lists) {
             remote_iovs.push_back(iov_list);
         }
     } else if (xferBenchConfig::isStorageBackend()) {
+        int num_buffers = num_threads * num_devices;
+        int num_files = xferBenchConfig::num_files;
+        int remainder_buffers = num_buffers % num_files;
 
-        remote_fds = createFileFds(getName());
+        if (num_files > num_buffers) {
+            std::cerr << "Error: number of buffers (" << num_buffers
+                      << ") needs to be bigger or equal to the number of files (" << num_files
+                      << "). Try adjusting num_files." << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
+        if (remainder_buffers != 0) {
+            std::cerr << "Error: number of buffers (" << num_buffers
+                      << ") needs to be divisible by the number of files (" << num_files
+                      << "). Try adjusting num_files." << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
+        remote_fds = createFileFds(getName(), num_files);
         if (remote_fds.empty()) {
             std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
             exit(EXIT_FAILURE);
         }
-        for (int list_idx = 0; list_idx < num_lists; list_idx++) {
+
+        int file_idx = 0;
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(buffer_size, remote_fds[0], i);
+                basic_desc = initBasicDescFile(buffer_size, remote_fds[file_idx], i);
                 if (basic_desc) {
                     iov_list.push_back(basic_desc.value());
                 }
+                file_idx += 1;
+                if (file_idx >= num_files) file_idx = 0;
             }
             nixl_reg_dlist_t desc_list(FILE_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
         }
-        // Reset the running pointer to 0
-        gds_running_ptr = 0x0;
     }
 
-    for (int list_idx = 0; list_idx < num_lists; list_idx++) {
+    for (int list_idx = 0; list_idx < num_threads; list_idx++) {
         std::vector<xferBenchIOV> iov_list;
         for (i = 0; i < num_devices; i++) {
             std::optional<xferBenchIOV> basic_desc;
@@ -740,22 +782,34 @@ xferBenchNixlWorker::exchangeMetadata() {
 }
 
 std::vector<std::vector<xferBenchIOV>>
-xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iovs) {
+xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iovs,
+                                 size_t block_size) {
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
     if (xferBenchConfig::isStorageBackend()) {
+        size_t fd_idx = 0;
+        uint64_t file_offset = 0;
         for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov : iov_list) {
-                std::optional<xferBenchIOV> basic_desc;
                 if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
+                    std::optional<xferBenchIOV> basic_desc;
                     basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
+                    if (basic_desc) {
+                        remote_iov_list.push_back(basic_desc.value());
+                    }
                 } else {
-                    basic_desc = initBasicDescFile(iov.len, remote_fds[0], iov.devId);
-                }
-                if (basic_desc) {
-                    remote_iov_list.push_back(basic_desc.value());
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = file_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = remote_fds[fd_idx].fd;
+                    remote_iov_list.push_back(iov_remote);
+                    fd_idx++;
+                    if (fd_idx >= remote_fds.size()) {
+                        file_offset += block_size;
+                        fd_idx = 0;
+                    }
                 }
             }
             res.push_back(remote_iov_list);
@@ -856,9 +910,6 @@ execTransfer(nixlAgent *agent,
 
         if (xferBenchConfig::isStorageBackend()) {
             target = "initiator";
-        } else if (XFERBENCH_BACKEND_MOONCAKE == xferBenchConfig::backend) {
-            params.hasNotif = false;
-            target = "target";
         } else {
             params.notifMsg = "0xBEEF";
             params.hasNotif = true;

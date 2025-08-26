@@ -248,11 +248,6 @@ class nixlDescList {
          */
         inline bool isEmpty() const { return (descs.size()==0); }
         /**
-         * @brief Check if any two nixlDescs in the internal list of descriptors
-         *        overlap with each other
-         */
-        bool hasOverlaps() const;
-        /**
          * @brief Operator [] overloading, get/set descriptor at [index].
          *        Can throw std::out_of_range exception.
          */
@@ -309,13 +304,6 @@ class nixlDescList {
          *        nixlDescList of nixlBasicDesc elements
          */
         nixlDescList<nixlBasicDesc> trim() const;
-        /**
-         * @brief  Check if input descriptor `desc` overlaps with any descriptor
-         *         within the current object, and returns its index if found.
-         *
-         * @param  index [out] index of overlapping descriptor
-         */
-        bool overlaps (const T &desc, int &index) const;
         /**
          * @brief  Get the index of a descriptor that matches the `query`
          *

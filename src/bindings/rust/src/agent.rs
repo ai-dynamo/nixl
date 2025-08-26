@@ -22,6 +22,18 @@ pub struct Agent {
     inner: Arc<RwLock<AgentInner>>,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum XferStatus {
+    Success,
+    InProgress,
+}
+
+impl XferStatus {
+    pub fn is_success(&self) -> bool {
+        return *self == XferStatus::Success;
+    }
+}
+
 impl Agent {
     /// Creates a new agent with the given name
     pub fn new(name: &str) -> Result<Self, NixlError> {
@@ -407,7 +419,7 @@ impl Agent {
         }
     }
 
-    pub fn make_connection(&self, remote_agent: &str) -> Result<(), NixlError> {
+    pub fn make_connection(&self, remote_agent: &str, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
         let remote_agent = CString::new(remote_agent)?;
         let inner_guard = self.inner.write().unwrap();
 
@@ -415,12 +427,70 @@ impl Agent {
             nixl_capi_agent_make_connection(
                 inner_guard.handle.as_ptr(),
                 remote_agent.as_ptr(),
-                std::ptr::null_mut(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             )
         };
 
         match status {
             NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    pub fn prepare_xfer_dlist(
+        &self,
+        agent_name: &str,
+        descs: &XferDescList,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<XferDlistHandle, NixlError> {
+        let c_agent_name = CString::new(agent_name)?;
+        let mut dlist_hndl = std::ptr::null_mut();
+        let inner_guard = self.inner.read().unwrap();
+
+        let status = unsafe {
+            nixl_capi_prep_xfer_dlist(
+                inner_guard.handle.as_ptr(),
+                c_agent_name.as_ptr(),
+                descs.handle(),
+                &mut dlist_hndl,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(XferDlistHandle::new(dlist_hndl, inner_guard.handle)),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    pub fn make_xfer_req(&self, operation: XferOp,
+                         local_descs: &XferDlistHandle, local_indices: &[i32],
+                         remote_descs: &XferDlistHandle, remote_indices: &[i32],
+                         opt_args: Option<&OptArgs>) -> Result<XferRequest, NixlError> {
+        let mut req = std::ptr::null_mut();
+        let inner_guard = self.inner.read().unwrap();
+
+        let status = unsafe {
+            nixl_capi_make_xfer_req(
+                inner_guard.handle.as_ptr(),
+                operation as bindings::nixl_capi_xfer_op_t,
+                local_descs.handle(),
+                local_indices.as_ptr(),
+                local_indices.len() as usize,
+                remote_descs.handle(),
+                remote_indices.as_ptr(),
+                remote_indices.len() as usize,
+                &mut req,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr())
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(XferRequest::new(NonNull::new(req)
+                .ok_or(NixlError::FailedToCreateXferRequest)?,
+                self.inner.clone(),
+            )),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }
@@ -841,14 +911,14 @@ impl Agent {
     ///
     /// # Arguments
     /// * `req` - Transfer request handle after `post_xfer_req`
-    pub fn get_xfer_status(&self, req: &XferRequest) -> Result<bool, NixlError> {
+    pub fn get_xfer_status(&self, req: &XferRequest) -> Result<XferStatus, NixlError> {
         let status = unsafe {
             nixl_capi_get_xfer_status(self.inner.write().unwrap().handle.as_ptr(), req.handle())
         };
 
         match status {
-            NIXL_CAPI_SUCCESS => Ok(false), // Transfer completed
-            NIXL_CAPI_IN_PROG => Ok(true),  // Transfer in progress
+            NIXL_CAPI_SUCCESS => Ok(XferStatus::Success), // Transfer completed
+            NIXL_CAPI_IN_PROG => Ok(XferStatus::InProgress),  // Transfer in progress
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }
