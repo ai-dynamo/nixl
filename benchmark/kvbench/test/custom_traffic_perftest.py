@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import time
 from test.traffic_pattern import TrafficPattern
 from typing import Literal, Optional, Tuple
@@ -113,6 +114,14 @@ class CTPerftest:
         self.warmup_iters = warmup_iters
 
         self.nixl_agent = nixl_agent(f"{self.my_rank}")
+
+        if (
+            not os.environ.get("CUDA_VISIBLE_DEVICES")
+            and self.traffic_pattern.mem_type == "cuda"
+        ):
+            logger.warning(
+                "Cuda buffers detected, but the env var CUDA_VISIBLE_DEVICES is not set, this will cause every process in the same host to use the same GPU device."
+            )
 
         """Initialize the buffers, one big send and recv buffer is used for all the transfers
         it has to be chunked inside each transfer to get buffers per ranks
