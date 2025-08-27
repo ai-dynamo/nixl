@@ -1359,7 +1359,7 @@ fn test_get_local_partial_md_empty_descs() {
     // Try with empty descriptor list (should fail)
     let result = agent.get_local_partial_md(&reg_descs, None);
     assert!(
-        result.is_err(),
+        result.is_err_and(|e| matches!(e, NixlError::InvalidParam)),
         "get_local_partial_md should fail with empty descriptor list"
     );
 }
