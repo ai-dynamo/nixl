@@ -1206,7 +1206,7 @@ fn test_prep_xfer_dlist_success() {
 
     // 2. Create memory regions and register them
     let mut storage_list = create_storage_list(&local_agent, &opt_args, DLIST_SIZE);
-    let remote_storage_list = create_storage_list(&remote_agent, &opt_args_remote, DLIST_SIZE);
+    let _remote_storage_list = create_storage_list(&remote_agent, &opt_args_remote, DLIST_SIZE);
 
     {
         // 3. Create transfer descriptor list
@@ -1324,7 +1324,7 @@ fn test_make_xfer_req_invalid_indices() {
 // Tests for get_local_partial_md API
 #[test]
 fn test_get_local_partial_md_success() {
-    let agent = create_agent_with_backend("test_agent")
+    let (agent, _) = create_agent_with_backend("test_agent")
         .expect("Failed to setup agent with backend");
     // Create a registration descriptor list
     let mut reg_descs = RegDescList::new(MemType::Dram, false)
@@ -1351,7 +1351,7 @@ fn test_get_local_partial_md_success() {
 
 #[test]
 fn test_get_local_partial_md_empty_descs() {
-    let agent = create_agent_with_backend("test_agent")
+    let (agent, _) = create_agent_with_backend("test_agent")
         .expect("Failed to setup agent with backend");
     // Create empty registration descriptor list
     let reg_descs = RegDescList::new(MemType::Dram, false)
@@ -1367,7 +1367,7 @@ fn test_get_local_partial_md_empty_descs() {
 // Tests for send_local_partial_md API
 #[test]
 fn test_send_local_partial_md_success() {
-    let agent = create_agent_with_backend("test_agent")
+    let (agent, _) = create_agent_with_backend("test_agent")
         .expect("Failed to setup agent with backend");
     // Create a registration descriptor list
     let mut reg_descs = RegDescList::new(MemType::Dram, false)
@@ -1411,10 +1411,8 @@ fn test_query_xfer_backend_success() {
 }
 #[test]
 fn test_query_xfer_backend_invalid_request() {
-    let agent1 = Agent::new("agent1").expect("Failed to create agent");
-    let agent2 = Agent::new("agent2").expect("Failed to create agent");
-    let opt_args = setup_agent_with_backend(&agent1).expect("Failed to setup agent");
-    let opt_args_remote = setup_agent_with_backend(&agent2).expect("Failed to setup agent");
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
     // Create descriptor lists
     let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
     let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
