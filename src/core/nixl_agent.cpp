@@ -1574,6 +1574,6 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
             }
         }
     }
-    NIXL_ERROR << "NIXL metadata not found for remote " << remote_name << ".";
+    NIXL_ERROR << "NIXL metadata not found for remote: " << remote_name;
     return NIXL_ERR_NOT_FOUND;
 }
