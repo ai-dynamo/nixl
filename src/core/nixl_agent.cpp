@@ -111,45 +111,47 @@ nixlXferReqH::updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry_pub,
                << duration.count() << "us.";
 }
 
-namespace
-{
-    [[nodiscard]] bool makeUseEtcd() {
+namespace {
+[[nodiscard]] bool
+makeUseEtcd() {
 #if HAVE_ETCD
-        if (std::getenv("NIXL_ETCD_ENDPOINTS")) {
-            NIXL_DEBUG << "NIXL ETCD enabled (environment).";
-            return true;
-        } else {
-            NIXL_DEBUG << "NIXL ETCD disabled (default).";
-            return false;
-        }
-#else
-        NIXL_DEBUG << "NIXL ETCD disabled (build).";
+    if (std::getenv("NIXL_ETCD_ENDPOINTS")) {
+        NIXL_DEBUG << "NIXL ETCD enabled (environment).";
+        return true;
+    } else {
+        NIXL_DEBUG << "NIXL ETCD disabled (default).";
         return false;
-#endif
     }
+#else
+    NIXL_DEBUG << "NIXL ETCD disabled (build).";
+    return false;
+#endif
+}
 
-    [[nodiscard]] std::unique_ptr<nixlTelemetry> makeTelemetry(const std::string& name, backend_map_t& backends) {
-        constexpr std::array enables{"y", "yes", "1", "on"};
-        constexpr std::array disables{"n", "no", "0", "off"};
-        const char* envRaw = std::getenv(TELEMETRY_ENABLED_VAR);
-        if(envRaw == nullptr) {
-            NIXL_DEBUG << "NIXL telemetry disabled (default).";
-            return {};
-        }
-        const std::string envStr = str_tolower(envRaw);
-        if(std::find(enables.begin(), enables.end(), envStr) != enables.end()) {
-            NIXL_DEBUG << "NIXL telemetry enabled (environment).";
-            return std::make_unique<nixlTelemetry>(name, backends);
-        }
-        if(std::find(disables.begin(), disables.end(), envStr) != disables.end()) {
-            NIXL_DEBUG << "NIXL telemetry disabled (environment).";
-            return {};
-        }
-        NIXL_WARN << "NIXL telemetry disabled (invalid NIXL_TELEMETRY_ENABLE environment variable -- valid are 'y', 'yes', '1', 'on', 'n', 'no', '0', 'off', case insensitive).";
+[[nodiscard]] std::unique_ptr<nixlTelemetry>
+makeTelemetry(const std::string &name, backend_map_t &backends) {
+    constexpr std::array enables{"y", "yes", "1", "on"};
+    constexpr std::array disables{"n", "no", "0", "off"};
+    const char *envRaw = std::getenv(TELEMETRY_ENABLED_VAR);
+    if (envRaw == nullptr) {
+        NIXL_DEBUG << "NIXL telemetry disabled (default).";
         return {};
     }
+    const std::string envStr = str_tolower(envRaw);
+    if (std::find(enables.begin(), enables.end(), envStr) != enables.end()) {
+        NIXL_DEBUG << "NIXL telemetry enabled (environment).";
+        return std::make_unique<nixlTelemetry>(name, backends);
+    }
+    if (std::find(disables.begin(), disables.end(), envStr) != disables.end()) {
+        NIXL_DEBUG << "NIXL telemetry disabled (environment).";
+        return {};
+    }
+    NIXL_WARN << "NIXL telemetry disabled (invalid NIXL_TELEMETRY_ENABLE environment variable -- "
+                 "valid are 'y', 'yes', '1', 'on', 'n', 'no', '0', 'off', case insensitive).";
+    return {};
+}
 
-}  // namespace
+} // namespace
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg)
@@ -284,12 +286,12 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
     nixlBackendEngine*    backend = nullptr;
     nixlBackendInitParams init_params;
-    nixl_mem_list_t       mems;
+    nixl_mem_list_t mems;
     std::string           str;
     backend_list_t*       backend_list;
 
     NIXL_LOCK_GUARD(data->lock);
-    if (data->backendEngines.count(type)!=0) {
+    if (data->backendEngines.count(type) != 0) {
         // TODO: Unlock here?
         NIXL_WARN << "NIXL duplicate create backend type: " << str_sanitize(type);
         return NIXL_ERR_INVALID_PARAM;
@@ -300,8 +302,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
             for (const auto &plugin_name : combination) {
                 if (plugin_name != type &&
                     data->backendEngines.find(plugin_name) != data->backendEngines.end()) {
-                    NIXL_ERROR << "NICL plugin backend " << type << " is in illegal combination with "
-                               << plugin_name;
+                    NIXL_ERROR << "NIXL plugin backend " << type
+                               << " is in illegal combination with " << plugin_name;
                     return NIXL_ERR_NOT_ALLOWED;
                 }
             }
@@ -327,7 +329,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     // Plugin found, use it to create the backend
     backend = plugin_handle->createEngine(&init_params);
 
-    if(!backend) {
+    if (!backend) {
         NIXL_ERROR << "NIXL engine create failed.";
         return NIXL_ERR_BACKEND;
     }
@@ -374,15 +376,14 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     data->backendEngines[type] = backend;
     data->backendHandles[type] = bknd_hndl;
     mems = backend->getSupportedMems();
-    for (auto & elm : mems) {
+    for (auto &elm : mems) {
         backend_list = &data->memToBackend[elm];
         // First time creating this backend handle, so unique
         // The order of creation sets the preference order
         backend_list->push_back(backend);
     }
 
-    if (backend->supportsRemote())
-        data->notifEngines.push_back(backend);
+    if (backend->supportsRemote()) data->notifEngines.push_back(backend);
 
     // TODO: Check if backend supports ProgThread
     //       when threading is in agent
@@ -415,7 +416,8 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->memToBackend[descs.getType()];
         if (backend_list->empty()) {
-            NIXL_ERROR << "NIXL register mem found no backends for memory type: " << nixlEnumStrings::memTypeStr(descs.getType());
+            NIXL_ERROR << "NIXL register mem found no backends for memory type: "
+                       << nixlEnumStrings::memTypeStr(descs.getType());
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
@@ -460,10 +462,9 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     // sum all the sizes of the descriptors using std::accumulate
     if (data->telemetry_) {
         const uint64_t total_size = std::accumulate(
-                                              descs.begin(),
-                                              descs.end(),
-                                              uint64_t{0},
-                                              [](uint64_t sum, const nixlBlobDesc &desc) { return sum + desc.len; });
+            descs.begin(), descs.end(), uint64_t{0}, [](uint64_t sum, const nixlBlobDesc &desc) {
+                return sum + desc.len;
+            });
         data->telemetry_->updateMemoryRegistered(total_size);
     }
     return NIXL_SUCCESS;
@@ -480,10 +481,10 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     NIXL_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_set_t* avail_backends;
-        avail_backends = data->memorySection.queryBackends(
-                                              descs.getType());
+        avail_backends = data->memorySection.queryBackends(descs.getType());
         if (!avail_backends || avail_backends->empty()) {
-            NIXL_ERROR << "NIXL deregister mem found no backends for memory type: " << nixlEnumStrings::memTypeStr(descs.getType());
+            NIXL_ERROR << "NIXL deregister mem found no backends for memory type: "
+                       << nixlEnumStrings::memTypeStr(descs.getType());
             return NIXL_ERR_NOT_FOUND;
         }
         // Make a copy as we might change it in remDescList
@@ -501,24 +502,23 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     }
 
     if (bad_ret != NIXL_SUCCESS) {
-        NIXL_ERROR << "NIXL deregister mem produced error(s): " << nixlEnumStrings::statusStr(bad_ret);
+        NIXL_ERROR << "NIXL deregister mem produced error(s): "
+                   << nixlEnumStrings::statusStr(bad_ret);
         return bad_ret;
     }
 
     if (data->telemetry_) {
         const uint64_t total_size = std::accumulate(
-                                              descs.begin(),
-                                              descs.end(),
-                                              uint64_t{0},
-                                              [](uint64_t sum, const nixlBlobDesc &desc) { return sum + desc.len; });
+            descs.begin(), descs.end(), uint64_t{0}, [](uint64_t sum, const nixlBlobDesc &desc) {
+                return sum + desc.len;
+            });
         data->telemetry_->updateMemoryDeregistered(total_size);
     }
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlAgent::makeConnection(const std::string &remote_agent,
-                          const nixl_opt_args_t* extra_params) {
+nixlAgent::makeConnection(const std::string &remote_agent, const nixl_opt_args_t *extra_params) {
     std::set<nixl_backend_t> backend_set;
 
     NIXL_LOCK_GUARD(data->lock);
@@ -541,10 +541,11 @@ nixlAgent::makeConnection(const std::string &remote_agent,
     size_t count = 0;
     for (auto & backend: backend_set) {
         if (data->backendEngines.count(backend)!=0) {
-            nixlBackendEngine* eng = data->backendEngines[backend];
+            nixlBackendEngine *eng = data->backendEngines[backend];
             const nixl_status_t ret = eng->connect(remote_agent);
             if (ret) {
-                NIXL_ERROR << "NIXL make connection engine error: " << nixlEnumStrings::statusStr(ret);
+                NIXL_ERROR << "NIXL make connection engine error: "
+                           << nixlEnumStrings::statusStr(ret);
                 return ret;
             }
             ++count;
@@ -583,8 +584,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
             backend_set = data->remoteSections[agent_name]->
                                 queryBackends(descs.getType());
         else
-            backend_set = data->memorySection.
-                                queryBackends(descs.getType());
+            backend_set = data->memorySection.queryBackends(descs.getType());
 
         if (!backend_set || backend_set->empty()) {
             UPDATE_TELEMETRY_DATA(data->telemetry_, updateErrorCount(NIXL_ERR_NOT_FOUND));
@@ -612,8 +612,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
                                          descs.getType(),
                                          descs.isSorted());
         if (init_side)
-            ret = data->memorySection.populate(
-                       descs, backend, *(handle->descs[backend]));
+            ret = data->memorySection.populate(descs, backend, *(handle->descs[backend]));
         else
             ret = data->remoteSections[agent_name]->populate(
                        descs, backend, *(handle->descs[backend]));
@@ -840,8 +839,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     if (!extra_params || extra_params->backends.size() == 0) {
         // Finding backends that support the corresponding memories
         // locally and remotely, and find the common ones.
-        backend_set_t* local_set =
-            data->memorySection.queryBackends(local_descs.getType());
+        backend_set_t *local_set = data->memorySection.queryBackends(local_descs.getType());
         backend_set_t* remote_set =
             data->remoteSections[remote_agent]->queryBackends(
                                                 remote_descs.getType());
@@ -878,8 +876,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // preference list or more exhaustive search.
     for (auto & backend : *backend_set) {
         // If populate fails, it clears the resp before return
-        ret1 = data->memorySection.populate(
-                     local_descs, backend, *handle->initiatorDescs);
+        ret1 = data->memorySection.populate(local_descs, backend, *handle->initiatorDescs);
         ret2 = data->remoteSections[remote_agent]->populate(
                      remote_descs, backend, *handle->targetDescs);
 
@@ -1376,7 +1373,8 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     size_t conn_cnt;
     ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
     if (ret != NIXL_SUCCESS) {
-        NIXL_ERROR << "NIXL remote metadata has no connection count for agent: " << str_sanitize(remote_agent) << ", error: " << nixlEnumStrings::statusStr(ret);
+        NIXL_ERROR << "NIXL remote metadata has no connection count for agent: "
+                   << str_sanitize(remote_agent) << ", error: " << nixlEnumStrings::statusStr(ret);
         return ret;
     }
 
@@ -1566,9 +1564,9 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
             } else {
                 nixl_meta_dlist_t dummy(descs.getType(), descs.isSorted());
                 // We only add to data->remoteBackends if data->backendEngines[backend] exists
-                for (const auto& [backend, conn_info] : data->remoteBackends[remote_name])
+                for (const auto &[backend, conn_info] : data->remoteBackends[remote_name])
                     if (data->remoteSections[remote_name]->populate(
-                                                                    descs, data->backendEngines[backend], dummy) == NIXL_SUCCESS)
+                            descs, data->backendEngines[backend], dummy) == NIXL_SUCCESS)
                         return NIXL_SUCCESS;
                 dummy.clear();
             }

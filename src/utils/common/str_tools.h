@@ -68,24 +68,25 @@ class strEqual
       }
 };
 
-[[nodiscard]] inline std::string str_tolower(const std::string_view& view) {
+[[nodiscard]] inline std::string
+str_tolower(const std::string_view &view) {
     std::string result;
     result.reserve(view.size());
-    for(const char c : view) {
+    for (const char c : view) {
         result += std::tolower(c);
     }
     return result;
 }
 
-[[nodiscard]] inline std::string str_sanitize(const std::string_view& view) {
+[[nodiscard]] inline std::string
+str_sanitize(const std::string_view &view) {
     using uchar = unsigned char;
     std::string result;
     result.reserve(view.size());
-    for(const char c : view) {
-        if(std::isprint(uchar(c))) {
+    for (const char c : view) {
+        if (std::isprint(uchar(c))) {
             result += c;
-        }
-        else {
+        } else {
             result += '.';
         }
     }
