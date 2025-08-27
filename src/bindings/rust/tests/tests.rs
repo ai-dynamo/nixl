@@ -1356,11 +1356,11 @@ fn test_get_local_partial_md_empty_descs() {
     // Create empty registration descriptor list
     let reg_descs = RegDescList::new(MemType::Dram, false)
         .expect("Failed to create registration descriptor list");
-    // Try with empty descriptor list (should fail)
+    // Try with empty descriptor list should succeed and return all available backends
     let result = agent.get_local_partial_md(&reg_descs, None);
     assert!(
-        result.is_err_and(|e| matches!(e, NixlError::InvalidParam)),
-        "get_local_partial_md should fail with empty descriptor list"
+        result.is_ok(),
+        "get_local_partial_md should succeed with empty descriptor list"
     );
 }
 

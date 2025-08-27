@@ -352,11 +352,6 @@ impl Agent {
         let mut len: usize = 0;
         let inner_guard = self.inner.write().unwrap();
 
-        if descs.is_empty() {
-            tracing::error!(error = "invalid_param", "Descriptor list is empty");
-            return Err(NixlError::InvalidParam);
-        }
-
         let status = unsafe {
             nixl_capi_get_local_partial_md(
                 inner_guard.handle.as_ptr(),

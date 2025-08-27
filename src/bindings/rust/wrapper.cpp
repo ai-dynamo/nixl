@@ -176,12 +176,12 @@ nixl_capi_get_local_partial_md(nixl_capi_agent_t agent,
             return NIXL_CAPI_ERROR_BACKEND;
         }
         // Allocate memory for the blob data
-        void *blob_data = malloc(blob.size());
-        if (!blob_data) {
+        *data = malloc(blob.size());
+        if (!*data) {
             return NIXL_CAPI_ERROR_BACKEND;
         }
         // Copy the data
-        memcpy(blob_data, blob.data(), blob.size());
+        memcpy(*data, blob.data(), blob.size());
         return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
     }
     catch (...) {
