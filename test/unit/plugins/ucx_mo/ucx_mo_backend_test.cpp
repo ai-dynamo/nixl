@@ -368,7 +368,7 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
         while(status == NIXL_IN_PROG) {
             status = ucx1->checkXfer(handle);
             if(progress){
-                ucx2->progress();
+                ((nixlUcxMoEngine *)ucx2)->progress();
             }
             assert( (NIXL_SUCCESS == status) || (NIXL_IN_PROG == status) );
         }
@@ -385,7 +385,7 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
             status = ucx2->getNotifs(target_notifs);
             assert(NIXL_SUCCESS == status);
             if(progress){
-                ucx1->progress();
+                ((nixlUcxMoEngine *)ucx1)->progress();
             }
         }
 
@@ -526,7 +526,7 @@ void test_agent_transfer(bool p_thread,
             assert(NIXL_SUCCESS == status);
             if (!p_thread) {
                 /* progress UCX1 as well */
-                ucx1->progress();
+                ((nixlUcxMoEngine *)ucx1)->progress();
             }
         }
 

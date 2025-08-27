@@ -46,11 +46,6 @@ public:
         return false;
     }
 
-    bool
-    supportsProgTh() const override {
-        return false;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override {
         return {OBJ_SEG, DRAM_SEG};

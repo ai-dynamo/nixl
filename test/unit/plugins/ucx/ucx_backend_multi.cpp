@@ -32,7 +32,6 @@ void test_thread(int id)
 {
     nixlBackendInitParams init_params;
     nixl_b_params_t       custom_params;
-    nixlBackendEngine*    ucx;
     nixl_status_t         ret;
 
     std::string my_name("Agent1");
@@ -50,9 +49,9 @@ void test_thread(int id)
 
     std::cout << my_name << " Started\n";
 
-    ucx = nixlUcxEngine::create(init_params).release();
+    auto ucx = nixlUcxEngine::create(init_params).release();
 
-    if(!USE_PTHREAD) ucx->progress();
+    if (!USE_PTHREAD) ucx->progress();
 
     ucx->getConnInfo(conn_info[id]);
 
@@ -71,7 +70,7 @@ void test_thread(int id)
 
     done[id] = true;
     while(!done[!id])
-        if(!USE_PTHREAD && id) ucx->progress();
+        if (!USE_PTHREAD && id) ucx->progress();
 
     std::cout << "Thread passed with id " << id << "\n";
 
@@ -83,7 +82,7 @@ void test_thread(int id)
     //wait for other
     while(!disconnect[!id]);
 
-    if(!USE_PTHREAD) ucx->progress();
+    if (!USE_PTHREAD) ucx->progress();
 
     std::cout << "Thread disconnected with id " << id << "\n";
 

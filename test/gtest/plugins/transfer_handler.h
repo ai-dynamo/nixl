@@ -190,8 +190,6 @@ private:
         while (ret == NIXL_IN_PROG && absl::Now() < end_time) {
             ret = srcBackendEngine_->checkXfer(handle);
             ASSERT_TRUE(ret == NIXL_SUCCESS || ret == NIXL_IN_PROG);
-
-            if (dstBackendEngine_->supportsProgTh()) dstBackendEngine_->progress();
         }
 
         NIXL_INFO << "\nTransfer complete";
@@ -220,7 +218,6 @@ private:
         while (num_notifs == 0 && absl::Now() < end_time) {
             ASSERT_EQ(dstBackendEngine_->getNotifs(target_notifs), NIXL_SUCCESS);
             num_notifs = target_notifs.size();
-            if (srcBackendEngine_->supportsProgTh()) srcBackendEngine_->progress();
         }
 
         NIXL_INFO << "\nNotification transfer complete";

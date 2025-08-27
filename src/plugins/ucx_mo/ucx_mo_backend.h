@@ -95,7 +95,7 @@ private:
     bool pthrOn;
 
     // UCX backends data
-    std::vector<std::unique_ptr<nixlBackendEngine>> engines;
+    std::vector<std::unique_ptr<nixlUcxEngine>> engines;
     // Map of agent name to saved nixlUcxConnection info
     using remote_conn_map_t = std::map<std::string, nixlUcxMoConnection>;
     using remote_comm_it_t = remote_conn_map_t::iterator;
@@ -114,7 +114,6 @@ public:
     bool supportsRemote () const { return true; }
     bool supportsLocal  () const { return false; }
     bool supportsNotif  () const { return true; }
-    bool supportsProgTh () const { return pthrOn; }
 
     nixl_mem_list_t getSupportedMems () const;
 
@@ -159,14 +158,16 @@ public:
     nixl_status_t checkXfer (nixlBackendReqH* handle) const;
     nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
 
-    int progress();
-
     nixl_status_t getNotifs(notif_list_t &notif_list);
     nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const;
 
     //public function for UCX worker to mark connections as connected
     nixl_status_t checkConn(const std::string &remote_agent);
     nixl_status_t endConn(const std::string &remote_agent);
+
+    // Public function as it is used in tests
+    int
+    progress();
 };
 
 #endif
