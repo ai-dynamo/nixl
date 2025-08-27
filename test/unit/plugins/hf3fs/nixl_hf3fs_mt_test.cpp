@@ -41,6 +41,7 @@ namespace {
     constexpr size_t default_transfer_size = 1024 * 1024;  // 1MB
     constexpr int default_write_iterations = 1;
     constexpr int default_read_iterations = 1;
+    constexpr int default_iopool_size = 64;
     constexpr char test_phrase[] = "NIXL HF3FS Multi-Thread Test Pattern 2025";
     constexpr char test_file_name[] = "mt_testfile";
     constexpr mode_t std_file_permissions = 0744;
@@ -307,10 +308,11 @@ int main(int argc, char *argv[]) {
     int write_iterations = default_write_iterations;
     int read_iterations = default_read_iterations;
     std::string test_dir = default_test_files_dir_path;
+    int iopool_size = default_iopool_size;
 
     // Parse command line arguments
     int opt;
-    while ((opt = getopt(argc, argv, "t:n:s:w:r:d:h")) != -1) {
+    while ((opt = getopt(argc, argv, "t:n:s:w:r:d:h:i:")) != -1) {
         switch (opt) {
             case 't':
                 num_threads = std::stoi(optarg);
@@ -329,6 +331,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'd':
                 test_dir = optarg;
+                break;
+            case 'i':
+                iopool_size = std::stoi(optarg);
                 break;
             case 'h':
             default:
@@ -356,6 +361,9 @@ int main(int argc, char *argv[]) {
                 std::cout << absl::StrFormat("  -d: Test directory (default: %s)",
                                              default_test_files_dir_path)
                           << std::endl;
+                std::cout << absl::StrFormat("  -i: IO Pool Size (default: %s)",
+                                             default_iopool_size)
+                          << std::endl;
                 return (opt == 'h') ? 0 : 1;
         }
     }
@@ -370,11 +378,12 @@ int main(int argc, char *argv[]) {
 
     // Initialize NIXL
     nixlAgentConfig cfg(true, false, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
-    nixl_b_params_t params;
     nixlAgent agent("HF3FSMultiThreadTester", cfg);
 
     // Create HF3FS backend
     nixlBackendH* hf3fs = nullptr;
+    nixl_b_params_t params;
+    params["iopool_size"] = std::to_string(iopool_size);
     nixl_status_t ret = agent.createBackend("HF3FS", params, hf3fs);
     if (ret != NIXL_SUCCESS) {
         std::cerr << absl::StrFormat("Error creating HF3FS backend: %d", ret) << std::endl;

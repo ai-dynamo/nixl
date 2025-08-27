@@ -71,7 +71,7 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
                     iopool_size = size;
                 } else {
                     iopool_size = HF3FS_MAX_IOPOOL_SIZE;
-                    NIXL_INFO << size << " exceeded max iopool size " << iopool_size
+                    NIXL_WARN << size << " exceeded max iopool size " << iopool_size
                               << ", set it to max";
                 }
             }
@@ -97,7 +97,7 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
         iopool.push_back(io);
     }
 
-    NIXL_DEBUG << "HF3FS: Page size: " << page_size;
+    NIXL_DEBUG << "HF3FS: page size " << page_size << " iopool_size " << iopool_size;
 }
 
 nixlHf3fsIO *
