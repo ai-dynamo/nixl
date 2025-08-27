@@ -14,9 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __STR_TOOLS_H
-#define __STR_TOOLS_H
+#ifndef NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
+#define NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
+
+#include <cctype>
 #include <regex>
+#include <string>
+#include <string_view>
+#include <vector>
 
 inline std::vector<std::string> str_split(const std::string& str, const std::string& delims) {
     std::regex re(delims);
@@ -62,4 +67,29 @@ class strEqual
           return true;
       }
 };
+
+[[nodiscard]] inline std::string str_tolower(const std::string_view& view) {
+    std::string result;
+    result.reserve(view.size());
+    for(const char c : view) {
+        result += std::tolower(c);
+    }
+    return result;
+}
+
+[[nodiscard]] inline std::string str_sanitize(const std::string_view& view) {
+    using uchar = unsigned char;
+    std::string result;
+    result.reserve(view.size());
+    for(const char c : view) {
+        if(std::isprint(uchar(c))) {
+            result += c;
+        }
+        else {
+            result += '.';
+        }
+    }
+    return result;
+}
+
 #endif

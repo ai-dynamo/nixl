@@ -62,7 +62,7 @@ using nixl_socket_peer_t = std::pair<std::string, int>;
 
 class nixlAgentData {
     private:
-        std::string     name;
+        const std::string name;
         nixlAgentConfig config;
         nixlLock        lock;
 
@@ -79,7 +79,7 @@ class nixlAgentData {
         std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
 
         // Local section, and Remote sections and their available common backends
-        nixlLocalSection*                                        memorySection;
+        nixlLocalSection                                         memorySection;
 
         std::unordered_map<std::string,
                            std::unordered_map<nixl_backend_t, nixl_blob_t>,
@@ -94,8 +94,8 @@ class nixlAgentData {
         std::vector<nixl_comm_req_t>       commQueue;
         std::mutex                         commLock;
         bool                               commThreadStop;
-        bool                               useEtcd;
-        std::unique_ptr<nixlTelemetry> telemetry_;
+        const bool                         useEtcd;
+        std::unique_ptr<nixlTelemetry>     telemetry_;
         void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
