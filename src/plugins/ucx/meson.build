@@ -32,8 +32,8 @@ if cuda_dep.found()
         ''', dependencies : ucx_dep)
 
         have_gpu_dlist_export = cpp.has_function(
-            'ucp_gpu_dlist_export',
-            prefix: '#include <ucp/api/ucp.h>',
+            'ucp_gpu_mem_list_create',
+            prefix: '#include <ucp/api/device/ucp_host.h>',
             dependencies: ucx_dep
         )
 
