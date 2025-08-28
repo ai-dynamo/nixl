@@ -55,8 +55,8 @@ if cuda_lib_path == ''
     if not cuda_dep.found()
         # Meson is not detecting CUDA reliably on ARM, fallback to manual detection
         cuda_root = run_command('bash', '-c', 'ls -d /usr/local/cuda* 2>/dev/null | sort -V | tail -n1').stdout().strip()
-        message('CUDA root:', cuda_root)
         if cuda_root != ''
+            message('CUDA root:', cuda_root)
             cuda_lib_dirs = run_command(
                 'bash', '-c', 'ls -d ' + cuda_root + '/targets/*/lib{,/stubs} 2>/dev/null'
             ).stdout().splitlines()
@@ -68,7 +68,7 @@ if cuda_lib_path == ''
                     dependencies : [cudart, cuda],
                     include_directories : include_directories(cuda_root + '/include')
                 )
-                message('Found CUDA installation:', cuda_root)
+                message('Found CUDA installation through fallback method:', cuda_root)
             endif
         endif
     endif
@@ -102,10 +102,7 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
 else
-    # TODO: do not merge
-    detect = run_command('find', '/', '-name', 'libcuda*').stdout().strip()
-    message('CUDA libraries: ' + detect)
-    error('CUDA not found')
+    warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
 endif
 
 # DOCA
