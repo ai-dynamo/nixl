@@ -15,7 +15,7 @@
 
 ucx_utils_dep = declare_dependency(link_with: ucx_utils_lib, include_directories: utils_inc_dirs )
 asio_dep = [dependency('asio', required: true)]
-cpp  = meson.get_compiler('cpp')
+cpp = meson.get_compiler('cpp')
 
 compile_flags = []
 if cuda_dep.found()
