@@ -356,7 +356,7 @@ impl Agent {
             nixl_capi_get_local_partial_md(
                 inner_guard.handle.as_ptr(),
                 descs.handle(),
-                &mut data,
+                &mut data as *mut *mut _,
                 &mut len,
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
             )

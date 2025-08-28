@@ -69,6 +69,15 @@ nixl_capi_get_local_md(nixl_capi_agent_t agent, void** data, size_t* len)
 }
 
 nixl_capi_status_t
+nixl_capi_get_local_partial_md(nixl_capi_agent_t agent,
+                               nixl_capi_reg_dlist_t descs,
+                               void **data,
+                               size_t *len,
+                               nixl_capi_opt_args_t opt_args) {
+  return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
 nixl_capi_load_remote_md(nixl_capi_agent_t agent, const void* data, size_t len, char** agent_name)
 {
   return nixl_capi_stub_abort();
@@ -215,6 +224,18 @@ nixl_capi_opt_args_set_skip_desc_merge(nixl_capi_opt_args_t args, bool skip_merg
 
 nixl_capi_status_t
 nixl_capi_opt_args_get_skip_desc_merge(nixl_capi_opt_args_t args, bool* skip_merge)
+{
+  return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_opt_args_set_ip_addr(nixl_capi_opt_args_t args, const char* ip_addr)
+{
+  return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_opt_args_set_port(nixl_capi_opt_args_t args, uint16_t port)
 {
   return nixl_capi_stub_abort();
 }

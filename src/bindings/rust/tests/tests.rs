@@ -1324,15 +1324,16 @@ fn test_make_xfer_req_invalid_indices() {
 // Tests for get_local_partial_md API
 #[test]
 fn test_get_local_partial_md_success() {
-    let (agent, _) = create_agent_with_backend("test_agent")
+    let (agent, opt_args) = create_agent_with_backend("test_agent")
         .expect("Failed to setup agent with backend");
+    let _storage_list = create_storage_list(&agent, &opt_args, 10);
     // Create a registration descriptor list
     let mut reg_descs = RegDescList::new(MemType::Dram, false)
         .expect("Failed to create registration descriptor list");
     reg_descs.add_desc(0x1000, 0x100, 0)
         .expect("Failed to add descriptor");
     // Get local partial metadata
-    let result = agent.get_local_partial_md(&reg_descs, None);
+    let result = agent.get_local_partial_md(&reg_descs, Some(&opt_args));
     // Should succeed and return metadata
     match result {
         Ok(metadata) => {
@@ -1367,15 +1368,23 @@ fn test_get_local_partial_md_empty_descs() {
 // Tests for send_local_partial_md API
 #[test]
 fn test_send_local_partial_md_success() {
-    let (agent, _) = create_agent_with_backend("test_agent")
+    let (agent, opt_args) = create_agent_with_backend("test_agent")
         .expect("Failed to setup agent with backend");
+    let (agent2, opt_args2) = create_agent_with_backend("test_agent2")
+        .expect("Failed to setup agent with backend");
+    let _storage_list = create_storage_list(&agent, &opt_args, 10);
+    let _remote_storage_list = create_storage_list(&agent2, &opt_args2, 10);
+
     // Create a registration descriptor list
     let mut reg_descs = RegDescList::new(MemType::Dram, false)
         .expect("Failed to create registration descriptor list");
-    reg_descs.add_desc(0x1000, 0x100, 0)
-        .expect("Failed to add descriptor");
+    reg_descs.add_storage_desc(&_storage_list[0]).expect("Failed to add storage descriptor");
+
     // Send local partial metadata
-    let result = agent.send_local_partial_md(&reg_descs, None);
+    let mut opt_args_temp = OptArgs::new().expect("Failed to create opt args");
+    opt_args_temp.set_ip_addr("127.0.0.1").expect("Failed to set ip address");
+    let result = agent.send_local_partial_md(&reg_descs, Some(&opt_args_temp));
+
     assert!(
         result.is_ok(),
         "send_local_partial_md should succeed"
