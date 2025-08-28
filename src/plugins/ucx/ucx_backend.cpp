@@ -657,7 +657,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
                                           _internalRequestFini,
                                           init_params.enableProgTh,
                                           num_workers,
-                                          init_params.syncMode);
+                                          init_params.syncMode,
+                                          init_params.engine_params);
 
     for (size_t i = 0; i < num_workers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));

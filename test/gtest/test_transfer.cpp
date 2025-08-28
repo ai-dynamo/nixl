@@ -93,9 +93,16 @@ private:
     const size_t size;
 };
 
+struct nixl_test_param_t {
+    std::string backend_name;
+    unsigned num_workers;
+    bool progress_thread;
+    std::unordered_map<std::string,std::string> engine_config;
+};
+
 class TestTransfer :
     // Tuple fields are: backend_name, enable_progress_thread, num_workers
-    public testing::TestWithParam<std::tuple<std::string, bool, size_t>> {
+    public testing::TestWithParam<nixl_test_param_t> {
 protected:
     nixlAgentConfig
     getConfig(int listen_port) {
@@ -136,7 +143,7 @@ protected:
                                                             getConfig(getPort(i))));
             nixlBackendH *backend_handle = nullptr;
             nixl_status_t status = agents.back()->createBackend(
-                    getBackendName(), getBackendParams(), backend_handle);
+                    getBackendName(), getBackendParams(), backend_handle, GetParam().engine_config);
             ASSERT_EQ(status, NIXL_SUCCESS);
             EXPECT_NE(backend_handle, nullptr);
         }
@@ -149,17 +156,17 @@ protected:
 
     std::string getBackendName() const
     {
-        return std::get<0>(GetParam());
+        return GetParam().backend_name;
     }
 
     bool
     isProgressThreadEnabled() const {
-        return std::get<1>(GetParam());
+        return GetParam().progress_thread;
     }
 
     size_t
     getNumWorkers() const {
-        return std::get<2>(GetParam());
+        return GetParam().num_workers;
     }
 
     nixl_opt_args_t
@@ -516,10 +523,30 @@ TEST_P(TestTransfer, ListenerCommSize) {
     deregisterMem(getAgent(1), buffers, DRAM_SEG);
 }
 
-INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values(std::make_tuple("UCX", true, 2)));
-INSTANTIATE_TEST_SUITE_P(ucx_no_pt,
-                         TestTransfer,
-                         testing::Values(std::make_tuple("UCX", false, 2)));
-INSTANTIATE_TEST_SUITE_P(ucx_mo, TestTransfer, testing::Values(std::make_tuple("UCX_MO", true, 2)));
+std::vector<nixl_test_param_t> enum_params(const std::string& backend, unsigned num_workers,
+                                           bool progress_thread, const std::string& engine_conf)
+{
+    std::vector<nixl_test_param_t> params;
+    nixl_test_param_t param;
+
+    param.backend_name    = backend;
+//    param.engine_config   = engine_conf;
+    param.num_workers     = num_workers;
+    param.progress_thread = progress_thread;
+
+    params.push_back(param);
+    return params;
+}
+
+#define NIXL_INSTANTIATE_TEST(_test_name, _test_case, _backend, _progress_thread, _num_workers, _conf) \
+        INSTANTIATE_TEST_SUITE_P(_test_name, _test_case, testing::ValuesIn(enum_params(_backend, \
+                                 _progress_thread, _num_workers, _conf)));
+
+NIXL_INSTANTIATE_TEST(basic, TestTransfer, "UCX",  true, 2, "tls=dc,rndv=inf");
+
+//INSTANTIATE_TEST_SUITE_P(ucx_no_pt,
+//                         TestTransfer,
+//                         testing::Values(std::make_tuple("UCX", false, 2)));
+//INSTANTIATE_TEST_SUITE_P(ucx_mo, TestTransfer, testing::Values(std::make_tuple("UCX_MO", true, 2)));
 
 } // namespace gtest

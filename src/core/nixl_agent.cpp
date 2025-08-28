@@ -224,7 +224,8 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
-                         nixlBackendH* &bknd_hndl) {
+                         nixlBackendH* &bknd_hndl,
+                         const std::unordered_map<std::string,std::string> &engine_params) {
 
     nixlBackendEngine*    backend = nullptr;
     nixlBackendInitParams init_params;
@@ -252,12 +253,13 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
     }
 
-    init_params.localAgent   = data->name;
-    init_params.type         = type;
-    init_params.customParams = const_cast<nixl_b_params_t*>(&params);
-    init_params.enableProgTh = data->config.useProgThread;
-    init_params.pthrDelay    = data->config.pthrDelay;
-    init_params.syncMode     = data->config.syncMode;
+    init_params.localAgent    = data->name;
+    init_params.type          = type;
+    init_params.customParams  = const_cast<nixl_b_params_t*>(&params);
+    init_params.enableProgTh  = data->config.useProgThread;
+    init_params.pthrDelay     = data->config.pthrDelay;
+    init_params.syncMode      = data->config.syncMode;
+    init_params.engine_params = engine_params;
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();

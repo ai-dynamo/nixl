@@ -19,6 +19,7 @@
 
 #include <mutex>
 #include <string>
+#include <map>
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
@@ -52,6 +53,7 @@ class nixlBackendInitParams {
         bool              enableProgTh;
         nixlTime::us_t    pthrDelay;
         nixl_thread_sync_t syncMode;
+        std::unordered_map<std::string,std::string> engine_params;
 };
 
 // Pure virtual class to have a common pointer type

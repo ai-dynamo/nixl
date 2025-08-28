@@ -104,7 +104,8 @@ class nixlAgent {
         nixl_status_t
         createBackend (const nixl_backend_t &type,
                        const nixl_b_params_t &params,
-                       nixlBackendH* &backend);
+                       nixlBackendH* &backend,
+                       const std::unordered_map<std::string,std::string> &conf = {});
         /**
          * @brief  Register a memory/storage with NIXL. If a list of backends hints is provided
          *         (via extra_params), the registration is limited to the specified backends.

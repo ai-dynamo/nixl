@@ -373,7 +373,8 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                nixlUcxContext::req_cb_t fini_cb,
                                bool prog_thread,
                                unsigned long num_workers,
-                               nixl_thread_sync_t sync_mode)
+                               nixl_thread_sync_t sync_mode,
+                               const std::unordered_map<std::string,std::string> &conf)
 {
     ucp_params_t ucp_params;
 
@@ -433,6 +434,10 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         config.modify ("MAX_RMA_RAILS", "4");
     } else {
         config.modify ("MAX_RMA_RAILS", "2");
+    }
+
+    for (auto &e : conf) {
+        config.modify(e.first, e.second);
     }
 
     const auto status = ucp_init (&ucp_params, config.getUcpConfig(), &ctx);
