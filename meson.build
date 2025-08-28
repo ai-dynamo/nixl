@@ -64,6 +64,9 @@ if cuda_lib_path == ''
         cuda_dep = declare_dependency(
           link_args : ['-L' + cuda_lib, '-L' + cuda_stub, '-lcuda', '-lcudart'],
           include_directories : include_directories(cuda_inc))
+        if cuda_dep.found()
+            message('Found CUDA installation through fallback method:', cuda_home)
+        endif
     endif
 else
     message('cuda lib path ', cuda_lib_path)
@@ -95,7 +98,7 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
 else
-    error('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
+    warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
 endif
 
 # DOCA
