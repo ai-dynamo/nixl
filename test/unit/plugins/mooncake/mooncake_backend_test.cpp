@@ -436,9 +436,6 @@ performTransfer(nixlBackendEngine *mooncake1,
 
         while (ret3 == NIXL_IN_PROG) {
             ret3 = mooncake1->checkXfer(handle);
-            if (progress) {
-                mooncake2->progress();
-            }
             assert(ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
         }
     }
@@ -458,9 +455,6 @@ performTransfer(nixlBackendEngine *mooncake1,
         while (ret2 == 0) {
             ret3 = mooncake2->getNotifs(target_notifs);
             ret2 = target_notifs.size();
-            if (progress) {
-                mooncake1->progress();
-            }
             assert(ret3 == NIXL_SUCCESS);
         }
 
