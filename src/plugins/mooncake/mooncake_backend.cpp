@@ -136,6 +136,7 @@ struct nixlMooncakeBackendMD : public nixlBackendMD {
     nixlMooncakeBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {}
 
     virtual ~nixlMooncakeBackendMD() {}
+
     void *addr;
     size_t length;
     int ref_cnt;
@@ -216,6 +217,7 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
     nixlMooncakeBackendReqH() : nixlBackendReqH() {}
 
     virtual ~nixlMooncakeBackendReqH() {}
+
     uint64_t batch_id;
     size_t request_count;
 };
@@ -325,7 +327,7 @@ nixlMooncakeEngine::getNotifs(notif_list_t &notif_list) {
     for (int i = 0; i < size; i++) {
         notif_list.push_back(std::make_pair(notify_msgs[i].name, notify_msgs[i].msg));
     }
-    free(notify_msgs);
+    freeNotifsMsgBuf(notify_msgs, size);
     return NIXL_SUCCESS;
 }
 
