@@ -61,11 +61,13 @@ if cuda_lib_path == ''
         cuda_lib = cuda_home + '/lib64'
         cuda_inc = cuda_home + '/include'
         cuda_stub = cuda_lib + '/stubs'
-        cuda_dep = declare_dependency(
-          link_args : ['-L' + cuda_lib, '-L' + cuda_stub, '-lcuda', '-lcudart'],
-          include_directories : include_directories(cuda_inc))
-        if cuda_dep.found()
-            message('Found CUDA installation through fallback method:', cuda_home)
+        if fs.exists(cuda_lib) and fs.exists(cuda_inc)
+            cuda_dep = declare_dependency(
+              link_args : ['-L' + cuda_lib, '-L' + cuda_stub, '-lcuda', '-lcudart'],
+              include_directories : include_directories(cuda_inc))
+            if cuda_dep.found()
+                message('Found CUDA installation through fallback method:', cuda_home)
+            endif
         endif
     endif
 else
