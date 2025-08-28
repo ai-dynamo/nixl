@@ -23,6 +23,7 @@ project('nixl', 'CPP', version: '0.5.1',
 
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
+fs = import('fs')
 
 dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
