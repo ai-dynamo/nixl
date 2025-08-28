@@ -159,8 +159,8 @@ nixl_status_t
 nixlObjEngine::deregisterMem(nixlBackendMD *meta) {
     nixlObjMetadata *obj_md = static_cast<nixlObjMetadata *>(meta);
     if (obj_md) {
-        std::unique_ptr<nixlObjMetadata> obj_md_ptr = std::unique_ptr<nixlObjMetadata>(obj_md);
         devIdToObjKey_.erase(obj_md->devId);
+        delete obj_md;
     }
 
     return NIXL_SUCCESS;

@@ -119,11 +119,12 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
     if (getenv("NIXL_ETCD_ENDPOINTS")) {
         useEtcd = true;
         NIXL_DEBUG << "NIXL ETCD is enabled";
-    } else {
+    } else
+#endif // HAVE_ETCD
+    {
         useEtcd = false;
         NIXL_DEBUG << "NIXL ETCD is disabled";
     }
-#endif // HAVE_ETCD
     if (name.empty())
         throw std::invalid_argument("Agent needs a name");
 
