@@ -52,10 +52,6 @@ public:
     supportsLocal() const override {
         return true;
     }
-    bool
-    supportsProgTh() const override {
-        return false;
-    }
 
     nixl_mem_list_t
     getSupportedMems() const override {
