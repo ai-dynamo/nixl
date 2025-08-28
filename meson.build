@@ -102,7 +102,10 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
 else
-    warning('CUDA not found')
+    # TODO: do not merge
+    detect = run_command('find', '/', '-name', 'libcuda*').stdout().strip()
+    message('CUDA libraries: ' + detect)
+    error('CUDA not found')
 endif
 
 # DOCA
