@@ -53,24 +53,17 @@ cuda_stub_path = get_option('cudapath_stub')
 if cuda_lib_path == ''
     cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda' ])
     if not cuda_dep.found()
-        # Meson is not detecting CUDA reliably on ARM, fallback to manual detection
-        cuda_root = run_command('bash', '-c', 'ls -d /usr/local/cuda* 2>/dev/null | sort -V | tail -n1').stdout().strip()
-        if cuda_root != ''
-            message('CUDA root:', cuda_root)
-            cuda_lib_dirs = run_command(
-                'bash', '-c', 'ls -d ' + cuda_root + '/targets/*/lib{,/stubs} 2>/dev/null'
-            ).stdout().splitlines()
-            message('CUDA libdirs:', cuda_lib_dirs)
-            cudart = cpp.find_library('cudart', dirs : cuda_lib_dirs, required : false)
-            cuda   = cpp.find_library('cuda',   dirs : cuda_lib_dirs, required : false)
-            if cudart.found() and cuda.found()
-                cuda_dep = declare_dependency(
-                    dependencies : [cudart, cuda],
-                    include_directories : include_directories(cuda_root + '/include')
-                )
-                message('Found CUDA installation through fallback method:', cuda_root)
-            endif
+        # Meson is not detecting CUDA reliably on ARM, fallback to default
+        cuda_home = run_command('bash', '-c', 'echo $CUDA_HOME').stdout().strip()
+        if cuda_home == ''
+            cuda_home = '/usr/local/cuda'
         endif
+        cuda_lib = cuda_home + '/lib64'
+        cuda_inc = cuda_home + '/include'
+        cuda_stub = cuda_lib + '/stubs'
+        cuda_dep = declare_dependency(
+          link_args : ['-L' + cuda_lib, '-L' + cuda_stub, '-lcuda', '-lcudart'],
+          include_directories : include_directories(cuda_inc))
     endif
 else
     message('cuda lib path ', cuda_lib_path)
@@ -102,7 +95,7 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
 else
-    warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
+    error('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
 endif
 
 # DOCA
