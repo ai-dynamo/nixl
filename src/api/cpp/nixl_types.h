@@ -224,6 +224,11 @@ struct nixlAgentOptionalArgs {
 using nixl_opt_args_t = nixlAgentOptionalArgs;
 
 /**
+ * @brief A typedef for a nixlGpuXferReqH
+ */
+using nixlGpuXferReqH = void;
+
+/**
  * @brief A define for an empty string, that indicates the descriptor list is being
  *        prepared for the local agent as an initiator in prepXferDlist method.
  */
