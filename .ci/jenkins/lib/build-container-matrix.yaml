@@ -122,9 +122,10 @@ steps:
       envsubst < .ci/assets/nixl-version-info.template > version-info
 
       # Add version info to the image
-      CONTAINER_ID=$(docker create "${LOCAL_TAG_BASE}${arch}" --pull=never)
-      docker cp version-info "${CONTAINER_ID}:/opt/nixl-version"
-      docker commit "${CONTAINER_ID}" "${LOCAL_TAG_BASE}${arch}"
+      docker run -itd --name tempcontainer "${LOCAL_TAG_BASE}${arch}"
+      docker cp version-info "tempcontainer:/opt/nixl-version"
+      docker commit tempcontainer "${LOCAL_TAG_BASE}${arch}"
+      docker rm -f tempcontainer || true
 
   - name: Push
     credentialsId: 'svc-nixl-artifactory-token'
