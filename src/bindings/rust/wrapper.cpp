@@ -666,30 +666,28 @@ nixl_capi_opt_args_get_skip_desc_merge(nixl_capi_opt_args_t args, bool* skip_mer
 }
 
 nixl_capi_status_t
-nixl_capi_opt_args_set_ip_addr(nixl_capi_opt_args_t args, const char* ip_addr)
-{
-  if (!args || !ip_addr) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
+nixl_capi_opt_args_set_ip_addr(nixl_capi_opt_args_t args, const char *ip_addr) {
+    if (!args || !ip_addr) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
 
-  try {
-    args->args.ipAddr.assign(ip_addr);
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
+    try {
+        args->args.ipAddr.assign(ip_addr);
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 nixl_capi_status_t
-nixl_capi_opt_args_set_port(nixl_capi_opt_args_t args, uint16_t port)
-{
-  if (!args) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
+nixl_capi_opt_args_set_port(nixl_capi_opt_args_t args, uint16_t port) {
+    if (!args) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
 
-  args->args.port = port;
-  return NIXL_CAPI_SUCCESS;
+    args->args.port = port;
+    return NIXL_CAPI_SUCCESS;
 }
 
 nixl_capi_status_t
