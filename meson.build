@@ -52,6 +52,26 @@ cuda_stub_path = get_option('cudapath_stub')
 
 if cuda_lib_path == ''
     cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda' ])
+    if not cuda_dep.found()
+        # Meson is not detecting CUDA reliably on ARM, fallback to manual detection
+        cuda_root = run_command('bash', '-c', 'ls -d /usr/local/cuda* 2>/dev/null | sort -V | tail -n1').stdout().strip()
+        message('CUDA root:', cuda_root)
+        if cuda_root != ''
+            cuda_lib_dirs = run_command(
+                'bash', '-c', 'ls -d ' + cuda_root + '/targets/*/lib{,/stubs} 2>/dev/null'
+            ).stdout().splitlines()
+            message('CUDA libdirs:', cuda_lib_dirs)
+            cudart = cpp.find_library('cudart', dirs : cuda_lib_dirs, required : false)
+            cuda   = cpp.find_library('cuda',   dirs : cuda_lib_dirs, required : false)
+            if cudart.found() and cuda.found()
+                cuda_dep = declare_dependency(
+                    dependencies : [cudart, cuda],
+                    include_directories : include_directories(cuda_root + '/include')
+                )
+                message('Found CUDA installation:', cuda_root)
+            endif
+        endif
+    endif
 else
     message('cuda lib path ', cuda_lib_path)
     if cuda_stub_path == ''
@@ -81,6 +101,8 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
+else
+    warning('CUDA not found')
 endif
 
 # DOCA
