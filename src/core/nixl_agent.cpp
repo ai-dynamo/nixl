@@ -1218,6 +1218,41 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 }
 
 nixl_status_t
+nixlAgent::createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH *&gpu_req_hndl) const {
+    if (!req_hndl.engine) {
+        NIXL_ERROR << "Invalid request handle[" << &req_hndl << "]: engine is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (!req_hndl.backendHandle) {
+        NIXL_ERROR << "Invalid request handle[" << &req_hndl << "]: backendHandle is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    const auto status = req_hndl.engine->createGpuXferReq(*req_hndl.backendHandle, gpu_req_hndl);
+    if (status == NIXL_SUCCESS) {
+        data->gpuReqToEngine.emplace(&gpu_req_hndl, req_hndl.engine);
+    }
+
+    return status;
+}
+
+void
+nixlAgent::releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const {
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    auto it = data->gpuReqToEngine.find(gpu_req_hndl);
+    if (it == data->gpuReqToEngine.end()) {
+        NIXL_WARN << "Invalid gpu_req_hndl[" << gpu_req_hndl << "] ";
+        return;
+    }
+
+    it->second->releaseGpuXferReq(gpu_req_hndl);
+
+    data->gpuReqToEngine.erase(it);
+}
+
+nixl_status_t
 nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
     NIXL_LOCK_GUARD(data->lock);
     delete dlist_hndl;
