@@ -30,34 +30,80 @@ timeout_minutes: 240
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: swx-media
-  limits: "{memory: 8Gi, cpu: 8000m}"
-  requests: "{memory: 8Gi, cpu: 8000m}"
+  limits: '{memory: 10Gi, cpu: 10000m}'
+  requests: '{memory: 10Gi, cpu: 10000m}'
+  arch_table:
+    x86_64:
+      nodeSelector: 'kubernetes.io/arch=amd64'
+      jnlpImage: 'harbor.mellanox.com/toolbox/c3po-jnlp:latest'
+    aarch64:
+      nodeSelector: 'kubernetes.io/arch=arm64'
+      jnlpImage: 'harbor.mellanox.com/toolbox/c3po-jnlp:latest'
+
+# =============================================================================
+# Container Registry Configuration
+# =============================================================================
+# Harbor registry for storing build artifacts and base images
+registry_host: harbor.mellanox.com
+registry_path: /swx-infra/nixl
+registry_auth: swx-infra_harbor_credentials
 
 runs_on_dockers:
-  - { name: "ubuntu24.04-pytorch", url: "nvcr.io/nvidia/pytorch:25.02-py3" }
-  - { name: "ubuntu22.04-pytorch", url: "nvcr.io/nvidia/pytorch:24.10-py3" }
-  - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", category: 'tool', privileged: true }
+  - {
+    url: 'harbor.mellanox.com/swx-infra/nixl/ci/$arch/nixl-base-ubuntu24.04:20250701',
+    # file: 'contrib/dockerfiles/Dockerfile',
+    name: 'ubuntu24.04',
+    uri: 'ci/$arch/nixl-base-$name',
+    tag: '20250701',
+    build_args: '--no-cache --target nixl-base --build-arg OS=ubuntu24 --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base --build-arg BASE_IMAGE_TAG=25.03-cuda12.8-devel-ubuntu24.04 --build-arg UCX_PREFIX=$UCX_PREFIX --build-arg NPROC=$NPROC --build-arg ARCH=$arch'
+    }
+  - {
+    url: 'harbor.mellanox.com/swx-infra/nixl/ci/$arch/nixl-base-ubuntu22.04:20250701',
+    # file: 'contrib/dockerfiles/Dockerfile',
+    name: 'ubuntu22.04',
+    uri: 'ci/$arch/nixl-base-$name',
+    tag: '20250701',
+    build_args: '--no-cache --target nixl-base --build-arg OS=ubuntu22 --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base --build-arg BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04 --build-arg UCX_PREFIX=$UCX_PREFIX --build-arg NPROC=$NPROC --build-arg ARCH=$arch'
+    }
 
 matrix:
   axes:
     arch:
       - x86_64
-      - aarch64
+      # - aarch64
+
+taskName: "${name}/${arch}"
 
 env:
   NIXL_INSTALL_DIR: /opt/nixl
+  UCX_PREFIX: /usr
   TEST_TIMEOUT: 30
-  NPROC: "16"
+  NPROC: 16
 
 steps:
   - name: Build
     parallel: false
     run: |
-      if [[ "${name}" == *"ubuntu22.04"* ]]; then
-        # distro's meson version is too old project requires >= 0.64.0
-        pip3 install meson
-      fi
-      .gitlab/build.sh ${NIXL_INSTALL_DIR}
+      export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/cuda/lib64"
+      export LD_LIBRARY_PATH="${NIXL_INSTALL_DIR}/lib:${NIXL_INSTALL_DIR}/lib/$ARCH-linux-gnu:${NIXL_INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${NIXL_INSTALL_DIR}/lib"
+      export CPATH="${NIXL_INSTALL_DIR}/include:$CPATH"
+      export PATH="${NIXL_INSTALL_DIR}/bin:$PATH"
+      export PKG_CONFIG_PATH="${NIXL_INSTALL_DIR}/lib/pkgconfig:${NIXL_INSTALL_DIR}/lib64/pkgconfig:${NIXL_INSTALL_DIR}:$PKG_CONFIG_PATH"
+      export NIXL_PLUGIN_DIR="${NIXL_INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
+      export CMAKE_PREFIX_PATH="${NIXL_INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
+
+      # Disabling CUDA IPC not to use NVLINK, as it slows down local
+      # UCX transfers and can cause contention with local collectives.
+      export UCX_TLS=^cuda_ipc
+
+      meson setup nixl_build --prefix=${NIXL_INSTALL_DIR} -Ducx_path=${UCX_PREFIX} -Drust=false
+      ninja -C nixl_build -j${NPROC}
+      ninja -C nixl_build install
+
+      cd benchmark/nixlbench
+      meson setup nixlbench_build -Dnixl_path=${NIXL_INSTALL_DIR} -Dprefix=${NIXL_INSTALL_DIR}
+      ninja -C nixlbench_build -j${NPROC}
+      ninja -C nixlbench_build install
 
   - name: Test CPP
     parallel: false
@@ -83,14 +129,14 @@ steps:
     run: |
       .gitlab/test_rust.sh ${NIXL_INSTALL_DIR}
 
-  - name: Build Docker Image
-    parallel: false
-    containerSelector: "{ name: 'podman.*' }"
-    run: |
-      # change storage driver to improve build performance
-      rm -f /etc/containers/storage.conf ; podman system reset -f || true
-      # symlink podman to docker - scripts works with docker commands
-      ln -sfT $(type -p podman) /usr/bin/docker
-      # install git for building container image
-      yum install -y git
-      contrib/build-container.sh --no-cache
+  # - name: Build Docker Image
+  #   parallel: false
+  #   containerSelector: "{ name: 'podman.*' }"
+  #   run: |
+  #     # change storage driver to improve build performance
+  #     rm -f /etc/containers/storage.conf ; podman system reset -f || true
+  #     # symlink podman to docker - scripts works with docker commands
+  #     ln -sfT $(type -p podman) /usr/bin/docker
+  #     # install git for building container image
+  #     yum install -y git
+  #     contrib/build-container.sh --no-cache
