@@ -943,14 +943,15 @@ execTransfer(nixlAgent *agent,
                 rc = agent->getXferStatus(req);
             }
 
-            const nixlTime::us_t transfer_duration = timer.lap();
-            thread_stats.transfer_duration.add(transfer_duration);
-
             if (NIXL_SUCCESS != rc) {
-                std::cout << "NIXL postXferReq failed" << std::endl;
+                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
+                          << std::endl;
                 ret = -1;
                 break;
             }
+
+            const nixlTime::us_t transfer_duration = timer.lap();
+            thread_stats.transfer_duration.add(transfer_duration);
         }
 
         if (ret == 0) {
