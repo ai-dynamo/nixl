@@ -119,6 +119,21 @@ class nixlHf3fsEngine : public nixlBackendEngine {
         nixl_hf3fs_mem_config mem_config;
         static long page_size;
 
+        mutable std::mutex iopool_lock;
+        mutable std::list<nixlHf3fsIO *> iopool;
+        unsigned int iopool_size;
+
+        nixlHf3fsIO *
+        getFromIOPool() const;
+        bool
+        returnToIOPool(nixlHf3fsIO *io) const;
+        void
+        destroyIOPool();
+        nixlHf3fsIO *
+        getIOObj() const;
+        void
+        putIOObj(nixlHf3fsIO *io) const;
+
         void cleanupIOList(nixlHf3fsBackendReqH *handle) const;
         void cleanupIOThread(nixlHf3fsBackendReqH *handle) const;
         static void waitForIOsThread(void* handle, void *utils);
