@@ -758,7 +758,6 @@ xferBenchNixlWorker::exchangeMetadata() {
         rt->sendInt(&meta_sz, destrank);
         rt->sendChar((char *)buffer, meta_sz, destrank);
     } else if (isInitiator()) {
-        char *buffer;
         std::string remote_agent;
         int srcrank;
 
@@ -769,17 +768,28 @@ xferBenchNixlWorker::exchangeMetadata() {
         } else {
             srcrank = 1;
         }
-        rt->recvInt(&meta_sz, srcrank);
-        buffer = (char *)calloc(meta_sz, sizeof(*buffer));
-        rt->recvChar((char *)buffer, meta_sz, srcrank);
 
-        std::string remote_metadata(buffer, meta_sz);
-        agent->loadRemoteMD(remote_metadata, remote_agent);
-        if ("" == remote_agent) {
-            std::cerr << "NIXL: loadMetadata failed" << std::endl;
+        ret = rt->recvInt(&meta_sz, srcrank);
+        if (ret < 0) {
+            std::cerr << "NIXL: failed to receive metadata size" << std::endl;
+            return ret;
         }
-        free(buffer);
+
+        std::string remote_metadata(meta_sz, '\0');
+        ret = rt->recvChar(remote_metadata.data(), meta_sz, srcrank);
+        if (ret < 0) {
+            std::cerr << "NIXL: failed to receive metadata" << std::endl;
+            return ret;
+        }
+
+        nixl_status_t status = agent->loadRemoteMD(remote_metadata, remote_agent);
+        if (status != NIXL_SUCCESS) {
+            std::cerr << "NIXL: loadRemoteMD failed: " << nixlEnumStrings::statusStr(status)
+                      << std::endl;
+            return -1;
+        }
     }
+
     return ret;
 }
 
@@ -824,14 +834,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             iovListToNixlXferDlist(local_iov, local_desc);
 
             if (isTarget()) {
-                const char *buffer;
                 int destrank;
-
-                local_desc.serialize(&ser_des);
-                std::string desc_str = ser_des.exportStr();
-                buffer = desc_str.data();
-                desc_str_sz = desc_str.size();
-
                 if (IS_PAIRWISE_AND_SG()) {
                     destrank = rt->getRank() - xferBenchConfig::num_target_dev;
                     // XXX: Fix up the rank, depends on processes distributed on hosts
@@ -839,12 +842,14 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 } else {
                     destrank = 0;
                 }
-                rt->sendInt(&desc_str_sz, destrank);
-                rt->sendChar((char *)buffer, desc_str_sz, destrank);
-            } else if (isInitiator()) {
-                char *buffer;
-                int srcrank;
 
+                local_desc.serialize(&ser_des);
+                std::string desc_str = ser_des.exportStr();
+                desc_str_sz = desc_str.size();
+                rt->sendInt(&desc_str_sz, destrank);
+                rt->sendChar(desc_str.data(), desc_str.size(), destrank);
+            } else if (isInitiator()) {
+                int srcrank;
                 if (IS_PAIRWISE_AND_SG()) {
                     srcrank = rt->getRank() + xferBenchConfig::num_initiator_dev;
                     // XXX: Fix up the rank, depends on processes distributed on hosts
@@ -852,11 +857,19 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 } else {
                     srcrank = 1;
                 }
-                rt->recvInt(&desc_str_sz, srcrank);
-                buffer = (char *)calloc(desc_str_sz, sizeof(*buffer));
-                rt->recvChar((char *)buffer, desc_str_sz, srcrank);
 
-                std::string desc_str(buffer, desc_str_sz);
+                if (rt->recvInt(&desc_str_sz, srcrank) != 0) {
+                    std::cerr << "NIXL: failed to receive metadata size" << std::endl;
+                    std::exit(EXIT_FAILURE);
+                }
+
+                std::string desc_str;
+                desc_str.resize(desc_str_sz, '\0');
+                if (rt->recvChar(desc_str.data(), desc_str.size(), srcrank) != 0) {
+                    std::cerr << "NIXL: failed to receive metadata" << std::endl;
+                    std::exit(EXIT_FAILURE);
+                }
+
                 ser_des.importStr(desc_str);
 
                 nixl_xfer_dlist_t remote_desc(&ser_des);
@@ -905,7 +918,6 @@ execTransfer(nixlAgent *agent,
 
         nixl_opt_args_t params;
         nixl_b_params_t b_params;
-        bool error = false;
         nixlXferReqH *req;
         nixl_status_t rc;
         std::string target;
@@ -919,37 +931,39 @@ execTransfer(nixlAgent *agent,
         }
 
         CHECK_NIXL_ERROR(agent->createXferReq(op, local_desc, remote_desc, target, req, &params),
-                         "createTransferReq failed");
+                         "createXferReq failed");
 
         const nixlTime::us_t prepare_duration = timer.lap();
         thread_stats.prepare_duration.add(prepare_duration);
 
-        for (int i = 0; i < num_iter && !error; i++) {
+        for (int i = 0; i < num_iter; i++) {
             rc = agent->postXferReq(req);
             const nixlTime::us_t post_duration = timer.lap();
             thread_stats.post_duration.add(post_duration);
-            if (NIXL_ERR_BACKEND == rc) {
-                std::cout << "NIXL postRequest failed" << std::endl;
-                error = true;
-            } else {
-                do {
-                    /* XXX agent isn't const because the getXferStatus() is not const  */
-                    rc = agent->getXferStatus(req);
-                    if (NIXL_ERR_BACKEND == rc) {
-                        std::cout << "NIXL getStatus failed" << std::endl;
-                        error = true;
-                        break;
-                    }
-                } while (NIXL_SUCCESS != rc);
-                const nixlTime::us_t transfer_duration = timer.lap();
-                thread_stats.transfer_duration.add(transfer_duration);
+            while (NIXL_IN_PROG == rc) {
+                /* XXX agent isn't const because the getXferStatus() is not const  */
+                rc = agent->getXferStatus(req);
+            }
+
+            if (NIXL_SUCCESS != rc) {
+                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
+                          << std::endl;
+                ret = -1;
+                break;
+            }
+
+            const nixlTime::us_t transfer_duration = timer.lap();
+            thread_stats.transfer_duration.add(transfer_duration);
+        }
+
+        if (ret == 0) {
+            rc = agent->releaseXferReq(req);
+            if (NIXL_SUCCESS != rc) {
+                std::cout << "NIXL releaseXferReq failed" << std::endl;
+                ret = -1;
             }
         }
-        agent->releaseXferReq(req);
-        if (error) {
-            std::cout << "NIXL releaseXferReq failed" << std::endl;
-            ret = -1;
-        }
+
 #pragma omp critical
         { stats.add(thread_stats); }
     }
