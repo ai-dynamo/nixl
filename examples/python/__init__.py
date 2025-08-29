@@ -12,18 +12,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-import os
-
-import nixl
-
-__all__ = ["nixl"]
-
-if "NIXL_PLUGIN_DIR" not in os.environ:
-    LOCAL_PLUGIN_DIR = nixl.__file__[:-16] + ".nixl.mesonpy.libs/plugins/"
-    PYBIND_PLUGIN_DIR = nixl.__file__[:-16] + ".nixl_pybind.mesonpy.libs/plugins/"
-
-    if os.path.isdir(LOCAL_PLUGIN_DIR):
-        os.environ["NIXL_PLUGIN_DIR"] = LOCAL_PLUGIN_DIR
-    elif os.path.isdir(PYBIND_PLUGIN_DIR):
-        os.environ["NIXL_PLUGIN_DIR"] = PYBIND_PLUGIN_DIR
