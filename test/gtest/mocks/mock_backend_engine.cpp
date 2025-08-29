@@ -124,9 +124,4 @@ MockBackendEngine::genNotif(const std::string &remote_agent, const std::string &
     return gmock_backend_engine->genNotif(remote_agent, msg);
 }
 
-int
-MockBackendEngine::progress() {
-    sharedState++;
-    return gmock_backend_engine->progress();
-}
 } // namespace mocks

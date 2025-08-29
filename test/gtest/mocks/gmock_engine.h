@@ -67,7 +67,6 @@ public:
     MOCK_METHOD(bool, supportsRemote, (), (const, override));
     MOCK_METHOD(bool, supportsLocal, (), (const, override));
     MOCK_METHOD(bool, supportsNotif, (), (const, override));
-    MOCK_METHOD(bool, supportsProgTh, (), (const, override));
     MOCK_METHOD(nixl_mem_list_t, getSupportedMems, (), (const, override));
     MOCK_METHOD(nixl_status_t,
                 registerMem,
@@ -122,7 +121,6 @@ public:
                 genNotif,
                 (const std::string &remote_agent, const std::string &msg),
                 (const, override));
-    MOCK_METHOD(int, progress, (), (override));
 };
 
 } // namespace mocks
