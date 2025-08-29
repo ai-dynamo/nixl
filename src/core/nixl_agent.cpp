@@ -442,7 +442,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     for (size_t i=0; i<backend_list->size(); ++i) {
         nixlBackendEngine* backend = (*backend_list)[i];
         // meta_descs use to be passed to loadLocalData
-        nixl_sec_dlist_t sec_descs(descs.getType(), false);
+        nixl_sec_dlist_t sec_descs(descs.getType());
         ret = data->memorySection->addDescList(descs, backend, sec_descs);
         if (ret == NIXL_SUCCESS) {
             if (backend->supportsLocal()) {
@@ -630,9 +630,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     }
 
     for (auto & backend : *backend_set) {
-        handle->descs[backend] = new nixl_meta_dlist_t (
-                                         descs.getType(),
-                                         descs.isSorted());
+        handle->descs[backend] = new nixl_meta_dlist_t(descs.getType());
         if (init_side)
             ret = data->memorySection->populate(
                        descs, backend, *(handle->descs[backend]));
@@ -770,16 +768,10 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    // Populate has been already done, no benefit in having sorted descriptors
-    // which will be overwritten by [] assignment operator.
     std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>();
-    handle->initiatorDescs = new nixl_meta_dlist_t (
-                                     local_descs->getType(),
-                                     false, desc_count);
+    handle->initiatorDescs = new nixl_meta_dlist_t(local_descs->getType(), desc_count);
 
-    handle->targetDescs    = new nixl_meta_dlist_t (
-                                     remote_descs->getType(),
-                                     false, desc_count);
+    handle->targetDescs = new nixl_meta_dlist_t(remote_descs->getType(), desc_count);
 
     if (extra_params && extra_params->skipDescMerge) {
         for (int i=0; i<desc_count; ++i) {
@@ -920,13 +912,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
     std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>();
-    handle->initiatorDescs = new nixl_meta_dlist_t (
-                                     local_descs.getType(),
-                                     local_descs.isSorted());
+    handle->initiatorDescs = new nixl_meta_dlist_t(local_descs.getType());
 
-    handle->targetDescs    = new nixl_meta_dlist_t (
-                                     remote_descs.getType(),
-                                     remote_descs.isSorted());
+    handle->targetDescs = new nixl_meta_dlist_t(remote_descs.getType());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1714,7 +1702,7 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
         if (descs.descCount() == 0) {
             return NIXL_SUCCESS;
         } else {
-            nixl_meta_dlist_t dummy(descs.getType(), descs.isSorted());
+            nixl_meta_dlist_t dummy(descs.getType());
             // We only add to data->remoteBackends if data->backendEngines[backend] exists
             for (const auto& [backend, conn_info] : data->remoteBackends[remote_name])
                 if (data->remoteSections[remote_name]->populate(

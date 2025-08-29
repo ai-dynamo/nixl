@@ -358,7 +358,6 @@ class nixl_agent:
 
     @param reg_list List of either memory regions, tensors, or nixlRegDList to register.
     @param mem_type Optional memory type, necessary if specifying a list of memory regions.
-    @param is_sorted Optional bool for a list of memory regions or tensors for if they are sorted.
     @param backends Optional list of backend names for registration, otherwise NIXL will try to
             register with all backends that support this memory type.
     @return nixlRegDList for the registered memory, can be used with deregister_memory.
@@ -368,10 +367,9 @@ class nixl_agent:
         self,
         reg_list,
         mem_type: Optional[str] = None,
-        is_sorted: bool = False,
         backends: list[str] = [],
     ) -> nixlBind.nixlRegDList:
-        reg_descs = self.get_reg_descs(reg_list, mem_type, is_sorted)
+        reg_descs = self.get_reg_descs(reg_list, mem_type)
 
         handle_list = []
         for backend_string in backends:
@@ -408,7 +406,7 @@ class nixl_agent:
     def query_memory(
         self, reg_list, backend: str, mem_type: Optional[str] = None
     ) -> list[Optional[dict[str, str]]]:
-        reg_descs = self.get_reg_descs(reg_list, mem_type, False)
+        reg_descs = self.get_reg_descs(reg_list, mem_type)
 
         # Get the backend handle
         if backend not in self.backends:
@@ -452,8 +450,6 @@ class nixl_agent:
     @param xfer_list List of transfer descriptors, can be list of memory region tuples, tensors,
                      Nx3 numpy array, or nixlXferDList. See get_xfer_descs for more details on the structure.
     @param mem_type Optional memory type necessary for list of memory regions.
-    @param is_sorted Optional bool for whether memory region list or tensor list are sorted.
-                     For long lists of transfer descriptors, sorting can speed up transfer preparation.
     @param backends Optional list of backend names to limit which backends are used during preparation
     @return Opaque handle to the prepared transfer descriptor list.
     """
@@ -463,10 +459,9 @@ class nixl_agent:
         agent_name: str,
         xfer_list,
         mem_type: Optional[str] = None,
-        is_sorted: bool = False,
         backends: list[str] = [],
     ) -> nixl_prepped_dlist_handle:
-        descs = self.get_xfer_descs(xfer_list, mem_type, is_sorted)
+        descs = self.get_xfer_descs(xfer_list, mem_type)
 
         if agent_name == "NIXL_INIT_AGENT" or agent_name == "":
             agent_name = nixlBind.NIXL_INIT_AGENT
@@ -891,8 +886,6 @@ class nixl_agent:
 
     @param descs List of any of the above types
     @param mem_type Optional memory type necessary for (a).
-    @param is_sorted Optional bool for if the descriptors are sorted for (a) and (c)
-            sort criteria has the comparison order of devID, then addr, then len.
     @return Transfer descriptor list, nixlXferDList.
     """
 
@@ -900,7 +893,6 @@ class nixl_agent:
         self,
         descs,
         mem_type: Optional[str] = None,
-        is_sorted: bool = False,
     ) -> nixlBind.nixlXferDList:
         # can add check for DLPack input
 
@@ -911,9 +903,7 @@ class nixl_agent:
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
-                new_descs = nixlBind.nixlXferDList(
-                    self.nixl_mems[mem_type], descs, is_sorted
-                )
+                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
             elif mem_type is None:
                 logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
@@ -922,9 +912,7 @@ class nixl_agent:
                 new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
-                new_descs = nixlBind.nixlXferDList(
-                    self.nixl_mems[mem_type], descs, is_sorted
-                )
+                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
             elif mem_type is None:
                 logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
@@ -942,9 +930,7 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 new_descs = nixlBind.nixlXferDList(
-                    self.nixl_mems[mem_type],
-                    [(base_addr, region_len, gpu_id)],
-                    is_sorted,
+                    self.nixl_mems[mem_type], [(base_addr, region_len, gpu_id)]
                 )
             else:
                 logger.error("Please use a list of contiguous Tensors")
@@ -966,9 +952,7 @@ class nixl_agent:
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
             mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
-            new_descs = nixlBind.nixlXferDList(
-                self.nixl_mems[mem_type], dlist, is_sorted
-            )
+            new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
 
@@ -985,8 +969,6 @@ class nixl_agent:
 
     @param descs List of any of the above types
     @param mem_type Optional memory type necessary for (a).
-    @param is_sorted Optional bool for if the descriptors are sorted for (a) and (c)
-            sort criteria has the comparison order of devID, then addr, then len.
     @return Registration descriptor list, nixlRegDList.
     """
 
@@ -994,7 +976,6 @@ class nixl_agent:
         self,
         descs,
         mem_type: Optional[str] = None,
-        is_sorted: bool = False,
     ) -> nixlBind.nixlRegDList:
         # can add check for DLPack input
 
@@ -1005,9 +986,7 @@ class nixl_agent:
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 4:
-                new_descs = nixlBind.nixlRegDList(
-                    self.nixl_mems[mem_type], descs, is_sorted
-                )
+                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
             elif mem_type is None:
                 logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
@@ -1016,9 +995,7 @@ class nixl_agent:
                 new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
-                new_descs = nixlBind.nixlRegDList(
-                    self.nixl_mems[mem_type], descs, is_sorted
-                )
+                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
             elif mem_type is None:
                 logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
@@ -1036,9 +1013,7 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 new_descs = nixlBind.nixlRegDList(
-                    self.nixl_mems[mem_type],
-                    [(base_addr, region_len, gpu_id, "")],
-                    is_sorted,
+                    self.nixl_mems[mem_type], [(base_addr, region_len, gpu_id, "")]
                 )
             else:
                 logger.error("Please use a list of contiguous Tensors")
@@ -1060,9 +1035,7 @@ class nixl_agent:
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
             mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
-            new_descs = nixlBind.nixlRegDList(
-                self.nixl_mems[mem_type], dlist, is_sorted
-            )
+            new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
 

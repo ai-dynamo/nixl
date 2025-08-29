@@ -269,12 +269,12 @@ nixl_capi_check_remote_md(nixl_capi_agent_t agent, const char* remote_name, nixl
   try {
     // If descs is null, create an empty descriptor list of DRAM type
     if (!descs) {
-      nixl_xfer_dlist_t empty_list(DRAM_SEG, true);
-      nixl_status_t ret = agent->inner->checkRemoteMD(remote_name, empty_list);
-      return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        nixl_xfer_dlist_t empty_list(DRAM_SEG);
+        nixl_status_t ret = agent->inner->checkRemoteMD(remote_name, empty_list);
+        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
     } else {
-      nixl_status_t ret = agent->inner->checkRemoteMD(remote_name, *descs->dlist);
-      return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        nixl_status_t ret = agent->inner->checkRemoteMD(remote_name, *descs->dlist);
+        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
     }
   }
   catch (...) {
@@ -808,21 +808,20 @@ nixl_capi_get_backend_params(
 
 // Transfer descriptor list functions
 nixl_capi_status_t
-nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t* dlist, bool sorted)
-{
-  if (!dlist) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
+nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t *dlist) {
+    if (!dlist) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
 
-  try {
-    auto d = new nixl_capi_xfer_dlist_s;
-    d->dlist = new nixl_xfer_dlist_t(static_cast<nixl_mem_t>(mem_type), sorted);
-    *dlist = d;
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
+    try {
+        auto d = new nixl_capi_xfer_dlist_s;
+        d->dlist = new nixl_xfer_dlist_t(static_cast<nixl_mem_t>(mem_type));
+        *dlist = d;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 nixl_capi_status_t
@@ -915,22 +914,6 @@ nixl_capi_xfer_dlist_is_empty(nixl_capi_xfer_dlist_t dlist, bool* is_empty)
 }
 
 nixl_capi_status_t
-nixl_capi_xfer_dlist_is_sorted(nixl_capi_xfer_dlist_t dlist, bool* is_sorted)
-{
-  if (!dlist || !is_sorted) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    *is_sorted = dlist->dlist->isSorted();
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
-nixl_capi_status_t
 nixl_capi_xfer_dlist_trim(nixl_capi_xfer_dlist_t dlist)
 {
   if (!dlist) {
@@ -954,22 +937,6 @@ nixl_capi_status_t nixl_capi_xfer_dlist_rem_desc(nixl_capi_xfer_dlist_t dlist, i
 
   try {
     dlist->dlist->remDesc(index);
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
-nixl_capi_status_t
-nixl_capi_xfer_dlist_verify_sorted(nixl_capi_xfer_dlist_t dlist, bool* is_sorted)
-{
-  if (!dlist || !is_sorted) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    *is_sorted = dlist->dlist->verifySorted();
     return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
@@ -1026,21 +993,20 @@ nixl_capi_xfer_dlist_resize(nixl_capi_xfer_dlist_t dlist, size_t new_size)
 
 // Registration descriptor list functions
 nixl_capi_status_t
-nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist, bool sorted)
-{
-  if (!dlist) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
+nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t *dlist) {
+    if (!dlist) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
 
-  try {
-    auto d = new nixl_capi_reg_dlist_s;
-    d->dlist = new nixl_reg_dlist_t(static_cast<nixl_mem_t>(mem_type), sorted);
-    *dlist = d;
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
+    try {
+        auto d = new nixl_capi_reg_dlist_s;
+        d->dlist = new nixl_reg_dlist_t(static_cast<nixl_mem_t>(mem_type));
+        *dlist = d;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 nixl_capi_status_t
@@ -1069,22 +1035,6 @@ nixl_capi_reg_dlist_get_type(nixl_capi_reg_dlist_t dlist, nixl_capi_mem_type_t* 
 
   try {
     *mem_type = static_cast<nixl_capi_mem_type_t>(dlist->dlist->getType());
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
-nixl_capi_status_t
-nixl_capi_reg_dlist_verify_sorted(nixl_capi_reg_dlist_t dlist, bool* is_sorted)
-{
-  if (!dlist || !is_sorted) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    *is_sorted = dlist->dlist->verifySorted();
     return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
@@ -1153,21 +1103,6 @@ nixl_capi_reg_dlist_is_empty(nixl_capi_reg_dlist_t dlist, bool* is_empty)
 
   try {
     *is_empty = dlist->dlist->isEmpty();
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-}
-
-nixl_capi_status_t nixl_capi_reg_dlist_is_sorted(nixl_capi_reg_dlist_t dlist, bool* is_sorted)
-{
-  if (!dlist || !is_sorted) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    *is_sorted = dlist->dlist->isSorted();
     return NIXL_CAPI_SUCCESS;
   }
   catch (...) {

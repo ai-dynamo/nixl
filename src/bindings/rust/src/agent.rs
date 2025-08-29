@@ -237,7 +237,7 @@ impl Agent {
         descriptor: &impl NixlDescriptor,
         opt_args: Option<&OptArgs>,
     ) -> Result<RegistrationHandle, NixlError> {
-        let mut reg_dlist = RegDescList::new(descriptor.mem_type(), false)?;
+        let mut reg_dlist = RegDescList::new(descriptor.mem_type())?;
         unsafe {
             reg_dlist.add_storage_desc(descriptor)?;
 
