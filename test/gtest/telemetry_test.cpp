@@ -37,6 +37,7 @@
 
 namespace fs = std::filesystem;
 constexpr char TELEMETRY_ENABLED_VAR[] = "NIXL_TELEMETRY_ENABLE";
+constexpr char TELEMETRY_DIR_VAR[] = "NIXL_TELEMETRY_DIR";
 
 // Custom mock backend class for testing backend telemetry events
 class telemetryTestBackend : public mocks::GMockBackendEngine {
@@ -55,7 +56,7 @@ protected:
     void
     SetUp() override {
         testDir_ = "/tmp/telemetry_test_files";
-        testFile_ = "test_telemetry";
+        testFile_ = testDir_.string() + "/test_telemetry";
         try {
             if (!fs::exists(testDir_)) {
                 fs::create_directory(testDir_);
@@ -85,7 +86,7 @@ protected:
 
     void
     validateState() {
-        auto path = fs::path(testDir_) / testFile_;
+        auto path = fs::path(testFile_);
         auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
             path.string(), false, TELEMETRY_VERSION);
         EXPECT_EQ(buffer->version(), TELEMETRY_VERSION);
@@ -155,7 +156,7 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_NO_THROW(telemetry.addXferTime(std::chrono::microseconds(100), true, 2000));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    auto path = fs::path(testDir_) / testFile_;
+    auto path = fs::path(testFile_);
     auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
         path.string(), false, TELEMETRY_VERSION);
     EXPECT_EQ(buffer->size(), 10);
@@ -240,9 +241,9 @@ TEST_F(telemetryTest, CustomTelemetryDirectory) {
     envHelper_.addVar(TELEMETRY_DIR_VAR, custom_dir.string());
 
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(testFile_, backendMap_);
+        fs::path telemetry_file = custom_dir / "test_telemetry";
+        nixlTelemetry telemetry(telemetry_file.string(), backendMap_);
 
-        fs::path telemetry_file = custom_dir / testFile_;
         EXPECT_TRUE(fs::exists(telemetry_file));
     });
     envHelper_.popVar();
@@ -265,7 +266,7 @@ TEST_F(telemetryTest, TelemetryCategoryStringConversion) {
 // Test concurrent access (basic thread safety)
 TEST_F(telemetryTest, ConcurrentAccess) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
-    testFile_ = "test_concurrent_access";
+    testFile_ = testDir_.string() + "/test_concurrent_access";
     nixlTelemetry telemetry(testFile_, backendMap_);
 
     const int num_threads = 4;
@@ -333,7 +334,7 @@ TEST_F(telemetryTest, BackendTelemetryEventsCollection) {
     std::this_thread::sleep_for(std::chrono::milliseconds(3));
 
     // Verify that backend events are collected and written to buffer
-    auto path = fs::path(testDir_) / testFile_;
+    auto path = fs::path(testFile_);
     auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
         path.string(), false, TELEMETRY_VERSION);
 
@@ -373,7 +374,7 @@ TEST_F(telemetryTest, BackendTelemetryEventsEmptyBackendMap) {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
     // Verify that only agent events are written (no backend events)
-    auto path = fs::path(testDir_) / testFile_;
+    auto path = fs::path(testFile_);
     auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
         path.string(), false, TELEMETRY_VERSION);
 
@@ -415,7 +416,7 @@ TEST_F(telemetryTest, BackendTelemetryEventsMixedWithAgentEvents) {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
     // Verify that both agent and backend events are written
-    auto path = fs::path(testDir_) / testFile_;
+    auto path = fs::path(testFile_);
     auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
         path.string(), false, TELEMETRY_VERSION);
 
@@ -461,7 +462,7 @@ TEST_F(telemetryTest, BackendTelemetryEventsDisabledTelemetry) {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
     // Verify that no events are written
-    auto path = fs::path(testDir_) / testFile_;
+    auto path = fs::path(testFile_);
     auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
         path.string(), false, TELEMETRY_VERSION);
 
@@ -500,7 +501,7 @@ TEST_F(telemetryTest, BackendTelemetryEventsMultipleBackends) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     // Verify that events from all backends are collected
-    auto path = fs::path(testDir_) / testFile_;
+    auto path = fs::path(testFile_);
     auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
         path.string(), false, TELEMETRY_VERSION);
 
