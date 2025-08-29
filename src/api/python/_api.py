@@ -27,10 +27,96 @@ logger = get_logger(__name__)
 
 DEFAULT_COMM_PORT = nixlBind.DEFAULT_COMM_PORT
 
-# Opaque nixl handle types
+
+"""
+@brief Opaque handle wrapper for a prepared transfer descriptor list.
+       Use release() to explicitly free resources; __del__ performs best-effort cleanup.
+@param agent Owning nixl_agent used to perform release operations.
+@param value Internal handle
+"""
+
+
+class nixl_prepped_dlist_handle:
+    __slots__ = ("_handle", "_agent", "_released")
+
+    def __init__(self, agent, value: int):
+        self._handle = int(value)
+        self._agent = agent
+        self._released = False
+
+    def __repr__(self) -> str:
+        return (
+            f"nixl_prepped_dlist_handle(0x{self._handle:x}, released={self._released})"
+        )
+
+    def release(self):
+        if not self._released:
+            self._agent.releasedDlistH(self._handle)
+            self._released = True
+
+    def __del__(self):
+        if not self._released:
+            try:
+                self._agent.releasedDlistH(self._handle)
+            except Exception:
+                try:
+                    logger.error(
+                        "nixl_prepped_dlist_handle finalization failed for 0x%x",
+                        self._handle,
+                    )
+                except Exception:
+                    pass
+
+
+"""
+@brief Opaque handle wrapper for a transfer request.
+       Use release() to explicitly free resources. If transfer was not complete, this will initiate
+       the abort process (if available) and will raise an exception.
+       __del__ calls release() and if it fails, it logs the failure and defers release by queuing
+       the handle in leaked xfer handles list, which will be re-released during agent destruction
+@param agent Owning nixl_agent used to perform release operations.
+@param value Internal handle
+"""
+
+
+class nixl_xfer_handle:
+    __slots__ = ("_handle", "_agent", "_released")
+
+    def __init__(self, agent, value: int):
+        self._handle = int(value)
+        self._agent = agent
+        self._released = False
+
+    def __repr__(self) -> str:
+        return f"nixl_xfer_handle(0x{self._handle:x}, released={self._released})"
+
+    def release(self):
+        if not self._released:
+            self._agent.releaseXferReq(self._handle)
+            self._released = True
+
+    def __del__(self):
+        if not self._released:
+            try:
+                self._agent.releaseXferReq(self._handle)
+            except Exception:
+                try:
+                    logger.error(
+                        "nixl_xfer_handle finalization failed for 0x%x; keeping handle alive in agent leak list",
+                        self._handle,
+                    )
+                except Exception:
+                    pass
+                try:
+                    self._agent._leaked_xfer_handles.append(self._handle)
+                except Exception:
+                    pass
+                return
+
+
+# Opaque handle for backend can be just int, as it's not passed to the user
 nixl_backend_handle = int
-nixl_prepped_dlist_handle = int
-nixl_xfer_handle = int
+
 
 """
 @brief Configuration class for NIXL agent.
@@ -104,6 +190,7 @@ class nixl_agent:
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name
+        self._leaked_xfer_handles: list[int] = []
         self.notifs: dict[str, list[bytes]] = {}
         self.backends: dict[str, nixl_backend_handle] = {}
         self.backend_mems: dict[str, list[str]] = {}
@@ -155,6 +242,21 @@ class nixl_agent:
         }
 
         logger.info("Initialized NIXL agent: %s", agent_name)
+
+    def __del__(self):
+        # Best-effort cleanup of any leaked xfer handles belonging to this agent
+        if getattr(self, "_leaked_xfer_handles", None):
+            for h in list(self._leaked_xfer_handles):
+                try:
+                    self.releaseXferReq(h)
+                except Exception as e:
+                    try:
+                        logger.error(
+                            "Failed to finalize leaked nixl_xfer_handle 0x%x: %s", h, e
+                        )
+                    except Exception:
+                        pass
+            self._leaked_xfer_handles.clear()
 
     """
     @brief Get the list of available plugins.
@@ -374,8 +476,7 @@ class nixl_agent:
             handle_list.append(self.backends[backend_string])
 
         handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
-
-        return handle
+        return nixl_prepped_dlist_handle(self.agent, handle)
 
     """
     @brief Estimate the cost of a transfer operation.
@@ -386,7 +487,7 @@ class nixl_agent:
     """
 
     def estimate_xfer_cost(self, req_handle: nixl_xfer_handle) -> tuple[int, int, int]:
-        duration, err_margin, method = self.agent.estimateXferCost(req_handle)
+        duration, err_margin, method = self.agent.estimateXferCost(req_handle._handle)
         if method == nixlBind.NIXL_COST_ANALYTICAL_BACKEND:
             method = "ANALYTICAL_BACKEND"
         else:
@@ -408,6 +509,7 @@ class nixl_agent:
     @param backends Optional list of backend names to limit which backends NIXL can use.
     @param skip_desc_merge Whether to skip descriptor merging optimization.
     @return Opaque handle for posting/checking transfer.
+            The handle can be released by calling release_xfer_handle from agent, or release() method on itself.
     """
 
     def make_prepped_xfer(
@@ -428,16 +530,16 @@ class nixl_agent:
 
         handle = self.agent.makeXferReq(
             op,
-            local_xfer_side,
+            local_xfer_side._handle,
             local_indices,
-            remote_xfer_side,
+            remote_xfer_side._handle,
             remote_indices,
             notif_msg,
             handle_list,
             skip_desc_merge,
         )
 
-        return handle
+        return nixl_xfer_handle(self.agent, handle)
 
     """
     @brief  Initialize a transfer operation. This is a combined API, to create a transfer request
@@ -454,6 +556,7 @@ class nixl_agent:
            notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
     @param backends Optional list of backend names to limit which backends NIXL can use.
     @return Opaque handle for posting/checking transfer.
+            The handle can be released by calling release_xfer_handle from agent, or release() method on itself.
     """
 
     def initialize_xfer(
@@ -474,7 +577,7 @@ class nixl_agent:
             op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
         )
 
-        return handle
+        return nixl_xfer_handle(self.agent, handle)
 
     """
     @brief  Initiate a data transfer operation.
@@ -489,7 +592,7 @@ class nixl_agent:
     """
 
     def transfer(self, handle: nixl_xfer_handle, notif_msg: bytes = b"") -> str:
-        status = self.agent.postXferReq(handle, notif_msg)
+        status = self.agent.postXferReq(handle._handle, notif_msg)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
         elif status == nixlBind.NIXL_IN_PROG:
@@ -505,7 +608,7 @@ class nixl_agent:
     """
 
     def check_xfer_state(self, handle: nixl_xfer_handle) -> str:
-        status = self.agent.getXferStatus(handle)
+        status = self.agent.getXferStatus(handle._handle)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
         elif status == nixlBind.NIXL_IN_PROG:
@@ -521,7 +624,7 @@ class nixl_agent:
     """
 
     def query_xfer_backend(self, handle: nixl_xfer_handle) -> str:
-        b_handle = self.agent.queryXferBackend(handle)
+        b_handle = self.agent.queryXferBackend(handle._handle)
         # this works because there should not be multiple matching handles in the Dict
         return next(
             backendS
@@ -538,7 +641,7 @@ class nixl_agent:
     """
 
     def release_xfer_handle(self, handle: nixl_xfer_handle):
-        self.agent.releaseXferReq(handle)
+        handle.release()
 
     """
     @brief Release a descriptor list handle, which internally frees the memory used for the handle.
@@ -547,7 +650,7 @@ class nixl_agent:
     """
 
     def release_dlist_handle(self, handle: nixl_prepped_dlist_handle):
-        self.agent.releasedDlistH(handle)
+        handle.release()
 
     """
     @brief Get new notifications that have come to the agent.

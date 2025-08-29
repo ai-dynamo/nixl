@@ -167,7 +167,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         std::cout << "Mooncake backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
         // Using default param values for HF3FS backend
-        std::cout << "HF3FS backend" << std::endl;
+        std::cout << "HF3FS backend iopool_size " << xferBenchConfig::hf3fs_iopool_size
+                  << std::endl;
+        backend_params["iopool_size"] = std::to_string(xferBenchConfig::hf3fs_iopool_size);
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_OBJ)) {
         // Using default param values for OBJ backend
         backend_params["access_key"] = xferBenchConfig::obj_access_key;
