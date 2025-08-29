@@ -70,7 +70,9 @@ use bindings::{
     nixl_capi_query_mem, nixl_capi_create_query_resp_list, nixl_capi_destroy_query_resp_list,
     nixl_capi_query_resp_list_size, nixl_capi_query_resp_list_has_value,
     nixl_capi_query_resp_list_get_params, nixl_capi_prep_xfer_dlist, nixl_capi_release_xfer_dlist_handle,
-    nixl_capi_make_xfer_req
+    nixl_capi_make_xfer_req, nixl_capi_get_local_partial_md,
+    nixl_capi_send_local_partial_md, nixl_capi_query_xfer_backend, nixl_capi_opt_args_set_ip_addr,
+    nixl_capi_opt_args_set_port
 };
 
 // Re-export status codes
@@ -316,6 +318,29 @@ impl OptArgs {
             unsafe { nixl_capi_opt_args_get_skip_desc_merge(self.inner.as_ptr(), &mut skip_merge) };
         match status {
             NIXL_CAPI_SUCCESS => Ok(skip_merge),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Set the IP address
+    /// used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+    pub fn set_ip_addr(&mut self, ip_addr: &str) -> Result<(), NixlError> {
+        let c_str = CString::new(ip_addr).expect("Failed to convert string to CString");
+        let status = unsafe { nixl_capi_opt_args_set_ip_addr(self.inner.as_ptr(), c_str.as_ptr()) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Set the port
+    /// used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+    pub fn set_port(&mut self, port: u16) -> Result<(), NixlError> {
+        let status = unsafe { nixl_capi_opt_args_set_port(self.inner.as_ptr(), port) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }

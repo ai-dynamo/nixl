@@ -337,6 +337,52 @@ impl Agent {
         }
     }
 
+    /// Gets the local partial metadata as a byte array
+    ///
+    /// # Arguments
+    /// * `descs` - Registration descriptor list to get metadata for
+    /// * `opt_args` - Optional arguments for getting metadata
+    ///
+    /// # Returns
+    /// A byte array containing the local partial metadata
+    ///
+    pub fn get_local_partial_md(&self, descs: &RegDescList, opt_args: Option<&OptArgs>) -> Result<Vec<u8>, NixlError> {
+        tracing::trace!("Getting local partial metadata");
+        let mut data = std::ptr::null_mut();
+        let mut len: usize = 0;
+        let inner_guard = self.inner.write().unwrap();
+
+        let status = unsafe {
+            nixl_capi_get_local_partial_md(
+                inner_guard.handle.as_ptr(),
+                descs.handle(),
+                &mut data as *mut *mut _,
+                &mut len,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                let bytes = unsafe {
+                    let slice = std::slice::from_raw_parts(data as *const u8, len);
+                    let vec = slice.to_vec();
+                    libc::free(data as *mut libc::c_void);
+                    vec
+                };
+                tracing::trace!(metadata.size = len, "Successfully retrieved local partial metadata");
+                Ok(bytes)
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::error!(error = "invalid_param", "Failed to get local partial metadata");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::error!(error = "backend_error", "Failed to get local partial metadata");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
     /// Loads remote metadata from a byte slice
     pub fn load_remote_md(&self, metadata: &[u8]) -> Result<String, NixlError> {
         tracing::trace!(metadata.size = metadata.len(), "Loading remote metadata");
@@ -549,6 +595,35 @@ impl Agent {
             }
         }
     }
+
+    /// Send this agent's partial metadata
+    ///
+    /// # Arguments
+    /// * `descs` - Registration descriptor list to send
+    /// * `opt_args` - Optional arguments for sending metadata
+    pub fn send_local_partial_md(&self, descs: &RegDescList, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
+        tracing::trace!("Sending local partial metadata to etcd");
+        let inner_guard = self.inner.write().unwrap();
+        let status = unsafe {
+            nixl_capi_send_local_partial_md(
+                inner_guard.handle.as_ptr(),
+                descs.handle(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!("Successfully sent local partial metadata to etcd");
+                Ok(())
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::error!(error = "invalid_param", "Failed to send local partial metadata to etcd");
+                Err(NixlError::InvalidParam)
+            }
+            _ => Err(NixlError::BackendError)
+        }
+    }
+
 
     /// Fetch a remote agent's metadata from etcd
     ///
@@ -849,6 +924,36 @@ impl Agent {
             _ => Err(NixlError::BackendError),
         }
     }
+
+    /// Queries the backend for a transfer request
+    ///
+    /// # Arguments
+    /// * `req` - Transfer request handle after `post_xfer_req`
+    ///
+    /// # Returns
+    /// A handle to the backend used for the transfer
+    ///
+    /// # Errors
+    /// Returns a NixlError if the operation fails
+    pub fn query_xfer_backend(&self, req: &XferRequest) -> Result<Backend, NixlError> {
+        let mut backend = std::ptr::null_mut();
+        let inner_guard = self.inner.write().unwrap();
+        let status = unsafe {
+            nixl_capi_query_xfer_backend(
+                inner_guard.handle.as_ptr(),
+                req.handle(),
+                &mut backend
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                Ok(Backend{ inner: NonNull::new(backend).ok_or(NixlError::FailedToCreateBackend)? })
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
 
     /// Gets notifications from other agents
     ///
