@@ -23,7 +23,7 @@ if cuda_dep.found()
 
     # UCX GPU device API detection
     if get_option('use_ucx_gpu_device_api')
-        if cpp.has_function('ucp_gpu_mem_list_create',
+        if cpp.has_function('ucp_mem_list_create',
                             prefix: '#include <ucp/api/device/ucp_host.h>',
                             dependencies: ucx_dep)
             compile_flags += ['-DHAVE_UCX_GPU_DEVICE_API']
