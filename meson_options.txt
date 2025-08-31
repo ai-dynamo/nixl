@@ -14,7 +14,7 @@
 # limitations under the License.
 
 option('ucx_path', type: 'string', value: '', description: 'Path to UCX install')
-option('enable_ucx_gpu_device_api', type: 'boolean', value: true,
+option('use_ucx_gpu_device_api', type: 'boolean', value: true,
        description: 'Enable detection and use of UCX GPU device API')
 option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD Headers')
 option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD Libraries')
