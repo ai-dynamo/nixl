@@ -154,4 +154,17 @@ nixlGpuGetXferStatus(const nixlGpuXferStatusH &xfer_status)
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
+/**
+ * @brief Read the value of a signal.
+ *
+ * @param signal_addr [in]  Address of the signal.
+ *
+ * @return The value of the signal.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::BLOCK>
+__device__ uint64_t
+nixlGpuReadSignalValue(const void *signal_addr) {
+    return 0;
+}
+
 #endif
