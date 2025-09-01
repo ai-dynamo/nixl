@@ -151,6 +151,32 @@ else
   ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'])
 endif
 
+if ucx_dep.found() and cuda_dep.found()
+    cuda = meson.get_compiler('cuda')
+
+    # UCX GPU device API detection
+    have_gpu_side = cuda.compiles('''
+            #include <ucp/api/device/ucp_device_impl.h>
+            int main() { return 0; }
+        ''', dependencies : ucx_dep)
+
+    have_host_side = cpp.has_header(
+        'ucp/api/device/ucp_host.h',
+        dependencies: ucx_dep)
+
+    if have_gpu_side and have_host_side
+        add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
+        message('UCX GPU device API support detected and enabled')
+
+        # Install GPU device API header when support is available
+        if get_option('install_headers')
+            install_headers(meson.project_source_root() / 'src/api/gpu/ucx/nixl_device.cuh', subdir: 'gpu/ucx')
+        endif
+    else
+        message('UCX GPU device API support not available - GPU device API features will be disabled')
+    endif
+endif
+
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
