@@ -22,21 +22,13 @@ if cuda_dep.found()
     compile_flags = [ '-DHAVE_CUDA' ]
 
     # UCX GPU device API detection
-    if get_option('use_ucx_gpu_device_api')
-        if cpp.has_function('ucp_mem_list_create',
-                            prefix: '#include <ucp/api/device/ucp_host.h>',
-                            dependencies: ucx_dep)
-            compile_flags += ['-DHAVE_UCX_GPU_DEVICE_API']
-            message('UCX GPU device API support detected and enabled')
-        else
-            message('UCX GPU device API support not available - GPU device API features will be disabled')
-        endif
+    if cpp.has_function('ucp_mem_list_create',
+                        prefix: '#include <ucp/api/device/ucp_host.h>',
+                        dependencies: ucx_dep)
+        compile_flags += ['-DHAVE_UCX_GPU_DEVICE_API']
+        message('UCX GPU device API support detected and enabled')
     else
-        message('UCX GPU device API support explicitly disabled by user')
-    endif
-else
-    if get_option('use_ucx_gpu_device_api')
-        message('UCX GPU device API support not available - CUDA not found')
+        message('UCX GPU device API support not available - GPU device API features will be disabled')
     endif
 endif
 
