@@ -185,11 +185,13 @@ xferBenchNvshmemWorker::transfer(size_t block_size,
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
-    ret = execTransfer(local_trans_lists, remote_trans_lists, skip, stream, stats);
-    if (ret < 0) {
-        return std::variant<xferBenchStats, int>(ret);
+    if (skip > 0) {
+        ret = execTransfer(local_trans_lists, remote_trans_lists, skip, stream, stats);
+        if (ret < 0) {
+            return std::variant<xferBenchStats, int>(ret);
+        }
+        stats.clear();
     }
-    stats.clear();
     nvshmemx_barrier_all_on_stream(stream);
     CHECK_CUDA_ERROR(cudaStreamSynchronize(stream), "Failed to synchronize CUDA stream");
 

@@ -989,10 +989,12 @@ xferBenchNixlWorker::transfer(size_t block_size,
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
-    ret = execTransfer(
-        agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats);
-    if (ret < 0) {
-        return std::variant<xferBenchStats, int>(ret);
+    if (skip > 0) {
+        ret = execTransfer(
+            agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats);
+        if (ret < 0) {
+            return std::variant<xferBenchStats, int>(ret);
+        }
     }
 
     // Synchronize to ensure all processes have completed the warmup (iter and polling)
