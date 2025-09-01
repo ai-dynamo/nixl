@@ -20,16 +20,26 @@ cpp = meson.get_compiler('cpp')
 compile_flags = []
 if cuda_dep.found()
     compile_flags = [ '-DHAVE_CUDA' ]
+    cuda = meson.get_compiler('cuda')
 
     # UCX GPU device API detection
-    if cpp.has_function('ucp_mem_list_create',
-                        prefix: '#include <ucp/api/device/ucp_host.h>',
-                        dependencies: ucx_dep)
+    have_gpu_side = cuda.compiles('''
+            #include <ucp/api/device/ucp_device_impl.h>
+            int main() { return 0; }
+        ''', dependencies : ucx_dep)
+
+    have_host_side = cpp.has_function(
+        'ucp_mem_list_create',
+        prefix: '#include <ucp/api/device/ucp_host.h>',
+        dependencies: ucx_dep)
+
+    if have_gpu_side and have_host_side
         compile_flags += ['-DHAVE_UCX_GPU_DEVICE_API']
         message('UCX GPU device API support detected and enabled')
     else
         message('UCX GPU device API support not available - GPU device API features will be disabled')
     endif
+
 endif
 
 if 'UCX' in static_plugins
