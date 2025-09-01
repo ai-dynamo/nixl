@@ -170,6 +170,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         std::cout << "HF3FS backend iopool_size " << xferBenchConfig::hf3fs_iopool_size
                   << std::endl;
         backend_params["iopool_size"] = std::to_string(xferBenchConfig::hf3fs_iopool_size);
+        backend_params["threadpool_size"] = std::to_string(xferBenchConfig::hf3fs_threadpool_size);
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_OBJ)) {
         // Using default param values for OBJ backend
         backend_params["access_key"] = xferBenchConfig::obj_access_key;

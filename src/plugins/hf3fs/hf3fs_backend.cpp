@@ -119,7 +119,8 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
         tpool.emplace_back(ioThread, io_ctx);
     }
 
-    NIXL_DEBUG << "HF3FS: page size " << page_size << " iopool_size " << iopool_size;
+    NIXL_DEBUG << "HF3FS: page size " << page_size << " iopool_size " << iopool_size
+               << " threadpool_size " << threadpool_size;
 }
 
 nixlHf3fsIO *
