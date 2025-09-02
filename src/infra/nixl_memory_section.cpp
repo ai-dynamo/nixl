@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 #include <map>
+#include <cassert>
+#include <algorithm>
 #include <iostream>
 #include "nixl.h"
 #include "nixl_descriptors.h"
@@ -35,14 +37,27 @@ backend_set_t* nixlMemSection::queryBackends (const nixl_mem_t &mem) {
         return &memToBackend[mem];
 }
 
+// Helper function to find the covering index for a given query element
+namespace {
+inline int
+getCoveringIndex(const nixl_sec_dlist_t *base, const nixlBasicDesc &query) {
+    auto itr = std::lower_bound(base->begin(), base->end(), query);
+    if (itr != base->end() && itr->covers(query)) return static_cast<int>(itr - base->begin());
+    // If query and element don't have the same start address, try previous entry
+    if (itr != base->begin()) {
+        auto prev_itr = std::prev(itr, 1);
+        if (prev_itr->covers(query)) return static_cast<int>(prev_itr - base->begin());
+    }
+    return -1;
+}
+} // namespace
+
 nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
                                         nixlBackendEngine* backend,
                                         nixl_meta_dlist_t &resp) const {
 
-    if (query.getType() != resp.getType())
-        return NIXL_ERR_INVALID_PARAM;
-    // 1-to-1 mapping cannot hold
-    if (query.isSorted() != resp.isSorted())
+    if ((query.getType() != resp.getType()) || (query.descCount() == 0) ||
+        (query.isSorted() != resp.isSorted())) // 1-to-1 mapping cannot hold
         return NIXL_ERR_INVALID_PARAM;
 
     section_key_t sec_key = std::make_pair(query.getType(), backend);
@@ -50,98 +65,44 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
     if (it==sectionMap.end())
         return NIXL_ERR_NOT_FOUND;
 
-    nixlBasicDesc *p;
     nixl_sec_dlist_t* base = it->second;
+    assert(base->isSorted());
     resp.resize(query.descCount());
 
-    if (!base->isSorted()) {
-        int count = 0;
-        for (int i=0; i<query.descCount(); ++i)
-            for (const auto & elm : *base)
-                if (elm.covers(query[i])){
-                    p = &resp[i];
-                    *p = query[i];
-                    resp[i].metadataP = elm.metadataP;
-                    count++;
-                    break;
-                }
+    int size = base->descCount();
+    int s_index = 0;
 
-        if (query.descCount()==count) {
-            return NIXL_SUCCESS;
-        } else {
-            resp.clear();
-            return NIXL_ERR_UNKNOWN;
-        }
-    } else {
-        const nixlBasicDesc *q;
-        bool found, q_sorted = query.isSorted();
-
-        if (q_sorted) {
-            int s_index, q_index, size;
-            const nixlSectionDesc *s;
-
-            size = base->descCount();
-            s_index = 0;
-            q_index = 0;
-
-            while (q_index<query.descCount()){
-                s = &(*base)[s_index];
-                q = &query[q_index];
-                if (s->covers(*q)) {
-                    p = &resp[q_index];
-                    *p = *q;
-                    resp[q_index].metadataP = s->metadataP;
-                    q_index++;
-                } else {
-                    s_index++;
-                    // TODO: add early termination if already (*q < *s),
-                    // but s was not properly covering q
-                    if (s_index==size) {
-                        resp.clear();
-                        return NIXL_ERR_UNKNOWN;
-                    }
-                }
-            }
-
-            // To be added only in debug mode
-            // resp.verifySorted();
-            return NIXL_SUCCESS;
-
-        } else {
-            int last_found = 0;
-            for (int i=0; i<query.descCount(); ++i) {
-                found = false;
-                q = &query[i];
-                auto itr = std::lower_bound(base->begin() + last_found,
-                                            base->end(), *q);
-
-                // Same start address case
-                if (itr != base->end()){
-                    if (itr->covers(*q)) {
-                        found = true;
-                    }
-                }
-
-                // query starts starts later, try previous entry
-                if ((!found) && (itr != base->begin())){
-                    itr = std::prev(itr , 1);
-                    if (itr->covers(*q)) {
-                        found = true;
-                    }
-                }
-
-                if (found) {
-                    p = &resp[i];
-                    *p = *q;
-                    resp[i].metadataP = itr->metadataP;
-                } else {
-                    resp.clear();
-                    return NIXL_ERR_UNKNOWN;
-                }
-            }
-            return NIXL_SUCCESS;
-        }
+    // Use logN search for the first element, instead of linear search
+    s_index = getCoveringIndex(base, query[0]);
+    if (s_index < 0) {
+        resp.clear();
+        return NIXL_ERR_UNKNOWN;
     }
+    static_cast<nixlBasicDesc &>(resp[0]) = query[0];
+    resp[0].metadataP = (*base)[s_index].metadataP;
+
+    // Walk forward for non-decreasing elements; logN search on temporal disorder
+    for (int i = 1; i < query.descCount(); ++i) {
+        if (query[i] < query[i - 1]) {
+            // Disorder in the list, resolve this element using logN search
+            s_index = getCoveringIndex(base, query[i]);
+            if (s_index < 0) {
+                resp.clear();
+                return NIXL_ERR_UNKNOWN;
+            }
+        } else {
+            while (s_index < size && !(*base)[s_index].covers(query[i]))
+                ++s_index;
+            if (s_index == size) {
+                resp.clear();
+                return NIXL_ERR_UNKNOWN;
+            }
+        }
+
+        static_cast<nixlBasicDesc &>(resp[i]) = query[i];
+        resp[i].metadataP = (*base)[s_index].metadataP;
+    }
+    return NIXL_SUCCESS;
 }
 
 /*** Class nixlLocalSection implementation ***/
@@ -319,7 +280,7 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
         // TODO: consider section_map_t to be a map of unique_ptr or instance of nixl_meta_dlist_t.
         //       This will avoid the need to delete the nixl_sec_dlist_t instances.
         const nixl_sec_dlist_t *base = it->second;
-        nixl_sec_dlist_t *resp = new nixl_sec_dlist_t(nixl_mem, mem_elms.isSorted());
+        nixl_sec_dlist_t *resp = new nixl_sec_dlist_t(nixl_mem, true);
         for (const auto &desc : mem_elms) {
             int index = base->getIndex(desc);
             if (index < 0) {
