@@ -386,13 +386,13 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     test_side_perf(A1, A2, src_backend, dst_backend);
 
-    int n_bufs = 4; //must be even
+    int n_bufs = 32; // must be even
     size_t len = 1024;
     void* src_bufs[n_bufs], *dst_bufs[n_bufs];
 
     nixl_reg_dlist_t mem_list1(DRAM_SEG), mem_list2(DRAM_SEG);
     nixl_xfer_dlist_t src_list(DRAM_SEG), dst_list(DRAM_SEG);
-    nixlBlobDesc src_desc[4], dst_desc[4];
+    nixlBlobDesc src_desc[n_bufs], dst_desc[n_bufs];
     for(int i = 0; i<n_bufs; i++) {
 
         src_bufs[i] = calloc(1, len);
@@ -413,6 +413,9 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     src_list = mem_list1.trim();
     dst_list = mem_list2.trim();
+
+    if (!src_list.verifySorted() || !dst_list.verifySorted())
+        std::cout << "src_list or dst_list is not sorted, covering corner cases.";
 
     status = A1->registerMem(mem_list1, &extra_params1);
     assert (status == NIXL_SUCCESS);
