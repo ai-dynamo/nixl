@@ -545,13 +545,9 @@ nixlUcxMoEngine::prepXfer (const nixl_xfer_op_t &operation,
         /* Allocate internal dlists if needed */
         if (!req->dlMatrix[lidx][ridx].in_use) {
             req->dlMatrix[lidx][ridx].in_use = true;
-            req->dlMatrix[lidx][ridx].ldescs = new nixl_meta_dlist_t (
-                                                local.getType(),
-                                                local.isSorted());
+            req->dlMatrix[lidx][ridx].ldescs = new nixl_meta_dlist_t(local.getType());
 
-            req->dlMatrix[lidx][ridx].rdescs = new nixl_meta_dlist_t (
-                                                remote.getType(),
-                                                remote.isSorted());
+            req->dlMatrix[lidx][ridx].rdescs = new nixl_meta_dlist_t(remote.getType());
         }
 
         nixlMetaDesc ldesc = local[i];

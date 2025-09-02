@@ -170,8 +170,7 @@ class nixlAgent {
          *           - For loopback descriptors, it is set to local agent's name, indicating that
          *             this is for a loopback (local) transfer to be uued for remote_side handle
          *         If a list of backends hints is provided (via extra_params), the preparation
-         *         is limited to the specified backends. If `descs` has the sorted flag, that
-         *         enables an optimization to speed up the preparation process.
+         *         is limited to the specified backends.
          *
          * @param  agent_name       Agent name as a string for preparing xfer handle
          * @param  descs            The descriptor list to be prepared for transfer requests
@@ -226,8 +225,6 @@ class nixlAgent {
          *         pre-processing done in the preparation step. If a list of backends hints is
          *         provided (via extra_params), the selection is limited to the specified backends.
          *         Optionally, a notification message can also be provided through extra_params.
-         *         If `local_descs` or `remote_descs` have the sorted flag, that enables an
-         *         optimization to speed up the preparation process.
          *
          * @param  operation      Operation for transfer (e.g., NIXL_WRITE)
          * @param  local_descs    Local descriptor list
