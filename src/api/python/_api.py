@@ -612,6 +612,22 @@ class nixl_agent:
             return "ERR"
 
     """
+    @brief Get telemetry information of a transfer request.
+           The output object has three time values fields in microseconds
+           (startTime, postDuration, xferDuration), as well as integer totalBytes transferred
+           for the request, and integer descCount representing number of descriptors involved
+           (for example if there was some merging of descriptors).
+
+    @param handle Handle to the transfer operation, from make_prepped_xfer or initialize_xfer.
+    @return nixlXferTelemetry object
+    """
+
+    def get_xfer_telemetry(
+        self, handle: nixl_xfer_handle
+    ) -> nixlBind.nixlXferTelemetry:
+        return self.agent.getXferTelemetry(handle._handle)
+
+    """
     @brief Query the backend that was chosen for a transfer operation.
 
     @param handle Handle to the transfer operation.

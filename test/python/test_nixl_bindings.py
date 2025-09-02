@@ -60,6 +60,7 @@ def test_list():
 
 
 def test_agent():
+    os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
     name1 = "Agent1"
     name2 = "Agent2"
 
@@ -144,6 +145,15 @@ def test_agent():
     assert notifMap[name1][0] == noti_str.encode()
 
     logger.info("Transfer verified")
+
+    # Verify transfer telemetry
+    telem = agent1.getXferTelemetry(handle)
+    assert telem.descCount == 1
+    assert telem.totalBytes == req_size
+    assert telem.startTime > 0
+    assert telem.postDuration > 0
+    assert telem.xferDuration > 0
+    assert telem.xferDuration >= telem.postDuration
 
     agent1.releaseXferReq(handle)
 
