@@ -15,9 +15,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# pylint: disable=broad-exception-caught
+
 import os
 import sys
 import tempfile
+import traceback
 
 try:
     from nixl._api import nixl_agent, nixl_agent_config
@@ -33,7 +36,8 @@ except ImportError:
     logger.error("NIXL API missing install NIXL.")
     NIXL_AVAILABLE = False
 
-if __name__ == "__main__":
+
+def main():
     logger.info("NIXL queryMem Python API Example")
     logger.info("=" * 40)
 
@@ -118,8 +122,6 @@ if __name__ == "__main__":
 
     except Exception as e:
         logger.exception("Error in example: %s", e)
-        import traceback
-
         traceback.print_exc()
 
     finally:
@@ -129,3 +131,7 @@ if __name__ == "__main__":
             if os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
                 logger.info("Removed: %s", temp_file_path)
+
+
+if __name__ == "__main__":
+    main()
