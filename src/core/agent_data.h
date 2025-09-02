@@ -78,6 +78,9 @@ class nixlAgentData {
         std::unordered_map<nixl_backend_t, nixlBackendH*> backendHandles;
         std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
 
+        // Bookkeeping from GPU request handles to backend engines
+        std::unordered_map<nixlGpuXferReqH *, nixlBackendEngine *> gpuReqToEngine;
+
         // Local section, and Remote sections and their available common backends
         nixlLocalSection*                                        memorySection;
 
@@ -130,7 +133,6 @@ class nixlBackendH {
         bool supportsRemote () const { return engine->supportsRemote(); }
         bool supportsLocal  () const { return engine->supportsLocal (); }
         bool supportsNotif  () const { return engine->supportsNotif (); }
-        bool supportsProgTh () const { return engine->supportsProgTh(); }
 
     friend class nixlAgentData;
     friend class nixlAgent;

@@ -310,7 +310,6 @@ TEST_F(objTestFixture, EngineInitialization) {
     EXPECT_TRUE(objEngine_->supportsLocal());
     EXPECT_FALSE(objEngine_->supportsRemote());
     EXPECT_FALSE(objEngine_->supportsNotif());
-    EXPECT_FALSE(objEngine_->supportsProgTh());
 
     // Verify that the executor was properly set on the mock S3 client by the engine constructor
     EXPECT_TRUE(mockS3Client_->hasExecutor());
