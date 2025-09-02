@@ -179,7 +179,8 @@ public:
                    req_cb_t fini_cb,
                    bool prog_thread,
                    unsigned long num_workers,
-                   nixl_thread_sync_t sync_mode);
+                   nixl_thread_sync_t sync_mode,
+                   const std::string &engine_conf);
     ~nixlUcxContext();
 
     /* Memory management */
