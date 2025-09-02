@@ -1004,11 +1004,11 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
     ret = execTransfer(
         agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);
-
-    synchronize();
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
     }
+
+    synchronize();
     return std::variant<xferBenchStats, int>(stats);
 }
 

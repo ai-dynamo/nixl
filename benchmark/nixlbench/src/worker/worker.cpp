@@ -46,7 +46,14 @@ static xferBenchRT *createRT(int *terminate) {
 }
 
 int xferBenchWorker::synchronize() {
-    return rt->barrier("sync");
+    if (rt->barrier("sync") != 0) {
+        std::cerr << "Failed to synchronize" << std::endl;
+        // assuming this is a fatal error, continue benchmarking after synchronization failure does
+        // not make sense
+        exit(EXIT_FAILURE);
+    }
+
+    return 0;
 }
 
 xferBenchWorker::xferBenchWorker(int *argc, char ***argv) {

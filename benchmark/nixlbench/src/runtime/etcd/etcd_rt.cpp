@@ -412,6 +412,8 @@ int xferBenchEtcdRT::barrier(const std::string& barrier_id) {
         std::cerr << "Error in barrier " << e.what() << " " << barrier_key
             << " rank " << my_rank << " completed "
             << count << "/" << global_size << " ranks)" << std::endl;
+        // Clean up after failure, otherwise next runs may be affected
+        client->rmdir(barrier_key, true);
     }
 
     return -1;
