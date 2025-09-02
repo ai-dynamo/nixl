@@ -93,9 +93,23 @@ private:
     const size_t size;
 };
 
-class TestTransfer :
-    // Tuple fields are: backend_name, enable_progress_thread, num_workers, num_threads
-    public testing::TestWithParam<std::tuple<std::string, bool, size_t, size_t>> {
+struct nixl_test_param_t {
+    std::string backend_name;
+    bool progress_thread;
+    unsigned num_workers;
+    unsigned num_threads;
+    std::string engine_config;
+};
+
+#define NIXL_INSTANTIATE_TEST(                                                           \
+    _test_name, _backend, _progress_thread, _num_workers, __num_threads, _engine_config) \
+    INSTANTIATE_TEST_SUITE_P(                                                            \
+        _test_name,                                                                      \
+        TestTransfer,                                                                    \
+        testing::ValuesIn(std::vector<nixl_test_param_t>(                                \
+            {{_backend, _progress_thread, _num_workers, __num_threads, _engine_config}})));
+
+class TestTransfer : public testing::TestWithParam<nixl_test_param_t> {
 protected:
     nixlAgentConfig
     getConfig(int listen_port) {
@@ -123,6 +137,7 @@ protected:
             params["split_batch_size"] = "32";
         }
 
+        params["engine_config"] = GetParam().engine_config;
         return params;
     }
 
@@ -152,22 +167,22 @@ protected:
 
     std::string getBackendName() const
     {
-        return std::get<0>(GetParam());
+        return GetParam().backend_name;
     }
 
     bool
     isProgressThreadEnabled() const {
-        return std::get<1>(GetParam());
+        return GetParam().progress_thread;
     }
 
     size_t
     getNumWorkers() const {
-        return std::get<2>(GetParam());
+        return GetParam().num_workers;
     }
 
     size_t
     getNumThreads() const {
-        return std::get<3>(GetParam());
+        return GetParam().num_threads;
     }
 
     nixl_opt_args_t
@@ -528,18 +543,10 @@ TEST_P(TestTransfer, ListenerCommSize) {
     deregisterMem(getAgent(1), buffers, DRAM_SEG);
 }
 
-INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values(std::make_tuple("UCX", true, 2, 0)));
-INSTANTIATE_TEST_SUITE_P(ucx_no_pt,
-                         TestTransfer,
-                         testing::Values(std::make_tuple("UCX", false, 2, 0)));
-INSTANTIATE_TEST_SUITE_P(ucx_threadpool,
-                         TestTransfer,
-                         testing::Values(std::make_tuple("UCX", true, 6, 4)));
-INSTANTIATE_TEST_SUITE_P(ucx_threadpool_no_pt,
-                         TestTransfer,
-                         testing::Values(std::make_tuple("UCX", false, 6, 4)));
-INSTANTIATE_TEST_SUITE_P(ucx_mo,
-                         TestTransfer,
-                         testing::Values(std::make_tuple("UCX_MO", true, 2, 0)));
+NIXL_INSTANTIATE_TEST(ucx, "UCX", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_no_pt, "UCX", false, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool, "UCX", true, 6, 4, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, "UCX", false, 6, 4, "");
+NIXL_INSTANTIATE_TEST(ucx_mo, "UCX_MO", true, 2, 0, "");
 
 } // namespace gtest

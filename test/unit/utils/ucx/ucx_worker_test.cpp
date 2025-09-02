@@ -91,14 +91,16 @@ int main()
                             nullptr,
                             false,
                             1,
-                            nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
+                            nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE,
+                            ""},
                            {devs,
                             sizeof(requestData),
                             nixlUcxRequestInit,
                             nullptr,
                             false,
                             1,
-                            nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
+                            nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE,
+                            ""}};
 
     nixlUcxWorker w[2] = {
         nixlUcxWorker(c[0]),
