@@ -15,6 +15,7 @@
 
 import os
 import pickle
+import pytest
 import tempfile
 
 import nixl._bindings as nixl
@@ -251,3 +252,12 @@ def test_query_mem():
             os.unlink(temp_file1.name)
         if os.path.exists(temp_file2.name):
             os.unlink(temp_file2.name)
+
+
+@pytest.mark.parametrize(
+    "plugin", ["UCX", "UCX_MO", "GDS", "GDS_MT", "GPUNETIO", "OBJ", "POSIX"]
+)
+def test_plugin_loads(plugin):
+    devices = nixl.nixlAgentConfig(False)
+    agent = nixl.nixlAgent("test_agent", devices)
+    agent.createBackend(plugin, {"bucket": "nixl-test-bucket"})

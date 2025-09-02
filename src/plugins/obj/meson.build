@@ -22,10 +22,12 @@ obj_sources = [
 ]
 
 aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
-if aws_s3.found()
+aws_core = dependency('aws-cpp-sdk-core', required: false, static: false)
+if aws_s3.found() and aws_core.found()
     # By default aws-cpp-sdk sets c++11 compile flag for the whole project
     partial_aws_s3 = aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
-    plugin_deps += [partial_aws_s3]
+    partial_aws_core = aws_core.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
+    plugin_deps += [partial_aws_s3, partial_aws_core]
 else
     subdir_done()
 endif
