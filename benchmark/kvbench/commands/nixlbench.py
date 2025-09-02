@@ -61,6 +61,20 @@ class NIXLBench:
         warmup_iter=100,
         worker_type="nixl",
         benchmark_group="default",
+        gds_mt_num_threads=1,
+        gpunetio_device_list="0",
+        hf3fs_iopool_size=64,
+        obj_access_key="",
+        obj_secret_key="",
+        obj_session_token="",
+        obj_bucket_name="",
+        obj_scheme="http",
+        obj_region="eu-central-1",
+        obj_use_virtual_addressing=False,
+        obj_endpoint_override="",
+        obj_req_checksum="supported",
+        # Additional nixlbench arguments
+        large_blk_iter_ftr=16,
     ):
         """
         Initialize a NIXLBench instance with benchmark configuration.
@@ -99,6 +113,19 @@ class NIXLBench:
             total_buffer_size (int, optional): Total buffer size. Defaults to 8589934592.
             warmup_iter (int, optional): Number of warmup iterations. Defaults to 100.
             worker_type (str, optional): Type of worker. Defaults to "nixl".
+            gds_mt_num_threads (int, optional): Number of threads for GDS_MT plugin. Defaults to 1.
+            gpunetio_device_list (str, optional): GPU device list for GPUNETIO plugin. Defaults to "0".
+            hf3fs_iopool_size (int, optional): IO pool size for HF3FS plugin. Defaults to 64.
+            obj_access_key (str, optional): Access key for OBJ/S3 plugin. Defaults to "".
+            obj_secret_key (str, optional): Secret key for OBJ/S3 plugin. Defaults to "".
+            obj_session_token (str, optional): Session token for OBJ/S3 plugin. Defaults to "".
+            obj_bucket_name (str, optional): Bucket name for OBJ/S3 plugin. Defaults to "".
+            obj_scheme (str, optional): HTTP scheme for OBJ/S3 plugin. Defaults to "http".
+            obj_region (str, optional): Region for OBJ/S3 plugin. Defaults to "eu-central-1".
+            obj_use_virtual_addressing (bool, optional): Use virtual addressing for OBJ/S3. Defaults to False.
+            obj_endpoint_override (str, optional): Endpoint override for OBJ/S3. Defaults to "".
+            obj_req_checksum (str, optional): Required checksum for OBJ/S3. Defaults to "supported".
+            large_blk_iter_ftr (int, optional): Factor to reduce iterations for large blocks. Defaults to 16.
         """
         self.model = model
         self.model_config = model_config
@@ -133,6 +160,19 @@ class NIXLBench:
         self.total_buffer_size = total_buffer_size
         self.warmup_iter = warmup_iter
         self.worker_type = worker_type
+        self.gds_mt_num_threads = gds_mt_num_threads
+        self.gpunetio_device_list = gpunetio_device_list
+        self.hf3fs_iopool_size = hf3fs_iopool_size
+        self.obj_access_key = obj_access_key
+        self.obj_secret_key = obj_secret_key
+        self.obj_session_token = obj_session_token
+        self.obj_bucket_name = obj_bucket_name
+        self.obj_scheme = obj_scheme
+        self.obj_region = obj_region
+        self.obj_use_virtual_addressing = obj_use_virtual_addressing
+        self.obj_endpoint_override = obj_endpoint_override
+        self.obj_req_checksum = obj_req_checksum
+        self.large_blk_iter_ftr = large_blk_iter_ftr
         self._override_defaults()
 
     def set_io_size(self, io_size: int):
@@ -140,18 +180,18 @@ class NIXLBench:
         self.max_block_size = io_size
 
     def _configure_gds(self, source: str, destination: str):
+        """Configure GDS and GDS_MT plugins (same logic for both)"""
         if source == "file":
-            # this is a READ from GDS to GPU
             self.op_type = "READ"
             self.target_seg_type = "VRAM"
         elif source == "gpu":
-            # this is a WRITE from GPU to GDS
             self.op_type = "WRITE"
-            self.target_seg_type = "VRAM"
+            self.target_seg_type = "FILE"
         else:
-            raise ValueError(f"Invalid source for GDS: {source}")
+            raise ValueError(f"Invalid source for GDS/GDS_MT: {source}")
 
     def _configure_posix(self, source: str, destination: str):
+        """Configure POSIX and HF3FS plugins (same logic for both)"""
         if source == "file":
             self.op_type = "READ"
             self.target_seg_type = "DRAM"
@@ -159,53 +199,51 @@ class NIXLBench:
             self.op_type = "WRITE"
             self.initiator_seg_type = "DRAM"
         else:
-            raise ValueError(f"Invalid source for POSIX: {source}")
+            raise ValueError(f"Invalid source for POSIX/HF3FS: {source}")
 
-    def _configure_ucx(self, source: str, destination: str):
+    def _configure_ucx(self, backend: str, source: str, destination: str):
+        """Configure UCX, UCX_MO, GPUNETIO, and Mooncake plugins (same logic for all)"""
         arg_to_seg_type = {
             "memory": "DRAM",
             "gpu": "VRAM",
         }
+
+        backend = backend.upper()
         try:
             self.initiator_seg_type = arg_to_seg_type[source]
         except KeyError:
             raise ValueError(
-                f"Invalid source for UCX: {source}, valid sources are: {arg_to_seg_type.keys()}"
+                f"Invalid source for {backend}: {source}, valid sources are: {arg_to_seg_type.keys()}"
             )
         try:
             self.target_seg_type = arg_to_seg_type[destination]
         except KeyError:
             raise ValueError(
-                f"Invalid destination for UCX: {destination}, valid destinations are: {arg_to_seg_type.keys()}"
+                f"Invalid destination for {backend}: {destination}, valid destinations are: {arg_to_seg_type.keys()}"
             )
 
+    def _configure_obj(self, source: str, destination: str):
+        """Configure OBJ plugin for object storage operations"""
+        if source == "memory":
+            self.target_seg_type = "OBJ"
+        elif destination == "memory":
+            self.initiator_seg_type = "OBJ"
+        else:
+            raise ValueError(f"Invalid source for OBJ: {source}")
+
     def configure_segment_type(self, backend: str, source: str, destination: str):
-        if backend.lower() == "gds":
+        backend_lower = backend.lower()
+
+        if backend_lower in ["gds", "gds_mt"]:
             self._configure_gds(source, destination)
-        elif backend.lower() == "posix":
+        elif backend_lower in ["posix", "hf3fs"]:
             self._configure_posix(source, destination)
-        elif backend.lower() == "ucx":
-            self._configure_ucx(source, destination)
+        elif backend_lower in ["ucx", "ucx_mo", "gpunetio", "mooncake"]:
+            self._configure_ucx(backend_lower, source, destination)
+        elif backend_lower == "obj":
+            self._configure_obj(source, destination)
         else:
             raise ValueError(f"Invalid backend: {backend}")
-
-        # if backend == "GDS" or backend == "POSIX":
-        #     if source == "file":
-        #         # this is a READ from GDS to GPU
-        #         self.op_type = "READ"
-        #         self.target_seg_type = "VRAM"
-        #     elif source == "gpu":
-        #         # this is a WRITE from GPU to GDS
-        #         self.op_type = "WRITE"
-        #         self.target_seg_type = "VRAM"
-
-        #     elif source == "memory":
-        #         # this is a WRITE from memory to GDS
-        #         self.op_type = "WRITE"
-        #         self.initiator_seg_type = "DRAM"
-        #         self.target_seg_type = "DRAM"
-        # else:
-        #     raise ValueError(f"Invalid backend: {backend}")
 
     def configure_scheme(self, scheme: str = "pairwise", direction: str = "isl"):
         """
@@ -280,6 +318,20 @@ class NIXLBench:
             "total_buffer_size": self.total_buffer_size,
             "warmup_iter": self.warmup_iter,
             "worker_type": self.worker_type,
+            "gds_mt_num_threads": self.gds_mt_num_threads,
+            "gpunetio_device_list": self.gpunetio_device_list,
+            "hf3fs_iopool_size": self.hf3fs_iopool_size,
+            "obj_access_key": self.obj_access_key,
+            "obj_secret_key": self.obj_secret_key,
+            "obj_session_token": self.obj_session_token,
+            "obj_bucket_name": self.obj_bucket_name,
+            "obj_scheme": self.obj_scheme,
+            "obj_region": self.obj_region,
+            "obj_use_virtual_addressing": self.obj_use_virtual_addressing,
+            "obj_endpoint_override": self.obj_endpoint_override,
+            "obj_req_checksum": self.obj_req_checksum,
+            # Additional nixlbench parameters
+            "large_blk_iter_ftr": self.large_blk_iter_ftr,
         }
 
     @staticmethod
@@ -325,6 +377,20 @@ class NIXLBench:
             "warmup_iter": 100,
             "worker_type": "nixl",
             "benchmark_group": "default",
+            "gds_mt_num_threads": 1,
+            "gpunetio_device_list": "0",
+            "hf3fs_iopool_size": 64,
+            "obj_access_key": "",
+            "obj_secret_key": "",
+            "obj_session_token": "",
+            "obj_bucket_name": "",
+            "obj_scheme": "http",
+            "obj_region": "eu-central-1",
+            "obj_use_virtual_addressing": False,
+            "obj_endpoint_override": "",
+            "obj_req_checksum": "supported",
+            # Additional nixlbench defaults
+            "large_blk_iter_ftr": 16,
         }
 
     def plan(self, format: str = "text"):
