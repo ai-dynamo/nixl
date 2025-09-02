@@ -1232,3 +1232,122 @@ fn test_make_xfer_req_invalid_indices() {
         assert!(result.is_err_and(|e| matches!(e, NixlError::BackendError)), "Expected InvalidParam for out-of-bounds indices");
     }
 }
+
+// Tests for get_local_partial_md API
+#[test]
+fn test_get_local_partial_md_success() {
+    let (agent, opt_args) = create_agent_with_backend("test_agent")
+        .expect("Failed to setup agent with backend");
+    let _storage_list = create_storage_list(&agent, &opt_args, 10);
+    // Create a registration descriptor list
+    let mut reg_descs = RegDescList::new(MemType::Dram)
+        .expect("Failed to create registration descriptor list");
+    reg_descs.add_desc(0x1000, 0x100, 0)
+        .expect("Failed to add descriptor");
+    // Get local partial metadata
+    let result = agent.get_local_partial_md(&reg_descs, Some(&opt_args));
+    // Should succeed and return metadata
+    match result {
+        Ok(metadata) => {
+            assert!(!metadata.is_empty(), "Metadata should not be empty");
+            println!("Partial metadata size: {}", metadata.len());
+        }
+        Err(e) => {
+            // May fail if no partial metadata exists yet, which is acceptable
+            assert!(
+                matches!(e, NixlError::BackendError) || matches!(e, NixlError::InvalidParam),
+                "Expected BackendError or InvalidParam, got: {:?}", e
+            );
+        }
+    }
+}
+
+#[test]
+fn test_get_local_partial_md_empty_descs() {
+    let (agent, _) = create_agent_with_backend("test_agent")
+        .expect("Failed to setup agent with backend");
+    // Create empty registration descriptor list
+    let reg_descs = RegDescList::new(MemType::Dram)
+        .expect("Failed to create registration descriptor list");
+    // Try with empty descriptor list should succeed and return all available backends
+    let result = agent.get_local_partial_md(&reg_descs, None);
+    assert!(
+        result.is_ok(),
+        "get_local_partial_md should succeed with empty descriptor list"
+    );
+}
+
+// Tests for send_local_partial_md API
+#[test]
+fn test_send_local_partial_md_success() {
+    let (agent, opt_args) = create_agent_with_backend("test_agent")
+        .expect("Failed to setup agent with backend");
+    let (agent2, opt_args2) = create_agent_with_backend("test_agent2")
+        .expect("Failed to setup agent with backend");
+    let _storage_list = create_storage_list(&agent, &opt_args, 10);
+    let _remote_storage_list = create_storage_list(&agent2, &opt_args2, 10);
+
+    // Create a registration descriptor list
+    let mut reg_descs = RegDescList::new(MemType::Dram)
+        .expect("Failed to create registration descriptor list");
+    reg_descs.add_storage_desc(&_storage_list[0]).expect("Failed to add storage descriptor");
+
+    // Send local partial metadata
+    let mut opt_args_temp = OptArgs::new().expect("Failed to create opt args");
+    opt_args_temp.set_ip_addr("127.0.0.1").expect("Failed to set ip address");
+    let result = agent.send_local_partial_md(&reg_descs, Some(&opt_args_temp));
+
+    assert!(
+        result.is_ok(),
+        "send_local_partial_md should succeed"
+    );
+}
+
+// Tests for query_xfer_backend API
+#[test]
+fn test_query_xfer_backend_success() {
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+    // Create descriptor lists
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+        // Create transfer request
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "agent2",
+            None
+        ).expect("Failed to create transfer request");
+        // Query which backend will be used for this transfer
+        let result: Result<Backend, NixlError> = agent1.query_xfer_backend(&xfer_req);
+        assert!(result.is_ok(), "query_xfer_backend failed with error: {:?}", result.err());
+        let backend = result.unwrap();
+        println!("Transfer will use backend: {:?}", backend);
+   }
+}
+#[test]
+fn test_query_xfer_backend_invalid_request() {
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+    // Create descriptor lists
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+        // Create transfer request with non-existent remote agent (should fail or succeed)
+        let xfer_req_result = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "non_existent_agent",
+            None
+        );
+        assert!(xfer_req_result.is_err(), "Transfer request creation should fail for non-existent agent");
+ }
+}
