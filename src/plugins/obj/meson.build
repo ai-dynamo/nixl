@@ -29,6 +29,7 @@ if aws_s3.found() and aws_core.found()
     partial_aws_core = aws_core.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
     plugin_deps += [partial_aws_s3, partial_aws_core]
 else
+    warning('AWS SDK dependencies not found, skipping OBJ plugin build')
     subdir_done()
 endif
 plugin_deps += [dependency('asio', required: true)]
