@@ -44,10 +44,12 @@ Telemetry is controlled by environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `NIXL_TELEMETRY_ENABLE` | Enable telemetry collection | Disabled |
-| `NIXL_TELEMETRY_DIR` | Directory for telemetry files | `/tmp` |
+| `NIXL_TELEMETRY_DIR` | Directory for telemetry files | - |
 | `NIXL_TELEMETRY_BUFFER_SIZE` | Number of events in buffer | `4096` |
 | `NIXL_TELEMETRY_RUN_INTERVAL` | Flush interval (ms) | `100` |
 
+- NIXL_TELEMETRY_ENABLE can be set to y/yes/on/1 to be enabled, and n/no/off/0 (or not set) to be disabled,
+- If NIXL_TELEMETRY_ENABLE is set to enabled but NIXL_TELEMETRY_DIR is not set, no telemetry file is generated and NIXL_TELEMETRY_RUN_INTERVAL is not used.
 
 ## Telemetry File Format
 
