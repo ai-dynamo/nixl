@@ -1119,7 +1119,6 @@ fn test_prep_xfer_dlist_success() {
 
     // 2. Create memory regions and register them
     let mut storage_list = create_storage_list(&local_agent, &opt_args, DLIST_SIZE);
-    let _remote_storage_list = create_storage_list(&remote_agent, &opt_args_remote, DLIST_SIZE);
 
     {
         // 3. Create transfer descriptor list
@@ -1241,7 +1240,7 @@ fn test_get_local_partial_md_success() {
         .expect("Failed to setup agent with backend");
     let _storage_list = create_storage_list(&agent, &opt_args, 10);
     // Create a registration descriptor list
-    let mut reg_descs = RegDescList::new(MemType::Dram, false)
+    let mut reg_descs = RegDescList::new(MemType::Dram)
         .expect("Failed to create registration descriptor list");
     reg_descs.add_desc(0x1000, 0x100, 0)
         .expect("Failed to add descriptor");
@@ -1268,7 +1267,7 @@ fn test_get_local_partial_md_empty_descs() {
     let (agent, _) = create_agent_with_backend("test_agent")
         .expect("Failed to setup agent with backend");
     // Create empty registration descriptor list
-    let reg_descs = RegDescList::new(MemType::Dram, false)
+    let reg_descs = RegDescList::new(MemType::Dram)
         .expect("Failed to create registration descriptor list");
     // Try with empty descriptor list should succeed and return all available backends
     let result = agent.get_local_partial_md(&reg_descs, None);
@@ -1289,7 +1288,7 @@ fn test_send_local_partial_md_success() {
     let _remote_storage_list = create_storage_list(&agent2, &opt_args2, 10);
 
     // Create a registration descriptor list
-    let mut reg_descs = RegDescList::new(MemType::Dram, false)
+    let mut reg_descs = RegDescList::new(MemType::Dram)
         .expect("Failed to create registration descriptor list");
     reg_descs.add_storage_desc(&_storage_list[0]).expect("Failed to add storage descriptor");
 
