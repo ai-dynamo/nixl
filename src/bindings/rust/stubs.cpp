@@ -276,9 +276,8 @@ nixl_capi_get_backend_params(
 
 // Transfer descriptor list functions
 nixl_capi_status_t
-nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t* dlist, bool sorted)
-{
-  return nixl_capi_stub_abort();
+nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t *dlist) {
+    return nixl_capi_stub_abort();
 }
 
 nixl_capi_status_t
@@ -313,9 +312,8 @@ nixl_capi_xfer_dlist_resize(nixl_capi_xfer_dlist_t dlist, size_t new_size)
 
 // Registration descriptor list functions
 nixl_capi_status_t
-nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist, bool sorted)
-{
-  return nixl_capi_stub_abort();
+nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t *dlist) {
+    return nixl_capi_stub_abort();
 }
 
 nixl_capi_status_t

@@ -146,13 +146,9 @@ void nixlBlobDesc::print(const std::string &suffix) const {
 // The template is used to select from nixlBasicDesc/nixlMetaDesc/nixlBlobDesc
 // There are no virtual functions, so the object is all data, no pointers.
 
-template <class T>
-nixlDescList<T>::nixlDescList (const nixl_mem_t &type,
-                               const bool &sorted,
-                               const int &init_size) {
+template<class T> nixlDescList<T>::nixlDescList(const nixl_mem_t &type, const int &init_size) {
     static_assert (std::is_base_of<nixlBasicDesc, T>::value);
-    this->type        = type;
-    this->sorted      = sorted;
+    this->type = type;
     this->descs.resize(init_size);
 }
 
@@ -173,8 +169,7 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
 
     if (deserializer->getBuf("t", &type, sizeof(type)))
         return;
-    if (deserializer->getBuf("s", &sorted, sizeof(sorted)))
-        return;
+
     if (deserializer->getBuf("n", &n_desc, sizeof(n_desc)))
         return;
 
@@ -220,25 +215,13 @@ inline const T& nixlDescList<T>::operator[](unsigned int index) const {
 // Setter
 template <class T>
 inline T& nixlDescList<T>::operator[](unsigned int index) {
-    // To be added only in debug mode
-    // if (index >= descs.size())
-    //     throw std::out_of_range("Index is out of range");
-    // sorted = false;
+    assert(index < descs.size());
     return descs[index];
 }
 
 template <class T>
 void nixlDescList<T>::addDesc (const T &desc) {
-    if (!sorted) {
-        descs.push_back(desc);
-    } else {
-        // Since vector is kept soted, we can use upper_bound
-        auto itr = std::upper_bound(descs.begin(), descs.end(), desc);
-        if (itr == descs.end())
-            descs.push_back(desc);
-        else
-            descs.insert(itr, desc);
-    }
+    descs.push_back(desc);
 }
 
 template <class T>
@@ -248,35 +231,10 @@ void nixlDescList<T>::remDesc (const int &index){
     descs.erase(descs.begin() + index);
 }
 
-template <class T>
-void nixlDescList<T>::resize (const size_t &count) {
-    // To be added only in debug mode
-    // if (count > descs.size())
-    //     sorted = false;
+template<class T>
+void
+nixlDescList<T>::resize(const size_t &count) {
     descs.resize(count);
-}
-
-template <class T>
-bool nixlDescList<T>::verifySorted() {
-    int size = (int) descs.size();
-    if (size==0) {
-        return false;
-    } else if (size == 1) {
-        sorted = true;
-        return true;
-    }
-
-    for (int i=0; i<size-1; ++i) {
-        if (descs[i+1] < descs[i]) {
-            if (sorted) {
-                NIXL_WARN << "Descs are not sorted although sorted=True was passed, this may affect performance";
-            }
-            sorted = false;
-            return false;
-        }
-    }
-    sorted = true;
-    return true;
 }
 
 template <class T>
@@ -285,7 +243,7 @@ nixlDescList<nixlBasicDesc> nixlDescList<T>::trim() const {
     if constexpr (std::is_same<nixlBasicDesc, T>::value) {
         return *this;
     } else {
-        nixlDescList<nixlBasicDesc> trimmed(type, sorted);
+        nixlDescList<nixlBasicDesc> trimmed(type);
         nixlBasicDesc* p;
 
         for (auto & elm: descs) {
@@ -300,20 +258,9 @@ nixlDescList<nixlBasicDesc> nixlDescList<T>::trim() const {
 
 template <class T>
 int nixlDescList<T>::getIndex(const nixlBasicDesc &query) const {
-    if (!sorted) {
-        auto itr = std::find(descs.begin(), descs.end(), query);
-        if (itr == descs.end())
-            return NIXL_ERR_NOT_FOUND; // not found
-        return itr - descs.begin();
-    } else {
-        auto itr = std::lower_bound(descs.begin(), descs.end(), query);
-        if (itr == descs.end())
-            return NIXL_ERR_NOT_FOUND; // not found
-        // As desired, becomes nixlBasicDesc on both sides
-        if (*itr == query)
-            return itr - descs.begin();
-    }
-    return NIXL_ERR_NOT_FOUND;
+    auto itr = std::find(descs.begin(), descs.end(), query);
+    if (itr == descs.end()) return NIXL_ERR_NOT_FOUND; // not found
+    return itr - descs.begin();
 }
 
 template <class T>
@@ -341,9 +288,6 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     ret = serializer->addBuf("t", &type, sizeof(type));
     if (ret) return ret;
 
-    ret = serializer->addBuf("s", &sorted, sizeof(sorted));
-    if (ret) return ret;
-
     ret = serializer->addBuf("n", &(n_desc), sizeof(n_desc));
     if (ret) return ret;
 
@@ -369,8 +313,7 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
 
 template <class T>
 void nixlDescList<T>::print() const {
-    std::cout << "DescList of mem type " << type << " "
-              << (sorted ? "sorted" : "unsorted") << std::endl;
+    std::cout << "DescList of mem type " << type << std::endl;
     for (auto & elm : descs) {
         elm.print("");
     }
@@ -378,10 +321,7 @@ void nixlDescList<T>::print() const {
 
 template <class T>
 bool operator==(const nixlDescList<T> &lhs, const nixlDescList<T> &rhs) {
-    if ((lhs.getType()       != rhs.getType())       ||
-        (lhs.descCount()     != rhs.descCount())     ||
-        (lhs.isSorted()      != rhs.isSorted()))
-        return false;
+    if ((lhs.getType() != rhs.getType()) || (lhs.descCount() != rhs.descCount())) return false;
 
     for (size_t i=0; i<lhs.descs.size(); ++i)
         if (lhs.descs[i] != rhs.descs[i])
@@ -403,3 +343,62 @@ template bool operator==<nixlBlobDesc>(const nixlDescList<nixlBlobDesc> &lhs,
                                        const nixlDescList<nixlBlobDesc> &rhs);
 template bool operator==<nixlSectionDesc>(const nixlDescList<nixlSectionDesc> &lhs,
                                           const nixlDescList<nixlSectionDesc> &rhs);
+
+// nixlSecDescList keeps the elements sorted
+void
+nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
+    auto &vec = this->descs;
+    auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
+    if (itr == vec.end())
+        vec.push_back(desc);
+    else
+        vec.insert(itr, desc);
+}
+
+bool
+nixlSecDescList::verifySorted() const {
+    const auto &vec = this->descs;
+    int size = (int)vec.size();
+    if (size <= 1) return (size == 1);
+    for (int i = 0; i < size - 1; ++i) {
+        if (vec[i + 1] < vec[i]) return false;
+    }
+    return true;
+}
+
+nixlSectionDesc &
+nixlSecDescList::operator[](unsigned int index) {
+    nixlSectionDesc &ref = this->descs[index];
+    assert(verifySorted());
+    return ref;
+}
+
+int
+nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
+    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
+    if (itr == this->descs.end()) return NIXL_ERR_NOT_FOUND;
+    if (static_cast<const nixlBasicDesc &>(*itr) == query)
+        return static_cast<int>(itr - this->descs.begin());
+    return NIXL_ERR_NOT_FOUND;
+}
+
+int
+nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
+    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
+    if (itr != this->descs.end() && itr->covers(query))
+        return static_cast<int>(itr - this->descs.begin());
+    // If query and element don't have the same start address, try previous entry
+    if (itr != this->descs.begin()) {
+        auto prev_itr = std::prev(itr, 1);
+        if (prev_itr->covers(query)) return static_cast<int>(prev_itr - this->descs.begin());
+    }
+    return -1;
+}
+
+void
+nixlSecDescList::resize(const size_t &count) {
+    if (count > this->descs.size())
+        throw std::logic_error(
+            "nixlSecDescList: to keep list sorted, resize growth is not allowed.");
+    this->descs.resize(count);
+}
