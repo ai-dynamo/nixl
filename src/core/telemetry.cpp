@@ -132,28 +132,13 @@ nixlTelemetry::registerPeriodicTask(periodicTask &task) {
     task.timer_.expires_after(task.interval_);
     task.timer_.async_wait([this, &task](const asio::error_code &ec) {
         if (ec != asio::error::operation_aborted) {
-            // Check if the task is enabled before executing
+
+            task.callback_();
+
             if (!task.enabled_) {
                 return;
             }
 
-            auto start_time = std::chrono::steady_clock::now();
-
-            if (task.callback_) task.callback_();
-
-            auto end_time = std::chrono::steady_clock::now();
-            auto execution_time =
-                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-            if (!task.enabled_) {
-                return;
-            }
-
-            // Schedule next execution with adjusted interval
-            auto next_interval = std::chrono::milliseconds(task.interval_) - execution_time;
-            if (next_interval.count() < 0) {
-                next_interval = std::chrono::milliseconds(0);
-            }
-            task.interval_ = next_interval;
             registerPeriodicTask(task);
         }
     });
