@@ -139,8 +139,10 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade meson pybind11 patchelf pyYAML click tabulate && \
-    uv pip install torch --index-url https://download.pytorch.org/whl/cu129
+    uv pip install --upgrade meson pybind11 patchelf pyYAML click tabulate
+
+RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
+    uv pip install torch --index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION
 
 RUN rm -rf build && \
     mkdir build && \
