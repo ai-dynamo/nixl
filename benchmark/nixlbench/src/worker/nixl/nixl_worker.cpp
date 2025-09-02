@@ -986,16 +986,15 @@ xferBenchNixlWorker::transfer(size_t block_size,
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
         skip /= xferBenchConfig::large_blk_iter_ftr;
-        if (skip < MIN_WARMUP_ITERS) {
-            skip = MIN_WARMUP_ITERS;
-        }
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
-    ret = execTransfer(
-        agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats);
-    if (ret < 0) {
-        return std::variant<xferBenchStats, int>(ret);
+    if (skip > 0) {
+        ret = execTransfer(
+            agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats);
+        if (ret < 0) {
+            return std::variant<xferBenchStats, int>(ret);
+        }
     }
 
     // Synchronize to ensure all processes have completed the warmup (iter and polling)
@@ -1024,9 +1023,6 @@ xferBenchNixlWorker::poll(size_t block_size) {
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
         skip /= xferBenchConfig::large_blk_iter_ftr;
-        if (skip < MIN_WARMUP_ITERS) {
-            skip = MIN_WARMUP_ITERS;
-        }
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
     total_iter = skip + num_iter;

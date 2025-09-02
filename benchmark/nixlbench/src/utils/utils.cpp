@@ -317,8 +317,8 @@ xferBenchConfig::loadFromFlags() {
         return -1;
     }
 
-    if (large_blk_iter_ftr == 0 || large_blk_iter_ftr > num_iter) {
-        std::cerr << "iter_factor must not be 0 and must be lower than num_iter" << std::endl;
+    if (large_blk_iter_ftr <= 0) {
+        std::cerr << "iter_factor must be greater than 0" << std::endl;
         return -1;
     }
 
