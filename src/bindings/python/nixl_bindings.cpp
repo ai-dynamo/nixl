@@ -18,6 +18,7 @@
 #include <pybind11/stl.h>
 #include <pybind11/operators.h>
 #include <pybind11/numpy.h>
+#include <pybind11/chrono.h>
 
 #include <tuple>
 #include <iostream>
@@ -64,14 +65,29 @@ public:
     nixlRepostActiveError(const char *what) : runtime_error(what) {}
 };
 
+class nixlUnknownError : public std::runtime_error {
+public:
+    nixlUnknownError(const char *what) : runtime_error(what) {}
+};
+
 class nixlNotSupportedError : public std::runtime_error {
 public:
     nixlNotSupportedError(const char *what) : runtime_error(what) {}
 };
 
-class nixlUnknownError : public std::runtime_error {
+class nixlRemoteDisconnectError : public std::runtime_error {
 public:
-    nixlUnknownError(const char *what) : runtime_error(what) {}
+    nixlRemoteDisconnectError(const char *what) : runtime_error(what) {}
+};
+
+class nixlCancelledError : public std::runtime_error {
+public:
+    nixlCancelledError(const char *what) : runtime_error(what) {}
+};
+
+class nixlNoTelemetryError : public std::runtime_error {
+public:
+    nixlNoTelemetryError(const char *what) : runtime_error(what) {}
 };
 
 void
@@ -107,6 +123,15 @@ throw_nixl_exception(const nixl_status_t &status) {
         break;
     case NIXL_ERR_NOT_SUPPORTED:
         throw nixlNotSupportedError(nixlEnumStrings::statusStr(status).c_str());
+        break;
+    case NIXL_ERR_REMOTE_DISCONNECT:
+        throw nixlRemoteDisconnectError(nixlEnumStrings::statusStr(status).c_str());
+        break;
+    case NIXL_ERR_CANCELED:
+        throw nixlCancelledError(nixlEnumStrings::statusStr(status).c_str());
+        break;
+    case NIXL_ERR_NO_TELEMETRY:
+        throw nixlNoTelemetryError(nixlEnumStrings::statusStr(status).c_str());
         break;
     default:
         throw std::runtime_error("BAD_STATUS");
@@ -161,6 +186,22 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_ERR_NOT_SUPPORTED", NIXL_ERR_NOT_SUPPORTED)
         .export_values();
 
+    py::class_<nixl_xfer_telem_t>(m, "nixlXferTelemetry")
+        .def(py::init<>())
+        .def_property_readonly("startTime",
+                               [](const nixl_xfer_telem_t &t) {
+                                   return std::chrono::duration_cast<chrono_period_us_t>(
+                                              t.startTime.time_since_epoch())
+                                       .count();
+                               })
+        .def_property_readonly("postDuration",
+                               [](const nixl_xfer_telem_t &t) { return t.postDuration.count(); })
+        .def_property_readonly("xferDuration",
+                               [](const nixl_xfer_telem_t &t) { return t.xferDuration.count(); })
+        .def_readonly("totalBytes", &nixl_xfer_telem_t::totalBytes)
+        .def_readonly("descCount", &nixl_xfer_telem_t::descCount);
+
+
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
     py::register_exception<nixlInvalidParamError>(m, "nixlInvalidParamError");
     py::register_exception<nixlBackendError>(m, "nixlBackendError");
@@ -170,13 +211,13 @@ PYBIND11_MODULE(_bindings, m) {
     py::register_exception<nixlRepostActiveError>(m, "nixlRepostActiveError");
     py::register_exception<nixlUnknownError>(m, "nixlUnknownError");
     py::register_exception<nixlNotSupportedError>(m, "nixlNotSupportedError");
+    py::register_exception<nixlRemoteDisconnectError>(m, "nixlRemoteDisconnectError");
+    py::register_exception<nixlCancelledError>(m, "nixlCancelledError");
+    py::register_exception<nixlNoTelemetryError>(m, "nixlNoTelemetryError");
 
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
-        .def(py::init<nixl_mem_t, bool, int>(),
-             py::arg("type"),
-             py::arg("sorted") = false,
-             py::arg("init_size") = 0)
-        .def(py::init([](nixl_mem_t mem, py::array descs, bool sorted) {
+        .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
+        .def(py::init([](nixl_mem_t mem, py::array descs) {
                  static_assert(sizeof(nixlBasicDesc) == 3 * sizeof(uint64_t),
                                "nixlBasicDesc size mismatch");
                  // Check array shape and dtype
@@ -190,20 +231,17 @@ PYBIND11_MODULE(_bindings, m) {
                      throw std::invalid_argument("descs must be a C-contiguous numpy array");
                  }
                  size_t n = descs.shape(0);
-                 nixl_xfer_dlist_t new_list(mem, sorted, n);
+                 nixl_xfer_dlist_t new_list(mem, n);
                  // We assume that the Nx3 array matches the nixlBasicDesc layout so we can simply
                  // memcpy
                  std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
 
-                 new_list.verifySorted();
-
                  return new_list;
              }),
              py::arg("type"),
-             py::arg("descs").noconvert(),
-             py::arg("sorted") = false)
-        .def(py::init([](nixl_mem_t mem, py::list descs, bool sorted) {
-                 nixl_xfer_dlist_t new_list(mem, sorted, descs.size());
+             py::arg("descs").noconvert())
+        .def(py::init([](nixl_mem_t mem, py::list descs) {
+                 nixl_xfer_dlist_t new_list(mem, descs.size());
                  for (size_t i = 0; i < descs.size(); i++) {
                      if (!py::isinstance<py::tuple>(descs[i])) {
                          throw py::type_error(
@@ -219,17 +257,13 @@ PYBIND11_MODULE(_bindings, m) {
                                                  desc[2].cast<uint64_t>());
                  }
 
-                 new_list.verifySorted();
-
                  return new_list;
              }),
              py::arg("type"),
-             py::arg("descs").noconvert(),
-             py::arg("sorted") = false)
+             py::arg("descs").noconvert())
         .def("getType", &nixl_xfer_dlist_t::getType)
         .def("descCount", &nixl_xfer_dlist_t::descCount)
         .def("isEmpty", &nixl_xfer_dlist_t::isEmpty)
-        .def("isSorted", &nixl_xfer_dlist_t::isSorted)
         .def(py::self == py::self)
         .def("__getitem__",
              [](nixl_xfer_dlist_t &list, unsigned int i) -> py::tuple {
@@ -259,7 +293,6 @@ PYBIND11_MODULE(_bindings, m) {
                  return (int)ret;
              })
         .def("remDesc", &nixl_xfer_dlist_t::remDesc)
-        .def("verifySorted", &nixl_xfer_dlist_t::verifySorted)
         .def("clear", &nixl_xfer_dlist_t::clear)
         .def("print", &nixl_xfer_dlist_t::print)
         .def(py::pickle(
@@ -276,11 +309,8 @@ PYBIND11_MODULE(_bindings, m) {
             }));
 
     py::class_<nixl_reg_dlist_t>(m, "nixlRegDList")
-        .def(py::init<nixl_mem_t, bool, int>(),
-             py::arg("type"),
-             py::arg("sorted") = false,
-             py::arg("init_size") = 0)
-        .def(py::init([](nixl_mem_t mem, py::array descs, bool sorted) {
+        .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
+        .def(py::init([](nixl_mem_t mem, py::array descs) {
             if (descs.ndim() != 2 || descs.shape(1) != 3)
                 throw std::invalid_argument("descs must be a Nx3 numpy array");
             if (!py::dtype::of<uint64_t>().equal(descs.dtype()) &&
@@ -290,7 +320,7 @@ PYBIND11_MODULE(_bindings, m) {
                 throw std::invalid_argument("descs must be a C-contiguous numpy array");
             }
             size_t n = descs.shape(0);
-            nixl_reg_dlist_t new_list(mem, sorted, n);
+            nixl_reg_dlist_t new_list(mem, n);
             if (py::dtype::of<uint64_t>().equal(descs.dtype())) {
                 auto buffer = descs.unchecked<uint64_t, 2>();
                 for (size_t i = 0; i < n; i++) {
@@ -303,12 +333,10 @@ PYBIND11_MODULE(_bindings, m) {
                 }
             }
 
-            new_list.verifySorted();
-
             return new_list;
         }))
-        .def(py::init([](nixl_mem_t mem, py::list descs, bool sorted) {
-                 nixl_reg_dlist_t new_list(mem, sorted, descs.size());
+        .def(py::init([](nixl_mem_t mem, py::list descs) {
+                 nixl_reg_dlist_t new_list(mem, descs.size());
                  for (size_t i = 0; i < descs.size(); i++) {
                      if (!py::isinstance<py::tuple>(descs[i])) {
                          throw py::type_error(
@@ -324,17 +352,14 @@ PYBIND11_MODULE(_bindings, m) {
                                                 desc[2].cast<uint64_t>(),
                                                 desc[3].cast<std::string>());
                  }
-                 new_list.verifySorted();
 
                  return new_list;
              }),
              py::arg("type"),
-             py::arg("descs"),
-             py::arg("sorted") = false)
+             py::arg("descs"))
         .def("getType", &nixl_reg_dlist_t::getType)
         .def("descCount", &nixl_reg_dlist_t::descCount)
         .def("isEmpty", &nixl_reg_dlist_t::isEmpty)
-        .def("isSorted", &nixl_reg_dlist_t::isSorted)
         .def(py::self == py::self)
         .def("__getitem__",
              [](nixl_reg_dlist_t &list, unsigned int i) -> py::tuple {
@@ -373,7 +398,6 @@ PYBIND11_MODULE(_bindings, m) {
              })
         .def("trim", &nixl_reg_dlist_t::trim)
         .def("remDesc", &nixl_reg_dlist_t::remDesc)
-        .def("verifySorted", &nixl_reg_dlist_t::verifySorted)
         .def("clear", &nixl_reg_dlist_t::clear)
         .def("print", &nixl_reg_dlist_t::print)
         .def(py::pickle(
@@ -652,6 +676,15 @@ PYBIND11_MODULE(_bindings, m) {
                  throw_nixl_exception(ret);
                  return ret;
              })
+        .def(
+            "getXferTelemetry",
+            [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_telem_t {
+                nixl_xfer_telem_t telemetry;
+                nixl_status_t ret = agent.getXferTelemetry((nixlXferReqH *)reqh, telemetry);
+                throw_nixl_exception(ret);
+                return telemetry;
+            },
+            py::arg("reqh"))
         .def("queryXferBackend",
              [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {
                  nixlBackendH *backend = nullptr;

@@ -195,14 +195,9 @@ public:
  */
 template<class T>
 class nixlDescList {
-private:
+protected:
     /** @var NIXL memory type */
     nixl_mem_t type;
-    /** @var Flag for if list should be kept sorted
-     *       Comparison is done based on nixlBasicDesc (<) operator which
-     *       has comparison order of devID, then addr, then len.
-     */
-    bool sorted;
     /** @var Vector for storing nixlDescs */
     std::vector<T> descs;
 
@@ -211,10 +206,10 @@ public:
      * @brief Parametrized Constructor for nixlDescList
      *
      * @param type         NIXL memory type of descriptor list
-     * @param sorted       Flag to set sorted option (default = false)
      * @param init_size    initial size for descriptor list (default = 0)
      */
-    nixlDescList(const nixl_mem_t &type, const bool &sorted = false, const int &init_size = 0);
+    nixlDescList(const nixl_mem_t &type, const int &init_size = 0);
+
     /**
      * @brief Deserializer constructor for nixlDescList from nixlSerDes object
      *        which serializes/deserializes our classes into/from blobs
@@ -222,6 +217,7 @@ public:
      * @param deserialize nixlSerDes object to construct nixlDescList
      */
     nixlDescList(nixlSerDes *deserializer);
+
     /**
      * @brief Copy constructor for creating nixlDescList from another object
      *        of the same type.
@@ -229,6 +225,7 @@ public:
      * @param d_list other nixlDescList object of the same type
      */
     nixlDescList(const nixlDescList<T> &d_list) = default;
+
     /**
      * @brief Operator = overloading constructor for nixlDescList
      *
@@ -236,10 +233,11 @@ public:
      */
     nixlDescList &
     operator=(const nixlDescList<T> &d_list) = default;
+
     /**
      * @brief nixlDescList Destructor
      */
-    ~nixlDescList() = default;
+    virtual ~nixlDescList() = default;
 
     /**
      * @brief      Get NIXL memory type for this DescList
@@ -247,14 +245,6 @@ public:
     inline nixl_mem_t
     getType() const {
         return type;
-    }
-
-    /**
-     * @brief get sorted flag
-     */
-    inline bool
-    isSorted() const {
-        return sorted;
     }
 
     /**
@@ -279,7 +269,7 @@ public:
      */
     const T &
     operator[](unsigned int index) const;
-    T &
+    virtual T &
     operator[](unsigned int index);
 
     /**
@@ -304,6 +294,7 @@ public:
     end() {
         return descs.end();
     }
+
     /**
      * @brief Operator overloading (==) to compare nixlDescList objects
      *
@@ -314,20 +305,14 @@ public:
     template<class Y>
     friend bool
     operator==(const nixlDescList<Y> &lhs, const nixlDescList<Y> &rhs);
+
     /**
-     * @brief Resize nixlDescList object. If new size is more than the
-     *        original size, the sorted status will be negated if set.
+     * @brief Resize nixlDescList object.
      *
      * @param count Number of elements after resizing DescList object
      */
-    void
+    virtual void
     resize(const size_t &count);
-    /**
-     * @brief Verify if a nixlDescList is sorted, for instance after using
-     *        resize and adding new elements. If true, the sorted flag is set.
-     */
-    bool
-    verifySorted();
 
     /**
      * @brief Empty the descriptors list
@@ -339,30 +324,33 @@ public:
 
     /**
      * @brief     Add Descriptors to descriptor list
-     *               If nixlDescList object is sorted, this method keeps it sorted
      */
-    void
+    virtual void
     addDesc(const T &desc);
+
     /**
      * @brief Remove descriptor from list at index
      *        Can throw std::out_of_range exception.
      */
     void
     remDesc(const int &index);
+
     /**
      * @brief Convert a nixlDescList with metadata by trimming it to a
      *        nixlDescList of nixlBasicDesc elements
      */
     nixlDescList<nixlBasicDesc>
     trim() const;
+
     /**
      * @brief  Get the index of a descriptor that matches the `query`
      *
      * @param  query nixlBasicDesc object to find among the object's descriptors
      * @return int   index of the queried nixlBasicDesc if found, or negative error value
      */
-    int
+    virtual int
     getIndex(const nixlBasicDesc &query) const;
+
     /**
      * @brief Serialize a descriptor list with nixlSerDes class
      * @param serializer nixlSerDes object to serialize nixlDescList
@@ -370,6 +358,7 @@ public:
      */
     nixl_status_t
     serialize(nixlSerDes *serializer) const;
+
     /**
      * @brief Print the descriptor list for debugging
      */

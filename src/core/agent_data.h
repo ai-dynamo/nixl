@@ -19,6 +19,7 @@
 
 #include "common/str_tools.h"
 #include "mem_section.h"
+#include "telemetry.h"
 #include "stream/metadata_stream.h"
 #include "sync.h"
 
@@ -32,8 +33,6 @@ class SyncClient;
 
 #define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"
 #endif // HAVE_ETCD
-
-class nixlTelemetry;
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
@@ -65,6 +64,7 @@ class nixlAgentData {
         std::string     name;
         nixlAgentConfig config;
         nixlLock        lock;
+        bool telemetryEnabled = false;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
@@ -114,6 +114,11 @@ class nixlAgentData {
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
         ~nixlAgentData();
+
+        inline void
+        addErrorTelemetry(nixl_status_t err_status) {
+            if (telemetry_) telemetry_->updateErrorCount(err_status);
+        }
 
     friend class nixlAgent;
 };
