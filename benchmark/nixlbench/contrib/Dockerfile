@@ -142,7 +142,7 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     uv pip install --upgrade meson pybind11 patchelf pyYAML click tabulate
 
 RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
-    uv pip install torch --index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION
+    uv pip install torch --index https://download.pytorch.org/whl/$CUDA_SHORT_VERSION
 
 RUN rm -rf build && \
     mkdir build && \
