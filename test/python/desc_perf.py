@@ -32,7 +32,7 @@ if __name__ == "__main__":
 
     start_time = time.perf_counter()
 
-    descs = agent.get_xfer_descs(addr_list, "DRAM", True)
+    descs = agent.get_xfer_descs(addr_list, "DRAM")
 
     end_time = time.perf_counter()
 

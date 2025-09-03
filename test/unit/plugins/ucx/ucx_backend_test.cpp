@@ -106,10 +106,8 @@ public:
     }
 };
 
-
-nixlBackendEngine *createEngine(std::string name, bool p_thread)
-{
-    nixlBackendEngine     *ucx;
+nixlUcxEngine *
+createEngine(std::string name, bool p_thread) {
     nixlBackendInitParams init;
     nixl_b_params_t       custom_params;
 
@@ -119,7 +117,7 @@ nixlBackendEngine *createEngine(std::string name, bool p_thread)
     init.customParams = &custom_params;
     init.type         = "UCX";
 
-    ucx = nixlUcxEngine::create(init).release();
+    auto ucx = nixlUcxEngine::create(init).release();
     assert(!ucx->getInitErr());
     if (ucx->getInitErr()) {
         std::cout << "Failed to initialize worker1" << std::endl;
@@ -129,8 +127,8 @@ nixlBackendEngine *createEngine(std::string name, bool p_thread)
     return ucx;
 }
 
-void releaseEngine(nixlBackendEngine *ucx)
-{
+void
+releaseEngine(nixlUcxEngine *ucx) {
     delete ucx;
 }
 
@@ -283,8 +281,8 @@ void *releaseValidationPtr(nixl_mem_t mem_type, void *addr)
     return NULL;
 }
 
-void allocateWrongGPUTest(nixlBackendEngine* ucx, int dev_id)
-{
+void
+allocateWrongGPUTest(nixlUcxEngine *ucx, int dev_id) {
     nixlBlobDesc desc;
     nixlBackendMD* md;
     void* buf;
@@ -301,9 +299,13 @@ void allocateWrongGPUTest(nixlBackendEngine* ucx, int dev_id)
     releaseBuffer(VRAM_SEG, dev_id, buf);
 }
 
-void allocateAndRegister(nixlBackendEngine *ucx, int dev_id, nixl_mem_t mem_type,
-                         void* &addr, size_t len, nixlBackendMD* &md)
-{
+void
+allocateAndRegister(nixlUcxEngine *ucx,
+                    int dev_id,
+                    nixl_mem_t mem_type,
+                    void *&addr,
+                    size_t len,
+                    nixlBackendMD *&md) {
     nixlBlobDesc desc;
 
     allocateBuffer(mem_type, dev_id, len, addr);
@@ -317,17 +319,25 @@ void allocateAndRegister(nixlBackendEngine *ucx, int dev_id, nixl_mem_t mem_type
     assert(ret == NIXL_SUCCESS);
 }
 
-void deallocateAndDeregister(nixlBackendEngine *ucx, int dev_id, nixl_mem_t mem_type,
-                             void* &addr, nixlBackendMD* &md)
-{
+void
+deallocateAndDeregister(nixlUcxEngine *ucx,
+                        int dev_id,
+                        nixl_mem_t mem_type,
+                        void *&addr,
+                        nixlBackendMD *&md) {
     ucx->deregisterMem(md);
     releaseBuffer(mem_type, dev_id, addr);
 }
 
-void loadRemote(nixlBackendEngine *ucx, int dev_id, std::string agent,
-                nixl_mem_t mem_type, void *addr, size_t len,
-                nixlBackendMD* &lmd, nixlBackendMD* &rmd)
-{
+void
+loadRemote(nixlUcxEngine *ucx,
+           int dev_id,
+           std::string agent,
+           nixl_mem_t mem_type,
+           void *addr,
+           size_t len,
+           nixlBackendMD *&lmd,
+           nixlBackendMD *&rmd) {
     nixlBlobDesc info;
     info.addr     = (uintptr_t) addr;
     info.len      = len;
@@ -367,15 +377,18 @@ static string op2string(nixl_xfer_op_t op, bool hasNotif)
     return string("ERR-OP");
 }
 
-
-void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
-                     nixl_meta_dlist_t &req_src_descs,
-                     nixl_meta_dlist_t &req_dst_descs,
-                     void* addr1, void* addr2, size_t len,
-                     nixl_xfer_op_t op,
-                     testHndlIterator &hiter,
-                     bool progress, bool use_notif)
-{
+void
+performTransfer(nixlUcxEngine *ucx1,
+                nixlUcxEngine *ucx2,
+                nixl_meta_dlist_t &req_src_descs,
+                nixl_meta_dlist_t &req_dst_descs,
+                void *addr1,
+                void *addr2,
+                size_t len,
+                nixl_xfer_op_t op,
+                testHndlIterator &hiter,
+                bool progress,
+                bool use_notif) {
     int ret2;
     nixl_status_t ret3;
     void *chkptr1, *chkptr2;
@@ -465,8 +478,8 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
     cout << "OK" << endl;
 }
 
-void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t mem_type)
-{
+void
+test_intra_agent_transfer(bool p_thread, nixlUcxEngine *ucx, nixl_mem_t mem_type) {
 
     std::cout << std::endl << std::endl;
     std::cout << "****************************************************" << std::endl;
@@ -541,10 +554,15 @@ void test_intra_agent_transfer(bool p_thread, nixlBackendEngine *ucx, nixl_mem_t
     ucx->disconnect(agent1);
 }
 
-void test_inter_agent_transfer(bool p_thread, bool reuse_hndl,
-                                nixlBackendEngine *ucx1, nixl_mem_t src_mem_type, int src_dev_id,
-                                nixlBackendEngine *ucx2, nixl_mem_t dst_mem_type, int dst_dev_id)
-{
+void
+test_inter_agent_transfer(bool p_thread,
+                          bool reuse_hndl,
+                          nixlUcxEngine *ucx1,
+                          nixl_mem_t src_mem_type,
+                          int src_dev_id,
+                          nixlUcxEngine *ucx2,
+                          nixl_mem_t dst_mem_type,
+                          int dst_dev_id) {
     int ret;
     int iter = 10;
 
@@ -674,7 +692,7 @@ void test_inter_agent_transfer(bool p_thread, bool reuse_hndl,
 int main()
 {
     bool thread_on[2] = {false, true};
-    nixlBackendEngine *ucx[2][2] = { 0 };
+    nixlUcxEngine *ucx[2][2] = {0};
 
     // Allocate UCX engines
     for(int i = 0; i < 2; i++) {

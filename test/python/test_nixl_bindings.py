@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 
 def test_list():
     descs = [(1000, 105, 0), (2000, 30, 0), (1010, 20, 0)]
-    test_list = nixl.nixlXferDList(nixl.DRAM_SEG, descs, False)
+    test_list = nixl.nixlXferDList(nixl.DRAM_SEG, descs)
 
     assert test_list.descCount() == 3
 
@@ -60,6 +60,7 @@ def test_list():
 
 
 def test_agent():
+    os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
     name1 = "Agent1"
     name2 = "Agent2"
 
@@ -77,10 +78,10 @@ def test_agent():
 
     nixl_utils.ba_buf(addr1, size)
 
-    reg_list1 = nixl.nixlRegDList(nixl.DRAM_SEG, False)
+    reg_list1 = nixl.nixlRegDList(nixl.DRAM_SEG)
     reg_list1.addDesc((addr1, size, 0, "dead"))
 
-    reg_list2 = nixl.nixlRegDList(nixl.DRAM_SEG, False)
+    reg_list2 = nixl.nixlRegDList(nixl.DRAM_SEG)
     reg_list2.addDesc((addr2, size, 0, "dead"))
 
     ret = agent1.registerMem(reg_list1, [ucx1])
@@ -103,10 +104,10 @@ def test_agent():
     offset = 8
     req_size = 8
 
-    src_list = nixl.nixlXferDList(nixl.DRAM_SEG, False)
+    src_list = nixl.nixlXferDList(nixl.DRAM_SEG)
     src_list.addDesc((addr1 + offset, req_size, 0))
 
-    dst_list = nixl.nixlXferDList(nixl.DRAM_SEG, False)
+    dst_list = nixl.nixlXferDList(nixl.DRAM_SEG)
     dst_list.addDesc((addr2 + offset, req_size, 0))
 
     logger.info("Transfer from %s to %s", str(addr1 + offset), str(addr2 + offset))
@@ -144,6 +145,15 @@ def test_agent():
     assert notifMap[name1][0] == noti_str.encode()
 
     logger.info("Transfer verified")
+
+    # Verify transfer telemetry
+    telem = agent1.getXferTelemetry(handle)
+    assert telem.descCount == 1
+    assert telem.totalBytes == req_size
+    assert telem.startTime > 0
+    assert telem.postDuration > 0
+    assert telem.xferDuration > 0
+    assert telem.xferDuration >= telem.postDuration
 
     agent1.releaseXferReq(handle)
 
@@ -186,7 +196,7 @@ def test_query_mem():
             params, mems = agent.getPluginParams("POSIX")
             backend = agent.createBackend("POSIX", params)
 
-            descs = nixl.nixlRegDList(nixl.FILE_SEG, False)
+            descs = nixl.nixlRegDList(nixl.FILE_SEG)
 
             # Test 1: Query with empty descriptor list
             try:

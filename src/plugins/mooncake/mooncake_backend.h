@@ -27,9 +27,7 @@
 #include "nixl.h"
 #include "backend/backend_engine.h"
 #include "common/str_tools.h"
-
 #include "common/nixl_time.h"
-#include "common/list_elem.h"
 
 #include "transfer_engine_c.h"
 
@@ -53,11 +51,6 @@ public:
     bool
     supportsNotif() const {
         return true;
-    }
-
-    bool
-    supportsProgTh() const {
-        return false;
     }
 
     nixl_mem_list_t

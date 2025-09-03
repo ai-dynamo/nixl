@@ -122,18 +122,28 @@ protected:
         LOAD_REMOTE_THEN_FAIL,
         XFER_THEN_FAIL,
         XFER_FAIL_RESTORE,
+        FAIL_AFTER_POST,
     };
 
     TestErrorHandling();
     template<TestType test_type, enum nixl_xfer_op_t op> void testXfer();
 
 private:
-    template<TestType test_type> bool isFailure(size_t iter);
+    template<TestType test_type>
+    bool
+    failBeforePost(size_t iter);
+    template<TestType test_type>
+    bool
+    failAfterPost(size_t iter);
+    template<TestType test_type>
+    bool
+    isFailure(size_t iter);
     template<TestType test_type> size_t numIter();
     void
     exchangeMetaData();
+    template<TestType test_type>
     std::variant<nixlXferReqH *, nixl_status_t>
-    postXfer(enum nixl_xfer_op_t op, bool target_failure);
+    postXfer(enum nixl_xfer_op_t op, size_t iter);
 
     ScopedEnv    m_env;
     Agent        m_Initiator;
@@ -256,11 +266,10 @@ void TestErrorHandling::testXfer() {
     exchangeMetaData();
 
     for (size_t i = 0; i < numIter<test_type>(); ++i) {
-        auto result = postXfer(op, isFailure<test_type>(i));
         nixl_status_t status;
-
+        auto result = postXfer<test_type>(op, i);
         if (std::holds_alternative<nixl_status_t>(result)) {
-            // Transfer failed immediately
+            // Transfer completed immediately
             status = std::get<nixl_status_t>(result);
         } else {
             // Transfer was posted, wait for completion
@@ -269,7 +278,12 @@ void TestErrorHandling::testXfer() {
         }
 
         if (isFailure<test_type>(i)) {
-            EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, status);
+            if (failBeforePost<test_type>(i)) {
+                EXPECT_EQ(status, NIXL_ERR_REMOTE_DISCONNECT);
+            } else {
+                EXPECT_TRUE((status == NIXL_ERR_REMOTE_DISCONNECT) || (status == NIXL_SUCCESS));
+            }
+
             if (test_type == TestType::XFER_FAIL_RESTORE) {
                 m_Target.init(target_name, m_backend_name, numWorkers_, numThreads_);
                 exchangeMetaData();
@@ -293,20 +307,38 @@ void TestErrorHandling::testXfer() {
         return;
     case TestType::LOAD_REMOTE_THEN_FAIL:
     case TestType::XFER_THEN_FAIL:
+    case TestType::FAIL_AFTER_POST:
         m_Initiator.destroy();
         return;
     }
 }
 
 template<TestErrorHandling::TestType test_type>
-bool TestErrorHandling::isFailure(size_t iter) {
+bool
+TestErrorHandling::failBeforePost(size_t iter) {
     switch (test_type) {
-    case TestType::BASIC_XFER:            return false;
-    case TestType::LOAD_REMOTE_THEN_FAIL: return iter == 0;
+    case TestType::BASIC_XFER:
+        return false;
+    case TestType::LOAD_REMOTE_THEN_FAIL:
+        return iter == 0;
     case TestType::XFER_THEN_FAIL:
     case TestType::XFER_FAIL_RESTORE:
         return iter == 1;
+    case TestType::FAIL_AFTER_POST:
+        return false;
     }
+}
+
+template<TestErrorHandling::TestType test_type>
+bool
+TestErrorHandling::failAfterPost(size_t iter) {
+    return (test_type == TestType::FAIL_AFTER_POST) && (iter == 1);
+}
+
+template<TestErrorHandling::TestType test_type>
+bool
+TestErrorHandling::isFailure(size_t iter) {
+    return failBeforePost<test_type>(iter) || failAfterPost<test_type>(iter);
 }
 
 template<TestErrorHandling::TestType test_type>
@@ -317,6 +349,7 @@ TestErrorHandling::numIter() {
     case TestType::LOAD_REMOTE_THEN_FAIL:
         return 1;
     case TestType::XFER_THEN_FAIL:
+    case TestType::FAIL_AFTER_POST:
         return 2;
     case TestType::XFER_FAIL_RESTORE:
         return 3;
@@ -328,8 +361,9 @@ void TestErrorHandling::exchangeMetaData() {
     m_Target.loadRemoteMD(m_Initiator.getLocalMD());
 }
 
+template<TestErrorHandling::TestType test_type>
 std::variant<nixlXferReqH *, nixl_status_t>
-TestErrorHandling::postXfer(enum nixl_xfer_op_t op, bool target_failure) {
+TestErrorHandling::postXfer(enum nixl_xfer_op_t op, size_t iter) {
     EXPECT_TRUE(op == NIXL_WRITE || op == NIXL_READ);
 
     nixlBasicDesc sReq_src;
@@ -341,33 +375,29 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, bool target_failure) {
     m_Target.fillRegList(rReq_descs, rReq_dst);
 
     nixlXferReqH* req_handle;
-    nixl_status_t status;
-
-    status = m_Initiator.createXferReq(op, sReq_descs, rReq_descs, req_handle);
+    nixl_status_t status = m_Initiator.createXferReq(op, sReq_descs, rReq_descs, req_handle);
     EXPECT_EQ(NIXL_SUCCESS, status)
         << "createXferReq failed with unexpected error: " << nixlEnumStrings::statusStr(status);
 
-    if (target_failure) {
+    if (failBeforePost<test_type>(iter)) {
         m_Target.destroy();
     }
 
     status = m_Initiator.postXferReq(req_handle);
-    if (target_failure) {
-        // If the target is destroyed, the transfer may fail immediately
-        // or later
-        if (status == NIXL_ERR_REMOTE_DISCONNECT) {
-            // failed handle destroyed on post
-            return status;
-        }
 
-        EXPECT_EQ(NIXL_IN_PROG, status) << "status: " << nixlEnumStrings::statusStr(status);
-    } else {
-        EXPECT_LE(0, status) << "status: "
-                             << nixlEnumStrings::statusStr(status);
+    if (failAfterPost<test_type>(iter)) {
+        m_Target.destroy();
     }
 
+    if (isFailure<test_type>(iter) && (status == NIXL_ERR_REMOTE_DISCONNECT)) {
+        // failed handle destroyed on post
+        return status;
+    }
+
+    EXPECT_LE(0, status) << "status: " << nixlEnumStrings::statusStr(status);
     return req_handle;
 }
+
 
 TEST_P(TestErrorHandling, BasicXfer) {
     testXfer<TestType::BASIC_XFER, NIXL_WRITE>();
@@ -387,6 +417,11 @@ TEST_P(TestErrorHandling, XferThenFail) {
 TEST_P(TestErrorHandling, XferFailRestore) {
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_WRITE>();
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_READ>();
+}
+
+TEST_P(TestErrorHandling, XferPostThenFail) {
+    testXfer<TestType::FAIL_AFTER_POST, NIXL_WRITE>();
+    testXfer<TestType::FAIL_AFTER_POST, NIXL_READ>();
 }
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestErrorHandling, testing::Values(std::make_tuple("UCX", 1, 0)));

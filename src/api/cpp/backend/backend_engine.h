@@ -112,9 +112,6 @@ class nixlBackendEngine {
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
         virtual bool supportsNotif() const = 0;
 
-        // Determines if a backend supports progress thread.
-        virtual bool supportsProgTh() const = 0;
-
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 
 
@@ -159,6 +156,15 @@ class nixlBackendEngine {
         //Backend aborts the transfer if necessary, and destructs the relevant objects
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
+        // Create a GPU transfer request to GPU memory for GPU transfer.
+        virtual nixl_status_t
+        createGpuXferReq(const nixlBackendReqH &req_hndl, nixlGpuXferReqH *&gpu_req_hndl) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        // Release a GPU transfer request from GPU memory
+        virtual void
+        releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const {}
 
         // *** Needs to be implemented if supportsRemote() is true *** //
 
@@ -208,14 +214,6 @@ class nixlBackendEngine {
             return NIXL_ERR_BACKEND;
         }
 
-
-        // *** Needs to be implemented if supportsProgTh() is true *** //
-
-        // Force backend engine worker to progress.
-        virtual int
-        progress() {
-            return 0;
-        }
 
         // *** Optional virtual methods that are good to be implemented in any backend *** //
 

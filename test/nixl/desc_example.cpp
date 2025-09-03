@@ -48,7 +48,7 @@ void testPerf(){
     std::cout << "time per desc " << time_per_desc << "us\n";
 
 
-    nixl_xfer_dlist_t dlist2 (DRAM_SEG, false, desc_count);
+    nixl_xfer_dlist_t dlist2(DRAM_SEG, desc_count);
 
     gettimeofday(&start_time, NULL);
 
@@ -163,28 +163,22 @@ int main()
     nixlMetaDesc meta4 (10070, 42, 0);
     meta3.metadataP = nullptr;
     meta4.metadataP = nullptr;
-    int dummy;
 
     nixl_meta_dlist_t dlist1 (DRAM_SEG);
     dlist1.addDesc(meta1);
-    assert (dlist1.overlaps(meta2, dummy));
     dlist1.addDesc(meta3);
 
-    nixl_meta_dlist_t dlist2 (VRAM_SEG, false, false);
+    nixl_meta_dlist_t dlist2(VRAM_SEG, false);
     dlist2.addDesc(meta3);
     dlist2.addDesc(meta2);
-    assert (dlist2.overlaps(meta1, dummy));
 
-    nixl_meta_dlist_t dlist3 (VRAM_SEG, false, true);
+    nixl_meta_dlist_t dlist3(VRAM_SEG, true);
     dlist3.addDesc(meta3);
     dlist3.addDesc(meta2);
-    assert (dlist3.overlaps(meta1, dummy));
 
     nixl_meta_dlist_t dlist4 (dlist1);
     nixl_meta_dlist_t dlist5 (VRAM_SEG);
     dlist5 = dlist3;
-
-    // TODO: test overlap_check flag
 
     dlist1.print();
     dlist2.print();
@@ -236,13 +230,13 @@ int main()
     nixlBasicDesc b5 (305, 30, 4);
     nixlBasicDesc b6 (100, 30, 3);
 
-    nixl_xfer_dlist_t dlist10 (DRAM_SEG, false);
-    nixl_xfer_dlist_t dlist11 (DRAM_SEG, true);
-    nixl_xfer_dlist_t dlist12 (DRAM_SEG, true);
-    nixl_xfer_dlist_t dlist13 (DRAM_SEG, true);
-    nixl_xfer_dlist_t dlist14 (DRAM_SEG, true);
+    nixl_xfer_dlist_t dlist10(DRAM_SEG);
+    nixl_xfer_dlist_t dlist11(DRAM_SEG);
+    nixl_xfer_dlist_t dlist12(DRAM_SEG);
+    nixl_xfer_dlist_t dlist13(DRAM_SEG);
+    nixl_xfer_dlist_t dlist14(DRAM_SEG);
 
-    nixl_reg_dlist_t dlist20 (DRAM_SEG, true);
+    nixl_reg_dlist_t dlist20(DRAM_SEG);
 
     dlist10.addDesc(b1);
     dlist10.addDesc(b2);
@@ -300,11 +294,11 @@ int main()
     importSList.print();
     std::cout << "\n";
 
-    nixl_reg_dlist_t dlist21 (DRAM_SEG, false);
-    nixl_reg_dlist_t dlist22 (DRAM_SEG, false);
-    nixl_reg_dlist_t dlist23 (DRAM_SEG, false);
-    nixl_reg_dlist_t dlist24 (DRAM_SEG, false);
-    nixl_reg_dlist_t dlist25 (DRAM_SEG, false);
+    nixl_reg_dlist_t dlist21(DRAM_SEG);
+    nixl_reg_dlist_t dlist22(DRAM_SEG);
+    nixl_reg_dlist_t dlist23(DRAM_SEG);
+    nixl_reg_dlist_t dlist24(DRAM_SEG);
+    nixl_reg_dlist_t dlist25(DRAM_SEG);
 
     testPerf();
 

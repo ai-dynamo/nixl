@@ -76,10 +76,10 @@ def cli(debug):
 
 
 @cli.command("plan")
+@cli_args
 @common_args
 @plan_args
 @nixl_bench_args
-@cli_args
 def plan_command(model, model_config, model_configs, format, **kwargs):
     """Display the recommended configuration for nixlbench"""
     if not model:
@@ -213,9 +213,9 @@ def plan_command(model, model_config, model_configs, format, **kwargs):
 
 
 @cli.command("profile")
+@cli_args
 @common_args
 @nixl_bench_args
-@cli_args
 def profile_command(model, model_config, **kwargs):
     """Run nixlbench"""
     if not model or not model_config:
@@ -254,8 +254,8 @@ def profile_command(model, model_config, **kwargs):
 
 
 @cli.command("kvcache")
-@common_args
 @cli_args
+@common_args
 def kvcache_command(model, model_config, **kwargs):
     """Display kvcache information"""
     if not model or not model_config:

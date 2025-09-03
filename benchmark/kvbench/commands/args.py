@@ -41,6 +41,18 @@ def cli_args(func):
     func = click.option("--num_requests", type=int, help="Number of requests")(func)
     func = click.option("--page_size", type=int, help="Page size")(func)
     func = click.option("--access_pattern", type=str, help="Access pattern")(func)
+    func = click.option(
+        "--source",
+        default="file",
+        type=str,
+        help="Source of the nixl descriptors [file, memory, gpu] (default: file)",
+    )(func)
+    func = click.option(
+        "--destination",
+        default="memory",
+        type=str,
+        help="Destination of the nixl descriptors [file, memory, gpu] (default: memory)",
+    )(func)
     return func
 
 
@@ -58,21 +70,9 @@ def plan_args(func):
 def nixl_bench_args(func):
     """Decorator for NIXL benchmark arguments"""
     func = click.option(
-        "--source",
-        default="file",
-        type=str,
-        help="Source of the nixl descriptors [file, memory, gpu] (default: file)",
-    )(func)
-    func = click.option(
-        "--destination",
-        default="memory",
-        type=str,
-        help="Destination of the nixl descriptors [file, memory, gpu] (default: memory)",
-    )(func)
-    func = click.option(
         "--backend",
         type=str,
-        help="Communication backend [POSIX, GDS] (default: POSIX)",
+        help="Communication backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] (default: UCX)",
     )(func)
     func = click.option(
         "--worker_type",
@@ -82,12 +82,12 @@ def nixl_bench_args(func):
     func = click.option(
         "--initiator_seg_type",
         type=str,
-        help="Memory segment type for initiator [DRAM, VRAM] (default: DRAM)",
+        help="Memory segment type for initiator [DRAM, VRAM, FILE, OBJ] (default: DRAM)",
     )(func)
     func = click.option(
         "--target_seg_type",
         type=str,
-        help="Memory segment type for target [DRAM, VRAM] (default: DRAM)",
+        help="Memory segment type for target [DRAM, VRAM, FILE, OBJ] (default: DRAM)",
     )(func)
     func = click.option(
         "--scheme",
@@ -154,7 +154,7 @@ def nixl_bench_args(func):
         "--runtime_type", type=str, help="Type of runtime to use [ETCD] (default: ETCD)"
     )(func)
     func = click.option(
-        "--etcd-endpoints",
+        "--etcd_endpoints",
         type=str,
         help="ETCD server URL for coordination (default: http://localhost:2379)",
     )(func)
@@ -173,15 +173,96 @@ def nixl_bench_args(func):
         help="API type for POSIX operations [AIO, URING] (only used with POSIX backend",
     )(func)
     func = click.option(
-        "--enable-vmm",
+        "--enable_vmm",
         type=bool,
         help="Enable VMM memory allocation when DRAM is requested",
     )(func)
     func = click.option(
-        "--benchmark-group",
+        "--benchmark_group",
         type=str,
         help="Name of benchmark group (default: default). Use different names to run multiple benchmarks in parallel",
         default="default",
+    )(func)
+    # Missing arguments from nixlbench
+    func = click.option(
+        "--num_files",
+        type=int,
+        help="Number of files used by benchmark (default: 1)",
+    )(func)
+    func = click.option(
+        "--large_blk_iter_ftr",
+        type=int,
+        help="Factor to reduce test iteration when testing large block size(>1MB) (default: 16)",
+    )(func)
+    func = click.option(
+        "--gds_batch_pool_size",
+        type=int,
+        help="Batch pool size for GDS operations (default: 32, only used with GDS backend)",
+    )(func)
+    func = click.option(
+        "--gds_batch_limit",
+        type=int,
+        help="Batch limit for GDS operations (default: 128, only used with GDS backend)",
+    )(func)
+    func = click.option(
+        "--gds_mt_num_threads",
+        type=int,
+        help="Number of threads used by GDS MT plugin (default: 1)",
+    )(func)
+    func = click.option(
+        "--gpunetio_device_list",
+        type=str,
+        help="Comma-separated GPU CUDA device id to use for communication (only used with GPUNETIO backend)",
+    )(func)
+    func = click.option(
+        "--hf3fs_iopool_size",
+        type=int,
+        help="Size of io memory pool for HF3FS backend (default: 64)",
+    )(func)
+    func = click.option(
+        "--obj_access_key",
+        type=str,
+        help="Access key for S3 backend (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_secret_key",
+        type=str,
+        help="Secret key for S3 backend (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_session_token",
+        type=str,
+        help="Session token for S3 backend (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_bucket_name",
+        type=str,
+        help="Bucket name for S3 backend (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_scheme",
+        type=str,
+        help="HTTP scheme for S3 backend [http, https] (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_region",
+        type=str,
+        help="Region for S3 backend (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_use_virtual_addressing",
+        type=bool,
+        help="Use virtual addressing for S3 backend (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_endpoint_override",
+        type=str,
+        help="Endpoint override for S3 backend (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_req_checksum",
+        type=str,
+        help="Required checksum type for S3 backend [supported, required] (only used with OBJ backend)",
     )(func)
     return func
 

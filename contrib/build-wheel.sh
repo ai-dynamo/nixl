@@ -86,7 +86,7 @@ uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
 # Bundle libraries
 uv pip install auditwheel patchelf
 
-uv run auditwheel repair --exclude libcuda.so.1 --exclude 'libssl*' --exclude 'libcrypto*' $TMP_DIR/nixl-*.whl --plat $WHL_PLATFORM --wheel-dir $OUTPUT_DIR
+uv run auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' $TMP_DIR/nixl-*.whl --plat $WHL_PLATFORM --wheel-dir $OUTPUT_DIR
 
 uv run ./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $OUTPUT_DIR/*.whl
 

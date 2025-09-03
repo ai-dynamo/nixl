@@ -58,7 +58,37 @@ public:
     }
 };
 
-using nixl_sec_dlist_t = nixlDescList<nixlSectionDesc>;
+class nixlSecDescList : public nixlDescList<nixlSectionDesc> {
+public:
+    explicit nixlSecDescList(const nixl_mem_t &type) : nixlDescList<nixlSectionDesc>(type, 0) {}
+
+    using nixlDescList<nixlSectionDesc>::operator[]; // bring in const overload
+
+    void
+    addDesc(const nixlSectionDesc &desc) override;
+
+    bool
+    verifySorted() const;
+
+    nixlSectionDesc &
+    operator[](unsigned int index) override;
+
+    int
+    getIndex(const nixlBasicDesc &query) const override;
+
+    int
+    getCoveringIndex(const nixlBasicDesc &query) const;
+
+    void
+    resize(const size_t &count) override;
+
+    // Disable parent's convenience constructors that allow pre-sizing
+    nixlSecDescList(const nixlSecDescList &) = default;
+    nixlSecDescList &
+    operator=(const nixlSecDescList &) = default;
+};
+
+using nixl_sec_dlist_t = nixlSecDescList;
 using section_map_t = std::map<section_key_t, nixl_sec_dlist_t*>;
 
 class nixlMemSection {

@@ -121,6 +121,9 @@ DEFINE_string(obj_req_checksum,
               XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
               "Required checksum for S3 backend [supported, required]");
 
+// HF3FS options - only used when backend is HF3FS
+DEFINE_int32(hf3fs_iopool_size, 64, "Size of io memory pool");
+
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
 std::string xferBenchConfig::backend = "";
@@ -166,6 +169,7 @@ std::string xferBenchConfig::obj_region = "";
 bool xferBenchConfig::obj_use_virtual_addressing = false;
 std::string xferBenchConfig::obj_endpoint_override = "";
 std::string xferBenchConfig::obj_req_checksum = "";
+int xferBenchConfig::hf3fs_iopool_size = 0;
 
 int
 xferBenchConfig::loadFromFlags() {
@@ -191,7 +195,6 @@ xferBenchConfig::loadFromFlags() {
         if (backend == XFERBENCH_BACKEND_GDS) {
             gds_batch_pool_size = FLAGS_gds_batch_pool_size;
             gds_batch_limit = FLAGS_gds_batch_limit;
-            storage_enable_direct = FLAGS_storage_enable_direct;
         }
 
         if (backend == XFERBENCH_BACKEND_GDS_MT) {
@@ -201,7 +204,6 @@ xferBenchConfig::loadFromFlags() {
         // Load POSIX-specific configurations if backend is POSIX
         if (backend == XFERBENCH_BACKEND_POSIX) {
             posix_api_type = FLAGS_posix_api_type;
-            storage_enable_direct = FLAGS_storage_enable_direct;
 
             // Validate POSIX API type
             if (posix_api_type != XFERBENCH_POSIX_API_AIO &&
@@ -219,7 +221,7 @@ xferBenchConfig::loadFromFlags() {
 
         // Load HD3FS-specific configurations if backend is HD3FS
         if (backend == XFERBENCH_BACKEND_HF3FS) {
-            storage_enable_direct = FLAGS_storage_enable_direct;
+            hf3fs_iopool_size = FLAGS_hf3fs_iopool_size;
         }
 
         // Load OBJ-specific configurations if backend is OBJ
@@ -307,15 +309,16 @@ xferBenchConfig::loadFromFlags() {
                   << std::endl;
         return -1;
     }
-    if (max_block_size > (total_buffer_size / num_threads)) {
-        std::cerr << "Incorrect buffer size configuration" << " max_block_size(" << max_block_size
-                  << ") >" << " (total_buffer_size / num_threads)("
+    if ((max_block_size * max_batch_size) > (total_buffer_size / num_threads)) {
+        std::cerr << "Incorrect buffer size configuration " << "(max_block_size * max_batch_size) "
+                  << "(" << (max_block_size * max_batch_size) << ")"
+                  << " is > (total_buffer_size / num_threads) ("
                   << (total_buffer_size / num_threads) << ")" << std::endl;
         return -1;
     }
 
-    if (large_blk_iter_ftr == 0 || large_blk_iter_ftr > num_iter) {
-        std::cerr << "iter_factor must not be 0 and must be lower than num_iter" << std::endl;
+    if (large_blk_iter_ftr <= 0) {
+        std::cerr << "iter_factor must be greater than 0" << std::endl;
         return -1;
     }
 

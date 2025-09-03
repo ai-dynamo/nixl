@@ -36,7 +36,6 @@
 #include "common/nixl_time.h"
 #include "ucx/rkey.h"
 #include "ucx/ucx_utils.h"
-#include "common/list_elem.h"
 
 enum ucx_cb_op_t { NOTIF_STR };
 
@@ -125,11 +124,6 @@ public:
         return true;
     }
 
-    bool
-    supportsProgTh() const override {
-        return false;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override;
 
@@ -196,8 +190,14 @@ public:
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
+    nixl_status_t
+    createGpuXferReq(const nixlBackendReqH &handle, nixlGpuXferReqH *&gpu_req_hndl) const override;
+
+    void
+    releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const override;
+
     int
-    progress() override;
+    progress();
 
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;
@@ -272,7 +272,10 @@ private:
     notifSendPriv(const std::string &remote_agent,
                   const std::string &msg,
                   nixlUcxReq &req,
-                  size_t worker_id) const;
+                  const std::unique_ptr<nixlUcxEp> &ep) const;
+
+    ucx_connection_ptr_t
+    getConnection(const std::string &remote_agent) const;
 
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
@@ -304,11 +307,6 @@ class nixlUcxThreadEngine : public nixlUcxEngine {
 public:
     nixlUcxThreadEngine(const nixlBackendInitParams &init_params);
     ~nixlUcxThreadEngine();
-
-    bool
-    supportsProgTh() const override {
-        return true;
-    }
 
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;
@@ -342,11 +340,6 @@ public:
              const std::string &remote_agent,
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args = nullptr) const override;
-
-    bool
-    supportsProgTh() const override {
-        return true;
-    }
 
     size_t
     getSharedWorkersSize() const override {

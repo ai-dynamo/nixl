@@ -14,45 +14,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _NIXL_LIST_ELEM_H
-#define _NIXL_LIST_ELEM_H
+#ifndef NIXL_SRC_UTILS_COMMON_OPERATORS_H
+#define NIXL_SRC_UTILS_COMMON_OPERATORS_H
 
+#include <ostream>
 
-template <typename T>
-class nixlLinkElem {
-private:
-    T *_next;
-public:
-    nixlLinkElem()
-    {
-        _next = NULL;
-    }
+#include "nixl_types.h"
 
-    ~nixlLinkElem() {
-        _next = NULL;;
-    }
+inline std::ostream &
+operator<<(std::ostream &os, const nixl_mem_t value) {
+    return os << nixlEnumStrings::memTypeStr(value);
+}
 
-    /* Link this element into the chain after "elem" */
-    void link(T *elem)
-    {
-        elem->_next = _next;
-        _next = elem;
-    }
+inline std::ostream &
+operator<<(std::ostream &os, const nixl_xfer_op_t value) {
+    return os << nixlEnumStrings::xferOpStr(value);
+}
 
-    /* Exclude this element from the chain, return the new head */
-    T *unlink()
-    {
-        T *ret = _next;
-        /* Forget my place */
-        _next = NULL;
-        return ret;
-    }
-
-    T *next()
-    {
-        return _next;
-    }
-
-} ;
+inline std::ostream &
+operator<<(std::ostream &os, const nixl_status_t value) {
+    return os << nixlEnumStrings::statusStr(value);
+}
 
 #endif
