@@ -17,8 +17,6 @@
 #ifndef _NIXL_DEVICE_CUH
 #define _NIXL_DEVICE_CUH
 
-#ifdef HAVE_UCX_GPU_DEVICE_API
-
 #include <nixl_types.h>
 #include <ucp/api/device/ucp_device_impl.h>
 
@@ -244,7 +242,5 @@ nixlGpuReadSignalValue(const void *signal)
 {
     return ucp_device_counter_read<static_cast<ucp_device_level_t>(level)>(signal);
 }
-
-#endif // HAVE_UCX_GPU_DEVICE_API
 
 #endif // _NIXL_DEVICE_CUH
