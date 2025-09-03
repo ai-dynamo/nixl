@@ -14,121 +14,217 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <cstring>
+#include <stdexcept>
+
 #include "serdes.h"
 
-nixlSerDes::nixlSerDes() {
-    workingStr = "nixlSerDes|";
-    des_offset = 11;
+namespace nixl {
+namespace {
+    const std::string_view header1 = "N1XL";
 
-    mode = SERIALIZE;
+    inline constexpr size_t varLenBias = 127;
+
+    inline constexpr uint8_t lowerNibble = 0x0F;
+    inline constexpr uint8_t upperNibble = 0xF0;
+    inline constexpr uint8_t varLenNibble = 0xC0;
+
+    void
+    addRaw(std::string &buffer, const void *data, const size_t size) {
+        buffer.append(static_cast<const char *>(data), size);
+    }
+
+    void
+    addVarLen(std::string &buffer, size_t size) {
+        // assert(size > varLenBias);
+
+        uint8_t tmp[9];
+        uint8_t used = 0;
+
+        size -= varLenBias;
+
+        // Can we use __builtin_clzl() to optimize this?
+        while (size > 0) {
+            tmp[++used] = uint8_t(size);
+            size >>= 8;
+        }
+        tmp[0] = (used | varLenNibble);
+        addRaw(buffer, tmp, 1 + used);
+    }
+
+    void
+    addLen(std::string &buffer, const size_t size) {
+        if (size <= varLenBias) {
+            buffer += char(size);
+        } else {
+            addVarLen(buffer, size);
+        }
+    }
+
+    void
+    addStr(std::string &buffer, const std::string_view &string) {
+        addLen(buffer, string.size());
+        addRaw(buffer, string.data(), string.size());
+    }
+
+} // namespace
+
+} // namespace nixl
+
+nixlSerDes::nixlSerDes() : buffer_(nixl::header1), offset_(buffer_.size()) {}
+
+void
+nixlSerDes::require(const size_t size) {
+    if (offset_ + size > buffer_.size()) {
+        throw std::runtime_error("serialized data is incomplete");
+    }
 }
 
-std::string nixlSerDes::_bytesToString(const void *buf, ssize_t size) {
-    std::string ret_str = std::string(reinterpret_cast<const char*>(buf), size);
-    return ret_str;
+void
+nixlSerDes::consume(const size_t size) noexcept {
+    // assert(offset_ + size <= buffer_.size());
+    offset_ += size;
 }
 
-void nixlSerDes::_stringToBytes(void* fill_buf, const std::string &s, ssize_t size){
-    s.copy(reinterpret_cast<char*>(fill_buf), size);
+uint8_t
+nixlSerDes::getFirst() {
+    require(1);
+    const uint8_t first = buffer_[offset_];
+    consume(1);
+    return first;
 }
 
-// Strings serialization
-nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str){
+size_t
+nixlSerDes::getVarLen(const uint8_t first) {
+    // assert((first & upperNibble) == varLenNibble);
+    const size_t bytes = (first & nixl::lowerNibble);
+    if (bytes > 6) {
+        throw std::runtime_error("serialized size exceeds 2^48");
+    }
+    require(bytes);
+    size_t result = 0;
+    std::memcpy(&result, buffer_.data() + offset_, bytes);
+    consume(bytes);
+    require(result);
+    return result + nixl::varLenBias;
+}
 
-    size_t len = str.size();
+size_t
+nixlSerDes::getViewLen() {
+    const uint8_t first = getFirst();
+    if (first <= nixl::varLenBias) {
+        require(first);
+        return first;
+    }
+    if ((first & nixl::upperNibble) == nixl::varLenNibble) {
+        return getVarLen(first);
+    }
+    throw std::runtime_error("serialized data is mangled");
+}
 
-    workingStr.append(tag);
-    workingStr.append(_bytesToString(&len, sizeof(size_t)));
-    workingStr.append(str);
-    workingStr.append("|");
+std::string_view
+nixlSerDes::getView() {
+    const size_t size = getViewLen();
+    const char *data = buffer_.data() + offset_;
+    consume(size);
+    return std::string_view(data, size);
+}
 
+nixl_status_t
+nixlSerDes::addStr(const std::string &tag, const std::string &str) {
+    nixl::addStr(buffer_, tag);
+    nixl::addStr(buffer_, str);
     return NIXL_SUCCESS;
 }
 
-std::string nixlSerDes::getStr(const std::string &tag){
-
-    if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-       //incorrect tag
-       return "";
+std::string
+nixlSerDes::getStr(const std::string &tag) {
+    const size_t offset = offset_;
+    try {
+        if (getView() == tag) {
+            return std::string(getView());
+        }
+        offset_ = offset;
+        return {};
     }
-    ssize_t len;
-
-    //skip tag
-    des_offset += tag.size();
-
-    //get len
-    //_stringToBytes(&len, workingStr.data() + des_offset, sizeof(ssize_t));
-    _stringToBytes(&len, workingStr.substr(des_offset, sizeof(ssize_t)), sizeof(ssize_t));
-    des_offset += sizeof(ssize_t);
-
-    //get string
-    std::string ret = workingStr.substr(des_offset, len);
-
-    //move past string plus | delimiter
-    des_offset += len + 1;
-
-    return ret;
+    catch (...) {
+        offset_ = offset;
+        return {};
+    }
 }
 
-// Byte buffers serialization
-nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_t len){
-
-    workingStr.append(tag);
-    workingStr.append(_bytesToString(&len, sizeof(ssize_t)));
-    workingStr.append(_bytesToString(buf, len));
-    workingStr.append("|");
-
+nixl_status_t
+nixlSerDes::addBuf(const std::string &tag, const void *buf, ssize_t len) {
+    nixl::addStr(buffer_, tag);
+    nixl::addLen(buffer_, len);
+    nixl::addRaw(buffer_, buf, len);
     return NIXL_SUCCESS;
 }
 
-ssize_t nixlSerDes::getBufLen(const std::string &tag) const{
-    if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-       //incorrect tag
-       return -1;
+ssize_t
+nixlSerDes::getBufLen(const std::string &tag) {
+    const size_t offset = offset_;
+    try {
+        if (getView() == tag) {
+            const size_t result = getViewLen();
+            offset_ = offset;
+            return result;
+        }
+        offset_ = offset;
+        return -1;
     }
-
-    ssize_t len;
-
-    //get len
-    //_stringToBytes(&len, workingStr.data() + des_offset + tag.size(), sizeof(ssize_t));
-    _stringToBytes(&len, workingStr.substr(des_offset + tag.size(), sizeof(ssize_t)), sizeof(ssize_t));
-
-    return len;
+    catch (...) {
+        offset_ = offset;
+        return -1;
+    }
 }
 
-nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len){
-    if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-       //incorrect tag
-       return NIXL_ERR_MISMATCH;
+nixl_status_t
+nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len) {
+    const size_t offset = offset_;
+    try {
+        if (getView() == tag) {
+            const std::string_view data = getView();
+            if (data.size() == size_t(len)) {
+                std::memcpy(buf, data.data(), data.size());
+                return NIXL_SUCCESS;
+            }
+            offset_ = offset;
+            return NIXL_ERR_MISMATCH;
+        }
+        offset_ = offset;
+        return NIXL_ERR_NOT_FOUND;
     }
+    catch (...) {
+        offset_ = offset;
+        return NIXL_ERR_UNKNOWN;
+    }
+}
 
-    //skip over tag and size, which we assume has been read previously
-    des_offset += tag.size() + sizeof(ssize_t);
+std::string
+nixlSerDes::exportStr() const {
+    return buffer_;
+}
 
-    //_stringToBytes(buf, workingStr.data() + des_offset, len);
-    _stringToBytes(buf, workingStr.substr(des_offset, len), len);
-
-    //bytes in string form are twice as long, skip those plus | delimiter
-    des_offset += len + 1;
-
+nixl_status_t
+nixlSerDes::importStr(const std::string &sdbuf) {
+    if (sdbuf.size() < nixl::header1.size()) {
+        return NIXL_ERR_MISMATCH;
+    }
+    if (std::memcmp(sdbuf.data(), nixl::header1.data(), nixl::header1.size()) != 0) {
+        return NIXL_ERR_MISMATCH;
+    }
+    buffer_ = sdbuf;
+    offset_ = nixl::header1.size();
     return NIXL_SUCCESS;
 }
 
-// Buffer management serialization
-std::string nixlSerDes::exportStr() const {
-    return workingStr;
+std::string
+nixlSerDes::_bytesToString(const void *buf, ssize_t size) {
+    return std::string(reinterpret_cast<const char *>(buf), size);
 }
 
-nixl_status_t nixlSerDes::importStr(const std::string &sdbuf) {
-
-    if(sdbuf.compare(0, 11, "nixlSerDes|") != 0){
-       //incorrect tag
-       return NIXL_ERR_MISMATCH;
-    }
-
-    workingStr = sdbuf;
-    mode = DESERIALIZE;
-    des_offset = 11;
-
-    return NIXL_SUCCESS;
+void
+nixlSerDes::_stringToBytes(void *fill_buf, const std::string &s, ssize_t size) {
+    s.copy(reinterpret_cast<char *>(fill_buf), size);
 }

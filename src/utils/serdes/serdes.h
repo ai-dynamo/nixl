@@ -14,41 +14,71 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __SERDES_H
-#define __SERDES_H
+#ifndef NIXL_SRC_UTILS_SERDES_SERDES_H
+#define NIXL_SRC_UTILS_SERDES_SERDES_H
 
-#include <cstring>
-#include <string>
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 #include "nixl_types.h"
 
 class nixlSerDes {
 private:
-    typedef enum { SERIALIZE, DESERIALIZE } ser_mode_t;
+    std::string buffer_; // Used for both.
+    std::size_t offset_; // Only for deserialization.
 
-    std::string workingStr;
-    ssize_t des_offset;
-    ser_mode_t mode;
+    void
+    require(const size_t);
+    void
+    consume(const size_t) noexcept;
+
+    [[nodiscard]] uint8_t
+    getFirst();
+    [[nodiscard]] size_t
+    getVarLen(const uint8_t);
+    [[nodiscard]] size_t
+    getViewLen();
+    [[nodiscard]] std::string_view
+    getView();
 
 public:
     nixlSerDes();
 
+    [[nodiscard]] size_t
+    totalSize() const noexcept {
+        return buffer_.size();
+    }
+
+    [[nodiscard]] size_t
+    remainingSize() const noexcept {
+        return buffer_.size() - offset_;
+    }
+
     /* Ser/Des for Strings */
-    nixl_status_t addStr(const std::string &tag, const std::string &str);
-    std::string getStr(const std::string &tag);
+    nixl_status_t
+    addStr(const std::string &tag, const std::string &str);
+    std::string
+    getStr(const std::string &tag);
 
     /* Ser/Des for Byte buffers */
-    nixl_status_t addBuf(const std::string &tag, const void* buf, ssize_t len);
-    ssize_t getBufLen(const std::string &tag) const;
-    nixl_status_t getBuf(const std::string &tag, void *buf, ssize_t len);
+    nixl_status_t
+    addBuf(const std::string &tag, const void *buf, ssize_t len);
+    ssize_t
+    getBufLen(const std::string &tag); // NOT const ANYMORE!
+    nixl_status_t
+    getBuf(const std::string &tag, void *buf, ssize_t len);
 
     /* Ser/Des buffer management */
-    std::string exportStr() const;
-    nixl_status_t importStr(const std::string &sdbuf);
+    std::string
+    exportStr() const;
+    nixl_status_t
+    importStr(const std::string &sdbuf);
 
-    static std::string _bytesToString(const void *buf, ssize_t size);
-    static void _stringToBytes(void* fill_buf, const std::string &s, ssize_t size);
+    static std::string
+    _bytesToString(const void *buf, ssize_t size);
+    static void
+    _stringToBytes(void *fill_buf, const std::string &s, ssize_t size);
 };
 
 #endif
