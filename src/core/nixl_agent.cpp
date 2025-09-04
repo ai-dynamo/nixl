@@ -1218,7 +1218,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 }
 
 nixl_status_t
-nixlAgent::createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH *&gpu_req_hndl) const {
+nixlAgent::createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const {
     if (!req_hndl.engine) {
         NIXL_ERROR_FUNC << "Invalid request handle[" << &req_hndl << "]: engine is null";
         return NIXL_ERR_INVALID_PARAM;
@@ -1239,7 +1239,7 @@ nixlAgent::createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH *&gpu_
 }
 
 void
-nixlAgent::releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const {
+nixlAgent::releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const {
     NIXL_SHARED_LOCK_GUARD(data->lock);
     auto it = data->gpuReqToEngine.find(gpu_req_hndl);
     if (it == data->gpuReqToEngine.end()) {

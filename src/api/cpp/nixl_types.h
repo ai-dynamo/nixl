@@ -228,7 +228,7 @@ using nixl_opt_args_t = nixlAgentOptionalArgs;
 /**
  * @brief A typedef for a nixlGpuXferReqH
  */
-using nixlGpuXferReqH = void;
+using nixlGpuXferReqH = void *;
 
 /**
  * @brief A typedefs for a point in time
