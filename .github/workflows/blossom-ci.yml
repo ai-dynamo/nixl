@@ -24,7 +24,7 @@ jobs:
       args: ${{ env.args }}
 
     # This job only runs for pull request comments
-    if: github.event.comment.body == '/build' || github.event_name == 'pull_request'
+    if: github.event.comment.body == '/build'
     steps:
       - name: Check if comment is issued by authorized person
         run: blossom-ci
