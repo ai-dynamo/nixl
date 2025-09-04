@@ -196,6 +196,12 @@ public:
     void
     releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const override;
 
+    nixl_status_t
+    getGpuSignalSize(size_t &signal_size) const override;
+
+    nixl_status_t
+    prepGpuSignal(const nixlBackendMD &meta, void *signal) const override;
+
     int
     progress();
 

@@ -23,6 +23,9 @@
 extern "C"
 {
 #include <ucp/api/ucp.h>
+#ifdef HAVE_UCX_GPU_DEVICE_API
+#include <ucp/api/device/ucp_host.h>
+#endif
 }
 
 #include <nixl_types.h>
@@ -170,6 +173,9 @@ private:
     /* Local UCX stuff */
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
+#ifdef HAVE_UCX_GPU_DEVICE_API
+    size_t device_counter_size{0};
+#endif
 public:
 
     using req_cb_t = void(void *request);
@@ -186,6 +192,13 @@ public:
     int memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl_mem_type);
     [[nodiscard]] std::string packRkey(nixlUcxMem &mem);
     void memDereg(nixlUcxMem &mem);
+
+    /* GPU signal management */
+    [[nodiscard]] nixl_status_t
+    prepGpuSignal(const nixlUcxMem &mem, void *signal) const;
+
+    [[nodiscard]] size_t
+    getGpuSignalSize() const;
 
     friend class nixlUcxWorker;
 };
