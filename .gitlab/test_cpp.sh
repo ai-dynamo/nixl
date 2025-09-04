@@ -30,10 +30,6 @@ else
     SUDO=""
 fi
 
-$SUDO apt-get update
-$SUDO apt-get -qq install -y libaio-dev
-
-
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
 
@@ -101,8 +97,10 @@ kill -s SIGINT $telePID
 nixl_test_port=$(get_next_tcp_port)
 
 ./bin/nixl_test target 127.0.0.1 "$nixl_test_port"&
+target_pid=$!
 sleep 1
 ./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
+wait $target_pid
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"

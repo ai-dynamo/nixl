@@ -105,11 +105,13 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
         if (!rc)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    if (!rc)
+    if (!rc) {
         std::cerr << "Thread " << thread_id << " UCX Transfer failed, buffers are different\n";
-    else
+        exit(-1);
+    } else {
         std::cout << "Thread " << thread_id << " Transfer completed and Buffers match with Initiator\n"
                   << "Thread " << thread_id << " UCX Transfer Success!!!\n";
+    }
 
     std::cout << "Thread " << thread_id << " Cleanup..\n";
     agent.deregisterMem(dram_for_ucx, extra_params);
