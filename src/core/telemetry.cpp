@@ -36,7 +36,7 @@ constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 
 nixlTelemetry::nixlTelemetry(const std::string &file_path, backend_map_t &backend_map)
     : pool_(1),
-      writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL),
+      writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false),
       file_(file_path),
       backendMap_(backend_map) {
     if (file_path.empty()) {
@@ -46,14 +46,17 @@ nixlTelemetry::nixlTelemetry(const std::string &file_path, backend_map_t &backen
 }
 
 nixlTelemetry::~nixlTelemetry() {
+    writeTask_.enabled_ = false;
     try {
-        writeTask_.callback_ = nullptr;
         writeTask_.timer_.cancel();
+        pool_.stop();
+        pool_.join();
     }
     catch (const asio::system_error &e) {
         NIXL_DEBUG << "Failed to cancel telemetry write timer: " << e.what();
         // continue anyway since it's not critical
     }
+
     if (buffer_) {
         writeEventHelper();
         buffer_.reset();
@@ -85,6 +88,7 @@ nixlTelemetry::initializeTelemetry() {
     // Update write task interval and start it
     writeTask_.callback_ = [this]() { return writeEventHelper(); };
     writeTask_.interval_ = run_interval;
+    writeTask_.enabled_ = true;
     registerPeriodicTask(writeTask_);
 }
 
@@ -128,25 +132,13 @@ nixlTelemetry::registerPeriodicTask(periodicTask &task) {
     task.timer_.expires_after(task.interval_);
     task.timer_.async_wait([this, &task](const asio::error_code &ec) {
         if (ec != asio::error::operation_aborted) {
-            auto start_time = std::chrono::steady_clock::now();
 
-            if (!task.callback_ || !task.callback_()) {
-                // if return false, stop the task
+            task.callback_();
+
+            if (!task.enabled_) {
                 return;
             }
 
-            auto end_time = std::chrono::steady_clock::now();
-            auto execution_time =
-                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-
-            // Schedule next execution with adjusted interval
-            auto next_interval = std::chrono::milliseconds(task.interval_) - execution_time;
-            if (next_interval.count() < 0) {
-                next_interval = std::chrono::milliseconds(0);
-            }
-
-            // Schedule the next operation
-            task.interval_ = next_interval;
             registerPeriodicTask(task);
         }
     });

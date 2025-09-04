@@ -28,6 +28,7 @@
 #include <memory>
 #include <chrono>
 #include <functional>
+#include <atomic>
 
 #include <asio.hpp>
 
@@ -35,10 +36,15 @@ struct periodicTask {
     asio::steady_timer timer_;
     std::function<bool()> callback_;
     std::chrono::milliseconds interval_;
+    std::atomic<bool> enabled_;
 
-    periodicTask(const asio::any_io_executor &executor, std::chrono::milliseconds interval)
+    periodicTask(const asio::any_io_executor &executor,
+                 std::chrono::milliseconds interval,
+                 bool enabled = false)
         : timer_(executor),
-          interval_(interval) {}
+          callback_(nullptr),
+          interval_(interval),
+          enabled_(enabled) {}
 };
 
 class nixlTelemetry {
