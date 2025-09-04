@@ -151,10 +151,11 @@ else
   ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'])
 endif
 
+# UCX GPU device API detection
+ucx_gpu_device_api_available = false
 if ucx_dep.found() and cuda_dep.found()
     cuda = meson.get_compiler('cuda')
 
-    # UCX GPU device API detection
     have_gpu_side = cuda.compiles('''
             #include <ucp/api/device/ucp_device_impl.h>
             int main() { return 0; }
@@ -165,6 +166,7 @@ if ucx_dep.found() and cuda_dep.found()
         dependencies: ucx_dep)
 
     if have_gpu_side and have_host_side
+        ucx_gpu_device_api_available = true
         add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
         message('UCX GPU device API support detected and enabled')
 

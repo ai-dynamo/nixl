@@ -7,7 +7,6 @@
 #include <cuda_runtime.h>
 #endif
 
-#ifdef HAVE_UCX_GPU_DEVICE_API
 #include <gpu/ucx/nixl_device.cuh>
 
 class GpuDeviceApi : public ::testing::Test {
@@ -37,5 +36,3 @@ TEST_F(GpuDeviceApi, NixlGpuApiCompilationTest) {
 
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
 }
-
-#endif

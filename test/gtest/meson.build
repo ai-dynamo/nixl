@@ -66,8 +66,7 @@ gtest_sources = [
     ]
 
 if cuda_dep.found()
-    nvcc_prog = find_program('nvcc', required: false)
-    if nvcc_prog.found()
+    if ucx_gpu_device_api_available
         gtest_sources += 'device_api_test.cu'
     endif
 endif
