@@ -31,6 +31,11 @@ sudo apt install nvidia-kernel-open-<version>  # e.g., nvidia-kernel-open-575
 sudo reboot
 ```
 
+If running on nvlink hosts like DGX we should also install fabric manager
+```bash
+sudo apt install nvidia-fabricmanager-<version> # should be same as kernel version nvidia-fabricmanager-575
+```
+
 Verify with `nvidia-smi`. Driver compatibility is critical for RDMA support[^1_1][^1_3].
 
 
