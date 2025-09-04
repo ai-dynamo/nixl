@@ -14,6 +14,7 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /SECURITY.md @ai-dynamo/Devops
 
 # Bindings
+/src/bindings/python @ovidiusm @mkhazraee @roiedanino
 /src/bindings/rust @roiedanino @gleon99 @mkhazraee
 
 # UCX Plugins
