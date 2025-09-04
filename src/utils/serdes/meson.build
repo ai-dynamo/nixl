@@ -15,7 +15,8 @@
 
 serdes_lib = library('serdes',
            'serdes.cpp', 'serdes.h',
-           include_directories: nixl_inc_dirs,
+           dependencies: [absl_log_dep],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
            install: true)
 
 serdes_interface = declare_dependency(link_with: serdes_lib)

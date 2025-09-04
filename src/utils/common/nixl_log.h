@@ -49,6 +49,11 @@
 #define NIXL_PERROR NIXL_ERROR.WithPerror()
 
 /*
+ * Like NIXL_ERROR, but prefixed with current function name and a colon
+ */
+#define NIXL_ERROR_FUNC NIXL_ERROR << __FUNCTION__ << ": "
+
+/*
  * Logs messages unconditionally (maps to Abseil WARNING level)
  */
 #define NIXL_WARN LOG(WARNING)

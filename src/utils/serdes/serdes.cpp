@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "serdes.h"
+#include "common/nixl_log.h"
 
 nixlSerDes::nixlSerDes() {
     workingStr = "nixlSerDes|";
@@ -48,8 +49,8 @@ nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str)
 std::string nixlSerDes::getStr(const std::string &tag){
 
     if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-       //incorrect tag
-       return "";
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed";
+        return "";
     }
     ssize_t len;
 
@@ -67,6 +68,8 @@ std::string nixlSerDes::getStr(const std::string &tag){
     //move past string plus | delimiter
     des_offset += len + 1;
 
+    if (ret.empty()) NIXL_ERROR << "Deserialization of tag " << tag << " failed";
+
     return ret;
 }
 
@@ -83,8 +86,8 @@ nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_
 
 ssize_t nixlSerDes::getBufLen(const std::string &tag) const{
     if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-       //incorrect tag
-       return -1;
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed";
+        return -1;
     }
 
     ssize_t len;
@@ -93,13 +96,15 @@ ssize_t nixlSerDes::getBufLen(const std::string &tag) const{
     //_stringToBytes(&len, workingStr.data() + des_offset + tag.size(), sizeof(ssize_t));
     _stringToBytes(&len, workingStr.substr(des_offset + tag.size(), sizeof(ssize_t)), sizeof(ssize_t));
 
+    if (len == 0) NIXL_WARN << "In deserialization of tag " << tag << " the buffer length ios 0";
+
     return len;
 }
 
 nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len){
     if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-       //incorrect tag
-       return NIXL_ERR_MISMATCH;
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed";
+        return NIXL_ERR_MISMATCH;
     }
 
     //skip over tag and size, which we assume has been read previously
@@ -122,8 +127,8 @@ std::string nixlSerDes::exportStr() const {
 nixl_status_t nixlSerDes::importStr(const std::string &sdbuf) {
 
     if(sdbuf.compare(0, 11, "nixlSerDes|") != 0){
-       //incorrect tag
-       return NIXL_ERR_MISMATCH;
+        NIXL_ERROR << "Deserialization failed, missing nixlSerDes tag";
+        return NIXL_ERR_MISMATCH;
     }
 
     workingStr = sdbuf;
