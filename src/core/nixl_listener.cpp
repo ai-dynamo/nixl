@@ -324,7 +324,7 @@ public:
             // This lambda assumes lifetime only inside this method
             auto watcher_callback = [&](etcd::Response response) -> void {
                 if (promise_set.exchange(true)) {
-                    NIXL_WARN << "Ignoring subsequent watch event for key: " << metadata_key;
+                    NIXL_DEBUG << "Ignoring subsequent watch event for key: " << metadata_key;
                     return;
                 }
 
