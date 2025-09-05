@@ -105,8 +105,8 @@ then
     run_nixlbench --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type DRAM
     run_nixlbench_one_worker --backend POSIX --op_type READ --initiator_seg_type VRAM
     run_nixlbench_one_worker --backend POSIX --op_type WRITE --target_seg_type VRAM
-    run_nixlbench_one_worker --backend GDS --filepath /tmp --op_type READ --target_seg_type VRAM
-    run_nixlbench_one_worker --backend GDS --filepath /tmp --op_type WRITE --target_seg_type VRAM
+    run_nixlbench_one_worker --backend GDS --op_type READ --target_seg_type VRAM
+    run_nixlbench_one_worker --backend GDS --op_type WRITE --target_seg_type VRAM
 fi
 
 pkill etcd
