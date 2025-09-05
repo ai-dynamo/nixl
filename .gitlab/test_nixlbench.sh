@@ -97,12 +97,12 @@ run_nixlbench_one_worker --backend POSIX --op_type WRITE --initiator_seg_type DR
 
 if [ "$HAS_GPU" = true ]
 then
-    run_nixlbench --backend UCX --op_type READ --initiator_seg_type VRAM --target_seg_type VRAM
-    run_nixlbench --backend UCX --op_type READ --initiator_seg_type DRAM --target_seg_type VRAM
-    run_nixlbench --backend UCX --op_type READ --initiator_seg_type VRAM --target_seg_type DRAM
-    run_nixlbench --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type VRAM
-    run_nixlbench --backend UCX --op_type WRITE --initiator_seg_type DRAM --target_seg_type VRAM
-    run_nixlbench --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type DRAM
+    run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type VRAM --target_seg_type VRAM
+    run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type DRAM --target_seg_type VRAM
+    run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type VRAM --target_seg_type DRAM
+    run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type VRAM
+    run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type DRAM --target_seg_type VRAM
+    run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type DRAM
     run_nixlbench_one_worker --backend POSIX --op_type READ --initiator_seg_type VRAM
     run_nixlbench_one_worker --backend POSIX --op_type WRITE --target_seg_type VRAM
     run_nixlbench_one_worker --backend GDS --op_type READ --target_seg_type VRAM
