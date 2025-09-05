@@ -84,7 +84,7 @@ run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type DRA
 run_nixlbench_one_worker --backend POSIX --op_type READ --initiator_seg_type DRAM --target_seg_type DRAM
 run_nixlbench_one_worker --backend POSIX --op_type WRITE --initiator_seg_type DRAM --target_seg_type DRAM
 
-if $HAS_GPU
+if $HAS_CUDA
 then
     run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type VRAM --target_seg_type VRAM
     run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type DRAM --target_seg_type VRAM

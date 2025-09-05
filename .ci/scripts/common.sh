@@ -75,11 +75,11 @@ min_gtest_port=$((tcp_port_min + gtest_offset))
 # shellcheck disable=SC2034
 max_gtest_port=$((tcp_port_max + gtest_offset))
 
-if nvidia-smi -L | grep '^GPU'
+if nvidia-smi -L | grep '^GPU' && test -d "$CUDA_HOME"
 then
-    HAS_GPU=true
+    HAS_CUDA=true
     echo "==== GPU found ===="
 else
-    HAS_GPU=false
+    HAS_CUDA=false
     echo "==== GPU not found ===="
 fi

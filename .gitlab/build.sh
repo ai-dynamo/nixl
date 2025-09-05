@@ -102,12 +102,9 @@ chmod +x rustup-init
 ./rustup-init -y --default-toolchain 1.86.0
 export PATH="$HOME/.cargo/bin:$PATH"
 
-if $HAS_GPU
+if $HAS_CUDA
 then
-    UCX_CUDA_BUILD_ARGS="--with-cuda=/usr/local/cuda"
-    env | sort | grep CUDA
-    find / -name "cuda.h" 2>/dev/null
-    find / -name "libcuda*so*" 2>/dev/null
+    UCX_CUDA_BUILD_ARGS="--with-cuda=${CUDA_HOME}"
 else
     UCX_CUDA_BUILD_ARGS=""
 fi
