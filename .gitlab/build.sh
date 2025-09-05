@@ -99,6 +99,13 @@ chmod +x rustup-init
 ./rustup-init -y --default-toolchain 1.86.0
 export PATH="$HOME/.cargo/bin:$PATH"
 
+if $HAS_GPU
+then
+    UCX_CUDA_BUILD_ARGS="--with-cuda=/usr/local/cuda"
+else
+    UCX_CUDA_BUILD_ARGS=""
+fi
+
 curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
@@ -113,6 +120,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
+          ${UCX_CUDA_BUILD_ARGS} \
           --enable-mt && \
         make -j && \
         make -j install-strip && \

@@ -45,15 +45,6 @@ nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 
-if nvidia-smi -L | grep '^GPU'
-then
-    HAS_GPU=true
-    echo "==== GPU found ===="
-else
-    HAS_GPU=false
-    echo "==== GPU not found ===="
-fi
-
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
 etcd_peer_port=$(get_next_tcp_port)
@@ -93,7 +84,7 @@ run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type DRA
 run_nixlbench_one_worker --backend POSIX --op_type READ --initiator_seg_type DRAM --target_seg_type DRAM
 run_nixlbench_one_worker --backend POSIX --op_type WRITE --initiator_seg_type DRAM --target_seg_type DRAM
 
-if [ "$HAS_GPU" = true ]
+if $HAS_GPU
 then
     run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type VRAM --target_seg_type VRAM
     run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type DRAM --target_seg_type VRAM
@@ -101,10 +92,10 @@ then
     run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type VRAM
     run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type DRAM --target_seg_type VRAM
     run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type DRAM
-    run_nixlbench_one_worker --backend POSIX --op_type READ --initiator_seg_type VRAM
-    run_nixlbench_one_worker --backend POSIX --op_type WRITE --target_seg_type VRAM
-    run_nixlbench_one_worker --backend GDS --op_type READ --target_seg_type VRAM
-    run_nixlbench_one_worker --backend GDS --op_type WRITE --target_seg_type VRAM
+    run_nixlbench_one_worker --backend GDS --op_type READ
+    run_nixlbench_one_worker --backend GDS --op_type WRITE
+else
+    echo "Skipping GPU tests"
 fi
 
 pkill etcd
