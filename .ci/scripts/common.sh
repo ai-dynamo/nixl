@@ -74,3 +74,16 @@ gtest_offset=$((tcp_port_range / 2))
 min_gtest_port=$((tcp_port_min + gtest_offset))
 # shellcheck disable=SC2034
 max_gtest_port=$((tcp_port_max + gtest_offset))
+
+if nvidia-smi -L | grep '^GPU' && test -d "$CUDA_HOME"
+then
+    echo "==== CUDA support found ===="
+    HAS_CUDA=true
+    UCX_CUDA_BUILD_ARGS="--with-cuda=${CUDA_HOME}"
+else
+    echo "==== CUDA support not found ===="
+    HAS_CUDA=false
+    UCX_CUDA_BUILD_ARGS=""
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
+fi
