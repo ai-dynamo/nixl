@@ -102,6 +102,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 if $HAS_GPU
 then
     UCX_CUDA_BUILD_ARGS="--with-cuda=/usr/local/cuda"
+    env | sort | grep CUDA
+    find / -name "cuda.h" 2>/dev/null
+    find / -name "libcuda*so*" 2>/dev/null
 else
     UCX_CUDA_BUILD_ARGS=""
 fi
