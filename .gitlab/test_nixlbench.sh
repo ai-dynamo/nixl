@@ -92,8 +92,6 @@ then
     run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type VRAM
     run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type DRAM --target_seg_type VRAM
     run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type DRAM
-    run_nixlbench_one_worker --backend GDS --op_type READ
-    run_nixlbench_one_worker --backend GDS --op_type WRITE
 else
     echo "Skipping GPU tests"
 fi

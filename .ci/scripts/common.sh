@@ -78,8 +78,10 @@ max_gtest_port=$((tcp_port_max + gtest_offset))
 if nvidia-smi -L | grep '^GPU' && test -d "$CUDA_HOME"
 then
     HAS_CUDA=true
-    echo "==== GPU found ===="
+    UCX_CUDA_BUILD_ARGS="--with-cuda=${CUDA_HOME}"
+    echo "==== CUDA support found ===="
 else
     HAS_CUDA=false
-    echo "==== GPU not found ===="
+    UCX_CUDA_BUILD_ARGS=""
+    echo "==== CUDA support not found ===="
 fi

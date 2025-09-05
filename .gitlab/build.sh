@@ -102,13 +102,6 @@ chmod +x rustup-init
 ./rustup-init -y --default-toolchain 1.86.0
 export PATH="$HOME/.cargo/bin:$PATH"
 
-if $HAS_CUDA
-then
-    UCX_CUDA_BUILD_ARGS="--with-cuda=${CUDA_HOME}"
-else
-    UCX_CUDA_BUILD_ARGS=""
-fi
-
 curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
