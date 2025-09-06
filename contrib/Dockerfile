@@ -55,16 +55,35 @@ RUN apt-get update -y && \
     flex \
     libgtest-dev \
     build-essential \
-    python3.12-dev \
+    devscripts \
+    debhelper \
+    dkms \
+    git \
+    wget \
     clang \
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
+
+RUN if [ "$OS" = "ubuntu22" ]; then apt-get install -y python3.10-dev; \
+    else apt-get install -y python3.12-dev; \
+    fi
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
     libnuma-dev librdmacm-dev ibverbs-providers
 
 WORKDIR /workspace
-RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+
+RUN if [ "$OS" = "ubuntu22" ]; then git clone --depth 1 https://github.com/NVIDIA/gdrcopy.git; \
+        cd gdrcopy; \
+        git fetch --tags --depth=1; \
+        latest_tag=$(git describe --tags "$(git rev-list --tags --max-count=1)"); \
+        git checkout "$latest_tag"; \
+        cd packages; \
+        CUDA=/usr/local/cuda ./build-deb-packages.sh; \
+        dpkg -i libgdr*.deb; \
+     fi
+
+RUN cd /workspace && git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
@@ -98,12 +117,8 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "am
     MELLANOX_OS=$(if [ "${OS}" = "ubuntu22" ]; then echo "ubuntu2204"; elif [ "${OS}" = "ubuntu24" ]; then echo "ubuntu2404"; else echo "${OS}"; fi) && \
     wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb && \
     dpkg -i doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb && \
-    apt-get update
-
-RUN if [ "$OS" = "ubuntu24" ]; then \
-        apt-get install -y --no-install-recommends \
-            doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev; \
-    fi
+    apt-get update && \
+    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
 
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
@@ -159,10 +174,10 @@ RUN cd src/bindings/rust && cargo build --release --locked
 
 # Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
 RUN ./contrib/build-wheel.sh \
-    --python-version $DEFAULT_PYTHON_VERSION \
+    --python-version $WHL_DEFAULT_PYTHON_VERSIONS \
     --platform manylinux_2_39_$ARCH \
     --ucx-plugins-dir $UCX_PLUGIN_DIR \
     --nixl-plugins-dir $NIXL_PLUGIN_DIR \
     --output-dir /workspace/nixl/dist
 
-RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+RUN uv pip install dist/nixl-*.whl

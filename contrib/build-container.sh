@@ -35,6 +35,7 @@ ARCH=$(uname -m)
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
+DEF_PY_VERSION="3.12"
 UCX_REF=${UCX_REF:-v1.19.0}
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
@@ -97,6 +98,14 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --def-py-version)
+            if [ "$2" ]; then
+                DEF_PY_VERSION=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --python-versions)
             if [ "$2" ]; then
                 WHL_PYTHON_VERSIONS=$2
@@ -135,7 +144,7 @@ get_options() {
     done
 
     if [[ $OS == "ubuntu22" ]]; then
-        BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04
+        #BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04
         WHL_BASE=${WHL_BASE:-manylinux_2_34}
     fi
 
@@ -166,6 +175,7 @@ show_help() {
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--tag tag for image]"
+    echo "  [--def-py-version to use for virtual env]"
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-upstream use ucx master branch]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
@@ -190,7 +200,8 @@ if [ -d "$NIXL_DIR/build" ]; then
 fi
 
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
-BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
+BUILD_ARGS+=" --build-arg DEFAULT_PYTHON_VERSION=$DEF_PY_VERSION"
+BUILD_ARGS+=" --build-arg WHL_DEFAULT_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
