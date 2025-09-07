@@ -51,7 +51,13 @@ cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
 
-if cuda_lib_path == ''
+# Check for nvcc compiler availability once at the beginning
+nvcc_prog = find_program('nvcc', required: false)
+
+if not nvcc_prog.found()
+    message('CUDA compiler (nvcc) not found in PATH - disabling CUDA support')
+    cuda_dep = disabler()
+elif cuda_lib_path == ''
     cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda' ])
     if not cuda_dep.found()
         # Meson is not detecting CUDA reliably on ARM, fallback to default
