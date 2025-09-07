@@ -53,6 +53,11 @@ class nixlAgentConfig {
          */
         uint64_t lthrDelay;
 
+        /**
+         * @var ETCD watch timeout in microseconds
+         *      Timeout for waiting for metadata changes when watching etcd keys.
+         */
+        std::chrono::microseconds etcdWatchTimeout;
 
         /**
          * @brief  Agent configuration constructor for enabling various features.
@@ -62,20 +67,24 @@ class nixlAgentConfig {
          * @param sync_mode          Thread synchronization mode
          * @param pthr_delay_us      Optional delay for pthread in us
          * @param lthr_delay_us      Optional delay for listener thread in us
+         * @param etcd_watch_timeout Optional timeout for etcd watch operations in microseconds
          */
-        nixlAgentConfig (const bool use_prog_thread,
-                         const bool use_listen_thread=false,
-                         const int port=0,
-                         nixl_thread_sync_t sync_mode=nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT,
-                         unsigned int num_workers = 1,
-                         const uint64_t pthr_delay_us=0,
-                         const uint64_t lthr_delay_us = 100000) :
-                         useProgThread(use_prog_thread),
-                         useListenThread(use_listen_thread),
-                         listenPort(port),
-                         syncMode(sync_mode),
-                         pthrDelay(pthr_delay_us),
-                         lthrDelay(lthr_delay_us) { }
+        nixlAgentConfig(const bool use_prog_thread,
+                        const bool use_listen_thread = false,
+                        const int port = 0,
+                        nixl_thread_sync_t sync_mode = nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT,
+                        unsigned int num_workers = 1,
+                        const uint64_t pthr_delay_us = 0,
+                        const uint64_t lthr_delay_us = 100000,
+                        const std::chrono::microseconds &etcd_watch_timeout =
+                            std::chrono::microseconds(5000000))
+            : useProgThread(use_prog_thread),
+              useListenThread(use_listen_thread),
+              listenPort(port),
+              syncMode(sync_mode),
+              pthrDelay(pthr_delay_us),
+              lthrDelay(lthr_delay_us),
+              etcdWatchTimeout(etcd_watch_timeout) {}
 
         /**
          * @brief Copy constructor for nixlAgentConfig object
