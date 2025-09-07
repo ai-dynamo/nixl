@@ -65,13 +65,13 @@ gtest_sources = [
     'telemetry_test.cpp'
     ]
 
-    if ucx_gpu_device_api_available
-        gtest_sources += 'device_api_test.cu'
-        device_api_inc = nixl_gpu_inc_dirs
-        device_api_dep = ucx_dep
-    else
-        device_api_inc = []
-        device_api_dep = []
+if ucx_gpu_device_api_available
+    gtest_sources += 'device_api_test.cu'
+    device_api_inc = nixl_gpu_inc_dirs
+    device_api_dep = ucx_dep
+else
+    device_api_inc = []
+    device_api_dep = []
 endif
 
 test_exe = executable('gtest',
