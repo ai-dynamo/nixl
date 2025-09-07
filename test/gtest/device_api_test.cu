@@ -3,21 +3,15 @@
 #include "nixl.h"
 #include "common.h"
 
-#ifdef HAVE_CUDA
 #include <cuda_runtime.h>
-#endif
+#include <nixl_device.cuh>
 
-#include <gpu/ucx/nixl_device.cuh>
+namespace gtest::nixl::gpu {
 
-class GpuDeviceApi : public ::testing::Test {
-protected:
-    void SetUp() override {}
-
-    void TearDown() override {}
-};
+class ucxDeviceApi : public ::testing::Test {};
 
 template<nixl_gpu_level_t level>
-__global__ void nixl_gpu_api_compilation_test_kernel() {
+__global__ void dummyKernel() {
     const nixlGpuSignal signal { 1, 0x1000 };
     nixlGpuXferStatusH status;
 
@@ -29,10 +23,12 @@ __global__ void nixl_gpu_api_compilation_test_kernel() {
     [[maybe_unused]] auto result6 = nixlGpuReadSignalValue<level>(nullptr);
 }
 
-TEST_F(GpuDeviceApi, NixlGpuApiCompilationTest) {
-    nixl_gpu_api_compilation_test_kernel<nixl_gpu_level_t::THREAD><<<1, 1>>>();
+TEST_F(ucxDeviceApi, compilationTest) {
+    dummyKernel<nixl_gpu_level_t::THREAD><<<1, 1>>>();
     cudaError_t err = cudaGetLastError();
     ASSERT_EQ(err, cudaSuccess) << "Kernel launch failed: " << cudaGetErrorString(err);
 
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
 }
+
+} // namespace gtest::nixl::gpu

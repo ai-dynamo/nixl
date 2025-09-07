@@ -175,11 +175,6 @@ if ucx_dep.found() and cuda_dep.found()
         ucx_gpu_device_api_available = true
         add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
         message('UCX GPU device API support detected and enabled')
-
-        # Install GPU device API header when support is available
-        if get_option('install_headers')
-            install_headers(meson.project_source_root() / 'src/api/gpu/ucx/nixl_device.cuh', subdir: 'gpu/ucx')
-        endif
     else
         message('UCX GPU device API support not available - GPU device API features will be disabled')
     endif
@@ -218,6 +213,7 @@ if get_option('buildtype') == 'debug'
 endif
 
 nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core')
+nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
@@ -240,6 +236,9 @@ if get_option('install_headers')
   install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
+  if ucx_gpu_device_api_available
+    install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')
+  endif
 endif
 
 # Doxygen documentation
