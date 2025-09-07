@@ -18,7 +18,7 @@ __global__ void dummyKernel() {
     [[maybe_unused]] auto result3 = nixlGpuPostPartialWriteXferReq<level>(nullptr, 0, nullptr, nullptr, nullptr, nullptr, signal);
     [[maybe_unused]] auto result4 = nixlGpuPostWriteXferReq<level>(nullptr, nullptr, nullptr, nullptr, signal);
     [[maybe_unused]] auto result5 = nixlGpuGetXferStatus<level>(status);
-    [[maybe_unused]] auto result6 = nixlGpuReadSignalValue<level>(nullptr);
+    [[maybe_unused]] auto result6 = nixlGpuReadSignal<level>(nullptr);
 }
 
 TEST_F(ucxDeviceApi, compilationTest) {

@@ -228,17 +228,17 @@ nixlGpuGetXferStatus(nixlGpuXferStatusH &xfer_status)
 }
 
 /**
- * @brief Read the value of a signal.
+ * @brief Read the signal.
  *
  * The signal must be initialized with the host function @ref prepGpuSignal.
  *
  * @param signal [in]  Address of the signal.
  *
- * @return The value of the signal.
+ * @return The signal.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ uint64_t
-nixlGpuReadSignalValue(const void *signal)
+nixlGpuReadSignal(const void *signal)
 {
     return ucp_device_counter_read<static_cast<ucp_device_level_t>(level)>(signal);
 }
