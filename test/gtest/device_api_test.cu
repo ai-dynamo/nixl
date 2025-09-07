@@ -1,7 +1,5 @@
 #include <gtest/gtest.h>
-#include <tuple>
 #include "nixl.h"
-#include "common.h"
 
 #include <cuda_runtime.h>
 #include <nixl_device.cuh>
