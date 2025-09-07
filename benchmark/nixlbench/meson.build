@@ -23,6 +23,7 @@ project('nixlbench', 'CPP', version: '0.6.0',
 
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
+fs = import('fs')
 
 # Allow overriding paths through environment variables
 # CUDA
@@ -60,8 +61,28 @@ endif
 cuda_available = false
 if cuda_lib_path == ''
     cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda' ])
+    if not cuda_dep.found()
+        # Meson is not detecting CUDA reliably on ARM, fallback to default
+        cuda_home = run_command('bash', '-c', 'echo $CUDA_HOME', check: true).stdout().strip()
+        if cuda_home == ''
+            cuda_home = '/usr/local/cuda'
+        endif
+        cuda_lib = cuda_home + '/lib64'
+        cuda_inc = cuda_home + '/include'
+        cuda_stub = cuda_lib + '/stubs'
+        if fs.exists(cuda_lib) and fs.exists(cuda_inc)
+            cuda_dep = declare_dependency(
+              link_args : ['-L' + cuda_lib, '-L' + cuda_stub, '-lcuda', '-lcudart'],
+              include_directories : include_directories(cuda_inc))
+            if cuda_dep.found()
+                message('Found CUDA installation through fallback method:', cuda_home)
+            endif
+        endif
+    endif
     if cuda_dep.found()
         cuda_available = true
+    else
+        warning('CUDA not found. VRAM support will be disabled.')
     endif
 else
     message('cuda lib path ', cuda_lib_path)
