@@ -1624,12 +1624,12 @@ nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 
 nixl_status_t
 nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &handle,
-                                nixlGpuXferReqH *&gpu_req_hndl) const {
+                                nixlGpuXferReqH &gpu_req_hndl) const {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
 void
-nixlUcxEngine::releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const {}
+nixlUcxEngine::releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const {}
 
 nixl_status_t
 nixlUcxEngine::getGpuSignalSize(size_t &signal_size) const {

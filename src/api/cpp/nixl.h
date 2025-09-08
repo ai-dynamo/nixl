@@ -327,7 +327,7 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH *&gpu_req_hndl) const;
+        createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const;
 
         /**
          * @brief  Release transfer request from GPU memory
@@ -335,7 +335,7 @@ class nixlAgent {
          * @param  gpu_req_hndl  [in] GPU transfer request handle to be released
          */
         void
-        releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const;
+        releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const;
 
         /**
          * @brief  Get the size required for a GPU signal.

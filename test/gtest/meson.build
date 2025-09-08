@@ -64,11 +64,21 @@ gtest_sources = [
     'query_mem.cpp',
     'telemetry_test.cpp'
     ]
+
+if ucx_gpu_device_api_available
+    gtest_sources += 'device_api_test.cu'
+    device_api_inc = nixl_gpu_inc_dirs
+    device_api_dep = ucx_dep
+else
+    device_api_inc = []
+    device_api_dep = []
+endif
+
 test_exe = executable('gtest',
     sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, cuda_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, file_utils_interface],
+    dependencies : [nixl_dep, nixl_common_dep, cuda_dep, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, file_utils_interface],
     link_with: [nixl_build_lib],
     install : true
 )
