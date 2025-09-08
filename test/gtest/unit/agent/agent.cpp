@@ -210,6 +210,48 @@ namespace agent {
         EXPECT_FALSE(metadata.empty());
     }
 
+    TEST_F(SingleAgentSessionFixture, AddLocalUserMetadataTest) {
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+        EXPECT_EQ(agent_helper_->CreateBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent_->addLocalUserMD("test_key1", "test_value1"), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->addLocalUserMD("test_key2", "test_value2"), NIXL_SUCCESS);
+
+        std::string metadata;
+        EXPECT_EQ(agent_->getLocalMD(metadata), NIXL_SUCCESS);
+        EXPECT_FALSE(metadata.empty());
+
+        EXPECT_NE(metadata.find("test_key1"), std::string::npos);
+        EXPECT_NE(metadata.find("test_value1"), std::string::npos);
+        EXPECT_NE(metadata.find("test_key2"), std::string::npos);
+        EXPECT_NE(metadata.find("test_value2"), std::string::npos);
+    }
+
+    TEST_F(SingleAgentSessionFixture, AddLocalUserMetadataPartialTest) {
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+        EXPECT_EQ(agent_helper_->CreateBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent_->addLocalUserMD("test_key1", "test_value1"), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->addLocalUserMD("test_key2", "test_value2"), NIXL_SUCCESS);
+
+        // Test partial metadata with userMdKeys specified
+        nixl_opt_args_t extra_params;
+        extra_params.userMdKeys = std::vector<std::string>{"test_key1"};
+
+        std::string partial_metadata;
+        nixl_reg_dlist_t empty_dlist(DRAM_SEG);
+        EXPECT_EQ(agent_->getLocalPartialMD(empty_dlist, partial_metadata, &extra_params),
+                  NIXL_SUCCESS);
+        EXPECT_FALSE(partial_metadata.empty());
+
+        EXPECT_NE(partial_metadata.find("test_key1"), std::string::npos);
+        EXPECT_NE(partial_metadata.find("test_value1"), std::string::npos);
+        EXPECT_EQ(partial_metadata.find("test_key2"), std::string::npos);
+        EXPECT_EQ(partial_metadata.find("test_value2"), std::string::npos);
+    }
+
     TEST_P(SingleAgentWithMemParamFixture, RegisterMemoryTest) {
         nixl_b_params_t params;
         nixlBackendH *backend;
@@ -251,6 +293,29 @@ namespace agent {
         EXPECT_EQ(local_agent_helper_->GetAndLoadRemoteMD(remote_agent_, remote_agent_name_out),
                   NIXL_SUCCESS);
         EXPECT_EQ(remote_agent_name, remote_agent_name_out);
+    }
+
+    TEST_F(DualAgentBridgeFixture, GetRemoteUserMetadataTest) {
+        nixl_b_params_t local_params, remote_params;
+        nixlBackendH *local_backend, *remote_backend;
+        EXPECT_EQ(local_agent_helper_->CreateBackendWithGMock(local_params, local_backend),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(remote_agent_helper_->CreateBackendWithGMock(remote_params, remote_backend),
+                  NIXL_SUCCESS);
+
+        EXPECT_EQ(remote_agent_->addLocalUserMD("test_key1", "test_value1"), NIXL_SUCCESS);
+
+        std::string remote_agent_name_out;
+        EXPECT_EQ(local_agent_helper_->GetAndLoadRemoteMD(remote_agent_, remote_agent_name_out),
+                  NIXL_SUCCESS);
+
+        std::string value;
+        EXPECT_EQ(local_agent_->getRemoteUserMD(remote_agent_name_out, "test_key1", value),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(value, "test_value1");
+
+        EXPECT_EQ(local_agent_->getRemoteUserMD(remote_agent_name_out, "test_key2", value),
+                  NIXL_ERR_NOT_FOUND);
     }
 
     TEST_F(DualAgentBridgeFixture, InvalidateRemoteMetadataTest) {

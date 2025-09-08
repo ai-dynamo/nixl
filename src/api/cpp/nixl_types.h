@@ -20,6 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <cstdint>
+#include <optional>
 
 
 /*** Forward declarations ***/
@@ -217,6 +218,11 @@ struct nixlAgentOptionalArgs {
      * @var signal_dev_id Device ID of the signal buffer for signaling operations
      */
     uint64_t signal_dev_id = 0;
+
+    /**
+     * @var userMdKeys Used to specify the keys of the user metadata to be included in the metadata.
+     */
+    std::optional<std::vector<std::string>> userMdKeys;
 };
 
 /**
