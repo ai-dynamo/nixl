@@ -166,6 +166,18 @@ class nixlBackendEngine {
         virtual void
         releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const {}
 
+        // Get the size required for a GPU signal
+        virtual nixl_status_t
+        getGpuSignalSize(size_t &signal_size) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        // Initialize a signal for GPU transfer using memory handle from descriptor
+        virtual nixl_status_t
+        prepGpuSignal(const nixlBackendMD &meta, void *signal) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
         // *** Needs to be implemented if supportsRemote() is true *** //
 
         // Gets serialized form of public metadata

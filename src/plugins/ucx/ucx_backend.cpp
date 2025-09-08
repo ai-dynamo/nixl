@@ -1631,6 +1631,36 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &handle,
 void
 nixlUcxEngine::releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const {}
 
+nixl_status_t
+nixlUcxEngine::getGpuSignalSize(size_t &signal_size) const {
+    if (gpuSignalSize_) {
+        signal_size = *gpuSignalSize_;
+        return NIXL_SUCCESS;
+    }
+
+    try {
+        gpuSignalSize_ = signal_size = uc->getGpuSignalSize();
+        return NIXL_SUCCESS;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << e.what();
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+nixl_status_t
+nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta, void *signal) const {
+    try {
+        auto *ucx_meta = static_cast<const nixlUcxPrivateMetadata *>(&meta);
+        uc->prepGpuSignal(ucx_meta->mem, signal);
+        return NIXL_SUCCESS;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << e.what();
+        return NIXL_ERR_BACKEND;
+    }
+}
+
 int nixlUcxEngine::progress() {
     // TODO: add listen for connection handling if necessary
     int ret = 0;
