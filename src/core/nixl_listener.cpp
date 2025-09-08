@@ -322,9 +322,15 @@ public:
             int64_t watch_index = response.index();
             std::promise<nixl_status_t> ret_prom;
             auto future = ret_prom.get_future();
+            std::atomic<bool> promise_set{false};
 
             // This lambda assumes lifetime only inside this method
             auto watcher_callback = [&](etcd::Response response) -> void {
+                if (promise_set.exchange(true)) {
+                    NIXL_DEBUG << "Ignoring subsequent watch event for key: " << metadata_key;
+                    return;
+                }
+
                 if (!response.is_ok()) {
                     NIXL_ERROR << "Watch failed for key: " << metadata_key << " : "
                                << response.error_message();
