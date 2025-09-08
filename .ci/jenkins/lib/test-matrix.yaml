@@ -25,6 +25,7 @@ timeout_minutes: 240
 # label is defined at jenkins slave configuration, we want to run the job on a gpu agent and be able to esaly replace it without having to change this file
 runs_on_agents:
   - {nodeLabel: 'H100'}
+  - {nodeLabel: 'DGX'}
 
 matrix:
   axes:
@@ -32,6 +33,8 @@ matrix:
       - nvcr.io/nvidia/pytorch:25.02-py3
     arch:
       - x86_64
+
+taskName: "${name}/${arch}/${axis_index}"
 
 env:
   INSTALL_DIR: ${WORKSPACE}/nixl_install
