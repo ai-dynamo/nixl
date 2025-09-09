@@ -682,7 +682,6 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         NIXL_ERROR_FUNC << "remote agent '" << remote_side->remoteAgent
                         << "' was invalidated in between prepXferDlist and this call";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
-        delete req_hndl;
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1038,7 +1037,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated after transfer request creation";
-        delete req_hndl;
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
@@ -1049,7 +1047,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                      req_hndl->backendHandle);
         if (req_hndl->status == NIXL_IN_PROG) {
             NIXL_ERROR_FUNC << "transfer request is still in progress and cannot be reposted";
-            delete req_hndl;
             return NIXL_ERR_REPOST_ACTIVE;
         }
 
@@ -1057,7 +1054,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
             data->invalidateRemoteData(req_hndl->remoteAgent);
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
-            delete req_hndl;
             return NIXL_ERR_REMOTE_DISCONNECT;
         }
     }
@@ -1084,7 +1080,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (opt_args.hasNotif && (!req_hndl->engine->supportsNotif())) {
         NIXL_ERROR_FUNC << "the selected backend '" << req_hndl->engine->getType()
                         << "' does not support notifications";
-        delete req_hndl;
         data->addErrorTelemetry(NIXL_ERR_BACKEND);
         return NIXL_ERR_BACKEND;
     }
@@ -1102,7 +1097,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
             data->invalidateRemoteData(req_hndl->remoteAgent);
-            delete req_hndl;
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
             NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1135,7 +1129,6 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was invalidated during transfer";
-            delete req_hndl;
             return NIXL_ERR_NOT_FOUND;
         }
 
@@ -1143,7 +1136,6 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         if (req_hndl->status < 0) {
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
                 data->invalidateRemoteData(req_hndl->remoteAgent);
-                delete req_hndl;
                 return NIXL_ERR_REMOTE_DISCONNECT;
             } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
