@@ -217,9 +217,7 @@ TestErrorHandling::Agent::waitForCompletion(nixlXferReqH *req_handle) {
         EXPECT_NE(NIXL_ERR_NOT_POSTED, status);
     } while (status == NIXL_IN_PROG);
 
-    if (status == NIXL_SUCCESS) {
-        m_priv->releaseXferReq(req_handle);
-    }
+    m_priv->releaseXferReq(req_handle);
 
     return status;
 }
