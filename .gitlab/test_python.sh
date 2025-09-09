@@ -35,8 +35,6 @@ else
     SUDO=""
 fi
 
-$SUDO apt-get -qq install liburing-dev
-
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
@@ -50,11 +48,6 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 # Raise exceptions for logging errors
 export NIXL_DEBUG_LOGGING=yes
-
-pip3 install --break-system-packages .
-pip3 install --break-system-packages pytest
-pip3 install --break-system-packages pytest-timeout
-pip3 install --break-system-packages zmq
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
@@ -83,9 +76,11 @@ blocking_send_recv_port=$(get_next_tcp_port)
 mkdir -p /tmp/telemetry_test
 
 python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
+target_pid=$!
 sleep 5
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
 python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
+wait $target_pid
 
 python3 telemetry_reader.py --telemetry_path /tmp/telemetry_test/initiator &
 telePID=$!
