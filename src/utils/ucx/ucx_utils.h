@@ -187,6 +187,13 @@ public:
     [[nodiscard]] std::string packRkey(nixlUcxMem &mem);
     void memDereg(nixlUcxMem &mem);
 
+    /* GPU signal management */
+    void
+    prepGpuSignal(const nixlUcxMem &mem, void *signal) const;
+
+    [[nodiscard]] size_t
+    getGpuSignalSize() const;
+
     friend class nixlUcxWorker;
 };
 

@@ -1624,12 +1624,42 @@ nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 
 nixl_status_t
 nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &handle,
-                                nixlGpuXferReqH *&gpu_req_hndl) const {
+                                nixlGpuXferReqH &gpu_req_hndl) const {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
 void
-nixlUcxEngine::releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const {}
+nixlUcxEngine::releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const {}
+
+nixl_status_t
+nixlUcxEngine::getGpuSignalSize(size_t &signal_size) const {
+    if (gpuSignalSize_) {
+        signal_size = *gpuSignalSize_;
+        return NIXL_SUCCESS;
+    }
+
+    try {
+        gpuSignalSize_ = signal_size = uc->getGpuSignalSize();
+        return NIXL_SUCCESS;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << e.what();
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+nixl_status_t
+nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta, void *signal) const {
+    try {
+        auto *ucx_meta = static_cast<const nixlUcxPrivateMetadata *>(&meta);
+        uc->prepGpuSignal(ucx_meta->mem, signal);
+        return NIXL_SUCCESS;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << e.what();
+        return NIXL_ERR_BACKEND;
+    }
+}
 
 int nixlUcxEngine::progress() {
     // TODO: add listen for connection handling if necessary
