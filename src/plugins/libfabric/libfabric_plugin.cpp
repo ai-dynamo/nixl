@@ -15,70 +15,74 @@
 #include "backend/backend_plugin.h"
 #include "libfabric_backend.h"
 
-namespace
-{
-   const char* plugin_name = "Libfabric";
-   const char* plugin_version = "0.1.0";
+namespace {
+const char *plugin_name = "Libfabric";
+const char *plugin_version = "0.1.0";
 
-   [[nodiscard]] nixlBackendEngine* create_libfabric_engine(const nixlBackendInitParams* init_params) {
-        try {
-            return new nixlLibfabricEngine(init_params);
-        } catch (const std::exception &e) {
-            return nullptr;
-        }
-   }
+[[nodiscard]] nixlBackendEngine *
+create_libfabric_engine(const nixlBackendInitParams *init_params) {
+    try {
+        return new nixlLibfabricEngine(init_params);
+    }
+    catch (const std::exception &e) {
+        return nullptr;
+    }
+}
 
-   void destroy_libfabric_engine(nixlBackendEngine *engine) {
-       delete engine;
-   }
+void
+destroy_libfabric_engine(nixlBackendEngine *engine) {
+    delete engine;
+}
 
-   [[nodiscard]] const char* get_plugin_name() {
-       return plugin_name;
-   }
+[[nodiscard]] const char *
+get_plugin_name() {
+    return plugin_name;
+}
 
-   [[nodiscard]] const char* get_plugin_version() {
-       return plugin_version;
-   }
+[[nodiscard]] const char *
+get_plugin_version() {
+    return plugin_version;
+}
 
-   [[nodiscard]] nixl_b_params_t get_backend_options() {
-        return {};
-   }
+[[nodiscard]] nixl_b_params_t
+get_backend_options() {
+    return {};
+}
 
-   [[nodiscard]] nixl_mem_list_t get_backend_mems() {
-       return {
-           DRAM_SEG,
-           VRAM_SEG
-       };
-   }
+[[nodiscard]] nixl_mem_list_t
+get_backend_mems() {
+    return {DRAM_SEG, VRAM_SEG};
+}
 
-   // Static plugin structure
-   nixlBackendPlugin plugin = {
-       NIXL_PLUGIN_API_VERSION,
-       create_libfabric_engine,
-       destroy_libfabric_engine,
-       get_plugin_name,
-       get_plugin_version,
-       get_backend_options,
-       get_backend_mems
-   };
+// Static plugin structure
+nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
+                            create_libfabric_engine,
+                            destroy_libfabric_engine,
+                            get_plugin_name,
+                            get_plugin_version,
+                            get_backend_options,
+                            get_backend_mems};
 
-}  // namespace
+} // namespace
 
 #ifdef STATIC_PLUGIN_LIBFABRIC
 
-nixlBackendPlugin* createStaticLibfabricPlugin() {
+nixlBackendPlugin *
+createStaticLibfabricPlugin() {
     return &plugin;
 }
 
 #else
 
 // Plugin initialization function
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init() {
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
     return &plugin;
 }
 
 // Plugin cleanup function
-extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {
     // Cleanup any resources if needed
 }
 #endif

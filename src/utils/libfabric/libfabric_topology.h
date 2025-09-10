@@ -52,17 +52,27 @@ private:
     std::map<std::string, std::string> libfabric_to_pcie_map;
 
     // Helper methods
-    nixl_status_t discoverEfaDevices();
-    nixl_status_t discoverTopology();
+    nixl_status_t
+    discoverEfaDevices();
+    nixl_status_t
+    discoverTopology();
 
     // hwloc-based discovery methods
-    nixl_status_t initHwlocTopology();
-    nixl_status_t discoverHwlocTopology();
-    nixl_status_t buildPcieToLibfabricMapping();
-    nixl_status_t discoverGpusWithHwloc();
-    nixl_status_t discoverEfaDevicesWithHwloc();
-    nixl_status_t buildGpuToEfaMapping();
-    void cleanupHwlocTopology();
+    nixl_status_t
+    initHwlocTopology();
+    nixl_status_t
+    discoverHwlocTopology();
+    nixl_status_t
+    buildPcieToLibfabricMapping();
+    nixl_status_t
+    discoverGpusWithHwloc();
+    nixl_status_t
+    discoverEfaDevicesWithHwloc();
+    nixl_status_t
+    buildGpuToEfaMapping();
+    void
+    cleanupHwlocTopology();
+
     // Data structures for NIXL topology-aware grouping algorithm
     struct NicInfo {
         std::string libfabric_name;
@@ -72,6 +82,7 @@ private:
         uint8_t device_id;
         uint8_t function_id;
     };
+
     struct GpuInfo {
         hwloc_obj_t hwloc_node;
         uint16_t domain_id;
@@ -79,6 +90,7 @@ private:
         uint8_t device_id;
         uint8_t function_id;
     };
+
     struct NicGroup {
         std::vector<NicInfo> nics;
         GpuInfo closest_gpu;
@@ -87,47 +99,80 @@ private:
     };
 
     // NIXL topology-aware grouping algorithm methods
-    nixl_status_t buildTopologyAwareGrouping();
-    nixl_status_t buildFallbackMapping();
-    nixl_status_t buildFallbackNumaMapping();
-    nixl_status_t groupNicsWithGpus(const std::vector<NicInfo>& discovered_nics,
-                                   const std::vector<GpuInfo>& discovered_gpus,
-                                   std::vector<NicGroup>& nic_groups);
+    nixl_status_t
+    buildTopologyAwareGrouping();
+    nixl_status_t
+    buildFallbackMapping();
+    nixl_status_t
+    buildFallbackNumaMapping();
+    nixl_status_t
+    groupNicsWithGpus(const std::vector<NicInfo> &discovered_nics,
+                      const std::vector<GpuInfo> &discovered_gpus,
+                      std::vector<NicGroup> &nic_groups);
 
     // hwloc helper methods
-    std::string getPcieAddressFromHwlocObj(hwloc_obj_t obj) const;
-    bool isNvidiaGpu(hwloc_obj_t obj) const;
-    bool isEfaDevice(hwloc_obj_t obj) const;
+    std::string
+    getPcieAddressFromHwlocObj(hwloc_obj_t obj) const;
+    bool
+    isNvidiaGpu(hwloc_obj_t obj) const;
+    bool
+    isEfaDevice(hwloc_obj_t obj) const;
 
 public:
-    nixlLibfabricTopology();  // Automatically discovers topology, throws on failure
+    nixlLibfabricTopology(); // Automatically discovers topology, throws on failure
     ~nixlLibfabricTopology();
     // GPU-based queries
-    std::vector<std::string> getEfaDevicesForGpu(int gpu_id) const;
-    int detectGpuIdForMemory(void* mem_addr) const;
-    bool isGpuMemory(void* mem_addr) const;
+    std::vector<std::string>
+    getEfaDevicesForGpu(int gpu_id) const;
+    int
+    detectGpuIdForMemory(void *mem_addr) const;
+    bool
+    isGpuMemory(void *mem_addr) const;
     // NUMA-based queries
-    std::vector<std::string> getEfaDevicesForNumaNode(int numa_node) const;
-    int detectNumaNodeForMemory(void* mem_addr) const;
-    bool isHostMemory(void* mem_addr) const;
+    std::vector<std::string>
+    getEfaDevicesForNumaNode(int numa_node) const;
+    int
+    detectNumaNodeForMemory(void *mem_addr) const;
+    bool
+    isHostMemory(void *mem_addr) const;
 
     // Memory-based queries (main interface)
-    std::vector<std::string> getEfaDevicesForMemory(void* mem_addr, nixl_mem_t mem_type) const;
+    std::vector<std::string>
+    getEfaDevicesForMemory(void *mem_addr, nixl_mem_t mem_type) const;
 
     // System information
-    int getNumGpus() const { return num_gpus; }
-    int getNumNumaNodes() const { return num_numa_nodes; }
+    int
+    getNumGpus() const {
+        return num_gpus;
+    }
 
-    const std::vector<std::string>& getAllEfaDevices() const { return all_efa_devices; }
+    int
+    getNumNumaNodes() const {
+        return num_numa_nodes;
+    }
+
+    const std::vector<std::string> &
+    getAllEfaDevices() const {
+        return all_efa_devices;
+    }
+
     // Validation
-    bool isTopologyDiscovered() const { return topology_discovered; }
-    bool isValidGpuId(int gpu_id) const;
-    bool isValidNumaNode(int numa_node) const;
-    bool isValidEfaDevice(const std::string& efa_device) const;
-    // Debug/info
-    void printTopologyInfo() const;
-    std::string getTopologyString() const;
+    bool
+    isTopologyDiscovered() const {
+        return topology_discovered;
+    }
 
+    bool
+    isValidGpuId(int gpu_id) const;
+    bool
+    isValidNumaNode(int numa_node) const;
+    bool
+    isValidEfaDevice(const std::string &efa_device) const;
+    // Debug/info
+    void
+    printTopologyInfo() const;
+    std::string
+    getTopologyString() const;
 };
 
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_TOPOLOGY_H

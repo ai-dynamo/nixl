@@ -1,4 +1,18 @@
 /*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
  * Simple test to verify libfabric topology implementation
  */
 
@@ -10,7 +24,8 @@
 #include <cuda_runtime.h>
 #endif
 
-int main() {
+int
+main() {
     NIXL_INFO << "=== Testing Libfabric Topology Implementation ===";
     try {
         // Create topology instance - discovery happens automatically in constructor
@@ -27,15 +42,16 @@ int main() {
         NIXL_INFO << "3. Testing memory-based device selection...";
 
         // Test with dummy host memory
-        void* host_mem = malloc(1024);
+        void *host_mem = malloc(1024);
         auto host_devices = topology.getEfaDevicesForMemory(host_mem, DRAM_SEG);
-        NIXL_INFO << "   Host memory (" << host_mem << ") mapped to " << host_devices.size() << " EFA devices";
-        for (const auto& device : host_devices) {
+        NIXL_INFO << "   Host memory (" << host_mem << ") mapped to " << host_devices.size()
+                  << " EFA devices";
+        for (const auto &device : host_devices) {
             NIXL_INFO << "     - " << device;
         }
 
         // Test with actual GPU memory allocation if CUDA is available
-        void* gpu_mem = nullptr;
+        void *gpu_mem = nullptr;
 
 #ifdef CUDA_FOUND
         bool cuda_allocation_succeeded = false;
@@ -46,8 +62,9 @@ int main() {
             cuda_allocation_succeeded = true;
             NIXL_INFO << "   SUCCESS: CUDA GPU memory allocated successfully";
             auto gpu_devices = topology.getEfaDevicesForMemory(gpu_mem, VRAM_SEG);
-            NIXL_INFO << "   GPU memory (" << gpu_mem << ", CUDA) mapped to " << gpu_devices.size() << " EFA devices";
-            for (const auto& device : gpu_devices) {
+            NIXL_INFO << "   GPU memory (" << gpu_mem << ", CUDA) mapped to " << gpu_devices.size()
+                      << " EFA devices";
+            for (const auto &device : gpu_devices) {
                 NIXL_INFO << "     - " << device;
             }
 
@@ -58,19 +75,21 @@ int main() {
                        << ", gpu_id=" << detected_gpu_id;
         } else {
             NIXL_WARN << "   CUDA allocation failed: " << cudaGetErrorString(cuda_err);
-            gpu_mem = malloc(1024);  // Fallback to host memory
+            gpu_mem = malloc(1024); // Fallback to host memory
             auto gpu_devices = topology.getEfaDevicesForMemory(gpu_mem, VRAM_SEG);
-            NIXL_INFO << "   GPU memory (" << gpu_mem << ", host fallback) mapped to " << gpu_devices.size() << " EFA devices";
-            for (const auto& device : gpu_devices) {
+            NIXL_INFO << "   GPU memory (" << gpu_mem << ", host fallback) mapped to "
+                      << gpu_devices.size() << " EFA devices";
+            for (const auto &device : gpu_devices) {
                 NIXL_INFO << "     - " << device;
             }
         }
 #else
         NIXL_INFO << "   CUDA not available, using host memory as fallback";
-        gpu_mem = malloc(1024);  // Fallback to host memory
+        gpu_mem = malloc(1024); // Fallback to host memory
         auto gpu_devices = topology.getEfaDevicesForMemory(gpu_mem, VRAM_SEG);
-        NIXL_INFO << "   GPU memory (" << gpu_mem << ", host fallback) mapped to " << gpu_devices.size() << " EFA devices";
-        for (const auto& device : gpu_devices) {
+        NIXL_INFO << "   GPU memory (" << gpu_mem << ", host fallback) mapped to "
+                  << gpu_devices.size() << " EFA devices";
+        for (const auto &device : gpu_devices) {
             NIXL_INFO << "     - " << device;
         }
 #endif
@@ -78,15 +97,16 @@ int main() {
         int num_gpus = topology.getNumGpus();
         if (num_gpus > 0) {
             NIXL_INFO << "4. Testing GPU-specific queries (detected " << num_gpus << " GPUs)...";
-            int test_gpus = std::min(num_gpus, 3);  // Test up to 3 GPUs or all available
+            int test_gpus = std::min(num_gpus, 3); // Test up to 3 GPUs or all available
             for (int gpu_id = 0; gpu_id < test_gpus; ++gpu_id) {
                 auto gpu_devices = topology.getEfaDevicesForGpu(gpu_id);
                 std::string device_list;
-                for (const auto& device : gpu_devices) {
+                for (const auto &device : gpu_devices) {
                     if (!device_list.empty()) device_list += " ";
                     device_list += device;
                 }
-                NIXL_INFO << "   GPU " << gpu_id << " mapped to " << gpu_devices.size() << " EFA devices: " << device_list;
+                NIXL_INFO << "   GPU " << gpu_id << " mapped to " << gpu_devices.size()
+                          << " EFA devices: " << device_list;
             }
         } else {
             NIXL_INFO << "4. Skipping GPU-specific tests (no GPUs detected)";
@@ -94,15 +114,16 @@ int main() {
         // Test NUMA-specific queries
         int num_numa = topology.getNumNumaNodes();
         NIXL_INFO << "5. Testing NUMA-specific queries (detected " << num_numa << " NUMA nodes)...";
-        int test_numa = std::min(num_numa, 2);  // Test up to 2 NUMA nodes or all available
+        int test_numa = std::min(num_numa, 2); // Test up to 2 NUMA nodes or all available
         for (int numa_node = 0; numa_node < test_numa; ++numa_node) {
             auto numa_devices = topology.getEfaDevicesForNumaNode(numa_node);
             std::string device_list;
-            for (const auto& device : numa_devices) {
+            for (const auto &device : numa_devices) {
                 if (!device_list.empty()) device_list += " ";
                 device_list += device;
             }
-            NIXL_INFO << "   NUMA " << numa_node << " mapped to " << numa_devices.size() << " EFA devices: " << device_list;
+            NIXL_INFO << "   NUMA " << numa_node << " mapped to " << numa_devices.size()
+                      << " EFA devices: " << device_list;
         }
 
         // Clean up memory
@@ -111,12 +132,13 @@ int main() {
         if (cuda_allocation_succeeded) {
             cudaFree(gpu_mem);
         } else {
-            free(gpu_mem);  // Host memory fallback
+            free(gpu_mem); // Host memory fallback
         }
 #else
-        free(gpu_mem);  // Always host memory when CUDA not available
+        free(gpu_mem); // Always host memory when CUDA not available
 #endif
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e) {
         NIXL_ERROR << "   Topology discovery failed: " << e.what();
         return 1;
     }

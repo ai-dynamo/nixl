@@ -324,7 +324,8 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
             int expected;
             // For pairwise scheme with multiple devices, only initiator processes contribute
             // In pairwise scheme: global_size = num_initiator_dev + num_target_dev
-            // Only initiators participate in reduction, so we expect (num_initiator_dev - 1) contributions
+            // Only initiators participate in reduction, so we expect (num_initiator_dev - 1)
+            // contributions
             if (global_size > 2) {
                 // Assume pairwise scheme with equal initiators and targets
                 expected = (global_size / 2) - 1; // Only other initiators

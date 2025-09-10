@@ -29,7 +29,3 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 
 # Benchmarks
 /benchmark @aranadive @ovidiusm @brminich
-
-# Libfabric Plugins
-/src/plugins/libfabric* @yexiang-aws @arunkarthik-akkart
-/src/utils/libfabric @yexiang-aws @arunkarthik-akkart

@@ -24,7 +24,8 @@
 
 namespace LibfabricUtils {
 
-std::vector<std::string> getAvailableEfaDevices() {
+std::vector<std::string>
+getAvailableEfaDevices() {
     std::vector<std::string> devices;
     struct fi_info *hints, *info;
     hints = fi_allocinfo();
@@ -52,22 +53,23 @@ std::vector<std::string> getAvailableEfaDevices() {
     return devices;
 }
 
-std::string hexdump(const void* data) {
+std::string
+hexdump(const void *data) {
     static constexpr uint HEXDUMP_MAX_LENGTH = 56;
     std::stringstream ss;
     ss.str().reserve(HEXDUMP_MAX_LENGTH * 3);
-    const unsigned char* bytes = static_cast<const unsigned char*>(data);
+    const unsigned char *bytes = static_cast<const unsigned char *>(data);
     for (size_t i = 0; i < HEXDUMP_MAX_LENGTH; ++i) {
-        ss << std::hex << std::setw(2) << std::setfill('0')
-            << static_cast<int>(bytes[i]) << " ";
-        }
+        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytes[i]) << " ";
+    }
     return ss.str();
 }
 
 // Simple counter for pre-allocation only
 static uint32_t g_xfer_id_counter = 1; // Start from 1, 0 reserved for special cases
 
-std::vector<uint32_t> preallocateXferIds(size_t count) {
+std::vector<uint32_t>
+preallocateXferIds(size_t count) {
     std::vector<uint32_t> xfer_ids;
     xfer_ids.reserve(count);
 
