@@ -123,6 +123,7 @@ DEFINE_string(obj_req_checksum,
 
 // HF3FS options - only used when backend is HF3FS
 DEFINE_int32(hf3fs_iopool_size, 64, "Size of io memory pool");
+DEFINE_int32(hf3fs_threadpool_size, 4, "Size of thread pool for polling completion");
 
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
@@ -170,6 +171,7 @@ bool xferBenchConfig::obj_use_virtual_addressing = false;
 std::string xferBenchConfig::obj_endpoint_override = "";
 std::string xferBenchConfig::obj_req_checksum = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
+int xferBenchConfig::hf3fs_threadpool_size = 0;
 
 int
 xferBenchConfig::loadFromFlags() {
@@ -222,6 +224,7 @@ xferBenchConfig::loadFromFlags() {
         // Load HD3FS-specific configurations if backend is HD3FS
         if (backend == XFERBENCH_BACKEND_HF3FS) {
             hf3fs_iopool_size = FLAGS_hf3fs_iopool_size;
+            hf3fs_threadpool_size = FLAGS_hf3fs_threadpool_size;
         }
 
         // Load OBJ-specific configurations if backend is OBJ
