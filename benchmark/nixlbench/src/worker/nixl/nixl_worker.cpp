@@ -95,6 +95,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
         xferBenchConfig::isStorageBackend()) {
@@ -107,9 +108,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     agent->getPluginParams(backend_name, mems, backend_params);
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
-
         // No need to set device_list if all is specified
         // fallback to backend preference
         if (devices[0] != "all" && devices.size() >= 1) {
@@ -999,6 +1000,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
     synchronize();
 
     stats.clear();
+
 
     ret = execTransfer(
         agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);

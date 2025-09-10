@@ -13,8 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('libfabric')
-subdir('serdes')
-subdir('stream')
-subdir('ucx')
+libfabric_utils_dep = [ libfabric_dep, nixl_common_deps ]
+libfabric_test_cpp_args = []
+
+if cuda_dep.found()
+    libfabric_utils_dep += [ cuda_dep ]
+    libfabric_test_cpp_args += [ '-DCUDA_FOUND' ]
+endif
+
+if get_option('buildtype') != 'release'
+
+    libfabric_topology_test_bin = executable('libfabric_topology_test',
+               'libfabric_topology_test.cpp',
+               dependencies: libfabric_utils_dep,
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with: libfabric_utils_lib,
+               cpp_args: libfabric_test_cpp_args,
+               install: true)
+
+endif

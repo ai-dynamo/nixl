@@ -124,7 +124,10 @@ etcd_inc = etcd_inc_path
 nixl_inc = nixl_path + '/include'
 nvshmem_inc = nvshmem_inc_path
 
-inc_dir = include_directories('.', './src/', nixl_inc)
+# Add libfabric plugin source directory for header access
+libfabric_plugin_src = '../../src/nixl/src'
+
+inc_dir = include_directories('.', './src/', nixl_inc, libfabric_plugin_src)
 
 nvshmem_available = false
 if nvshmem_lib_path != ''
@@ -133,7 +136,7 @@ if nvshmem_lib_path != ''
         nvshmem_host_lib = cpp.find_library('nvshmem_host', dirs: [nvshmem_lib_path])
         if nvshmem_lib.found()
             nvshmem_available = true
-            inc_dir = include_directories('.', './src/', nixl_inc, nvshmem_inc)
+            inc_dir = include_directories('.', './src/', nixl_inc, nvshmem_inc, libfabric_plugin_src)
             add_project_arguments('-DHAVE_NVSHMEM', language: 'cpp')
             add_project_arguments('-Wno-unused-variable', language: 'cpp')
         endif
@@ -147,6 +150,9 @@ endif
 if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
 endif
+
+# Add LIBFABRIC support flag
+add_project_arguments('-DHAVE_LIBFABRIC', language: 'cpp')
 
 # Subprojects
 subdir('src/utils')
@@ -166,7 +172,10 @@ configure_file(
     install_dir: get_option('includedir') / 'nixlbench'
 )
 
-deps = [gflags_dep, nixl_lib, nixl_build, nixl_serdes, openmp_dep]
+# Find libfabric plugin library
+libfabric_plugin_lib = cpp.find_library('plugin_LIBFABRIC', dirs: [nixl_lib_path + '/plugins'])
+
+deps = [gflags_dep, nixl_lib, nixl_build, nixl_serdes, openmp_dep, libfabric_plugin_lib]
 args = []
 if etcd_available
     deps += [etcd_dep]
