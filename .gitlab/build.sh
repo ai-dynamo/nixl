@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 set -o pipefail
@@ -113,6 +116,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
+          ${UCX_CUDA_BUILD_ARGS} \
           --enable-mt && \
         make -j && \
         make -j install-strip && \
