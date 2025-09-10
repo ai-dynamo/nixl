@@ -1,0 +1,147 @@
+# NIXL PR Testing Matrix Configuration
+#
+# This file defines the build matrix for NIXL PR validation using the multi-target Docker base.
+# Primary purpose: Fast feedback on code changes via build + test execution.
+#
+# Key Components:
+# - Reusable Base Image: Contains all dependencies (UCX, AWS SDK, Rust, Python tools)
+# - Runtime NIXL Build: Builds NIXL from source in each test run
+# - Integrated Testing: Runs C++ and Python tests after build
+# - CI-Demo Integration: Base image auto-builds only when Dockerfile changes
+#
+# PR Testing Benefits:
+# - Fast feedback: Base layer cached, only NIXL rebuilt per PR
+# - Full rebuild: When infrastructure (Dockerfile) changes
+# - No Docker complexity: Simple build + test workflow
+# - Multi-OS/arch testing: Ensures compatibility across platforms
+#
+
+---
+job: nixl-ci-build-multi-target
+
+# Registry configuration for base image reusability
+registry_host: urm.nvidia.com
+registry_path: /sw-nbu-swx-nixl-docker-local/ci
+registry_auth: svc-nixl-artifactory-token
+
+# Build settings
+failFast: false
+timeout_minutes: 120
+
+# Infrastructure
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: swx-media
+  limits: "{memory: 16Gi, cpu: 8000m}"
+  requests: "{memory: 8Gi, cpu: 4000m}"
+
+
+runs_on_dockers:
+  # Base image - contains all dependencies: UCX, AWS SDK, etcd-cpp-apiv3, Rust, Python tools
+  - {
+      file: 'contrib/Dockerfile.multi-target',
+      name: "nixl-base",
+      category: 'tool',
+      build_args: '--build-arg OS=${os} --build-arg ARCH=${arch} --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base --build-arg BASE_IMAGE_TAG=25.06-cuda12.9-devel-${os} --build-arg UCX_REF=v1.19.x --build-arg NPROC=16 --build-arg DEFAULT_PYTHON_VERSION=3.12 --target base'
+    }
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+      - aarch64
+    os:
+      - ubuntu24.04
+
+env:
+  NIXL_INSTALL_DIR: "/usr/local/nixl"
+  NPROC: "16"
+
+taskName: "${os}/${arch}/${axis_index}"
+
+credentials:
+  - credentialsId: 'svc-nixl-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USERNAME'
+    passwordVariable: 'ARTIFACTORY_PASSWORD'
+
+steps:
+  - name: DEBUG
+    containerSelector: "{ name: 'nixl-base.*' }"
+    run: |
+      # Fail fast if matrix variables are not properly resolved
+      echo "Matrix variables check:"
+      echo "  os: '${os}'"
+      echo "  arch: '${arch}'"
+
+      if [ -z "${os}" ] || [ "${os}" = "\${os}" ]; then
+        echo "ERROR: Matrix variable 'os' is not defined or not resolved!"
+        echo "Expected: ubuntu22.04 or ubuntu24.04"
+        exit 1
+      fi
+
+      if [ -z "${arch}" ] || [ "${arch}" = "\${arch}" ]; then
+        echo "ERROR: Matrix variable 'arch' is not defined or not resolved!"
+        echo "Expected: x86_64 or aarch64"
+        exit 1
+      fi
+
+      echo "Matrix variables validated successfully"
+      echo "Building for: ${os}/${arch}"
+
+  - name: Build NIXL
+    containerSelector: "{ name: 'nixl-base.*' }"
+    run: |
+      # Set up environment
+      export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+      export NIXL_PLUGIN_DIR=${NIXL_INSTALL_DIR}/lib/$(uname -m)-linux-gnu/plugins
+
+      # Create Python virtual environment
+      uv venv .venv --python 3.12
+      source .venv/bin/activate
+      uv pip install --upgrade "meson>=0.64.0" pybind11 patchelf pyYAML click tabulate
+
+      # Build NIXL with meson
+      rm -rf build && mkdir build
+      meson setup build/ --prefix=${NIXL_INSTALL_DIR}
+      cd build && ninja && ninja install
+
+      # Configure library paths
+      echo "${NIXL_INSTALL_DIR}/lib/$(uname -m)-linux-gnu" | sudo tee /etc/ld.so.conf.d/nixl.conf
+      echo "${NIXL_INSTALL_DIR}/lib/$(uname -m)-linux-gnu/plugins" | sudo tee -a /etc/ld.so.conf.d/nixl.conf
+      sudo ldconfig
+
+  - name: Test CPP
+    containerSelector: "{ name: 'nixl-base.*' }"
+    run: |
+      .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
+
+  - name: Test Python
+    containerSelector: "{ name: 'nixl-base.*' }"
+    run: |
+      .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
+
+pipeline_stop:
+  shell: action
+  module: groovy
+  run: |
+    def jobStatus = currentBuild.result ?: 'SUCCESS'
+    def statusColor = jobStatus == 'SUCCESS' ? 'green' : 'red'
+
+    echo "NIXL PR testing completed with status: ${jobStatus}"
+
+        if (params.MAIL_TO) {
+        def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
+
+        mail(
+            to: params.MAIL_TO,
+            subject: "NIXL PR Testing [${env.BUILD_NUMBER}] - ${jobStatus}",
+            mimeType: 'text/html',
+            body: """
+                <h3>NIXL PR Testing Results</h3>
+                <p><b>Status:</b> <span style="color: ${statusColor};">${jobStatus}</span></p>
+                <p><b>Build:</b> <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+                <p><b>Images:</b> Base image pushed for reuse, NIXL tested with PR changes</p>
+                <p><a href='${env.BUILD_URL}console'>View Console Output</a></p>
+            """
+        )
+    }
