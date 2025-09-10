@@ -305,9 +305,8 @@ int xferBenchEtcdRT::recvChar(char* buffer, size_t count, int src_rank) {
 
 int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, int dest_rank) {
     try {
-        // Use a random ID for this reduction operation
-        std::string reduce_id = std::to_string(std::time(nullptr)) + "-" + std::to_string(std::rand());
-        std::string reduce_key = makeKey("reduce/" + reduce_id);
+        // Use a deterministic key based on dest_rank to avoid collisions
+        std::string reduce_key = makeKey("reduce/dest-" + std::to_string(dest_rank));
         std::string value_key = reduce_key + "/rank-" + std::to_string(my_rank);
 
         // Contribute our value directly as a string
@@ -322,7 +321,17 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
 
             // Wait for all contributions
             int received = 0;
-            int expected = global_size - 1; // Excluding ourselves
+            int expected;
+            // For pairwise scheme with multiple devices, only initiator processes contribute
+            // In pairwise scheme: global_size = num_initiator_dev + num_target_dev
+            // Only initiators participate in reduction, so we expect (num_initiator_dev - 1)
+            // contributions
+            if (global_size > 2) {
+                // Assume pairwise scheme with equal initiators and targets
+                expected = (global_size / 2) - 1; // Only other initiators
+            } else {
+                expected = global_size - 1; // Fallback for simple 2-process case
+            }
             int retries = 0;
 
             while (received < expected && should_retry(retries, 30)) {
@@ -366,6 +375,9 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
                           << expected << " contributions)" << std::endl;
                 return -1;
             }
+        } else {
+            // Non-destination ranks just wait a bit to ensure their contribution is processed
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
 
         return 0;
