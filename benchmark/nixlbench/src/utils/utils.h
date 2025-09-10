@@ -134,7 +134,13 @@ class xferBenchConfig {
         static int gds_batch_pool_size;
         static int gds_batch_limit;
         static std::string gpunetio_device_list;
-
+        static bool enable_gdaki;
+        static std::string gdaki_gpu_device_list;
+        // GDAKI kernel configuration parameters
+        static std::string gdaki_coordination_level;
+        static int gdaki_threads_per_block;
+        static int gdaki_blocks_per_grid;
+        static bool gdaki_enable_partial_transfers;
         static int loadFromFlags();
         static void printConfig();
         static void

@@ -36,6 +36,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
         nixl_mem_t seg_type;
         std::vector<int> remote_fds;
         std::vector<std::vector<xferBenchIOV>> remote_iovs;
+
+        // GDAKI signal buffer support
+        std::vector<xferBenchIOV> signal_buffers;
+        bool is_gdaki_enabled;
     public:
         xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices);
         ~xferBenchNixlWorker();  // Custom destructor to clean up resources
@@ -49,7 +53,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<std::vector<xferBenchIOV>> exchangeIOV(const std::vector<std::vector<xferBenchIOV>>
                                                            &local_iov_lists) override;
         void poll(size_t block_size) override;
-        int synchronizeStart();
+        int synchronizeStart() override;
 
         // Data operations
         std::variant<double, int> transfer(size_t block_size,
@@ -65,6 +69,16 @@ class xferBenchNixlWorker: public xferBenchWorker {
 #endif
         std::optional<xferBenchIOV> initBasicDescFile(size_t buffer_size, int fd, int mem_dev_id);
         void cleanupBasicDescFile(xferBenchIOV &basic_desc);
+
+        // GDAKI signal buffer management
+        std::optional<xferBenchIOV> initSignalBuffer(int mem_dev_id);
+        void cleanupSignalBuffer(xferBenchIOV &signal_desc);
+
+        // GDAKI wireup notification
+        int sendWireupMessage();
+
+        // GDAKI bidirectional metadata exchange
+        int exchangeMetadataBidirectional();
 };
 
 #endif // __NIXL_WORKER_H
