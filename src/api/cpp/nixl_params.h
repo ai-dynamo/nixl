@@ -37,6 +37,8 @@ class nixlAgentConfig {
         int      listenPort;
         /** @var synchronization mode for multi-threaded environment execution */
         nixl_thread_sync_t syncMode;
+        /** @var Capture telemetry info regardless of environment variables*/
+        bool captureTelemetry;
 
     public:
 
@@ -62,11 +64,13 @@ class nixlAgentConfig {
         /**
          * @brief  Agent configuration constructor for enabling various features.
          * @param use_prog_thread    flag to determine use of progress thread
-         * @param use_listen_thread  flag to determine use of listener thread
-         * @param port               specify port for listener thread to listen on
-         * @param sync_mode          Thread synchronization mode
+         * @param use_listen_thread  Optional flag to determine use of listener thread
+         * @param port               Optional port for listener thread to listen on
+         * @param sync_mode          Optional Thread synchronization mode
+         * @param num_workers        Optional number of shared workers per backend
          * @param pthr_delay_us      Optional delay for pthread in us
          * @param lthr_delay_us      Optional delay for listener thread in us
+         * @param capture_telemetry  Optional flag to enable telemetry capture
          * @param etcd_watch_timeout Optional timeout for etcd watch operations in microseconds
          */
         nixlAgentConfig(const bool use_prog_thread,
@@ -76,12 +80,14 @@ class nixlAgentConfig {
                         unsigned int num_workers = 1,
                         const uint64_t pthr_delay_us = 0,
                         const uint64_t lthr_delay_us = 100000,
+                        const bool capture_telemetry = false,
                         const std::chrono::microseconds &etcd_watch_timeout =
                             std::chrono::microseconds(5000000))
             : useProgThread(use_prog_thread),
               useListenThread(use_listen_thread),
               listenPort(port),
               syncMode(sync_mode),
+              captureTelemetry(capture_telemetry),
               pthrDelay(pthr_delay_us),
               lthrDelay(lthr_delay_us),
               etcdWatchTimeout(etcd_watch_timeout) {}

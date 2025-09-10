@@ -67,7 +67,7 @@ etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_
 sleep 5
 
 echo "==== Running python tests ===="
-pytest test/python
+pytest -s test/python
 python3 test/python/prep_xfer_perf.py list
 python3 test/python/prep_xfer_perf.py array
 

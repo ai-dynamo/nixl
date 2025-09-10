@@ -101,14 +101,15 @@ class TestTransfer :
     public testing::TestWithParam<std::tuple<std::string, bool, size_t, size_t>> {
 protected:
     nixlAgentConfig
-    getConfig(int listen_port) {
+    getConfig(int listen_port, bool capture_telemetry) {
         return nixlAgentConfig(isProgressThreadEnabled(),
                                listen_port > 0,
                                listen_port,
                                nixl_thread_sync_t::NIXL_THREAD_SYNC_RW,
                                1,
                                0,
-                               100000);
+                               100000,
+                               capture_telemetry);
     }
 
     uint16_t
@@ -130,10 +131,10 @@ protected:
     }
 
     void
-    addAgent(unsigned int agent_num) {
+    addAgent(unsigned int agent_num, bool capture_telemetry = false) {
         ports.push_back(PortAllocator::next_tcp_port());
-        agents.emplace_back(
-            std::make_unique<nixlAgent>(getAgentName(agent_num), getConfig(getPort(agent_num))));
+        agents.emplace_back(std::make_unique<nixlAgent>(
+            getAgentName(agent_num), getConfig(getPort(agent_num), capture_telemetry)));
         nixlBackendH *backend_handle = nullptr;
         nixl_status_t status =
             agents.back()->createBackend(getBackendName(), getBackendParams(), backend_handle);
@@ -627,6 +628,42 @@ TEST_P(TestTransfer, GetXferTelemetryAPI) {
     deregisterMem(getAgent(2), src_buffers, DRAM_SEG);
     deregisterMem(getAgent(3), dst_buffers, DRAM_SEG);
 }
+
+TEST_P(TestTransfer, GetXferTelemetryAPICfg) {
+    // Disable telemetry from env var but through config, expecting a warning
+    env.addVar("NIXL_TELEMETRY_ENABLE", "n");
+
+    // Create fresh agents that read the current env var and add them to the fixture
+    // with capture_telemetry set
+    addAgent(2, true);
+    addAgent(3, true);
+
+    constexpr size_t size = 1024;
+    constexpr size_t count = 1;
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(getAgent(2), size, count, DRAM_SEG, src_buffers);
+    createRegisteredMem(getAgent(3), size, count, DRAM_SEG, dst_buffers);
+
+    exchangeMD(2, 3);
+    doTransfer(getAgent(2),
+               getAgentName(2),
+               getAgent(3),
+               getAgentName(3),
+               size,
+               count,
+               1,
+               1,
+               DRAM_SEG,
+               src_buffers,
+               DRAM_SEG,
+               dst_buffers,
+               NIXL_SUCCESS);
+
+    invalidateMD(2, 3);
+    deregisterMem(getAgent(2), src_buffers, DRAM_SEG);
+    deregisterMem(getAgent(3), dst_buffers, DRAM_SEG);
+}
+
 
 TEST_P(TestTransfer, GetXferTelemetryDisabled) {
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
