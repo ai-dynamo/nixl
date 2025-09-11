@@ -130,6 +130,11 @@ RUN cd /usr/local/src && \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
 
+RUN git clone https://github.com/nvidia/gusli.git && \
+     cd gusli && \
+     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+     cd ..
+
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
