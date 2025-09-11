@@ -121,7 +121,7 @@ public:
 class nixlLibfabricBackendH : public nixlBackendReqH {
 private:
     std::atomic<size_t> completed_requests_; // Atomic count of completed requests
-    size_t total_requests_used_; // Total number of requests for this transfer
+    std::atomic<size_t> total_requests_used_; // Total number of requests for this transfer
     BinaryNotification binary_notif_; // Notification data with XFER_IDs
 
 public:
@@ -147,6 +147,10 @@ public:
     /** Get total number of requests used for this transfer */
     size_t
     get_total_requests_used() const;
+
+    /** Adjust total request count to actual value after submissions complete */
+    void
+    adjust_total_requests(size_t actual_count);
 
     /** Get reference to binary notification for XFER_ID collection */
     BinaryNotification &

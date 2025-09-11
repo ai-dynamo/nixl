@@ -165,7 +165,7 @@ nixlLibfabricEngine::vramFiniCtx() {
 nixlLibfabricBackendH::nixlLibfabricBackendH() : completed_requests_(0), total_requests_used_(0) {
     binary_notif_.clear(); // Initialize the binary notification
     NIXL_DEBUG << "constructor called, this: " << this
-               << " total_requests_used=" << total_requests_used_;
+               << " total_requests_used=" << total_requests_used_.load();
 }
 
 nixlLibfabricBackendH::~nixlLibfabricBackendH() {
@@ -175,7 +175,7 @@ nixlLibfabricBackendH::~nixlLibfabricBackendH() {
 // Multi-request completion tracking methods
 void
 nixlLibfabricBackendH::init_request_tracking(size_t num_requests) {
-    total_requests_used_ = num_requests;
+    total_requests_used_.store(num_requests);
     completed_requests_.store(0);
     NIXL_DEBUG << "Initialized request tracking for " << num_requests << " requests";
 }
@@ -184,7 +184,7 @@ void
 nixlLibfabricBackendH::increment_completed_requests() {
     size_t completed = completed_requests_.fetch_add(1);
     NIXL_DEBUG << "Request completed, total completed: " << completed << "/"
-               << total_requests_used_;
+               << total_requests_used_.load();
 }
 
 size_t
@@ -194,14 +194,20 @@ nixlLibfabricBackendH::get_completed_requests_count() const {
 
 size_t
 nixlLibfabricBackendH::get_total_requests_used() const {
-    return total_requests_used_;
+    return total_requests_used_.load();
+}
+
+void
+nixlLibfabricBackendH::adjust_total_requests(size_t actual_count) {
+    total_requests_used_.store(actual_count);
+    NIXL_DEBUG << "Adjusted total requests to actual count: " << actual_count;
 }
 
 bool
 nixlLibfabricBackendH::is_completed() const {
     // Transfer is completed when all requests have completed
     NIXL_DEBUG << "Request completed, total completed: " << completed_requests_.load();
-    return completed_requests_.load() == total_requests_used_;
+    return completed_requests_.load() == total_requests_used_.load();
 }
 
 /****************************************
@@ -981,8 +987,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Request estimation and tracking setup
-    size_t estimated_total_requests = 0;
     nixlLibfabricReq::OpType op_type;
     int desc_count = local.descCount();
 
@@ -996,20 +1000,11 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     binary_notif.clear();
     binary_notif.setAgentName(localAgent);
 
-    for (int desc_idx = 0; desc_idx < desc_count; ++desc_idx) {
-        auto *local_md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
-        if (local_md && !local_md->selected_rails_.empty()) {
-            size_t transfer_size = local[desc_idx].len;
-            bool use_striping = rail_manager.shouldUseStriping(transfer_size) &&
-                local_md->selected_rails_.size() > 1;
-            estimated_total_requests += use_striping ? local_md->selected_rails_.size() : 1;
-        }
-    }
-    // Initialize completion tracking with estimated total
-    backend_handle->init_request_tracking(estimated_total_requests);
+    // Set initial request count to maximum possible requests
+    size_t max_possible_requests = desc_count * rail_manager.getNumDataRails();
+    backend_handle->init_request_tracking(max_possible_requests);
 
-    // Core transfer submission
-    // Single loop: process each descriptor with direct submission
+    // Core transfer submission to process each descriptor with direct submission
     for (int desc_idx = 0; desc_idx < desc_count; ++desc_idx) {
         auto *local_md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
         auto *remote_md = static_cast<nixlLibfabricPublicMetadata *>(remote[desc_idx].metadataP);
@@ -1031,7 +1026,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         NIXL_DEBUG << "Processing descriptor " << desc_idx << " GPU " << gpu_id
                    << " addr: " << transfer_addr << " size: " << transfer_size;
 
-        // OPTIMIZATION: Direct prepare and submit - no intermediate storage
+        // Prepare and submit transfer
         nixl_status_t status = rail_manager.prepareAndSubmitTransfer(
             op_type,
             transfer_addr,
@@ -1045,7 +1040,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             [backend_handle]() {
                 backend_handle->increment_completed_requests();
             }, // Completion callback
-            &binary_notif // Direct BinaryNotification population
+            &binary_notif // Populate BinaryNotification
         );
 
         if (status != NIXL_SUCCESS) {
@@ -1062,7 +1057,9 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                << " requests from " << desc_count << " descriptors" << " with "
                << binary_notif.xfer_id_count << " total XFER_IDs";
 
-    // Notification handling
+    // Adjust to actual request count after all submissions complete
+    backend_handle->adjust_total_requests(binary_notif.xfer_id_count);
+
     // Send notification immediately after successful request submission
     if (opt_args && opt_args->hasNotif) {
         NIXL_DEBUG << "Sending immediate notification after successful request submission";
@@ -1079,7 +1076,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                    << " XFER_IDs";
     }
 
-    // Progress and completion check
     // Progress data rails to kick off transfers
     if (!progress_thread_enabled_) {
         nixl_status_t progress_status = rail_manager.progressActiveDataRails();
@@ -1088,8 +1084,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         }
     }
 
-    // For very small transfers we can check for
-    // local completions immediately.
+    // For very small transfers we can check for local completions immediately.
     if (backend_handle->is_completed()) {
         return NIXL_SUCCESS;
     }
