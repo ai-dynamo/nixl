@@ -20,9 +20,6 @@ libfabric_utils_headers = files(
 # Find hwloc dependency
 hwloc_dep = dependency('hwloc', required: true)
 
-# Find NUMA library (optional)
-numa_dep = dependency('numa', required: false)
-
 # Set up dependencies and compile args
 libfabric_utils_deps = [
     libfabric_dep,
@@ -31,12 +28,6 @@ libfabric_utils_deps = [
 ]
 
 libfabric_utils_cpp_args = []
-
-# Add NUMA support if available
-if numa_dep.found()
-    libfabric_utils_deps += [numa_dep]
-    libfabric_utils_cpp_args += ['-DHAVE_NUMA']
-endif
 
 # Add CUDA support if available
 if cuda_dep.found()
