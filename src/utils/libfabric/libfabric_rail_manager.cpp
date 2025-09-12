@@ -526,8 +526,7 @@ nixlLibfabricRailManager::cleanupConnection(RailType rail_type,
 
 nixl_status_t
 nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
-                                             const void *buf,
-                                             size_t len,
+                                             nixlLibfabricReq *req,
                                              fi_addr_t dest_addr,
                                              uint16_t agent_idx,
                                              std::function<void()> completion_callback) {
@@ -536,6 +535,12 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
         NIXL_ERROR << "No control rails available";
         return NIXL_ERR_INVALID_PARAM;
     }
+
+    if (!req) {
+        NIXL_ERROR << "Pre-allocated request is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     uint64_t msg_type_value;
     switch (msg_type) {
     case ControlMessageType::NOTIFICATION:
@@ -555,31 +560,17 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
         return NIXL_ERR_INVALID_PARAM;
     }
     size_t control_rail_id = 0;
-    nixlLibfabricReq *req = control_rails_[control_rail_id]->allocateControlRequest(len);
-    if (!req) {
-        NIXL_ERROR << "Failed to allocate request for control message";
-        return NIXL_ERR_BACKEND;
-    }
-
     uint32_t xfer_id = req->xfer_id;
     uint64_t imm_data = NIXL_MAKE_IMM_DATA(msg_type_value, agent_idx, xfer_id);
-
-    NIXL_TRACE << "Sending control message type " << msg_type_value << " agent_idx=" << agent_idx
-               << " XFER_ID=" << xfer_id << " imm_data=0x" << std::hex << imm_data << std::dec;
-
-    // Buffer setup
-    // Copy data to request buffer
-    memcpy(req->buffer, buf, len);
-
-    // CRITICAL FIX: Update buffer_size to reflect actual message size
-    // This ensures fi_senddata sends only the actual message, not the full buffer
-    req->buffer_size = len;
 
     // Set completion callback if provided
     if (completion_callback) {
         req->completion_callback = completion_callback;
         NIXL_DEBUG << "Set completion callback for control message request " << req->xfer_id;
     }
+
+    NIXL_DEBUG << "Sending control message type " << msg_type_value << " agent_idx=" << agent_idx
+               << " XFER_ID=" << xfer_id << " imm_data=0x" << std::hex << imm_data << std::dec;
 
     // Rail postSend
     nixl_status_t status = control_rails_[control_rail_id]->postSend(imm_data, dest_addr, req);
@@ -608,20 +599,20 @@ nixlLibfabricRailManager::progressActiveDataRails() {
             NIXL_ERROR << "Invalid active rail ID: " << rail_id;
             continue;
         }
-        // PHASE 2: Use batched completion processing for better performance
+        // Process completions on active data rails
         nixl_status_t status = data_rails_[rail_id]->progressCompletionQueue(false);
         if (status == NIXL_SUCCESS) {
             any_completions = true;
-            NIXL_DEBUG << "Processed batched completions on active data rail " << rail_id;
+            NIXL_DEBUG << "Processed completions on active data rail " << rail_id;
         } else if (status != NIXL_IN_PROG && status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Failed to process batched completions on active data rail " << rail_id;
+            NIXL_ERROR << "Failed to process completions on active data rail " << rail_id;
             // Continue processing other active rails even if one fails
         }
     }
 
     if (any_completions) {
         NIXL_TRACE << "Processed " << active_rails_.size()
-                   << " active rails with batching, completions found";
+                   << " active rails, completions found";
     }
 
     return any_completions ? NIXL_SUCCESS : NIXL_IN_PROG;

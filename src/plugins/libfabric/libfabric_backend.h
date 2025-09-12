@@ -122,7 +122,6 @@ class nixlLibfabricBackendH : public nixlBackendReqH {
 private:
     std::atomic<size_t> completed_requests_; // Atomic count of completed requests
     std::atomic<size_t> total_requests_used_; // Total number of requests for this transfer
-    BinaryNotification binary_notif_; // Notification data with XFER_IDs
 
 public:
     nixlLibfabricBackendH();
@@ -151,12 +150,6 @@ public:
     /** Adjust total request count to actual value after submissions complete */
     void
     adjust_total_requests(size_t actual_count);
-
-    /** Get reference to binary notification for XFER_ID collection */
-    BinaryNotification &
-    getBinaryNotification() {
-        return binary_notif_;
-    }
 };
 
 class nixlLibfabricEngine : public nixlBackendEngine {
@@ -238,7 +231,7 @@ private:
                           const std::vector<std::array<char, 56>> &control_rail_endpoints);
     // Private notification implementation with unified binary notification system
     nixl_status_t
-    notifSendPriv(const std::string &remote_agent, BinaryNotification *binary_notif) const;
+    notifSendPriv(const std::string &remote_agent, nixlLibfabricReq *control_request) const;
 #ifdef HAVE_CUDA
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;

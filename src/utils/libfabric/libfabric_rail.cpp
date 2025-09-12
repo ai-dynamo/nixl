@@ -465,20 +465,18 @@ nixl_status_t
 nixlLibfabricRail::progressCompletionQueue(bool use_blocking) {
     // Protect completion queue operations from concurrent access
     std::lock_guard<std::mutex> lock(cq_progress_mutex_);
-    // Batch size for completion processing
-    constexpr size_t BATCH_SIZE = 16;
-    struct fi_cq_data_entry completions[BATCH_SIZE];
-    memset(completions, 0, sizeof(completions));
+    // Completion processing
+    struct fi_cq_data_entry completion;
+    memset(&completion, 0, sizeof(completion));
 
     int ret;
 
     if (use_blocking && blocking_cq_sread_supported) {
-        // Blocking batch read using fi_cq_sread (used by CM thread)
-        ret =
-            fi_cq_sread(cq, completions, BATCH_SIZE, nullptr, NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_SEC);
+        // Blocking read using fi_cq_sread (used by CM thread)
+        ret = fi_cq_sread(cq, &completion, 1, nullptr, NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_SEC);
     } else {
-        // Non-blocking batch read (used by progress thread or fallback)
-        ret = fi_cq_read(cq, completions, BATCH_SIZE);
+        // Non-blocking read (used by progress thread or fallback)
+        ret = fi_cq_read(cq, &completion, 1);
     }
 
     if (ret == -FI_EAGAIN) {
@@ -486,7 +484,7 @@ nixlLibfabricRail::progressCompletionQueue(bool use_blocking) {
     }
 
     if (ret < 0) {
-        NIXL_ERROR << "fi_cq_read batched returned error " << ret << " on rail " << rail_id << ": "
+        NIXL_ERROR << "fi_cq_read returned error " << ret << " on rail " << rail_id << ": "
                    << fi_strerror(-ret);
 
         // Handle error - but be careful about fi_cq_readerr
@@ -495,7 +493,7 @@ nixlLibfabricRail::progressCompletionQueue(bool use_blocking) {
 
         int err_ret = fi_cq_readerr(cq, &err_entry, 0);
         if (err_ret > 0) {
-            NIXL_ERROR << "CQ batched read failed on rail " << rail_id
+            NIXL_ERROR << "CQ read failed on rail " << rail_id
                        << " with error: " << fi_strerror(err_entry.err)
                        << " prov_errno: " << err_entry.prov_errno << " len: " << err_entry.len;
         } else {
@@ -504,28 +502,20 @@ nixlLibfabricRail::progressCompletionQueue(bool use_blocking) {
         return NIXL_ERR_BACKEND;
     }
 
-    if (ret > 0) {
-        NIXL_TRACE << "Batched completions received on rail " << rail_id << ": " << ret
-                   << " completions in single system call";
+    if (ret == 1) {
+        NIXL_TRACE << "Completion received on rail " << rail_id
+                   << " flags: " << std::hex << completion.flags
+                   << " data: " << completion.data
+                   << " context: " << completion.op_context << std::dec;
 
-        // Process all completions in the batch
-        nixl_status_t overall_status = NIXL_SUCCESS;
-        for (int i = 0; i < ret; ++i) {
-            NIXL_TRACE << "Processing completion " << i << "/" << ret << " flags: " << std::hex
-                       << completions[i].flags << " data: " << completions[i].data
-                       << " context: " << completions[i].op_context << std::dec;
-
-            nixl_status_t status = processCompletionQueueEntry(&completions[i]);
-            if (status != NIXL_SUCCESS) {
-                NIXL_ERROR << "Failed to process completion " << i << " in batch";
-                overall_status = status;
-                // Continue processing other completions even if one fails
-            }
+        nixl_status_t status = processCompletionQueueEntry(&completion);
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to process completion on rail " << rail_id;
+            return status;
         }
 
-        NIXL_DEBUG << "Batched processing complete: " << ret << " completions processed on rail "
-                   << rail_id;
-        return overall_status;
+        NIXL_DEBUG << "Completion processed on rail " << rail_id;
+        return NIXL_SUCCESS;
     }
 
     return NIXL_ERR_BACKEND; // Unexpected case
@@ -562,7 +552,39 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) {
         return processRemoteWriteCompletion(comp);
 
     } else {
-        // Error if the flags are not detected correctly
+        // Add more detailed warning for unknown completion flags
+        NIXL_WARN << "Unknown completion flags detected on rail " << rail_id
+                  << " - flags: 0x" << std::hex << flags << std::dec
+                  << " (FI_SEND=" << !!(flags & FI_SEND)
+                  << " FI_RECV=" << !!(flags & FI_RECV)
+                  << " FI_WRITE=" << !!(flags & FI_WRITE)
+                  << " FI_READ=" << !!(flags & FI_READ)
+                  << " FI_REMOTE_WRITE=" << !!(flags & FI_REMOTE_WRITE)
+                  << " FI_REMOTE_READ=" << !!(flags & FI_REMOTE_READ) << ")"
+                  << " data: 0x" << std::hex << comp->data << std::dec
+                  << " context: " << comp->op_context
+                  << " len: " << comp->len;
+
+        // Try to find the request associated with this context for debugging
+        nixlLibfabricReq *req = findRequestFromContext(comp->op_context);
+        if (req) {
+            NIXL_WARN << "Found request for zero-flags completion: XFER_ID=" << req->xfer_id
+                      << " context=" << &req->ctx << " req_ptr=" << req << " rail=" << rail_id
+                      << " in_use=" << req->in_use << " op_type="
+                      << (req->operation_type == nixlLibfabricReq::WRITE ? "WRITE" :
+                          req->operation_type == nixlLibfabricReq::READ ? "READ" :
+                          req->operation_type == nixlLibfabricReq::SEND ? "SEND" : "RECV");
+        } else {
+            NIXL_WARN << "No request found for zero-flags completion context " << comp->op_context;
+        }
+
+        // Check if this might be a spurious completion with flags=0
+        if (flags == 0) {
+            NIXL_WARN << "Completion with zero flags detected - this may be a spurious completion or cleanup event";
+            // Don't treat zero flags as a fatal error, just skip processing
+            return NIXL_SUCCESS;
+        }
+
         NIXL_ERROR << "Unknown completion flags: " << std::hex << flags << " data: " << comp->data
                    << " context: " << comp->op_context;
         return NIXL_ERR_BACKEND;

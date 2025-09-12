@@ -187,8 +187,7 @@ public:
     };
     /** Send control message via control rail
      * @param msg_type Type of control message
-     * @param buf Message buffer
-     * @param len Message length
+     * @param req Control request with data buffer
      * @param dest_addr Destination address
      * @param agent_idx Agent index for message routing
      * @param completion_callback Optional completion callback
@@ -196,8 +195,7 @@ public:
      */
     nixl_status_t
     postControlMessage(ControlMessageType msg_type,
-                       const void *buf,
-                       size_t len,
+                       nixlLibfabricReq *req,
                        fi_addr_t dest_addr,
                        uint16_t agent_idx = 0,
                        std::function<void()> completion_callback = nullptr);

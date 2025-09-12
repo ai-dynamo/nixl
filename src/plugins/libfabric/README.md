@@ -9,7 +9,7 @@ The Libfabric plugin provides a high-performance RDMA communication backend with
 - **Multi-Rail RDMA**: Automatic discovery and utilization of multiple network devices for increased bandwidth
 - **GPU Direct Support**: Zero-copy transfers between GPU memory (VRAM) and remote systems with CUDA integration. And GDR support is currently mandated
 - **Scalable Connection Management**: Efficient multi-agent connectivity with robust state tracking and automatic reconnection
-- **Asynchronous Processing**: Non-blocking RDMA operations with pre-allocated request pools and batched completion processing
+- **Asynchronous Processing**: Non-blocking RDMA operations with pre-allocated request pools and completion processing
 - **Thread-Safe Concurrency**: Background progress threads with lock-free data structures and configurable threading patterns
 
 EFA Specific **Topology-Aware Optimization**: Hardware-aware GPU-to-EFA and NUMA-to-EFA mapping using hwloc for optimal performance
