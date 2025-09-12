@@ -95,6 +95,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
         xferBenchConfig::isStorageBackend()) {
@@ -109,7 +110,6 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
-
         // No need to set device_list if all is specified
         // fallback to backend preference
         if (devices[0] != "all" && devices.size() >= 1) {
@@ -135,6 +135,15 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
         std::cout << "Init nixl worker, dev "
                   << (("all" == devices[0]) ? "all" : backend_params["device_list"]) << " rank "
+                  << rank << ", type " << name << ", hostname " << hostname << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC)) {
+        if (gethostname(hostname, 256)) {
+            std::cerr << "Failed to get hostname" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
+        std::cout << "Init nixl worker, dev "
+                  << (("all" == devices[0]) ? "all" : devices[rank]) << " rank "
                   << rank << ", type " << name << ", hostname " << hostname << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)) {
         // Using default param values for GDS backend
@@ -999,6 +1008,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
     synchronize();
 
     stats.clear();
+
 
     ret = execTransfer(
         agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);

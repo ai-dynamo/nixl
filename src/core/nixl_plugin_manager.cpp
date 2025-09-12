@@ -395,6 +395,10 @@ const std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
     registerStaticPlugin(#name, createStatic##name##Plugin);
 
 void nixlPluginManager::registerBuiltinPlugins() {
+#ifdef STATIC_PLUGIN_LIBFABRIC
+    NIXL_REGISTER_STATIC_PLUGIN(LIBFABRIC)
+#endif
+
 #ifdef STATIC_PLUGIN_UCX
     NIXL_REGISTER_STATIC_PLUGIN(UCX)
 #endif
