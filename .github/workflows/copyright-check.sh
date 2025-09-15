@@ -3,37 +3,49 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-current_year=$(date +%Y)
 failures=()
 
-# Expected headers (you can extend this array if you want multiple copyright holders)
-expected_copyright="SPDX-FileCopyrightText: Copyright (c) ${current_year} NVIDIA CORPORATION & AFFILIATES. All rights reserved."
-expected_license="SPDX-License-Identifier: Apache-2.0"
-
 for f in $(git ls-files); do
+  # Skip non-source files
   case "$f" in
-    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|LICENSE|*.md|*.json)
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|LICENSE)
       continue
       ;;
   esac
 
-  header=$(head -n 20 "$f" | sed 's|^# *||; s|^// *||; s|^ \* *||; s|^<!-- *||; s|-->$||')
+  header=$(head -n 20 "$f")
 
-  # Verify at least one full copyright line matches
-  if ! echo "$header" | grep -Fxq "$expected_copyright"; then
-    failures+=("$f (copyright line missing or wrong)")
+  # Extract last modification year from git
+  last_modified=$(git log -1 --pretty="%cs" -- "$f" | cut -d- -f1)
+
+  # Extract copyright years (handles YYYY or YYYY-YYYY)
+  copyright_years=$(echo "$header" | \
+    grep -Eo 'Copyright \(c\) [0-9]{4}(-[0-9]{4})?' | \
+    sed -E 's/.* ([0-9]{4})(-[0-9]{4})?/\1\2/')
+
+  if [[ -z "$copyright_years" ]]; then
+    failures+=("$f (missing copyright)")
     continue
   fi
 
-  # Verify license line matches exactly
-  if ! echo "$header" | grep -Fxq "$expected_license"; then
-    failures+=("$f (license line missing or wrong)")
+  # Get last year (handles range)
+  end_year=$(echo "$copyright_years" | sed -E 's/.*-//')
+
+  # Validate date
+  if (( end_year < last_modified )); then
+    failures+=("$f (copyright year $end_year < last modified $last_modified)")
+    continue
+  fi
+
+  # License line must exist
+  if ! echo "$header" | grep -Fxq "# SPDX-License-Identifier: Apache-2.0"; then
+    failures+=("$f (missing license)")
     continue
   fi
 done
 
 if ((${#failures[@]} > 0)); then
-  echo "❌ SPDX header check failed in:"
+  echo "❌ SPDX header check failed:"
   printf '  - %s\n' "${failures[@]}"
   exit 1
 else
