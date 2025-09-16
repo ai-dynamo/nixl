@@ -87,15 +87,22 @@ sudo modprobe nvidia_fs
 lsmod | grep nvidia_fs  # Should show loaded module
 ```
 
-### 📦 5. **Enable GDS in CUDA**
+### 📦 5. **Configure NVIDIA Module Options**
 
-GDS is bundled with CUDA ≥11.4 but requires explicit enabling:
+Configure required NVIDIA driver options:
 
 ```bash
+# Enable GPUDirect Storage
 sudo echo "options nvidia NVreg_EnableGpuDirectStorage=1" > /etc/modprobe.d/nvidia-gds.conf
+
+# Configure PeerMappingOverride for RDMA support
+sudo echo "options nvidia NVreg_RegistryDwords=\"PeerMappingOverride=1;\"" > /etc/modprobe.d/nvidia.conf
+
 sudo update-initramfs -u
 sudo reboot
 ```
+
+The `PeerMappingOverride=1` option is required for proper GPU peer-to-peer communication in RDMA environments.
 
 ### 6. **Enable Kernel Modules at Boot**
 

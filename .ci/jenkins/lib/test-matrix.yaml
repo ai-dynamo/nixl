@@ -33,12 +33,15 @@ matrix:
       - nvcr.io/nvidia/pytorch:25.02-py3
     arch:
       - x86_64
+    ucx_version:
+      - master
+      - v1.19.0
 
-taskName: "${name}/${arch}/${axis_index}"
+taskName: "${name}/${arch}/${ucx_version}/${axis_index}"
 
 env:
   INSTALL_DIR: ${WORKSPACE}/nixl_install
-  UCX_VERSION: v1.19.0
+  UCX_VERSION: ${ucx_version}
   NPROC: "16"
   # Manual timeout - ci-demo doesn't handle docker exec
   TEST_TIMEOUT: 30

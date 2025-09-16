@@ -45,6 +45,32 @@ RUN apt-get update && \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Install DOCA GPUNETIO packages
+ARG DOCA_BASE=https://doca-repo-prod.nvidia.com/internal/repo/doca
+ARG DOCA_VER=3.1.0
+ARG DIST=ubuntu24.04
+ARG ARCH=x86_64
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       ca-certificates curl gnupg \
+    && curl -fsSL ${DOCA_BASE}/${DOCA_VER}/${DIST}/${ARCH}/latest/GPG-KEY-Mellanox.pub \
+       | gpg --dearmor -o /usr/share/keyrings/doca.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/doca.gpg] ${DOCA_BASE}/${DOCA_VER}/${DIST}/${ARCH}/latest/ ./" \
+       > /etc/apt/sources.list.d/doca.list \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       doca-ofed-userspace \
+       doca-ofed-devel-userspace \
+       doca-sdk-gpunetio \
+       libdoca-sdk-common-dev \
+       libdoca-sdk-verbs-dev \
+       libdoca-sdk-gpunetio-dev \
+       rdma-core \
+       doca-sdk-verbs doca-sdk-common \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create group and user in one RUN command to reduce layers
 RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \
         groupadd -g "${_GID}" "${_GROUP}"; \
