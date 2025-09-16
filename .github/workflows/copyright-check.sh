@@ -28,6 +28,12 @@ for f in $(git ls-files); do
 
   header=$(head -n 20 "$f")
 
+  # Match SPDX-FileCopyrightText with NVIDIA and year(s)
+  if ! echo "$header" | grep -Eq 'SPDX-FileCopyrightText:\s*Copyright \(c\) [0-9]{4}(-[0-9]{4})? NVIDIA CORPORATION & AFFILIATES\. All rights reserved\.'; then
+    failures+=("$f (missing or incorrect copyright line)")
+    continue
+  fi
+  
   # Extract last modification year from git
   last_modified=$(git log -1 --pretty="%cs" -- "$f" | cut -d- -f1)
 
@@ -47,12 +53,6 @@ for f in $(git ls-files); do
   # Validate date
   if (( end_year < last_modified )); then
     failures+=("$f (copyright year $end_year < last modified $last_modified)")
-    continue
-  fi
-
-  # Match SPDX-FileCopyrightText with NVIDIA and year(s)
-  if ! echo "$header" | grep -Eq 'SPDX-FileCopyrightText:\s*Copyright \(c\) [0-9]{4}(-[0-9]{4})? NVIDIA CORPORATION & AFFILIATES\. All rights reserved\.'; then
-    failures+=("$f (missing or incorrect copyright line)")
     continue
   fi
 
