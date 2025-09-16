@@ -14,6 +14,7 @@
 # limitations under the License.
 
 subdir('common')
+subdir('libfabric')
 subdir('serdes')
 subdir('stream')
 subdir('ucx')
