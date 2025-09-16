@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
     std::set<nixl_backend_t> staticPlugs;
 
     std::set<std::string> plugins = {
-        "UCX", "GDS", "POSIX", "UCX_MO", "MOCK_BACKEND", "GPUNETIO", "OBJ", "GDS_MT"};
+        "UCX", "GDS", "POSIX", "UCX_MO", "MOCK_BACKEND", "GPUNETIO", "OBJ", "GDS_MT", "LIBFABRIC"};
 
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
         print_usage(argv[0]);

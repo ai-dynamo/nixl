@@ -21,6 +21,10 @@ if etcd_dep.found()
     nixl_lib_deps += [ etcd_dep ]
 endif
 
+if 'LIBFABRIC' in static_plugins
+    nixl_lib_deps += [ libfabric_backend_interface, cuda_dep ]
+endif
+
 if 'UCX' in static_plugins
     nixl_lib_deps += [ ucx_backend_interface, asio_dep, cuda_dep ]
 endif

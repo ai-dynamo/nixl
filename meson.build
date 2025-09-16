@@ -151,6 +151,17 @@ else
   ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'])
 endif
 
+libfabric_path = get_option('libfabric_path')
+if libfabric_path != ''
+  libfabric_lib_path = libfabric_path + '/lib'
+  libfabric_inc_path = libfabric_path + '/include'
+  libfabric_dep = declare_dependency(
+    link_args : ['-L' + libfabric_lib_path, '-lfabric'],
+    include_directories : include_directories(libfabric_inc_path))
+else
+  libfabric_dep = dependency('libfabric', required: false)
+endif
+
 # UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
