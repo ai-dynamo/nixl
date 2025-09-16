@@ -1010,7 +1010,6 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
     stats.clear();
 
-
     ret = execTransfer(
         agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);
     if (ret < 0) {
