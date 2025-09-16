@@ -31,6 +31,7 @@ ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 ARG EFA_INSTALLER_VERSION="latest"
+ARG EFA_INSTALL_PATH="/opt/amazon/efa"
 
 RUN apt-get update -y && \
     apt-get install -y ubuntu-keyring && \
@@ -142,7 +143,7 @@ RUN cd /usr/local/src && \
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$EFA_INSTALL_PATH/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
@@ -155,7 +156,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=$NIXL_PREFIX && \
+    uv run meson setup -Dlibfabric_path=$EFA_INSTALL_PATH build/ --prefix=$NIXL_PREFIX && \
     cd build && \
     ninja && \
     ninja install
