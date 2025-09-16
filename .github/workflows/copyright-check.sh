@@ -18,7 +18,7 @@ for f in $(git ls-files); do
 
   # Skip ignored top-level paths
   case "$f" in
-    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|*.md|*.svg|*.wrap|*.in|*.json|*.template|*.cu|*.gitignore|*.python-version|*py.typed)
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|*.md|*.svg|*.wrap|*.in|*.json|*.template|*.gitignore|*.python-version|*py.typed)
       continue
       ;;
     CODEOWNERS|LICENSE|Doxyfile|.clang-format|.clang-tidy|.codespellrc)
@@ -47,6 +47,12 @@ for f in $(git ls-files); do
   # Validate date
   if (( end_year < last_modified )); then
     failures+=("$f (copyright year $end_year < last modified $last_modified)")
+    continue
+  fi
+
+  # Match SPDX-FileCopyrightText with NVIDIA and year(s)
+  if ! echo "$header" | grep -Eq 'SPDX-FileCopyrightText:\s*Copyright \(c\) [0-9]{4}(-[0-9]{4})? NVIDIA CORPORATION & AFFILIATES\. All rights reserved\.'; then
+    failures+=("$f (missing or incorrect copyright line)")
     continue
   fi
 
