@@ -20,6 +20,7 @@ jobs:
       - run: git config --global --add safe.directory /__w/dynamo/dynamo
       - run: git config --global --add safe.directory /workspace
       - run: /workspace/.github/workflows/copyright-check.sh
+        shell: bash
         env:
           NVBUILD_VERBOSITY: DETAILED
         timeout-minutes: 2
