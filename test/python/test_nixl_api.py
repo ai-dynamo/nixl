@@ -252,3 +252,59 @@ def test_get_xfer_telemetry():
     finally:
         utils.free_passthru(addr1)
         utils.free_passthru(addr2)
+        os.environ.pop("NIXL_TELEMETRY_ENABLE")
+
+
+def test_get_xfer_telemetry_cfg():
+    os.environ["NIXL_TELEMETRY_ENABLE"] = "m"  # invalid value not to enable
+    os.environ["NIXL_TELEMETRY_DIR"] = "/tmp/dummy"  # to be ignored
+
+    agent1 = nixl_agent(
+        str(uuid.uuid4()), nixl_conf=nixl_agent_config(capture_telemetry=True)
+    )
+    agent2 = nixl_agent(str(uuid.uuid4()))
+
+    mem_size = 128
+    addr1 = utils.malloc_passthru(mem_size)
+    addr2 = utils.malloc_passthru(mem_size)
+
+    try:
+        reg1 = agent1.get_reg_descs([(addr1, mem_size, 0, "")], mem_type="DRAM")
+        reg2 = agent2.get_reg_descs([(addr2, mem_size, 0, "")], mem_type="DRAM")
+        agent1.register_memory(reg1)
+        agent2.register_memory(reg2)
+
+        agent1.add_remote_agent(agent2.get_agent_metadata())
+        src = agent1.get_xfer_descs(
+            [(addr1, mem_size // 2, 0), (addr1 + mem_size // 2, mem_size // 2, 0)],
+            mem_type="DRAM",
+        )
+        dst = agent1.get_xfer_descs(
+            [(addr2, mem_size // 2, 0), (addr2 + mem_size // 2, mem_size // 2, 0)],
+            mem_type="DRAM",
+        )
+
+        handle = agent1.initialize_xfer("WRITE", src, dst, agent2.name)
+        st = agent1.transfer(handle)
+        assert st in ("DONE", "PROC")
+
+        while True:
+            st = agent1.check_xfer_state(handle)
+            assert st in ("DONE", "PROC")
+            if st == "DONE":
+                break
+
+        telem = agent1.get_xfer_telemetry(handle)
+        assert telem.descCount == 2
+        assert telem.totalBytes == mem_size
+        assert telem.startTime > 0
+        assert telem.postDuration > 0
+        assert telem.xferDuration > 0
+        assert telem.xferDuration >= telem.postDuration
+
+        agent1.release_xfer_handle(handle)
+    finally:
+        utils.free_passthru(addr1)
+        utils.free_passthru(addr2)
+        os.environ.pop("NIXL_TELEMETRY_ENABLE")
+        os.environ.pop("NIXL_TELEMETRY_DIR")

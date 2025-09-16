@@ -27,6 +27,7 @@
 #include <atomic>
 #include <chrono>
 #include <poll.h>
+#include <optional>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -191,10 +192,16 @@ public:
     releaseReqH(nixlBackendReqH *handle) const override;
 
     nixl_status_t
-    createGpuXferReq(const nixlBackendReqH &handle, nixlGpuXferReqH *&gpu_req_hndl) const override;
+    createGpuXferReq(const nixlBackendReqH &handle, nixlGpuXferReqH &gpu_req_hndl) const override;
 
     void
-    releaseGpuXferReq(nixlGpuXferReqH *gpu_req_hndl) const override;
+    releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const override;
+
+    nixl_status_t
+    getGpuSignalSize(size_t &signal_size) const override;
+
+    nixl_status_t
+    prepGpuSignal(const nixlBackendMD &meta, void *signal) const override;
 
     int
     progress();
@@ -286,6 +293,7 @@ private:
     /* CUDA data*/
     std::unique_ptr<nixlUcxCudaCtx> cudaCtx; // Context matching specific device
     bool cuda_addr_wa;
+    mutable std::optional<size_t> gpuSignalSize_;
 
     // Context to use when current context is missing
     nixlUcxCudaDevicePrimaryCtxPtr m_cudaPrimaryCtx;

@@ -956,12 +956,10 @@ execTransfer(nixlAgent *agent,
             thread_stats.transfer_duration.add(transfer_duration);
         }
 
-        if (ret == 0) {
-            rc = agent->releaseXferReq(req);
-            if (NIXL_SUCCESS != rc) {
-                std::cout << "NIXL releaseXferReq failed" << std::endl;
-                ret = -1;
-            }
+        rc = agent->releaseXferReq(req);
+        if (NIXL_SUCCESS != rc) {
+            std::cout << "NIXL releaseXferReq failed" << std::endl;
+            ret = -1;
         }
 
 #pragma omp critical
