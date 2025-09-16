@@ -18,7 +18,6 @@
 #ifndef NIXL_SRC_UTILS_UCX_GPU_XFER_REQ_H_H
 #define NIXL_SRC_UTILS_UCX_GPU_XFER_REQ_H_H
 
-#include <memory>
 #include <vector>
 
 extern "C" {
@@ -35,26 +34,11 @@ class nixlUcxMem;
 namespace nixl::ucx {
 class rkey;
 
-class gpuXferReqH {
-public:
-    gpuXferReqH() = delete;
+nixlGpuXferReqH createGpuXferReq(const nixlUcxEp &,
+                       const std::vector<nixlUcxMem> &,
+                       const std::vector<const nixl::ucx::rkey *> &);
 
-    static nixlGpuXferReqH
-    create(const nixlUcxEp &ep,
-           const std::vector<nixlUcxMem> &local_mems,
-           const std::vector<const nixl::ucx::rkey *> &remote_rkeys);
-
-    static void
-    release(nixlGpuXferReqH gpu_req);
-
-private:
-#ifdef HAVE_UCX_GPU_DEVICE_API
-    [[nodiscard]] static ucp_device_mem_list_handle_h
-    createDeviceMemList(const nixlUcxEp &ep,
-                        const std::vector<nixlUcxMem> &local_mems,
-                        const std::vector<const nixl::ucx::rkey *> &remote_rkeys);
-#endif
-};
+void releaseGpuXferReq(nixlGpuXferReqH gpu_req) noexcept;
 } // namespace nixl::ucx
 
 #endif

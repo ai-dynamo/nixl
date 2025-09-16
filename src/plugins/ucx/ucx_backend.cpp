@@ -1666,7 +1666,7 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
     }
 
     try {
-        gpu_req_hndl = nixl::ucx::gpuXferReqH::create(*ep, local_mems, remote_rkeys);
+        gpu_req_hndl = nixl::ucx::createGpuXferReq(*ep, local_mems, remote_rkeys);
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -1677,7 +1677,7 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
 
 void
 nixlUcxEngine::releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const {
-    nixl::ucx::gpuXferReqH::release(gpu_req_hndl);
+    nixl::ucx::releaseGpuXferReq(gpu_req_hndl);
 }
 
 nixl_status_t
