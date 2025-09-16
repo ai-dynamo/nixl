@@ -48,7 +48,8 @@ class xferBenchNvshmemWorker: public xferBenchWorker {
         // Communication and synchronization
         int exchangeMetadata() override;
         std::vector<std::vector<xferBenchIOV>>
-        exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists) override;
+        exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                    size_t block_size) override;
         void
         poll(size_t block_size) override;
         int
