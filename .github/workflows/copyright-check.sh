@@ -28,13 +28,25 @@ for f in $(git ls-files); do
     continue
   fi
 
-  # Get last year (handles range)
-  end_year=$(echo "$copyright_years" | sed -E 's/.*-//' || true)
+  # Compute the maximum year found in any "Copyright (c) YYYY[-YYYY]" occurrences
+  end_year=$(echo "$header" \
+    | grep -Eo 'Copyright \(c\) [0-9]{4}(-[0-9]{4})?' \
+    | sed -E 's/.*-([0-9]{4})$/\1/; t; s/.* ([0-9]{4}).*/\1/' \
+    | sort -n \
+    | tail -1 \
+    || true)
 
-  # Validate date
-  if (( end_year < last_modified )); then
-    failures+=("$f (copyright year $end_year < last modified $last_modified)")
+  if [[ -z "${end_year:-}" ]]; then
+    failures+=("$f (missing copyright)")
     continue
+  fi
+
+  # Validate date (only if both numeric)
+  if [[ "$end_year" =~ ^[0-9]+$ && "$last_modified" =~ ^[0-9]+$ ]]; then
+    if (( end_year < last_modified )); then
+      failures+=("$f (copyright year $end_year < last modified $last_modified)")
+      continue
+    fi
   fi
 
   # License line must exist
