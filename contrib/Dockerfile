@@ -30,6 +30,8 @@ ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
+ARG EFA_INSTALLER_VERSION="latest"
+ARG EFA_INSTALL_PATH="/opt/amazon/efa"
 
 RUN apt-get update -y && \
     apt-get install -y ubuntu-keyring && \
@@ -57,6 +59,8 @@ RUN apt-get update -y && \
     build-essential \
     python3.12-dev \
     clang \
+    hwloc \
+    libhwloc-dev \
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
@@ -69,6 +73,12 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
+
+# Install EFA (Elastic Fabric Adapter)
+RUN curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" | tar xz && \
+    cd aws-efa-installer && \
+    ./efa_installer.sh -y -g --skip-kmod --skip-limit-conf --no-verify && \
+    ldconfig
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
@@ -133,7 +143,7 @@ RUN cd /usr/local/src && \
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$EFA_INSTALL_PATH/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
@@ -146,7 +156,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=$NIXL_PREFIX && \
+    uv run meson setup -Dlibfabric_path=$EFA_INSTALL_PATH build/ --prefix=$NIXL_PREFIX && \
     cd build && \
     ninja && \
     ninja install
