@@ -20,12 +20,6 @@
 
 #include <vector>
 
-extern "C" {
-#ifdef HAVE_UCX_GPU_DEVICE_API
-#include <ucp/api/device/ucp_host.h>
-#endif
-}
-
 #include "nixl_types.h"
 
 class nixlUcxEp;

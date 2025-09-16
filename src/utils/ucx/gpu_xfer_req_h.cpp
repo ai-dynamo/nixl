@@ -21,6 +21,11 @@
 #include "rkey.h"
 #include "config.h"
 
+extern "C" {
+#ifdef HAVE_UCX_GPU_DEVICE_API
+#include <ucp/api/device/ucp_host.h>
+#endif
+}
 namespace nixl::ucx {
 
 #ifdef HAVE_UCX_GPU_DEVICE_API
@@ -75,11 +80,6 @@ createGpuXferReq(const nixlUcxEp &ep,
 
 void
 releaseGpuXferReq(nixlGpuXferReqH gpu_req) noexcept {
-    if (gpu_req == nullptr) {
-        NIXL_WARN << "Attempting to release null GPU transfer request handle";
-        return;
-    }
-
     auto ucx_handle = reinterpret_cast<ucp_device_mem_list_handle_h>(gpu_req);
     ucp_device_mem_list_release(ucx_handle);
 }
