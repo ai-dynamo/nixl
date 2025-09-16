@@ -21,7 +21,7 @@ endif
 
 ucx_utils_inc_dirs = include_directories('.')
 
-ucx_utils_sources = ['ucx_utils.cpp', 'ucx_utils.h', 'config.h', 'config.cpp', 'rkey.cpp', 'rkey.h', 'device_mem_list.cpp', 'device_mem_list.h']
+ucx_utils_sources = ['ucx_utils.cpp', 'ucx_utils.h', 'config.h', 'config.cpp', 'rkey.cpp', 'rkey.h', 'gpu_xfer_req_h.cpp', 'gpu_xfer_req_h.h']
 
 ucx_utils_lib = library('ucx_utils',
            ucx_utils_sources,
