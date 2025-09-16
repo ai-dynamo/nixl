@@ -33,7 +33,7 @@ for f in $(git ls-files); do
     failures+=("$f (missing or incorrect copyright line)")
     continue
   fi
-  
+
   # Extract last modification year from git
   last_modified=$(git log -1 --pretty="%cs" -- "$f" | cut -d- -f1)
 
