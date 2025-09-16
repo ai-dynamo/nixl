@@ -65,7 +65,7 @@ The AWS test script:
 
 ## Container Image
 
-The script uses the container image: `nvcr.io/nvidia/pytorch:25.02-py3`
+The script uses the container image: `nvcr.io/nvidia/pytorch:25.06-py3`
 You can override this by setting the `CONTAINER_IMAGE` environment variable:
 
 ```bash

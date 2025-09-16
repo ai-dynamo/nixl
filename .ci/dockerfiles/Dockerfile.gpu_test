@@ -13,7 +13,7 @@
 #   docker run --gpus all --privileged -it nixl-gpu-test
 #
 # Build arguments:
-#   BASE_IMAGE: Base NVIDIA PyTorch image (default: nvcr.io/nvidia/pytorch:25.02-py3)
+#   BASE_IMAGE: Base NVIDIA PyTorch image (default: nvcr.io/nvidia/pytorch:25.06-py3)
 #   _UID: User ID for the non-root user (default: 148069)
 #   _GID: Group ID for the user (default: 30)
 #   _LOGIN: Username (default: svc-nixl)
@@ -22,7 +22,7 @@
 #   WORKSPACE: Workspace directory path
 #
 
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.02-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.06-py3
 
 FROM ${BASE_IMAGE}
 
