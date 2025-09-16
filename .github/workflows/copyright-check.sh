@@ -51,7 +51,7 @@ for f in $(git ls-files); do
   fi
 
   # License line must exist
-  if ! echo "$header" | grep -Eq '^[[:space:]]*(#|//|/\*|\*|<!--)?[[:space:]]*"?SPDX-License-Identifier:[[:space:]]*Apache-2\.0'; then
+  if ! echo "$header" | grep -Eq '^[[:space:]]*(#|//|\*|/\*|<!--)[[:space:]]*SPDX-License-Identifier:[[:space:]]*Apache-2\.0'; then
     failures+=("$f (missing license)")
     continue
   fi
