@@ -21,7 +21,7 @@ for f in $(git ls-files); do
   # Extract copyright years (handles YYYY or YYYY-YYYY)
   copyright_years=$(echo "$header" | \
     grep -Eo 'Copyright \(c\) [0-9]{4}(-[0-9]{4})?' | \
-    sed -E 's/.* ([0-9]{4})(-[0-9]{4})?/\1\2/')
+    sed -E 's/.* ([0-9]{4})(-[0-9]{4})?/\1\2/' || true)
 
   if [[ -z "$copyright_years" ]]; then
     failures+=("$f (missing copyright)")
@@ -29,7 +29,7 @@ for f in $(git ls-files); do
   fi
 
   # Get last year (handles range)
-  end_year=$(echo "$copyright_years" | sed -E 's/.*-//')
+  end_year=$(echo "$copyright_years" | sed -E 's/.*-//' || true)
 
   # Validate date
   if (( end_year < last_modified )); then
