@@ -6,9 +6,22 @@ set -euo pipefail
 failures=()
 
 for f in $(git ls-files); do
-  # Skip non-source files
+  # Normalize path
+  f=${f#./}
+
+  # Skip ignored folders anywhere in path
   case "$f" in
-    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|LICENSE)
+    .github/*|.ci/*)
+      continue
+      ;;
+  esac
+
+  # Skip ignored top-level paths
+  case "$f" in
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|LICENSE|*.md|*.svg|*.wrap|*.in|*.json)
+      continue
+      ;;
+    CODEOWNERS|Doxyfile|.clang-format|.clang-tidy|.codespellrc|.gitignore|.python-version|py.typed)
       continue
       ;;
   esac
