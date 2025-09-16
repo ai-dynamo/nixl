@@ -1229,9 +1229,10 @@ nixlAgent::createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_r
     }
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    const auto status = req_hndl.engine->createGpuXferReq(*req_hndl.backendHandle, gpu_req_hndl);
+    const auto status = req_hndl.engine->createGpuXferReq(
+        *req_hndl.backendHandle, *req_hndl.initiatorDescs, *req_hndl.targetDescs, gpu_req_hndl);
     if (status == NIXL_SUCCESS) {
-        data->gpuReqToEngine.emplace(&gpu_req_hndl, req_hndl.engine);
+        data->gpuReqToEngine.emplace(gpu_req_hndl, req_hndl.engine);
     }
 
     return status;
@@ -1252,15 +1253,26 @@ nixlAgent::releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const {
 }
 
 nixl_status_t
-nixlAgent::getGpuSignalSize(const nixlBackendH &backend, size_t &signal_size) const {
+nixlAgent::getGpuSignalSize(size_t &signal_size, const nixl_opt_args_t *extra_params) const {
+    if (!extra_params || extra_params->backends.empty()) {
+        NIXL_ERROR_FUNC << "backend must be specified in extra_params";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    return backend.engine->getGpuSignalSize(signal_size);
+    return extra_params->backends[0]->engine->getGpuSignalSize(signal_size);
 }
 
 nixl_status_t
-nixlAgent::prepGpuSignal(const nixl_reg_dlist_t &signal_descs) const {
+nixlAgent::prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
+                         const nixl_opt_args_t *extra_params) const {
     if (signal_descs.descCount() == 0) {
         NIXL_ERROR_FUNC << "signal descriptor list is empty";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (!extra_params || extra_params->backends.empty()) {
+        NIXL_ERROR_FUNC << "backend must be specified in extra_params";
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -1269,30 +1281,30 @@ nixlAgent::prepGpuSignal(const nixl_reg_dlist_t &signal_descs) const {
     // Convert reg_dlist to xfer_dlist for populate call
     nixl_xfer_dlist_t xfer_descs = signal_descs.trim();
 
-    // Find backends that have registrations for this memory type
-    backend_set_t *backends = data->memorySection->queryBackends(signal_descs.getType());
-    if (!backends || backends->empty()) {
-        NIXL_ERROR_FUNC << "no available backends for mem type '" << signal_descs.getType() << "'";
-        return NIXL_ERR_NOT_FOUND;
+    nixlBackendH *backend = extra_params->backends[0];
+    nixl_meta_dlist_t result(signal_descs.getType());
+    nixl_status_t ret = data->memorySection->populate(xfer_descs, backend->engine, result);
+
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR_FUNC << "failed to populate signal metadata with specified backend";
+        return ret;
     }
 
-    // Try each backend to find the signal metadata
-    for (const auto &backend : *backends) {
-        nixl_meta_dlist_t result(signal_descs.getType());
-        nixl_status_t ret = data->memorySection->populate(xfer_descs, backend, result);
+    for (size_t i = 0; i < static_cast<size_t>(result.descCount()); i++) {
+        void *signal = reinterpret_cast<void *>(result[i].addr);
+        ret = backend->engine->prepGpuSignal(*result[i].metadataP, signal);
 
-        if (ret == NIXL_SUCCESS) {
-            void *signal = reinterpret_cast<void *>(result[0].addr);
-            ret = backend->prepGpuSignal(*result[0].metadataP, signal);
-
-            if ((ret == NIXL_SUCCESS) || (ret != NIXL_ERR_NOT_SUPPORTED)) {
-                return ret;
-            }
+        if (ret != NIXL_SUCCESS) {
+            NIXL_ERROR_FUNC << "failed to prepare GPU signal " << i
+                            << " with status: " << nixlEnumStrings::statusStr(ret);
+            return ret;
         }
+
+        NIXL_DEBUG << "Successfully prepared GPU signal " << i << " at address " << signal;
     }
 
-    NIXL_ERROR_FUNC << "signal memory is not registered with any backend that supports GPU signals";
-    return NIXL_ERR_NOT_FOUND;
+    NIXL_DEBUG << "Successfully prepared " << result.descCount() << " GPU signals";
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t

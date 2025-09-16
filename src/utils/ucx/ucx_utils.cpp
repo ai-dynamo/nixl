@@ -397,6 +397,10 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
 
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
     ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 | UCP_FEATURE_AM;
+#ifdef HAVE_UCX_GPU_DEVICE_API
+    ucp_params.features |= UCP_FEATURE_DEVICE;
+#endif
+
     if (prog_thread)
         ucp_params.features |= UCP_FEATURE_WAKEUP;
     ucp_params.mt_workers_shared = num_workers > 1 ? 1 : 0;

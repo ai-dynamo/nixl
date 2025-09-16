@@ -68,11 +68,7 @@ struct nixlGpuXferReqParams {
  */
 __device__ inline nixl_status_t
 nixlGpuConvertUcsStatus(ucs_status_t status) {
-    if (status == UCS_OK) {
-        return NIXL_SUCCESS;
-    } else {
-        return NIXL_ERR_BACKEND;
-    }
+    return status == UCS_OK ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
 }
 
 /**

@@ -156,23 +156,27 @@ nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
 if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     cuda = meson.get_compiler('cuda')
-
     have_gpu_side = cuda.compiles('''
             #include <ucp/api/device/ucp_device_impl.h>
             int main() { return 0; }
-        ''', dependencies : ucx_dep)
+        ''', dependencies : ucx_dep, args: nvcc_flags)
 
-    have_host_side = cpp.has_header(
-        'ucp/api/device/ucp_host.h',
-        dependencies: ucx_dep)
+    have_host_side = cpp.compiles('''
+            #include <ucp/api/device/ucp_host.h>
+            int main() { return 0; }
+        ''', dependencies: ucx_dep)
 
     if have_gpu_side and have_host_side
         ucx_gpu_device_api_available = true
         add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
-        message('UCX GPU device API support detected and enabled')
-    else
-        message('UCX GPU device API support not available - GPU device API features will be disabled')
     endif
+
+    summary({
+    'UCX GPU Device API' : ucx_gpu_device_api_available,
+    'GPU-side compile'   : have_gpu_side,
+    'Host-side compile'  : have_host_side,
+    'nvcc available'     : nvcc_prog.found(),
+  }, section: 'UCX GPU Device API', bool_yn: true)
 endif
 
 if get_option('disable_gds_backend')

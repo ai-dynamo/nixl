@@ -19,6 +19,7 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
+#include "ucx/device_mem_list.h"
 
 #include <optional>
 #include <limits>
@@ -1412,7 +1413,10 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
 
     /* TODO: try to get from a pool first */
     size_t worker_id = getWorkerId();
-    handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
+    auto *ucx_handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
+
+    handle = ucx_handle;
+
     return NIXL_SUCCESS;
 }
 
@@ -1623,13 +1627,62 @@ nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 }
 
 nixl_status_t
-nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &handle,
+nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
+                                const nixl_meta_dlist_t &local_descs,
+                                const nixl_meta_dlist_t &remote_descs,
                                 nixlGpuXferReqH &gpu_req_hndl) const {
-    return NIXL_ERR_NOT_SUPPORTED;
+    auto intHandle = static_cast<const nixlUcxBackendH *>(&req_hndl);
+
+    if (local_descs.descCount() != remote_descs.descCount()) {
+        NIXL_ERROR << "Mismatch between local and remote descriptor counts";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (local_descs.descCount() == 0) {
+        NIXL_ERROR << "Empty descriptor lists";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    auto remoteMd = static_cast<nixlUcxPublicMetadata *>(remote_descs[0].metadataP);
+    if (!remoteMd || !remoteMd->conn) {
+        NIXL_ERROR << "No connection found in remote metadata";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    size_t workerId = intHandle->getWorkerId();
+    nixlUcxEp *ep = remoteMd->conn->getEp(workerId).get();
+
+    std::vector<nixlUcxMem> local_mems;
+    std::vector<const nixl::ucx::rkey *> remote_rkeys;
+    local_mems.reserve(local_descs.descCount());
+    remote_rkeys.reserve(remote_descs.descCount());
+
+    for (size_t i = 0; i < static_cast<size_t>(local_descs.descCount()); i++) {
+        auto localMd = static_cast<nixlUcxPrivateMetadata *>(local_descs[i].metadataP);
+        auto remoteMdDesc = static_cast<nixlUcxPublicMetadata *>(remote_descs[i].metadataP);
+
+        local_mems.push_back(localMd->mem);
+        remote_rkeys.push_back(&remoteMdDesc->getRkey(workerId));
+    }
+
+    try {
+        auto device_mem_list =
+            std::make_unique<nixl::ucx::deviceMemList>(*ep, local_mems, remote_rkeys);
+        gpu_req_hndl = device_mem_list->get();
+        device_mem_list.release();
+        return NIXL_SUCCESS;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to create device memory list for GPU transfer: " << e.what();
+        return NIXL_ERR_BACKEND;
+    }
 }
 
 void
-nixlUcxEngine::releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const {}
+nixlUcxEngine::releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const {
+    nixl::ucx::deviceMemList device_mem_list{gpu_req_hndl};
+    gpu_req_hndl = nullptr;
+}
 
 nixl_status_t
 nixlUcxEngine::getGpuSignalSize(size_t &signal_size) const {

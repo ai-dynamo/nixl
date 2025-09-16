@@ -192,7 +192,10 @@ public:
     releaseReqH(nixlBackendReqH *handle) const override;
 
     nixl_status_t
-    createGpuXferReq(const nixlBackendReqH &handle, nixlGpuXferReqH &gpu_req_hndl) const override;
+    createGpuXferReq(const nixlBackendReqH &req_hndl,
+                     const nixl_meta_dlist_t &local_descs,
+                     const nixl_meta_dlist_t &remote_descs,
+                     nixlGpuXferReqH &gpu_req_hndl) const override;
 
     void
     releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const override;

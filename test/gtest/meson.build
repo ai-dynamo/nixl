@@ -35,6 +35,10 @@ subdir('mocks')
 subdir('unit')
 subdir('plugins')
 
+if ucx_gpu_device_api_available
+    subdir('device_api')
+endif
+
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
 cpp_flags = []
@@ -66,8 +70,8 @@ gtest_sources = [
     ]
 
 if ucx_gpu_device_api_available
-    gtest_sources += 'device_api_test.cu'
-    device_api_inc = nixl_gpu_inc_dirs
+    gtest_sources += device_api_test_sources
+    device_api_inc = [nixl_gpu_inc_dirs, include_directories('device_api')]
     device_api_dep = ucx_dep
 else
     device_api_inc = []
