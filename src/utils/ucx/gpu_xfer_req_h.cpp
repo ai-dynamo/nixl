@@ -26,6 +26,7 @@ extern "C" {
 #include <ucp/api/device/ucp_host.h>
 #endif
 }
+
 namespace nixl::ucx {
 
 #ifdef HAVE_UCX_GPU_DEVICE_API

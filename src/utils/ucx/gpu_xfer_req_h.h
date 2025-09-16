@@ -28,11 +28,13 @@ class nixlUcxMem;
 namespace nixl::ucx {
 class rkey;
 
-nixlGpuXferReqH createGpuXferReq(const nixlUcxEp &,
-                       const std::vector<nixlUcxMem> &,
-                       const std::vector<const nixl::ucx::rkey *> &);
+nixlGpuXferReqH
+createGpuXferReq(const nixlUcxEp &,
+                 const std::vector<nixlUcxMem> &,
+                 const std::vector<const nixl::ucx::rkey *> &);
 
-void releaseGpuXferReq(nixlGpuXferReqH gpu_req) noexcept;
+void
+releaseGpuXferReq(nixlGpuXferReqH gpu_req) noexcept;
 } // namespace nixl::ucx
 
 #endif
