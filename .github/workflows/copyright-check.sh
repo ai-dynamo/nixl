@@ -31,10 +31,10 @@ for f in $(git ls-files); do
   # Extract last modification year from git
   last_modified=$(git log -1 --pretty="%cs" -- "$f" | cut -d- -f1)
 
-  # Extract copyright years (handles YYYY or YYYY-YYYY)
+  # Extract only NVIDIA COPYRIGHT years (YYYY or YYYY-YYYY)
   copyright_years=$(echo "$header" | \
-    grep -Eo 'Copyright \(c\) [0-9]{4}(-[0-9]{4})?' | \
-    sed -E 's/.* ([0-9]{4})(-[0-9]{4})?/\1\2/' || true)
+  grep -Eo '^# SPDX-FileCopyrightText: Copyright \(c\) [0-9]{4}(-[0-9]{4})? NVIDIA CORPORATION & AFFILIATES\. All rights reserved\.$' | \
+  grep -Eo '[0-9]{4}(-[0-9]{4})?' || true)
 
   if [[ -z "$copyright_years" ]]; then
     failures+=("$f (missing copyright)")
