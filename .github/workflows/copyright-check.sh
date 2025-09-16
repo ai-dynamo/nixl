@@ -18,10 +18,10 @@ for f in $(git ls-files); do
 
   # Skip ignored top-level paths
   case "$f" in
-    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|LICENSE|*.md|*.svg|*.wrap|*.in|*.json|*.template|*.cu|*.gitignore|*.python-version|*.py.typed)
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|*.md|*.svg|*.wrap|*.in|*.json|*.template|*.cu|*.gitignore|*.python-version|*py.typed)
       continue
       ;;
-    CODEOWNERS|Doxyfile|.clang-format|.clang-tidy|.codespellrc)
+    CODEOWNERS|LICENSE|Doxyfile|.clang-format|.clang-tidy|.codespellrc)
       continue
       ;;
   esac
