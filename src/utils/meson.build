@@ -18,4 +18,7 @@ subdir('serdes')
 subdir('ucx')
 subdir('stream')
 subdir('file')
-subdir('libfabric')
+
+if libfabric_dep.found()
+    subdir('libfabric')
+endif
