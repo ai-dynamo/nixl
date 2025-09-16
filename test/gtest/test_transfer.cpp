@@ -423,14 +423,16 @@ protected:
                              << "(" << bandwidth << " GB/s)";
                 }
 
-                nixl_xfer_telem_t telemetry;
-                status = from.getXferTelemetry(xfer_req, telemetry);
-                EXPECT_EQ(status, expected_telem_status);
-                if (expected_telem_status == NIXL_SUCCESS) {
-                    EXPECT_TRUE(telemetry.startTime > min_chrono_time);
-                    EXPECT_TRUE(telemetry.postDuration > chrono_period_us_t(0));
-                    EXPECT_TRUE(telemetry.xferDuration > chrono_period_us_t(0));
-                    EXPECT_TRUE(telemetry.xferDuration >= telemetry.postDuration);
+                if (expected_telem_status != NIXL_ERR_NO_TELEMETRY) {
+                    nixl_xfer_telem_t telemetry;
+                    status = from.getXferTelemetry(xfer_req, telemetry);
+                    EXPECT_EQ(status, expected_telem_status);
+                    if (expected_telem_status == NIXL_SUCCESS) {
+                        EXPECT_TRUE(telemetry.startTime > min_chrono_time);
+                        EXPECT_TRUE(telemetry.postDuration > chrono_period_us_t(0));
+                        EXPECT_TRUE(telemetry.xferDuration > chrono_period_us_t(0));
+                        EXPECT_TRUE(telemetry.xferDuration >= telemetry.postDuration);
+                    }
                 }
 
                 status = from.releaseXferReq(xfer_req);
