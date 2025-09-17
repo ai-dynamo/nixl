@@ -69,43 +69,43 @@ sleep 5
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
-# ./bin/desc_example
-# ./bin/agent_example
-# ./bin/nixl_example
-# ./bin/nixl_etcd_example
-# ./bin/ucx_backend_test
-# # TODO this seems to be broken with GPU
-# #./bin/ucx_mo_backend_test
-# mkdir -p /tmp/telemetry_test
-# NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
-# sleep 1
-# ./bin/telemetry_reader /tmp/telemetry_test/Agent001 &
-# telePID=$!
-# sleep 6
-# kill -s SIGINT $telePID
+./bin/desc_example
+./bin/agent_example
+./bin/nixl_example
+./bin/nixl_etcd_example
+./bin/ucx_backend_test
+# TODO this seems to be broken with GPU
+#./bin/ucx_mo_backend_test
+mkdir -p /tmp/telemetry_test
+NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
+sleep 1
+./bin/telemetry_reader /tmp/telemetry_test/Agent001 &
+telePID=$!
+sleep 6
+kill -s SIGINT $telePID
 
-# # POSIX test disabled until we solve io_uring and Docker compatibility
+# POSIX test disabled until we solve io_uring and Docker compatibility
 
-# ./bin/nixl_posix_test -n 128 -s 1048576
+./bin/nixl_posix_test -n 128 -s 1048576
 
-# ./bin/ucx_backend_multi
-# ./bin/serdes_test
+./bin/ucx_backend_multi
+./bin/serdes_test
 
 # shellcheck disable=SC2154
 gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
-# ./bin/test_plugin
+./bin/test_plugin
 
-# # Run NIXL client-server test
-# nixl_test_port=$(get_next_tcp_port)
+# Run NIXL client-server test
+nixl_test_port=$(get_next_tcp_port)
 
-# ./bin/nixl_test target 127.0.0.1 "$nixl_test_port"&
-# sleep 1
-# ./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
+./bin/nixl_test target 127.0.0.1 "$nixl_test_port"&
+sleep 1
+./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
 
-# echo "${TEXT_YELLOW}==== Disabled tests==="
-# echo "./bin/md_streamer disabled"
-# echo "./bin/p2p_test disabled"
-# echo "./bin/ucx_worker_test disabled"
-# echo "${TEXT_CLEAR}"
+echo "${TEXT_YELLOW}==== Disabled tests==="
+echo "./bin/md_streamer disabled"
+echo "./bin/p2p_test disabled"
+echo "./bin/ucx_worker_test disabled"
+echo "${TEXT_CLEAR}"
 
 pkill etcd
