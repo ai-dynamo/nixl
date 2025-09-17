@@ -43,19 +43,12 @@ namespace gtest {
 class MemBuffer : std::shared_ptr<void> {
 public:
     MemBuffer(size_t size, nixl_mem_t mem_type = DRAM_SEG) :
-        std::shared_ptr<void>(allocate(size, mem_type), [](void *) {}),
-        mem_type(mem_type),
+        std::shared_ptr<void>(allocate(size, mem_type),
+                              [mem_type](void *ptr) {
+                                  release(ptr, mem_type);
+                              }),
         size(size)
     {
-    }
-
-    ~MemBuffer()
-    {
-        if (registered) {
-            Logger() << "MemBuffer is registered, cannot be destroyed";
-            return;
-        }
-        release(get(), mem_type);
     }
 
     operator uintptr_t() const
@@ -66,14 +59,6 @@ public:
     size_t getSize() const
     {
         return size;
-    }
-
-    void registerMem() {
-        registered = true;
-    }
-
-    void deregisterMem() {
-        registered = false;
     }
 
 private:
@@ -108,9 +93,7 @@ private:
         }
     }
 
-    nixl_mem_t mem_type;
     const size_t size;
-    bool registered = false;
 };
 
 class TestTransfer :
@@ -233,15 +216,11 @@ protected:
         return desc_list;
     }
 
-    void registerMem(nixlAgent &agent, std::vector<MemBuffer> &buffers,
+    void registerMem(nixlAgent &agent, const std::vector<MemBuffer> &buffers,
                      nixl_mem_t mem_type)
     {
         auto reg_list = makeDescList<nixlBlobDesc>(buffers, mem_type);
-        nixl_status_t status = agent.registerMem(reg_list);
-        ASSERT_EQ(status, NIXL_SUCCESS);
-        for (auto &b : buffers) {
-            b.registerMem();
-        }
+        agent.registerMem(reg_list);
     }
 
     static bool wait_until_true(std::function<bool()> func, int retries = 500) {
@@ -318,13 +297,10 @@ protected:
 
     void
     deregisterMem(nixlAgent &agent,
-                  std::vector<MemBuffer> &buffers,
+                  const std::vector<MemBuffer> &buffers,
                   nixl_mem_t mem_type) const {
         const auto desc_list = makeDescList<nixlBlobDesc>(buffers, mem_type);
         agent.deregisterMem(desc_list);
-        for (auto &b : buffers) {
-            b.deregisterMem();
-        }
     }
 
     void
