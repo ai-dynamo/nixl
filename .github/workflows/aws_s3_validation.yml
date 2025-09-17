@@ -10,7 +10,7 @@ jobs:
   run_aws_s3_tests:
     name: Run AWS S3 Tests
     environment: SWX_AWS
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       AWS_DEFAULT_REGION: eu-central-1
       AWS_ACCESS_KEY_ID: ${{ secrets.NIXL_AWS_ACCESS_KEY_ID }}
