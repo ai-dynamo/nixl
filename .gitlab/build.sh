@@ -140,15 +140,11 @@ $SUDO curl -fsSL "${DOCA_REPO}"/GPG-KEY-Mellanox.pub | $SUDO gpg --dearmor -o /u
 echo "deb [signed-by=/usr/share/keyrings/doca.gpg] ${DOCA_REPO}/ ./" | $SUDO tee /etc/apt/sources.list.d/doca.list >/dev/null
 $SUDO apt-get -qq update
 $SUDO apt-get install -y --no-install-recommends \
-    doca-ofed-devel-userspace \
-    doca-ofed-userspace \
     doca-sdk-common \
     doca-sdk-gpunetio \
-    doca-sdk-verbs \
     libdoca-sdk-common-dev \
     libdoca-sdk-gpunetio-dev \
-    libdoca-sdk-verbs-dev \
-    rdma-core
+    libdoca-sdk-verbs-dev
 
 ( \
   cd /tmp && \
