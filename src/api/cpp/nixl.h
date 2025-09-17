@@ -425,6 +425,17 @@ class nixlAgent {
         nixl_status_t
         invalidateRemoteMD (const std::string &remote_agent);
 
+        /**
+         * @brief  Add local user metadata to the agent.
+         *         Overwrite if the key already exists.
+         *
+         * @param  key   Key of the user metadata
+         * @param  value Value of the user metadata
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        addLocalUserMD (const std::string &key, const std::string &value);
+
         /*** Metadata handling through direct channels (p2p socket and ETCD) ***/
         /**
          * @brief  Send your own agent metadata to a remote location.
@@ -483,6 +494,19 @@ class nixlAgent {
         nixl_status_t
         fetchRemoteMD (const std::string remote_name,
                        const nixl_opt_args_t* extra_params = nullptr);
+
+        /**
+         * @brief  Get remote user metadata from the agent.
+         *
+         * @param  remote_agent Remote agent name as string
+         * @param  key          Key of the user metadata
+         * @param  value        [out] Value of the user metadata
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        getRemoteUserMD (const std::string &remote_agent,
+                         const std::string &key,
+                         std::string &value);
 
         /**
          * @brief  Invalidate your own memory in one/all remote agent(s).
