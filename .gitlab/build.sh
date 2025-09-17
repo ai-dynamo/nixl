@@ -103,7 +103,7 @@ $SUDO apt-get -qq install -y curl \
 
 # Install DOCA & GPUNETIO packages
 UBUNTU_VER=$(grep '^VERSION_ID=' /etc/os-release | cut -d'"' -f2)
-DOCA_REPO="https://doca-repo-prod.nvidia.com/internal/repo/doca/${DOCA_VERSION}/ubuntu${UBUNTU_VER}/${ARCH}/latest"
+DOCA_REPO="https://linux.mellanox.com/public/repo/doca/3.1.0/ubuntu${UBUNTU_VER}/${ARCH}"
 $SUDO curl -fsSL "${DOCA_REPO}"/GPG-KEY-Mellanox.pub | $SUDO gpg --dearmor -o /usr/share/keyrings/doca.gpg
 echo "deb [signed-by=/usr/share/keyrings/doca.gpg] ${DOCA_REPO}/ ./" | $SUDO tee /etc/apt/sources.list.d/doca.list >/dev/null
 $SUDO apt-get -qq update
