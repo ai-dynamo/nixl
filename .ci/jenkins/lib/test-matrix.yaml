@@ -37,11 +37,12 @@ matrix:
       - master
       - v1.19.0
 
-taskName: "${name}/${arch}/${ucx_version}/${axis_index}"
+taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 env:
   INSTALL_DIR: ${WORKSPACE}/nixl_install
   UCX_VERSION: ${ucx_version}
+  EFA_INSTALLER_VERSION: latest
   NPROC: "16"
   # Manual timeout - ci-demo doesn't handle docker exec
   TEST_TIMEOUT: 30
@@ -96,7 +97,7 @@ steps:
   - name: Build
     parallel: false
     run: |
-      docker exec -w ${WORKSPACE} -e UCX_VERSION=${UCX_VERSION} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/build.sh ${INSTALL_DIR}"
+      docker exec -w ${WORKSPACE} -e UCX_VERSION=${UCX_VERSION} -e EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/build.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"

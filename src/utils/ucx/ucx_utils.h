@@ -160,6 +160,11 @@ private:
     size_t size;
     ucp_mem_h memh;
 public:
+    [[nodiscard]] ucp_mem_h
+    getMemh() const noexcept {
+        return memh;
+    }
+
     friend class nixlUcxWorker;
     friend class nixlUcxContext;
     friend class nixlUcxEp;
