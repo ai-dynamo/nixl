@@ -117,8 +117,6 @@ $SUDO apt-get install -y --no-install-recommends \
     libdoca-sdk-gpunetio-dev \
     libdoca-sdk-verbs-dev \
     rdma-core
-$SUDO apt-get clean
-$SUDO rm -rf /var/lib/apt/lists/*
 
 wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
 chmod +x rustup-init
