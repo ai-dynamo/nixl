@@ -101,23 +101,6 @@ $SUDO apt-get -qq install -y curl \
                              libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
-# Install DOCA & GPUNETIO packages
-UBUNTU_VER=$(grep '^VERSION_ID=' /etc/os-release | cut -d'"' -f2)
-DOCA_REPO="https://linux.mellanox.com/public/repo/doca/3.1.0/ubuntu${UBUNTU_VER}/${ARCH}"
-$SUDO curl -fsSL "${DOCA_REPO}"/GPG-KEY-Mellanox.pub | $SUDO gpg --dearmor -o /usr/share/keyrings/doca.gpg
-echo "deb [signed-by=/usr/share/keyrings/doca.gpg] ${DOCA_REPO}/ ./" | $SUDO tee /etc/apt/sources.list.d/doca.list >/dev/null
-$SUDO apt-get -qq update
-$SUDO apt-get install -y --no-install-recommends \
-    doca-ofed-devel-userspace \
-    doca-ofed-userspace \
-    doca-sdk-common \
-    doca-sdk-gpunetio \
-    doca-sdk-verbs \
-    libdoca-sdk-common-dev \
-    libdoca-sdk-gpunetio-dev \
-    libdoca-sdk-verbs-dev \
-    rdma-core
-
 wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
 chmod +x rustup-init
 ./rustup-init -y --default-toolchain 1.86.0
@@ -149,6 +132,23 @@ curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLE
   $SUDO ./efa_installer.sh -y -g --skip-kmod --skip-limit-conf --no-verify && \
   $SUDO ldconfig \
 )
+
+# Install DOCA & GPUNETIO packages after EFA to avoid MPI conflicts
+UBUNTU_VER=$(grep '^VERSION_ID=' /etc/os-release | cut -d'"' -f2)
+DOCA_REPO="https://linux.mellanox.com/public/repo/doca/3.1.0/ubuntu${UBUNTU_VER}/${ARCH}"
+$SUDO curl -fsSL "${DOCA_REPO}"/GPG-KEY-Mellanox.pub | $SUDO gpg --dearmor -o /usr/share/keyrings/doca.gpg
+echo "deb [signed-by=/usr/share/keyrings/doca.gpg] ${DOCA_REPO}/ ./" | $SUDO tee /etc/apt/sources.list.d/doca.list >/dev/null
+$SUDO apt-get -qq update
+$SUDO apt-get install -y --no-install-recommends \
+    doca-ofed-devel-userspace \
+    doca-ofed-userspace \
+    doca-sdk-common \
+    doca-sdk-gpunetio \
+    doca-sdk-verbs \
+    libdoca-sdk-common-dev \
+    libdoca-sdk-gpunetio-dev \
+    libdoca-sdk-verbs-dev \
+    rdma-core
 
 ( \
   cd /tmp && \
