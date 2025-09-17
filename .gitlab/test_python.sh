@@ -28,15 +28,6 @@ if [ -z "$INSTALL_DIR" ]; then
     exit 1
 fi
 
-# For running as user - check if running as root, if not set sudo variable
-if [ "$(id -u)" -ne 0 ]; then
-    SUDO=sudo
-else
-    SUDO=""
-fi
-
-$SUDO apt-get -qq install liburing-dev
-
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 

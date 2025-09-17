@@ -23,16 +23,6 @@ set -x
 TEXT_YELLOW="\033[1;33m"
 TEXT_CLEAR="\033[0m"
 
-# For running as user - check if running as root, if not set sudo variable
-if [ "$(id -u)" -ne 0 ]; then
-    SUDO=sudo
-else
-    SUDO=""
-fi
-
-$SUDO apt-get update
-$SUDO apt-get -qq install -y libaio-dev
-
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
 
