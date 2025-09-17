@@ -25,6 +25,8 @@ UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 # UCX_VERSION is the version of UCX to build override default with env variable.
 UCX_VERSION=${UCX_VERSION:-v1.19.0}
+# DOCA_VERSION is the version of DOCA to install override default with env variable.
+DOCA_VERSION=${DOCA_VERSION:-3.1.0}
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -51,6 +53,7 @@ $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
 $SUDO apt-get -qq install -y curl \
+                             gnupg \
                              wget \
                              libnuma-dev \
                              numactl \
@@ -93,6 +96,25 @@ $SUDO apt-get -qq install -y curl \
                              doxygen \
                              clang \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
+
+# Install DOCA & GPUNETIO packages
+UBUNTU_VER=$(grep '^VERSION_ID=' /etc/os-release | cut -d'"' -f2)
+DOCA_REPO="https://doca-repo-prod.nvidia.com/internal/repo/doca/${DOCA_VERSION}/ubuntu${UBUNTU_VER}/${ARCH}/latest"
+$SUDO curl -fsSL ${DOCA_REPO}/GPG-KEY-Mellanox.pub | $SUDO gpg --dearmor -o /usr/share/keyrings/doca.gpg
+echo "deb [signed-by=/usr/share/keyrings/doca.gpg] ${DOCA_REPO}/ ./" | $SUDO tee /etc/apt/sources.list.d/doca.list >/dev/null
+$SUDO apt-get -qq update
+$SUDO apt-get install -y --no-install-recommends \
+    doca-ofed-devel-userspace \
+    doca-ofed-userspace \
+    doca-sdk-common \
+    doca-sdk-gpunetio \
+    doca-sdk-verbs \
+    libdoca-sdk-common-dev \
+    libdoca-sdk-gpunetio-dev \
+    libdoca-sdk-verbs-dev \
+    rdma-core
+$SUDO apt-get clean
+$SUDO rm -rf /var/lib/apt/lists/*
 
 wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
 chmod +x rustup-init
