@@ -110,6 +110,8 @@ ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 ARG BUILD_TYPE="release"
+ARG EFA_INSTALLER_VERSION="latest"
+ARG EFA_INSTALL_PATH="/opt/amazon/efa"
 ARG NPROC
 
 WORKDIR /workspace
@@ -124,7 +126,14 @@ COPY --from=nixl . /workspace/nixl
 COPY --from=nixlbench . /workspace/nixlbench
 
 # Install AWS SDK C++ dependencies and build
-RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev
+RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
+
+# Install EFA (Elastic Fabric Adapter)
+RUN curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" | tar xz && \
+    cd aws-efa-installer && \
+    ./efa_installer.sh -y -g --skip-kmod --skip-limit-conf --no-verify && \
+    ldconfig
+
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir sdk_build && \
     cd sdk_build && \
@@ -134,7 +143,7 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
 
 WORKDIR /workspace/nixl
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$EFA_INSTALL_PATH/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
@@ -146,7 +155,7 @@ RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    uv run meson setup build -Dlibfabric_path=$EFA_INSTALL_PATH --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install

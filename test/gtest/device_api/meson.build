@@ -13,12 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
-subdir('ucx')
-subdir('stream')
-subdir('file')
+# Device API test utilities and sources
+device_api_inc_dirs = include_directories('.')
 
-if libfabric_dep.found()
-    subdir('libfabric')
-endif
+device_api_sources = [
+    'single_write_test.cu',
+    'utils.cu'
+]
+
+# Export for parent meson.build
+device_api_test_sources = files(device_api_sources)

@@ -95,6 +95,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
         xferBenchConfig::isStorageBackend()) {
@@ -136,6 +137,15 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         std::cout << "Init nixl worker, dev "
                   << (("all" == devices[0]) ? "all" : backend_params["device_list"]) << " rank "
                   << rank << ", type " << name << ", hostname " << hostname << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC)) {
+        if (gethostname(hostname, 256)) {
+            std::cerr << "Failed to get hostname" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
+        std::cout << "Init nixl worker, dev " << (("all" == devices[0]) ? "all" : devices[rank])
+                  << " rank " << rank << ", type " << name << ", hostname " << hostname
+                  << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)) {
         // Using default param values for GDS backend
         std::cout << "GDS backend" << std::endl;
