@@ -68,8 +68,6 @@ Verify with `lsmod | grep gdrdrv`[^1_1][^1_5].
 
 ### ⚙️ 4. **Install GDS Components**
 
-GDS is bundled with CUDA ≥11.4 but requires explicit enabling:
-
 - **Install `nvidia-fs-dkms`** (the GDS kernel module):
 
 ```bash
@@ -89,12 +87,11 @@ sudo modprobe nvidia_fs
 lsmod | grep nvidia_fs  # Should show loaded module
 ```
 
-### 📦 5. **Configure NVIDIA Module Options**
+### 📦 5. **Enable GDS in CUDA**
 
-Configure required NVIDIA driver options:
+GDS is bundled with CUDA ≥11.4 but requires explicit enabling:
 
 ```bash
-# Enable GPUDirect Storage
 sudo echo "options nvidia NVreg_EnableGpuDirectStorage=1" > /etc/modprobe.d/nvidia-gds.conf
 
 # Configure PeerMappingOverride for GPU-Initiated RDMA support
@@ -103,6 +100,8 @@ sudo echo "options nvidia NVreg_RegistryDwords=\"PeerMappingOverride=1;\"" > /et
 sudo update-initramfs -u
 sudo reboot
 ```
+
+The `PeerMappingOverride=1` option is required for proper GPU peer-to-peer communication in RDMA environments.
 
 ### 6. **Enable Kernel Modules at Boot**
 
