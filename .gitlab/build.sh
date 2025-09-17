@@ -158,7 +158,8 @@ curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLE
 ( \
   cd /tmp &&
   git clone --depth 1 https://github.com/google/gtest-parallel.git &&
-  cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py ${INSTALL_DIR}/bin/
+  mkdir -p ${INSTALL_DIR}/bin &&
+  cp gtest-parallel/* ${INSTALL_DIR}/bin/
 )
 
 export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/cuda/lib64"
