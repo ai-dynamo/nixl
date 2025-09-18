@@ -84,5 +84,7 @@ else
     echo "==== CUDA support not found ===="
     HAS_CUDA=false
     UCX_CUDA_BUILD_ARGS=""
-    export LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:$LD_LIBRARY_PATH
+    # Normal CUDA installation: load CUDA from lib64/stubs
+    # nvcr.io images: load CUDA from compat/lib.real
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 fi
