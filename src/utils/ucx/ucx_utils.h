@@ -193,9 +193,6 @@ public:
     void memDereg(nixlUcxMem &mem);
 
     /* GPU signal management */
-    void
-    prepGpuSignal(const nixlUcxMem &mem, void *signal) const;
-
     [[nodiscard]] size_t
     getGpuSignalSize() const;
 
@@ -234,6 +231,10 @@ public:
 
     [[nodiscard]] int
     getEfd() const;
+
+    /* GPU signal management */
+    void
+    prepGpuSignal(const nixlUcxMem &mem, void *signal) const;
 
 private:
     [[nodiscard]] static ucp_worker *
