@@ -120,7 +120,7 @@ DEFINE_string(obj_endpoint_override, "", "Endpoint override for S3 backend");
 DEFINE_string(obj_req_checksum,
               XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
               "Required checksum for S3 backend [supported, required]");
-DEFINE_string(obj_ca_bundle, "", "CA bundle for S3 backend");
+DEFINE_string(obj_ca_bundle, "", "Path to CA bundle for S3 backend");
 
 // HF3FS options - only used when backend is HF3FS
 DEFINE_int32(hf3fs_iopool_size, 64, "Size of io memory pool");
