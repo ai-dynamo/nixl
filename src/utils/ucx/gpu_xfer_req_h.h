@@ -18,14 +18,7 @@
 #ifndef NIXL_SRC_UTILS_UCX_GPU_XFER_REQ_H_H
 #define NIXL_SRC_UTILS_UCX_GPU_XFER_REQ_H_H
 
-#include <memory>
 #include <vector>
-
-extern "C" {
-#ifdef HAVE_UCX_GPU_DEVICE_API
-#include <ucp/api/device/ucp_host.h>
-#endif
-}
 
 #include "nixl_types.h"
 
@@ -35,28 +28,13 @@ class nixlUcxMem;
 namespace nixl::ucx {
 class rkey;
 
-class deviceMemList {
-public:
-    deviceMemList() = delete;
-    deviceMemList(const nixlUcxEp &ep,
-                  const std::vector<nixlUcxMem> &local_mems,
-                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys);
-    explicit deviceMemList(const nixlGpuXferReqH) noexcept;
+nixlGpuXferReqH
+createGpuXferReq(const nixlUcxEp &,
+                 const std::vector<nixlUcxMem> &,
+                 const std::vector<const nixl::ucx::rkey *> &);
 
-    [[nodiscard]] nixlGpuXferReqH
-    get() const noexcept;
-
-#ifdef HAVE_UCX_GPU_DEVICE_API
-private:
-    [[nodiscard]] static ucp_device_mem_list_handle_h
-    createDeviceMemList(const nixlUcxEp &ep,
-                        const std::vector<nixlUcxMem> &local_mems,
-                        const std::vector<const nixl::ucx::rkey *> &remote_rkeys);
-
-    const std::unique_ptr<ucp_device_mem_list_handle, void (*)(ucp_device_mem_list_handle_h)>
-        deviceMemList_;
-#endif
-};
+void
+releaseGpuXferReq(nixlGpuXferReqH gpu_req) noexcept;
 } // namespace nixl::ucx
 
 #endif
