@@ -167,6 +167,7 @@ class xferBenchConfig {
         static std::string obj_endpoint_override;
         static std::string obj_req_checksum;
         static int hf3fs_iopool_size;
+        static int hf3fs_threadpool_size;
 
         static int
         loadFromFlags();
