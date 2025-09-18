@@ -1428,8 +1428,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
         }
     }
 
-    // TODO: Silence this error log for now
-    // NIXL_ERROR_FUNC << "no specified or potential backend could send the inter-agent notifications";
+    NIXL_ERROR_FUNC << "no specified or potential backend could send the inter-agent notifications";
     return NIXL_ERR_NOT_FOUND;
 }
 

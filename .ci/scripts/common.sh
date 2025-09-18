@@ -84,6 +84,4 @@ else
     echo "==== CUDA support not found ===="
     HAS_CUDA=false
     UCX_CUDA_BUILD_ARGS=""
-    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
-    export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 fi
