@@ -72,6 +72,8 @@ steps:
   - name: Build GPU Test Environment
     parallel: false
     run: |
+      set -x
+      meson subprojects download
       docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} --build-arg WORKSPACE=${WORKSPACE} .
     onfail: docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
 
