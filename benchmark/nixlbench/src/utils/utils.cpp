@@ -120,6 +120,7 @@ DEFINE_string(obj_endpoint_override, "", "Endpoint override for S3 backend");
 DEFINE_string(obj_req_checksum,
               XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
               "Required checksum for S3 backend [supported, required]");
+DEFINE_string(obj_ca_bundle, "", "Path to CA bundle for S3 backend");
 
 // HF3FS options - only used when backend is HF3FS
 DEFINE_int32(hf3fs_iopool_size, 64, "Size of io memory pool");
@@ -169,6 +170,7 @@ std::string xferBenchConfig::obj_region = "";
 bool xferBenchConfig::obj_use_virtual_addressing = false;
 std::string xferBenchConfig::obj_endpoint_override = "";
 std::string xferBenchConfig::obj_req_checksum = "";
+std::string xferBenchConfig::obj_ca_bundle = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
 
 int
@@ -235,6 +237,7 @@ xferBenchConfig::loadFromFlags() {
             obj_use_virtual_addressing = FLAGS_obj_use_virtual_addressing;
             obj_endpoint_override = FLAGS_obj_endpoint_override;
             obj_req_checksum = FLAGS_obj_req_checksum;
+            obj_ca_bundle = FLAGS_obj_ca_bundle;
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -412,6 +415,7 @@ xferBenchConfig::printConfig() {
                         obj_endpoint_override);
             printOption("OBJ S3 required checksum (--obj_req_checksum=[supported, required])",
                         obj_req_checksum);
+            printOption("OBJ S3 CA bundle (--obj_ca_bundle=cert-path)", obj_ca_bundle);
         }
 
         if (xferBenchConfig::isStorageBackend()) {

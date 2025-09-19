@@ -264,6 +264,11 @@ def nixl_bench_args(func):
         type=str,
         help="Required checksum type for S3 backend [supported, required] (only used with OBJ backend)",
     )(func)
+    func = click.option(
+        "--obj_ca_bundle",
+        type=str,
+        help="Path to CA bundle for S3 backend (only used with OBJ backend)",
+    )(func)
     return func
 
 
