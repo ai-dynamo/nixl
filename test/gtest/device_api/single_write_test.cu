@@ -387,7 +387,7 @@ TEST_P(SingleWriteTest, BasicSingleWriteTest) {
     size_t num_threads = 32;
     const size_t num_iters = 10000;
     constexpr unsigned index = 0;
-    const bool is_no_delay = false; // TODO: Change to true when UCX supports it
+    const bool is_no_delay = true;
 
     createRegisteredMem(getAgent(SENDER_AGENT), size, count, mem_type, src_buffers);
     createRegisteredMem(getAgent(RECEIVER_AGENT), size, count, mem_type, dst_buffers);
@@ -487,7 +487,7 @@ TEST_P(SingleWriteTest, VariableSizeTest) {
         size_t num_threads = 32;
         const size_t num_iters = 50000;
         constexpr unsigned index = 0;
-        const bool is_no_delay = false; // TODO: Change to true when UCX supports it
+        const bool is_no_delay = true;
 
         createRegisteredMem(getAgent(SENDER_AGENT), test_size, count, mem_type, src_buffers);
         createRegisteredMem(getAgent(RECEIVER_AGENT), test_size, count, mem_type, dst_buffers);

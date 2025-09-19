@@ -1701,7 +1701,7 @@ nixl_status_t
 nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta, void *signal) const {
     try {
         auto *ucx_meta = static_cast<const nixlUcxPrivateMetadata *>(&meta);
-        uc->prepGpuSignal(ucx_meta->mem, signal);
+        getWorker(getWorkerId())->prepGpuSignal(ucx_meta->mem, signal);
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
