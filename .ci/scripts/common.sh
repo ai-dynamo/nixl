@@ -79,10 +79,11 @@ if nvidia-smi -L | grep '^GPU' && test -d "$CUDA_HOME"
 then
     echo "==== CUDA support found ===="
     HAS_CUDA=true
-    UCX_CUDA_BUILD_ARGS="--with-cuda=${CUDA_HOME}"
+    #UCX_CUDA_BUILD_ARGS="--with-cuda=${CUDA_HOME}"
 else
     echo "==== CUDA support not found ===="
     HAS_CUDA=false
-    UCX_CUDA_BUILD_ARGS=""
+    #UCX_CUDA_BUILD_ARGS=""
     export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat:/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 fi
+UCX_CUDA_BUILD_ARGS=""
