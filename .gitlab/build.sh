@@ -27,6 +27,8 @@ EXTRA_BUILD_ARGS=${3:-""}
 UCX_VERSION=${UCX_VERSION:-v1.19.0}
 # EFA_INSTALLER_VERSION is the version of EFA installer to use, defaults to "latest"
 EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION:-latest}
+# DOCA_VERSION is the version of DOCA to install, override default with env variable.
+DOCA_VERSION=${DOCA_VERSION:-3.1.0}
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -53,6 +55,7 @@ $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
 $SUDO apt-get -qq install -y curl \
+                             gnupg \
                              wget \
                              libnuma-dev \
                              numactl \
@@ -129,6 +132,19 @@ curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLE
   $SUDO ./efa_installer.sh -y -g --skip-kmod --skip-limit-conf --no-verify && \
   $SUDO ldconfig \
 )
+
+# Install DOCA & GPUNETIO packages after EFA to avoid MPI conflicts
+UBUNTU_VER=$(grep '^VERSION_ID=' /etc/os-release | cut -d'"' -f2)
+DOCA_REPO="https://linux.mellanox.com/public/repo/doca/3.1.0/ubuntu${UBUNTU_VER}/${ARCH}"
+$SUDO curl -fsSL "${DOCA_REPO}"/GPG-KEY-Mellanox.pub | $SUDO gpg --dearmor -o /usr/share/keyrings/doca.gpg
+echo "deb [signed-by=/usr/share/keyrings/doca.gpg] ${DOCA_REPO}/ ./" | $SUDO tee /etc/apt/sources.list.d/doca.list >/dev/null
+$SUDO apt-get -qq update
+$SUDO apt-get install -y --no-install-recommends \
+    doca-sdk-common \
+    doca-sdk-gpunetio \
+    libdoca-sdk-common-dev \
+    libdoca-sdk-gpunetio-dev \
+    libdoca-sdk-verbs-dev
 
 ( \
   cd /tmp && \
