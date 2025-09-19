@@ -1072,7 +1072,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
         // Check for same-agent (local) transfer - handle with direct memcpy
         if (remote_agent == localAgent) {
-            NIXL_DEBUG << "Same-agent transfer detected for descriptor " << desc_idx
+            NIXL_DEBUG << "Same-agent transfer detected from localAgent= " << localAgent
+                       << "to remote_agent " << remote_agent << "for descriptor " << desc_idx
                        << ", using memcpy fallback for " << transfer_size << " bytes";
 
             // For same-agent transfers, we need to copy directly between the descriptor addresses
