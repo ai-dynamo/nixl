@@ -167,6 +167,12 @@ class xferBenchConfig {
         static std::string obj_endpoint_override;
         static std::string obj_req_checksum;
         static int hf3fs_iopool_size;
+        static bool enable_gdaki;
+        static std::string gdaki_gpu_device_list;
+        static std::string gdaki_coordination_level;
+        static int gdaki_threads_per_block;
+        static int gdaki_blocks_per_grid;
+        static bool gdaki_enable_partial_transfers;
 
         static int
         loadFromFlags();
