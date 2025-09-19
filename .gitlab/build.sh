@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 set -o pipefail
@@ -117,6 +120,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
+          ${UCX_CUDA_BUILD_ARGS} \
           --enable-mt && \
         make -j && \
         make -j install-strip && \
@@ -149,6 +153,13 @@ curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLE
   cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
   make -j"${NPROC:-$(nproc)}" && \
   $SUDO make install
+)
+
+( \
+  cd /tmp &&
+  git clone --depth 1 https://github.com/google/gtest-parallel.git &&
+  mkdir -p ${INSTALL_DIR}/bin &&
+  cp gtest-parallel/* ${INSTALL_DIR}/bin/
 )
 
 export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/cuda/lib64"

@@ -33,8 +33,6 @@ ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
 export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 
 export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
@@ -62,7 +60,7 @@ cd ${INSTALL_DIR}
 
 run_nixlbench() {
     args="$@"
-    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} --initiator_seg_type DRAM --target_seg_type DRAM --filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
+    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} --filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
 }
 
 run_nixlbench_one_worker() {
@@ -81,9 +79,21 @@ run_nixlbench_two_workers() {
     wait $pid
 }
 
-run_nixlbench_two_workers --backend UCX --op_type READ
-run_nixlbench_two_workers --backend UCX --op_type WRITE
-run_nixlbench_one_worker --backend POSIX --op_type READ
-run_nixlbench_one_worker --backend POSIX --op_type WRITE
+run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type DRAM --target_seg_type DRAM
+run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type DRAM --target_seg_type DRAM
+run_nixlbench_one_worker --backend POSIX --op_type READ --initiator_seg_type DRAM --target_seg_type DRAM
+run_nixlbench_one_worker --backend POSIX --op_type WRITE --initiator_seg_type DRAM --target_seg_type DRAM
+
+if $HAS_CUDA
+then
+    run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type VRAM --target_seg_type VRAM
+    run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type DRAM --target_seg_type VRAM
+    run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type VRAM --target_seg_type DRAM
+    run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type VRAM
+    run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type DRAM --target_seg_type VRAM
+    run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type DRAM
+else
+    echo "Skipping GPU tests"
+fi
 
 pkill etcd
