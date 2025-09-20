@@ -253,4 +253,20 @@ nixlGpuReadSignal(const void *signal) {
     return ucp_device_counter_read<static_cast<ucs_device_level_t>(level)>(signal);
 }
 
+/**
+ * @brief Write value to the local signal.
+ *
+ * This function can be used to set a signal to a specific value.
+ *
+ * The signal must be initialized with the host function @ref prepGpuSignal.
+ *
+ * @param signal [in,out]  Address of the signal.
+ * @param value  [in]      Value to write to the signal.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+__device__ void
+nixlGpuWriteSignal(void *signal, uint64_t value) {
+    ucp_device_counter_write<static_cast<ucs_device_level_t>(level)>(signal, value);
+}
+
 #endif // _NIXL_DEVICE_CUH
