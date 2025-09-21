@@ -40,10 +40,9 @@ matrix:
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 env:
-  INSTALL_DIR: ${WORKSPACE}/nixl_install_${axis_index}
+  INSTALL_DIR: /workspace/nixl_install
   CONTAINER_WORKSPACE: /workspace
   EFA_INSTALLER_VERSION: latest
-  UCX_VERSION: ${ucx_version}
   NPROC: "16"
   # Manual timeout - ci-demo doesn't handle docker exec
   TEST_TIMEOUT: 30
@@ -76,7 +75,7 @@ steps:
   - name: Build GPU Test Environment
     parallel: false
     run: |
-      docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} --build-arg WORKSPACE=${WORKSPACE} .
+      docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} --build-arg WORKSPACE=${CONTAINER_WORKSPACE} .
     onfail: docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
 
   - name: Run GPU Test Environment
@@ -99,7 +98,7 @@ steps:
     parallel: false
     run: |
       set -ex
-      docker exec -w ${CONTAINER_WORKSPACE} -e EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION} -e UCX_VERSION=${UCX_VERSION} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/build.sh ${INSTALL_DIR}"
+      docker exec -w ${CONTAINER_WORKSPACE} -e EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c "UCX_VERSION=${ucx_version} .gitlab/build.sh ${INSTALL_DIR}"
 
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
