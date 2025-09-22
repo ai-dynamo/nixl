@@ -1217,22 +1217,25 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 }
 
 nixl_status_t
-nixlAgent::createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const {
-    if (!req_hndl.engine) {
-        NIXL_ERROR_FUNC << "Invalid request handle[" << &req_hndl << "]: engine is null";
-        return NIXL_ERR_INVALID_PARAM;
+nixlAgent::createGpuXferReq(const nixl_xfer_op_t &operation,
+                            const nixl_xfer_dlist_t &local_descs,
+                            const nixl_xfer_dlist_t &remote_descs,
+                            const std::string &remote_agent,
+                            nixlGpuXferReqH &gpu_req_hndl,
+                            nixlXferReqH *&req_hndl,
+                            const nixl_opt_args_t *extra_params) const {
+
+    nixl_status_t status =
+        createXferReq(operation, local_descs, remote_descs, remote_agent, req_hndl, extra_params);
+    if (status != NIXL_SUCCESS) {
+        return status;
     }
 
-    if (!req_hndl.backendHandle) {
-        NIXL_ERROR_FUNC << "Invalid request handle[" << &req_hndl << "]: backendHandle is null";
-        return NIXL_ERR_INVALID_PARAM;
-    }
+    status = req_hndl->engine->createGpuXferReq(
+        *req_hndl->backendHandle, *req_hndl->initiatorDescs, *req_hndl->targetDescs, gpu_req_hndl);
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-    const auto status = req_hndl.engine->createGpuXferReq(
-        *req_hndl.backendHandle, *req_hndl.initiatorDescs, *req_hndl.targetDescs, gpu_req_hndl);
     if (status == NIXL_SUCCESS) {
-        data->gpuReqToEngine.emplace(gpu_req_hndl, req_hndl.engine);
+        data->gpuReqToEngine.emplace(gpu_req_hndl, req_hndl->engine);
     }
 
     return status;

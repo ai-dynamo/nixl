@@ -320,14 +320,26 @@ class nixlAgent {
         releaseXferReq (nixlXferReqH* req_hndl) const;
 
         /**
-         * @brief  Create a GPU transfer request from a transfer request.
+         * @brief  Create a GPU transfer request.
          *
-         * @param  req_hndl     [in]  Transfer request obtained from makeXferReq/createXferReq
-         * @param  gpu_req_hndl [out] GPU transfer request handle
-         * @return nixl_status_t Error code if call was not successful
+         * @param  operation      [in]  Operation for transfer (e.g., NIXL_WRITE)
+         * @param  local_descs    [in]  Local descriptor list
+         * @param  remote_descs   [in]  Remote descriptor list
+         * @param  remote_agent   [in]  Remote agent name for accessing the remote data
+         * @param  gpu_req_hndl   [out] GPU transfer request handle
+         * @param  req_hndl       [out] Transfer request handle
+         * @param  extra_params   [in]  Optional extra parameters used in creating a GPU transfer
+         *                              request
+         * @return nixl_status_t  Error code if call was not successful
          */
         nixl_status_t
-        createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const;
+        createGpuXferReq(const nixl_xfer_op_t &operation,
+                         const nixl_xfer_dlist_t &local_descs,
+                         const nixl_xfer_dlist_t &remote_descs,
+                         const std::string &remote_agent,
+                         nixlGpuXferReqH &gpu_req_hndl,
+                         nixlXferReqH *&req_hndl,
+                         const nixl_opt_args_t *extra_params = nullptr) const;
 
         /**
          * @brief  Release transfer request from GPU memory
