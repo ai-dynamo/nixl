@@ -146,6 +146,12 @@ RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
 
 RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
     uv pip install torch --index https://download.pytorch.org/whl/$CUDA_SHORT_VERSION
+    if [[ "$CUDA_VERSION" >= "13" ]]; then \
+      FLAGS="--pre --index-url https://download.pytorch.org/whl/nightly/$CUDA_SHORT_VERSION"; \
+    else \
+      FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION"; \
+    fi && \
+    uv pip install $FLAGS torch torchvision torchaudio
 
 RUN rm -rf build && \
     mkdir build && \
