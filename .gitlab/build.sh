@@ -130,12 +130,12 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
         $SUDO ldconfig \
 )
 
-curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" | tar xz
-( \
-  cd aws-efa-installer && \
-  $SUDO ./efa_installer.sh -y -g --skip-kmod --skip-limit-conf --no-verify && \
-  $SUDO ldconfig \
-)
+# curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" | tar xz
+# ( \
+#   cd aws-efa-installer && \
+#   $SUDO ./efa_installer.sh -y -g --skip-kmod --skip-limit-conf --no-verify && \
+#   $SUDO ldconfig \
+# )
 
 # Install DOCA & GPUNETIO packages after EFA to avoid MPI conflicts
 ( \
