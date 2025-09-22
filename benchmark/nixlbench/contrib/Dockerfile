@@ -139,12 +139,18 @@ COPY --from=nixlbench . /workspace/nixlbench
 
 WORKDIR /workspace/nixl
 
+# Create a new virtual environment
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+# Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
+# Install python dependencies
 RUN uv pip install --upgrade meson pybind11 patchelf pyYAML click tabulate auditwheel
 
+# Install PyTorch
+# Latest stable PyTorch wheels are only available for CUDA 12.x
+# Nightly PyTorch wheels are needed for CUDA 13.x images
 RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
     CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
     if [ "$CUDA_MAJOR" -ge 13 ]; then \
