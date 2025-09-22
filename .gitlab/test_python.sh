@@ -68,6 +68,7 @@ sleep 5
 
 echo "==== Running python tests ===="
 pytest -s test/python
+pytest -s test/python --backend LIBFABRIC
 python3 test/python/prep_xfer_perf.py list
 python3 test/python/prep_xfer_perf.py array
 
