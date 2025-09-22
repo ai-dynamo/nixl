@@ -52,15 +52,11 @@ RUN apt-get update -y && \
 
 # Add DOCA repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-    MELLANOX_OS=$(if [ "${OS}" = "ubuntu22" ]; then echo "ubuntu2204"; elif [ "${OS}" = "ubuntu24" ]; then echo "ubuntu2404"; else echo "${OS}"; fi) && \
+    MELLANOX_OS="ubuntu$(. /etc/lsb-release; echo ${DISTRIB_RELEASE} | tr -d .)" && \
     wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb && \
     dpkg -i doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb && \
-    apt-get update
-
-RUN if [ "$OS" = "ubuntu24" ]; then \
-        apt-get install -y --no-install-recommends \
-            doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev; \
-    fi
+    apt-get update && \
+    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
 
 # Install AWS CLI
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
