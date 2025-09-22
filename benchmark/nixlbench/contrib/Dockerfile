@@ -115,10 +115,6 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-COPY --from=nixl . /workspace/nixl
-COPY --from=nixlbench . /workspace/nixlbench
-
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
 
@@ -135,18 +131,23 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
     make -j && \
     make install
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=nixl . /workspace/nixl
+COPY --from=nixlbench . /workspace/nixlbench
+
 WORKDIR /workspace/nixl
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$EFA_INSTALL_PATH/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade meson pybind11 patchelf pyYAML click tabulate
+RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN uv pip install --upgrade meson pybind11 patchelf pyYAML click tabulate auditwheel
 
 RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
-    uv pip install torch --index https://download.pytorch.org/whl/$CUDA_SHORT_VERSION
-    if [[ "$CUDA_VERSION" >= "13" ]]; then \
+    CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
+    if [ "$CUDA_MAJOR" -ge 13 ]; then \
       FLAGS="--pre --index-url https://download.pytorch.org/whl/nightly/$CUDA_SHORT_VERSION"; \
     else \
       FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION"; \
@@ -155,28 +156,16 @@ RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build -Dlibfabric_path=$EFA_INSTALL_PATH --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    meson setup build -Dlibfabric_path=$EFA_INSTALL_PATH --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install
 
-ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/$ARCH-linux-gnu/plugins
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-# Create the wheel
-# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
-RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
-        uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
-    done
-
-# Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
-RUN uv pip install auditwheel && \
-    uv run auditwheel repair --exclude libcuda.so.1 /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
-
-RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+RUN uv pip install .
 
 WORKDIR /workspace/nixlbench
 
@@ -188,7 +177,7 @@ RUN ls -ll /workspace/nixlbench
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
+    meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
     cd build && ninja && ninja install
 
 WORKDIR /workspace/nixl
