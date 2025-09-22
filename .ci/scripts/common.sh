@@ -78,5 +78,12 @@ max_gtest_port=$((tcp_port_max + gtest_offset))
 # Check if a GPU is present
 nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
 
+if $HAS_GPU && test -d "$CUDA_HOME"
+then
+    UCX_CUDA_BUILD_ARGS="--with-cuda=${CUDA_HOME}"
+else
+    UCX_CUDA_BUILD_ARGS=""
+fi
+
 # This sequence covers all test environments (workers with and without GPU)
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat:/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
