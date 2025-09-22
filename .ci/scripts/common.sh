@@ -75,13 +75,8 @@ min_gtest_port=$((tcp_port_min + gtest_offset))
 # shellcheck disable=SC2034
 max_gtest_port=$((tcp_port_max + gtest_offset))
 
-if nvidia-smi -L | grep '^GPU' && test -d "$CUDA_HOME"
-then
-    echo "==== CUDA support found ===="
-    HAS_CUDA=true
-else
-    echo "==== CUDA support not found ===="
-    HAS_CUDA=false
-fi
-UCX_CUDA_BUILD_ARGS=""
+# Check if a GPU is present
+nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+
+# This sequence covers all test environments (workers with and without GPU)
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat:/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
