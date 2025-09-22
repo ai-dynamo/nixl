@@ -42,7 +42,8 @@ getAvailableEfaDevices() {
         return {fabric_name, all_efa_devices};
     }
 
-    hints->mode = ~0; // Important to set this to allow differentiate between EFA and EFA-Direct
+    // Important to initialize this to allow differentiation between EFA and EFA-Direct
+    hints->mode = ~0;
 
     // Set required capabilities - let libfabric select the best provider
     hints->caps = FI_READ | FI_WRITE | FI_RECV | FI_SEND | FI_REMOTE_READ | FI_REMOTE_WRITE |
