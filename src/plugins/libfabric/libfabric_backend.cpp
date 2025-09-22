@@ -543,7 +543,8 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
     //         return NIXL_ERR_BACKEND;
     //     }
 
-    //     memcpy(control_request->buffer, serialized_conn_info.data(), serialized_conn_info.length());
+    //     memcpy(control_request->buffer, serialized_conn_info.data(),
+    //     serialized_conn_info.length());
 
     //     // Set the actual size of serialized data
     //     control_request->buffer_size = serialized_conn_info.length();
@@ -837,6 +838,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     nixl_status_t status = rail_manager.registerMemory((void *)mem.addr,
                                                        mem.len,
                                                        nixl_mem,
+                                                       mem.devId,
                                                        priv->rail_mr_list_,
                                                        priv->rail_key_list_,
                                                        priv->selected_rails_);

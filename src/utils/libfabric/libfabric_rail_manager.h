@@ -63,7 +63,9 @@ public:
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
-    createControlRails(const std::vector<std::string> &efa_devices, const std::string &provider_name, size_t num_control_rails);
+    createControlRails(const std::vector<std::string> &efa_devices,
+                       const std::string &provider_name,
+                       size_t num_control_rails);
 
     // Access rails
     /** Get reference to data rail by ID */
@@ -107,6 +109,7 @@ public:
      * @param buffer Memory buffer to register
      * @param length Buffer size in bytes
      * @param mem_type Memory type (DRAM_SEG or VRAM_SEG)
+     * @param gpu_id GPU device ID (used for VRAM_SEG, ignored for DRAM_SEG)
      * @param mr_list_out Memory registration handles, indexed by rail ID
      * @param key_list_out Remote access keys, indexed by rail ID
      * @param selected_rails_out List of rail IDs where memory was registered
@@ -116,6 +119,7 @@ public:
     registerMemory(void *buffer,
                    size_t length,
                    nixl_mem_t mem_type,
+                   int gpu_id,
                    std::vector<struct fid_mr *> &mr_list_out,
                    std::vector<uint64_t> &key_list_out,
                    std::vector<size_t> &selected_rails_out);
@@ -306,7 +310,7 @@ private:
 
     // Internal rail selection method
     std::vector<size_t>
-    selectRailsForMemory(void *mem_addr, nixl_mem_t mem_type) const;
+    selectRailsForMemory(void *mem_addr, nixl_mem_t mem_type, int gpu_id) const;
 
     // Helper functions for connection SerDes
     void

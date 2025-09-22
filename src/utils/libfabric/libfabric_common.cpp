@@ -45,9 +45,8 @@ getAvailableEfaDevices() {
     hints->mode = ~0; // Important to set this to allow differentiate between EFA and EFA-Direct
 
     // Set required capabilities - let libfabric select the best provider
-    hints->caps = FI_READ | FI_WRITE | FI_RECV | FI_SEND |
-                  FI_REMOTE_READ | FI_REMOTE_WRITE |
-                  FI_LOCAL_COMM | FI_REMOTE_COMM;
+    hints->caps = FI_READ | FI_WRITE | FI_RECV | FI_SEND | FI_REMOTE_READ | FI_REMOTE_WRITE |
+        FI_LOCAL_COMM | FI_REMOTE_COMM;
     hints->fabric_attr->prov_name = strdup("efa");
     hints->ep_attr->type = FI_EP_RDM;
 
@@ -60,8 +59,8 @@ getAvailableEfaDevices() {
 
     // Process providers and filter for EFA providers with RMA capabilities
     for (struct fi_info *cur = info; cur; cur = cur->next) {
-        if (cur->domain_attr && cur->domain_attr->name &&
-            cur->fabric_attr && cur->fabric_attr->name) {
+        if (cur->domain_attr && cur->domain_attr->name && cur->fabric_attr &&
+            cur->fabric_attr->name) {
 
             std::string device_name = cur->domain_attr->name;
             std::string provider_name = cur->fabric_attr->name;
@@ -69,8 +68,7 @@ getAvailableEfaDevices() {
             // Add device to the appropriate provider's vector
             provider_devices_map[provider_name].push_back(device_name);
 
-            NIXL_TRACE << "Found EFA device: " << device_name
-                       << " with provider: " << provider_name
+            NIXL_TRACE << "Found EFA device: " << device_name << " with provider: " << provider_name
                        << " (caps: 0x" << std::hex << cur->caps << std::dec << ")";
         }
     }

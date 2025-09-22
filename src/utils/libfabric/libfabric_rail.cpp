@@ -187,7 +187,9 @@ DataRequestPool::allocate(nixlLibfabricReq::OpType op_type) {
 
 // Rail Class Implementation
 
-nixlLibfabricRail::nixlLibfabricRail(const std::string &device, const std::string &provider, uint16_t id)
+nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
+                                     const std::string &provider,
+                                     uint16_t id)
     : rail_id(id),
       device_name(device),
       blocking_cq_sread_supported(true),
@@ -203,7 +205,8 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device, const std::strin
     memset(ep_name, 0, sizeof(ep_name));
 
     // Initialize all Libfabric resources for this rail
-    NIXL_TRACE << "Initializing rail " << rail_id << " with device: " << device_name << ", provider: " << provider;
+    NIXL_TRACE << "Initializing rail " << rail_id << " with device: " << device_name
+               << ", provider: " << provider;
 
     // Initialize hints for this rail
     struct fi_info *hints = fi_allocinfo();
@@ -216,8 +219,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device, const std::strin
     hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
     if (provider.c_str() == std::string("efa-direct")) {
         hints->mode = FI_CONTEXT | FI_CONTEXT2;
-    }
-    else {
+    } else {
         hints->mode = FI_CONTEXT;
     }
     hints->ep_attr->type = FI_EP_RDM;
@@ -240,7 +242,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device, const std::strin
             NIXL_ERROR << "fi_fabric failed for rail " << rail_id << ": " << fi_strerror(-ret);
             throw std::runtime_error("fi_fabric failed for rail " + std::to_string(rail_id));
         }
-        NIXL_WARN << "fabric_attr->name " << info->fabric_attr->name;
+        NIXL_TRACE << "fabric_attr->name " << info->fabric_attr->name;
         // Create domain for this rail
         ret = fi_domain(fabric, info, &domain, NULL);
         if (ret) {
@@ -255,8 +257,8 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device, const std::strin
         cq_attr.size = 12288;
         ret = fi_cq_open(domain, &cq_attr, &cq, NULL);
         if (ret) {
-            NIXL_ERROR << "fi_cq_open failed for rail " << rail_id << ": " << fi_strerror(-ret)
-                       << " - trying FI_WAIT_NONE";
+            NIXL_WARN << "fi_cq_open failed for rail " << rail_id << ": " << fi_strerror(-ret)
+                      << " - trying FI_WAIT_NONE";
             if (ret == -FI_ENOSYS) {
                 NIXL_TRACE << "FI_WAIT_UNSPEC not supported, falling back to FI_WAIT_NONE for rail "
                            << rail_id;
