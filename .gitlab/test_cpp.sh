@@ -64,7 +64,7 @@ cd ${INSTALL_DIR}
 ./bin/nixl_example
 ./bin/nixl_etcd_example
 ./bin/ucx_backend_test
-# TODO this seems to be broken with GPU
+# Skip UCX_MO backend test, fails VRAM transfers
 #./bin/ucx_mo_backend_test
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
@@ -72,7 +72,7 @@ sleep 1
 ./bin/telemetry_reader /tmp/telemetry_test/Agent001 &
 telePID=$!
 sleep 6
-kill -s SIGINT $telePID
+kill -s INT $telePID
 
 # POSIX test disabled until we solve io_uring and Docker compatibility
 
@@ -82,7 +82,7 @@ kill -s SIGINT $telePID
 ./bin/serdes_test
 
 # shellcheck disable=SC2154
-gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+gtest-parallel --workers="${NPROC:-$(nproc)}" --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
 # Run NIXL client-server test
