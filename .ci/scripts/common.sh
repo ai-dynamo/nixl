@@ -83,7 +83,6 @@ then
     UCX_CUDA_BUILD_ARGS="--with-cuda=${CUDA_HOME}"
 else
     UCX_CUDA_BUILD_ARGS=""
+    # This sequence ensures that we can link and load the binaries in all CI environments, even if a GPU is not present
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat:/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 fi
-
-# This sequence covers all test environments (workers with and without GPU)
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat:/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
