@@ -989,6 +989,62 @@ impl Agent {
             }
         }
     }
+
+    /// Gets telemetry data for a transfer request
+    ///
+    /// # Arguments
+    /// * `req` - Transfer request handle to get telemetry for
+    ///
+    /// # Returns
+    /// Transfer telemetry data containing timing and performance metrics
+    ///
+    /// # Errors
+    /// * `TelemetryNotEnabled` - If telemetry is not enabled or transfer is not complete
+    /// * `InvalidParam` - If the request handle is invalid
+    /// * `BackendError` - If there was an error retrieving telemetry data
+    pub fn get_xfer_telemetry(&self, req: &XferRequest) -> Result<XferTelemetry, NixlError> {
+        tracing::trace!("Getting transfer telemetry");
+        let mut telemetry = bindings::nixl_capi_xfer_telemetry_s {
+            start_time_us: 0,
+            post_duration_us: 0,
+            xfer_duration_us: 0,
+            total_bytes: 0,
+            desc_count: 0,
+        };
+
+        let status = unsafe {
+            nixl_capi_get_xfer_telemetry(
+                self.inner.write().unwrap().handle.as_ptr(),
+                req.handle(),
+                &mut telemetry,
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!("Successfully retrieved transfer telemetry");
+                Ok(XferTelemetry {
+                    start_time_us: telemetry.start_time_us,
+                    post_duration_us: telemetry.post_duration_us,
+                    xfer_duration_us: telemetry.xfer_duration_us,
+                    total_bytes: telemetry.total_bytes,
+                    desc_count: telemetry.desc_count,
+                })
+            }
+            NIXL_CAPI_ERROR_INVALID_STATE => {
+                tracing::error!(error = "telemetry_not_enabled", "Telemetry not enabled or transfer not complete");
+                Err(NixlError::TelemetryNotEnabled)
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::error!(error = "invalid_param", "Failed to get transfer telemetry");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::error!(error = "backend_error", "Failed to get transfer telemetry");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
 }
 
 /// Inner state for an agent that manages the raw pointer
