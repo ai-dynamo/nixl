@@ -40,6 +40,9 @@ private:
     // All available EFA devices discovered on this system
     std::vector<std::string> all_efa_devices;
 
+    // EFA fabric name
+    std::string efa_fabric_name;
+
     // System information
     int num_gpus;
     int num_numa_nodes;
@@ -158,6 +161,10 @@ public:
     const std::vector<std::string> &
     getAllEfaDevices() const {
         return all_efa_devices;
+    }
+
+    const std::string & getEFAfabricName() const {
+        return efa_fabric_name;
     }
 
     // Validation

@@ -501,97 +501,97 @@ nixlLibfabricEngine::connect(const std::string &remote_agent) {
 
 nixl_status_t
 nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
-    std::lock_guard<std::mutex> lock(connection_state_mutex_);
-    auto it = connections_.find(remote_agent);
-    if (it == connections_.end()) {
-        NIXL_ERROR << "Disconnect failed. No metadata connection info for " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
-    }
-    // Connection exists - check if already disconnected
-    if (it->second->overall_state_ == ConnectionState::DISCONNECTED) {
-        NIXL_DEBUG << "Connection already established for " << remote_agent
-                   << ", fi_addr: " << it->second->rail_remote_addr_list_[0];
-        return NIXL_SUCCESS;
-    }
+    // std::lock_guard<std::mutex> lock(connection_state_mutex_);
+    // auto it = connections_.find(remote_agent);
+    // if (it == connections_.end()) {
+    //     NIXL_ERROR << "Disconnect failed. No metadata connection info for " << remote_agent;
+    //     return NIXL_ERR_NOT_FOUND;
+    // }
+    // // Connection exists - check if already disconnected
+    // if (it->second->overall_state_ == ConnectionState::DISCONNECTED) {
+    //     NIXL_DEBUG << "Connection already established for " << remote_agent
+    //                << ", fi_addr: " << it->second->rail_remote_addr_list_[0];
+    //     return NIXL_SUCCESS;
+    // }
 
-    NIXL_DEBUG << "Disconnecting from agent: " << remote_agent;
+    // NIXL_DEBUG << "Disconnecting from agent: " << remote_agent;
 
-    if (remote_agent != localAgent) {
-        // Send disconnect control message to remote peer - fire and forget semantics
-        NIXL_DEBUG << "Sending disconnect notification to remote agent: " << remote_agent;
+    // if (remote_agent != localAgent) {
+    //     // Send disconnect control message to remote peer - fire and forget semantics
+    //     NIXL_DEBUG << "Sending disconnect notification to remote agent: " << remote_agent;
 
-        // Use rail manager's serialization method with "src" prefix (we are sending our source
-        // endpoints)
-        std::string serialized_conn_info;
-        nixl_status_t serialize_status =
-            rail_manager.serializeConnectionInfo("src", serialized_conn_info);
-        if (serialize_status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Rail manager serializeConnectionInfo failed";
-            return serialize_status;
-        }
+    //     // Use rail manager's serialization method with "src" prefix (we are sending our source
+    //     // endpoints)
+    //     std::string serialized_conn_info;
+    //     nixl_status_t serialize_status =
+    //         rail_manager.serializeConnectionInfo("src", serialized_conn_info);
+    //     if (serialize_status != NIXL_SUCCESS) {
+    //         NIXL_ERROR << "Rail manager serializeConnectionInfo failed";
+    //         return serialize_status;
+    //     }
 
-        // Allocate control request
-        const size_t control_rail_id = 0;
-        const size_t buffer_size =
-            (rail_manager.getNumDataRails() + rail_manager.getNumControlRails()) *
-                LF_EP_NAME_MAX_LEN +
-            1024;
-        nixlLibfabricReq *control_request =
-            rail_manager.getControlRail(control_rail_id).allocateControlRequest(buffer_size);
-        if (!control_request) {
-            NIXL_ERROR << "Failed to allocate control request for disconnect";
-            return NIXL_ERR_BACKEND;
-        }
+    //     // Allocate control request
+    //     const size_t control_rail_id = 0;
+    //     const size_t buffer_size =
+    //         (rail_manager.getNumDataRails() + rail_manager.getNumControlRails()) *
+    //             LF_EP_NAME_MAX_LEN +
+    //         1024;
+    //     nixlLibfabricReq *control_request =
+    //         rail_manager.getControlRail(control_rail_id).allocateControlRequest(buffer_size);
+    //     if (!control_request) {
+    //         NIXL_ERROR << "Failed to allocate control request for disconnect";
+    //         return NIXL_ERR_BACKEND;
+    //     }
 
-        memcpy(control_request->buffer, serialized_conn_info.data(), serialized_conn_info.length());
+    //     memcpy(control_request->buffer, serialized_conn_info.data(), serialized_conn_info.length());
 
-        // Set the actual size of serialized data
-        control_request->buffer_size = serialized_conn_info.length();
+    //     // Set the actual size of serialized data
+    //     control_request->buffer_size = serialized_conn_info.length();
 
-        nixl_status_t status = rail_manager.postControlMessage(
-            nixlLibfabricRailManager::ControlMessageType::DISCONNECT_REQ,
-            control_request,
-            it->second->control_rail_remote_addr_list_[0], // Use control rail 0
-            it->second->agent_index_);
+    //     nixl_status_t status = rail_manager.postControlMessage(
+    //         nixlLibfabricRailManager::ControlMessageType::DISCONNECT_REQ,
+    //         control_request,
+    //         it->second->control_rail_remote_addr_list_[0], // Use control rail 0
+    //         it->second->agent_index_);
 
-        if (status != NIXL_SUCCESS) {
-            NIXL_WARN << "Failed to send disconnect notification to " << remote_agent
-                      << ", proceeding with local cleanup anyway";
-            // Continue with cleanup even if notification failed
-        } else {
-            NIXL_DEBUG << "Disconnect notification sent successfully to " << remote_agent;
-        }
-    } else {
-        NIXL_DEBUG << "Skipping disconnect notification for self-connection";
-    }
+    //     if (status != NIXL_SUCCESS) {
+    //         NIXL_WARN << "Failed to send disconnect notification to " << remote_agent
+    //                   << ", proceeding with local cleanup anyway";
+    //         // Continue with cleanup even if notification failed
+    //     } else {
+    //         NIXL_DEBUG << "Disconnect notification sent successfully to " << remote_agent;
+    //     }
+    // } else {
+    //     NIXL_DEBUG << "Skipping disconnect notification for self-connection";
+    // }
 
-    // Clean up libfabric resources (AV entries) via rail manager
-    NIXL_DEBUG << "Cleaning up libfabric resources for agent: " << remote_agent;
-    // Clean up libfabric per-connection AV cleanup for both data and control rails
-    nixl_status_t data_cleanup_status = rail_manager.cleanupConnection(
-        nixlLibfabricRailManager::RailType::DATA, it->second->rail_remote_addr_list_);
-    if (data_cleanup_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to clean up data rail resources for agent: " << remote_agent
-                   << " with status: " << data_cleanup_status;
-        return data_cleanup_status;
-    }
+    // // Clean up libfabric resources (AV entries) via rail manager
+    // NIXL_DEBUG << "Cleaning up libfabric resources for agent: " << remote_agent;
+    // // Clean up libfabric per-connection AV cleanup for both data and control rails
+    // nixl_status_t data_cleanup_status = rail_manager.cleanupConnection(
+    //     nixlLibfabricRailManager::RailType::DATA, it->second->rail_remote_addr_list_);
+    // if (data_cleanup_status != NIXL_SUCCESS) {
+    //     NIXL_ERROR << "Failed to clean up data rail resources for agent: " << remote_agent
+    //                << " with status: " << data_cleanup_status;
+    //     return data_cleanup_status;
+    // }
 
-    nixl_status_t control_cleanup_status = rail_manager.cleanupConnection(
-        nixlLibfabricRailManager::RailType::CONTROL, it->second->control_rail_remote_addr_list_);
-    if (control_cleanup_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to clean up control rail resources for agent: " << remote_agent
-                   << " with status: " << control_cleanup_status;
-        return control_cleanup_status;
-    }
+    // nixl_status_t control_cleanup_status = rail_manager.cleanupConnection(
+    //     nixlLibfabricRailManager::RailType::CONTROL, it->second->control_rail_remote_addr_list_);
+    // if (control_cleanup_status != NIXL_SUCCESS) {
+    //     NIXL_ERROR << "Failed to clean up control rail resources for agent: " << remote_agent
+    //                << " with status: " << control_cleanup_status;
+    //     return control_cleanup_status;
+    // }
 
-    NIXL_DEBUG << "Successfully cleaned up libfabric resources for agent: " << remote_agent;
+    // NIXL_DEBUG << "Successfully cleaned up libfabric resources for agent: " << remote_agent;
 
-    // Update connection state to DISCONNECTED before removing
-    it->second->overall_state_ = ConnectionState::DISCONNECTED;
+    // // Update connection state to DISCONNECTED before removing
+    // it->second->overall_state_ = ConnectionState::DISCONNECTED;
 
-    // Remove connection from map
-    connections_.erase(remote_agent);
-    NIXL_DEBUG << "Connection erased from the connection map for agent: " << remote_agent;
+    // // Remove connection from map
+    // connections_.erase(remote_agent);
+    // NIXL_DEBUG << "Connection erased from the connection map for agent: " << remote_agent;
 
     return NIXL_SUCCESS;
 }

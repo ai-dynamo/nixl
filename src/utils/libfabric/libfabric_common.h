@@ -21,6 +21,7 @@
 #include <vector>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 #include <cstring>
 
 #include "nixl.h"
@@ -151,7 +152,7 @@ preallocateXferIds(size_t count);
 // Utility functions
 namespace LibfabricUtils {
 // Device discovery
-std::vector<std::string>
+std::pair<std::string, std::vector<std::string>>
 getAvailableEfaDevices();
 // String utilities
 std::string

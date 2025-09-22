@@ -97,7 +97,10 @@ nixlLibfabricTopology::discoverTopology() {
 nixl_status_t
 nixlLibfabricTopology::discoverEfaDevices() {
     // Use the utility function from libfabric_common
-    all_efa_devices = LibfabricUtils::getAvailableEfaDevices();
+    auto efa_result = LibfabricUtils::getAvailableEfaDevices();
+    efa_fabric_name = efa_result.first;
+    all_efa_devices = efa_result.second;
+
     num_efa_devices = all_efa_devices.size();
     if (all_efa_devices.empty()) {
         NIXL_ERROR << "No EFA devices found";
