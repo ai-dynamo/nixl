@@ -23,7 +23,6 @@
 #include <cstring>
 #include <exception>
 #include <iterator>
-#include <map>
 #include <string>
 #include <vector>
 #include <chrono>
@@ -1818,6 +1817,52 @@ nixl_capi_query_mem(nixl_capi_agent_t agent,
         nixl_opt_args_t *args = opt_args ? &opt_args->args : nullptr;
         nixl_status_t ret = agent->inner->queryMem(*descs->dlist, resp->responses, args);
         return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+static nixl_capi_status_t
+nixl_capi_status_from_nixl_status(nixl_status_t status) {
+    switch (status) {
+    case NIXL_SUCCESS:
+        return NIXL_CAPI_SUCCESS;
+    case NIXL_IN_PROG:
+        return NIXL_CAPI_IN_PROG;
+    case NIXL_ERR_NO_TELEMETRY:
+        return NIXL_CAPI_ERROR_NO_TELEMETRY;
+    default:
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
+                             nixl_capi_xfer_req_t req_hndl,
+                             nixl_capi_xfer_telemetry_t telemetry) {
+    if (!agent || !req_hndl || !telemetry) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        nixl_xfer_telem_t cpp_telemetry;
+        nixl_status_t ret = agent->inner->getXferTelemetry(req_hndl->req, cpp_telemetry);
+        if (ret == NIXL_SUCCESS) {
+            // Convert C++ telemetry structure to C structure
+            // Convert steady_clock time_point to microseconds since steady_clock epoch
+            auto steady_epoch = std::chrono::steady_clock::time_point{};
+            auto start_duration = cpp_telemetry.startTime - steady_epoch;
+            telemetry->start_time_us =
+                std::chrono::duration_cast<std::chrono::microseconds>(start_duration).count();
+            telemetry->post_duration_us = cpp_telemetry.postDuration.count();
+            telemetry->xfer_duration_us = cpp_telemetry.xferDuration.count();
+            telemetry->total_bytes = cpp_telemetry.totalBytes;
+            telemetry->desc_count = cpp_telemetry.descCount;
+            return NIXL_CAPI_SUCCESS;
+        }
+
+        return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;
