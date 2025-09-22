@@ -17,7 +17,6 @@
 #ifndef __TRANSFER_REQUEST_H_
 #define __TRANSFER_REQUEST_H_
 
-#include <chrono>
 #include <string>
 #include <unordered_map>
 #include <memory>
@@ -25,9 +24,6 @@
 #include "nixl_types.h"
 #include "backend_engine.h"
 #include "telemetry.h"
-
-using chrono_point_t = std::chrono::steady_clock::time_point;
-using std::chrono::microseconds;
 
 enum nixl_telemetry_stat_status_t {
     NIXL_TELEMETRY_POST = 0,
@@ -52,12 +48,7 @@ class nixlXferReqH {
         nixl_xfer_op_t     backendOp;
         nixl_status_t      status;
 
-        struct {
-            chrono_point_t startTime;
-            microseconds postDuration_ = microseconds(0);
-            microseconds xferDuration_ = microseconds(0);
-            size_t totalBytes;
-        } telemetry;
+        nixl_xfer_telem_t telemetry;
 
     public:
         inline nixlXferReqH() { }

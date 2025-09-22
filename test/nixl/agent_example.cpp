@@ -81,9 +81,6 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
         }
     }
 
-    assert (src_list.verifySorted() == true);
-    assert (dst_list.verifySorted() == true);
-
     assert (mem_list1.descCount() == n_mems);
     assert (mem_list2.descCount() == n_mems);
 
@@ -413,9 +410,6 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     src_list = mem_list1.trim();
     dst_list = mem_list2.trim();
-
-    if (!src_list.verifySorted() || !dst_list.verifySorted())
-        std::cout << "src_list or dst_list is not sorted, covering corner cases.";
 
     status = A1->registerMem(mem_list1, &extra_params1);
     assert (status == NIXL_SUCCESS);

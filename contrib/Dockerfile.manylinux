@@ -103,6 +103,25 @@ RUN cd /workspace && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install
 
+# The base image libcurl is linked against openssl 1.x, so we need to build from source
+# in order to use openssl 3.x. This is needed to build aws-sdk-cpp.
+RUN wget https://curl.se/download/curl-8.5.0.tar.gz && \
+    tar xzf curl-8.5.0.tar.gz && cd curl-8.5.0 && \
+    ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --enable-shared && \
+    make -j$(nproc) && make install
+
+RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581
+RUN mkdir aws_sdk_build && cd aws_sdk_build && \
+    export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
+    export CFLAGS="-I/usr/local/openssl3/include" && \
+    export CXXFLAGS="-I/usr/local/openssl3/include" && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_PREFIX_PATH="/usr/local/openssl3;/usr/local" \
+        -DCURL_LIBRARY=/usr/local/lib/libcurl.so \
+        -DCURL_INCLUDE_DIR=/usr/local/include \
+        -DOPENSSL_USE_STATIC_LIBS=OFF && \
+    make -j${NPROC:-$(nproc)} && make install
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 ENV RUSTUP_HOME=/usr/local/rustup \

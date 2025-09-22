@@ -17,7 +17,6 @@
 
 import argparse
 import ctypes
-import errno
 import logging
 import mmap
 import os
@@ -53,7 +52,7 @@ NIXL_TELEMETRY_MAX = 8
 running = True
 
 
-def signal_handler(signum, frame):
+def signal_handler(signum, _):
     """Signal handler for Ctrl+C"""
     global running
     if signum == signal.SIGINT:
@@ -94,7 +93,7 @@ class SharedRingBuffer:
     def __init__(self, file_path, version=1):
         self.file_path = file_path
         self.version = version
-        self.file_fd = None
+        self.file_fd = -1
         self.mmap_obj = None
         self.header = None
         self.data = None
@@ -106,10 +105,6 @@ class SharedRingBuffer:
     def _open_file(self):
         """Open existing file"""
         self.file_fd = os.open(self.file_path, os.O_RDWR)
-        if self.file_fd == -1:
-            raise RuntimeError(
-                f"Failed to open file for shared memory: {os.strerror(errno.errno)}"
-            )
 
     def _map_memory(self):
         """Map the file into memory"""
@@ -135,7 +130,7 @@ class SharedRingBuffer:
             )
 
         self.buffer_size = temp_header.capacity
-        logger.info(f"Auto-detected buffer size: {self.buffer_size}")
+        logger.info("Auto-detected buffer size: %d", self.buffer_size)
 
         del temp_header
         header_mmap.close()
@@ -198,7 +193,7 @@ class SharedRingBuffer:
         """Cleanup resources"""
         # if self.mmap_obj:
         #     self.mmap_obj.close()
-        if self.file_fd is not None and self.file_fd != -1:
+        if self.file_fd != -1:
             os.close(self.file_fd)
 
 
@@ -240,15 +235,15 @@ def get_telemetry_category_string(category):
 def print_telemetry_event(event):
     """Print telemetry event in a formatted way"""
     logger.info("\n=== NIXL Telemetry Event ===")
-    logger.info(f"Timestamp: {format_timestamp(event.timestamp_us)}")
+    logger.info("Timestamp: %s", format_timestamp(event.timestamp_us))
 
     # Decode event name
     event_name = event.event_name.decode("utf-8").rstrip("\x00")
     category_str = get_telemetry_category_string(event.category)
 
-    logger.info(f"Category: {category_str}")
-    logger.info(f"Event: {event_name}")
-    logger.info(f"Value: {event.value}")
+    logger.info("Category: %s", category_str)
+    logger.info("Event: %s", event_name)
+    logger.info("Value: %s", event.value)
     logger.info("===========================")
 
 
@@ -261,26 +256,26 @@ def main():
 
     args = parser.parse_args()
 
-    logger.info(f"Telemetry path: {args.telemetry_path}")
+    logger.info("Telemetry path: %s", args.telemetry_path)
     telemetry_file_name = args.telemetry_path
     if not os.path.exists(telemetry_file_name):
-        logger.error(f"Telemetry file {telemetry_file_name} does not exist")
+        logger.error("Telemetry file %s does not exist", telemetry_file_name)
         return 1
 
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        logger.info(f"Opening telemetry buffer: {telemetry_file_name}")
+        logger.info("Opening telemetry buffer: %s", telemetry_file_name)
         logger.info("Press Ctrl+C to stop reading telemetry...")
 
         buffer = SharedRingBuffer(telemetry_file_name, version=TELEMETRY_VERSION)
 
         logger.info(
-            f"Successfully opened telemetry buffer (version: {buffer.get_version()})"
+            "Successfully opened telemetry buffer (version: %d)", buffer.get_version()
         )
-        logger.info(f"Buffer capacity: {buffer.get_capacity()} events")
-        logger.info(f"Current events in buffer: {buffer.size()}")
-        logger.info(f"Event structure size: {ctypes.sizeof(NixlTelemetryEvent)} bytes")
+        logger.info("Buffer capacity: %d events", buffer.get_capacity())
+        logger.info("Current events in buffer: %d", buffer.size())
+        logger.info("Event structure size: %d bytes", ctypes.sizeof(NixlTelemetryEvent))
 
         event_count = 0
 
@@ -294,11 +289,11 @@ def main():
                 # No events available, sleep briefly
                 time.sleep(0.1)
 
-        logger.info(f"\nTotal events read: {event_count}")
-        logger.info(f"Final buffer size: {buffer.size()} events")
+        logger.info("\nTotal events read: %d", event_count)
+        logger.info("Final buffer size: %d events", buffer.size())
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error("Error: %s", e)
         return 1
 
     return 0

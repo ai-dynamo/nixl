@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 #include <map>
-#include <cassert>
 #include <algorithm>
 #include <iostream>
 #include "nixl.h"
@@ -37,27 +36,11 @@ backend_set_t* nixlMemSection::queryBackends (const nixl_mem_t &mem) {
         return &memToBackend[mem];
 }
 
-// Helper function to find the covering index for a given query element
-namespace {
-inline int
-getCoveringIndex(const nixl_sec_dlist_t *base, const nixlBasicDesc &query) {
-    auto itr = std::lower_bound(base->begin(), base->end(), query);
-    if (itr != base->end() && itr->covers(query)) return static_cast<int>(itr - base->begin());
-    // If query and element don't have the same start address, try previous entry
-    if (itr != base->begin()) {
-        auto prev_itr = std::prev(itr, 1);
-        if (prev_itr->covers(query)) return static_cast<int>(prev_itr - base->begin());
-    }
-    return -1;
-}
-} // namespace
-
 nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
                                         nixlBackendEngine* backend,
                                         nixl_meta_dlist_t &resp) const {
 
-    if ((query.getType() != resp.getType()) || (query.descCount() == 0) ||
-        (query.isSorted() != resp.isSorted())) // 1-to-1 mapping cannot hold
+    if ((query.getType() != resp.getType()) || (query.descCount() == 0))
         return NIXL_ERR_INVALID_PARAM;
 
     section_key_t sec_key = std::make_pair(query.getType(), backend);
@@ -66,14 +49,13 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
         return NIXL_ERR_NOT_FOUND;
 
     nixl_sec_dlist_t* base = it->second;
-    assert(base->isSorted());
     resp.resize(query.descCount());
 
     int size = base->descCount();
     int s_index = 0;
 
     // Use logN search for the first element, instead of linear search
-    s_index = getCoveringIndex(base, query[0]);
+    s_index = base->getCoveringIndex(query[0]);
     if (s_index < 0) {
         resp.clear();
         return NIXL_ERR_UNKNOWN;
@@ -85,7 +67,7 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
     for (int i = 1; i < query.descCount(); ++i) {
         if (query[i] < query[i - 1]) {
             // Disorder in the list, resolve this element using logN search
-            s_index = getCoveringIndex(base, query[i]);
+            s_index = base->getCoveringIndex(query[i]);
             if (s_index < 0) {
                 resp.clear();
                 return NIXL_ERR_UNKNOWN;
@@ -120,7 +102,7 @@ nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
 
     auto it = sectionMap.find(sec_key);
     if (it==sectionMap.end()) { // New desc list
-        sectionMap[sec_key] = new nixl_sec_dlist_t(nixl_mem, true);
+        sectionMap[sec_key] = new nixl_sec_dlist_t(nixl_mem);
         memToBackend[nixl_mem].insert(backend);
     }
     nixl_sec_dlist_t *target = sectionMap[sec_key];
@@ -280,7 +262,7 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
         // TODO: consider section_map_t to be a map of unique_ptr or instance of nixl_meta_dlist_t.
         //       This will avoid the need to delete the nixl_sec_dlist_t instances.
         const nixl_sec_dlist_t *base = it->second;
-        nixl_sec_dlist_t *resp = new nixl_sec_dlist_t(nixl_mem, true);
+        nixl_sec_dlist_t *resp = new nixl_sec_dlist_t(nixl_mem);
         for (const auto &desc : mem_elms) {
             int index = base->getIndex(desc);
             if (index < 0) {
@@ -329,8 +311,9 @@ nixl_status_t nixlRemoteSection::addDescList (
     // Without it, its corrupt data, we keep the last option without raising an error
     nixl_mem_t nixl_mem   = mem_elms.getType();
     section_key_t sec_key = std::make_pair(nixl_mem, backend);
-    if (sectionMap.count(sec_key) == 0)
-        sectionMap[sec_key] = new nixl_sec_dlist_t(nixl_mem, true);
+    if (sectionMap.count(sec_key) == 0) {
+        sectionMap[sec_key] = new nixl_sec_dlist_t(nixl_mem);
+    }
     memToBackend[nixl_mem].insert(backend); // Fine to overwrite, it's a set
     nixl_sec_dlist_t *target = sectionMap[sec_key];
 
@@ -397,8 +380,9 @@ nixl_status_t nixlRemoteSection::loadLocalData (
     nixl_mem_t     nixl_mem     = mem_elms.getType();
     section_key_t sec_key = std::make_pair(nixl_mem, backend);
 
-    if (sectionMap.count(sec_key) == 0)
-        sectionMap[sec_key] = new nixl_sec_dlist_t(nixl_mem, true);
+    if (sectionMap.count(sec_key) == 0) {
+        sectionMap[sec_key] = new nixl_sec_dlist_t(nixl_mem);
+    }
     memToBackend[nixl_mem].insert(backend); // Fine to overwrite, it's a set
     nixl_sec_dlist_t *target = sectionMap[sec_key];
 

@@ -19,7 +19,8 @@ jobs:
         # Allowlist both variants of the mounted source directory.
       - run: git config --global --add safe.directory /__w/dynamo/dynamo
       - run: git config --global --add safe.directory /workspace
-      - run: pwsh /workspace/.github/workflows/copyright-check.ps1
+      - run: /workspace/.github/workflows/copyright-check.sh
+        shell: bash
         env:
           NVBUILD_VERBOSITY: DETAILED
         timeout-minutes: 2

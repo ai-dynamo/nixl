@@ -23,10 +23,10 @@ pub struct RegDescList<'a> {
 
 impl<'a> RegDescList<'a> {
     /// Creates a new registration descriptor list for the given memory type
-    pub fn new(mem_type: MemType, sorted: bool) -> Result<Self, NixlError> {
+    pub fn new(mem_type: MemType) -> Result<Self, NixlError> {
         let mut dlist = ptr::null_mut();
         let status = unsafe {
-            nixl_capi_create_reg_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist, sorted)
+            nixl_capi_create_reg_dlist(mem_type as nixl_capi_mem_type_t, &mut dlist)
         };
 
         match status {
@@ -44,11 +44,6 @@ impl<'a> RegDescList<'a> {
             }
             _ => Err(NixlError::RegDescListCreationFailed),
         }
-    }
-
-    /// Creates a new sorted registration descriptor list for the given memory type
-    pub fn new_sorted(mem_type: MemType) -> Result<Self, NixlError> {
-        Self::new(mem_type, true)
     }
 
     pub fn get_type(&self) -> Result<MemType, NixlError> {
@@ -115,31 +110,6 @@ impl<'a> RegDescList<'a> {
 
         match status {
             NIXL_CAPI_SUCCESS => Ok(len),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Returns true if the list is sorted
-    fn verify_sorted_inner(inner: NonNull<bindings::nixl_capi_reg_dlist_s>) -> Result<bool, NixlError> {
-        let mut is_sorted = false;
-        let status = unsafe { nixl_capi_reg_dlist_verify_sorted(inner.as_ptr(), &mut is_sorted) };
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(is_sorted),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-    /// Returns true if the list is sorted
-    pub fn verify_sorted(&self) -> Result<bool, NixlError> {
-        Self::verify_sorted_inner(self.inner)
-    }
-
-    pub fn is_sorted(&self) -> Result<bool, NixlError> {
-        let mut is_sorted = false;
-        let status = unsafe { nixl_capi_reg_dlist_is_sorted(self.inner.as_ptr(), &mut is_sorted) };
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(is_sorted),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }
