@@ -22,6 +22,7 @@
 #include <vector>
 #include <string>
 
+
 namespace gtest {
 std::vector<std::string> SplitWithDelimiter(const std::string &str,
                                             char delimiter) {
@@ -65,10 +66,26 @@ void ParseArguments(int argc, char **argv) {
   }
 }
 
+class EtcdNamespaceIsolator : public ::testing::Environment {
+public:
+    ~EtcdNamespaceIsolator() override {}
+
+    // This is called once per process, before any tests run.
+    void
+    SetUp() override {
+        // Create a unique etcd namespace for this worker process
+        std::string ns = "/nixl/agents/gtest_" + std::to_string(getpid());
+        setenv("NIXL_ETCD_NAMESPACE", ns.c_str(), 1);
+    }
+
+    void
+    TearDown() override {}
+};
+
 int RunTests(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);
   ParseArguments(argc, argv);
-
+  testing::AddGlobalTestEnvironment(new EtcdNamespaceIsolator());
   return RUN_ALL_TESTS();
 }
 } // namespace gtest

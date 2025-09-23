@@ -162,11 +162,10 @@ curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLE
   cp gtest-parallel/* ${INSTALL_DIR}/bin/
 )
 
-export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/cuda/lib64"
-export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib:/opt/amazon/efa/lib"
+export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:/opt/amazon/efa/lib"
 export CPATH="${INSTALL_DIR}/include:/opt/amazon/efa/include:$CPATH"
 export PATH="${INSTALL_DIR}/bin:$PATH"
-export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:/opt/amazon/efa/lib/pkgconfig:$PKG_CONFIG_PATH"
+export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:$PKG_CONFIG_PATH:/opt/amazon/efa/lib/pkgconfig"
 export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
 export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 
