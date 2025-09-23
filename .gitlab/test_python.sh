@@ -56,6 +56,8 @@ pip3 install --break-system-packages pytest
 pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
 
+cat /sys/devices/virtual/dmi/id/product_name
+
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
 etcd_peer_port=$(get_next_tcp_port)
@@ -67,6 +69,7 @@ etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_
 sleep 5
 
 echo "==== Running python tests ===="
+export NIXL_LOG_LEVEL=TRACE
 pytest -s test/python
 pytest -s test/python --backend LIBFABRIC
 python3 test/python/prep_xfer_perf.py list

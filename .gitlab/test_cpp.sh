@@ -59,6 +59,7 @@ env
 nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
+cat /sys/devices/virtual/dmi/id/product_name
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
@@ -74,6 +75,7 @@ echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
 ./bin/desc_example
 ./bin/agent_example
+export NIXL_LOG_LEVEL=TRACE
 ./bin/nixl_example
 ./bin/nixl_example LIBFABRIC
 ./bin/nixl_etcd_example
