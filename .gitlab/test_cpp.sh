@@ -64,8 +64,10 @@ cd ${INSTALL_DIR}
 ./bin/nixl_example
 ./bin/nixl_etcd_example
 ./bin/ucx_backend_test
-# Skip UCX_MO backend test, fails VRAM transfers
-#./bin/ucx_mo_backend_test
+# Skip UCX_MO backend test on GPU worker, fails VRAM transfers
+if ! $HAS_GPU ; then
+    ./bin/ucx_mo_backend_test
+fi
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
 sleep 1
@@ -81,8 +83,9 @@ kill -s INT $telePID
 ./bin/ucx_backend_multi
 ./bin/serdes_test
 
+$HAS_GPU && GTEST_WORKERS=16 || GTEST_WORKERS=2
 # shellcheck disable=SC2154
-gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+gtest-parallel --workers=$GTEST_WORKERS --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
 # Run NIXL client-server test
