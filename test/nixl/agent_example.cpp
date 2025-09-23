@@ -573,8 +573,8 @@ int main()
     for (nixl_backend_t b: plugins)
         std::cout << b << "\n";
 
-    ret1 = A1.getPluginParams("UCX", mems1, init1);
-    ret2 = A2.getPluginParams("UCX", mems2, init2);
+    ret1 = A1.getPluginParams("LIBFABRIC", mems1, init1);
+    ret2 = A2.getPluginParams("LIBFABRIC", mems2, init2);
 
     assert (ret1 == NIXL_SUCCESS);
     assert (ret2 == NIXL_SUCCESS);
@@ -584,8 +584,8 @@ int main()
     printParams(init2, mems2);
 
     nixlBackendH* ucx1, *ucx2;
-    ret1 = A1.createBackend("UCX", init1, ucx1);
-    ret2 = A2.createBackend("UCX", init2, ucx2);
+    ret1 = A1.createBackend("LIBFABRIC", init1, ucx1);
+    ret2 = A2.createBackend("LIBFABRIC", init2, ucx2);
 
     nixl_opt_args_t extra_params1, extra_params2;
     extra_params1.backends.push_back(ucx1);
