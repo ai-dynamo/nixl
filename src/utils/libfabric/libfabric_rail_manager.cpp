@@ -43,16 +43,19 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
 
     // Get EFA devices from topology and create rails automatically
     std::vector<std::string> all_efa_devices = topology->getAllEfaDevices();
-    NIXL_DEBUG << "Got " << all_efa_devices.size() << " EFA devices from topology";
+    std::string selected_fabric_name = topology->getEFAfabricName();
 
-    // Create data rails
-    nixl_status_t rail_status = createDataRails(all_efa_devices);
+    NIXL_DEBUG << "Got " << all_efa_devices.size() << " EFA devices from topology for the fabric"
+               << selected_fabric_name;
+
+    // Create data rails with selected provider
+    nixl_status_t rail_status = createDataRails(all_efa_devices, selected_fabric_name);
     if (rail_status != NIXL_SUCCESS) {
         throw std::runtime_error("Rail Manager failed to create data rails");
     }
-    // Create control rails
-    nixl_status_t control_rail_status =
-        createControlRails(all_efa_devices, NIXL_LIBFABRIC_DEFAULT_CONTROL_RAILS);
+    // Create control rails with selected provider
+    nixl_status_t control_rail_status = createControlRails(
+        all_efa_devices, selected_fabric_name, NIXL_LIBFABRIC_DEFAULT_CONTROL_RAILS);
     if (control_rail_status != NIXL_SUCCESS) {
         throw std::runtime_error("Rail Manager failed to create control rails");
     }
@@ -65,7 +68,8 @@ nixlLibfabricRailManager::~nixlLibfabricRailManager() {
 }
 
 nixl_status_t
-nixlLibfabricRailManager::createDataRails(const std::vector<std::string> &efa_devices) {
+nixlLibfabricRailManager::createDataRails(const std::vector<std::string> &efa_devices,
+                                          const std::string &provider_name) {
     num_data_rails_ = efa_devices.size();
     // Pre-allocate to ensure contiguous memory allocation
     data_rails_.reserve(num_data_rails_);
@@ -78,13 +82,14 @@ nixlLibfabricRailManager::createDataRails(const std::vector<std::string> &efa_de
         data_rails_.reserve(num_data_rails_);
 
         for (size_t i = 0; i < num_data_rails_; ++i) {
-            data_rails_.emplace_back(
-                std::make_unique<nixlLibfabricRail>(efa_devices[i], static_cast<uint16_t>(i)));
+            data_rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
+                efa_devices[i], provider_name, static_cast<uint16_t>(i)));
 
             // Initialize EFA device mapping
             efa_device_to_rail_map[efa_devices[i]] = i;
 
-            NIXL_DEBUG << "Created data rail " << i << " (device: " << efa_devices[i] << ")";
+            NIXL_DEBUG << "Created data rail " << i << " (device: " << efa_devices[i]
+                       << ", provider: " << provider_name << ")";
         }
     }
     catch (const std::exception &e) {
@@ -96,6 +101,7 @@ nixlLibfabricRailManager::createDataRails(const std::vector<std::string> &efa_de
 
 nixl_status_t
 nixlLibfabricRailManager::createControlRails(const std::vector<std::string> &efa_devices,
+                                             const std::string &provider_name,
                                              size_t num_control_rails) {
     // Pre-allocate to ensure contiguous memory allocation
     num_control_rails_ = num_control_rails;
@@ -106,9 +112,10 @@ nixlLibfabricRailManager::createControlRails(const std::vector<std::string> &efa
         control_rails_.reserve(num_control_rails_);
 
         for (size_t i = 0; i < num_control_rails_; ++i) {
-            control_rails_.emplace_back(
-                std::make_unique<nixlLibfabricRail>(efa_devices[i], static_cast<uint16_t>(i)));
-            NIXL_DEBUG << "Created control rail " << i << " (device: " << efa_devices[i] << ")";
+            control_rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
+                efa_devices[i], provider_name, static_cast<uint16_t>(i)));
+            NIXL_DEBUG << "Created control rail " << i << " (device: " << efa_devices[i]
+                       << ", provider: " << provider_name << ")";
         }
     }
     catch (const std::exception &e) {
@@ -266,12 +273,13 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
 }
 
 std::vector<size_t>
-nixlLibfabricRailManager::selectRailsForMemory(void *mem_addr, nixl_mem_t mem_type) const {
+nixlLibfabricRailManager::selectRailsForMemory(void *mem_addr,
+                                               nixl_mem_t mem_type,
+                                               int gpu_id) const {
     if (mem_type == VRAM_SEG) {
 #ifdef HAVE_CUDA
-        int gpu_id = topology->detectGpuIdForMemory(mem_addr);
         if (gpu_id < 0) {
-            NIXL_ERROR << "Could not detect GPU for VRAM memory " << mem_addr;
+            NIXL_ERROR << "Invalid GPU ID " << gpu_id << " for VRAM memory " << mem_addr;
             return {}; // Return empty vector to indicate failure
         }
         std::vector<std::string> gpu_efa_devices = topology->getEfaDevicesForGpu(gpu_id);
@@ -314,35 +322,16 @@ nixlLibfabricRailManager::selectRailsForMemory(void *mem_addr, nixl_mem_t mem_ty
 #endif
     }
     if (mem_type == DRAM_SEG) {
-        int numa_node = topology->detectNumaNodeForMemory(mem_addr);
-        if (numa_node < 0) {
-            NIXL_ERROR << "Could not detect NUMA node for DRAM memory " << mem_addr;
-            return {};
-        }
-        std::vector<std::string> numa_efa_devices = topology->getEfaDevicesForNumaNode(numa_node);
-        if (numa_efa_devices.empty()) {
-            NIXL_ERROR << "No EFA devices found for NUMA node " << numa_node;
-            return {};
-        }
-        std::vector<size_t> numa_rails;
-        for (const std::string &efa_device : numa_efa_devices) {
-            auto it = efa_device_to_rail_map.find(efa_device);
-            if (it != efa_device_to_rail_map.end()) {
-                numa_rails.push_back(it->second);
-                NIXL_DEBUG << "DRAM memory " << mem_addr << " on NUMA node " << numa_node
-                           << " mapped to rail " << it->second << " (EFA device: " << efa_device
-                           << ")";
-            }
+        // For DRAM, use all available rails for maximum bandwidth
+        std::vector<size_t> all_rails;
+        all_rails.reserve(data_rails_.size());
+        for (size_t i = 0; i < data_rails_.size(); ++i) {
+            all_rails.push_back(i);
         }
 
-        if (numa_rails.empty()) {
-            NIXL_ERROR << "No rail mapping found for NUMA node " << numa_node;
-            return {};
-        }
-
-        NIXL_DEBUG << "DRAM memory " << mem_addr << " on NUMA node " << numa_node << " will use "
-                   << numa_rails.size() << " rails";
-        return numa_rails;
+        NIXL_DEBUG << "DRAM memory " << mem_addr << " will use all " << all_rails.size()
+                   << " available rails for maximum bandwidth";
+        return all_rails;
     }
 
     // For unsupported memory types, return empty vector
@@ -354,6 +343,7 @@ nixl_status_t
 nixlLibfabricRailManager::registerMemory(void *buffer,
                                          size_t length,
                                          nixl_mem_t mem_type,
+                                         int gpu_id,
                                          std::vector<struct fid_mr *> &mr_list_out,
                                          std::vector<uint64_t> &key_list_out,
                                          std::vector<size_t> &selected_rails_out) {
@@ -362,8 +352,8 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Use internal rail selection (moved from engine)
-    std::vector<size_t> selected_rails = selectRailsForMemory(buffer, mem_type);
+    // Use internal rail selection with explicit GPU ID
+    std::vector<size_t> selected_rails = selectRailsForMemory(buffer, mem_type, gpu_id);
     if (selected_rails.empty()) {
         NIXL_ERROR << "No rails selected for memory type " << mem_type;
         return NIXL_ERR_NOT_SUPPORTED;
@@ -590,14 +580,21 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
 
 nixl_status_t
 nixlLibfabricRailManager::progressActiveDataRails() {
+    std::vector<size_t> rails_to_process;
 
-    if (active_rails_.empty()) {
-        return NIXL_IN_PROG; // No active rails to process
+    // Copy active rails under lock to avoid iterator invalidation
+    {
+        std::lock_guard<std::mutex> lock(active_rails_mutex_);
+        if (active_rails_.empty()) {
+            return NIXL_IN_PROG; // No active rails to process
+        }
+        rails_to_process.assign(active_rails_.begin(), active_rails_.end());
     }
 
+    // Process rails without holding the lock
     bool any_completions = false;
 
-    for (size_t rail_id : active_rails_) {
+    for (size_t rail_id : rails_to_process) {
         if (rail_id >= data_rails_.size()) {
             NIXL_ERROR << "Invalid active rail ID: " << rail_id;
             continue;
@@ -614,7 +611,7 @@ nixlLibfabricRailManager::progressActiveDataRails() {
     }
 
     if (any_completions) {
-        NIXL_TRACE << "Processed " << active_rails_.size() << " active rails, completions found";
+        NIXL_TRACE << "Processed " << rails_to_process.size() << " active rails, completions found";
     }
 
     return any_completions ? NIXL_SUCCESS : NIXL_IN_PROG;
@@ -820,6 +817,7 @@ nixlLibfabricRailManager::markRailActive(size_t rail_id) {
         return;
     }
 
+    std::lock_guard<std::mutex> lock(active_rails_mutex_);
     bool was_inserted = active_rails_.insert(rail_id).second;
 
     if (was_inserted) {
@@ -832,6 +830,7 @@ nixlLibfabricRailManager::markRailActive(size_t rail_id) {
 
 void
 nixlLibfabricRailManager::markRailInactive(size_t rail_id) {
+    std::lock_guard<std::mutex> lock(active_rails_mutex_);
     size_t erased = active_rails_.erase(rail_id);
     if (erased > 0) {
         NIXL_DEBUG << "Marked rail " << rail_id
@@ -843,6 +842,7 @@ nixlLibfabricRailManager::markRailInactive(size_t rail_id) {
 
 void
 nixlLibfabricRailManager::clearActiveRails() {
+    std::lock_guard<std::mutex> lock(active_rails_mutex_);
     size_t cleared_count = active_rails_.size();
     active_rails_.clear();
     NIXL_DEBUG << "Cleared " << cleared_count << " active rails";
@@ -850,5 +850,6 @@ nixlLibfabricRailManager::clearActiveRails() {
 
 size_t
 nixlLibfabricRailManager::getActiveRailCount() const {
+    std::lock_guard<std::mutex> lock(active_rails_mutex_);
     return active_rails_.size();
 }

@@ -513,78 +513,8 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
                    << ", fi_addr: " << it->second->rail_remote_addr_list_[0];
         return NIXL_SUCCESS;
     }
-
-    NIXL_DEBUG << "Disconnecting from agent: " << remote_agent;
-
-    if (remote_agent != localAgent) {
-        // Send disconnect control message to remote peer - fire and forget semantics
-        NIXL_DEBUG << "Sending disconnect notification to remote agent: " << remote_agent;
-
-        // Use rail manager's serialization method with "src" prefix (we are sending our source
-        // endpoints)
-        std::string serialized_conn_info;
-        nixl_status_t serialize_status =
-            rail_manager.serializeConnectionInfo("src", serialized_conn_info);
-        if (serialize_status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Rail manager serializeConnectionInfo failed";
-            return serialize_status;
-        }
-
-        // Allocate control request
-        const size_t control_rail_id = 0;
-        const size_t buffer_size =
-            (rail_manager.getNumDataRails() + rail_manager.getNumControlRails()) *
-                LF_EP_NAME_MAX_LEN +
-            1024;
-        nixlLibfabricReq *control_request =
-            rail_manager.getControlRail(control_rail_id).allocateControlRequest(buffer_size);
-        if (!control_request) {
-            NIXL_ERROR << "Failed to allocate control request for disconnect";
-            return NIXL_ERR_BACKEND;
-        }
-
-        memcpy(control_request->buffer, serialized_conn_info.data(), serialized_conn_info.length());
-
-        // Set the actual size of serialized data
-        control_request->buffer_size = serialized_conn_info.length();
-
-        nixl_status_t status = rail_manager.postControlMessage(
-            nixlLibfabricRailManager::ControlMessageType::DISCONNECT_REQ,
-            control_request,
-            it->second->control_rail_remote_addr_list_[0], // Use control rail 0
-            it->second->agent_index_);
-
-        if (status != NIXL_SUCCESS) {
-            NIXL_WARN << "Failed to send disconnect notification to " << remote_agent
-                      << ", proceeding with local cleanup anyway";
-            // Continue with cleanup even if notification failed
-        } else {
-            NIXL_DEBUG << "Disconnect notification sent successfully to " << remote_agent;
-        }
-    } else {
-        NIXL_DEBUG << "Skipping disconnect notification for self-connection";
-    }
-
-    // Clean up libfabric resources (AV entries) via rail manager
-    NIXL_DEBUG << "Cleaning up libfabric resources for agent: " << remote_agent;
-    // Clean up libfabric per-connection AV cleanup for both data and control rails
-    nixl_status_t data_cleanup_status = rail_manager.cleanupConnection(
-        nixlLibfabricRailManager::RailType::DATA, it->second->rail_remote_addr_list_);
-    if (data_cleanup_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to clean up data rail resources for agent: " << remote_agent
-                   << " with status: " << data_cleanup_status;
-        return data_cleanup_status;
-    }
-
-    nixl_status_t control_cleanup_status = rail_manager.cleanupConnection(
-        nixlLibfabricRailManager::RailType::CONTROL, it->second->control_rail_remote_addr_list_);
-    if (control_cleanup_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to clean up control rail resources for agent: " << remote_agent
-                   << " with status: " << control_cleanup_status;
-        return control_cleanup_status;
-    }
-
-    NIXL_DEBUG << "Successfully cleaned up libfabric resources for agent: " << remote_agent;
+    // TODO: Implement disconnect logic to cleanup the AV Address Entries from both local and remote
+    // AV.
 
     // Update connection state to DISCONNECTED before removing
     it->second->overall_state_ = ConnectionState::DISCONNECTED;
@@ -592,7 +522,6 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
     // Remove connection from map
     connections_.erase(remote_agent);
     NIXL_DEBUG << "Connection erased from the connection map for agent: " << remote_agent;
-
     return NIXL_SUCCESS;
 }
 
@@ -837,6 +766,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     nixl_status_t status = rail_manager.registerMemory((void *)mem.addr,
                                                        mem.len,
                                                        nixl_mem,
+                                                       mem.devId,
                                                        priv->rail_mr_list_,
                                                        priv->rail_key_list_,
                                                        priv->selected_rails_);

@@ -214,7 +214,7 @@ public:
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
 
     /** Initialize libfabric rail with all resources */
-    nixlLibfabricRail(const std::string &device, uint16_t id);
+    nixlLibfabricRail(const std::string &device, const std::string &provider, uint16_t id);
 
     /** Destroy rail and cleanup all libfabric resources */
     ~nixlLibfabricRail();

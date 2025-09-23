@@ -187,7 +187,9 @@ DataRequestPool::allocate(nixlLibfabricReq::OpType op_type) {
 
 // Rail Class Implementation
 
-nixlLibfabricRail::nixlLibfabricRail(const std::string &device, uint16_t id)
+nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
+                                     const std::string &provider,
+                                     uint16_t id)
     : rail_id(id),
       device_name(device),
       blocking_cq_sread_supported(true),
@@ -203,7 +205,8 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device, uint16_t id)
     memset(ep_name, 0, sizeof(ep_name));
 
     // Initialize all Libfabric resources for this rail
-    NIXL_TRACE << "Initializing rail " << rail_id << " with device: " << device_name;
+    NIXL_TRACE << "Initializing rail " << rail_id << " with device: " << device_name
+               << ", provider: " << provider;
 
     // Initialize hints for this rail
     struct fi_info *hints = fi_allocinfo();
@@ -212,9 +215,13 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device, uint16_t id)
         throw std::runtime_error("Failed to allocate fi_info for rail " + std::to_string(rail_id));
     }
     hints->caps = 0;
-    hints->caps = FI_MSG | FI_RMA | FI_HMEM;
+    hints->caps = FI_MSG | FI_RMA;
     hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
-    hints->mode = FI_CONTEXT | FI_CONTEXT2;
+    if (provider.c_str() == std::string("efa-direct")) {
+        hints->mode = FI_CONTEXT | FI_CONTEXT2;
+    } else {
+        hints->mode = FI_CONTEXT;
+    }
     hints->ep_attr->type = FI_EP_RDM;
     hints->domain_attr->mr_mode =
         FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
@@ -250,8 +257,8 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device, uint16_t id)
         cq_attr.size = 12288;
         ret = fi_cq_open(domain, &cq_attr, &cq, NULL);
         if (ret) {
-            NIXL_ERROR << "fi_cq_open failed for rail " << rail_id << ": " << fi_strerror(-ret)
-                       << " - trying FI_WAIT_NONE";
+            NIXL_WARN << "fi_cq_open failed for rail " << rail_id << ": " << fi_strerror(-ret)
+                      << " - trying FI_WAIT_NONE";
             if (ret == -FI_ENOSYS) {
                 NIXL_TRACE << "FI_WAIT_UNSPEC not supported, falling back to FI_WAIT_NONE for rail "
                            << rail_id;
