@@ -77,6 +77,26 @@ typedef struct nixl_capi_xfer_req_s* nixl_capi_xfer_req_t;
 typedef struct nixl_capi_notif_map_s* nixl_capi_notif_map_t;
 typedef struct nixl_capi_query_resp_list_s *nixl_capi_query_resp_list_t;
 
+// Thread sync enum matching nixl_thread_sync_t
+typedef enum {
+    NIXL_CAPI_THREAD_SYNC_NONE = 0,
+    NIXL_CAPI_THREAD_SYNC_STRICT = 1,
+    NIXL_CAPI_THREAD_SYNC_RW = 2,
+    NIXL_CAPI_THREAD_SYNC_DEFAULT = NIXL_CAPI_THREAD_SYNC_NONE,
+} nixl_capi_thread_sync_t;
+
+// Agent configuration struct mirroring nixlAgentConfig constructor args
+typedef struct nixl_capi_agent_config_s {
+    bool enable_prog_thread;
+    bool enable_listen_thread;
+    int listen_port;
+    nixl_capi_thread_sync_t thread_sync;
+    unsigned int num_workers;
+    uint64_t pthr_delay_us;
+    uint64_t lthr_delay_us;
+    bool capture_telemetry;
+} nixl_capi_agent_config_t;
+
 // Transfer request functions
 typedef enum {
   NIXL_CAPI_XFER_OP_READ = 0,
@@ -84,8 +104,17 @@ typedef enum {
 } nixl_capi_xfer_op_t;
 
 // Core API functions
+
+// Create an agent with a provided config
+nixl_capi_status_t
+nixl_capi_create_configured_agent(const char *name,
+                                  const nixl_capi_agent_config_t *cfg,
+                                  nixl_capi_agent_t *agent);
+
+// Create an agent with default config
 nixl_capi_status_t nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent);
 
+// Destroy an agent
 nixl_capi_status_t nixl_capi_destroy_agent(nixl_capi_agent_t agent);
 
 // Get local metadata as a byte array
