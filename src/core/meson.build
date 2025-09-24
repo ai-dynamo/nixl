@@ -58,12 +58,13 @@ if libtransfer_engine.found() and not disable_mooncake_backend and 'Mooncake' in
 endif
 
 nixl_lib = library('nixl',
+                   'signalhandler.cpp',
                    'nixl_agent.cpp',
                    'nixl_plugin_manager.cpp',
                    'nixl_listener.cpp',
                    'telemetry.cpp',
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-                   link_args: ['-lstdc++fs'],
+                   link_args: ['-lstdc++fs', '-lbacktrace'],
                    dependencies: nixl_lib_deps,
                    install: true)
 
