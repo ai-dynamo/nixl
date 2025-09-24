@@ -41,7 +41,6 @@ ARCH=$(uname -m)
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
-OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 
 get_options() {
@@ -183,7 +182,6 @@ show_help() {
     echo "  [--ucx path/to/ucx/source/dir]"
     echo "  [--build-type [debug|release] to select build type]"
     echo "  [--no-cache disable docker build cache]"
-    echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--tag tag for image]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
