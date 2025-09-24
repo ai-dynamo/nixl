@@ -15,6 +15,20 @@
 
 use super::*;
 use crate::descriptors::{QueryResponseList, RegDescList};
+use crate::bindings::{
+    nixl_capi_agent_config_s as nixl_capi_agent_config_t,
+    nixl_capi_thread_sync_t, nixl_capi_create_configured_agent};
+
+impl From<ThreadSync> for nixl_capi_thread_sync_t {
+    fn from(value: ThreadSync) -> Self {
+        match value {
+            ThreadSync::None => crate::bindings::nixl_capi_thread_sync_t_NIXL_CAPI_THREAD_SYNC_NONE,
+            ThreadSync::Strict => crate::bindings::nixl_capi_thread_sync_t_NIXL_CAPI_THREAD_SYNC_STRICT,
+            ThreadSync::Rw => crate::bindings::nixl_capi_thread_sync_t_NIXL_CAPI_THREAD_SYNC_RW,
+            ThreadSync::Default => crate::bindings::nixl_capi_thread_sync_t_NIXL_CAPI_THREAD_SYNC_DEFAULT,
+        }
+    }
+}
 
 /// A NIXL agent that can create backends and manage memory
 #[derive(Debug, Clone)]
@@ -57,6 +71,48 @@ impl Agent {
             }
             _ => {
                 tracing::error!(agent.name = %name, error = "backend_error", "Failed to create NIXL agent");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Creates a new agent with the given configuration
+    pub fn new_configured(name: &str, cfg: &AgentConfig) -> Result<Self, NixlError> {
+        tracing::trace!(agent.name = %name, "Creating configured NIXL agent");
+        let c_name = CString::new(name)?;
+
+        // Prepare C ABI config
+        let mut c_cfg = nixl_capi_agent_config_t {
+            enable_prog_thread: cfg.enable_prog_thread,
+            enable_listen_thread: cfg.enable_listen_thread,
+            listen_port: cfg.listen_port,
+            thread_sync: cfg.thread_sync.into(),
+            num_workers: cfg.num_workers,
+            pthr_delay_us: cfg.pthr_delay_us,
+            lthr_delay_us: cfg.lthr_delay_us,
+            capture_telemetry: cfg.capture_telemetry,
+        };
+
+        let mut agent = ptr::null_mut();
+        let status = unsafe {
+            nixl_capi_create_configured_agent(c_name.as_ptr(), &mut c_cfg, &mut agent)
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                // SAFETY: If status is NIXL_CAPI_SUCCESS, agent is non-null
+                let handle = unsafe { NonNull::new_unchecked(agent) };
+                tracing::trace!(agent.name = %name, "Successfully created configured NIXL agent");
+                Ok(Self {
+                    inner: Arc::new(RwLock::new(AgentInner::new(handle, name.to_string()))),
+                })
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::error!(agent.name = %name, error = "invalid_param", "Failed to create configured NIXL agent");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::error!(agent.name = %name, error = "backend_error", "Failed to create configured NIXL agent");
                 Err(NixlError::BackendError)
             }
         }
@@ -998,6 +1054,41 @@ pub(crate) struct AgentInner {
     pub(crate) handle: NonNull<bindings::nixl_capi_agent_s>,
     pub(crate) backends: HashMap<String, NonNull<bindings::nixl_capi_backend_s>>,
     pub(crate) remotes: HashSet<String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ThreadSync {
+    None,
+    Strict,
+    Rw,
+    Default,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentConfig {
+    pub enable_prog_thread: bool,
+    pub enable_listen_thread: bool,
+    pub listen_port: i32,
+    pub thread_sync: ThreadSync,
+    pub num_workers: u32,
+    pub pthr_delay_us: u64,
+    pub lthr_delay_us: u64,
+    pub capture_telemetry: bool,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            enable_prog_thread: true,
+            enable_listen_thread: false,
+            listen_port: 0,
+            thread_sync: ThreadSync::None,
+            num_workers: 1,
+            pthr_delay_us: 0,
+            lthr_delay_us: 100_000,
+            capture_telemetry: false,
+        }
+    }
 }
 
 unsafe impl Send for AgentInner {}
