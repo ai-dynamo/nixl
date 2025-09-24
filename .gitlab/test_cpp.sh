@@ -84,7 +84,7 @@ kill -s INT $telePID
 ./bin/serdes_test
 
 # shellcheck disable=SC2154
-./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
 # Run NIXL client-server test
