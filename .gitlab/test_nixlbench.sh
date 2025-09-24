@@ -81,19 +81,26 @@ run_nixlbench_two_workers() {
 
 run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type DRAM --target_seg_type DRAM
 run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type DRAM --target_seg_type DRAM
-run_nixlbench_one_worker --backend POSIX --op_type READ --initiator_seg_type DRAM --target_seg_type DRAM
-run_nixlbench_one_worker --backend POSIX --op_type WRITE --initiator_seg_type DRAM --target_seg_type DRAM
 
-if $HAS_GPU
-then
-    run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type VRAM --target_seg_type VRAM
-    run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type DRAM --target_seg_type VRAM
-    run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type VRAM --target_seg_type DRAM
-    run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type VRAM
-    run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type DRAM --target_seg_type VRAM
-    run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type VRAM --target_seg_type DRAM
+if $HAS_GPU ; then
+    seg_types="VRAM DRAM"
 else
-    echo "Worker without GPU, skipping GPU tests"
+    seg_types="DRAM"
+    echo "Worker without GPU, skipping VRAM tests"
 fi
+
+for op_type in READ WRITE; do
+    for initiator in $seg_types; do
+        for target in $seg_types; do
+            run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+        done
+    done
+done
+
+for op_type in READ WRITE; do
+    for target in $seg_types; do
+        run_nixlbench_one_worker --backend POSIX --op_type $op_type --target_seg_type $target
+    done
+done
 
 pkill etcd
