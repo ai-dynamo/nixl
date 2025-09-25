@@ -75,30 +75,6 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
 
-# Install EFA (Elastic Fabric Adapter) - minimal installation
-RUN curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" | tar xz && \
-    cd aws-efa-installer && \
-    ./efa_installer.sh -y --minimal --skip-kmod --skip-limit-conf --no-verify && \
-    ldconfig
-
-# Build libfabric from source
-RUN curl -fSsL "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" | tar xj && \
-    cd libfabric-* && \
-    ./autogen.sh && \
-    ./configure --prefix="${LIBFABRIC_INSTALL_PATH}" \
-                --disable-verbs \
-                --disable-psm3 \
-                --disable-opx \
-                --disable-usnic \
-                --disable-rstream \
-                --enable-efa \
-                --with-cuda=/usr/local/cuda \
-                --enable-cuda-dlopen \
-                --with-gdrcopy \
-                --enable-gdrcopy-dlopen && \
-    make -j${NPROC:-$(nproc)} && \
-    make install && \
-    ldconfig
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
@@ -159,6 +135,27 @@ RUN cd /usr/local/src && \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
+
+# Build libfabric from source
+RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+    "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
+    tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
+    cd libfabric-* && \
+    ./autogen.sh && \
+    ./configure --prefix="${LIBFABRIC_INSTALL_PATH}" \
+                --disable-verbs \
+                --disable-psm3 \
+                --disable-opx \
+                --disable-usnic \
+                --disable-rstream \
+                --enable-efa \
+                --with-cuda=/usr/local/cuda \
+                --enable-cuda-dlopen \
+                --with-gdrcopy \
+                --enable-gdrcopy-dlopen && \
+    make -j${NPROC:-$(nproc)} && \
+    make install && \
+    ldconfig
 
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl

@@ -105,8 +105,6 @@ ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 ARG BUILD_TYPE="release"
 ARG EFA_INSTALLER_VERSION="latest"
-ARG LIBFABRIC_VERSION="v2.3.0"
-ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG NPROC
 
 WORKDIR /workspace
@@ -123,30 +121,6 @@ COPY --from=nixlbench . /workspace/nixlbench
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
 
-# Install EFA (Elastic Fabric Adapter) - minimal installation
-RUN curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" | tar xz && \
-    cd aws-efa-installer && \
-    ./efa_installer.sh -y --minimal --skip-kmod --skip-limit-conf --no-verify && \
-    ldconfig
-
-# Build libfabric from source
-RUN curl -fSsL "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" | tar xj && \
-    cd libfabric-* && \
-    ./autogen.sh && \
-    ./configure --prefix="${LIBFABRIC_INSTALL_PATH}" \
-                --disable-verbs \
-                --disable-psm3 \
-                --disable-opx \
-                --disable-usnic \
-                --disable-rstream \
-                --enable-efa \
-                --with-cuda=/usr/local/cuda \
-                --enable-cuda-dlopen \
-                --with-gdrcopy \
-                --enable-gdrcopy-dlopen && \
-    make -j${NPROC:-$(nproc)} && \
-    make install && \
-    ldconfig
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir sdk_build && \
@@ -157,7 +131,7 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
 
 WORKDIR /workspace/nixl
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
@@ -169,7 +143,7 @@ RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    uv run meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install
