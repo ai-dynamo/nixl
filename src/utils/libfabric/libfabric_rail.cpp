@@ -470,8 +470,6 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         }
         // Create AV for this rail
         struct fi_av_attr av_attr = {};
-        // av_attr.type = FI_AV_TABLE;
-        // av_attr.count = 1024;
         ret = fi_av_open(domain, &av_attr, &av, NULL);
         if (ret) {
             NIXL_ERROR << "fi_av_open failed for rail " << rail_id << ": " << fi_strerror(-ret);
@@ -927,7 +925,6 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) {
     nixl_status_t status = postRecv(new_req);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to post subsequent receive on rail " << rail_id;
-        // Don't release request for efa provider, release for all other providers
         releaseRequest(new_req);
         return status;
     }
