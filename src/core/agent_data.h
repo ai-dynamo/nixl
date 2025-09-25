@@ -91,6 +91,7 @@ class nixlAgentData {
         std::vector<nixl_comm_req_t>       commQueue;
         std::mutex                         commLock;
         bool                               commThreadStop;
+        bool                               agentShutdown;
         bool                               useEtcd;
 
         void commWorker(nixlAgent* myAgent);
