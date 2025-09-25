@@ -13,12 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-nixl_example = executable('nixl_example',
-           'nixl_example.cpp',
-           dependencies: [nixl_dep, nixl_infra, nixl_common_deps, ucx_backend_dep, ucx_dep],
-           include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           link_with: [serdes_lib],
-           install: true)
+if ucx_dep.found()
+    nixl_example = executable('nixl_example',
+            'nixl_example.cpp',
+            dependencies: [nixl_dep, nixl_infra, nixl_common_deps, ucx_backend_dep, ucx_dep],
+            include_directories: [nixl_inc_dirs, utils_inc_dirs],
+            link_with: [serdes_lib],
+            install: true)
+endif
 
 if etcd_dep.found()
     etcd_example = executable('nixl_etcd_example',
