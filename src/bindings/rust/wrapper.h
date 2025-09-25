@@ -243,6 +243,12 @@ nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_backend_t *backend);
 
+nixl_capi_status_t
+nixl_capi_query_xfer_backend_type(nixl_capi_agent_t agent,
+                                  nixl_capi_xfer_req_t req_hndl,
+                                  void **backend_type,
+                                  size_t *backend_type_size);
+
 nixl_capi_status_t nixl_capi_release_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req);
 
 nixl_capi_status_t nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req);
