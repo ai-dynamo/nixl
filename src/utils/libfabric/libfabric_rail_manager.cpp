@@ -404,7 +404,7 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         markRailActive(rail_idx);
 
         NIXL_DEBUG << "Registered memory on rail " << rail_idx
-                   << " (mr: " << reinterpret_cast<uintptr_t>(mr) << ", key: " << key << ")";
+                   << " (mr: " << static_cast<const void *>(mr) << ", key: " << key << ")";
     }
 
     return NIXL_SUCCESS;

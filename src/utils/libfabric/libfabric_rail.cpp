@@ -19,41 +19,83 @@
 #include "libfabric_rail.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
+#include "libfabric_common.h"
 
 #include <cstring>
 #include <stdexcept>
+#include <stack>
 
 // RequestPool Base Class Implementation
 
-RequestPool::RequestPool(size_t pool_size, size_t rail_id) : rail_id_(rail_id) {
-    requests_.resize(pool_size);
+RequestPool::RequestPool(size_t pool_size, size_t rail_id)
+    : rail_id_(rail_id),
+      initial_pool_size_(pool_size) {
+    initializeBasePool(pool_size);
+}
 
-    for (size_t i = 0; i < pool_size; ++i) {
-        requests_[i].rail_id = rail_id;
+void
+RequestPool::initializeBasePool(size_t pool_size) {
+    size_t current_size = requests_.size();
+    requests_.resize(current_size + pool_size);
+
+    for (size_t i = current_size; i < requests_.size(); ++i) {
+        requests_[i].rail_id = rail_id_;
+        requests_[i].pool_index = i; // Set the pool index for deque compatibility
         requests_[i].in_use = false;
         free_indices_.push(i);
     }
+
+    NIXL_INFO << "InitializeBasePool - Rail " << rail_id_
+              << " completed. Total requests: " << requests_.size()
+              << " Free requests: " << free_indices_.size();
 }
 
 void
 RequestPool::release(nixlLibfabricReq *req) {
-    if (!req) return;
+    if (!req) {
+        NIXL_WARN << "ReleaseReq on Rail " << rail_id_ << " received null request";
+        return;
+    }
 
     std::lock_guard<std::mutex> lock(pool_mutex_);
 
+    NIXL_TRACE << "ReleaseReq on Rail " << rail_id_ << " releasing request XFER_ID=" << req->xfer_id
+               << " pool_index=" << req->pool_index;
+
     req->in_use = false;
+    req->xfer_id = 0;
     req->chunk_offset = 0;
     req->chunk_size = 0;
     req->completion_callback = nullptr;
     memset(&req->ctx, 0, sizeof(fi_context2));
-    size_t idx = req - &requests_[0];
+
+    // Use pool_index instead of pointer arithmetic for deque compatibility
+    size_t idx = req->pool_index;
+
+    // Validate the index is within bounds
+    if (idx >= requests_.size()) {
+        NIXL_ERROR << "Release Req on Rail " << rail_id_ << " invalid pool index " << idx
+                   << " for request release (pool size: " << requests_.size() << ")";
+        return;
+    }
+
     free_indices_.push(idx);
 }
 
 nixlLibfabricReq *
 RequestPool::findByContext(void *context) const {
     std::lock_guard<std::mutex> lock(pool_mutex_);
-    return reinterpret_cast<nixlLibfabricReq *>(context);
+
+    if (!context) {
+        return nullptr;
+    }
+
+    // Since fi_context2 ctx is the first member of nixlLibfabricReq,
+    // we can directly cast the context pointer to the request pointer
+    nixlLibfabricReq *req = reinterpret_cast<nixlLibfabricReq *>(context);
+
+    NIXL_TRACE << "From context the request xfer_id is : " << req->xfer_id;
+    return req;
 }
 
 size_t
@@ -62,13 +104,54 @@ RequestPool::getActiveRequestCount() const {
     return requests_.size() - free_indices_.size();
 }
 
+size_t
+RequestPool::getPoolUtilization() const {
+    std::lock_guard<std::mutex> lock(pool_mutex_);
+    return ((requests_.size() - free_indices_.size()) * 100) / requests_.size();
+}
+
+nixlLibfabricReq *
+RequestPool::allocateReq() {
+    std::lock_guard<std::mutex> lock(pool_mutex_);
+
+    if (free_indices_.empty()) {
+        size_t old_size = requests_.size();
+
+        // Try to expand the pool using the derived class implementation
+        nixl_status_t expand_status = expandPool();
+        if (expand_status != NIXL_SUCCESS) {
+            NIXL_ERROR << "AllocateReq on Rail " << rail_id_
+                       << " failed to expand pool, status=" << expand_status;
+            return nullptr;
+        }
+
+        // Check if expansion provided new requests
+        if (free_indices_.empty()) {
+            NIXL_ERROR << "AllocateReq on Rail " << rail_id_
+                       << " pool still exhausted after expansion";
+            return nullptr;
+        }
+
+        NIXL_INFO << "AllocateReq on Rail " << rail_id_ << " successfully expanded pool from "
+                  << old_size << " to " << requests_.size() << " requests";
+    }
+
+    size_t idx = free_indices_.top();
+    free_indices_.pop();
+
+    nixlLibfabricReq *req = &requests_[idx];
+    req->in_use = true;
+    req->xfer_id = LibfabricUtils::getNextXferId();
+
+    return req;
+}
+
 // ControlRequestPool Implementation
 
 ControlRequestPool::ControlRequestPool(size_t pool_size, size_t rail_id)
     : RequestPool(pool_size, rail_id),
-      buffer_chunk_(nullptr),
-      buffer_chunk_size_(0),
-      buffer_mr_(nullptr) {}
+      domain_(nullptr),
+      chunk_size_(NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE * pool_size) {}
 
 ControlRequestPool::~ControlRequestPool() {
     // Cleanup should have been called explicitly before domain destruction
@@ -78,70 +161,157 @@ ControlRequestPool::~ControlRequestPool() {
 
 void
 ControlRequestPool::cleanup() {
-    if (buffer_mr_) {
-        fi_close(&buffer_mr_->fid);
-        buffer_mr_ = nullptr;
+    for (auto &chunk : buffer_chunks_) {
+        if (chunk.mr) {
+            fi_close(&chunk.mr->fid);
+        }
+        if (chunk.buffer) {
+            free(chunk.buffer);
+        }
     }
-    if (buffer_chunk_) {
-        free(buffer_chunk_);
-        buffer_chunk_ = nullptr;
-    }
+    buffer_chunks_.clear();
 }
 
 nixl_status_t
-ControlRequestPool::initializeWithBuffersAndXferIds(struct fid_domain *domain,
-                                                    const std::vector<uint32_t> &xfer_ids) {
-    if (xfer_ids.size() != requests_.size()) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    // Allocate buffer chunk
-    buffer_chunk_size_ = BUFFER_SIZE * requests_.size();
-
-    buffer_chunk_ = malloc(buffer_chunk_size_);
-    if (!buffer_chunk_) {
-        NIXL_ERROR << "Standard allocation failed for control request pool on rail " << rail_id_;
+ControlRequestPool::createBufferChunk(size_t chunk_size, BufferChunk &chunk) {
+    // Allocate buffer memory
+    chunk.buffer = malloc(chunk_size);
+    if (!chunk.buffer) {
+        NIXL_ERROR << "CreateBufferChunk on Rail " << rail_id_
+                   << " failed to allocate buffer chunk of size " << chunk_size << " bytes";
         return NIXL_ERR_BACKEND;
     }
 
-    NIXL_DEBUG << "Allocated " << buffer_chunk_size_ << " bytes for control request pool on rail "
-               << rail_id_;
+    chunk.size = chunk_size;
 
     // Register buffer chunk with libfabric
-    int ret = fi_mr_reg(
-        domain, buffer_chunk_, buffer_chunk_size_, FI_SEND | FI_RECV, 0, 0, 0, &buffer_mr_, NULL);
+    int ret =
+        fi_mr_reg(domain_, chunk.buffer, chunk_size, FI_SEND | FI_RECV, 0, 0, 0, &chunk.mr, NULL);
     if (ret) {
-        free(buffer_chunk_);
-        buffer_chunk_ = nullptr;
+        NIXL_ERROR << "CreateBufferChunk on Rail " << rail_id_
+                   << " fi_mr_reg failed for buffer chunk: " << fi_strerror(-ret)
+                   << " buffer=" << chunk.buffer << " size=" << chunk_size;
+        free(chunk.buffer);
+        chunk.buffer = nullptr;
         return NIXL_ERR_BACKEND;
     }
-    // Pre-assign buffers and XFER_IDs to requests
+
+    NIXL_INFO << "CreateBufferChunk on Rail " << rail_id_ << " successfully created buffer chunk:"
+              << " buffer=" << chunk.buffer << " size=" << chunk.size << " mr=" << chunk.mr
+              << " mr_key=" << fi_mr_key(chunk.mr);
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+ControlRequestPool::initialize(struct fid_domain *domain) {
+
+    // Store domain for future expansions
+    domain_ = domain;
+
+    // Create initial buffer chunk
+    BufferChunk initial_chunk;
+    nixl_status_t status = createBufferChunk(chunk_size_, initial_chunk);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "InitializeWithBuffers on Rail " << rail_id_
+                   << " failed to create initial buffer chunk";
+        return status;
+    }
+
+    buffer_chunks_.push_back(initial_chunk);
+
+    // Pre-assign buffers to requests
     for (size_t i = 0; i < requests_.size(); ++i) {
-        requests_[i].xfer_id = xfer_ids[i];
-        requests_[i].buffer = static_cast<char *>(buffer_chunk_) + (i * BUFFER_SIZE);
-        requests_[i].mr = buffer_mr_;
-        requests_[i].buffer_size = BUFFER_SIZE;
+        void *buffer_addr =
+            static_cast<char *>(initial_chunk.buffer) + (i * NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE);
+        requests_[i].buffer = buffer_addr;
+        requests_[i].mr = initial_chunk.mr;
+        requests_[i].buffer_size = NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE;
         requests_[i].operation_type = nixlLibfabricReq::SEND; // Default for control
     }
+
+    NIXL_INFO << "InitializeWithBuffers on Rail " << rail_id_ << " successfully initialized with "
+              << buffer_chunks_.size() << " buffer chunks";
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+ControlRequestPool::expandPool() {
+    NIXL_INFO << "Expanding control request pool on rail " << rail_id_ << " from "
+              << requests_.size() << " to " << (requests_.size() * 2) << " requests";
+
+    size_t current_size = requests_.size();
+    size_t expansion_size = initial_pool_size_; // Add same amount as initial size
+
+    // Create new buffer chunk for the expansion
+    BufferChunk new_chunk;
+    nixl_status_t status = createBufferChunk(chunk_size_, new_chunk);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "ExpandPool on Rail " << rail_id_
+                   << " failed to create buffer chunk for pool expansion";
+        return status;
+    }
+
+    buffer_chunks_.push_back(new_chunk);
+
+    // Expand the base pool (adds new requests to requests_ vector and free_indices_)
+    initializeBasePool(expansion_size);
+
+    // Assign buffers to new requests
+    for (size_t i = current_size; i < requests_.size(); ++i) {
+        size_t local_idx = i - current_size;
+        void *buffer_addr = static_cast<char *>(new_chunk.buffer) +
+            (local_idx * NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE);
+
+        // Validate buffer address is within chunk bounds
+        size_t buffer_offset = local_idx * NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE;
+        if (buffer_offset + NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE > new_chunk.size) {
+            NIXL_ERROR << " Rail " << rail_id_ << " buffer assignment out of bounds for request["
+                       << i << "]:"
+                       << " local_idx=" << local_idx << " buffer_offset=" << buffer_offset
+                       << " buffer_size=" << NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE
+                       << " chunk_size=" << new_chunk.size;
+            return NIXL_ERR_BACKEND;
+        }
+
+        requests_[i].buffer = buffer_addr;
+        requests_[i].mr = new_chunk.mr;
+        requests_[i].buffer_size = NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE;
+        requests_[i].operation_type = nixlLibfabricReq::SEND;
+    }
+
+    NIXL_INFO << "Successfully expanded control request pool on rail " << rail_id_ << " to "
+              << requests_.size() << " requests with " << buffer_chunks_.size() << " buffer chunks";
+
     return NIXL_SUCCESS;
 }
 
 nixlLibfabricReq *
 ControlRequestPool::allocate(size_t needed_size) {
-    std::lock_guard<std::mutex> lock(pool_mutex_);
-
-    if (free_indices_.empty()) {
-        return nullptr; // No free requests
+    // Validate size before attempting allocation
+    if (needed_size > NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE) {
+        NIXL_ERROR << "Control pool allocation failed on rail " << rail_id_ << " - requested size "
+                   << needed_size << " exceeds buffer size "
+                   << NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE;
+        return nullptr;
     }
-    if (needed_size > BUFFER_SIZE) {
-        return nullptr; // Size too large
+
+    // Use common allocation logic from base class
+    nixlLibfabricReq *req = allocateReq();
+
+    if (req) {
+        // Always reset buffer_size to the actual message size needed
+        // The buffer itself is always NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE, but we need
+        // to set buffer_size to the actual message size for libfabric operations
+        req->buffer_size = needed_size;
+
+        NIXL_TRACE << "Allocate on Rail " << rail_id_
+                   << " allocated control request XFER_ID=" << req->xfer_id
+                   << " buffer_size=" << req->buffer_size;
+    } else {
+        NIXL_ERROR << "Allocate on Rail " << rail_id_ << " failed to allocate control request";
     }
-
-    size_t idx = free_indices_.top();
-    free_indices_.pop();
-
-    nixlLibfabricReq *req = &requests_[idx];
-    req->in_use = true;
 
     return req;
 }
@@ -152,13 +322,9 @@ DataRequestPool::DataRequestPool(size_t pool_size, size_t rail_id)
     : RequestPool(pool_size, rail_id) {}
 
 nixl_status_t
-DataRequestPool::initializeWithXferIds(const std::vector<uint32_t> &xfer_ids) {
-    if (xfer_ids.size() != requests_.size()) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    // Pre-assign XFER_IDs to requests
+DataRequestPool::initialize() {
+    // Initialize data requests
     for (size_t i = 0; i < requests_.size(); ++i) {
-        requests_[i].xfer_id = xfer_ids[i];
         requests_[i].buffer = nullptr; // No buffers for data requests
         requests_[i].mr = nullptr;
         requests_[i].buffer_size = 0;
@@ -167,21 +333,39 @@ DataRequestPool::initializeWithXferIds(const std::vector<uint32_t> &xfer_ids) {
     return NIXL_SUCCESS;
 }
 
-nixlLibfabricReq *
-DataRequestPool::allocate(nixlLibfabricReq::OpType op_type) {
-    std::lock_guard<std::mutex> lock(pool_mutex_);
+nixl_status_t
+DataRequestPool::expandPool() {
+    NIXL_INFO << "Expanding data request pool on rail " << rail_id_ << " from " << requests_.size()
+              << " to " << (requests_.size() * 2) << " requests";
 
-    if (free_indices_.empty()) {
-        return nullptr;
+    size_t current_size = requests_.size();
+    size_t expansion_size = initial_pool_size_; // Add same amount as initial size
+
+    // Expand the base pool (adds new requests to requests_ vector and free_indices_)
+    initializeBasePool(expansion_size);
+
+    // Initialize new requests
+    for (size_t i = current_size; i < requests_.size(); ++i) {
+        requests_[i].buffer = nullptr; // No buffers for data requests
+        requests_[i].mr = nullptr;
+        requests_[i].buffer_size = 0;
+        requests_[i].operation_type = nixlLibfabricReq::WRITE; // Default for data
     }
 
-    size_t idx = free_indices_.top();
-    free_indices_.pop();
+    NIXL_INFO << "Successfully expanded data request pool on rail " << rail_id_ << " to "
+              << requests_.size() << " requests";
 
-    nixlLibfabricReq *req = &requests_[idx];
-    req->in_use = true;
-    req->operation_type = op_type;
+    return NIXL_SUCCESS;
+}
 
+nixlLibfabricReq *
+DataRequestPool::allocate(nixlLibfabricReq::OpType op_type) {
+    // Use common allocation logic from base class
+    nixlLibfabricReq *req = allocateReq();
+    if (req) {
+        // Set the operation type specific to data requests
+        req->operation_type = op_type;
+    }
     return req;
 }
 
@@ -192,9 +376,10 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                                      uint16_t id)
     : rail_id(id),
       device_name(device),
+      provider_name(provider),
       blocking_cq_sread_supported(true),
-      control_request_pool_(CONTROL_REQUESTS_PER_RAIL, id),
-      data_request_pool_(DATA_REQUESTS_PER_RAIL, id) {
+      control_request_pool_(NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL, id),
+      data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id) {
     // Initialize all pointers to nullptr
     info = nullptr;
     fabric = nullptr;
@@ -235,14 +420,13 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             NIXL_ERROR << "fi_getinfo failed for rail " << rail_id << ": " << fi_strerror(-ret);
             throw std::runtime_error("fi_getinfo failed for rail " + std::to_string(rail_id));
         }
-
         // Create fabric for this rail
         ret = fi_fabric(info->fabric_attr, &fabric, NULL);
         if (ret) {
             NIXL_ERROR << "fi_fabric failed for rail " << rail_id << ": " << fi_strerror(-ret);
             throw std::runtime_error("fi_fabric failed for rail " + std::to_string(rail_id));
         }
-        NIXL_TRACE << "fabric_attr->name " << info->fabric_attr->name;
+        NIXL_INFO << "fabric_attr->name " << info->fabric_attr->name;
         // Create domain for this rail
         ret = fi_domain(fabric, info, &domain, NULL);
         if (ret) {
@@ -286,8 +470,6 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         }
         // Create AV for this rail
         struct fi_av_attr av_attr = {};
-        av_attr.type = FI_AV_TABLE;
-        av_attr.count = 1024;
         ret = fi_av_open(domain, &av_attr, &av, NULL);
         if (ret) {
             NIXL_ERROR << "fi_av_open failed for rail " << rail_id << ": " << fi_strerror(-ret);
@@ -343,29 +525,22 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             throw std::runtime_error("fi_getname failed for rail " + std::to_string(rail_id));
         }
 
-        // Pre-allocate XFER_IDs for both pools
-        std::vector<uint32_t> control_xfer_ids =
-            LibfabricUtils::preallocateXferIds(CONTROL_REQUESTS_PER_RAIL);
-        std::vector<uint32_t> data_xfer_ids =
-            LibfabricUtils::preallocateXferIds(DATA_REQUESTS_PER_RAIL);
-
-        // Initialize control request pool with buffers and XFER_IDs
-        nixl_status_t status =
-            control_request_pool_.initializeWithBuffersAndXferIds(domain, control_xfer_ids);
+        // Initialize control request pool with buffers
+        nixl_status_t status = control_request_pool_.initialize(domain);
         if (status != NIXL_SUCCESS) {
             throw std::runtime_error("Failed to initialize control request pool for rail " +
                                      std::to_string(rail_id));
         }
-        // Initialize data request pool with XFER_IDs only
-        status = data_request_pool_.initializeWithXferIds(data_xfer_ids);
+        // Initialize data request pool
+        status = data_request_pool_.initialize();
         if (status != NIXL_SUCCESS) {
             throw std::runtime_error("Failed to initialize data request pool for rail " +
                                      std::to_string(rail_id));
         }
 
-        NIXL_TRACE << "Initialized request pools: " << CONTROL_REQUESTS_PER_RAIL
-                   << " control requests, " << DATA_REQUESTS_PER_RAIL << " data requests for rail "
-                   << rail_id;
+        NIXL_TRACE << "Initialized request pools: " << NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL
+                   << " control requests, " << NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL
+                   << " data requests for rail " << rail_id;
 
         // Post initial receive using new resource management system
         nixlLibfabricReq *recv_req = allocateControlRequest(NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE);
@@ -402,7 +577,8 @@ nixlLibfabricRail::isProperlyInitialized() const {
 void
 nixlLibfabricRail::cleanup() {
     NIXL_TRACE << "Starting cleanup for rail " << rail_id;
-    // STEP 1: Close endpoint first (it depends on CQ and AV)
+
+    // STEP 1: Close endpoint first to stop any new operations
     if (endpoint) {
         NIXL_TRACE << "Closing endpoint for rail " << rail_id;
         int ret = fi_close(&endpoint->fid);
@@ -412,7 +588,8 @@ nixlLibfabricRail::cleanup() {
         }
         endpoint = nullptr;
     }
-    // STEP 2: Close CQ and AV (they depend on domain)
+
+    // STEP 2: Close CQ after endpoint
     if (cq) {
         NIXL_TRACE << "Closing completion queue for rail " << rail_id;
         int ret = fi_close(&cq->fid);
@@ -421,6 +598,7 @@ nixlLibfabricRail::cleanup() {
         }
         cq = nullptr;
     }
+
     if (av) {
         NIXL_TRACE << "Closing address vector for rail " << rail_id;
         int ret = fi_close(&av->fid);
@@ -630,7 +808,6 @@ nixlLibfabricRail::processLocalSendCompletion(struct fi_cq_data_entry *comp) {
             req->completion_callback();
             NIXL_TRACE << "Completion callback completed for send";
         }
-        // Always release request back to pool
         releaseRequest(req);
     } else {
         NIXL_ERROR << "No request found for context " << comp->op_context << " on rail " << rail_id;
@@ -653,8 +830,6 @@ nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
             req->completion_callback();
             NIXL_TRACE << "Completion callback completed for " << operation_type;
         }
-
-        // Always release request back to pool
         releaseRequest(req);
     } else {
         NIXL_ERROR << "No request found for " << operation_type << " completion context "
@@ -739,7 +914,6 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) {
     // Clear the receive buffer after processing
     memset(req->buffer, 0, req->buffer_size);
 
-    // Release the current request
     releaseRequest(req);
 
     // Post a new receive using new resource management system
@@ -825,9 +999,9 @@ nixl_status_t
 nixlLibfabricRail::postSend(uint64_t immediate_data,
                             fi_addr_t dest_addr,
                             nixlLibfabricReq *req) const {
-    if (req->buffer_size == 0 || req->buffer_size > ControlRequestPool::BUFFER_SIZE) {
+    if (req->buffer_size == 0 || req->buffer_size > NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE) {
         NIXL_ERROR << "Invalid message size: " << req->buffer_size
-                   << " (max: " << ControlRequestPool::BUFFER_SIZE << ")";
+                   << " (max: " << NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE << ")";
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -1047,6 +1221,7 @@ nixlLibfabricRail::releaseRequest(nixlLibfabricReq *req) {
         NIXL_ERROR << "Null request provided to releaseRequest on rail " << rail_id;
         return;
     }
+
     // Determine which pool to release to based on operation type
     if (req->operation_type == nixlLibfabricReq::SEND ||
         req->operation_type == nixlLibfabricReq::RECV) {
@@ -1054,7 +1229,6 @@ nixlLibfabricRail::releaseRequest(nixlLibfabricReq *req) {
     } else {
         data_request_pool_.release(req);
     }
-    NIXL_TRACE << "Released request with XFER_ID " << req->xfer_id;
 }
 
 nixlLibfabricReq *
