@@ -64,8 +64,10 @@ cd ${INSTALL_DIR}
 ./bin/nixl_example
 ./bin/nixl_etcd_example
 ./bin/ucx_backend_test
-# Skip UCX_MO backend test, fails VRAM transfers
-#./bin/ucx_mo_backend_test
+# Skip UCX_MO backend test on GPU worker, fails VRAM transfers
+if ! $HAS_GPU ; then
+    ./bin/ucx_mo_backend_test
+fi
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
 sleep 1
