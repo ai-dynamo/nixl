@@ -13,10 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if ucx_dep.found()
-    ucx_backend_dep = declare_dependency(link_with: ucx_backend_lib, include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/plugins/ucx'])
-endif
-
 desc_example = executable('desc_example',
            'desc_example.cpp',
            dependencies: [nixl_dep, nixl_infra],
