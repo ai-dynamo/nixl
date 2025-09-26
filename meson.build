@@ -155,9 +155,16 @@ libfabric_path = get_option('libfabric_path')
 if libfabric_path != ''
   libfabric_lib_path = libfabric_path + '/lib'
   libfabric_inc_path = libfabric_path + '/include'
-  libfabric_dep = declare_dependency(
-    link_args : ['-L' + libfabric_lib_path, '-lfabric'],
-    include_directories : include_directories(libfabric_inc_path))
+  # Check if path is absolute
+  if libfabric_inc_path.startswith('/')
+    libfabric_dep = declare_dependency(
+      link_args : ['-L' + libfabric_lib_path, '-lfabric'],
+      compile_args : ['-I' + libfabric_inc_path])
+  else
+    libfabric_dep = declare_dependency(
+      link_args : ['-L' + libfabric_lib_path, '-lfabric'],
+      include_directories : include_directories(libfabric_inc_path))
+  endif
 else
   libfabric_dep = dependency('libfabric', required: false)
 endif
