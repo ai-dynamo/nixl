@@ -78,7 +78,7 @@ struct docaXferReqGpu {
     uint32_t id;
     uintptr_t lbuf[DOCA_XFER_REQ_SIZE];
     uintptr_t rbuf[DOCA_XFER_REQ_SIZE];
-    uint32_t size[DOCA_XFER_REQ_SIZE];
+    size_t size[DOCA_XFER_REQ_SIZE];
     uint32_t lkey[DOCA_XFER_REQ_SIZE];
     uint32_t rkey[DOCA_XFER_REQ_SIZE];
     uint16_t num;

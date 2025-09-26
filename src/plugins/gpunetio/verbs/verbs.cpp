@@ -410,7 +410,7 @@ mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, s
             ibmr = ibv_reg_dmabuf_mr(pd,
                                      0,
                                      tot_size,
-                                     0,
+                                     (uint64_t)addr,
                                      dmabuf_fd,
                                      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
                                          IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);

@@ -129,7 +129,7 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
         doca_gpu_dev_verbs_submit(qp, wqe_idx + 1);
         // Wait for final CQE in block of iterations
         if (doca_gpu_dev_verbs_poll_cq_at(doca_gpu_dev_verbs_qp_get_cq_sq(qp), wqe_idx) != 0)
-            printf("Error CQE!\n");
+            printf("kernel_read: Error CQE!\n");
 
         DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].last_wqe) = wqe_idx;
         DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].in_use) = 1;
@@ -164,6 +164,14 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
         wqe_idx = base_wqe_idx + idx;
         wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
 
+#if ENABLE_DEBUG == 1
+        printf("prepare_write radd %lx rkey %x ladd %lx lkey %x size %ld\n",
+            (uint64_t)(xferReqRing[pos].rbuf[idx]),
+                                             xferReqRing[pos].rkey[idx],
+                                             (uint64_t)(xferReqRing[pos].lbuf[idx]),
+                                             xferReqRing[pos].lkey[idx],
+                                             (uint64_t)xferReqRing[pos].size[idx]);
+#endif
         doca_gpu_dev_verbs_wqe_prepare_write(qp,
                                              wqe_ptr,
                                              wqe_idx,
@@ -223,7 +231,7 @@ kernel_progress(struct docaXferCompletion *completion_list,
                             DOCA_GPUNETIO_VOLATILE(
                                 completion_list[index].xferReqRingGpu->last_wqe)) != 0) {
                         DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
-                        printf("Error CQE!\n");
+                        printf("kernel_progress: Error CQE!\n");
                         break;
                     }
 

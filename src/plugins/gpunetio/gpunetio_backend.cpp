@@ -1047,7 +1047,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             xferReqRingCpu[pos].lkey[idx] = (uintptr_t)lmd->mr->get_lkey();
             xferReqRingCpu[pos].rbuf[idx] = (uintptr_t)rmd->mr->get_addr();
             xferReqRingCpu[pos].rkey[idx] = (uintptr_t)rmd->mr->get_rkey();
-            xferReqRingCpu[pos].size[idx] = (uint32_t)lsize;
+            xferReqRingCpu[pos].size[idx] = lsize;
             xferReqRingCpu[pos].num++;
         }
 
