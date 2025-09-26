@@ -50,18 +50,22 @@ public:
     // Rail management
     /** Create data rails for high-bandwidth transfers (one per EFA device)
      * @param efa_devices List of EFA device names to create rails on
+     * @param provider_name Provider name ("efa" or "efa-direct")
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
-    createDataRails(const std::vector<std::string> &efa_devices);
+    createDataRails(const std::vector<std::string> &efa_devices, const std::string &provider_name);
 
     /** Create control rails for connection management and notifications
      * @param efa_devices List of EFA device names
+     * @param provider_name Provider name ("efa" or "efa-direct")
      * @param num_control_rails Number of control rails to create
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
-    createControlRails(const std::vector<std::string> &efa_devices, size_t num_control_rails);
+    createControlRails(const std::vector<std::string> &efa_devices,
+                       const std::string &provider_name,
+                       size_t num_control_rails);
 
     // Access rails
     /** Get reference to data rail by ID */
@@ -105,6 +109,7 @@ public:
      * @param buffer Memory buffer to register
      * @param length Buffer size in bytes
      * @param mem_type Memory type (DRAM_SEG or VRAM_SEG)
+     * @param gpu_id GPU device ID (used for VRAM_SEG, ignored for DRAM_SEG)
      * @param mr_list_out Memory registration handles, indexed by rail ID
      * @param key_list_out Remote access keys, indexed by rail ID
      * @param selected_rails_out List of rail IDs where memory was registered
@@ -114,6 +119,7 @@ public:
     registerMemory(void *buffer,
                    size_t length,
                    nixl_mem_t mem_type,
+                   int gpu_id,
                    std::vector<struct fid_mr *> &mr_list_out,
                    std::vector<uint64_t> &key_list_out,
                    std::vector<size_t> &selected_rails_out);
@@ -300,10 +306,11 @@ private:
 
     // Active Rail Tracking System
     std::unordered_set<size_t> active_rails_;
+    mutable std::mutex active_rails_mutex_;
 
     // Internal rail selection method
     std::vector<size_t>
-    selectRailsForMemory(void *mem_addr, nixl_mem_t mem_type) const;
+    selectRailsForMemory(void *mem_addr, nixl_mem_t mem_type, int gpu_id) const;
 
     // Helper functions for connection SerDes
     void

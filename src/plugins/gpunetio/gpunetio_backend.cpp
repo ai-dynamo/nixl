@@ -286,7 +286,11 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     memset(notif_send_cpu, 0, sizeof(struct docaNotif));
 
-    nixlDocaEngineCheckCuError(cuCtxGetCurrent(&main_cuda_ctx), "cuCtxGetCurrent failure");
+    // We may need a GPU warmup with relevant DOCA engine kernels
+    doca_kernel_write(0, nullptr, nullptr, 0);
+    doca_kernel_read(0, nullptr, nullptr, 0);
+    nixlDocaEngineCheckCudaError(cudaStreamSynchronize(0), "stream synchronize");
+
     // Warmup
     doca_kernel_progress(
         wait_stream, nullptr, notif_fill_gpu, notif_progress_gpu, notif_send_gpu, wait_exit_gpu);
@@ -297,11 +301,6 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
                          notif_progress_gpu,
                          notif_send_gpu,
                          wait_exit_gpu);
-
-    // We may need a GPU warmup with relevant DOCA engine kernels
-    doca_kernel_write(0, nullptr, nullptr, 0);
-    doca_kernel_read(0, nullptr, nullptr, 0);
-    nixlDocaEngineCheckCudaError(cudaStreamSynchronize(0), "stream synchronize");
 
     lastPostedReq = 0;
     xferRingPos = 0;

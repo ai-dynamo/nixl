@@ -22,39 +22,74 @@
 #include <iomanip>
 #include <sstream>
 #include <atomic>
+#include <cstring>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
 
 namespace LibfabricUtils {
 
-std::vector<std::string>
+
+std::pair<std::string, std::vector<std::string>>
 getAvailableEfaDevices() {
-    std::vector<std::string> devices;
+    std::unordered_map<std::string, std::vector<std::string>> provider_devices_map;
+    std::vector<std::string> all_efa_devices;
+    std::string fabric_name;
     struct fi_info *hints, *info;
     hints = fi_allocinfo();
     if (!hints) {
         NIXL_ERROR << "Failed to allocate fi_info for device discovery";
-        return devices;
+        return {fabric_name, all_efa_devices};
     }
 
+    // Important to initialize this to allow differentiation between EFA and EFA-Direct
+    hints->mode = ~0;
+
+    // Set required capabilities - let libfabric select the best provider
+    hints->caps = FI_READ | FI_WRITE | FI_RECV | FI_SEND | FI_REMOTE_READ | FI_REMOTE_WRITE |
+        FI_LOCAL_COMM | FI_REMOTE_COMM;
     hints->fabric_attr->prov_name = strdup("efa");
+    hints->ep_attr->type = FI_EP_RDM;
+
     int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
     if (ret) {
         NIXL_ERROR << "fi_getinfo failed during device discovery: " << fi_strerror(-ret);
         fi_freeinfo(hints);
-        return devices;
+        return {fabric_name, all_efa_devices};
     }
 
+    // Process providers and filter for EFA providers with RMA capabilities
     for (struct fi_info *cur = info; cur; cur = cur->next) {
-        if (cur->domain_attr && cur->domain_attr->name) {
-            devices.push_back(cur->domain_attr->name);
+        if (cur->domain_attr && cur->domain_attr->name && cur->fabric_attr &&
+            cur->fabric_attr->name) {
+
+            std::string device_name = cur->domain_attr->name;
+            std::string provider_name = cur->fabric_attr->name;
+
+            // Add device to the appropriate provider's vector
+            provider_devices_map[provider_name].push_back(device_name);
+
+            NIXL_TRACE << "Found EFA device: " << device_name << " with provider: " << provider_name
+                       << " (caps: 0x" << std::hex << cur->caps << std::dec << ")";
         }
     }
 
     fi_freeinfo(info);
     fi_freeinfo(hints);
-    return devices;
+
+    // Extract device names from the map, prioritizing efa-direct over efa
+    all_efa_devices.clear();
+    if (provider_devices_map.find("efa-direct") != provider_devices_map.end()) {
+        all_efa_devices = provider_devices_map["efa-direct"];
+        fabric_name = "efa-direct";
+        NIXL_TRACE << "Using efa-direct provider with " << all_efa_devices.size() << " devices";
+    } else if (provider_devices_map.find("efa") != provider_devices_map.end()) {
+        all_efa_devices = provider_devices_map["efa"];
+        fabric_name = "efa";
+        NIXL_TRACE << "Using efa provider with " << all_efa_devices.size() << " devices";
+    }
+
+    return {fabric_name, all_efa_devices};
 }
 
 std::string
@@ -69,29 +104,29 @@ hexdump(const void *data) {
     return ss.str();
 }
 
-// Simple counter for pre-allocation only
-static uint32_t g_xfer_id_counter = 1; // Start from 1, 0 reserved for special cases
+// Thread-safe atomic counter for dynamic allocation to ensure uniqueness
+static std::atomic<uint32_t> g_xfer_id_counter{1}; // Start from 1, 0 reserved for special cases
 
-std::vector<uint32_t>
-preallocateXferIds(size_t count) {
-    std::vector<uint32_t> xfer_ids;
-    xfer_ids.reserve(count);
+uint32_t
+getNextXferId() {
+    uint32_t xfer_id = g_xfer_id_counter.fetch_add(1);
 
-    for (size_t i = 0; i < count; ++i) {
-        uint32_t xfer_id = g_xfer_id_counter++;
-
-        // Handle wraparound: 20-bit field can hold 0 to 1,048,575
-        if (xfer_id > NIXL_XFER_ID_MASK) {
-            // Reset counter and try again
-            g_xfer_id_counter = 1;
-            xfer_id = 1;
-            g_xfer_id_counter = 2; // Update for next iteration
+    // Handle wraparound: 20-bit field can hold 0 to 1,048,575
+    if (xfer_id > NIXL_XFER_ID_MASK) {
+        // Reset counter atomically and get a fresh ID
+        uint32_t expected = xfer_id;
+        while (expected > NIXL_XFER_ID_MASK &&
+               !g_xfer_id_counter.compare_exchange_weak(expected, 1)) {
+            expected = g_xfer_id_counter.load();
         }
-
-        xfer_ids.push_back(xfer_id);
+        xfer_id = g_xfer_id_counter.fetch_add(1);
+        // Ensure we don't exceed the mask after reset
+        if (xfer_id > NIXL_XFER_ID_MASK) {
+            xfer_id = 1;
+        }
     }
 
-    return xfer_ids;
+    return xfer_id;
 }
 
 } // namespace LibfabricUtils
