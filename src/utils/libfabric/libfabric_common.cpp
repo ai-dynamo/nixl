@@ -104,29 +104,29 @@ hexdump(const void *data) {
     return ss.str();
 }
 
-// Simple counter for pre-allocation only
-static uint32_t g_xfer_id_counter = 1; // Start from 1, 0 reserved for special cases
+// Thread-safe atomic counter for dynamic allocation to ensure uniqueness
+static std::atomic<uint32_t> g_xfer_id_counter{1}; // Start from 1, 0 reserved for special cases
 
-std::vector<uint32_t>
-preallocateXferIds(size_t count) {
-    std::vector<uint32_t> xfer_ids;
-    xfer_ids.reserve(count);
+uint32_t
+getNextXferId() {
+    uint32_t xfer_id = g_xfer_id_counter.fetch_add(1);
 
-    for (size_t i = 0; i < count; ++i) {
-        uint32_t xfer_id = g_xfer_id_counter++;
-
-        // Handle wraparound: 20-bit field can hold 0 to 1,048,575
-        if (xfer_id > NIXL_XFER_ID_MASK) {
-            // Reset counter and try again
-            g_xfer_id_counter = 1;
-            xfer_id = 1;
-            g_xfer_id_counter = 2; // Update for next iteration
+    // Handle wraparound: 20-bit field can hold 0 to 1,048,575
+    if (xfer_id > NIXL_XFER_ID_MASK) {
+        // Reset counter atomically and get a fresh ID
+        uint32_t expected = xfer_id;
+        while (expected > NIXL_XFER_ID_MASK &&
+               !g_xfer_id_counter.compare_exchange_weak(expected, 1)) {
+            expected = g_xfer_id_counter.load();
         }
-
-        xfer_ids.push_back(xfer_id);
+        xfer_id = g_xfer_id_counter.fetch_add(1);
+        // Ensure we don't exceed the mask after reset
+        if (xfer_id > NIXL_XFER_ID_MASK) {
+            xfer_id = 1;
+        }
     }
 
-    return xfer_ids;
+    return xfer_id;
 }
 
 } // namespace LibfabricUtils
