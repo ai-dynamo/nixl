@@ -228,6 +228,78 @@ impl<'a> RegDescList<'a> {
         self.descriptors.iter().position(|d| d == desc)
     }
 
+    /// Deserialize a descriptor list from a byte vector using custom binary format
+    pub fn deserialize(data: &[u8]) -> Result<Self, NixlError> {
+        if data.is_empty() {
+            return Err(NixlError::InvalidParam);
+        }
+
+        // Use shared codec readers
+
+        let mut offset = 0;
+
+        // Read memory type
+        let (mem_type, desc_count) = super::codec::read_header(data, &mut offset)?;
+
+        // Create new descriptor list (but we can't use the C API constructor directly)
+        // We need to create it and then populate the internal tracking
+        let mut new_list = Self::new(mem_type)?;
+
+        // Read each descriptor
+        for _ in 0..desc_count {
+            // Read addr, len, dev_id (each 8 bytes)
+            let addr = super::codec::read_u64(data, &mut offset)? as usize;
+            let len = super::codec::read_u64(data, &mut offset)? as usize;
+            let dev_id = super::codec::read_u64(data, &mut offset)?;
+
+            // Read metadata length
+            let metadata_len = super::codec::read_u64(data, &mut offset)? as usize;
+
+            // Read metadata
+            let metadata = super::codec::read_bytes(data, &mut offset, metadata_len)?.to_vec();
+
+            // Add descriptor to the list
+            new_list.add_desc_with_meta(addr, len, dev_id, &metadata)?;
+        }
+
+        Ok(new_list)
+    }
+
+    /// Serialize the descriptor list to a byte vector using custom binary format
+    pub fn serialize(&self) -> Result<Vec<u8>, NixlError> {
+        // Precompute capacity: 1 (mem_type) + 8 (count) + per-desc (24 + 8 + meta.len())
+        let mut total_size = 1usize + 8usize;
+        for d in &self.descriptors {
+            total_size = total_size
+                .saturating_add(24) // addr,len,dev_id
+                .saturating_add(8)  // metadata_len
+                .saturating_add(d.metadata.len());
+        }
+
+        let mut buffer = Vec::new();
+        super::codec::reserve_capacity(&mut buffer, total_size);
+
+        // Format: [mem_type: u8][descriptor_count: u64][descriptors...]
+        // Each descriptor: [addr: u64][len: u64][dev_id: u64][metadata_len: u64][metadata: bytes]
+
+        super::codec::write_header(&mut buffer, self.mem_type, self.descriptors.len());
+
+        // Write each descriptor
+        for desc in &self.descriptors {
+            // Write addr, len, dev_id
+            super::codec::write_u64(&mut buffer, desc.addr as u64);
+            super::codec::write_u64(&mut buffer, desc.len as u64);
+            super::codec::write_u64(&mut buffer, desc.dev_id);
+
+            // Write metadata length and data
+            let metadata_len_u64 = desc.metadata.len() as u64;
+            super::codec::write_u64(&mut buffer, metadata_len_u64);
+            buffer.extend_from_slice(&desc.metadata);
+        }
+
+        Ok(buffer)
+    }
+
     pub(crate) fn handle(&self) -> *mut bindings::nixl_capi_reg_dlist_s {
         // SAFETY: backend must be in sync before usage
         let _ = self.ensure_synced();

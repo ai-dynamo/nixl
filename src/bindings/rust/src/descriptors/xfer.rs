@@ -176,6 +176,57 @@ impl<'a> XferDescList<'a> {
         self.descriptors.iter().position(|d| d == desc)
     }
 
+    /// Deserialize a descriptor list from a byte vector using custom binary format
+    pub fn deserialize(data: &[u8]) -> Result<Self, NixlError> {
+        if data.is_empty() {
+            return Err(NixlError::InvalidParam);
+        }
+
+        // Use shared codec readers
+
+        let mut offset = 0;
+        let (mem_type, desc_count) = super::codec::read_header(data, &mut offset)?;
+
+        // Create new descriptor list
+        let mut new_list = Self::new(mem_type)?;
+
+        // Read each descriptor
+        for _ in 0..desc_count {
+            // Read addr, len, dev_id (each 8 bytes)
+            let addr = super::codec::read_u64(data, &mut offset)? as usize;
+            let len = super::codec::read_u64(data, &mut offset)? as usize;
+            let dev_id = super::codec::read_u64(data, &mut offset)?;
+
+            // Add descriptor to the list
+            new_list.add_desc(addr, len, dev_id)?;
+        }
+
+        Ok(new_list)
+    }
+
+    /// Serialize the descriptor list to a byte vector using custom binary format
+    pub fn serialize(&self) -> Result<Vec<u8>, NixlError> {
+        // Precompute capacity: 1 (mem_type) + 8 (count) + per-desc (24)
+        let total_size = 1usize + 8usize + self.descriptors.len().saturating_mul(24);
+        let mut buffer = Vec::new();
+        super::codec::reserve_capacity(&mut buffer, total_size);
+
+        // Format: [mem_type: u8][descriptor_count: u64][descriptors...]
+        // Each descriptor: [addr: u64][len: u64][dev_id: u64]
+
+        super::codec::write_header(&mut buffer, self.mem_type, self.descriptors.len());
+
+        // Write each descriptor
+        for desc in &self.descriptors {
+            // Write addr, len, dev_id
+            super::codec::write_u64(&mut buffer, desc.addr as u64);
+            super::codec::write_u64(&mut buffer, desc.len as u64);
+            super::codec::write_u64(&mut buffer, desc.dev_id);
+        }
+
+        Ok(buffer)
+    }
+
     pub(crate) fn handle(&self) -> *mut bindings::nixl_capi_xfer_dlist_s {
         let _ = self.ensure_synced();
         self.inner.as_ptr()

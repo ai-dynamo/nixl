@@ -20,6 +20,47 @@ mod reg;
 mod xfer;
 mod xfer_dlist_handle;
 
+mod codec {
+    use super::*;
+
+    pub fn reserve_capacity(buf: &mut Vec<u8>, additional: usize) {
+        let needed = buf.len().saturating_add(additional);
+        if buf.capacity() < needed { buf.reserve(needed - buf.capacity()); }
+    }
+
+    pub fn write_u8(buf: &mut Vec<u8>, v: u8) { buf.push(v); }
+
+    pub fn write_u64(buf: &mut Vec<u8>, v: u64) { buf.extend_from_slice(&v.to_le_bytes()); }
+
+    pub fn read_bytes<'a>(data: &'a [u8], off: &mut usize, len: usize) -> Result<&'a [u8], NixlError> {
+        let end = off.checked_add(len).ok_or(NixlError::InvalidParam)?;
+        let slice = data.get(*off..end).ok_or(NixlError::InvalidParam)?;
+        *off = end;
+        Ok(slice)
+    }
+
+    pub fn read_u8(data: &[u8], off: &mut usize) -> Result<u8, NixlError> {
+        Ok(read_bytes(data, off, 1)?[0])
+    }
+
+    pub fn read_u64(data: &[u8], off: &mut usize) -> Result<u64, NixlError> {
+        let bytes = read_bytes(data, off, 8)?;
+        let arr: [u8; 8] = bytes.try_into().map_err(|_| NixlError::InvalidParam)?;
+        Ok(u64::from_le_bytes(arr))
+    }
+
+    pub fn write_header(buf: &mut Vec<u8>, mem_type: MemType, count: usize) {
+        write_u8(buf, mem_type as u8);
+        write_u64(buf, count as u64);
+    }
+
+    pub fn read_header(data: &[u8], off: &mut usize) -> Result<(MemType, usize), NixlError> {
+        let mem = MemType::from(read_u8(data, off)? as nixl_capi_mem_type_t);
+        let count = read_u64(data, off)? as usize;
+        Ok((mem, count))
+    }
+}
+
 pub use query::{QueryResponse, QueryResponseIterator, QueryResponseList};
 pub use reg::{RegDescList, RegDescriptor};
 pub use xfer::{XferDescList, XferDescriptor};
