@@ -104,12 +104,14 @@ for op_type in READ WRITE; do
 done
 
 # GPUNETIO tests
-for op_type in READ WRITE; do
-    for initiator in $seg_types; do
-        for target in $seg_types; do
-            run_nixlbench_two_workers --backend GPUNETIO --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+if $HAS_GPU ; then
+    for op_type in READ WRITE; do
+        for initiator in $seg_types; do
+            for target in $seg_types; do
+                run_nixlbench_two_workers --backend GPUNETIO --gpunetio_device_list=0 --device_list=mlx5_0 --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+            done
         done
     done
-done
+fi
 
 pkill etcd
