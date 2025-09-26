@@ -148,11 +148,7 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
               --disable-opx \
               --disable-usnic \
               --disable-rstream \
-              --enable-efa \
-              --with-cuda=/usr/local/cuda \
-              --enable-cuda-dlopen \
-              --with-gdrcopy \
-              --enable-gdrcopy-dlopen && \
+              --enable-efa && \
   make -j && \
   make install && \
   $SUDO ldconfig \
