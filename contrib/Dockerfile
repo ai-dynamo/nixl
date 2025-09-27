@@ -140,6 +140,12 @@ RUN cd /usr/local/src && \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
 
+RUN cd /tmp && \
+    git clone --depth 1 https://github.com/google/gtest-parallel.git && \
+    mkdir -p /usr/local/bin && \
+    cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/
+ENV PATH=/usr/local/bin:$PATH
+
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
