@@ -54,6 +54,8 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     libibumad-devel \
     numactl-devel \
     librdmacm-devel \
+    hwloc \
+    hwloc-devel \
     wget \
     zlib
 
