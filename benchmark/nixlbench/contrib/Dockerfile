@@ -48,6 +48,8 @@ RUN apt-get update -y && \
     libz-dev \
     flex \
     libgtest-dev \
+    hwloc \
+    libhwloc-dev \
     build-essential
 
 # Add DOCA repository and install packages
@@ -104,10 +106,38 @@ ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 ARG BUILD_TYPE="release"
-ARG EFA_INSTALLER_VERSION="latest"
+ARG LIBFABRIC_VERSION="v2.3.0"
 ARG NPROC
 
 WORKDIR /workspace
+
+# Build libfabric from source
+# Install RDMA/EFA packages required for libfabric EFA provider
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get -y install \
+    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
+
+# Build libfabric from source
+RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+    "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
+    tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
+    cd libfabric-* && \
+    ./autogen.sh && \
+    ./configure --prefix=/usr/local \
+                --disable-verbs \
+                --disable-psm3 \
+                --disable-opx \
+                --disable-usnic \
+                --disable-rstream \
+                --enable-efa \
+                --with-cuda=/usr/local/cuda \
+                --enable-cuda-dlopen \
+                --with-gdrcopy \
+                --enable-gdrcopy-dlopen && \
+    make -j${NPROC:-$(nproc)} && \
+    make install && \
+    ldconfig
+
 RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
