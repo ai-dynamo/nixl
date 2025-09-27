@@ -34,11 +34,15 @@
 
 // Libfabric configuration constants
 #define NIXL_LIBFABRIC_DEFAULT_CONTROL_RAILS 1
-#define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192
 #define NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_SEC 1
 #define NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD (128 * 1024) // 128KB
 #define NIXL_LIBFABRIC_MAX_XFER_IDS 1024 // Maximum XFER_IDs per notification
 #define LF_EP_NAME_MAX_LEN 56
+
+// Request pool configuration constants
+#define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 1024 // SEND/RECV operations (1:1 with buffers)
+#define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/read operations (no buffers)
+#define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192
 
 // The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
 // | 4-bit MSG TYPE flag | 8-bit agent index | 20-bit XFER_ID |
@@ -144,9 +148,9 @@ struct BinaryNotification {
 
 // Global XFER_ID management
 namespace LibfabricUtils {
-// Pre-allocate XFER_IDs during initialization (NOT fast path)
-std::vector<uint32_t>
-preallocateXferIds(size_t count);
+// Get next unique XFER_ID
+uint32_t
+getNextXferId();
 } // namespace LibfabricUtils
 
 // Utility functions

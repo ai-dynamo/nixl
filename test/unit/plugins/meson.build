@@ -13,8 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('ucx')
-subdir('ucx_mo')
+if ucx_dep.found()
+    subdir('ucx')
+    subdir('ucx_mo')
+endif
 subdir('posix')
 
 
