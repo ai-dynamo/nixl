@@ -90,7 +90,8 @@
  */
 struct BinaryNotification {
     char agent_name[256]; // Fixed-size agent name (null-terminated)
-    char message[1024]; // Fixed-size message (null-terminated)
+    char message[1024]; // Fixed-size message (binary data, not null-terminated)
+    uint32_t message_length; // Actual length of message data
     uint32_t xfer_id_count; // Number of XFER_IDs
     uint32_t
         xfer_ids[NIXL_LIBFABRIC_MAX_XFER_IDS]; // Fixed array of XFER_IDs (max 128 per notification)
@@ -108,11 +109,15 @@ struct BinaryNotification {
         agent_name[sizeof(agent_name) - 1] = '\0';
     }
 
-    /** @brief Set message with bounds checking */
+    /** @brief Set message with bounds checking and proper binary data handling */
     void
     setMessage(const std::string &msg) {
-        strncpy(message, msg.c_str(), sizeof(message) - 1);
-        message[sizeof(message) - 1] = '\0';
+        message_length = std::min(msg.length(), sizeof(message));
+        memcpy(message, msg.data(), message_length);
+        // Zero out remaining space for consistency
+        if (message_length < sizeof(message)) {
+            memset(message + message_length, 0, sizeof(message) - message_length);
+        }
     }
 
     /** @brief Add XFER_ID if space available */
@@ -129,10 +134,10 @@ struct BinaryNotification {
         return std::string(agent_name);
     }
 
-    /** @brief Get message as string */
+    /** @brief Get message as string using stored length for proper binary data handling */
     std::string
     getMessage() const {
-        return std::string(message);
+        return std::string(message, message_length);
     }
 
     /** @brief Get all XFER_IDs as unordered set */
