@@ -19,4 +19,6 @@ if libfabric_dep.found()
 endif
 subdir('serdes')
 subdir('stream')
-subdir('ucx')
+if ucx_dep.found()
+    subdir('ucx')
+endif
