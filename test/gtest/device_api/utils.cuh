@@ -139,7 +139,7 @@ protected:
     nixlDescList<Desc> makeDescList(const std::vector<MemBuffer> &buffers, nixl_mem_t mem_type);
 
     void registerMem(nixlAgent &agent, const std::vector<MemBuffer> &buffers, nixl_mem_t mem_type);
-    void completeWireup(size_t from_agent, size_t to_agent);
+
     void exchangeMD(size_t from_agent, size_t to_agent);
     void invalidateMD();
 
