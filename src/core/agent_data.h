@@ -91,14 +91,14 @@ class nixlAgentData {
                            std::hash<std::string>, strEqual>     remoteSections;
 
         // State/methods for listener thread
-        nixlMDStreamListener               *listener;
-        std::map<nixl_socket_peer_t, int>  remoteSockets;
-        std::thread                        commThread;
-        std::vector<nixl_comm_req_t>       commQueue;
-        std::mutex                         commLock;
-        bool                               commThreadStop;
-        bool                               agentShutdown;
-        bool                               useEtcd;
+        nixlMDStreamListener *listener;
+        std::map<nixl_socket_peer_t, int> remoteSockets;
+        std::thread commThread;
+        std::vector<nixl_comm_req_t> commQueue;
+        std::mutex commLock;
+        bool commThreadStop;
+        bool agentShutdown;
+        bool useEtcd;
         std::unique_ptr<nixlTelemetry> telemetry_;
         void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
