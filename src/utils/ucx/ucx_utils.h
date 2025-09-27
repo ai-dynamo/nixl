@@ -165,6 +165,11 @@ public:
         return memh;
     }
 
+    [[nodiscard]] void *
+    getBase() const noexcept {
+        return base;
+    }
+
     friend class nixlUcxWorker;
     friend class nixlUcxContext;
     friend class nixlUcxEp;
