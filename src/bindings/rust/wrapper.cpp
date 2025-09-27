@@ -1508,6 +1508,32 @@ nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
 }
 
 nixl_capi_status_t
+nixl_capi_query_xfer_backend_type(nixl_capi_agent_t agent,
+                                  nixl_capi_xfer_req_t req_hndl,
+                                  void **backend_type,
+                                  size_t *backend_type_size) {
+    if (!agent || !req_hndl || !backend_type || !backend_type_size) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    nixl_capi_backend_t backend_handle;
+    auto ret = nixl_capi_query_xfer_backend(agent, req_hndl, &backend_handle);
+    if (ret != NIXL_CAPI_SUCCESS) {
+        return ret;
+    }
+
+    static thread_local nixl_backend_t type;
+    auto nixl_ret = agent->inner->getBackendType(backend_handle->backend, type);
+    if (nixl_ret != NIXL_SUCCESS) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+
+    *backend_type = type.data();
+    *backend_type_size = type.size();
+    return NIXL_CAPI_SUCCESS;
+}
+
+nixl_capi_status_t
 nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req)
 {
   if (!req) {

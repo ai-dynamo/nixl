@@ -1324,10 +1324,10 @@ fn test_query_xfer_backend_success() {
             None
         ).expect("Failed to create transfer request");
         // Query which backend will be used for this transfer
-        let result: Result<Backend, NixlError> = agent1.query_xfer_backend(&xfer_req);
+        let result: Result<String, NixlError> = agent1.query_xfer_backend(&xfer_req);
         assert!(result.is_ok(), "query_xfer_backend failed with error: {:?}", result.err());
-        let backend = result.unwrap();
-        println!("Transfer will use backend: {:?}", backend);
+        let backend_name = result.unwrap();
+        println!("Transfer will use backend: {}", backend_name);
    }
 }
 #[test]

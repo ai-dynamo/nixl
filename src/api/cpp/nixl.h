@@ -106,6 +106,15 @@ class nixlAgent {
                        const nixl_b_params_t &params,
                        nixlBackendH* &backend);
         /**
+         * @brief  Get the type of a backend
+         *
+         * @param  backend Backend handle
+         * @param  type [out] Backend type
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        getBackendType(const nixlBackendH *backend, nixl_backend_t &type) const;
+        /**
          * @brief  Register a memory/storage with NIXL. If a list of backends hints is provided
          *         (via extra_params), the registration is limited to the specified backends.
          *

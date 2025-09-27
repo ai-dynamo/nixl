@@ -397,6 +397,22 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 }
 
 nixl_status_t
+nixlAgent::getBackendType(const nixlBackendH *backend, nixl_backend_t &type) const {
+    if (!backend) {
+        NIXL_ERROR_FUNC << "backend handle is not provided";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    try {
+        type = backend->getType();
+        return NIXL_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+nixl_status_t
 nixlAgent::queryMem(const nixl_reg_dlist_t &descs,
                     std::vector<nixl_query_resp_t> &resp,
                     const nixl_opt_args_t *extra_params) const {

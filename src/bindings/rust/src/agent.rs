@@ -931,23 +931,45 @@ impl Agent {
     /// * `req` - Transfer request handle after `post_xfer_req`
     ///
     /// # Returns
-    /// A handle to the backend used for the transfer
+    /// Name of the backend used for the transfer
     ///
     /// # Errors
     /// Returns a NixlError if the operation fails
-    pub fn query_xfer_backend(&self, req: &XferRequest) -> Result<Backend, NixlError> {
-        let mut backend = std::ptr::null_mut();
+    pub fn query_xfer_backend(&self, req: &XferRequest) -> Result<String, NixlError> {
+        let mut backend_type_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+        let mut backend_type_size: usize = 0;
+
         let inner_guard = self.inner.write().unwrap();
         let status = unsafe {
-            nixl_capi_query_xfer_backend(
+            nixl_capi_query_xfer_backend_type(
                 inner_guard.handle.as_ptr(),
                 req.handle(),
-                &mut backend
+                &mut backend_type_ptr,
+                &mut backend_type_size,
             )
         };
         match status {
             NIXL_CAPI_SUCCESS => {
-                Ok(Backend{ inner: NonNull::new(backend).ok_or(NixlError::FailedToCreateBackend)? })
+                if backend_type_ptr.is_null() || backend_type_size == 0 {
+                    return Err(NixlError::BackendError);
+                }
+
+                // Extract the backend type string from the binary data
+                let backend_type = unsafe {
+                    let slice = std::slice::from_raw_parts(
+                        backend_type_ptr as *const u8,
+                        backend_type_size
+                    );
+                    // Handle potential embedded nulls and convert to String
+                    String::from_utf8_lossy(slice).to_string()
+                };
+
+                // Verify this backend type exists in our backends map
+                if inner_guard.backends.contains_key(&backend_type) {
+                    Ok(backend_type)
+                } else {
+                    Err(NixlError::BackendError)
+                }
             }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
