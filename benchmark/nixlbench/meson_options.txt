@@ -19,5 +19,6 @@ option('cudapath_stub', type: 'string', value: '', description: 'Extra Stub path
 option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD C++ Client includes')
 option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD C++ Client library')
 option('nixl_path', type: 'string', value: '/usr/local', description: 'Path to NiXL')
+option('ucx_path', type: 'string', value: '', description: 'Path to UCX install')
 option('nvshmem_inc_path', type: 'string', value: '', description: 'Path to NVSHMEM include directory')
 option('nvshmem_lib_path', type: 'string', value: '', description: 'Path to NVSHMEM library directory')
