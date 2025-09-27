@@ -57,9 +57,20 @@ nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent)
 }
 
 nixl_capi_status_t
-nixl_capi_destroy_agent(nixl_capi_agent_t agent)
-{
-  return nixl_capi_stub_abort();
+nixl_capi_default_agent_config(nixl_capi_agent_config_t *out) {
+    return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_create_configured_agent(const char *name,
+                                  const nixl_capi_agent_config_t *cfg,
+                                  nixl_capi_agent_t *agent) {
+    return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_destroy_agent(nixl_capi_agent_t agent) {
+    return nixl_capi_stub_abort();
 }
 
 nixl_capi_status_t

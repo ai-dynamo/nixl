@@ -28,6 +28,19 @@
 #include <vector>
 #include <chrono>
 
+static nixl_thread_sync_t
+nixl_capi_thread_sync_to_nixl(nixl_capi_thread_sync_t sync) {
+    switch (sync) {
+    case NIXL_CAPI_THREAD_SYNC_NONE:
+        return nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE;
+    case NIXL_CAPI_THREAD_SYNC_STRICT:
+        return nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
+    case NIXL_CAPI_THREAD_SYNC_RW:
+        return nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+    default:
+        return nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
+    }
+}
 
 extern "C" {
 // Internal struct definitions to match our opaque types
@@ -111,20 +124,74 @@ nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent)
 }
 
 nixl_capi_status_t
-nixl_capi_destroy_agent(nixl_capi_agent_t agent)
-{
-  if (!agent) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
+nixl_capi_default_agent_config(nixl_capi_agent_config_t *out) {
+    if (!out) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
 
-  try {
-    delete agent->inner;
-    delete agent;
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
+    try {
+        out->enable_prog_thread = true;
+        out->enable_listen_thread = false;
+        out->listen_port = 0;
+        out->thread_sync = NIXL_CAPI_THREAD_SYNC_DEFAULT;
+        out->num_workers = 1;
+        out->pthr_delay_us = 0;
+        out->lthr_delay_us = 100000;
+        out->capture_telemetry = false;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_create_configured_agent(const char *name,
+                                  const nixl_capi_agent_config_t *cfg,
+                                  nixl_capi_agent_t *agent) {
+    if (!name || !cfg || !agent) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        nixl_thread_sync_t sync_mode = nixl_capi_thread_sync_to_nixl(cfg->thread_sync);
+
+        nixlAgentConfig nixl_config(cfg->enable_prog_thread,
+                                    cfg->enable_listen_thread,
+                                    cfg->listen_port,
+                                    sync_mode,
+                                    cfg->num_workers,
+                                    cfg->pthr_delay_us,
+                                    cfg->lthr_delay_us,
+                                    cfg->capture_telemetry);
+
+        std::string agent_name = name;
+        auto inner = new nixlAgent(agent_name, nixl_config);
+
+        auto agent_handle = new nixl_capi_agent_s;
+        agent_handle->inner = inner;
+        *agent = agent_handle;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_destroy_agent(nixl_capi_agent_t agent) {
+    if (!agent) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        delete agent->inner;
+        delete agent;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 nixl_capi_status_t
@@ -1824,4 +1891,4 @@ nixl_capi_query_mem(nixl_capi_agent_t agent,
     }
 }
 
-}  // extern "C"
+} // extern "C"

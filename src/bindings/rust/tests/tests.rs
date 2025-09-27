@@ -127,6 +127,21 @@ fn create_posix_backend(agent: &Agent) -> Option<(Backend, OptArgs)> {
 }
 
 #[test]
+fn create_agent_with_custom_config() {
+    // Ensure we can construct with non-default config
+    let mut cfg = AgentConfig::default();
+    cfg.enable_listen_thread = true;
+    cfg.listen_port = 0; // allow defaulting
+    cfg.capture_telemetry = false;
+
+    let agent = Agent::new_configured("cfg_agent", &cfg)
+        .expect("Failed to create configured agent");
+
+    // basic sanity: can query available plugins
+    let _plugins = agent.get_available_plugins().expect("Failed to get plugins");
+}
+
+#[test]
 fn test_agent_creation() {
     let agent = Agent::new("test_agent").expect("Failed to create agent");
     drop(agent);
