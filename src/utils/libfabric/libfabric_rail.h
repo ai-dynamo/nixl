@@ -19,6 +19,7 @@
 #define NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_RAIL_H
 
 #include <vector>
+#include <deque>
 #include <string>
 #include <functional>
 #include <mutex>
@@ -39,6 +40,7 @@ class nixlLibfabricConnection;
 struct nixlLibfabricReq {
     fi_context2 ctx; ///< Libfabric context for operation tracking
     size_t rail_id; ///< Rail ID that owns this request
+    size_t pool_index; ///< Index in the pool for deque compatibility
     uint32_t xfer_id; ///< Pre-assigned globally unique transfer ID
     void *buffer; ///< Pre-assigned buffer for CONTROL operations, nullptr for DATA
     struct fid_mr *mr; ///< Pre-assigned memory registration for CONTROL, nullptr for DATA
@@ -58,6 +60,7 @@ struct nixlLibfabricReq {
     /** Default constructor initializing all fields */
     nixlLibfabricReq()
         : rail_id(0),
+          pool_index(0),
           xfer_id(0),
           buffer(nullptr),
           mr(nullptr),
@@ -95,6 +98,20 @@ public:
     size_t
     getActiveRequestCount() const;
 
+    /** Get pool utilization as percentage (0-100) */
+    size_t
+    getPoolUtilization() const;
+
+    /** Expand pool by doubling its size - virtual method for subclass implementation */
+    virtual nixl_status_t
+    expandPool() = 0;
+
+protected:
+    /** Common allocation logic shared by both pool types */
+    nixlLibfabricReq *
+    allocateReq();
+
+public:
     // Non-copyable and non-movable since we use unique_ptr for management
     RequestPool(const RequestPool &) = delete;
     RequestPool &
@@ -104,10 +121,22 @@ public:
     operator=(RequestPool &&) = delete;
 
 protected:
-    std::vector<nixlLibfabricReq> requests_; ///< Fixed-size request pool
+    /** Initialize base pool structure with specified size */
+    void
+    initializeBasePool(size_t pool_size);
+
+    std::deque<nixlLibfabricReq> requests_; ///< Expandable request pool
     std::stack<size_t> free_indices_; ///< Stack of available request indices
     size_t rail_id_; ///< Rail ID for this pool
+    size_t initial_pool_size_; ///< Original pool size for expansion calculations
     mutable std::mutex pool_mutex_; ///< Thread safety protection
+};
+
+/** Buffer chunk structure for control request pool */
+struct BufferChunk {
+    void *buffer; ///< Buffer memory
+    size_t size; ///< Buffer size
+    struct fid_mr *mr; ///< Memory registration for this chunk
 };
 
 /** Control request pool with pre-allocated buffers for SEND/RECV operations */
@@ -127,26 +156,30 @@ public:
     ControlRequestPool &
     operator=(ControlRequestPool &&) = delete;
 
-    /** Initialize pool with buffers and pre-assigned XFER_IDs */
+    /** Initialize pool with buffers */
     nixl_status_t
-    initializeWithBuffersAndXferIds(struct fid_domain *domain,
-                                    const std::vector<uint32_t> &xfer_ids);
+    initialize(struct fid_domain *domain);
 
     /** Allocate control request with size validation */
     nixlLibfabricReq *
     allocate(size_t needed_size);
 
+    /** Expand pool by adding new buffer chunk - implements pure virtual */
+    nixl_status_t
+    expandPool() override;
+
     /** Explicit cleanup method for proper resource ordering */
     void
     cleanup();
 
-    /** Buffer size constant for validation */
-    static constexpr size_t BUFFER_SIZE = NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE;
-
 private:
-    void *buffer_chunk_; ///< Large pre-registered buffer chunk
-    size_t buffer_chunk_size_; ///< Total size of buffer chunk
-    struct fid_mr *buffer_mr_; ///< Memory registration for chunk
+    /** Create new buffer chunk and register with libfabric */
+    nixl_status_t
+    createBufferChunk(size_t chunk_size, BufferChunk &chunk);
+
+    std::vector<BufferChunk> buffer_chunks_; ///< Multiple buffer chunks for expansion
+    struct fid_domain *domain_; ///< Domain for MR registration (stored during init)
+    size_t chunk_size_; ///< Size of each buffer chunk
 };
 
 /** Lightweight data request pool for WRITE/READ operations */
@@ -166,13 +199,17 @@ public:
     DataRequestPool &
     operator=(DataRequestPool &&) = delete;
 
-    /** Initialize pool with pre-assigned XFER_IDs */
+    /** Initialize pool */
     nixl_status_t
-    initializeWithXferIds(const std::vector<uint32_t> &xfer_ids);
+    initialize();
 
     /** Allocate data request for specified operation type */
     nixlLibfabricReq *
     allocate(nixlLibfabricReq::OpType op_type);
+
+    /** Expand pool by doubling request count - implements pure virtual */
+    nixl_status_t
+    expandPool() override;
 };
 
 
@@ -209,6 +246,7 @@ class nixlLibfabricRail {
 public:
     uint16_t rail_id; ///< Unique rail identifier
     std::string device_name; ///< EFA device name for this rail
+    std::string provider_name; ///< Provider name (e.g., "efa", "efa-direct")
     char ep_name[LF_EP_NAME_MAX_LEN]; ///< Endpoint name for connection setup
     mutable bool blocking_cq_sread_supported; ///< Whether blocking CQ reads are supported
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
@@ -356,14 +394,9 @@ private:
     std::function<void(uint32_t)> xferIdCallback;
 
     // Separate request pools for optimal performance
-    ControlRequestPool
-        control_request_pool_; // 256 CONTROL requests (SEND/RECV) with internal buffers
-    DataRequestPool data_request_pool_; // 1024 DATA requests (WRITE/read) - no buffers needed
+    ControlRequestPool control_request_pool_;
+    DataRequestPool data_request_pool_;
 
-    // Configuration constants
-    static constexpr size_t CONTROL_REQUESTS_PER_RAIL =
-        256; // SEND/RECV operations (1:1 with buffers)
-    static constexpr size_t DATA_REQUESTS_PER_RAIL = 1024; // WRITE/read operations (no buffers)
 
     nixl_status_t
     processCompletionQueueEntry(struct fi_cq_data_entry *comp);

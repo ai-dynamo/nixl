@@ -148,7 +148,7 @@ if ucx_path != ''
       include_directories : include_directories(ucx_inc_path))
   endif
 else
-  ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'])
+  ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'], required: false)
 endif
 
 libfabric_path = get_option('libfabric_path')

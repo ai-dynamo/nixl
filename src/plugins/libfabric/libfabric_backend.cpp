@@ -627,14 +627,19 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
                << remote_agent;
 
     // Use single "Communicator" for CM
-    auto *conn_info = reinterpret_cast<nixlLibfabricConnection *>(it->second.get());
+    auto *conn_info = it->second.get();
 
-    NIXL_DEBUG << "Using connection info : 0: "
-               << LibfabricUtils::hexdump(conn_info->src_ep_names_[0]) << std::endl
-               << "1: " << LibfabricUtils::hexdump(conn_info->src_ep_names_[1]) << std::endl
-               << "control_0: " << LibfabricUtils::hexdump(conn_info->control_ep_names_[0])
-               << std::endl
-               << " with agent index: " << it->second->agent_index_;
+    NIXL_DEBUG << "Using connection info with " << conn_info->src_ep_names_.size()
+               << " data rails and " << conn_info->control_ep_names_.size() << " control rails";
+    for (size_t i = 0; i < conn_info->src_ep_names_.size(); ++i) {
+        NIXL_DEBUG << "Data rail " << i << ": "
+                   << LibfabricUtils::hexdump(conn_info->src_ep_names_[i]);
+    }
+    for (size_t i = 0; i < conn_info->control_ep_names_.size(); ++i) {
+        NIXL_DEBUG << "Control rail " << i << ": "
+                   << LibfabricUtils::hexdump(conn_info->control_ep_names_[i]);
+    }
+    NIXL_DEBUG << "Agent index: " << it->second->agent_index_;
     if (!conn_info) {
         NIXL_ERROR << "Connection info for agent " << remote_agent << " is null";
         return NIXL_ERR_BACKEND;
