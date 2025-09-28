@@ -30,6 +30,8 @@
 #define NUM_CQES 1024
 #define HF3FS_DEFAULT_IOPOOL_SIZE 64
 #define HF3FS_MAX_IOPOOL_SIZE (1 << 20)
+#define HF3FS_THREADPOOL_SIZE 4
+#define HF3FS_THREADPOOL_MAX 1024
 
 long nixlHf3fsEngine::page_size = sysconf(_SC_PAGESIZE);
 
@@ -37,6 +39,7 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       mem_config(NIXL_HF3FS_MEM_CONFIG_AUTO),
       iopool_size(HF3FS_DEFAULT_IOPOOL_SIZE) {
+    int threadpool_size = HF3FS_THREADPOOL_SIZE;
     hf3fs_utils = new hf3fsUtil();
 
     this->initErr = false;
@@ -64,6 +67,7 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
                 return;
             }
         }
+
         if (init_params->customParams->count("iopool_size") > 0) {
             int size = atoi(init_params->customParams->at("iopool_size").c_str());
             if (size > 0) {
@@ -76,6 +80,19 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
                 }
             }
         }
+
+        if (init_params->customParams->count("threadpool_size") > 0) {
+            int size = atoi(init_params->customParams->at("threadpool_size").c_str());
+            if (size > 0) {
+                if (size <= HF3FS_THREADPOOL_MAX) {
+                    threadpool_size = size;
+                } else {
+                    threadpool_size = HF3FS_THREADPOOL_MAX;
+                    NIXL_WARN << "threadpool_size param " << threadpool_size << " exceeded max "
+                              << HF3FS_THREADPOOL_MAX << ", set to max";
+                }
+            }
+        }
     }
 
     char mount_point_cstr[256];
@@ -84,7 +101,6 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
         this->initErr = true;
         return;
     }
-
     hf3fs_utils->mount_point = mount_point_cstr;
 
     for (unsigned int i = 0; i < iopool_size; i++) {
@@ -97,7 +113,14 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
         iopool.push_back(io);
     }
 
-    NIXL_DEBUG << "HF3FS: page size " << page_size << " iopool_size " << iopool_size;
+    io_ctx = new asio::io_context();
+    wg = new asio::executor_work_guard<asio::io_context::executor_type>(io_ctx->get_executor());
+    for (int i = 0; i < threadpool_size; i++) {
+        tpool.emplace_back(ioThread, io_ctx);
+    }
+
+    NIXL_DEBUG << "HF3FS: page size " << page_size << " iopool_size " << iopool_size
+               << " threadpool_size " << threadpool_size;
 }
 
 nixlHf3fsIO *
@@ -238,20 +261,6 @@ void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle) const
     }
 
     handle->io_list.clear();
-}
-
-void nixlHf3fsEngine::cleanupIOThread(nixlHf3fsBackendReqH *handle) const
-{
-    if (handle->io_status.thread != nullptr) {
-        handle->io_status.stop_thread = true;
-        handle->io_status.thread->join();
-
-        delete handle->io_status.thread;
-        handle->io_status.thread = nullptr;
-        handle->io_status.error_status = NIXL_SUCCESS;
-        handle->io_status.error_message = "";
-        handle->io_status.stop_thread = false;
-    }
 }
 
 nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
@@ -398,61 +407,57 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         HF3FS_LOG_RETURN(status, "Error: Failed to post IOR");
     }
 
-    // postXfer may be called multiple times, so we need to check if the thread is already running
-    if (hf3fs_handle->io_status.thread == nullptr) {
-        hf3fs_handle->io_status.thread = new std::thread(waitForIOsThread, hf3fs_handle,
-                                                         hf3fs_utils);
-        if (hf3fs_handle->io_status.thread == nullptr) {
-            HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error: Failed to create io thread");
-        }
-    }
-
     hf3fs_handle->num_ios += hf3fs_handle->io_list.size();
+    if (!hf3fs_handle->is_posted) {
+        hf3fs_handle->is_posted = true;
+        asio::post(*io_ctx, [this, hf3fs_handle]() {
+            nixlHf3fsEngine::waitForIOsAsync(io_ctx, hf3fs_handle, hf3fs_utils);
+        });
+    }
 
     return NIXL_IN_PROG;
 }
 
-void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
-{
-    nixlHf3fsBackendReqH* hf3fs_handle = (nixlHf3fsBackendReqH*)handle;
-    hf3fsUtil* hf3fs_utils = (hf3fsUtil*)utils;
-    nixlH3fsThreadStatus* io_status = &hf3fs_handle->io_status;
-    hf3fs_cqe* cqes = new hf3fs_cqe[NUM_CQES];
+void
+nixlHf3fsEngine::ioThread(asio::io_context *io_ctx) {
+    while (!io_ctx->stopped()) {
+        io_ctx->run();
+    }
+}
 
-    while (!io_status->stop_thread && io_status->error_status == NIXL_SUCCESS) {
-        // Check if we've processed all IOs
-        if (hf3fs_handle->completed_ios >= hf3fs_handle->num_ios) {
-            // User may call postXfer multiple times, so we could not exit yet,
-            // so we must wait for stop condition
-            sched_yield();
-            continue;
-        }
+void
+nixlHf3fsEngine::waitForIOsAsync(asio::io_context *ctx,
+                                 nixlHf3fsBackendReqH *handle,
+                                 hf3fsUtil *utils) {
+    uint32_t num_ios = handle->num_ios;
+    hf3fs_cqe *cqes = new hf3fs_cqe[NUM_CQES];
 
-        // Use a short timeout to allow thread to check stop condition
-        struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        ts.tv_nsec += 10 * 1000 * 1000; // 10 milliseconds
-        if (ts.tv_nsec >= 1000000000) {
-            ts.tv_sec += 1;
-            ts.tv_nsec -= 1000000000;
-        }
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    ts.tv_nsec += 1 * 1000 * 1000; // 1 milliseconds
+    if (ts.tv_nsec >= 1000000000) {
+        ts.tv_sec += 1;
+        ts.tv_nsec -= 1000000000;
+    }
 
-        int num_completed = 0;
-        nixl_status_t status = hf3fs_utils->waitForIOs(&hf3fs_handle->ior, cqes, NUM_CQES, 1, &ts,
-                                                       &num_completed);
+    int num_completed;
+    do {
+        num_completed = 0;
+        nixl_status_t status =
+            utils->waitForIOs(&handle->ior, cqes, NUM_CQES, 1, &ts, &num_completed);
         if (status != NIXL_SUCCESS) {
-            io_status->error_status = status;
-            io_status->error_message = "Error: Failed to wait for IOs";
-            break;
+            handle->error_status = status;
+            handle->error_message = "Error: Failed to wait for IOs";
+            goto async_out;
         }
 
         if (num_completed > 0) {
             for (int i = 0; i < num_completed; i++) {
                 if (cqes[i].result < 0) {
-                    io_status->error_status = NIXL_ERR_BACKEND;
-                    io_status->error_message = absl::StrFormat(
+                    handle->error_status = NIXL_ERR_BACKEND;
+                    handle->error_message = absl::StrFormat(
                         "Error: I/O operation completed with error: %d", cqes[i].result);
-                    break;
+                    goto async_out;
                 }
 
                 nixlHf3fsIO* io = (nixlHf3fsIO*)cqes[i].userdata;
@@ -460,11 +465,23 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
                     memcpy(io->addr, io->iov.base, io->size);
                 }
 
-                hf3fs_handle->completed_ios++;
+                handle->completed_ios++;
             }
         }
+        // Continue when hf3fs has more io to handle
+    } while (handle->completed_ios < num_ios && num_completed == NUM_CQES && !handle->stopped);
+
+    if (handle->completed_ios < handle->num_ios && !handle->stopped) {
+        // Repost to handle the remaining io
+        asio::post(
+            *ctx, [ctx, handle, utils]() { nixlHf3fsEngine::waitForIOsAsync(ctx, handle, utils); });
+    } else {
+        // It is possible that the user thread post new request at this point
+        // checkXfer has to detect that and post this async task if needed.
+        handle->is_posted = false;
     }
 
+async_out:
     delete[] cqes;
 }
 
@@ -482,23 +499,22 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
             "Error: IOR is not initialized in checkXfer");
     }
 
-    if (hf3fs_handle->io_status.thread == nullptr) {
-        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
-            "Error: io thread is not initialized in checkXfer");
-    }
-
-    if (hf3fs_handle->io_status.error_status != NIXL_SUCCESS) {
-        nixl_status_t error_status = hf3fs_handle->io_status.error_status;
-        std::string error_message = hf3fs_handle->io_status.error_message;
-        cleanupIOThread(hf3fs_handle);
+    if (hf3fs_handle->error_status != NIXL_SUCCESS) {
+        nixl_status_t error_status = hf3fs_handle->error_status;
+        std::string error_message = hf3fs_handle->error_message;
         HF3FS_LOG_RETURN(error_status, error_message);
     }
 
     if (hf3fs_handle->completed_ios < hf3fs_handle->num_ios) {
+        if (!hf3fs_handle->is_posted) {
+            hf3fs_handle->is_posted = true;
+            asio::post(*io_ctx, [this, hf3fs_handle]() {
+                nixlHf3fsEngine::waitForIOsAsync(io_ctx, hf3fs_handle, hf3fs_utils);
+            });
+        }
         return NIXL_IN_PROG;
     }
 
-    cleanupIOThread(hf3fs_handle);
     return NIXL_SUCCESS;
 }
 
@@ -506,7 +522,12 @@ nixl_status_t nixlHf3fsEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
 
-    cleanupIOThread(hf3fs_handle);
+    hf3fs_handle->stopped = true;
+    while (hf3fs_handle->is_posted) {
+        // Wait for the async task to be done
+        sched_yield();
+    }
+
     cleanupIOList(hf3fs_handle);
     hf3fs_utils->destroyIOR(&hf3fs_handle->ior);
     delete hf3fs_handle;
@@ -514,7 +535,16 @@ nixl_status_t nixlHf3fsEngine::releaseReqH(nixlBackendReqH* handle) const
 }
 
 nixlHf3fsEngine::~nixlHf3fsEngine() {
+    io_ctx->stop();
+    for (size_t i = 0; i < tpool.size(); i++) {
+        tpool[i].join();
+    }
+
+    delete wg;
+    delete io_ctx;
+
     destroyIOPool();
+
     hf3fs_utils->closeHf3fsDriver();
     delete hf3fs_utils;
 }
