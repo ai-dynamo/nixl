@@ -30,8 +30,15 @@ EXTRA_BUILD_ARGS=${3:-""}
 UCX_VERSION=${UCX_VERSION:-v1.19.0}
 # EFA_INSTALLER_VERSION is the version of EFA installer to use, defaults to "latest"
 EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION:-latest}
+<<<<<<< HEAD
 # DOCA_VERSION is the version of DOCA to install, override default with env variable.
 DOCA_VERSION=${DOCA_VERSION:-3.1.0}
+=======
+# LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
+LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
+# LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
+LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
+>>>>>>> dynamo/main
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -130,22 +137,31 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
         $SUDO ldconfig \
 )
 
-# curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" | tar xz
-# ( \
-#   cd aws-efa-installer && \
-#   $SUDO ./efa_installer.sh -y -g --skip-kmod --skip-limit-conf --no-verify && \
-#   $SUDO ldconfig \
-# )
-
-# Install DOCA & GPUNETIO packages after EFA to avoid MPI conflicts
+wget --tries=3 --waitretry=5 -O "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
+tar xzf "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
+rm "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
 ( \
-  cd /tmp && \
-  ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-  MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-  wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
-  $SUDO dpkg -i doca-host.deb && \
-  $SUDO apt-get update && \
-  $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev \
+  cd aws-efa-installer && \
+  $SUDO ./efa_installer.sh -y --minimal --skip-kmod --skip-limit-conf --no-verify && \
+  $SUDO ldconfig \
+)
+
+wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+( \
+  cd libfabric-* && \
+  ./autogen.sh && \
+  ./configure --prefix="${LIBFABRIC_INSTALL_DIR}" \
+              --disable-verbs \
+              --disable-psm3 \
+              --disable-opx \
+              --disable-usnic \
+              --disable-rstream \
+              --enable-efa && \
+  make -j && \
+  make install && \
+  $SUDO ldconfig \
 )
 
 ( \
@@ -176,10 +192,10 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
   cp gtest-parallel/* ${INSTALL_DIR}/bin/
 )
 
-export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:/opt/amazon/efa/lib"
-export CPATH="${INSTALL_DIR}/include:/opt/amazon/efa/include:$CPATH"
+export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${INSTALL_DIR}/lib:${LIBFABRIC_INSTALL_DIR}/lib"
+export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
 export PATH="${INSTALL_DIR}/bin:$PATH"
-export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:$PKG_CONFIG_PATH:/opt/amazon/efa/lib/pkgconfig"
+export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH"
 export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
 export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 
@@ -188,7 +204,7 @@ export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 export UCX_TLS=^cuda_ipc
 
 # shellcheck disable=SC2086
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="/opt/amazon/efa"
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
 ninja -C nixl_build && ninja -C nixl_build install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
