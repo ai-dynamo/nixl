@@ -21,6 +21,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG ARCH="x86_64"
 ARG UCX_REF="v1.19.0"
+ARG LIBFABRIC_VERSION="v2.3.0"
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
@@ -53,6 +54,8 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     libibumad-devel \
     numactl-devel \
     librdmacm-devel \
+    hwloc \
+    hwloc-devel \
     wget \
     zlib
 
@@ -197,6 +200,27 @@ RUN cd /usr/local/src && \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
+
+# Build libfabric from source
+RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+    "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
+    tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
+    cd libfabric-* && \
+    ./autogen.sh && \
+    ./configure --prefix=/usr/local \
+                --disable-verbs \
+                --disable-psm3 \
+                --disable-opx \
+                --disable-usnic \
+                --disable-rstream \
+                --enable-efa \
+                --with-cuda=/usr/local/cuda \
+                --enable-cuda-dlopen \
+                --with-gdrcopy \
+                --enable-gdrcopy-dlopen && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig
 
 COPY . /workspace/nixl
 

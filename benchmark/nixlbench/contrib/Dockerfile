@@ -48,21 +48,17 @@ RUN apt-get update -y && \
     libz-dev \
     flex \
     libgtest-dev \
+    hwloc \
+    libhwloc-dev \
     build-essential
 
-# Add Mellanox repository and install packages
-RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else echo "${ARCH}"; fi) && \
-    export PKG_CONFIG_PATH="/opt/mellanox/doca/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:/opt/mellanox/dpdk/lib/${ARCH_SUFFIX}-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" && \
-    curl -fsSL https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/${ARCH_SUFFIX}/GPG-KEY-Mellanox.pub | \
-    gpg --dearmor | tee /usr/share/keyrings/mellanox-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/mellanox-archive-keyring.gpg] https://linux.mellanox.com/public/repo/doca/3.0.0/ubuntu24.04/${ARCH_SUFFIX} ./" | \
-    tee /etc/apt/sources.list.d/mellanox.list && \
-    DEBIAN_FRONTEND=noninteractive apt update -y && \
-    apt install -y --no-install-recommends \
-        mlnx-dpdk mlnx-dpdk-dev \
-        doca-sdk-common doca-sdk-dma doca-sdk-dpdk-bridge \
-        doca-sdk-eth doca-sdk-flow doca-sdk-rdma doca-all \
-        doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
+# Add DOCA repository and install packages
+RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
+    MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
+    wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    dpkg -i doca-host.deb && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
 
 # Install AWS CLI
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
@@ -110,11 +106,38 @@ ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 ARG BUILD_TYPE="release"
-ARG EFA_INSTALLER_VERSION="latest"
-ARG EFA_INSTALL_PATH="/opt/amazon/efa"
+ARG LIBFABRIC_VERSION="v2.3.0"
 ARG NPROC
 
 WORKDIR /workspace
+
+# Build libfabric from source
+# Install RDMA/EFA packages required for libfabric EFA provider
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get -y install \
+    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
+
+# Build libfabric from source
+RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+    "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
+    tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
+    cd libfabric-* && \
+    ./autogen.sh && \
+    ./configure --prefix=/usr/local \
+                --disable-verbs \
+                --disable-psm3 \
+                --disable-opx \
+                --disable-usnic \
+                --disable-rstream \
+                --enable-efa \
+                --with-cuda=/usr/local/cuda \
+                --enable-cuda-dlopen \
+                --with-gdrcopy \
+                --enable-gdrcopy-dlopen && \
+    make -j${NPROC:-$(nproc)} && \
+    make install && \
+    ldconfig
+
 RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
@@ -128,11 +151,6 @@ COPY --from=nixlbench . /workspace/nixlbench
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
 
-# Install EFA (Elastic Fabric Adapter)
-RUN curl -fsSL "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" | tar xz && \
-    cd aws-efa-installer && \
-    ./efa_installer.sh -y -g --skip-kmod --skip-limit-conf --no-verify && \
-    ldconfig
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir sdk_build && \
@@ -143,7 +161,7 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
 
 WORKDIR /workspace/nixl
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$EFA_INSTALL_PATH/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
@@ -155,7 +173,7 @@ RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build -Dlibfabric_path=$EFA_INSTALL_PATH --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    uv run meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install

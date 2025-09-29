@@ -97,7 +97,10 @@ nixlLibfabricTopology::discoverTopology() {
 nixl_status_t
 nixlLibfabricTopology::discoverEfaDevices() {
     // Use the utility function from libfabric_common
-    all_efa_devices = LibfabricUtils::getAvailableEfaDevices();
+    auto efa_result = LibfabricUtils::getAvailableEfaDevices();
+    efa_fabric_name = efa_result.first;
+    all_efa_devices = efa_result.second;
+
     num_efa_devices = all_efa_devices.size();
     if (all_efa_devices.empty()) {
         NIXL_ERROR << "No EFA devices found";
@@ -111,30 +114,6 @@ nixlLibfabricTopology::discoverEfaDevices() {
 }
 
 std::vector<std::string>
-nixlLibfabricTopology::getEfaDevicesForMemory(void *mem_addr, nixl_mem_t mem_type) const {
-    if (!topology_discovered) {
-        NIXL_WARN << "Topology not discovered, returning all EFA devices";
-        return all_efa_devices;
-    }
-    if (mem_type == VRAM_SEG) {
-        // GPU memory
-        int gpu_id = detectGpuIdForMemory(mem_addr);
-        if (gpu_id >= 0) {
-            return getEfaDevicesForGpu(gpu_id);
-        }
-        NIXL_WARN << "Could not detect GPU ID for memory, using all devices";
-    } else {
-        // Host memory (DRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG)
-        int numa_node = detectNumaNodeForMemory(mem_addr);
-        if (numa_node >= 0) {
-            return getEfaDevicesForNumaNode(numa_node);
-        }
-        NIXL_WARN << "Could not detect NUMA node for memory, using all devices";
-    }
-    return all_efa_devices;
-}
-
-std::vector<std::string>
 nixlLibfabricTopology::getEfaDevicesForGpu(int gpu_id) const {
     auto it = gpu_to_efa_devices.find(gpu_id);
     if (it != gpu_to_efa_devices.end()) {
@@ -144,117 +123,9 @@ nixlLibfabricTopology::getEfaDevicesForGpu(int gpu_id) const {
     return all_efa_devices;
 }
 
-std::vector<std::string>
-nixlLibfabricTopology::getEfaDevicesForNumaNode(int numa_node) const {
-    auto it = numa_to_efa_devices.find(numa_node);
-    if (it != numa_to_efa_devices.end()) {
-        return it->second;
-    }
-    NIXL_WARN << "No EFA devices found for NUMA node " << numa_node << ", returning all devices";
-    return all_efa_devices;
-}
-
-int
-nixlLibfabricTopology::detectGpuIdForMemory(void *mem_addr) const {
-    if (!mem_addr) {
-        NIXL_TRACE << "detectGpuIdForMemory: null memory address";
-        return -1;
-    }
-#ifdef HAVE_CUDA
-    // Use CUDA runtime API to detect GPU memory
-    struct cudaPointerAttributes attributes;
-    memset(&attributes, 0, sizeof(attributes));
-
-    cudaError_t err = cudaPointerGetAttributes(&attributes, mem_addr);
-
-    if (err == cudaSuccess) {
-        NIXL_TRACE << "cudaPointerGetAttributes succeeded for " << mem_addr
-                   << ": type=" << attributes.type << ", device=" << attributes.device;
-
-        // Check if this is device memory
-        if (attributes.type == cudaMemoryTypeDevice) {
-            NIXL_TRACE << "Detected device memory on GPU " << attributes.device;
-            return attributes.device;
-        }
-        // For managed memory, also return the device ID if it has one
-        else if (attributes.type == cudaMemoryTypeManaged && attributes.device >= 0) {
-            NIXL_TRACE << "Detected managed memory on GPU " << attributes.device;
-            return attributes.device;
-        } else {
-            NIXL_TRACE << "Memory type " << attributes.type << " not recognized as GPU memory";
-        }
-    } else {
-        NIXL_TRACE << "cudaPointerGetAttributes failed for " << mem_addr << ": "
-                   << cudaGetErrorString(err);
-        // Clear the error - this is expected for host memory
-        cudaGetLastError();
-    }
-#else
-    NIXL_TRACE << "CUDA not available, cannot detect GPU memory";
-#endif
-    // Not GPU memory or CUDA not available
-    return -1;
-}
-
-int
-nixlLibfabricTopology::detectNumaNodeForMemory(void *mem_addr) const {
-    if (!hwloc_topology || !mem_addr) {
-        return 0; // Default to NUMA node 0
-    }
-    // Use hwloc to detect NUMA node for the memory address
-    hwloc_nodeset_t nodeset = hwloc_bitmap_alloc();
-    if (!nodeset) {
-        return 0;
-    }
-
-    // Try to get the NUMA node where this memory is located
-    int ret = hwloc_get_area_memlocation(
-        hwloc_topology, mem_addr, sizeof(void *), nodeset, HWLOC_MEMBIND_BYNODESET);
-
-    int numa_node = 0; // Default
-    if (ret == 0) {
-        // Find the first set bit in the nodeset
-        int first_node = hwloc_bitmap_first(nodeset);
-        if (first_node >= 0 && first_node < num_numa_nodes) {
-            numa_node = first_node;
-            NIXL_TRACE << "Detected memory " << mem_addr << " on NUMA node " << numa_node;
-        } else {
-            NIXL_TRACE << "Memory " << mem_addr << " NUMA detection returned invalid node "
-                       << first_node << ", using default 0";
-        }
-    } else {
-        // hwloc couldn't determine the location, use heuristic
-        NIXL_TRACE << "hwloc couldn't detect NUMA node for memory " << mem_addr
-                   << ", using heuristic";
-        // Simple heuristic: use the memory address to distribute across NUMA nodes
-        // This is not perfect but better than always returning 0
-        if (num_numa_nodes > 1) {
-            uintptr_t addr_val = reinterpret_cast<uintptr_t>(mem_addr);
-            numa_node = (addr_val >> 12) % num_numa_nodes; // Use page-aligned bits
-        }
-    }
-    hwloc_bitmap_free(nodeset);
-    return numa_node;
-}
-
-bool
-nixlLibfabricTopology::isGpuMemory(void *mem_addr) const {
-    return detectGpuIdForMemory(mem_addr) >= 0;
-}
-
-bool
-nixlLibfabricTopology::isHostMemory(void *mem_addr) const {
-    return !isGpuMemory(mem_addr);
-}
-
 bool
 nixlLibfabricTopology::isValidGpuId(int gpu_id) const {
     return gpu_id >= 0 && gpu_id < num_gpus;
-}
-
-bool
-nixlLibfabricTopology::isValidNumaNode(int numa_node) const {
-    return numa_node >= 0 && numa_node < num_numa_nodes;
 }
 
 bool
@@ -285,17 +156,7 @@ nixlLibfabricTopology::printTopologyInfo() const {
         ss << "]";
         NIXL_INFO << ss.str();
     }
-    NIXL_TRACE << "NUMA → EFA mapping:";
-    for (const auto &pair : numa_to_efa_devices) {
-        std::stringstream ss;
-        ss << "  NUMA " << pair.first << " → [";
-        for (size_t i = 0; i < pair.second.size(); ++i) {
-            if (i > 0) ss << ", ";
-            ss << pair.second[i];
-        }
-        ss << "]";
-        NIXL_TRACE << ss.str();
-    }
+    NIXL_TRACE << "Host memory (DRAM) will use all available EFA devices for maximum bandwidth";
     NIXL_TRACE << "=====================================";
 }
 
@@ -509,7 +370,6 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
 nixl_status_t
 nixlLibfabricTopology::buildGpuToEfaMapping() {
     gpu_to_efa_devices.clear();
-    numa_to_efa_devices.clear();
     // Implement NIXL's topology-aware GPU-EFA grouping algorithm
     nixl_status_t status = buildTopologyAwareGrouping();
     if (status != NIXL_SUCCESS) {
@@ -519,7 +379,6 @@ nixlLibfabricTopology::buildGpuToEfaMapping() {
 
     NIXL_TRACE << "Built GPU→EFA mapping for " << gpu_to_efa_devices.size()
                << " GPUs using topology-aware algorithm";
-    NIXL_TRACE << "Built NUMA→EFA mapping for " << numa_to_efa_devices.size() << " NUMA nodes";
 
     return NIXL_SUCCESS;
 }
@@ -624,8 +483,7 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             }
         }
     }
-    // Build NUMA mapping (fallback approach)
-    return buildFallbackNumaMapping();
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -636,28 +494,9 @@ nixlLibfabricTopology::buildFallbackMapping() {
     for (int gpu_id = 0; gpu_id < num_gpus; ++gpu_id) {
         gpu_to_efa_devices[gpu_id] = all_efa_devices;
     }
-    return buildFallbackNumaMapping();
-}
-
-nixl_status_t
-nixlLibfabricTopology::buildFallbackNumaMapping() {
-    // Build NUMA mapping using even split
-    numa_to_efa_devices.clear();
-    if (num_numa_nodes > 0) {
-        size_t devices_per_numa = all_efa_devices.size() / num_numa_nodes;
-        for (int numa_id = 0; numa_id < num_numa_nodes; ++numa_id) {
-            size_t start_idx = numa_id * devices_per_numa;
-            size_t end_idx = (numa_id == num_numa_nodes - 1) ? all_efa_devices.size() :
-                                                               start_idx + devices_per_numa;
-            std::vector<std::string> numa_devices(all_efa_devices.begin() + start_idx,
-                                                  all_efa_devices.begin() + end_idx);
-            numa_to_efa_devices[numa_id] = numa_devices;
-            NIXL_TRACE << "NUMA " << numa_id << " fallback mapping: " << numa_devices.size()
-                       << " devices";
-        }
-    }
     return NIXL_SUCCESS;
 }
+
 
 // hwloc helper methods
 

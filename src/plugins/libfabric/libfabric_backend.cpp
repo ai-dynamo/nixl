@@ -513,78 +513,8 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
                    << ", fi_addr: " << it->second->rail_remote_addr_list_[0];
         return NIXL_SUCCESS;
     }
-
-    NIXL_DEBUG << "Disconnecting from agent: " << remote_agent;
-
-    if (remote_agent != localAgent) {
-        // Send disconnect control message to remote peer - fire and forget semantics
-        NIXL_DEBUG << "Sending disconnect notification to remote agent: " << remote_agent;
-
-        // Use rail manager's serialization method with "src" prefix (we are sending our source
-        // endpoints)
-        std::string serialized_conn_info;
-        nixl_status_t serialize_status =
-            rail_manager.serializeConnectionInfo("src", serialized_conn_info);
-        if (serialize_status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Rail manager serializeConnectionInfo failed";
-            return serialize_status;
-        }
-
-        // Allocate control request
-        const size_t control_rail_id = 0;
-        const size_t buffer_size =
-            (rail_manager.getNumDataRails() + rail_manager.getNumControlRails()) *
-                LF_EP_NAME_MAX_LEN +
-            1024;
-        nixlLibfabricReq *control_request =
-            rail_manager.getControlRail(control_rail_id).allocateControlRequest(buffer_size);
-        if (!control_request) {
-            NIXL_ERROR << "Failed to allocate control request for disconnect";
-            return NIXL_ERR_BACKEND;
-        }
-
-        memcpy(control_request->buffer, serialized_conn_info.data(), serialized_conn_info.length());
-
-        // Set the actual size of serialized data
-        control_request->buffer_size = serialized_conn_info.length();
-
-        nixl_status_t status = rail_manager.postControlMessage(
-            nixlLibfabricRailManager::ControlMessageType::DISCONNECT_REQ,
-            control_request,
-            it->second->control_rail_remote_addr_list_[0], // Use control rail 0
-            it->second->agent_index_);
-
-        if (status != NIXL_SUCCESS) {
-            NIXL_WARN << "Failed to send disconnect notification to " << remote_agent
-                      << ", proceeding with local cleanup anyway";
-            // Continue with cleanup even if notification failed
-        } else {
-            NIXL_DEBUG << "Disconnect notification sent successfully to " << remote_agent;
-        }
-    } else {
-        NIXL_DEBUG << "Skipping disconnect notification for self-connection";
-    }
-
-    // Clean up libfabric resources (AV entries) via rail manager
-    NIXL_DEBUG << "Cleaning up libfabric resources for agent: " << remote_agent;
-    // Clean up libfabric per-connection AV cleanup for both data and control rails
-    nixl_status_t data_cleanup_status = rail_manager.cleanupConnection(
-        nixlLibfabricRailManager::RailType::DATA, it->second->rail_remote_addr_list_);
-    if (data_cleanup_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to clean up data rail resources for agent: " << remote_agent
-                   << " with status: " << data_cleanup_status;
-        return data_cleanup_status;
-    }
-
-    nixl_status_t control_cleanup_status = rail_manager.cleanupConnection(
-        nixlLibfabricRailManager::RailType::CONTROL, it->second->control_rail_remote_addr_list_);
-    if (control_cleanup_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to clean up control rail resources for agent: " << remote_agent
-                   << " with status: " << control_cleanup_status;
-        return control_cleanup_status;
-    }
-
-    NIXL_DEBUG << "Successfully cleaned up libfabric resources for agent: " << remote_agent;
+    // TODO: Implement disconnect logic to cleanup the AV Address Entries from both local and remote
+    // AV.
 
     // Update connection state to DISCONNECTED before removing
     it->second->overall_state_ = ConnectionState::DISCONNECTED;
@@ -592,7 +522,6 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
     // Remove connection from map
     connections_.erase(remote_agent);
     NIXL_DEBUG << "Connection erased from the connection map for agent: " << remote_agent;
-
     return NIXL_SUCCESS;
 }
 
@@ -698,14 +627,19 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
                << remote_agent;
 
     // Use single "Communicator" for CM
-    auto *conn_info = reinterpret_cast<nixlLibfabricConnection *>(it->second.get());
+    auto *conn_info = it->second.get();
 
-    NIXL_DEBUG << "Using connection info : 0: "
-               << LibfabricUtils::hexdump(conn_info->src_ep_names_[0]) << std::endl
-               << "1: " << LibfabricUtils::hexdump(conn_info->src_ep_names_[1]) << std::endl
-               << "control_0: " << LibfabricUtils::hexdump(conn_info->control_ep_names_[0])
-               << std::endl
-               << " with agent index: " << it->second->agent_index_;
+    NIXL_DEBUG << "Using connection info with " << conn_info->src_ep_names_.size()
+               << " data rails and " << conn_info->control_ep_names_.size() << " control rails";
+    for (size_t i = 0; i < conn_info->src_ep_names_.size(); ++i) {
+        NIXL_DEBUG << "Data rail " << i << ": "
+                   << LibfabricUtils::hexdump(conn_info->src_ep_names_[i]);
+    }
+    for (size_t i = 0; i < conn_info->control_ep_names_.size(); ++i) {
+        NIXL_DEBUG << "Control rail " << i << ": "
+                   << LibfabricUtils::hexdump(conn_info->control_ep_names_[i]);
+    }
+    NIXL_DEBUG << "Agent index: " << it->second->agent_index_;
     if (!conn_info) {
         NIXL_ERROR << "Connection info for agent " << remote_agent << " is null";
         return NIXL_ERR_BACKEND;
@@ -837,6 +771,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     nixl_status_t status = rail_manager.registerMemory((void *)mem.addr,
                                                        mem.len,
                                                        nixl_mem,
+                                                       mem.devId,
                                                        priv->rail_mr_list_,
                                                        priv->rail_key_list_,
                                                        priv->selected_rails_);
@@ -1067,7 +1002,40 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         NIXL_DEBUG << "Processing descriptor " << desc_idx << " GPU " << gpu_id
                    << " addr: " << transfer_addr << " size: " << transfer_size;
 
-        // Prepare and submit transfer
+        NIXL_DEBUG << "DEBUG: remote_agent='" << remote_agent << "' localAgent='" << localAgent
+                   << "'";
+
+        // Check for same-agent (local) transfer - handle with direct memcpy
+        if (remote_agent == localAgent) {
+            NIXL_DEBUG << "Same-agent transfer detected from localAgent= " << localAgent
+                       << "to remote_agent " << remote_agent << "for descriptor " << desc_idx
+                       << ", using memcpy fallback for " << transfer_size << " bytes";
+
+            // For same-agent transfers, we need to copy directly between the descriptor addresses
+            // The remote[desc_idx].addr should be the target address for the transfer
+            void *remote_addr = reinterpret_cast<void *>(remote[desc_idx].addr);
+
+            NIXL_DEBUG << "About to perform memcpy: local_addr=" << transfer_addr
+                       << " remote_addr=" << remote_addr << " size=" << transfer_size;
+
+            if (op_type == nixlLibfabricReq::WRITE) {
+                // Write: copy from local_addr to remote_addr
+                std::memcpy(remote_addr, transfer_addr, transfer_size);
+                NIXL_DEBUG << "Same-agent memcpy write completed: " << transfer_addr << " -> "
+                           << remote_addr << " (" << transfer_size << " bytes)";
+            } else {
+                // Read: copy from remote_addr to local_addr
+                std::memcpy(transfer_addr, remote_addr, transfer_size);
+                NIXL_DEBUG << "Same-agent memcpy read completed: " << remote_addr << " -> "
+                           << transfer_addr << " (" << transfer_size << " bytes)";
+            }
+
+            NIXL_DEBUG << "Successfully processed same-agent descriptor " << desc_idx
+                       << " using memcpy fallback";
+            continue; // Skip the rail manager transfer for this descriptor
+        }
+
+        // Prepare and submit transfer for remote agents
         nixl_status_t status = rail_manager.prepareAndSubmitTransfer(
             op_type,
             transfer_addr,
@@ -1098,8 +1066,14 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                << " requests from " << desc_count << " descriptors" << " with "
                << binary_notif->xfer_id_count << " total XFER_IDs";
 
-    // Adjust to actual request count after all submissions complete
-    backend_handle->adjust_total_requests(binary_notif->xfer_id_count);
+    // For same-agent transfers, we need to set the total to 0 since we bypassed all rail operations
+    if (remote_agent == localAgent) {
+        backend_handle->adjust_total_requests(0);
+        NIXL_DEBUG << "Same-agent transfer: adjusted total requests to 0 (all handled via memcpy)";
+    } else {
+        // Adjust to actual request count after all submissions complete
+        backend_handle->adjust_total_requests(binary_notif->xfer_id_count);
+    }
 
     // Send notification immediately after successful request submission
     if (opt_args && opt_args->hasNotif) {
