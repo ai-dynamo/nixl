@@ -90,6 +90,7 @@ $SUDO apt-get -qq install -y curl \
                              libaio-dev \
                              liburing-dev \
                              meson \
+                             mstflint \
                              ninja-build \
                              pkg-config \
                              protobuf-compiler-grpc \
