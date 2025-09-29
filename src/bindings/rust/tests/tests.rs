@@ -1368,3 +1368,220 @@ fn test_query_xfer_backend_invalid_request() {
         assert!(xfer_req_result.is_err(), "Transfer request creation should fail for non-existent agent");
  }
 }
+
+// Tests for get_xfer_telemetry API
+#[test]
+fn test_get_xfer_telemetry_success() {
+    env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "agent2",
+            None
+        ).expect("Failed to create transfer request");
+
+        let result = agent1.post_xfer_req(&xfer_req, Some(&opt_args));
+        assert!(result.is_ok(), "post_xfer_req failed with error: {:?}", result.err());
+
+        // Wait for transfer to complete
+        loop {
+            match agent1.get_xfer_status(&xfer_req) {
+                Ok(XferStatus::Success) => break,
+                Ok(XferStatus::InProgress) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => panic!("Failed to get transfer status: {:?}", e),
+            }
+        }
+
+        let telemetry_result = xfer_req.get_telemetry();
+        assert!(telemetry_result.is_ok(), "get_xfer_telemetry failed with error: {:?}", telemetry_result.err());
+
+        let telemetry = telemetry_result.unwrap();
+        assert!(telemetry.start_time_us > 0, "Start time should be greater than 0");
+        assert!(telemetry.total_bytes > 0, "Total bytes should be greater than 0");
+        assert!(telemetry.desc_count > 0, "Descriptor count should be greater than 0");
+
+        // Test convenience methods
+        let start_time = telemetry.start_time();
+        assert!(start_time.as_micros() == telemetry.start_time_us as u128);
+
+        let post_duration = telemetry.post_duration();
+        assert!(post_duration.as_micros() == telemetry.post_duration_us as u128);
+
+        let xfer_duration = telemetry.xfer_duration();
+        assert!(xfer_duration.as_micros() == telemetry.xfer_duration_us as u128);
+
+        let total_duration = telemetry.total_duration();
+        assert!(total_duration.as_micros() == (telemetry.post_duration_us + telemetry.xfer_duration_us) as u128);
+
+        // Test transfer rate calculation
+        let rate = telemetry.transfer_rate_bps();
+        if telemetry.xfer_duration_us > 0 {
+            assert!(rate > 0.0, "Transfer rate should be positive when transfer duration > 0");
+        }
+
+        println!("Telemetry data: {:?}", telemetry);
+        println!("Transfer rate: {:.2} MB/s", rate / 1_000_000.0);
+    }
+}
+
+#[test]
+fn test_get_xfer_telemetry_from_request() {
+    env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "agent2",
+            None
+        ).expect("Failed to create transfer request");
+
+        let result = agent1.post_xfer_req(&xfer_req, Some(&opt_args));
+        assert!(result.is_ok(), "post_xfer_req failed with error: {:?}", result.err());
+
+        // Wait for transfer to complete
+        loop {
+            match agent1.get_xfer_status(&xfer_req) {
+                Ok(XferStatus::Success) => break,
+                Ok(XferStatus::InProgress) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => panic!("Failed to get transfer status: {:?}", e),
+            }
+        }
+
+        let telemetry_result = xfer_req.get_telemetry();
+        assert!(telemetry_result.is_ok(), "get_telemetry from request failed with error: {:?}", telemetry_result.err());
+
+        let telemetry = telemetry_result.unwrap();
+        assert!(telemetry.start_time_us > 0, "Start time should be greater than 0");
+        assert!(telemetry.total_bytes > 0, "Total bytes should be greater than 0");
+        assert!(telemetry.desc_count > 0, "Descriptor count should be greater than 0");
+
+        println!("Telemetry data from request: {:?}", telemetry);
+    }
+}
+
+#[test]
+fn test_get_xfer_telemetry_without_telemetry_enabled() {
+    env::remove_var("NIXL_TELEMETRY_ENABLE");
+
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+
+    // Create descriptor lists
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "agent2",
+            None
+        ).expect("Failed to create transfer request");
+
+        let result = agent1.post_xfer_req(&xfer_req, Some(&opt_args));
+        assert!(result.is_ok(), "post_xfer_req failed with error: {:?}", result.err());
+
+        // Wait for transfer to complete
+        loop {
+            match agent1.get_xfer_status(&xfer_req) {
+                Ok(XferStatus::Success) => break,
+                Ok(XferStatus::InProgress) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => panic!("Failed to get transfer status: {:?}", e),
+            }
+        }
+
+        // Try to get telemetry data - should fail with NoTelemetry
+        let telemetry_result = xfer_req.get_telemetry();
+        assert!(telemetry_result.is_err(), "get_xfer_telemetry should fail when telemetry is disabled");
+
+        match telemetry_result.err().unwrap() {
+            NixlError::NoTelemetry => {
+                println!("Correctly received NoTelemetry error");
+            }
+            other => panic!("Expected NoTelemetry error, got: {:?}", other),
+        }
+    }
+}
+
+#[test]
+fn test_get_xfer_telemetry_before_posting() {
+    env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+
+    // Create descriptor lists
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        // Create transfer request
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "agent2",
+            None
+        ).expect("Failed to create transfer request");
+
+        // Try to get telemetry before posting the request - should fail
+        let telemetry_result = xfer_req.get_telemetry();
+        assert!(telemetry_result.is_err(), "get_xfer_telemetry should fail before transfer is posted");
+        let error = telemetry_result.err().unwrap();
+        match error {
+            NixlError::NoTelemetry | NixlError::BackendError => {
+                println!("Got expected error before posting: {:?}", error);
+            }
+            other => panic!("Expected NoTelemetry or BackendError, got: {:?}", other),
+        }
+
+        println!("Successfully tested telemetry before posting - got expected error");
+    }
+}

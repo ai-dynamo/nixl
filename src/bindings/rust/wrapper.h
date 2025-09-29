@@ -30,12 +30,13 @@ extern "C" {
 
 // Status codes for our C API
 typedef enum {
-  NIXL_CAPI_SUCCESS = 0,
-  NIXL_CAPI_ERROR_INVALID_PARAM = -1,
-  NIXL_CAPI_ERROR_BACKEND = -2,
-  NIXL_CAPI_ERROR_INVALID_STATE = -3,
-  NIXL_CAPI_ERROR_EXCEPTION = -4,
-  NIXL_CAPI_IN_PROG = 1,
+    NIXL_CAPI_SUCCESS = 0,
+    NIXL_CAPI_ERROR_INVALID_PARAM = -1,
+    NIXL_CAPI_ERROR_BACKEND = -2,
+    NIXL_CAPI_ERROR_INVALID_STATE = -3,
+    NIXL_CAPI_ERROR_EXCEPTION = -4,
+    NIXL_CAPI_IN_PROG = 1,
+    NIXL_CAPI_ERROR_NO_TELEMETRY = -5,
 } nixl_capi_status_t;
 
 // Memory types enum (matching nixl's memory types)
@@ -61,6 +62,14 @@ struct nixl_capi_reg_dlist_s;
 struct nixl_capi_xfer_req_s;
 struct nixl_capi_notif_map_s;
 struct nixl_capi_query_resp_list_s;
+
+struct nixl_capi_xfer_telemetry_s {
+    uint64_t start_time_us; // Start time in microseconds since epoch
+    uint64_t post_duration_us; // Post operation duration in microseconds
+    uint64_t xfer_duration_us; // Transfer duration in microseconds
+    uint64_t total_bytes; // Total bytes transferred
+    uint64_t desc_count; // Number of descriptors
+};
 
 // Opaque handle types for C++ objects
 typedef struct nixl_capi_agent_s* nixl_capi_agent_t;
@@ -340,6 +349,16 @@ nixl_capi_query_mem(nixl_capi_agent_t agent,
                     nixl_capi_reg_dlist_t descs,
                     nixl_capi_query_resp_list_t resp,
                     nixl_capi_opt_args_t opt_args);
+
+// Telemetry structure for transfer requests
+typedef struct nixl_capi_xfer_telemetry_s *nixl_capi_xfer_telemetry_t;
+
+// Get transfer telemetry data
+nixl_capi_status_t
+nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
+                             nixl_capi_xfer_req_t req_hndl,
+                             nixl_capi_xfer_telemetry_t telemetry);
+
 
 #ifdef __cplusplus
 }

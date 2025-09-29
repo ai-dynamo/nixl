@@ -72,7 +72,7 @@ use bindings::{
     nixl_capi_query_resp_list_get_params, nixl_capi_prep_xfer_dlist, nixl_capi_release_xfer_dlist_handle,
     nixl_capi_make_xfer_req, nixl_capi_get_local_partial_md,
     nixl_capi_send_local_partial_md, nixl_capi_query_xfer_backend, nixl_capi_opt_args_set_ip_addr,
-    nixl_capi_opt_args_set_port
+    nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry
 };
 
 // Re-export status codes
@@ -81,6 +81,7 @@ pub use bindings::{
     nixl_capi_status_t_NIXL_CAPI_ERROR_INVALID_PARAM as NIXL_CAPI_ERROR_INVALID_PARAM,
     nixl_capi_status_t_NIXL_CAPI_IN_PROG as NIXL_CAPI_IN_PROG,
     nixl_capi_status_t_NIXL_CAPI_SUCCESS as NIXL_CAPI_SUCCESS,
+    nixl_capi_status_t_NIXL_CAPI_ERROR_NO_TELEMETRY as NIXL_CAPI_ERROR_NO_TELEMETRY
 };
 
 mod agent;
@@ -118,6 +119,8 @@ pub enum NixlError {
     FailedToCreateXferDlistHandle,
     #[error("Failed to create backend")]
     FailedToCreateBackend,
+    #[error("Telemetry is not enabled or transfer is not complete")]
+    NoTelemetry,
 }
 
 /// A safe wrapper around NIXL memory list
@@ -199,6 +202,51 @@ pub struct Backend {
 unsafe impl Send for Backend {}
 unsafe impl Sync for Backend {}
 
+/// Transfer telemetry data wrapper
+#[derive(Debug)]
+pub struct XferTelemetry {
+    /// Start time in microseconds since epoch
+    pub start_time_us: u64,
+    /// Post operation duration in microseconds
+    pub post_duration_us: u64,
+    /// Transfer duration in microseconds
+    pub xfer_duration_us: u64,
+    /// Total bytes transferred
+    pub total_bytes: u64,
+    /// Number of descriptors
+    pub desc_count: u64,
+}
+
+impl XferTelemetry {
+    /// Get the start time as a Duration since Unix epoch
+    pub fn start_time(&self) -> std::time::Duration {
+        std::time::Duration::from_micros(self.start_time_us)
+    }
+
+    /// Get the post operation duration
+    pub fn post_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_micros(self.post_duration_us)
+    }
+
+    /// Get the transfer duration
+    pub fn xfer_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_micros(self.xfer_duration_us)
+    }
+
+    /// Get the total duration (post + transfer)
+    pub fn total_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_micros(self.post_duration_us + self.xfer_duration_us)
+    }
+
+    /// Calculate the transfer rate in bytes per second
+    pub fn transfer_rate_bps(&self) -> f64 {
+        if self.xfer_duration_us == 0 {
+            0.0
+        } else {
+            (self.total_bytes as f64) / (self.xfer_duration_us as f64 / 1_000_000.0)
+        }
+    }
+}
 
 /// A safe wrapper around NIXL optional arguments
 pub struct OptArgs {
