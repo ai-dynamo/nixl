@@ -968,6 +968,49 @@ fn test_reg_desc_list_print_after_add() {
     assert!(dlist.print().is_ok());
 }
 
+// ----------- Indexing and get_index tests -----------
+
+#[test]
+fn test_xfer_index_and_get_index() {
+    let mut list = XferDescList::new(MemType::Dram).unwrap();
+    list.add_desc(0x10, 16, 1).unwrap();
+    list.add_desc(0x20, 32, 2).unwrap();
+
+    // Index read
+    assert_eq!(list[0].addr, 0x10);
+    assert_eq!(list[1].len, 32);
+
+    // get_index by predicate
+    let idx = list.get_index(|d| d.dev_id == 2).unwrap();
+    assert_eq!(idx, 1);
+
+    // Mutate via IndexMut; backend should resync lazily on use
+    list[1].len = 64;
+    // Trigger backend usage; should succeed due to auto resync
+    assert!(list.print().is_ok());
+}
+
+#[test]
+fn test_reg_index_and_get_index() {
+    let mut list = RegDescList::new(MemType::Block).unwrap();
+    list.add_desc_with_meta(0xAA, 128, 7, b"m1").unwrap();
+    list.add_desc_with_meta(0xBB, 256, 8, b"m2").unwrap();
+
+    // Index read
+    assert_eq!(list[0].addr, 0xAA);
+    assert_eq!(list[1].metadata, b"m2");
+
+    // get_index by exact match
+    let want = RegDescriptor { addr: 0xBB, len: 256, dev_id: 8, metadata: b"m2".to_vec() };
+    let idx = list.index_of(&want).unwrap();
+    assert_eq!(idx, 1);
+
+    // Mutate via IndexMut; backend should resync lazily on use
+    list[0].metadata = b"m1-updated".to_vec();
+    // Trigger backend usage; should succeed due to auto resync
+    assert!(list.print().is_ok());
+}
+
 #[test]
 fn test_query_mem_with_files() {
     use std::fs::File;
@@ -1350,4 +1393,279 @@ fn test_query_xfer_backend_invalid_request() {
         );
         assert!(xfer_req_result.is_err(), "Transfer request creation should fail for non-existent agent");
  }
+}
+
+// Tests for equality operators on RegDescList and XferDescList
+#[test]
+fn test_descriptor_list_equality() {
+    // Test RegDescList equality scenarios
+    {
+        // 1. Empty lists of same type should be equal
+        let reg_list1 = RegDescList::new(MemType::Dram).unwrap();
+        let reg_list2 = RegDescList::new(MemType::Dram).unwrap();
+        assert_eq!(reg_list1, reg_list2);
+        assert!(!(reg_list1 != reg_list2));
+
+        // 2. Lists with different memory types should not be equal
+        let reg_list_vram = RegDescList::new(MemType::Vram).unwrap();
+        assert_ne!(reg_list1, reg_list_vram);
+        assert!(!(reg_list1 == reg_list_vram));
+
+        // 3. Lists with same descriptors should be equal
+        let mut reg_list3 = RegDescList::new(MemType::Dram).unwrap();
+        let mut reg_list4 = RegDescList::new(MemType::Dram).unwrap();
+
+        reg_list3.add_desc(0x1000, 0x100, 0).unwrap();
+        reg_list3.add_desc(0x2000, 0x200, 1).unwrap();
+
+        reg_list4.add_desc(0x1000, 0x100, 0).unwrap();
+        reg_list4.add_desc(0x2000, 0x200, 1).unwrap();
+
+        assert_eq!(reg_list3, reg_list4);
+        assert!(!(reg_list3 != reg_list4));
+
+        // 4. Lists with different descriptors should not be equal
+        let mut reg_list5 = RegDescList::new(MemType::Dram).unwrap();
+        let mut reg_list6 = RegDescList::new(MemType::Dram).unwrap();
+
+        reg_list5.add_desc(0x1000, 0x100, 0).unwrap();
+        reg_list6.add_desc(0x2000, 0x200, 1).unwrap();
+
+        assert_ne!(reg_list5, reg_list6);
+        assert!(!(reg_list5 == reg_list6));
+
+        // 5. Lists with different lengths should not be equal
+        let mut reg_list7 = RegDescList::new(MemType::Dram).unwrap();
+        let reg_list8 = RegDescList::new(MemType::Dram).unwrap();
+
+        reg_list7.add_desc(0x1000, 0x100, 0).unwrap();
+
+        assert_ne!(reg_list7, reg_list8);
+        assert!(!(reg_list7 == reg_list8));
+
+        // 6. Lists with same descriptors but different order should not be equal
+        let mut reg_list9 = RegDescList::new(MemType::Dram).unwrap();
+        let mut reg_list10 = RegDescList::new(MemType::Dram).unwrap();
+
+        reg_list9.add_desc(0x1000, 0x100, 0).unwrap();
+        reg_list9.add_desc(0x2000, 0x200, 1).unwrap();
+
+        reg_list10.add_desc(0x2000, 0x200, 1).unwrap();
+        reg_list10.add_desc(0x1000, 0x100, 0).unwrap();
+
+        assert_ne!(reg_list9, reg_list10);
+        assert!(!(reg_list9 == reg_list10));
+
+        // 7. Lists with same descriptors but different metadata should not be equal
+        let mut reg_list11 = RegDescList::new(MemType::Dram).unwrap();
+        let mut reg_list12 = RegDescList::new(MemType::Dram).unwrap();
+
+        reg_list11.add_desc_with_meta(0x1000, 0x100, 0, b"metadata1").unwrap();
+        reg_list12.add_desc_with_meta(0x1000, 0x100, 0, b"metadata2").unwrap();
+
+        assert_ne!(reg_list11, reg_list12);
+        assert!(!(reg_list11 == reg_list12));
+    }
+
+    // Test XferDescList equality scenarios (same tests as RegDescList)
+    {
+        // 1. Empty lists of same type should be equal
+        let xfer_list1 = XferDescList::new(MemType::Dram).unwrap();
+        let xfer_list2 = XferDescList::new(MemType::Dram).unwrap();
+        assert_eq!(xfer_list1, xfer_list2);
+        assert!(!(xfer_list1 != xfer_list2));
+
+        // 2. Lists with different memory types should not be equal
+        let xfer_list_vram = XferDescList::new(MemType::Vram).unwrap();
+        assert_ne!(xfer_list1, xfer_list_vram);
+        assert!(!(xfer_list1 == xfer_list_vram));
+
+        // 3. Lists with same descriptors should be equal
+        let mut xfer_list3 = XferDescList::new(MemType::Dram).unwrap();
+        let mut xfer_list4 = XferDescList::new(MemType::Dram).unwrap();
+
+        xfer_list3.add_desc(0x1000, 0x100, 0).unwrap();
+        xfer_list3.add_desc(0x2000, 0x200, 1).unwrap();
+
+        xfer_list4.add_desc(0x1000, 0x100, 0).unwrap();
+        xfer_list4.add_desc(0x2000, 0x200, 1).unwrap();
+
+        assert_eq!(xfer_list3, xfer_list4);
+        assert!(!(xfer_list3 != xfer_list4));
+
+        // 4. Lists with different descriptors should not be equal
+        let mut xfer_list5 = XferDescList::new(MemType::Dram).unwrap();
+        let mut xfer_list6 = XferDescList::new(MemType::Dram).unwrap();
+
+        xfer_list5.add_desc(0x1000, 0x100, 0).unwrap();
+        xfer_list6.add_desc(0x2000, 0x200, 1).unwrap();
+
+        assert_ne!(xfer_list5, xfer_list6);
+        assert!(!(xfer_list5 == xfer_list6));
+
+        // 5. Lists with different lengths should not be equal
+        let mut xfer_list7 = XferDescList::new(MemType::Dram).unwrap();
+        let xfer_list8 = XferDescList::new(MemType::Dram).unwrap();
+
+        xfer_list7.add_desc(0x1000, 0x100, 0).unwrap();
+
+        assert_ne!(xfer_list7, xfer_list8);
+        assert!(!(xfer_list7 == xfer_list8));
+
+        // 6. Lists with same descriptors but different order should not be equal
+        let mut xfer_list9 = XferDescList::new(MemType::Dram).unwrap();
+        let mut xfer_list10 = XferDescList::new(MemType::Dram).unwrap();
+
+        xfer_list9.add_desc(0x1000, 0x100, 0).unwrap();
+        xfer_list9.add_desc(0x2000, 0x200, 1).unwrap();
+
+        xfer_list10.add_desc(0x2000, 0x200, 1).unwrap();
+        xfer_list10.add_desc(0x1000, 0x100, 0).unwrap();
+
+        assert_ne!(xfer_list9, xfer_list10);
+        assert!(!(xfer_list9 == xfer_list10));
+    }
+}
+
+// Tests for serialize method on RegDescList and XferDescList
+#[test]
+fn test_descriptor_list_serialize() {
+    // Test RegDescList serialization
+    {
+        // 1. Empty list serialization should work
+        let empty_reg_list = RegDescList::new(MemType::Dram).unwrap();
+        let serialized_empty = empty_reg_list.serialize().unwrap();
+        assert!(!serialized_empty.is_empty(), "Serialized empty list should contain metadata");
+        println!("Empty RegDescList serialized to {} bytes", serialized_empty.len());
+
+        // 2. List with descriptors should serialize to larger size
+        let mut reg_list = RegDescList::new(MemType::Vram).unwrap();
+        reg_list.add_desc(0x1000, 0x100, 0).unwrap();
+        reg_list.add_desc(0x2000, 0x200, 1).unwrap();
+        
+        let serialized = reg_list.serialize().unwrap();
+        assert!(!serialized.is_empty(), "Serialized list should not be empty");
+        assert!(serialized.len() > serialized_empty.len(), 
+                "List with descriptors should serialize to larger size: {} > {}", 
+                serialized.len(), serialized_empty.len());
+        println!("RegDescList with 2 descriptors serialized to {} bytes", serialized.len());
+
+        // 3. Different memory types should produce different serializations
+        let mut reg_list_dram = RegDescList::new(MemType::Dram).unwrap();
+        reg_list_dram.add_desc(0x1000, 0x100, 0).unwrap();
+        
+        let serialized_dram = reg_list_dram.serialize().unwrap();
+        assert_ne!(serialized, serialized_dram, "Different memory types should serialize differently");
+
+        // 4. Same descriptors should produce same serialization
+        let mut reg_list2 = RegDescList::new(MemType::Vram).unwrap();
+        reg_list2.add_desc(0x1000, 0x100, 0).unwrap();
+        reg_list2.add_desc(0x2000, 0x200, 1).unwrap();
+        
+        let serialized2 = reg_list2.serialize().unwrap();
+        assert_eq!(serialized, serialized2, "Same descriptors should serialize identically");
+
+        // 5. Lists with metadata should include metadata in serialization
+        let mut reg_list_meta = RegDescList::new(MemType::Block).unwrap();
+        reg_list_meta.add_desc_with_meta(0x3000, 0x300, 2, b"test_metadata").unwrap();
+        
+        let serialized_meta = reg_list_meta.serialize().unwrap();
+        assert!(!serialized_meta.is_empty(), "List with metadata should serialize");
+        println!("RegDescList with metadata serialized to {} bytes", serialized_meta.len());
+
+        // 6. Different metadata should produce different serializations
+        let mut reg_list_meta2 = RegDescList::new(MemType::Block).unwrap();
+        reg_list_meta2.add_desc_with_meta(0x3000, 0x300, 2, b"different_metadata").unwrap();
+        
+        let serialized_meta2 = reg_list_meta2.serialize().unwrap();
+        assert_ne!(serialized_meta, serialized_meta2, "Different metadata should serialize differently");
+
+        // 7. Round-trip testing: serialize then deserialize should produce equivalent list
+        let deserialized = RegDescList::deserialize(&serialized).unwrap();
+        assert_eq!(reg_list, deserialized, "Round-trip should produce equivalent lists");
+        assert_eq!(deserialized.get_type().unwrap(), MemType::Vram);
+        assert_eq!(deserialized.len().unwrap(), 2);
+        println!("RegDescList round-trip successful");
+
+        // 8. Empty list round-trip
+        let deserialized_empty = RegDescList::deserialize(&serialized_empty).unwrap();
+        assert_eq!(empty_reg_list, deserialized_empty, "Empty list round-trip should work");
+
+        // 9. Metadata round-trip
+        let deserialized_meta = RegDescList::deserialize(&serialized_meta).unwrap();
+        assert_eq!(reg_list_meta, deserialized_meta, "Metadata round-trip should work");
+
+        // 10. Error cases for deserialization
+        let invalid_data = vec![0xFF, 0xFF, 0xFF];
+        assert!(RegDescList::deserialize(&invalid_data).is_err(), "Invalid data should return error");
+        
+        let empty_data = vec![];
+        assert!(RegDescList::deserialize(&empty_data).is_err(), "Empty data should return error");
+    }
+
+    // Test XferDescList serialization
+    {
+        // 1. Empty list serialization should work
+        let empty_xfer_list = XferDescList::new(MemType::Dram).unwrap();
+        let serialized_empty = empty_xfer_list.serialize().unwrap();
+        assert!(!serialized_empty.is_empty(), "Serialized empty list should contain metadata");
+        println!("Empty XferDescList serialized to {} bytes", serialized_empty.len());
+
+        // 2. List with descriptors should serialize to larger size
+        let mut xfer_list = XferDescList::new(MemType::Block).unwrap();
+        xfer_list.add_desc(0x3000, 0x300, 2).unwrap();
+        xfer_list.add_desc(0x4000, 0x400, 3).unwrap();
+        
+        let serialized = xfer_list.serialize().unwrap();
+        assert!(!serialized.is_empty(), "Serialized list should not be empty");
+        assert!(serialized.len() > serialized_empty.len(), 
+                "List with descriptors should serialize to larger size: {} > {}", 
+                serialized.len(), serialized_empty.len());
+        println!("XferDescList with 2 descriptors serialized to {} bytes", serialized.len());
+
+        // 3. Same descriptors should produce same serialization
+        let mut xfer_list2 = XferDescList::new(MemType::Block).unwrap();
+        xfer_list2.add_desc(0x3000, 0x300, 2).unwrap();
+        xfer_list2.add_desc(0x4000, 0x400, 3).unwrap();
+        
+        let serialized2 = xfer_list2.serialize().unwrap();
+        assert_eq!(serialized, serialized2, "Same descriptors should serialize identically");
+
+        // 4. Different memory types should produce different serializations
+        let mut xfer_list_vram = XferDescList::new(MemType::Vram).unwrap();
+        xfer_list_vram.add_desc(0x3000, 0x300, 2).unwrap();
+        
+        let serialized_vram = xfer_list_vram.serialize().unwrap();
+        assert_ne!(serialized, serialized_vram, "Different memory types should serialize differently");
+
+        // 5. Order should matter in serialization
+        let mut xfer_list_reordered = XferDescList::new(MemType::Block).unwrap();
+        xfer_list_reordered.add_desc(0x4000, 0x400, 3).unwrap();  // Different order
+        xfer_list_reordered.add_desc(0x3000, 0x300, 2).unwrap();
+        
+        let serialized_reordered = xfer_list_reordered.serialize().unwrap();
+        assert_ne!(serialized, serialized_reordered, "Different order should serialize differently");
+
+        // 6. Round-trip testing: serialize then deserialize should produce equivalent list
+        let deserialized = XferDescList::deserialize(&serialized).unwrap();
+        assert_eq!(xfer_list, deserialized, "Round-trip should produce equivalent lists");
+        assert_eq!(deserialized.get_type().unwrap(), MemType::Block);
+        assert_eq!(deserialized.len().unwrap(), 2);
+        println!("XferDescList round-trip successful");
+
+        // 7. Empty list round-trip
+        let deserialized_empty = XferDescList::deserialize(&serialized_empty).unwrap();
+        assert_eq!(empty_xfer_list, deserialized_empty, "Empty list round-trip should work");
+
+        // 8. Different memory types round-trip
+        let deserialized_vram = XferDescList::deserialize(&serialized_vram).unwrap();
+        assert_eq!(xfer_list_vram, deserialized_vram, "Different memory type round-trip should work");
+
+        // 9. Error cases for deserialization
+        let invalid_data = vec![0xFF, 0xFF, 0xFF];
+        assert!(XferDescList::deserialize(&invalid_data).is_err(), "Invalid data should return error");
+        
+        let empty_data = vec![];
+        assert!(XferDescList::deserialize(&empty_data).is_err(), "Empty data should return error");
+    }
 }
