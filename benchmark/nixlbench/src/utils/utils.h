@@ -166,6 +166,7 @@ class xferBenchConfig {
         static bool obj_use_virtual_addressing;
         static std::string obj_endpoint_override;
         static std::string obj_req_checksum;
+        static std::string obj_ca_bundle;
         static int hf3fs_iopool_size;
 
         static int

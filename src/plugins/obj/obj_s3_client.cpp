@@ -74,6 +74,9 @@ createClientConfiguration(nixl_b_params_t *custom_params) {
                                      "'. Must be 'required' or 'supported'");
     }
 
+    auto ca_bundle_it = custom_params->find("ca_bundle");
+    if (ca_bundle_it != custom_params->end()) config.caFile = ca_bundle_it->second;
+
     return config;
 }
 
