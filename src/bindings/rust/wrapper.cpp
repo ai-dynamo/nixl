@@ -27,6 +27,19 @@
 #include <vector>
 #include <chrono>
 
+static nixl_thread_sync_t
+nixl_capi_thread_sync_to_nixl(nixl_capi_thread_sync_t sync) {
+    switch (sync) {
+    case NIXL_CAPI_THREAD_SYNC_NONE:
+        return nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE;
+    case NIXL_CAPI_THREAD_SYNC_STRICT:
+        return nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
+    case NIXL_CAPI_THREAD_SYNC_RW:
+        return nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+    default:
+        return nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
+    }
+}
 
 extern "C" {
 // Internal struct definitions to match our opaque types
@@ -110,20 +123,47 @@ nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent)
 }
 
 nixl_capi_status_t
-nixl_capi_destroy_agent(nixl_capi_agent_t agent)
-{
-  if (!agent) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
+nixl_capi_create_configured_agent(const char *name,
+                                  const nixl_capi_agent_config_t *cfg,
+                                  nixl_capi_agent_t *agent) {
+    if (!name || !cfg || !agent) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
 
-  try {
-    delete agent->inner;
-    delete agent;
-    return NIXL_CAPI_SUCCESS;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
+    try {
+        nixlAgentConfig nixl_config(cfg->enable_prog_thread,
+                                    cfg->enable_listen_thread,
+                                    cfg->listen_port,
+                                    nixl_capi_thread_sync_to_nixl(cfg->thread_sync),
+                                    cfg->num_workers,
+                                    cfg->pthr_delay_us,
+                                    cfg->lthr_delay_us,
+                                    cfg->capture_telemetry);
+
+        auto agent_handle = new nixl_capi_agent_s;
+        agent_handle->inner = new nixlAgent(name, nixl_config);
+        *agent = agent_handle;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_destroy_agent(nixl_capi_agent_t agent) {
+    if (!agent) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        delete agent->inner;
+        delete agent;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 nixl_capi_status_t
@@ -1868,5 +1908,4 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
         return NIXL_CAPI_ERROR_BACKEND;
     }
 }
-
-}  // extern "C"
+} // extern "C"
