@@ -64,6 +64,7 @@ setup_cmd="set -x && \
     git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && \
     cd nixl && \
     ${GIT_CHECKOUT_CMD}"
+efa_validation_cmd="fi_info -p efa"
 build_cmd=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${UCX_INSTALL_DIR}"
 
 # Add timeout only if TEST_TIMEOUT is set (expects minutes)
@@ -71,7 +72,7 @@ if [ -n "$TEST_TIMEOUT" ]; then
     test_cmd="timeout ${TEST_TIMEOUT}m ${test_cmd}"
 fi
 
-export AWS_CMD="${setup_cmd} && ${build_cmd} && ${test_cmd}"
+export AWS_CMD="${setup_cmd} && ${build_cmd} && ${efa_validation_cmd} && ${test_cmd}"
 
 # Generate AWS job properties json from template
 envsubst < aws_vars.template > aws_vars.json
