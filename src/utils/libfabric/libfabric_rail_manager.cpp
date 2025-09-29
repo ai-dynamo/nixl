@@ -41,36 +41,31 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
                << " bytes";
 
     // Initialize topology system
-    try {
-        topology = std::make_unique<nixlLibfabricTopology>();
-        NIXL_DEBUG << "System topology discovered successfully";
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to discover system topology: " << e.what();
-        throw std::runtime_error(
-            "Topology discovery failed - cannot proceed without topology information");
-    }
+    topology = std::make_unique<nixlLibfabricTopology>();
 
-    // Get EFA devices from topology and create rails automatically
-    std::vector<std::string> all_efa_devices = topology->getAllEfaDevices();
-    std::string selected_fabric_name = topology->getEFAfabricName();
+    // Get network devices from topology and create rails automatically
+    std::vector<std::string> all_devices = topology->getAllDevices();
+    std::string selected_provider_name = topology->getProviderName();
 
-    NIXL_DEBUG << "Got " << all_efa_devices.size() << " EFA devices from topology for the fabric"
-               << selected_fabric_name;
+    NIXL_DEBUG << "Got " << all_devices.size()
+               << " network devices from topology for provider: " << selected_provider_name;
 
-    // Create data rails with selected provider
-    nixl_status_t rail_status = createDataRails(all_efa_devices, selected_fabric_name);
+    // Create data rails with selected provider - throw on failure
+    nixl_status_t rail_status = createDataRails(all_devices, selected_provider_name);
     if (rail_status != NIXL_SUCCESS) {
-        throw std::runtime_error("Rail Manager failed to create data rails");
+        throw std::runtime_error("Failed to create data rails for libfabric rail manager");
     }
-    // Create control rails with selected provider
+
+    // Create control rails with selected provider - throw on failure
     nixl_status_t control_rail_status = createControlRails(
-        all_efa_devices, selected_fabric_name, NIXL_LIBFABRIC_DEFAULT_CONTROL_RAILS);
+        all_devices, selected_provider_name, NIXL_LIBFABRIC_DEFAULT_CONTROL_RAILS);
     if (control_rail_status != NIXL_SUCCESS) {
-        throw std::runtime_error("Rail Manager failed to create control rails");
+        throw std::runtime_error("Failed to create control rails for libfabric rail manager");
     }
+
     NIXL_DEBUG << "Successfully created " << data_rails_.size() << " data rails and "
-               << control_rails_.size() << " control rails";
+               << control_rails_.size()
+               << " control rails using provider: " << selected_provider_name;
 }
 
 nixlLibfabricRailManager::~nixlLibfabricRailManager() {
@@ -175,7 +170,18 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
         req->chunk_offset = 0;
         req->chunk_size = transfer_size;
         req->local_addr = local_addr;
-        req->remote_addr = remote_base_addr;
+
+        // For TCP providers, use offset 0 instead of virtual address
+        // TCP providers don't support FI_MR_VIRT_ADDR and expect offset-based addressing
+        if (data_rails_[rail_id]->provider_name == "tcp" ||
+            data_rails_[rail_id]->provider_name == "sockets") {
+            req->remote_addr = 0; // Use offset 0 for TCP providers
+            NIXL_DEBUG << "TCP provider detected: using offset 0 instead of virtual address "
+                       << (void *)remote_base_addr << " for rail " << rail_id;
+        } else {
+            req->remote_addr = remote_base_addr; // Use virtual address for EFA and other providers
+        }
+
         req->local_mr = local_mrs[rail_id];
         req->remote_key = remote_keys[rail_id];
         req->rail_id = rail_id;
@@ -208,10 +214,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
             return status;
         }
 
-        // Increment expected completions
-        if (binary_notif) {
-            binary_notif->expected_completions++;
-        }
+        binary_notif->expected_completions++;
 
         NIXL_DEBUG << "Round-robin: submitted single request on rail " << rail_id << " for "
                    << transfer_size << " bytes, XFER_ID: " << req->xfer_id;
@@ -239,7 +242,20 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
             req->chunk_offset = chunk_offset;
             req->chunk_size = current_chunk_size;
             req->local_addr = static_cast<char *>(local_addr) + chunk_offset;
-            req->remote_addr = remote_base_addr + chunk_offset;
+
+            // For TCP providers, use offset instead of virtual address
+            // TCP providers don't support FI_MR_VIRT_ADDR and expect offset-based addressing
+            if (data_rails_[rail_id]->provider_name == "tcp" ||
+                data_rails_[rail_id]->provider_name == "sockets") {
+                req->remote_addr = chunk_offset; // Use chunk offset for TCP providers
+                NIXL_DEBUG << "TCP provider detected: using chunk offset " << chunk_offset
+                           << " instead of virtual address "
+                           << (void *)(remote_base_addr + chunk_offset) << " for rail " << rail_id;
+            } else {
+                req->remote_addr = remote_base_addr +
+                    chunk_offset; // Use virtual address for EFA and other providers
+            }
+
             req->local_mr = local_mrs[rail_id];
             req->remote_key = remote_keys[rail_id];
             req->rail_id = rail_id;
@@ -271,10 +287,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
                 return status;
             }
 
-            // Increment expected completions for notification
-            if (binary_notif) {
-                binary_notif->expected_completions++;
-            }
+            binary_notif->expected_completions++;
         }
         NIXL_DEBUG << "Striping: submitted "
                    << (binary_notif ? binary_notif->expected_completions : 0) << " requests for "
@@ -398,8 +411,7 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
 
         struct fid_mr *mr;
         uint64_t key;
-        nixl_status_t status = data_rails_[rail_idx]->registerMemory(
-            buffer, length, FI_REMOTE_WRITE | FI_REMOTE_READ, &mr, &key);
+        nixl_status_t status = data_rails_[rail_idx]->registerMemory(buffer, length, &mr, &key);
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to register memory on rail " << rail_idx;
             // Cleanup already registered MRs

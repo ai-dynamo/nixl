@@ -276,11 +276,7 @@ public:
     // Memory registration methods
     /** Register memory buffer with libfabric */
     nixl_status_t
-    registerMemory(void *buffer,
-                   size_t length,
-                   uint64_t access_flags,
-                   struct fid_mr **mr_out,
-                   uint64_t *key_out) const;
+    registerMemory(void *buffer, size_t length, struct fid_mr **mr_out, uint64_t *key_out) const;
 
     /** Deregister memory from libfabric */
     nixl_status_t
