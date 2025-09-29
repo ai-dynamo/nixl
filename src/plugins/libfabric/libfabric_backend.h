@@ -129,10 +129,13 @@ private:
     std::atomic<size_t> submitted_requests_; // Total number of submitted requests
 
 public:
-    // Pre-allocated BinaryNotification for this handle
+    const nixl_xfer_op_t operation_;
+    const std::string remote_agent_;
+    bool has_notif;
+
     BinaryNotification binary_notif; // Direct BinaryNotification instance
 
-    nixlLibfabricBackendH();
+    nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent);
     ~nixlLibfabricBackendH();
 
     /** Check if all requests in this transfer have completed */
@@ -247,7 +250,7 @@ private:
                           const std::vector<std::array<char, 56>> &control_rail_endpoints);
     // Private notification implementation with unified binary notification system
     nixl_status_t
-    notifSendPriv(const std::string &remote_agent, nixlLibfabricReq *control_request) const;
+    notifSendPriv(const std::string &remote_agent, BinaryNotification &binary_notification) const;
 #ifdef HAVE_CUDA
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;
