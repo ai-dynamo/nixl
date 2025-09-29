@@ -42,10 +42,10 @@ ARCH=$(uname -m)
 
 export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
-export CPATH=${INSTALL_DIR}/include:$CPATH
+export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:/opt/amazon/efa/lib:$LD_LIBRARY_PATH
+export CPATH=${INSTALL_DIR}/include:/opt/amazon/efa/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
+export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:/opt/amazon/efa/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 # Raise exceptions for logging errors
