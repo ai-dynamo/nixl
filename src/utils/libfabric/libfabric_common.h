@@ -149,9 +149,9 @@ resetSeqId();
 
 // Utility functions
 namespace LibfabricUtils {
-// Device discovery
+// Device discovery with fallback to sockets
 std::pair<std::string, std::vector<std::string>>
-getAvailableEfaDevices();
+getAvailableNetworkDevices();
 // String utilities
 std::string
 hexdump(const void *data);
