@@ -948,7 +948,7 @@ nixlLibfabricRail::processRemoteWriteCompletion(struct fi_cq_data_entry *comp) c
 
         // Call XFER_ID tracking callback to add received XFER_ID to global set
         if (xferIdCallback) {
-            xferIdCallback(xfer_id);
+            xferIdCallback(comp->data);
             NIXL_TRACE << "Called XFER_ID callback for XFER_ID " << xfer_id;
         } else {
             NIXL_ERROR << "No XFER_ID callback set for rail " << rail_id;

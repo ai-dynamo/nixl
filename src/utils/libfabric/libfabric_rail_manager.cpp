@@ -22,6 +22,16 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 
+// Forward declaration for LibfabricUtils namespace
+namespace LibfabricUtils {
+uint16_t
+getNextXferId();
+uint8_t
+getNextSeqId();
+void
+resetSeqId();
+} // namespace LibfabricUtils
+
 // Static round-robin counter for rail selection
 static std::atomic<size_t> round_robin_counter{0};
 
@@ -172,8 +182,10 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
         // Submit immediately
         nixl_status_t status;
         if (op_type == nixlLibfabricReq::WRITE) {
-            uint64_t imm_data =
-                NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, req->xfer_id);
+            // Generate next SEQ_ID for this specific write operation
+            uint8_t seq_id = LibfabricUtils::getNextSeqId();
+            uint64_t imm_data = NIXL_MAKE_IMM_DATA(
+                NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, binary_notif->xfer_id, seq_id);
             status = data_rails_[rail_id]->postWrite(req->local_addr,
                                                      req->chunk_size,
                                                      fi_mr_desc(req->local_mr),
@@ -196,9 +208,9 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
             return status;
         }
 
-        // Collect XFER_ID directly in BinaryNotification
-        if (binary_notif && binary_notif->xfer_id_count < NIXL_LIBFABRIC_MAX_XFER_IDS) {
-            binary_notif->addXferId(req->xfer_id);
+        // Increment expected completions
+        if (binary_notif) {
+            binary_notif->expected_completions++;
         }
 
         NIXL_DEBUG << "Round-robin: submitted single request on rail " << rail_id << " for "
@@ -233,8 +245,10 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
             req->rail_id = rail_id;
             nixl_status_t status;
             if (op_type == nixlLibfabricReq::WRITE) {
-                uint64_t imm_data =
-                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, req->xfer_id);
+                // Generate next SEQ_ID for this specific transfer operation
+                uint8_t seq_id = LibfabricUtils::getNextSeqId();
+                uint64_t imm_data = NIXL_MAKE_IMM_DATA(
+                    NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, binary_notif->xfer_id, seq_id);
                 status = data_rails_[rail_id]->postWrite(req->local_addr,
                                                          req->chunk_size,
                                                          fi_mr_desc(req->local_mr),
@@ -257,17 +271,19 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
                 return status;
             }
 
-            // Collect XFER_ID directly in BinaryNotification
-            if (binary_notif && binary_notif->xfer_id_count < NIXL_LIBFABRIC_MAX_XFER_IDS) {
-                binary_notif->addXferId(req->xfer_id);
+            // Increment expected completions for notification
+            if (binary_notif) {
+                binary_notif->expected_completions++;
             }
         }
-        NIXL_DEBUG << "Striping: submitted " << (binary_notif ? binary_notif->xfer_id_count : 0)
-                   << " requests for " << transfer_size << " bytes";
+        NIXL_DEBUG << "Striping: submitted "
+                   << (binary_notif ? binary_notif->expected_completions : 0) << " requests for "
+                   << transfer_size << " bytes";
     }
 
-    NIXL_DEBUG << "Successfully submitted " << (binary_notif ? binary_notif->xfer_id_count : 0)
-               << " requests for " << transfer_size << " bytes";
+    NIXL_DEBUG << "Successfully submitted "
+               << (binary_notif ? binary_notif->expected_completions : 0) << " requests for "
+               << transfer_size << " bytes";
 
     return NIXL_SUCCESS;
 }
@@ -555,7 +571,9 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     }
     size_t control_rail_id = 0;
     uint32_t xfer_id = req->xfer_id;
-    uint64_t imm_data = NIXL_MAKE_IMM_DATA(msg_type_value, agent_idx, xfer_id);
+    // For control messages, use SEQ_ID 0 since they don't need sequence tracking
+    // TODO: Add sequencing for connection establishment workflow.
+    uint64_t imm_data = NIXL_MAKE_IMM_DATA(msg_type_value, agent_idx, xfer_id, 0);
 
     // Set completion callback if provided
     if (completion_callback) {
