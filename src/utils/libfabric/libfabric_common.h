@@ -36,7 +36,6 @@
 #define NIXL_LIBFABRIC_DEFAULT_CONTROL_RAILS 1
 #define NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_SEC 1
 #define NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD (128 * 1024) // 128KB
-#define NIXL_LIBFABRIC_MAX_XFER_IDS 1024 // Maximum XFER_IDs per notification
 #define LF_EP_NAME_MAX_LEN 56
 
 // Request pool configuration constants
@@ -45,22 +44,25 @@
 #define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192
 
 // The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
-// | 4-bit MSG TYPE flag | 8-bit agent index | 20-bit XFER_ID |
+// | 4-bit MSG TYPE flag | 8-bit agent index | 16-bit XFER_ID | 4-bit SEQ_ID |
 
 // Optimized bit field constants (compile-time computed)
 #define NIXL_MSG_TYPE_BITS 4
 #define NIXL_AGENT_INDEX_BITS 8
-#define NIXL_XFER_ID_BITS 20
+#define NIXL_XFER_ID_BITS 16
+#define NIXL_SEQ_ID_BITS 4
 
 // Pre-computed shift amounts for better performance
 #define NIXL_MSG_TYPE_SHIFT 0
 #define NIXL_AGENT_INDEX_SHIFT 4
 #define NIXL_XFER_ID_SHIFT 12
+#define NIXL_SEQ_ID_SHIFT 28
 
 // Pre-computed masks (compile-time constants)
 #define NIXL_MSG_TYPE_MASK 0xFU // 0x0000000F (4 bits)
 #define NIXL_AGENT_INDEX_MASK 0xFFU // 0x000000FF (8 bits)
-#define NIXL_XFER_ID_MASK 0xFFFFFU // 0x000FFFFF (20 bits)
+#define NIXL_XFER_ID_MASK 0xFFFFU // 0x0000FFFF (16 bits)
+#define NIXL_SEQ_ID_MASK 0xFU // 0x0000000F (4 bits)
 
 // Message type constants
 #define NIXL_LIBFABRIC_MSG_CONNECT 0
@@ -74,26 +76,26 @@
 #define NIXL_GET_AGENT_INDEX_FROM_IMM(data) \
     (((data) >> NIXL_AGENT_INDEX_SHIFT) & NIXL_AGENT_INDEX_MASK)
 #define NIXL_GET_XFER_ID_FROM_IMM(data) (((data) >> NIXL_XFER_ID_SHIFT) & NIXL_XFER_ID_MASK)
+#define NIXL_GET_SEQ_ID_FROM_IMM(data) (((data) >> NIXL_SEQ_ID_SHIFT) & NIXL_SEQ_ID_MASK)
 
 // Single-operation immediate data creation (minimal bit operations)
-#define NIXL_MAKE_IMM_DATA(msg_type, agent_idx, xfer_id)                           \
+#define NIXL_MAKE_IMM_DATA(msg_type, agent_idx, xfer_id, seq_id)                   \
     (((uint64_t)(msg_type) & NIXL_MSG_TYPE_MASK) |                                 \
      (((uint64_t)(agent_idx) & NIXL_AGENT_INDEX_MASK) << NIXL_AGENT_INDEX_SHIFT) | \
-     (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT))
+     (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT) |           \
+     (((uint64_t)(seq_id) & NIXL_SEQ_ID_MASK) << NIXL_SEQ_ID_SHIFT))
 
 /**
- * @brief Binary notification format to eliminate SerDes string operations
+ * @brief Binary notification format with counter-based matching
  *
  * This structure provides a fixed-size, binary format for notifications
- * to avoid expensive string serialization/deserialization operations.
- * Used for high-performance notification passing between agents.
  */
 struct BinaryNotification {
     char agent_name[256]; // Fixed-size agent name (null-terminated)
-    char message[1024]; // Fixed-size message (null-terminated)
-    uint32_t xfer_id_count; // Number of XFER_IDs
-    uint32_t
-        xfer_ids[NIXL_LIBFABRIC_MAX_XFER_IDS]; // Fixed array of XFER_IDs (max 128 per notification)
+    char message[1024]; // Fixed-size message (binary data, not null-terminated)
+    uint32_t message_length; // Actual length of message data
+    uint16_t xfer_id; // 16-bit postXfer ID (unique per postXfer call)
+    uint32_t expected_completions; // Total write requests for this xfer_id
 
     /** @brief Clear all fields to zero */
     void
@@ -108,18 +110,14 @@ struct BinaryNotification {
         agent_name[sizeof(agent_name) - 1] = '\0';
     }
 
-    /** @brief Set message with bounds checking */
+    /** @brief Set message with bounds checking and proper binary data handling */
     void
     setMessage(const std::string &msg) {
-        strncpy(message, msg.c_str(), sizeof(message) - 1);
-        message[sizeof(message) - 1] = '\0';
-    }
-
-    /** @brief Add XFER_ID if space available */
-    void
-    addXferId(uint32_t xfer_id) {
-        if (xfer_id_count < NIXL_LIBFABRIC_MAX_XFER_IDS) {
-            xfer_ids[xfer_id_count++] = xfer_id;
+        message_length = std::min(msg.length(), sizeof(message));
+        memcpy(message, msg.data(), message_length);
+        // Zero out remaining space for consistency
+        if (message_length < sizeof(message)) {
+            memset(message + message_length, 0, sizeof(message) - message_length);
         }
     }
 
@@ -129,28 +127,24 @@ struct BinaryNotification {
         return std::string(agent_name);
     }
 
-    /** @brief Get message as string */
+    /** @brief Get message as string using stored length for proper binary data handling */
     std::string
     getMessage() const {
-        return std::string(message);
-    }
-
-    /** @brief Get all XFER_IDs as unordered set */
-    std::unordered_set<uint32_t>
-    getXferIds() const {
-        std::unordered_set<uint32_t> result;
-        for (uint32_t i = 0; i < xfer_id_count; ++i) {
-            result.insert(xfer_ids[i]);
-        }
-        return result;
+        return std::string(message, message_length);
     }
 };
 
 // Global XFER_ID management
 namespace LibfabricUtils {
 // Get next unique XFER_ID
-uint32_t
+uint16_t
 getNextXferId();
+// Get next 4-bit SEQ_ID
+uint8_t
+getNextSeqId();
+// Reset SEQ_ID counter for new postXfer
+void
+resetSeqId();
 } // namespace LibfabricUtils
 
 // Utility functions
