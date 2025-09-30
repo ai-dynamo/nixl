@@ -48,6 +48,7 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | `region` | AWS region for the S3 service | `us-east-1` | No |
 | `use_virtual_addressing` | Use virtual-hosted-style addressing (`true`/`false`) | `false` | No |
 | `req_checksum` | Request checksum validation (`required`/`supported`) | - | No |
+| `ca_bundle` | path to a custom certificate bundle | - | No |
 
 \* If `access_key` and `secret_key` are not provided, the AWS SDK will attempt to use default credential providers (IAM roles, environment variables, credential files, etc.)
 
@@ -115,7 +116,8 @@ nixl_b_params_t params = {
     {"scheme", "http"},
     {"region", "us-east-1"},
     {"use_virtual_addressing", "false"},
-    {"req_checksum", "supported"}
+    {"req_checksum", "supported"},
+    {"ca_bundle", "/root/ca-certs/cacert.pem"}
 };
 agent.createBackend("obj", params);
 ```

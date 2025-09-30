@@ -26,6 +26,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <chrono>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -125,10 +126,16 @@ public:
 class nixlLibfabricBackendH : public nixlBackendReqH {
 private:
     std::atomic<size_t> completed_requests_; // Atomic count of completed requests
-    std::atomic<size_t> total_requests_used_; // Total number of requests for this transfer
+    std::atomic<size_t> submitted_requests_; // Total number of submitted requests
 
 public:
-    nixlLibfabricBackendH();
+    const nixl_xfer_op_t operation_;
+    const std::string remote_agent_;
+    bool has_notif;
+
+    BinaryNotification binary_notif; // Direct BinaryNotification instance
+
+    nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent);
     ~nixlLibfabricBackendH();
 
     /** Check if all requests in this transfer have completed */
@@ -210,19 +217,27 @@ private:
     struct PendingNotification {
         std::string remote_agent;
         std::string message;
-        std::unordered_set<uint32_t> expected_xfer_ids; // From ref_xfer_id_list
-        std::chrono::steady_clock::time_point received_time;
+        uint16_t post_xfer_id;
+        uint32_t expected_completions; // Expected transfer requests for this post_xfer_id
+        uint32_t received_completions; // Actual remote transfer completions received for this
+                                       // post_xfer_id
+
+        // Default constructor for map operations
+        PendingNotification() : post_xfer_id(0), expected_completions(0), received_completions(0) {}
 
         PendingNotification(const std::string &agent,
                             const std::string &msg,
-                            const std::unordered_set<uint32_t> &xfer_ids)
+                            uint16_t xfer_id,
+                            uint32_t expected_cnt = 0)
             : remote_agent(agent),
               message(msg),
-              expected_xfer_ids(xfer_ids),
-              received_time(std::chrono::steady_clock::now()) {}
+              post_xfer_id(xfer_id),
+              expected_completions(expected_cnt),
+              received_completions(0) {}
     };
 
-    std::vector<PendingNotification> pending_notifications_;
+    // O(1) lookup with postXferID key
+    std::map<uint16_t, PendingNotification> pending_notifications_;
 
     // Connection management helpers
     nixl_status_t
@@ -235,7 +250,7 @@ private:
                           const std::vector<std::array<char, 56>> &control_rail_endpoints);
     // Private notification implementation with unified binary notification system
     nixl_status_t
-    notifSendPriv(const std::string &remote_agent, nixlLibfabricReq *control_request) const;
+    notifSendPriv(const std::string &remote_agent, BinaryNotification &binary_notification) const;
 #ifdef HAVE_CUDA
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;
@@ -549,26 +564,14 @@ public:
 
     // Receiver Side XFER_ID Tracking Helper Methods
     /**
-     * @brief Add received XFER_ID to global tracking set
+     * @brief Add received XFER_ID with counter-based matching
      *
-     * Thread-safe method to track received data transfers and trigger
-     * processing of pending notifications when all expected transfers arrive.
+     * Thread-safe method to track received data transfers.
      *
-     * @param[in] xfer_id Transfer ID that was received
+     * @param[in] xfer_id 16-bit transfer ID that was received
      */
     void
-    addReceivedXferId(uint32_t xfer_id);
-
-    /**
-     * @brief Check if all expected XFER_IDs have been received
-     *
-     * Determines if all transfers associated with a notification have completed.
-     *
-     * @param[in] expected Set of expected XFER_IDs
-     * @return true if all expected IDs received, false otherwise
-     */
-    bool
-    allXferIdsReceived(const std::unordered_set<uint32_t> &expected);
+    addReceivedXferId(uint16_t xfer_id);
 
     // Notification Queuing Helper Methods
     /**

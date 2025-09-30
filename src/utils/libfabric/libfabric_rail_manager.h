@@ -38,10 +38,10 @@ class nixlLibfabricTopology;
 /** Central manager for multi-rail RDMA operations with topology awareness */
 class nixlLibfabricRailManager {
 public:
-    /** Initialize rail manager with topology discovery and create rails based on available EFA
-     * devices
+    /** Initialize rail manager with topology discovery and create rails based on available
+     * network devices
      * @param striping_threshold Size threshold for enabling multi-rail striping
-     * @throws std::runtime_error if topology discovery or rail creation fails
+     * @throws std::runtime_error if initialization fails
      */
     nixlLibfabricRailManager(size_t striping_threshold);
     /** Destroy rail manager and cleanup all resources */
@@ -292,6 +292,7 @@ public:
 
 private:
     size_t striping_threshold_;
+
     // Rail allocation
     std::vector<std::unique_ptr<nixlLibfabricRail>> data_rails_;
     std::vector<std::unique_ptr<nixlLibfabricRail>> control_rails_;

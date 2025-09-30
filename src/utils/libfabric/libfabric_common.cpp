@@ -31,65 +31,68 @@ namespace LibfabricUtils {
 
 
 std::pair<std::string, std::vector<std::string>>
-getAvailableEfaDevices() {
-    std::unordered_map<std::string, std::vector<std::string>> provider_devices_map;
-    std::vector<std::string> all_efa_devices;
-    std::string fabric_name;
+getAvailableNetworkDevices() {
+    std::vector<std::string> all_devices;
+    std::string provider_name;
+
+    std::unordered_map<std::string, std::vector<std::string>> provider_device_map;
     struct fi_info *hints, *info;
     hints = fi_allocinfo();
     if (!hints) {
-        NIXL_ERROR << "Failed to allocate fi_info for device discovery";
-        return {fabric_name, all_efa_devices};
+        NIXL_ERROR << "Failed to allocate fi_info";
+        return {"none", {}};
     }
 
-    // Important to initialize this to allow differentiation between EFA and EFA-Direct
-    hints->mode = ~0;
+    hints->caps = 0;
+    hints->caps = FI_MSG | FI_RMA; // Basic messaging and RMA
 
-    // Set required capabilities - let libfabric select the best provider
-    hints->caps = FI_READ | FI_WRITE | FI_RECV | FI_SEND | FI_REMOTE_READ | FI_REMOTE_WRITE |
-        FI_LOCAL_COMM | FI_REMOTE_COMM;
-    hints->fabric_attr->prov_name = strdup("efa");
+    hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
+    hints->mode = FI_CONTEXT | FI_CONTEXT2;
     hints->ep_attr->type = FI_EP_RDM;
 
     int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
     if (ret) {
-        NIXL_ERROR << "fi_getinfo failed during device discovery: " << fi_strerror(-ret);
+        NIXL_ERROR << "fi_getinfo failed " << fi_strerror(-ret);
         fi_freeinfo(hints);
-        return {fabric_name, all_efa_devices};
+        return {"none", {}};
     }
 
-    // Process providers and filter for EFA providers with RMA capabilities
+    // Process devices for this provider
     for (struct fi_info *cur = info; cur; cur = cur->next) {
         if (cur->domain_attr && cur->domain_attr->name && cur->fabric_attr &&
             cur->fabric_attr->name) {
 
             std::string device_name = cur->domain_attr->name;
-            std::string provider_name = cur->fabric_attr->name;
+            std::string provider_name = cur->fabric_attr->prov_name;
 
-            // Add device to the appropriate provider's vector
-            provider_devices_map[provider_name].push_back(device_name);
+            NIXL_TRACE << "Found device - domain: " << device_name
+                       << ", provider: " << provider_name << ", ep_type: " << cur->ep_attr->type
+                       << ", caps: 0x" << std::hex << cur->caps << std::dec;
 
-            NIXL_TRACE << "Found EFA device: " << device_name << " with provider: " << provider_name
-                       << " (caps: 0x" << std::hex << cur->caps << std::dec << ")";
+            if (provider_device_map.find(provider_name) == provider_device_map.end()) {
+                provider_device_map[provider_name] = {};
+            }
+            provider_device_map[provider_name].push_back(device_name);
         }
     }
 
     fi_freeinfo(info);
     fi_freeinfo(hints);
 
-    // Extract device names from the map, prioritizing efa-direct over efa
-    all_efa_devices.clear();
-    if (provider_devices_map.find("efa-direct") != provider_devices_map.end()) {
-        all_efa_devices = provider_devices_map["efa-direct"];
-        fabric_name = "efa-direct";
-        NIXL_TRACE << "Using efa-direct provider with " << all_efa_devices.size() << " devices";
-    } else if (provider_devices_map.find("efa") != provider_devices_map.end()) {
-        all_efa_devices = provider_devices_map["efa"];
-        fabric_name = "efa";
-        NIXL_TRACE << "Using efa provider with " << all_efa_devices.size() << " devices";
+    for (auto device_list : provider_device_map) {
+        for (auto device : device_list.second) {
+            NIXL_TRACE << "Provider: " << device_list.first << ", Device: " << device;
+        }
     }
 
-    return {fabric_name, all_efa_devices};
+    if (provider_device_map.find("efa") != provider_device_map.end()) {
+        return {"efa", provider_device_map["efa"]};
+    } else if (provider_device_map.find("sockets") != provider_device_map.end()) {
+        return {"sockets", {provider_device_map["sockets"][0]}};
+    }
+
+    NIXL_WARN << "No network devices found with any provider";
+    return {"none", {}};
 }
 
 std::string
@@ -104,17 +107,18 @@ hexdump(const void *data) {
     return ss.str();
 }
 
-// Thread-safe atomic counter for dynamic allocation to ensure uniqueness
-static std::atomic<uint32_t> g_xfer_id_counter{1}; // Start from 1, 0 reserved for special cases
+// Thread-safe atomic counters for optimized ID generation
+static std::atomic<uint16_t> g_xfer_id_counter{1}; // 16-bit XFER_ID counter, start from 1
+static std::atomic<uint8_t> g_seq_id_counter{0}; // 4-bit SEQ_ID counter, start from 0
 
-uint32_t
+uint16_t
 getNextXferId() {
-    uint32_t xfer_id = g_xfer_id_counter.fetch_add(1);
+    uint16_t xfer_id = g_xfer_id_counter.fetch_add(1);
 
-    // Handle wraparound: 20-bit field can hold 0 to 1,048,575
+    // Handle wraparound: 16-bit field can hold 0 to 65,535
     if (xfer_id > NIXL_XFER_ID_MASK) {
         // Reset counter atomically and get a fresh ID
-        uint32_t expected = xfer_id;
+        uint16_t expected = xfer_id;
         while (expected > NIXL_XFER_ID_MASK &&
                !g_xfer_id_counter.compare_exchange_weak(expected, 1)) {
             expected = g_xfer_id_counter.load();
@@ -127,6 +131,34 @@ getNextXferId() {
     }
 
     return xfer_id;
+}
+
+uint8_t
+getNextSeqId() {
+    uint8_t seq_id = g_seq_id_counter.fetch_add(1);
+
+    // Handle wraparound: 4-bit field can hold 0 to 15
+    if (seq_id > NIXL_SEQ_ID_MASK) {
+        // Reset counter atomically and get a fresh ID
+        uint8_t expected = seq_id;
+        while (expected > NIXL_SEQ_ID_MASK &&
+               !g_seq_id_counter.compare_exchange_weak(expected, 0)) {
+            expected = g_seq_id_counter.load();
+        }
+        seq_id = g_seq_id_counter.fetch_add(1);
+        // Ensure we don't exceed the mask after reset
+        if (seq_id > NIXL_SEQ_ID_MASK) {
+            seq_id = 0;
+        }
+    }
+
+    return seq_id;
+}
+
+void
+resetSeqId() {
+    // Reset SEQ_ID counter for new postXfer
+    g_seq_id_counter.store(0);
 }
 
 } // namespace LibfabricUtils
