@@ -35,7 +35,7 @@ kubernetes:
 
 runs_on_dockers:
   - { name: "ubuntu24.04-pytorch", url: "nvcr.io/nvidia/pytorch:25.02-py3" }
-  - { name: "ubuntu22.04-pytorch", url: "nvcr.io/nvidia/pytorch:24.11-py3" }
+  - { name: "ubuntu22.04-pytorch", url: "nvcr.io/nvidia/pytorch:24.10-py3" }
   - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", category: 'tool', privileged: true }
 
 matrix:
