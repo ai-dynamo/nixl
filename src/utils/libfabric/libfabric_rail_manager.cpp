@@ -210,7 +210,6 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
                                                     req);
         }
         if (status != NIXL_SUCCESS) {
-            data_rails_[rail_id]->releaseRequest(req);
             return status;
         }
 
@@ -283,7 +282,6 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
                                                         req);
             }
             if (status != NIXL_SUCCESS) {
-                data_rails_[rail_id]->releaseRequest(req);
                 return status;
             }
 
@@ -602,7 +600,6 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to send control message type " << static_cast<int>(msg_type)
                    << " on control rail " << control_rail_id;
-        control_rails_[control_rail_id]->releaseRequest(req);
         return status;
     }
     return NIXL_SUCCESS;
