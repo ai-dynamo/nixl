@@ -30,12 +30,13 @@ extern "C" {
 
 // Status codes for our C API
 typedef enum {
-  NIXL_CAPI_SUCCESS = 0,
-  NIXL_CAPI_ERROR_INVALID_PARAM = -1,
-  NIXL_CAPI_ERROR_BACKEND = -2,
-  NIXL_CAPI_ERROR_INVALID_STATE = -3,
-  NIXL_CAPI_ERROR_EXCEPTION = -4,
-  NIXL_CAPI_IN_PROG = 1,
+    NIXL_CAPI_SUCCESS = 0,
+    NIXL_CAPI_ERROR_INVALID_PARAM = -1,
+    NIXL_CAPI_ERROR_BACKEND = -2,
+    NIXL_CAPI_ERROR_INVALID_STATE = -3,
+    NIXL_CAPI_ERROR_EXCEPTION = -4,
+    NIXL_CAPI_IN_PROG = 1,
+    NIXL_CAPI_ERROR_NO_TELEMETRY = -5,
 } nixl_capi_status_t;
 
 // Memory types enum (matching nixl's memory types)
@@ -62,6 +63,14 @@ struct nixl_capi_xfer_req_s;
 struct nixl_capi_notif_map_s;
 struct nixl_capi_query_resp_list_s;
 
+struct nixl_capi_xfer_telemetry_s {
+    uint64_t start_time_us; // Start time in microseconds since epoch
+    uint64_t post_duration_us; // Post operation duration in microseconds
+    uint64_t xfer_duration_us; // Transfer duration in microseconds
+    uint64_t total_bytes; // Total bytes transferred
+    uint64_t desc_count; // Number of descriptors
+};
+
 // Opaque handle types for C++ objects
 typedef struct nixl_capi_agent_s* nixl_capi_agent_t;
 typedef struct nixl_capi_params_s* nixl_capi_params_t;
@@ -77,6 +86,26 @@ typedef struct nixl_capi_xfer_req_s* nixl_capi_xfer_req_t;
 typedef struct nixl_capi_notif_map_s* nixl_capi_notif_map_t;
 typedef struct nixl_capi_query_resp_list_s *nixl_capi_query_resp_list_t;
 
+// Thread sync enum matching nixl_thread_sync_t
+typedef enum {
+    NIXL_CAPI_THREAD_SYNC_NONE = 0,
+    NIXL_CAPI_THREAD_SYNC_STRICT = 1,
+    NIXL_CAPI_THREAD_SYNC_RW = 2,
+    NIXL_CAPI_THREAD_SYNC_DEFAULT = NIXL_CAPI_THREAD_SYNC_NONE,
+} nixl_capi_thread_sync_t;
+
+// Agent configuration struct mirroring nixlAgentConfig constructor args
+typedef struct nixl_capi_agent_config_s {
+    bool enable_prog_thread;
+    bool enable_listen_thread;
+    int listen_port;
+    nixl_capi_thread_sync_t thread_sync;
+    unsigned int num_workers;
+    uint64_t pthr_delay_us;
+    uint64_t lthr_delay_us;
+    bool capture_telemetry;
+} nixl_capi_agent_config_t;
+
 // Transfer request functions
 typedef enum {
   NIXL_CAPI_XFER_OP_READ = 0,
@@ -84,8 +113,17 @@ typedef enum {
 } nixl_capi_xfer_op_t;
 
 // Core API functions
+
+// Create an agent with a provided config
+nixl_capi_status_t
+nixl_capi_create_configured_agent(const char *name,
+                                  const nixl_capi_agent_config_t *cfg,
+                                  nixl_capi_agent_t *agent);
+
+// Create an agent with default config
 nixl_capi_status_t nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent);
 
+// Destroy an agent
 nixl_capi_status_t nixl_capi_destroy_agent(nixl_capi_agent_t agent);
 
 // Get local metadata as a byte array
@@ -311,6 +349,16 @@ nixl_capi_query_mem(nixl_capi_agent_t agent,
                     nixl_capi_reg_dlist_t descs,
                     nixl_capi_query_resp_list_t resp,
                     nixl_capi_opt_args_t opt_args);
+
+// Telemetry structure for transfer requests
+typedef struct nixl_capi_xfer_telemetry_s *nixl_capi_xfer_telemetry_t;
+
+// Get transfer telemetry data
+nixl_capi_status_t
+nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
+                             nixl_capi_xfer_req_t req_hndl,
+                             nixl_capi_xfer_telemetry_t telemetry);
+
 
 #ifdef __cplusplus
 }
