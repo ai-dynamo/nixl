@@ -213,7 +213,3 @@ ninja -C nixl_build && ninja -C nixl_build install
 cd benchmark/nixlbench
 meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
 ninja -C nixlbench_build && ninja -C nixlbench_build install
-
-# Cleanup to reduce image size
-$SUDO apt-get clean
-$SUDO rm -rf /var/lib/apt/lists/*

@@ -40,8 +40,8 @@ matrix:
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 env:
-  INSTALL_DIR: /workspace/nixl_install
   CONTAINER_WORKSPACE: /workspace
+  INSTALL_DIR: ${CONTAINER_WORKSPACE}/nixl_install
   EFA_INSTALLER_VERSION: latest
   NPROC: "16"
   # Manual timeout - ci-demo doesn't handle docker exec
