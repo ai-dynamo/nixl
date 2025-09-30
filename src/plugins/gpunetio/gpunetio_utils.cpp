@@ -145,10 +145,12 @@ create_verbs_ah_attr(doca_verbs_context *verbs_context,
         goto destroy_verbs_ah;
     }
 
-    status = doca_verbs_ah_attr_set_hop_limit(new_ah_attr, VERBS_TEST_HOP_LIMIT);
-    if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set hop limit: %s", doca_error_get_descr(status);
-        goto destroy_verbs_ah;
+    if (addr_type == DOCA_VERBS_ADDR_TYPE_IPv4 || addr_type == DOCA_VERBS_ADDR_TYPE_IPv6) {
+        status = doca_verbs_ah_attr_set_hop_limit(new_ah_attr, VERBS_TEST_HOP_LIMIT);
+        if (status != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to set hop limit: %s", doca_error_get_descr(status);
+            goto destroy_verbs_ah;
+        }
     }
 
     *verbs_ah_attr = new_ah_attr;
