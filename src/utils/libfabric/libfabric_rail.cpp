@@ -1034,8 +1034,9 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
                << " dest_addr: " << dest_addr << std::dec << " context: " << &req->ctx;
 
     // Retry logic
-    const int max_retries = 10; // Default retry count
-    const int retry_delay_us = (provider_name == "efa") ? 100 : 1000; // EFA needs shorter delay
+    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
+    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
+                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
 
     int ret = -FI_EAGAIN;
     for (int attempt = 0; attempt < max_retries; ++attempt) {
@@ -1094,8 +1095,9 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                << " context: " << &req->ctx;
 
     // Retry logic
-    const int max_retries = 10; // Default retry count
-    const int retry_delay_us = (provider_name == "efa") ? 100 : 1000; // EFA needs shorter delay
+    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
+    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
+                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
 
     int ret = -FI_EAGAIN;
     for (int attempt = 0; attempt < max_retries; ++attempt) {
@@ -1159,8 +1161,9 @@ nixlLibfabricRail::postRead(void *local_buffer,
                << " remote_key: " << remote_key << " context: " << &req->ctx;
 
     // Retry logic
-    const int max_retries = 5; // Default retry count
-    const int retry_delay_us = (provider_name == "efa") ? 100 : 1000; // EFA needs shorter delay
+    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
+    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
+                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
 
     int ret = -FI_EAGAIN;
     for (int attempt = 0; attempt < max_retries; ++attempt) {
