@@ -132,6 +132,7 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
             printf("kernel_read: Error CQE!\n");
 
         DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].last_wqe) = wqe_idx;
+        doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
         DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].in_use) = 1;
     }
 
