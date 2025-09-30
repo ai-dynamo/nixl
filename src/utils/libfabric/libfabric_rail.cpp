@@ -831,6 +831,7 @@ nixlLibfabricRail::processLocalSendCompletion(struct fi_cq_data_entry *comp) {
     } else {
         NIXL_ERROR << "No request found for send completion context " << comp->op_context
                    << " on rail " << rail_id;
+        return NIXL_ERR_BACKEND;
     }
 
     return NIXL_SUCCESS;
@@ -857,6 +858,7 @@ nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
     } else {
         NIXL_ERROR << "No request found for " << operation_type << " completion context "
                    << comp->op_context << " on rail " << rail_id;
+        return NIXL_ERR_BACKEND;
     }
 
     return NIXL_SUCCESS;
