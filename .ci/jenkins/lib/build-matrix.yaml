@@ -32,6 +32,9 @@ kubernetes:
   namespace: swx-media
   limits: "{memory: 8Gi, cpu: 8000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
+  yaml: |
+    spec:
+      hostIPC: true
 
 runs_on_dockers:
   - { name: "ubuntu24.04-pytorch", url: "nvcr.io/nvidia/pytorch:25.02-py3" }
