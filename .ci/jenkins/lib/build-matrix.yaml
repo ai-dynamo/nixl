@@ -48,6 +48,7 @@ env:
   NIXL_INSTALL_DIR: /opt/nixl
   TEST_TIMEOUT: 30
   NPROC: "16"
+  UCX_TLS: "^shm"
 
 steps:
   - name: Build
