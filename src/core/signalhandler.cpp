@@ -85,4 +85,5 @@ setup_gdb_handler() {
     signal(SIGABRT, gdb_signal_handler);
     signal(SIGFPE, gdb_signal_handler);
     signal(SIGILL, gdb_signal_handler);
+    signal(SIGBUS, gdb_signal_handler);
 }
