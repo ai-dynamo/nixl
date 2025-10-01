@@ -14,16 +14,16 @@
 # limitations under the License.
 
 nixl_example = executable('nixl_example',
-           'nixl_example.cpp',
-           dependencies: [nixl_dep, nixl_infra, nixl_common_deps, ucx_backend_dep, ucx_dep],
-           include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           link_with: [serdes_lib],
-           install: true)
+        'nixl_example.cpp',
+        dependencies: [nixl_dep, nixl_infra, nixl_common_deps],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        link_with: [serdes_lib],
+        install: true)
 
 if etcd_dep.found()
     etcd_example = executable('nixl_etcd_example',
                'nixl_etcd_example.cpp',
-               dependencies: [nixl_dep, nixl_infra, nixl_common_deps, ucx_backend_dep, ucx_dep],
+               dependencies: [nixl_dep, nixl_infra, nixl_common_deps],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                link_with: [serdes_lib],
                install: true)
