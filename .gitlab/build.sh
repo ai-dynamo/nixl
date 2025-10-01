@@ -129,6 +129,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
         $SUDO ldconfig \
 )
 
+ln -sf libibverbs.so.1.14.50.0 /usr/lib/x86_64-linux-gnu/libibverbs.so
 wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
