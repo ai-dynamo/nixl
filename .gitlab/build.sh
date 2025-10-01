@@ -136,23 +136,23 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 #   $SUDO ldconfig \
 # )
 
-wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
-tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
-rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
-( \
-  cd libfabric-* && \
-  ./autogen.sh && \
-  ./configure --prefix="${LIBFABRIC_INSTALL_DIR}" \
-              --disable-verbs \
-              --disable-psm3 \
-              --disable-opx \
-              --disable-usnic \
-              --disable-rstream \
-              --enable-efa && \
-  make -j && \
-  make install && \
-  $SUDO ldconfig \
-)
+# wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+# tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+# rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+# ( \
+#   cd libfabric-* && \
+#   ./autogen.sh && \
+#   ./configure --prefix="${LIBFABRIC_INSTALL_DIR}" \
+#               --disable-verbs \
+#               --disable-psm3 \
+#               --disable-opx \
+#               --disable-usnic \
+#               --disable-rstream \
+#               --enable-efa && \
+#   make -j && \
+#   make install && \
+#   $SUDO ldconfig \
+# )
 
 ( \
   cd /tmp && \
@@ -188,7 +188,7 @@ export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 export UCX_TLS=^cuda_ipc
 
 # shellcheck disable=SC2086
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} # -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
 ninja -C nixl_build && ninja -C nixl_build install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
