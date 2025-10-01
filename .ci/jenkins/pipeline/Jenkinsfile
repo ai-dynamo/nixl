@@ -10,7 +10,7 @@
 // Load required pipeline libraries
 // These libraries provide shared functionality and utilities for the build process
 // Requires pipeline-github-lib plugin to load library from github
-@Library('github.com/Mellanox/ci-demo@stable_media')  // External library for matrix build functionality
+@Library('github.com/Mellanox/ci-demo@podtemplate_hostipc')  // External library for matrix build functionality
 
 // Initialize the build matrix
 // The matrix class handles the parallel execution of different build configurations
