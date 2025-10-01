@@ -92,7 +92,11 @@ $SUDO apt-get -qq install -y curl \
                              pciutils \
                              libpci-dev \
                              uuid-dev \
+                             rdma-core \
                              ibverbs-utils \
+                             libibumad-dev \
+                             librdmacm-dev \
+                             ibverbs-providers \
                              libibmad-dev \
                              doxygen \
                              clang \
