@@ -127,14 +127,14 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
         $SUDO ldconfig \
 )
 
-wget --tries=3 --waitretry=5 -O "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-tar xzf "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-rm "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-( \
-  cd aws-efa-installer && \
-  $SUDO ./efa_installer.sh -y --minimal --skip-kmod --skip-limit-conf --no-verify && \
-  $SUDO ldconfig \
-)
+# wget --tries=3 --waitretry=5 -O "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
+# tar xzf "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
+# rm "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
+# ( \
+#   cd aws-efa-installer && \
+#   $SUDO ./efa_installer.sh -y --minimal --skip-kmod --skip-limit-conf --no-verify && \
+#   $SUDO ldconfig \
+# )
 
 wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
