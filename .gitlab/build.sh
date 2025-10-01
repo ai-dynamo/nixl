@@ -25,8 +25,6 @@ UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 # UCX_VERSION is the version of UCX to build override default with env variable.
 UCX_VERSION=${UCX_VERSION:-v1.19.0}
-# EFA_INSTALLER_VERSION is the version of EFA installer to use, defaults to "latest"
-EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION:-latest}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
@@ -125,15 +123,6 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
         make -j && \
         make -j install-strip && \
         $SUDO ldconfig \
-)
-
-wget --tries=3 --waitretry=5 -O "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-tar xzf "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-rm "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-( \
-  cd aws-efa-installer && \
-  $SUDO ./efa_installer.sh -y --minimal --skip-kmod --skip-limit-conf --no-verify && \
-  $SUDO ldconfig \
 )
 
 wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
