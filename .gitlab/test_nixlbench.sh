@@ -88,6 +88,6 @@ run_nixlbench_two_workers_with_ucx_tls() {
 }
 
 run_nixlbench_two_workers_with_ucx_tls "tcp" --backend UCX --op_type READ
-run_nixlbench_two_workers_with_ucx_tls "rc_x,rc,dc_x_dc" --backend UCX --op_type READ
+run_nixlbench_two_workers_with_ucx_tls "rc_x,rc" --backend UCX --op_type READ
 
 pkill etcd
