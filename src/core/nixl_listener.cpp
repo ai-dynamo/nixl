@@ -620,7 +620,6 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
         }
 
         // third, do remote commands
-        std::vector<nixl_socket_peer_t> peers_to_close;
         auto socket_iter = remoteSockets.begin();
         while (socket_iter != remoteSockets.end()) {
             std::string commands;
@@ -632,9 +631,9 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                 received_msg = recvCommMessage(socket_iter->second, commands);
             }
             catch (const std::runtime_error &e) {
-                NIXL_ERROR << "Failed to receive message from peer: " << e.what();
-                peers_to_close.push_back(socket_iter->first);
-                socket_iter++;
+                NIXL_ERROR << "Failed to receive message from peer (disconnected): " << e.what();
+                close(socket_iter->second);
+                socket_iter = remoteSockets.erase(socket_iter);
                 continue;
             }
             if (!received_msg) {
@@ -670,8 +669,10 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                         sendCommMessage(socket_iter->second, std::string("NIXLCOMM:LOAD" + my_MD));
                     }
                     catch (const std::runtime_error &e) {
-                        NIXL_ERROR << "Failed to send message to peer: " << e.what();
-                        peers_to_close.push_back(socket_iter->first);
+                        NIXL_ERROR << "Failed to send message to peer (disconnected): " << e.what();
+                        close(socket_iter->second);
+                        socket_iter = remoteSockets.erase(socket_iter);
+                        continue;
                     }
                 } else if(header == "INVL") {
                     std::string remote_agent = command.substr(4);
@@ -684,10 +685,6 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             }
 
             socket_iter++;
-        }
-        for (const auto &peer : peers_to_close) {
-            close(peer.second);
-            remoteSockets.erase(peer);
         }
 
 #if HAVE_ETCD
