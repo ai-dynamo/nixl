@@ -79,9 +79,6 @@ run_nixlbench_two_workers() {
     wait $pid
 }
 
-run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type DRAM --target_seg_type DRAM
-run_nixlbench_two_workers --backend UCX --op_type WRITE --initiator_seg_type DRAM --target_seg_type DRAM
-
 if $HAS_GPU ; then
     seg_types="VRAM DRAM"
 else
