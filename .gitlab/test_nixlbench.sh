@@ -65,11 +65,6 @@ run_nixlbench() {
     ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} --initiator_seg_type DRAM --target_seg_type DRAM --filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
 }
 
-run_nixlbench_one_worker() {
-    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
-    args="$@"
-    run_nixlbench --benchmark_group $benchmark_group $args
-}
 
 run_nixlbench_two_workers() {
     benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
@@ -81,9 +76,18 @@ run_nixlbench_two_workers() {
     wait $pid
 }
 
-run_nixlbench_two_workers --backend UCX --op_type READ
-run_nixlbench_two_workers --backend UCX --op_type WRITE
-run_nixlbench_one_worker --backend POSIX --op_type READ
-run_nixlbench_one_worker --backend POSIX --op_type WRITE
+run_nixlbench_two_workers_with_ucx_tls() {
+    ucx_tls_value="$1"
+    shift
+    args="$@"
+    echo "==== Running nixlbench with UCX_TLS=$ucx_tls_value ===="
+    export UCX_TLS="$ucx_tls_value"
+    echo "UCX_TLS is now set to: $UCX_TLS"
+    run_nixlbench_two_workers $args
+    unset UCX_TLS
+}
+
+run_nixlbench_two_workers_with_ucx_tls "tcp" --backend UCX --op_type READ
+run_nixlbench_two_workers_with_ucx_tls "rc_x,rc,dc_x_dc" --backend UCX --op_type READ
 
 pkill etcd
