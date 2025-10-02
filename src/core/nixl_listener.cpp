@@ -436,8 +436,7 @@ public:
 } // unnamed namespace
 
 bool
-nixlAgentData::sendPeerMessage(nixl_socket_map_t::iterator &socket_iter, const std::string& msg)
-{
+nixlAgentData::sendPeerMessage(nixl_socket_map_t::iterator &socket_iter, const std::string &msg) {
     const int fd = socket_iter->second;
     try {
         sendCommMessage(fd, msg);
@@ -452,8 +451,7 @@ nixlAgentData::sendPeerMessage(nixl_socket_map_t::iterator &socket_iter, const s
 }
 
 bool
-nixlAgentData::recvPeerMessage(nixl_socket_map_t::iterator &socket_iter, std::string& msg)
-{
+nixlAgentData::recvPeerMessage(nixl_socket_map_t::iterator &socket_iter, std::string &msg) {
     const int fd = socket_iter->second;
     try {
         const bool received = recvCommMessage(fd, msg);
