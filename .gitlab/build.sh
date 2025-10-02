@@ -67,7 +67,6 @@ $SUDO apt-get -qq install -y curl \
                              flex \
                              build-essential \
                              cmake \
-                             libibverbs-dev \
                              libgoogle-glog-dev \
                              libgtest-dev \
                              libgmock-dev \
@@ -92,17 +91,17 @@ $SUDO apt-get -qq install -y curl \
                              pciutils \
                              libpci-dev \
                              uuid-dev \
-                             rdma-core \
-                             ibverbs-utils \
-                             libibumad-dev \
-                             librdmacm-dev \
-                             ibverbs-providers \
                              libibmad-dev \
                              doxygen \
                              clang \
                              hwloc \
                              libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
+
+# Reinstall rdma packages in case they are broken in the docker image:
+$SUDO apt-get -qq install --reinstall -y \
+    libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
 
 wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
 chmod +x rustup-init
