@@ -456,6 +456,7 @@ nixlAgentData::recvPeerMessage(nixl_socket_map_t::iterator &socket_iter, std::st
     try {
         const bool received = recvCommMessage(fd, msg);
         if (!received) {
+            // No message received, but without error condition.
             // Skip to the next peer
             socket_iter++;
         }
