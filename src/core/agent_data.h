@@ -59,6 +59,8 @@ using nixl_comm_req_t = std::tuple<nixl_comm_t, std::string, int, nixl_blob_t>;
 
 using nixl_socket_peer_t = std::pair<std::string, int>;
 
+using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
+
 class nixlAgentData {
     private:
         std::string     name;
@@ -92,7 +94,7 @@ class nixlAgentData {
 
         // State/methods for listener thread
         nixlMDStreamListener               *listener;
-        std::map<nixl_socket_peer_t, int>  remoteSockets;
+        nixl_socket_map_t                  remoteSockets;
         std::thread                        commThread;
         std::vector<nixl_comm_req_t>       commQueue;
         std::mutex                         commLock;
@@ -102,6 +104,16 @@ class nixlAgentData {
         void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
+        // Sends a message to the peer. Returns true if successful.
+        // If not successful, the peer is disconnected, erased from the socket map
+        // and the iterator is advanced to the next peer.
+        bool
+        sendPeerMessage(nixl_socket_map_t::iterator &socket_iter, const std::string& msg);
+        // Receives a message from the peer. Returns true if successful.
+        // If not successful, the iterator is advanced to the next peer.
+        // If the peer is disconnected, it is erased from the socket map.
+        bool
+        recvPeerMessage(nixl_socket_map_t::iterator &socket_iter, std::string& msg);
         nixl_status_t
         loadConnInfo(const std::string &remote_name,
                      const nixl_backend_t &backend,
