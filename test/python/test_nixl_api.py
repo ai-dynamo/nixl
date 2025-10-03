@@ -34,17 +34,20 @@ def one_empty_agent():
 
 @pytest.fixture
 def one_ucx_agent():
-    return nixl_agent(str(uuid.uuid4()))
+    config = nixl_agent_config(backends=['LIBFABRIC'])
+    return nixl_agent(str(uuid.uuid4()), config)
 
 
 @pytest.fixture
 def two_ucx_agents():
-    return (nixl_agent(str(uuid.uuid4())), nixl_agent(str(uuid.uuid4())))
+    config = nixl_agent_config(backends=['LIBFABRIC'])
+    return (nixl_agent(str(uuid.uuid4()), config), nixl_agent(str(uuid.uuid4()), config))
 
 
 @pytest.fixture
 def two_connected_ucx_agents():
-    agent1, agent2 = (nixl_agent(str(uuid.uuid4())), nixl_agent(str(uuid.uuid4())))
+    config = nixl_agent_config(backends=['LIBFABRIC'])
+    agent1, agent2 = (nixl_agent(str(uuid.uuid4(), config)), nixl_agent(str(uuid.uuid4()), config))
     agent1.add_remote_agent(agent2.get_agent_metadata())
     agent2.add_remote_agent(agent1.get_agent_metadata())
     yield (agent1, agent2)
@@ -207,8 +210,9 @@ def test_incorrect_plugin_env(monkeypatch):
 def test_get_xfer_telemetry():
     os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
 
-    agent1 = nixl_agent(str(uuid.uuid4()))
-    agent2 = nixl_agent(str(uuid.uuid4()))
+    config = nixl_agent_config(backends=['LIBFABRIC'])
+    agent1 = nixl_agent(str(uuid.uuid4()), config)
+    agent2 = nixl_agent(str(uuid.uuid4()), config)
 
     mem_size = 128
     addr1 = utils.malloc_passthru(mem_size)
@@ -259,10 +263,11 @@ def test_get_xfer_telemetry_cfg():
     os.environ["NIXL_TELEMETRY_ENABLE"] = "m"  # invalid value not to enable
     os.environ["NIXL_TELEMETRY_DIR"] = "/tmp/dummy"  # to be ignored
 
+
     agent1 = nixl_agent(
-        str(uuid.uuid4()), nixl_conf=nixl_agent_config(capture_telemetry=True)
+        str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=['LIBFABRIC'], capture_telemetry=True)
     )
-    agent2 = nixl_agent(str(uuid.uuid4()))
+    agent2 = nixl_agent(str(uuid.uuid4()), nixl_agent_config(backends=['LIBFABRIC']))
 
     mem_size = 128
     addr1 = utils.malloc_passthru(mem_size)

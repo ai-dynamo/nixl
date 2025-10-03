@@ -90,6 +90,7 @@ for op_type in READ WRITE; do
     for initiator in $seg_types; do
         for target in $seg_types; do
             run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+            run_nixlbench_two_workers --backend LIBFABRIC --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
         done
     done
 done
