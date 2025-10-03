@@ -79,6 +79,7 @@ steps:
     run: |
       docker run -dt --name "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" \
         --ulimit memlock=-1:-1 \
+        --privileged \
         --network=host \
         --ipc=host \
         --cap-add=SYS_PTRACE \
