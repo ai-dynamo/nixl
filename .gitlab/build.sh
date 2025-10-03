@@ -185,7 +185,7 @@ export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
-sed -i 's/#define DOCA_GPUNETIO_VERBS_ENABLE_DEBUG 0/#define DOCA_GPUNETIO_VERBS_ENABLE_DEBUG 1/g' /opt/mellanox/doca/include/doca_gpunetio_verbs_def.h
+$SUDO sed -i 's/#define DOCA_GPUNETIO_VERBS_ENABLE_DEBUG 0/#define DOCA_GPUNETIO_VERBS_ENABLE_DEBUG 1/g' /opt/mellanox/doca/include/doca_gpunetio_verbs_def.h
 
 # shellcheck disable=SC2086
 meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} # -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
