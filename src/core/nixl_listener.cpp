@@ -435,6 +435,41 @@ public:
 
 } // unnamed namespace
 
+bool
+nixlAgentData::sendPeerMessage(nixl_socket_map_t::iterator &socket_iter, const std::string &msg) {
+    const int fd = socket_iter->second;
+    try {
+        sendCommMessage(fd, msg);
+        return true;
+    }
+    catch (const std::runtime_error &e) {
+        NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
+        close(fd);
+        socket_iter = remoteSockets.erase(socket_iter);
+        return false;
+    }
+}
+
+bool
+nixlAgentData::recvPeerMessage(nixl_socket_map_t::iterator &socket_iter, std::string &msg) {
+    const int fd = socket_iter->second;
+    try {
+        const bool received = recvCommMessage(fd, msg);
+        if (!received) {
+            // No message received, but without error condition.
+            // Skip to the next peer
+            socket_iter++;
+        }
+        return received;
+    }
+    catch (const std::runtime_error &e) {
+        NIXL_ERROR << "Failed to receive message from peer, disconnecting: " << e.what();
+        close(fd);
+        socket_iter = remoteSockets.erase(socket_iter);
+        return false;
+    }
+}
+
 void nixlAgentData::commWorker(nixlAgent* myAgent){
 
 #if HAVE_ETCD
@@ -494,8 +529,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             nixl_socket_peer_t req_sock = std::make_pair(req_ip, req_port);
 
             // use remote IP for socket lookup
-            const auto client = remoteSockets.find(req_sock);
-            int client_fd;
+            auto client = remoteSockets.find(req_sock);
 
             // not connected
             if (req_command < SOCK_MAX) {
@@ -507,23 +541,21 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                         continue;
                     }
                     remoteSockets[req_sock] = new_client;
-                    client_fd = new_client;
-                } else {
-                    client_fd = client->second;
+                    client = remoteSockets.find(req_sock);
                 }
             }
 
             switch(req_command) {
             case SOCK_SEND: {
-                sendCommMessage(client_fd, "NIXLCOMM:LOAD" + my_MD);
+                sendPeerMessage(client, "NIXLCOMM:LOAD" + my_MD);
                 break;
             }
             case SOCK_FETCH: {
-                sendCommMessage(client_fd, "NIXLCOMM:SEND");
+                sendPeerMessage(client, "NIXLCOMM:SEND");
                 break;
             }
             case SOCK_INVAL: {
-                sendCommMessage(client_fd, "NIXLCOMM:INVL" + name);
+                sendPeerMessage(client, "NIXLCOMM:INVL" + name);
                 break;
             }
 #if HAVE_ETCD
@@ -604,9 +636,9 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             std::string commands;
             std::vector<std::string> command_list;
             nixl_status_t ret;
+            bool disconnected = false;
 
-            if (!recvCommMessage(socket_iter->second, commands)) {
-                socket_iter++;
+            if (!recvPeerMessage(socket_iter, commands)) {
                 continue;
             }
 
@@ -634,7 +666,10 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     nixl_blob_t my_MD;
                     myAgent->getLocalMD(my_MD);
 
-                    sendCommMessage(socket_iter->second, std::string("NIXLCOMM:LOAD" + my_MD));
+                    if (!sendPeerMessage(socket_iter, std::string("NIXLCOMM:LOAD" + my_MD))) {
+                        disconnected = true;
+                        break;
+                    }
                 } else if(header == "INVL") {
                     std::string remote_agent = command.substr(4);
                     myAgent->invalidateRemoteMD(remote_agent);
@@ -645,7 +680,10 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                 }
             }
 
-            socket_iter++;
+            // If the peer is disconnected, the iterator is already advanced to the next peer
+            if (!disconnected) {
+                socket_iter++;
+            }
         }
 
 #if HAVE_ETCD
