@@ -1248,6 +1248,8 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
 
     remoteConnMap.insert({remote_agent, conn});
 
+    performConnectionEstablishment(remote_agent, conn);
+
     return NIXL_SUCCESS;
 }
 
@@ -1816,4 +1818,34 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
         return ret;
     }
     return NIXL_SUCCESS;
+}
+
+void
+nixlUcxEngine::performConnectionEstablishment(
+    const std::string &remote_agent,
+    const std::shared_ptr<nixlUcxConnection> &conn) const {
+    NIXL_DEBUG << "Establishing connection with " << remote_agent;
+
+    // Flush all endpoints to ensure connection establishment
+    // and avoid UCS_ERR_NOT_CONNECTED errors during data transfers
+    for (size_t i = 0; i < conn->eps.size(); ++i) {
+        nixlUcxReq req;
+        nixl_status_t ret = conn->eps[i]->flushEp(req);
+
+        if (ret == NIXL_IN_PROG) {
+            nixlUcxWorker *worker = getWorker(i).get();
+            do {
+                ret = worker->test(req);
+            } while (ret == NIXL_IN_PROG);
+
+            worker->reqRelease(req);
+        }
+
+        if (ret != NIXL_SUCCESS) {
+            NIXL_WARN << "Failed to flush endpoint " << i << " for " << remote_agent
+                      << ", status: " << ret;
+        }
+    }
+
+    NIXL_DEBUG << "Connection establishment completed for " << remote_agent;
 }
