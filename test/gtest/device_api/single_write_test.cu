@@ -22,9 +22,10 @@ namespace gtest::nixl::gpu::single_write {
 template<nixl_gpu_level_t level>
 __global__ void
 TestSingleWriteKernel(nixlGpuXferReqH req_hdnl,
+                      unsigned channel_id,
                       unsigned index,
-                      const void *src_addr,
-                      uint64_t remote_addr,
+                      size_t src_offset,
+                      size_t remote_offset,
                       size_t size,
                       size_t num_iters,
                       bool is_no_delay,
@@ -45,7 +46,7 @@ TestSingleWriteKernel(nixlGpuXferReqH req_hdnl,
 
     for (size_t i = 0; i < num_iters; ++i) {
         status = nixlGpuPostSingleWriteXferReq<level>(
-            req_hdnl, index, src_addr, remote_addr, size, is_no_delay, xfer_status_ptr);
+            req_hdnl, 0, index, src_offset, remote_offset, size, is_no_delay, xfer_status_ptr);
         if (status != NIXL_SUCCESS) {
             printf("Thread %d: nixlGpuPostSingleWriteXferReq failed iteration %lu: status=%d (0x%x)\n",
                    threadIdx.x,
@@ -94,9 +95,10 @@ template<nixl_gpu_level_t level>
 nixl_status_t
 LaunchSingleWriteTest(unsigned num_threads,
                       nixlGpuXferReqH req_hdnl,
+                      unsigned channel_id,
                       unsigned index,
-                      const void *src_addr,
-                      uint64_t remote_addr,
+                      size_t src_offset,
+                      size_t remote_offset,
                       size_t size,
                       size_t num_iters,
                       bool is_no_delay,
@@ -106,9 +108,10 @@ LaunchSingleWriteTest(unsigned num_threads,
     cudaError_t err;
 
     TestSingleWriteKernel<level><<<1, num_threads>>>(req_hdnl,
+                                                     channel_id,
                                                      index,
-                                                     src_addr,
-                                                     remote_addr,
+                                                     src_offset,
+                                                     remote_offset,
                                                      size,
                                                      num_iters,
                                                      is_no_delay,
@@ -264,9 +267,10 @@ protected:
     dispatchLaunchSingleWriteTest(nixl_gpu_level_t level,
                                   unsigned num_threads,
                                   nixlGpuXferReqH req_hdnl,
+                                  unsigned channel_id,
                                   unsigned index,
-                                  const void *src_addr,
-                                  uint64_t remote_addr,
+                                  size_t src_offset,
+                                  size_t remote_offset,
                                   size_t size,
                                   size_t num_iters,
                                   bool is_no_delay,
@@ -276,9 +280,10 @@ protected:
         case nixl_gpu_level_t::BLOCK:
             return LaunchSingleWriteTest<nixl_gpu_level_t::BLOCK>(num_threads,
                                                                   req_hdnl,
+                                                                  channel_id,
                                                                   index,
-                                                                  src_addr,
-                                                                  remote_addr,
+                                                                  src_offset,
+                                                                  remote_offset,
                                                                   size,
                                                                   num_iters,
                                                                   is_no_delay,
@@ -287,9 +292,10 @@ protected:
         case nixl_gpu_level_t::WARP:
             return LaunchSingleWriteTest<nixl_gpu_level_t::WARP>(num_threads,
                                                                  req_hdnl,
+                                                                 channel_id,
                                                                  index,
-                                                                 src_addr,
-                                                                 remote_addr,
+                                                                 src_offset,
+                                                                 remote_offset,
                                                                  size,
                                                                  num_iters,
                                                                  is_no_delay,
@@ -299,9 +305,10 @@ protected:
             return LaunchSingleWriteTest<nixl_gpu_level_t::THREAD>(
                 num_threads,
                 req_hdnl,
+                channel_id,
                 index,
-                src_addr,
-                remote_addr,
+                src_offset,
+                remote_offset,
                 size,
                 num_iters,
                 is_no_delay,
@@ -388,6 +395,7 @@ TEST_P(SingleWriteTest, BasicSingleWriteTest) {
     const size_t num_iters = 10000;
     constexpr unsigned index = 0;
     const bool is_no_delay = true;
+    constexpr unsigned channel_id = 0;
 
     createRegisteredMem(getAgent(SENDER_AGENT), size, count, mem_type, src_buffers);
     createRegisteredMem(getAgent(RECEIVER_AGENT), size, count, mem_type, dst_buffers);
@@ -423,8 +431,8 @@ TEST_P(SingleWriteTest, BasicSingleWriteTest) {
 
     ASSERT_NE(gpu_req_hndl, nullptr) << "GPU request handle is null after createGpuXferReq";
 
-    uint64_t remote_addr = static_cast<uintptr_t>(dst_buffers[0]);
-    const void *src_addr = static_cast<const void *>(src_buffers[0]);
+    size_t src_offset = 0;
+    size_t remote_offset = 0;
 
     unsigned long long *start_time_ptr = nullptr;
     unsigned long long *end_time_ptr = nullptr;
@@ -437,9 +445,10 @@ TEST_P(SingleWriteTest, BasicSingleWriteTest) {
     status = dispatchLaunchSingleWriteTest(GetParam(),
                                            num_threads,
                                            gpu_req_hndl,
+                                           channel_id,
                                            index,
-                                           src_addr,
-                                           remote_addr,
+                                           src_offset,
+                                           remote_offset,
                                            size,
                                            num_iters,
                                            is_no_delay,
@@ -488,6 +497,7 @@ TEST_P(SingleWriteTest, VariableSizeTest) {
         const size_t num_iters = 50000;
         constexpr unsigned index = 0;
         const bool is_no_delay = true;
+        constexpr unsigned channel_id = 0;
 
         createRegisteredMem(getAgent(SENDER_AGENT), test_size, count, mem_type, src_buffers);
         createRegisteredMem(getAgent(RECEIVER_AGENT), test_size, count, mem_type, dst_buffers);
@@ -533,15 +543,16 @@ TEST_P(SingleWriteTest, VariableSizeTest) {
         cudaMalloc(&result_status, sizeof(nixl_status_t));
         cudaMemset(result_status, 0, sizeof(nixl_status_t));
 
-        uint64_t remote_addr = static_cast<uintptr_t>(dst_buffers[0]);
-        const void *src_addr = static_cast<const void *>(src_buffers[0]);
+        size_t src_offset = 0;
+        size_t remote_offset = 0;
 
         status = dispatchLaunchSingleWriteTest(GetParam(),
                                                num_threads,
                                                gpu_req_hndl,
+                                               channel_id,
                                                index,
-                                               src_addr,
-                                               remote_addr,
+                                               src_offset,
+                                               remote_offset,
                                                test_size,
                                                num_iters,
                                                is_no_delay,
