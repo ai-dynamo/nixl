@@ -23,17 +23,6 @@ set -x
 TEXT_YELLOW="\033[1;33m"
 TEXT_CLEAR="\033[0m"
 
-# For running as user - check if running as root, if not set sudo variable
-if [ "$(id -u)" -ne 0 ]; then
-    SUDO=sudo
-else
-    SUDO=""
-fi
-
-$SUDO apt-get update
-$SUDO apt-get -qq install -y libaio-dev
-
-
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
 
@@ -46,8 +35,6 @@ ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
 export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/compat/lib.real:$LD_LIBRARY_PATH
 
 export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
@@ -77,14 +64,17 @@ cd ${INSTALL_DIR}
 ./bin/nixl_example
 ./bin/nixl_etcd_example
 ./bin/ucx_backend_test
-./bin/ucx_mo_backend_test
+# Skip UCX_MO backend test on GPU worker, fails VRAM transfers
+if ! $HAS_GPU ; then
+    ./bin/ucx_mo_backend_test
+fi
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
 sleep 1
 ./bin/telemetry_reader /tmp/telemetry_test/Agent001 &
 telePID=$!
 sleep 6
-kill -s SIGINT $telePID
+kill -s INT $telePID
 
 # POSIX test disabled until we solve io_uring and Docker compatibility
 
@@ -94,7 +84,7 @@ kill -s SIGINT $telePID
 ./bin/serdes_test
 
 # shellcheck disable=SC2154
-./bin/gtest --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
 # Run NIXL client-server test
