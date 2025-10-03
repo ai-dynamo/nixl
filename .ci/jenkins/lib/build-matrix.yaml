@@ -33,6 +33,10 @@ kubernetes:
   limits: "{memory: 8Gi, cpu: 8000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
 
+# Mount large /dev/shm for UCX shared memory allocation
+empty_volumes:
+  - {mountPath: /dev/shm, memory: true}
+
 runs_on_dockers:
   - { name: "ubuntu24.04-pytorch", url: "nvcr.io/nvidia/pytorch:25.02-py3" }
   - { name: "ubuntu22.04-pytorch", url: "nvcr.io/nvidia/pytorch:24.10-py3" }
@@ -64,6 +68,8 @@ steps:
     parallel: false
     timeout: "${TEST_TIMEOUT}"
     run: |
+      echo "DEBUG: /dev/shm size"
+      df -h /dev/shm
       .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
 
   - name: Test Python
