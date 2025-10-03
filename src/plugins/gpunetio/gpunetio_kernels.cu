@@ -79,7 +79,7 @@ __global__ void
 kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
     uint64_t wqe_idx = 0;
     doca_gpu_dev_verbs_wqe *wqe_ptr;
-    enum doca_gpu_dev_verbs_wqe_ctrl_flags cflag = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_ERROR_UPDATE;
+    enum doca_gpu_dev_verbs_wqe_ctrl_flags cflag = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
     uint32_t tot_wqe, idx = 0;
     __shared__ uint64_t base_wqe_idx;
 

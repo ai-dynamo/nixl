@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <unistd.h>
 #include "common/nixl_log.h"
+#include <arpa/inet.h>
 
 const char info_delimiter = '-';
 
@@ -61,7 +62,16 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
     NIXL_INFO << std::endl;
 
-    gid_index = 0;
+    if (custom_params->count("oob_interface") > 0) {
+        NIXL_INFO << "DOCA network devices ";
+        // Temporary: will extend to more GPUs in a dedicated PR
+        if (custom_params->count("oob_interface") > 1)
+            throw std::invalid_argument("Only 1 oob interface is allowed");
+
+        oobdev = str_split((*custom_params)["oob_interface"], " ");
+        NIXL_INFO << "Using oob interface" << oobdev[0];
+        NIXL_INFO << std::endl;
+    }
 
     NIXL_INFO << "DOCA GPU devices: ";
     // Temporary: will extend to more GPUs in a dedicated PR
@@ -110,6 +120,13 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         throw std::invalid_argument("Failed to create doca verbs pd");
     }
 
+    ret = ibv_query_port(pd->context, 1, &port_attr);
+    if (ret) {
+        throw std::invalid_argument("Failed to query ibv port attributes");
+    }
+
+    gid_index = 0;
+
     ret = ibv_query_gid(pd->context, 1, gid_index, &rgid);
     if (ret) {
         NIXL_ERROR << "Failed to query ibv gid attributes";
@@ -117,12 +134,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
     memcpy(gid.raw, rgid.raw, DOCA_GID_BYTE_LENGTH);
 
-    ret = ibv_query_port(pd->context, 1, &port_attr);
-    if (ret) {
-        throw std::invalid_argument("Failed to query ibv port attributes");
-    }
-
-    if (port_attr.link_layer == 1) {
+    if (port_attr.link_layer == IBV_LINK_LAYER_INFINIBAND) {
         result = create_verbs_ah_attr(
             verbs_context, gid_index, DOCA_VERBS_ADDR_TYPE_IB_NO_GRH, &verbs_ah_attr);
         if (result != DOCA_SUCCESS)
@@ -147,8 +159,26 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
             NIXL_ERROR << "Failed to create DOCA GPU device " << doca_error_get_descr(result);
     }
 
-    doca_devinfo_get_ipv4_addr(
-        doca_dev_as_devinfo(ddev), (uint8_t *)ipv4_addr, DOCA_DEVINFO_IPV4_ADDR_SIZE);
+    if (oobdev.size() > 0 && oobdev[0] != "") {
+        netif_get_addr(oobdev[0].c_str(), AF_INET, &oob_saddr, &oob_netmask);
+        struct sockaddr_in *addr_in = (struct sockaddr_in *)&oob_saddr;
+        memcpy(ipv4_addr, (uint8_t*)&(addr_in->sin_addr.s_addr), 4);
+        NIXL_DEBUG << "Eth IP address "
+                << static_cast<unsigned>(ipv4_addr[0]) << " "
+                << static_cast<unsigned>(ipv4_addr[1]) << " "
+                << static_cast<unsigned>(ipv4_addr[2]) << " "
+                << static_cast<unsigned>(ipv4_addr[3]) << " "
+                << "ifface "
+                << oobdev[0].c_str();
+    } else {
+        doca_devinfo_get_ipv4_addr(
+            doca_dev_as_devinfo(ddev), (uint8_t *)ipv4_addr, DOCA_DEVINFO_IPV4_ADDR_SIZE);
+        NIXL_DEBUG << "DOCA IP address "
+                << static_cast<unsigned>(ipv4_addr[0]) << " "
+                << static_cast<unsigned>(ipv4_addr[1]) << " "
+                << static_cast<unsigned>(ipv4_addr[2]) << " "
+                << static_cast<unsigned>(ipv4_addr[3]);
+    }
 
     // DOCA_GPU_MEM_TYPE_GPU_CPU == GDRCopy
     result = doca_gpu_mem_alloc(gdevs[0].second,
@@ -468,17 +498,30 @@ nixlDocaEngine::progressThreadStart() {
         close(oob_sock_server);
         return NIXL_ERR_NOT_SUPPORTED;
     }
-    /* Set port and IP: */
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
-    server_addr.sin_addr.s_addr = INADDR_ANY; /* listen on any interface */
 
-    /* Bind to the set port and IP: */
-    if (bind(oob_sock_server, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        NIXL_ERROR << "Couldn't bind to the port " << DOCA_RDMA_CM_LOCAL_PORT_SERVER;
-        close(oob_sock_server);
-        return NIXL_ERR_NOT_SUPPORTED;
+    if (oobdev.size() > 0 && oobdev[0] != "") {
+        struct sockaddr_in *addr_in = (struct sockaddr_in *)&oob_saddr;
+        /* Bind to the set port and IP: */
+        addr_in->sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
+        if (bind(oob_sock_server, (struct sockaddr *)addr_in, sizeof(struct sockaddr_in)) < 0) {
+            NIXL_ERROR << "Couldn't bind to the port " << DOCA_RDMA_CM_LOCAL_PORT_SERVER;
+            close(oob_sock_server);
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+    } else {
+        /* Set port and IP: */
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
+        server_addr.sin_addr.s_addr = INADDR_ANY; /* listen on any interface */
+
+        /* Bind to the set port and IP: */
+        if (bind(oob_sock_server, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+            NIXL_ERROR << "Couldn't bind to the port " << DOCA_RDMA_CM_LOCAL_PORT_SERVER;
+            close(oob_sock_server);
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
     }
+
     NIXL_INFO << "Done with binding";
 
     /* Listen for clients: */

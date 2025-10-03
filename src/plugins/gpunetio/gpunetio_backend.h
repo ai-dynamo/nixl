@@ -39,6 +39,8 @@ public:
     int dlid; /* IB: destination ID */
     int gid_index;
     struct ibv_port_attr port_attr;
+    std::vector<std::string> oobdev;
+
     nixl_status_t
     addRdmaQp(const std::string &remote_agent);
     nixl_status_t
@@ -151,6 +153,8 @@ private:
     uint32_t local_port;
     int noSyncIters;
     uint8_t ipv4_addr[4];
+    struct sockaddr oob_saddr;
+    struct sockaddr oob_netmask;
     std::thread pthr;
     uint64_t *last_rsvd_flags;
     uint64_t *last_posted_flags;

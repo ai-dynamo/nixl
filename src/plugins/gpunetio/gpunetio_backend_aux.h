@@ -25,6 +25,10 @@
 #include <sys/types.h>
 #include <thread>
 #include <vector>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
 
 #include <infiniband/verbs.h>
 #include <infiniband/mlx5dv.h>
@@ -197,7 +201,10 @@ doca_error_t
 connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t remote_gid);
 void *
 threadProgressFunc(void *arg);
-
+int
+netif_get_addr(const char *if_name, sa_family_t af,
+                struct sockaddr *saddr,
+                struct sockaddr *netmask);
 doca_error_t
 doca_kernel_write(cudaStream_t stream,
                   doca_gpu_dev_verbs_qp *qp_gpu,

@@ -172,12 +172,12 @@ connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t
 
     status = doca_verbs_ah_attr_set_gid(eng->verbs_ah_attr, eng->remote_gid);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set remote gid: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set remote gid " << doca_error_get_descr(status);
         return status;
     }
 
     // IB
-    if (eng->port_attr.link_layer == 1) {
+    if (eng->port_attr.link_layer == IBV_LINK_LAYER_INFINIBAND) {
         status = doca_verbs_ah_attr_set_dlid(eng->verbs_ah_attr, eng->dlid);
         if (status != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to set dlid";
@@ -187,92 +187,92 @@ connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t
 
     status = doca_verbs_qp_attr_create(&verbs_qp_attr);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to create DOCA verbs QP attributes: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to create DOCA verbs QP attributes " << doca_error_get_descr(status);
         return status;
     }
 
-    status = doca_verbs_qp_attr_set_path_mtu(verbs_qp_attr, DOCA_MTU_SIZE_1K_BYTES);
+    status = doca_verbs_qp_attr_set_path_mtu(verbs_qp_attr, DOCA_MTU_SIZE_4K_BYTES);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set path MTU: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set path MTU " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_rq_psn(verbs_qp_attr, 0);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set RQ PSN: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set RQ PSN " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_sq_psn(verbs_qp_attr, 0);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set SQ PSN: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set SQ PSN " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_port_num(verbs_qp_attr, 1);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set port number: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set port number " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_ack_timeout(verbs_qp_attr, 14);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set ACK timeout: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set ACK timeout " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_retry_cnt(verbs_qp_attr, 7);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set retry counter: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set retry counter " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_rnr_retry(verbs_qp_attr, 1);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set RNR retry: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set RNR retry " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_min_rnr_timer(verbs_qp_attr, 1);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set minimum RNR timer: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set minimum RNR timer " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_next_state(verbs_qp_attr, DOCA_VERBS_QP_STATE_INIT);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set next state: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set next state " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_allow_remote_write(verbs_qp_attr, 1);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set allow remote write: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set allow remote write " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_allow_remote_read(verbs_qp_attr, 1);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set allow remote read: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set allow remote read " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_atomic_mode(verbs_qp_attr, DOCA_VERBS_QP_ATOMIC_MODE_IB_SPEC);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set atomic mode: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set atomic mode " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
     status = doca_verbs_qp_attr_set_ah_attr(verbs_qp_attr, eng->verbs_ah_attr);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set address handle: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set address handle " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
 
     status = doca_verbs_qp_attr_set_dest_qp_num(verbs_qp_attr, rqpn);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set destination QP number: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set destination QP number " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
@@ -289,7 +289,7 @@ connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t
 
     status = doca_verbs_qp_attr_set_next_state(verbs_qp_attr, DOCA_VERBS_QP_STATE_RTR);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set next state: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set next state " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
@@ -306,7 +306,7 @@ connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t
 
     status = doca_verbs_qp_attr_set_next_state(verbs_qp_attr, DOCA_VERBS_QP_STATE_RTS);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set next state: %s", doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to set next state " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
@@ -387,4 +387,85 @@ threadProgressFunc(void *arg) {
     }
 
     return nullptr;
+}
+
+static int sockaddr_sizeof(const struct sockaddr *addr, size_t *size_p)
+{
+    switch (addr->sa_family) {
+    case AF_INET:
+        *size_p = sizeof(struct sockaddr_in);
+        return 0;
+    case AF_INET6:
+        *size_p = sizeof(struct sockaddr_in6);
+        return 0;
+    default:
+        NIXL_ERROR << "unknown address family: " << addr->sa_family;
+        return -1;
+    }
+}
+
+static int netif_flags_is_active(unsigned int flags)
+{
+    return (flags & IFF_UP) && (flags & IFF_RUNNING);
+}
+
+int netif_get_addr(const char *if_name, sa_family_t af,
+                                struct sockaddr *saddr,
+                                struct sockaddr *netmask)
+{
+    int status = 0;
+    struct ifaddrs *ifa;
+    struct ifaddrs *ifaddrs;
+    const struct sockaddr_in6 *saddr6;
+    size_t addrlen;
+
+    if (getifaddrs(&ifaddrs)) {
+        NIXL_ERROR << "getifaddrs error";
+        return -1;
+    }
+
+    for (ifa = ifaddrs; ifa != NULL; ifa = ifa->ifa_next) {
+        if ((if_name != NULL) && (0 != strcmp(if_name, ifa->ifa_name))) {
+            continue;
+        }
+
+        if ((ifa->ifa_addr == NULL) ||
+            ((ifa->ifa_addr->sa_family != AF_INET) &&
+             (ifa->ifa_addr->sa_family != AF_INET6))) {
+            continue;
+        }
+
+        if (!netif_flags_is_active(ifa->ifa_flags)) {
+            continue;
+        }
+
+        if (ifa->ifa_addr->sa_family == AF_INET6) {
+            saddr6 = (const struct sockaddr_in6*)ifa->ifa_addr;
+            if (IN6_IS_ADDR_LINKLOCAL(&saddr6->sin6_addr)) {
+                continue;
+            }
+        }
+
+        if ((af == AF_UNSPEC) || (ifa->ifa_addr->sa_family == af)) {
+            status = sockaddr_sizeof(ifa->ifa_addr, &addrlen);
+            if (status != 0) {
+                goto out_free_ifaddr;
+            }
+
+            if (saddr != NULL) {
+                memcpy(saddr, ifa->ifa_addr, addrlen);
+            }
+
+            if (netmask != NULL) {
+                memcpy(netmask, ifa->ifa_netmask, addrlen);
+            }
+
+            status = 0;
+            break;
+        }
+    }
+
+out_free_ifaddr:
+    freeifaddrs(ifaddrs);
+    return status;
 }

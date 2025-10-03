@@ -20,7 +20,7 @@
 
 // Plugin version information
 static const char *PLUGIN_NAME = "GPUNETIO";
-static const char *PLUGIN_VERSION = "0.1.0";
+static const char *PLUGIN_VERSION = "0.2.0";
 
 static nixlBackendEngine *
 create_engine(const nixlBackendInitParams *init_params) {
@@ -54,6 +54,7 @@ static nixl_b_params_t
 get_backend_options() {
     nixl_b_params_t params;
     params["network_devices"] = "";
+    params["oob_interface"] = "";
     params["gpu_devices"] = "";
     params["cuda_streams"] = "";
     return params;
