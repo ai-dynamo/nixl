@@ -112,7 +112,7 @@ if $HAS_GPU ; then
     for op_type in READ WRITE; do
         for initiator in $seg_types; do
             for target in $seg_types; do
-                run_nixlbench_two_workers --backend GPUNETIO --gpunetio_device_list=0 --device_list=mlx5_0 --oob_list=lo --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+                run_nixlbench_two_workers --backend GPUNETIO --gpunetio_device_list=0 --device_list=mlx5_0 --gpunetio_oob_list=lo --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
             done
         done
     done
