@@ -80,7 +80,8 @@ run_nixlbench_two_workers() {
 }
 
 echo "==== Running GPUNETIO tests ===="
-run_nixlbench_two_workers --backend GPUNETIO --gpunetio_device_list=0 --device_list=mlx5_0 --op_type WRITE --initiator_seg_type DRAM --target_seg_type DRAM
+ip link || true
+run_nixlbench_two_workers --backend GPUNETIO --gpunetio_device_list=0 --device_list=mlx5_0 --gpunetio_oob_list=lo --op_type WRITE --initiator_seg_type DRAM --target_seg_type DRAM
 
 echo "==== Running UCX tests ===="
 run_nixlbench_two_workers --backend UCX --op_type READ --initiator_seg_type DRAM --target_seg_type DRAM
