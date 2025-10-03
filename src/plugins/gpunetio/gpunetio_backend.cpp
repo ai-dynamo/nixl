@@ -536,6 +536,8 @@ nixlDocaEngine::progressThreadStart() {
     // TODO [Relaxed mem] mem barrier to ensure pthr_x updates are complete
     // new (&pthr) std::thread(&nixlDocaEngine::threadProgressFunc, this);
 
+    cuCtxGetCurrent(&main_cuda_ctx);
+
     result = pthread_create(&server_thread_id, nullptr, threadProgressFunc, (void *)this);
     if (result != 0) {
         NIXL_ERROR << "Failed to create threadProgressFunc thread";
