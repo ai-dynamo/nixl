@@ -61,24 +61,26 @@
         try {{
             // Trigger the actual build and test jobs in parallel
             parallel build: {{
-                def build = build job: 'nixl-ci-build', parameters: [
+                def buildJob = 'nixl-ci-build'
+                def build = build job: buildJob, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ], propagate: false
-                currentBuild.description += "<br>Job: <a href='${{build.absoluteUrl}}'>nixl-ci-build</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
+                currentBuild.description += "<br>Job: <a href='${{JENKINS_URL}}blue/organizations/jenkins/NIXL%2F${{buildJob}}/detail/${{buildJob}}/${{build.number}}/pipeline/'>${{buildJob}}</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
                 if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
                   currentBuild.result = build.result
-                  error("Build CI failed")
+                  error("Job ${{buildJob}} failed")
                 }}
             }}, test: {{
-                def build = build job: 'nixl-ci-test', parameters: [
+                def buildJob = 'nixl-ci-test'
+                def build = build job: buildJob, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ], propagate: false
-                currentBuild.description += "<br>Job: <a href='${{build.absoluteUrl}}'>nixl-ci-test</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
+                currentBuild.description += "<br>Job: <a href='${{JENKINS_URL}}blue/organizations/jenkins/NIXL%2F${{buildJob}}/detail/${{buildJob}}/${{build.number}}/pipeline/'>${{buildJob}}</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
                 if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
                   currentBuild.result = build.result
-                  error("Test CI failed")
+                  error("Job ${{buildJob}} failed")
                 }}
             }},
             failFast: false  // Continue even if some parallel jobs fail
