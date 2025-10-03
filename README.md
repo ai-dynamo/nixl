@@ -114,6 +114,11 @@ $ meson setup <name_of_build_dir> \
     -Ducx_path=/path/to/ucx \     # Custom UCX installation path
     -Dinstall_headers=true \      # Install development headers
     -Ddisable_gds_backend=false   # Enable GDS backend
+
+# CUDA GPU architecture targeting (example)
+$ meson setup <name_of_build_dir> \
+    -Dcuda_args="-gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_90,code=sm_90" \
+    -Dcuda_link_args="-gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_90,code=sm_90"
 ```
 
 Common build options:
@@ -123,6 +128,32 @@ Common build options:
 - `disable_gds_backend`: Disable GDS backend (default: false)
 - `cudapath_inc`, `cudapath_lib`: Custom CUDA paths
 - `static_plugins`: Comma-separated list of plugins to build statically
+- `cuda_args`: CUDA compiler arguments (default: targets compute_80 and compute_90)
+- `cuda_link_args`: CUDA linker arguments (default: targets compute_80 and compute_90)
+
+### CUDA GPU Architecture Configuration
+
+NIXL automatically targets CUDA compute capabilities 8.0 (Ampere) and 9.0 (Hopper) by default.
+To target specific GPU architectures or add additional ones, use the `cuda_args` and `cuda_link_args` options:
+
+```bash
+# Target specific architectures
+$ meson setup build \
+    -Dcuda_args="-gencode=arch=compute_75,code=sm_75" \
+    -Dcuda_link_args="-gencode=arch=compute_75,code=sm_75"
+
+# Target multiple architectures
+$ meson setup build \
+    -Dcuda_args="-gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_90,code=sm_90" \
+    -Dcuda_link_args="-gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_90,code=sm_90"
+```
+
+Common CUDA compute capabilities:
+- `compute_75,code=sm_75`: NVIDIA Turing (RTX 20xx, Tesla T4)
+- `compute_80,code=sm_80`: NVIDIA Ampere (A100, RTX 30xx)
+- `compute_86,code=sm_86`: NVIDIA Ampere (RTX 30xx consumer)
+- `compute_89,code=sm_89`: NVIDIA Ada Lovelace (RTX 40xx)
+- `compute_90,code=sm_90`: NVIDIA Hopper (H100)
 
 ### Building Documentation
 
