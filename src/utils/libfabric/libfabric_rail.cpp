@@ -51,13 +51,20 @@ RequestPool::initializeBasePool(size_t pool_size) {
 }
 
 void
-RequestPool::release(nixlLibfabricReq *req) {
+RequestPool::release(nixlLibfabricReq *req) const {
     if (!req) {
         NIXL_WARN << "ReleaseReq on Rail " << rail_id_ << " received null request";
         return;
     }
 
     std::lock_guard<std::mutex> lock(pool_mutex_);
+
+    // GUARD: Check if already released
+    if (!req->in_use) {
+        NIXL_WARN << "Attempt to double-release request XFER_ID=" << req->xfer_id << " on rail "
+                  << rail_id_ << " - ignoring to prevent corruption";
+        return;
+    }
 
     NIXL_TRACE << "ReleaseReq on Rail " << rail_id_ << " releasing request XFER_ID=" << req->xfer_id
                << " pool_index=" << req->pool_index;
@@ -161,12 +168,16 @@ ControlRequestPool::~ControlRequestPool() {
 
 void
 ControlRequestPool::cleanup() {
+    if (buffer_chunks_.empty()) return; // Already cleaned up
+
     for (auto &chunk : buffer_chunks_) {
         if (chunk.mr) {
             fi_close(&chunk.mr->fid);
+            chunk.mr = nullptr;
         }
         if (chunk.buffer) {
             free(chunk.buffer);
+            chunk.buffer = nullptr;
         }
     }
     buffer_chunks_.clear();
@@ -669,7 +680,7 @@ nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t)> callback) {
 
 // Per-rail completion processing - handles one rail's CQ with configurable blocking behavior
 nixl_status_t
-nixlLibfabricRail::progressCompletionQueue(bool use_blocking) {
+nixlLibfabricRail::progressCompletionQueue(bool use_blocking) const {
     // Completion processing
     struct fi_cq_data_entry completion;
     memset(&completion, 0, sizeof(completion));
@@ -734,7 +745,7 @@ nixlLibfabricRail::progressCompletionQueue(bool use_blocking) {
 
 // Route completion to appropriate handler (rail-specific)
 nixl_status_t
-nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) {
+nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) const {
     uint64_t flags = comp->flags;
 
     NIXL_TRACE << "Routing completion from rail " << rail_id << " with flags: " << std::hex << flags
@@ -803,18 +814,24 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) {
 
 // Handle local send completions (establishConnection, genNotif)
 nixl_status_t
-nixlLibfabricRail::processLocalSendCompletion(struct fi_cq_data_entry *comp) {
-    // Release request back to pool
+nixlLibfabricRail::processLocalSendCompletion(struct fi_cq_data_entry *comp) const {
+    // Find the request from context to access the completion callback
     nixlLibfabricReq *req = findRequestFromContext(comp->op_context);
-    if (req) {
+    if (req && req->in_use) { // Only process if request is still valid and in use
+        // Call completion callback if it exists
         if (req->completion_callback) {
             NIXL_TRACE << "Calling completion callback for send request " << req->xfer_id;
             req->completion_callback();
             NIXL_TRACE << "Completion callback completed for send";
         }
         releaseRequest(req);
+    } else if (req && !req->in_use) {
+        NIXL_WARN << "Completion received for already released send request " << req->xfer_id
+                  << " on rail " << rail_id << " - skipping to prevent double-free";
     } else {
-        NIXL_ERROR << "No request found for context " << comp->op_context << " on rail " << rail_id;
+        NIXL_ERROR << "No request found for send completion context " << comp->op_context
+                   << " on rail " << rail_id;
+        return NIXL_ERR_BACKEND;
     }
 
     return NIXL_SUCCESS;
@@ -823,10 +840,10 @@ nixlLibfabricRail::processLocalSendCompletion(struct fi_cq_data_entry *comp) {
 // Handle local transfer completions (both read and write operations from postXfer)
 nixl_status_t
 nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
-                                                  const char *operation_type) {
+                                                  const char *operation_type) const {
     // Find the request from context to access the completion callback
     nixlLibfabricReq *req = findRequestFromContext(comp->op_context);
-    if (req) {
+    if (req && req->in_use) { // Only process if request is still valid and in use
         // Call completion callback if it exists
         if (req->completion_callback) {
             NIXL_TRACE << "Calling completion callback for " << operation_type << " request "
@@ -835,9 +852,13 @@ nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
             NIXL_TRACE << "Completion callback completed for " << operation_type;
         }
         releaseRequest(req);
+    } else if (req && !req->in_use) {
+        NIXL_WARN << "Completion received for already released " << operation_type << " request "
+                  << req->xfer_id << " on rail " << rail_id << " - skipping to prevent double-free";
     } else {
         NIXL_ERROR << "No request found for " << operation_type << " completion context "
                    << comp->op_context << " on rail " << rail_id;
+        return NIXL_ERR_BACKEND;
     }
 
     return NIXL_SUCCESS;
@@ -845,7 +866,7 @@ nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
 
 // Handle remote receive completions (conn_req, conn_ack, notification messages)
 nixl_status_t
-nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) {
+nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
     // Get the request from context to access the received buffer
     nixlLibfabricReq *req = findRequestFromContext(comp->op_context);
     if (!req) {
@@ -1019,9 +1040,10 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
                << " XFER_ID: " << NIXL_GET_XFER_ID_FROM_IMM(immediate_data)
                << " dest_addr: " << dest_addr << std::dec << " context: " << &req->ctx;
 
-    // For TCP providers, implement retry mechanism for "Resource temporarily unavailable"
-    const int max_retries = (provider_name == "tcp" || provider_name == "sockets") ? 10 : 1;
-    const int retry_delay_us = 1000; // 1ms delay between retries
+    // Retry logic
+    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
+    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
+                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
 
     int ret = -FI_EAGAIN;
     for (int attempt = 0; attempt < max_retries; ++attempt) {
@@ -1037,11 +1059,19 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
             return NIXL_SUCCESS;
         }
 
-        if (ret == -FI_EAGAIN && (provider_name == "tcp" || provider_name == "sockets")) {
-            // Resource temporarily unavailable - retry for TCP providers
+        if (ret == -FI_EAGAIN) {
+            // Resource temporarily unavailable - progress completion queue and retry
             if (attempt < max_retries - 1) {
                 NIXL_TRACE << "fi_senddata returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << (attempt + 1) << "/" << max_retries << ")";
+                           << ", progressing completion queue and retrying (attempt "
+                           << (attempt + 1) << "/" << max_retries << ")";
+
+                // Progress completion queue to drain pending completions before retry
+                nixl_status_t progress_status = progressCompletionQueue(false);
+                if (progress_status == NIXL_SUCCESS) {
+                    NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
+                }
+
                 usleep(retry_delay_us);
                 continue;
             } else {
@@ -1049,7 +1079,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
                           << rail_id << ": " << fi_strerror(-ret);
             }
         } else {
-            // Other error or non-TCP provider - don't retry
+            // Other error - don't retry
             break;
         }
     }
@@ -1079,9 +1109,10 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                << " remote_addr: " << (void *)remote_addr << " remote_key: " << remote_key
                << " context: " << &req->ctx;
 
-    // For TCP providers, implement retry mechanism for "Resource temporarily unavailable"
-    const int max_retries = (provider_name == "tcp" || provider_name == "sockets") ? 10 : 1;
-    const int retry_delay_us = 1000; // 1ms delay between retries
+    // Retry logic
+    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
+    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
+                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
 
     int ret = -FI_EAGAIN;
     for (int attempt = 0; attempt < max_retries; ++attempt) {
@@ -1104,11 +1135,19 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
             return NIXL_SUCCESS;
         }
 
-        if (ret == -FI_EAGAIN && (provider_name == "tcp" || provider_name == "sockets")) {
-            // Resource temporarily unavailable - retry for TCP providers
+        if (ret == -FI_EAGAIN) {
+            // Resource temporarily unavailable - progress completion queue and retry
             if (attempt < max_retries - 1) {
                 NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << (attempt + 1) << "/" << max_retries << ")";
+                           << ", progressing completion queue and retrying (attempt "
+                           << (attempt + 1) << "/" << max_retries << ")";
+
+                // Progress completion queue to drain pending completions before retry
+                nixl_status_t progress_status = progressCompletionQueue(false);
+                if (progress_status == NIXL_SUCCESS) {
+                    NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
+                }
+
                 usleep(retry_delay_us);
                 continue;
             } else {
@@ -1116,7 +1155,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                           << rail_id << ": " << fi_strerror(-ret);
             }
         } else {
-            // Other error or non-TCP provider - don't retry
+            // Other error - don't retry
             break;
         }
     }
@@ -1144,9 +1183,10 @@ nixlLibfabricRail::postRead(void *local_buffer,
                << " dest_addr: " << dest_addr << " remote_addr: " << (void *)remote_addr
                << " remote_key: " << remote_key << " context: " << &req->ctx;
 
-    // For TCP providers, implement retry mechanism for "Resource temporarily unavailable"
-    const int max_retries = (provider_name == "tcp" || provider_name == "sockets") ? 10 : 1;
-    const int retry_delay_us = 1000; // 1ms delay between retries
+    // Retry logic
+    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
+    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
+                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
 
     int ret = -FI_EAGAIN;
     for (int attempt = 0; attempt < max_retries; ++attempt) {
@@ -1168,11 +1208,19 @@ nixlLibfabricRail::postRead(void *local_buffer,
             return NIXL_SUCCESS;
         }
 
-        if (ret == -FI_EAGAIN && (provider_name == "tcp" || provider_name == "sockets")) {
-            // Resource temporarily unavailable - retry for TCP providers
+        if (ret == -FI_EAGAIN) {
+            // Resource temporarily unavailable - progress completion queue and retry
             if (attempt < max_retries - 1) {
                 NIXL_TRACE << "fi_read returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << (attempt + 1) << "/" << max_retries << ")";
+                           << ", progressing completion queue and retrying (attempt "
+                           << (attempt + 1) << "/" << max_retries << ")";
+
+                // Progress completion queue to drain pending completions before retry
+                nixl_status_t progress_status = progressCompletionQueue(false);
+                if (progress_status == NIXL_SUCCESS) {
+                    NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
+                }
+
                 usleep(retry_delay_us);
                 continue;
             } else {
@@ -1180,7 +1228,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
                           << rail_id << ": " << fi_strerror(-ret);
             }
         } else {
-            // Other error or non-TCP provider - don't retry
+            // Other error - don't retry
             break;
         }
     }
@@ -1335,17 +1383,17 @@ nixlLibfabricRail::getMemoryKey(struct fid_mr *mr) const {
 // Optimized Resource Management Methods
 
 nixlLibfabricReq *
-nixlLibfabricRail::allocateControlRequest(size_t needed_size) {
-    return control_request_pool_.allocate(needed_size);
+nixlLibfabricRail::allocateControlRequest(size_t needed_size) const {
+    return const_cast<ControlRequestPool &>(control_request_pool_).allocate(needed_size);
 }
 
 nixlLibfabricReq *
-nixlLibfabricRail::allocateDataRequest(nixlLibfabricReq::OpType op_type) {
-    return data_request_pool_.allocate(op_type);
+nixlLibfabricRail::allocateDataRequest(nixlLibfabricReq::OpType op_type) const {
+    return const_cast<DataRequestPool &>(data_request_pool_).allocate(op_type);
 }
 
 void
-nixlLibfabricRail::releaseRequest(nixlLibfabricReq *req) {
+nixlLibfabricRail::releaseRequest(nixlLibfabricReq *req) const {
     if (!req) {
         NIXL_ERROR << "Null request provided to releaseRequest on rail " << rail_id;
         return;

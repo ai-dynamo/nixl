@@ -28,10 +28,6 @@ UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 # UCX_VERSION is the version of UCX to build override default with env variable.
 UCX_VERSION=${UCX_VERSION:-v1.19.0}
-# EFA_INSTALLER_VERSION is the version of EFA installer to use, defaults to "latest"
-EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION:-latest}
-# DOCA_VERSION is the version of DOCA to install, override default with env variable.
-DOCA_VERSION=${DOCA_VERSION:-3.1.0}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
@@ -75,7 +71,6 @@ $SUDO apt-get -qq install -y curl \
                              flex \
                              build-essential \
                              cmake \
-                             libibverbs-dev \
                              libgoogle-glog-dev \
                              libgtest-dev \
                              libgmock-dev \
@@ -100,13 +95,17 @@ $SUDO apt-get -qq install -y curl \
                              pciutils \
                              libpci-dev \
                              uuid-dev \
-                             ibverbs-utils \
                              libibmad-dev \
                              doxygen \
                              clang \
                              hwloc \
                              libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
+
+# Reinstall rdma packages in case they are broken in the docker image:
+$SUDO apt-get -qq install --reinstall -y \
+    libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
 
 wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
 chmod +x rustup-init
@@ -134,33 +133,9 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
         $SUDO ldconfig \
 )
 
-# wget --tries=3 --waitretry=5 -O "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-# tar xzf "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-# rm "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-# ( \
-#   cd aws-efa-installer && \
-#   $SUDO ./efa_installer.sh -y --minimal --skip-kmod --skip-limit-conf --no-verify && \
-#   $SUDO ldconfig \
-# )
-
-# wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
-# tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
-# rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
-# ( \
-#   cd libfabric-* && \
-#   ./autogen.sh && \
-#   ./configure --prefix="${LIBFABRIC_INSTALL_DIR}" \
-#               --disable-verbs \
-#               --disable-psm3 \
-#               --disable-opx \
-#               --disable-usnic \
-#               --disable-rstream \
-#               --enable-efa && \
-#   make -j && \
-#   make install && \
-#   $SUDO ldconfig \
-# )
-
+wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 ( \
   cd /tmp && \
   ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \

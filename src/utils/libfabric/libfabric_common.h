@@ -43,6 +43,11 @@
 #define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/read operations (no buffers)
 #define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192
 
+// Retry configuration constants
+#define NIXL_LIBFABRIC_MAX_RETRIES 10
+#define NIXL_LIBFABRIC_EFA_RETRY_DELAY_US 100
+#define NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US 1000
+
 // The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
 // | 4-bit MSG TYPE flag | 8-bit agent index | 16-bit XFER_ID | 4-bit SEQ_ID |
 
