@@ -156,6 +156,12 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
+RUN cd /tmp && \
+    git clone --depth 1 https://github.com/google/gtest-parallel.git && \
+    mkdir -p /usr/local/bin && \
+    cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/
+ENV PATH=/usr/local/bin:$PATH
+
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 

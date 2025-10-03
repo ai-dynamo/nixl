@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 set -o pipefail
@@ -55,6 +58,7 @@ $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
 $SUDO apt-get -qq install -y curl \
+                             gnupg \
                              wget \
                              libnuma-dev \
                              numactl \
@@ -122,6 +126,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
+          ${UCX_CUDA_BUILD_ARGS} \
           --enable-mt && \
         make -j && \
         make -j install-strip && \
@@ -132,18 +137,13 @@ wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "http
 tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 ( \
-  cd libfabric-* && \
-  ./autogen.sh && \
-  ./configure --prefix="${LIBFABRIC_INSTALL_DIR}" \
-              --disable-verbs \
-              --disable-psm3 \
-              --disable-opx \
-              --disable-usnic \
-              --disable-rstream \
-              --enable-efa && \
-  make -j && \
-  make install && \
-  $SUDO ldconfig \
+  cd /tmp && \
+  ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
+  MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
+  wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+  $SUDO dpkg -i doca-host.deb && \
+  $SUDO apt-get update && \
+  $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev doca-ofed mstflint \
 )
 
 ( \
@@ -167,8 +167,14 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   $SUDO make install
 )
 
-export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/cuda/lib64"
-export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib:${LIBFABRIC_INSTALL_DIR}/lib"
+( \
+  cd /tmp &&
+  git clone --depth 1 https://github.com/google/gtest-parallel.git &&
+  mkdir -p ${INSTALL_DIR}/bin &&
+  cp gtest-parallel/* ${INSTALL_DIR}/bin/
+)
+
+export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${INSTALL_DIR}/lib:${LIBFABRIC_INSTALL_DIR}/lib"
 export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
 export PATH="${INSTALL_DIR}/bin:$PATH"
 export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -179,8 +185,10 @@ export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
+#$SUDO sed -i 's/#define DOCA_GPUNETIO_VERBS_ENABLE_DEBUG 0/#define DOCA_GPUNETIO_VERBS_ENABLE_DEBUG 1/g' /opt/mellanox/doca/include/doca_gpunetio_verbs_def.h
+
 # shellcheck disable=SC2086
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} # -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
 ninja -C nixl_build && ninja -C nixl_build install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
@@ -189,3 +197,11 @@ ninja -C nixl_build && ninja -C nixl_build install
 cd benchmark/nixlbench
 meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
 ninja -C nixlbench_build && ninja -C nixlbench_build install
+
+set -x
+which mst || true
+mst start || true
+mst status -v || true
+for dev in /dev/mst/*; do
+    flint -d $dev q || true
+done
