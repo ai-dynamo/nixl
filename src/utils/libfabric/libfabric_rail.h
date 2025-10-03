@@ -88,7 +88,7 @@ public:
 
     /** Release request back to the pool */
     virtual void
-    release(nixlLibfabricReq *req);
+    release(nixlLibfabricReq *req) const;
 
     /** Find request by libfabric context pointer */
     nixlLibfabricReq *
@@ -125,8 +125,8 @@ protected:
     void
     initializeBasePool(size_t pool_size);
 
-    std::deque<nixlLibfabricReq> requests_; ///< Expandable request pool
-    std::stack<size_t> free_indices_; ///< Stack of available request indices
+    mutable std::deque<nixlLibfabricReq> requests_; ///< Expandable request pool
+    mutable std::stack<size_t> free_indices_; ///< Stack of available request indices
     size_t rail_id_; ///< Rail ID for this pool
     size_t initial_pool_size_; ///< Original pool size for expansion calculations
     mutable std::mutex pool_mutex_; ///< Thread safety protection
@@ -332,7 +332,7 @@ public:
 
     /** Process completion queue with batching support */
     nixl_status_t
-    progressCompletionQueue(bool use_blocking = false);
+    progressCompletionQueue(bool use_blocking = false) const;
 
     // Callback registration methods
     /** Set callback for notification message processing */
@@ -356,15 +356,15 @@ public:
     // Optimized resource management methods
     /** Allocate control request with size validation */
     [[nodiscard]] nixlLibfabricReq *
-    allocateControlRequest(size_t needed_size);
+    allocateControlRequest(size_t needed_size) const;
 
     /** Allocate data request for specified operation */
     [[nodiscard]] nixlLibfabricReq *
-    allocateDataRequest(nixlLibfabricReq::OpType op_type);
+    allocateDataRequest(nixlLibfabricReq::OpType op_type) const;
 
     /** Release request back to appropriate pool */
     void
-    releaseRequest(nixlLibfabricReq *req);
+    releaseRequest(nixlLibfabricReq *req) const;
 
     /** Find request from libfabric context pointer */
     nixlLibfabricReq *
@@ -395,13 +395,13 @@ private:
 
 
     nixl_status_t
-    processCompletionQueueEntry(struct fi_cq_data_entry *comp);
+    processCompletionQueueEntry(struct fi_cq_data_entry *comp) const;
     nixl_status_t
-    processLocalSendCompletion(struct fi_cq_data_entry *comp);
+    processLocalSendCompletion(struct fi_cq_data_entry *comp) const;
     nixl_status_t
-    processLocalTransferCompletion(struct fi_cq_data_entry *comp, const char *operation_type);
+    processLocalTransferCompletion(struct fi_cq_data_entry *comp, const char *operation_type) const;
     nixl_status_t
-    processRecvCompletion(struct fi_cq_data_entry *comp);
+    processRecvCompletion(struct fi_cq_data_entry *comp) const;
     nixl_status_t
     processRemoteWriteCompletion(struct fi_cq_data_entry *comp) const;
 };
