@@ -60,8 +60,8 @@ etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_
 sleep 5
 
 echo "==== Running python tests ===="
-export NIXL_LOG_LEVEL=DEBUG
 pytest -s test/python
+export NIXL_LOG_LEVEL=TRACE
 pytest -s test/python --backend LIBFABRIC
 python3 test/python/prep_xfer_perf.py list
 python3 test/python/prep_xfer_perf.py array
