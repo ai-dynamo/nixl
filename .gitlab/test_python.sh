@@ -32,19 +32,24 @@ ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
 export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
-export CPATH=${INSTALL_DIR}/include:/opt/amazon/efa/include:$CPATH
+export CPATH=${INSTALL_DIR}/include::$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:/opt/amazon/efa/lib/pkgconfig:$PKG_CONFIG_PATH
+export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 # Raise exceptions for logging errors
 export NIXL_DEBUG_LOGGING=yes
+export FI_LOG_LEVEL=debug
+export FI_LOG_PROV=efa
 
 pip3 install --break-system-packages .
 pip3 install --break-system-packages pytest
 pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
+
+cat /sys/devices/virtual/dmi/id/product_name
+echo "Product Name: $(cat /sys/devices/virtual/dmi/id/product_name)"
+echo "Instance ID: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)"
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
@@ -57,7 +62,9 @@ etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_
 sleep 5
 
 echo "==== Running python tests ===="
-pytest -s test/python
+export NIXL_LOG_LEVEL=DEBUG
+# pytest -s test/python
+pytest -s test/python --backend LIBFABRIC
 python3 test/python/prep_xfer_perf.py list
 python3 test/python/prep_xfer_perf.py array
 
