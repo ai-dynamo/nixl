@@ -430,11 +430,15 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     hints->domain_attr->threading = FI_THREAD_SAFE;
     try {
         // Get fabric info for this specific device
-        int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
+        struct fi_info *tmp_info = NULL;
+        int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &tmp_info);
         if (ret) {
             NIXL_ERROR << "fi_getinfo failed for rail " << rail_id << ": " << fi_strerror(-ret);
             throw std::runtime_error("fi_getinfo failed for rail " + std::to_string(rail_id));
         }
+        info = fi_dupinfo(tmp_info);
+        fi_freeinfo(tmp_info);
+        tmp_info = nullptr;
         // Create fabric for this rail
         ret = fi_fabric(info->fabric_attr, &fabric, NULL);
         if (ret) {
@@ -575,6 +579,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     }
     catch (...) {
         fi_freeinfo(hints);
+        fi_freeinfo(info);
         throw;
     }
     fi_freeinfo(hints);
