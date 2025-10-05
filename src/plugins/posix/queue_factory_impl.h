@@ -25,6 +25,11 @@ namespace QueueFactory {
 
     std::unique_ptr<nixlPosixQueue> createUringQueue(int num_entries, nixl_xfer_op_t operation);
 
+    std::unique_ptr<nixlPosixQueue>
+    createLinuxAioQueue(int num_entries, nixl_xfer_op_t operation);
+
+    bool
+    isLinuxAioAvailable();
     bool isUringAvailable();
 };
 
