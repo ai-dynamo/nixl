@@ -32,6 +32,13 @@ thread_dep = dependency('threads')
 # Check for POSIX AIO support for the POSIX plugin and test (it is part of GLIBC)
 posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
 
+# Check for libaio (for LINUX AIO plugin and test)
+aio_dep = cpp.find_library('aio', required: false)
+linux_aio = false
+if aio_dep.found()
+    linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [aio_dep])
+endif
+
 # Forced to ignore this error due to:
 # https://github.com/abseil/abseil-cpp/issues/1779
 # This must be global since subprojects cannot be assigned with arguments.
