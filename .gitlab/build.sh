@@ -155,18 +155,20 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   $SUDO ldconfig \
 )
 
-# Install DOCA & GPUNETIO packages after EFA to avoid MPI conflicts
-UBUNTU_VER=$(grep '^VERSION_ID=' /etc/os-release | cut -d'"' -f2)
-DOCA_REPO="https://linux.mellanox.com/public/repo/doca/${DOCA_VERSION}/ubuntu${UBUNTU_VER}/${ARCH}"
-$SUDO curl -fsSL "${DOCA_REPO}"/GPG-KEY-Mellanox.pub | $SUDO gpg --dearmor -o /usr/share/keyrings/doca.gpg
-echo "deb [signed-by=/usr/share/keyrings/doca.gpg] ${DOCA_REPO}/ ./" | $SUDO tee /etc/apt/sources.list.d/doca.list >/dev/null
-$SUDO apt-get -qq update
-$SUDO apt-get install -y --no-install-recommends \
-    doca-sdk-common \
-    doca-sdk-gpunetio \
-    libdoca-sdk-common-dev \
-    libdoca-sdk-gpunetio-dev \
-    libdoca-sdk-verbs-dev
+# Install DOCA & GPUNETIO packages if GPU detected
+if command -v nvidia-smi; then
+  UBUNTU_VER=$(grep '^VERSION_ID=' /etc/os-release | cut -d'"' -f2)
+  DOCA_REPO="https://linux.mellanox.com/public/repo/doca/${DOCA_VERSION}/ubuntu${UBUNTU_VER}/${ARCH}"
+  $SUDO curl -fsSL "${DOCA_REPO}"/GPG-KEY-Mellanox.pub | $SUDO gpg --dearmor -o /usr/share/keyrings/doca.gpg
+  echo "deb [signed-by=/usr/share/keyrings/doca.gpg] ${DOCA_REPO}/ ./" | $SUDO tee /etc/apt/sources.list.d/doca.list >/dev/null
+  $SUDO apt-get -qq update
+  $SUDO apt-get install -y --no-install-recommends \
+      doca-sdk-common \
+      doca-sdk-gpunetio \
+      libdoca-sdk-common-dev \
+      libdoca-sdk-gpunetio-dev \
+      libdoca-sdk-verbs-dev
+fi
 
 ( \
   cd /tmp && \
