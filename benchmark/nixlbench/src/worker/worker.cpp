@@ -31,16 +31,41 @@ public:
 
     virtual ~xferBenchNullRT() {}
 
-    virtual int sendInt(int *buffer, int dest_rank) override { return 0; }
-    virtual int recvInt(int *buffer, int src_rank) override { return 0; }
-    virtual int broadcastInt(int *buffer, size_t count, int root_rank) override { return 0; }
-    virtual int sendChar(char *buffer, size_t count, int dest_rank) override { return 0; }
-    virtual int recvChar(char *buffer, size_t count, int src_rank) override { return 0; }
-    virtual int reduceSumDouble(double *local_value, double *global_value, int dest_rank) override {
+    virtual int
+    sendInt(int *buffer, int dest_rank) override {
+        return 0;
+    }
+
+    virtual int
+    recvInt(int *buffer, int src_rank) override {
+        return 0;
+    }
+
+    virtual int
+    broadcastInt(int *buffer, size_t count, int root_rank) override {
+        return 0;
+    }
+
+    virtual int
+    sendChar(char *buffer, size_t count, int dest_rank) override {
+        return 0;
+    }
+
+    virtual int
+    recvChar(char *buffer, size_t count, int src_rank) override {
+        return 0;
+    }
+
+    virtual int
+    reduceSumDouble(double *local_value, double *global_value, int dest_rank) override {
         *global_value = *local_value;
         return 0;
     }
-    virtual int barrier(const std::string& barrier_id) override { return 0; }
+
+    virtual int
+    barrier(const std::string &barrier_id) override {
+        return 0;
+    }
 };
 
 static xferBenchRT *createRT(int *terminate) {

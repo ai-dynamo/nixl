@@ -97,7 +97,9 @@ DEFINE_int32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (De
 // For example- 0:mlx5_0,mlx5_1,mlx5_2,1:mlx5_3,mlx5_4, ...
 DEFINE_string(device_list, "all", "Comma-separated device name to use for \
 		      communication (only used with nixl worker)");
-DEFINE_string(etcd_endpoints, "", "ETCD server endpoints for communication (optional for storage backends)");
+DEFINE_string(etcd_endpoints,
+              "",
+              "ETCD server endpoints for communication (optional for storage backends)");
 
 // POSIX options - only used when backend is POSIX
 DEFINE_string (posix_api_type,
@@ -283,7 +285,8 @@ xferBenchConfig::loadFromFlags() {
     if (!isStorageBackend() && etcd_endpoints.empty()) {
         // For non-storage backends, set default ETCD endpoint
         etcd_endpoints = "http://localhost:2379";
-        std::cout << "Using default ETCD endpoint for non-storage backend: " << etcd_endpoints << std::endl;
+        std::cout << "Using default ETCD endpoint for non-storage backend: " << etcd_endpoints
+                  << std::endl;
     }
 
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
