@@ -198,11 +198,23 @@ nixlLibfabricTopology::initHwlocTopology() {
     if (hwloc_topology) {
         cleanupHwlocTopology();
     }
+
+    // Initialize hwloc_topology to nullptr first for safety
+    hwloc_topology = nullptr;
+
     int ret = hwloc_topology_init(&hwloc_topology);
     if (ret != 0) {
         NIXL_ERROR << "Failed to initialize hwloc topology: " << ret;
+        hwloc_topology = nullptr;
         return NIXL_ERR_BACKEND;
     }
+
+    // Verify topology was properly initialized
+    if (!hwloc_topology) {
+        NIXL_ERROR << "hwloc_topology_init succeeded but topology is null";
+        return NIXL_ERR_BACKEND;
+    }
+
     // Enable I/O device discovery - this is the key to seeing EFA devices!
 #if (HWLOC_API_VERSION >= 0x00020000)
     enum hwloc_type_filter_e filter = HWLOC_TYPE_FILTER_KEEP_ALL;
@@ -218,13 +230,30 @@ nixlLibfabricTopology::initHwlocTopology() {
         NIXL_WARN << "Failed to set WHOLE_IO flag: " << ret << ", continuing anyway";
     }
 #endif
+
+    // Add additional safety check before loading
+    if (!hwloc_topology) {
+        NIXL_ERROR << "hwloc topology became null before loading";
+        return NIXL_ERR_BACKEND;
+    }
+
     ret = hwloc_topology_load(hwloc_topology);
     if (ret != 0) {
         NIXL_ERROR << "Failed to load hwloc topology: " << ret;
-        hwloc_topology_destroy(hwloc_topology);
-        hwloc_topology = nullptr;
+        // Clean up the partially initialized topology to prevent double-free
+        if (hwloc_topology) {
+            hwloc_topology_destroy(hwloc_topology);
+            hwloc_topology = nullptr;
+        }
         return NIXL_ERR_BACKEND;
     }
+
+    // Final verification that topology loaded successfully
+    if (!hwloc_topology) {
+        NIXL_ERROR << "hwloc topology became null after loading";
+        return NIXL_ERR_BACKEND;
+    }
+
     NIXL_TRACE << "hwloc topology initialized successfully with IO device support";
     return NIXL_SUCCESS;
 }
