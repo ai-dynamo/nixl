@@ -105,11 +105,15 @@ $ ninja install
 NIXL supports several build options that can be specified during the meson setup phase:
 
 ```bash
-# Basic build setup with default options
+# Basic build setup with default options (debug build)
 $ meson setup <name_of_build_dir>
+
+# Setup for release build with optimizations
+$ meson setup <name_of_build_dir> --buildtype=release
 
 # Setup with custom options (example)
 $ meson setup <name_of_build_dir> \
+    --buildtype=release \         # Build with optimizations
     -Dbuild_docs=true \           # Build Doxygen documentation
     -Ducx_path=/path/to/ucx \     # Custom UCX installation path
     -Dinstall_headers=true \      # Install development headers
@@ -117,6 +121,7 @@ $ meson setup <name_of_build_dir> \
 ```
 
 Common build options:
+- `buildtype`: Build type `debug` or `release` (default: debug)
 - `build_docs`: Build Doxygen documentation (default: false)
 - `ucx_path`: Path to UCX installation (default: system path)
 - `install_headers`: Install development headers (default: true)
