@@ -169,10 +169,13 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
                   << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
-        std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
-                  << xferBenchConfig::gpunetio_device_list << std::endl;
+        std::cout << "GPUNETIO backend, network device " << devices[0]
+                  << " GPU device " << xferBenchConfig::gpunetio_device_list
+                  << " OOB interface " << xferBenchConfig::gpunetio_oob_list
+                  << std::endl;
         backend_params["network_devices"] = devices[0];
         backend_params["gpu_devices"] = xferBenchConfig::gpunetio_device_list;
+        backend_params["oob_interface"] = xferBenchConfig::gpunetio_oob_list;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
         std::cout << "Mooncake backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
