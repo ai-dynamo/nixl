@@ -1040,13 +1040,11 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
                << " XFER_ID: " << NIXL_GET_XFER_ID_FROM_IMM(immediate_data)
                << " dest_addr: " << dest_addr << std::dec << " context: " << &req->ctx;
 
-    // Retry logic
-    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
-    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
-                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
-
+    // Retry indefinitely until senddata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    for (int attempt = 0; attempt < max_retries; ++attempt) {
+    int attempt = 0;
+
+    while (true) {
         // Libfabric fi_senddata call
         ret = fi_senddata(
             endpoint, req->buffer, req->buffer_size, desc, immediate_data, dest_addr, &req->ctx);
@@ -1060,26 +1058,32 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
         }
 
         if (ret == -FI_EAGAIN) {
-            // Resource temporarily unavailable - progress completion queue and retry
-            if (attempt < max_retries - 1) {
-                NIXL_TRACE << "fi_senddata returned EAGAIN on rail " << rail_id
-                           << ", progressing completion queue and retrying (attempt "
-                           << (attempt + 1) << "/" << max_retries << ")";
+            // Resource temporarily unavailable - retry indefinitely for all providers
+            attempt++;
 
-                // Progress completion queue to drain pending completions before retry
-                nixl_status_t progress_status = progressCompletionQueue(false);
-                if (progress_status == NIXL_SUCCESS) {
-                    NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
-                }
-
-                usleep(retry_delay_us);
-                continue;
+            // Log every N attempts to avoid log spam
+            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
+                NIXL_INFO << "fi_senddata still retrying EAGAIN on rail " << rail_id << " after "
+                          << attempt << " attempts";
             } else {
-                NIXL_WARN << "fi_senddata failed after " << max_retries << " attempts on rail "
-                          << rail_id << ": " << fi_strerror(-ret);
+                NIXL_TRACE << "fi_senddata returned EAGAIN on rail " << rail_id
+                           << ", retrying (attempt " << attempt << ")";
             }
+
+            // Exponential backoff with cap to avoid overwhelming the system
+            int delay_us = std::min(NIXL_LIBFABRIC_BASE_RETRY_DELAY_US * (1 + attempt / 10),
+                                    NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
+
+            // Progress completion queue to drain pending completions before retry
+            nixl_status_t progress_status = progressCompletionQueue(false);
+            if (progress_status == NIXL_SUCCESS) {
+                NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
+            }
+
+            usleep(delay_us);
+            continue;
         } else {
-            // Other error - don't retry
+            // Other error - don't retry, fail immediately
             break;
         }
     }
@@ -1109,13 +1113,11 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                << " remote_addr: " << (void *)remote_addr << " remote_key: " << remote_key
                << " context: " << &req->ctx;
 
-    // Retry logic
-    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
-    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
-                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
-
+    // Retry indefinitely until writedata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    for (int attempt = 0; attempt < max_retries; ++attempt) {
+    int attempt = 0;
+
+    while (true) {
         // Libfabric fi_writedata call
         ret = fi_writedata(endpoint,
                            local_buffer,
@@ -1136,26 +1138,32 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
         }
 
         if (ret == -FI_EAGAIN) {
-            // Resource temporarily unavailable - progress completion queue and retry
-            if (attempt < max_retries - 1) {
-                NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
-                           << ", progressing completion queue and retrying (attempt "
-                           << (attempt + 1) << "/" << max_retries << ")";
+            // Resource temporarily unavailable - retry indefinitely for all providers
+            attempt++;
 
-                // Progress completion queue to drain pending completions before retry
-                nixl_status_t progress_status = progressCompletionQueue(false);
-                if (progress_status == NIXL_SUCCESS) {
-                    NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
-                }
-
-                usleep(retry_delay_us);
-                continue;
+            // Log every N attempts to avoid log spam
+            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
+                NIXL_INFO << "fi_writedata still retrying EAGAIN on rail " << rail_id << " after "
+                          << attempt << " attempts";
             } else {
-                NIXL_WARN << "fi_writedata failed after " << max_retries << " attempts on rail "
-                          << rail_id << ": " << fi_strerror(-ret);
+                NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
+                           << ", retrying (attempt " << attempt << ")";
             }
+
+            // Exponential backoff with cap to avoid overwhelming the system
+            int delay_us = std::min(NIXL_LIBFABRIC_BASE_RETRY_DELAY_US * (1 + attempt / 10),
+                                    NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
+
+            // Progress completion queue to drain pending completions before retry
+            nixl_status_t progress_status = progressCompletionQueue(false);
+            if (progress_status == NIXL_SUCCESS) {
+                NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
+            }
+
+            usleep(delay_us);
+            continue;
         } else {
-            // Other error - don't retry
+            // Other error - don't retry, fail immediately
             break;
         }
     }
@@ -1183,13 +1191,11 @@ nixlLibfabricRail::postRead(void *local_buffer,
                << " dest_addr: " << dest_addr << " remote_addr: " << (void *)remote_addr
                << " remote_key: " << remote_key << " context: " << &req->ctx;
 
-    // Retry logic
-    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
-    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
-                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
-
+    // Retry indefinitely until readdata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    for (int attempt = 0; attempt < max_retries; ++attempt) {
+    int attempt = 0;
+
+    while (true) {
         // Libfabric fi_read call
         ret = fi_read(endpoint,
                       local_buffer,
@@ -1209,26 +1215,32 @@ nixlLibfabricRail::postRead(void *local_buffer,
         }
 
         if (ret == -FI_EAGAIN) {
-            // Resource temporarily unavailable - progress completion queue and retry
-            if (attempt < max_retries - 1) {
-                NIXL_TRACE << "fi_read returned EAGAIN on rail " << rail_id
-                           << ", progressing completion queue and retrying (attempt "
-                           << (attempt + 1) << "/" << max_retries << ")";
+            // Resource temporarily unavailable - retry indefinitely for all providers
+            attempt++;
 
-                // Progress completion queue to drain pending completions before retry
-                nixl_status_t progress_status = progressCompletionQueue(false);
-                if (progress_status == NIXL_SUCCESS) {
-                    NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
-                }
-
-                usleep(retry_delay_us);
-                continue;
+            // Log every N attempts to avoid log spam
+            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
+                NIXL_INFO << "fi_read still retrying EAGAIN on rail " << rail_id << " after "
+                          << attempt << " attempts";
             } else {
-                NIXL_WARN << "fi_read failed after " << max_retries << " attempts on rail "
-                          << rail_id << ": " << fi_strerror(-ret);
+                NIXL_TRACE << "fi_read returned EAGAIN on rail " << rail_id
+                           << ", retrying (attempt " << attempt << ")";
             }
+
+            // Exponential backoff with cap to avoid overwhelming the system
+            int delay_us = std::min(NIXL_LIBFABRIC_BASE_RETRY_DELAY_US * (1 + attempt / 10),
+                                    NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
+
+            // Progress completion queue to drain pending completions before retry
+            nixl_status_t progress_status = progressCompletionQueue(false);
+            if (progress_status == NIXL_SUCCESS) {
+                NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
+            }
+
+            usleep(delay_us);
+            continue;
         } else {
-            // Other error - don't retry
+            // Other error - don't retry, fail immediately
             break;
         }
     }
