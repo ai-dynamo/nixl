@@ -47,6 +47,9 @@
 #define NIXL_LIBFABRIC_MAX_RETRIES 10
 #define NIXL_LIBFABRIC_EFA_RETRY_DELAY_US 100
 #define NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US 1000
+#define NIXL_LIBFABRIC_BASE_RETRY_DELAY_US 1000 // Base 1ms delay between retries
+#define NIXL_LIBFABRIC_MAX_RETRY_DELAY_US 100000 // Max 100ms delay between retries
+#define NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS 100 // Log every N attempts to avoid spam
 
 // The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
 // | 4-bit MSG TYPE flag | 8-bit agent index | 16-bit XFER_ID | 4-bit SEQ_ID |
