@@ -210,7 +210,11 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
                                                     req);
         }
         if (status != NIXL_SUCCESS) {
+            // Release the allocated request back to pool on failure
             data_rails_[rail_id]->releaseRequest(req);
+            NIXL_ERROR << "Failed to submit "
+                       << (op_type == nixlLibfabricReq::WRITE ? "write" : "read") << " on rail "
+                       << rail_id << ", request released";
             return status;
         }
 
@@ -283,7 +287,11 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
                                                         req);
             }
             if (status != NIXL_SUCCESS) {
+                // This request failed to submit - release it immediately
                 data_rails_[rail_id]->releaseRequest(req);
+                NIXL_ERROR << "Failed to submit "
+                           << (op_type == nixlLibfabricReq::WRITE ? "write" : "read") << " on rail "
+                           << rail_id << ", request released";
                 return status;
             }
 
@@ -602,6 +610,7 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to send control message type " << static_cast<int>(msg_type)
                    << " on control rail " << control_rail_id;
+        // Release the pre-allocated control request back to pool on failure
         control_rails_[control_rail_id]->releaseRequest(req);
         return status;
     }
