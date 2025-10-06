@@ -20,7 +20,7 @@ namespace py = pybind11;
 
 //JUST FOR TESTING
 uintptr_t malloc_passthru(int size) {
-    return (uintptr_t) malloc(size);
+    return (uintptr_t)aligned_alloc(4096, size);
 }
 
 //JUST FOR TESTING
