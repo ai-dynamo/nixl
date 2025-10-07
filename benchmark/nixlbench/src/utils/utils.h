@@ -78,6 +78,7 @@
 #define XFERBENCH_BACKEND_OBJ "OBJ"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
+#define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -178,6 +179,8 @@ public:
     static std::string obj_req_checksum;
     static std::string obj_ca_bundle;
     static size_t obj_crt_min_limit;
+    static std::string azure_blob_account_url;
+    static std::string azure_blob_container_name;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
@@ -197,6 +200,8 @@ public:
     parseDeviceList();
     static bool
     isStorageBackend();
+    static bool
+    isObjStorageBackend();
 
 protected:
     static int
@@ -319,6 +324,18 @@ class xferBenchUtils {
 private:
     static xferBenchRT *rt;
     static std::string dev_to_use;
+    static int
+    createFile(size_t buffer_size, const std::string &filename);
+    static void
+    cleanupFile(const int fd, const std::string &filename);
+    static bool
+    putObjAzure(size_t buffer_size, const std::string &name);
+    static bool
+    getObjAzure(const std::string &name);
+    static bool
+    rmObjAzure(const std::string &name);
+    static std::string
+    buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
     static void
@@ -329,6 +346,12 @@ public:
     getDevToUse();
     static std::string
     buildAwsCredentials();
+    static bool
+    putObj(size_t buffer_size, const std::string &name);
+    static bool
+    getObj(const std::string &name);
+    static bool
+    rmObj(const std::string &name);
     static bool
     putObjS3(size_t buffer_size, const std::string &name);
     static bool

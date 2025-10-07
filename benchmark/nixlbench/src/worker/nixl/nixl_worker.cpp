@@ -272,6 +272,11 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
         std::cout << "UCCL backend" << std::endl;
         backend_params["in_python"] = "0";
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_AZURE_BLOB)) {
+        // Using default param values for AZURE_BLOB backend
+        backend_params["account_url"] = xferBenchConfig::azure_blob_account_url;
+        backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
+        std::cout << "AZURE_BLOB backend" << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -630,8 +635,8 @@ xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
 
 void
 xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
-    if (!xferBenchUtils::rmObjS3(iov.metaInfo)) {
-        std::cerr << "Failed to remove S3 object: " << iov.metaInfo << std::endl;
+    if (!xferBenchUtils::rmObj(iov.metaInfo)) {
+        std::cerr << "Failed to remove object: " << iov.metaInfo << std::endl;
         exit(EXIT_FAILURE);
     }
 }
@@ -677,7 +682,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     opt_args.backends.push_back(backend_engine);
 
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+    if (xferBenchConfig::isObjStorageBackend()) {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -690,8 +695,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     std::to_string(i) + "_" + std::to_string(timestamp);
 
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    if (!xferBenchUtils::putObjS3(buffer_size, unique_name)) {
-                        std::cerr << "Failed to put S3 object: " << unique_name << std::endl;
+                    if (!xferBenchUtils::putObj(buffer_size, unique_name)) {
+                        std::cerr << "Failed to put object: " << unique_name << std::endl;
                         continue;
                     }
                 }
@@ -884,7 +889,7 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
         }
     }
 
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+    if (xferBenchConfig::isObjStorageBackend()) {
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
                 cleanupBasicDescObj(iov);
@@ -991,7 +996,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             std::vector<xferBenchIOV> remote_iov_list;
             int devidx = 0;
             for (auto &iov : iov_list) {
-                if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
+                if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
                     basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
                     if (basic_desc) {
@@ -1096,7 +1101,7 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
                            const std::vector<xferBenchIOV> &local_iov,
                            const std::vector<xferBenchIOV> &remote_iov) {
     // Set remote descriptor type based on backend
-    if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
+    if (xferBenchConfig::isObjStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
