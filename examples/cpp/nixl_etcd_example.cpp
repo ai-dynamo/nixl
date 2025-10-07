@@ -22,6 +22,15 @@
 
 #include "nixl.h"
 
+#define CHECK_NIXL_ERROR(result, message, agent)                         \
+    do {                                                                 \
+        if (0 != result) {                                               \
+            std::cerr << "NIXL: " << message << " for agent " << agent   \
+                      << " (Error code: " << result << ")" << std::endl; \
+            exit(EXIT_FAILURE);                                          \
+        }                                                                \
+    } while (0)
+
 // Change these values to match your etcd setup
 const std::string ETCD_ENDPOINT = "http://localhost:2379";
 const std::string AGENT1_NAME = "EtcdAgent1";
@@ -132,6 +141,7 @@ int main() {
     ret1 = A1.getAvailPlugins(plugins);
     assert (ret1 == NIXL_SUCCESS);
 
+    CHECK_NIXL_ERROR(ret1, "Failed to get available plugins", AGENT1_NAME);
     std::cout << "Available plugins:\n";
 
     for (nixl_backend_t b: plugins)
@@ -142,6 +152,9 @@ int main() {
 
     assert (ret1 == NIXL_SUCCESS);
     assert (ret2 == NIXL_SUCCESS);
+
+    CHECK_NIXL_ERROR(ret1, "Failed to get plugin params for UCX", AGENT1_NAME);
+    CHECK_NIXL_ERROR(ret2, "Failed to get plugin params for UCX", AGENT2_NAME);
 
     std::cout << "Params before init:\n";
     printParams(init1, mems1);
@@ -155,11 +168,17 @@ int main() {
     assert (ret1 == NIXL_SUCCESS);
     assert (ret2 == NIXL_SUCCESS);
 
+    CHECK_NIXL_ERROR(ret1, "Failed to create UCX backend", AGENT1_NAME);
+    CHECK_NIXL_ERROR(ret2, "Failed to create UCX backend", AGENT2_NAME);
+
     ret1 = A1.getBackendParams(ucx1, mems1, init1);
     ret2 = A2.getBackendParams(ucx2, mems2, init2);
 
     assert (ret1 == NIXL_SUCCESS);
     assert (ret2 == NIXL_SUCCESS);
+
+    CHECK_NIXL_ERROR(ret1, "Failed to get UCX backend params", AGENT1_NAME);
+    CHECK_NIXL_ERROR(ret2, "Failed to get UCX backend params", AGENT2_NAME);
 
     std::cout << "Params after init:\n";
     printParams(init1, mems1);
@@ -168,8 +187,10 @@ int main() {
     // Register memory with both agents
     status = registerMemory(&addr1, &A1, &dlist1, &extra_params1, ucx1, 0xaa);
     assert(status == NIXL_SUCCESS);
+    CHECK_NIXL_ERROR(status, "Failed to register memory", AGENT1_NAME);
     status = registerMemory(&addr2, &A2, &dlist2, &extra_params2, ucx2, 0xbb);
     assert(status == NIXL_SUCCESS);
+    CHECK_NIXL_ERROR(ret2, "Failed to register memory", AGENT2_NAME);
 
     std::cout << "\nEtcd Metadata Exchange Demo\n";
     std::cout << "==========================\n";
@@ -180,9 +201,11 @@ int main() {
     // Both agents send their metadata to etcd
     status = A1.sendLocalMD();
     assert(status == NIXL_SUCCESS);
+    CHECK_NIXL_ERROR(status, "Failed to send local MD", AGENT1_NAME);
 
     status = A2.sendLocalMD();
     assert(status == NIXL_SUCCESS);
+    CHECK_NIXL_ERROR(status, "Failed to send local MD", AGENT2_NAME);
 
     // Give etcd time to process
     std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -193,10 +216,12 @@ int main() {
     // Agent1 fetches metadata for Agent2
     status = A1.fetchRemoteMD(AGENT2_NAME);
     assert(status == NIXL_SUCCESS);
+    CHECK_NIXL_ERROR(ret1, "Failed to fetch remote MD", AGENT1_NAME);
 
     // Agent2 fetches metadata for Agent1
     status = A2.fetchRemoteMD(AGENT1_NAME);
     assert(status == NIXL_SUCCESS);
+    CHECK_NIXL_ERROR(ret1, "Failed to fetch remote MD", AGENT2_NAME);
 
     // Do transfer from Agent 1 to Agent 2
     size_t req_size = 8;
@@ -229,6 +254,8 @@ int main() {
     extra_params1.hasNotif = true;
     ret1 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_dst_descs, AGENT2_NAME, req_handle, &extra_params1);
     std::cout << "Xfer request created, status: " << nixlEnumStrings::statusStr(ret1) << std::endl;
+    assert(ret1 == NIXL_SUCCESS);
+    CHECK_NIXL_ERROR(ret1, "Failed to create Xfer Req", AGENT1_NAME);
 
     status = A1.postXferReq(req_handle);
 
@@ -242,6 +269,8 @@ int main() {
         if (n_notifs == 0) ret2 = A2.getNotifs(notif_map);
         assert (status >= 0);
         assert (ret2 == NIXL_SUCCESS);
+        CHECK_NIXL_ERROR((status < 0), "Failed to post Xfer Req", AGENT1_NAME);
+        CHECK_NIXL_ERROR(ret2, "Failed to get notifs", AGENT2_NAME);
         n_notifs = notif_map.size();
     }
 
@@ -250,11 +279,14 @@ int main() {
     ret1 = A1.releaseXferReq(req_handle);
     assert (ret1 == NIXL_SUCCESS);
 
+    CHECK_NIXL_ERROR(ret1, "Failed to release Xfer Req", AGENT1_NAME);
     ret1 = A1.deregisterMem(dlist1, &extra_params1);
     ret2 = A2.deregisterMem(dlist2, &extra_params2);
     assert (ret1 == NIXL_SUCCESS);
     assert (ret2 == NIXL_SUCCESS);
 
+    CHECK_NIXL_ERROR(ret1, "Failed to deregister memory", AGENT1_NAME);
+    CHECK_NIXL_ERROR(ret2, "Failed to deregister memory", AGENT2_NAME);
     // 3. Partial Metadata Exchange
     std::cout << "\n3. Sending partial metadata to etcd...\n";
 
@@ -301,7 +333,7 @@ int main() {
     // 4. Invalidate Metadata
     std::cout << "\n4. Invalidating metadata in etcd...\n";
 
-    // Invalidate agent1's metadata
+    // Invalidate AGENT1_NAME's metadata
     status = A1.invalidateLocalMD();
     assert(status == NIXL_SUCCESS);
 

@@ -25,6 +25,15 @@
 
 #include "common/str_tools.h"
 
+#define CHECK_NIXL_ERROR(result, message, agent)                         \
+    do {                                                                 \
+        if (0 != result) {                                               \
+            std::cerr << "NIXL: " << message << " for agent " << agent   \
+                      << " (Error code: " << result << ")" << std::endl; \
+            exit(EXIT_FAILURE);                                          \
+        }                                                                \
+    } while (0)
+
 std::string generate_random_string(size_t length) {
     const std::string characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     std::random_device random_device;
@@ -137,11 +146,19 @@ int main()
 {
     strEqual tester;
     assert(tester.operator() ("abcdefgh","abcdefgh") == true);
+    CHECK_NIXL_ERROR(tester.operator()("abcdefgh", "abcdefgh"), "Test failed", "test");
     assert(tester.operator() ("abcdefgh","abdcefgh") == false);
+    CHECK_NIXL_ERROR(tester.operator()("abcdefgh", "abdcefgh"), "Test failed", "test");
     assert(tester.operator() ("abcdefgh123","abcdefgh123") == true);
+    CHECK_NIXL_ERROR(tester.operator()("abcdefgh123", "abcdefgh123"), "Test failed", "test");
     assert(tester.operator() ("abcdefgh123","aadcefgh123") == false);
+    CHECK_NIXL_ERROR(tester.operator()("abcdefgh123", "aadcefgh123"), "Test failed", "test");
     assert(tester.operator() ("12345678abcdefgh","12345678abcdefgh") == true);
+    CHECK_NIXL_ERROR(
+        tester.operator()("12345678abcdefgh", "12345678abcdefgh"), "Test failed", "test");
     assert(tester.operator() ("12345678abcdefgh","12345687abcdefgh") == false);
+    CHECK_NIXL_ERROR(
+        tester.operator()("12345678abcdefgh", "12345687abcdefgh"), "Test failed", "test");
 
     test_comparison_perf(16, 8);
     test_comparison_perf(16, 16);

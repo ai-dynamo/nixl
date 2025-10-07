@@ -235,11 +235,8 @@ plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')
-
-if get_option('buildtype') != 'release'
-  subdir('test')
-  subdir('examples')
-endif
+subdir('test')
+subdir('examples')
 
 if get_option('install_headers')
   install_headers('src/api/cpp/nixl.h', install_dir: prefix_inc)
