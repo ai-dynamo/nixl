@@ -29,9 +29,10 @@ namespace nixl::ucx {
 class rkey;
 
 nixlGpuXferReqH
-createGpuXferReq(const nixlUcxEp &,
-                 const std::vector<nixlUcxMem> &,
-                 const std::vector<const nixl::ucx::rkey *> &);
+createGpuXferReq(const nixlUcxEp &ep,
+                 const std::vector<nixlUcxMem> &local_mems,
+                 const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
+                 const std::vector<uint64_t> &remote_addrs);
 
 void
 releaseGpuXferReq(nixlGpuXferReqH gpu_req) noexcept;

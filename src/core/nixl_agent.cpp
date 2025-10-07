@@ -1278,12 +1278,22 @@ nixlAgent::prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
+    nixlBackendH *backend = extra_params->backends[0];
+
+    // Get the size of individual GPU signals
+    size_t signal_size;
+    nixl_status_t ret = backend->engine->getGpuSignalSize(signal_size);
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR_FUNC << "failed to get GPU signal size with status: "
+                        << nixlEnumStrings::statusStr(ret);
+        return ret;
+    }
+
     // Convert reg_dlist to xfer_dlist for populate call
     nixl_xfer_dlist_t xfer_descs = signal_descs.trim();
 
-    nixlBackendH *backend = extra_params->backends[0];
     nixl_meta_dlist_t result(signal_descs.getType());
-    nixl_status_t ret = data->memorySection->populate(xfer_descs, backend->engine, result);
+    ret = data->memorySection->populate(xfer_descs, backend->engine, result);
 
     if (ret != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "failed to populate signal metadata with specified backend";
@@ -1291,19 +1301,33 @@ nixlAgent::prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
     }
 
     for (size_t i = 0; i < static_cast<size_t>(result.descCount()); i++) {
-        void *signal = reinterpret_cast<void *>(result[i].addr);
-        ret = backend->engine->prepGpuSignal(*result[i].metadataP, signal);
+        size_t desc_len = result[i].len;
+        uintptr_t desc_addr = result[i].addr;
 
-        if (ret != NIXL_SUCCESS) {
-            NIXL_ERROR_FUNC << "failed to prepare GPU signal " << i
-                            << " with status: " << nixlEnumStrings::statusStr(ret);
-            return ret;
+        size_t num_signals = desc_len / signal_size;
+
+        if (num_signals == 0) {
+            NIXL_ERROR_FUNC << "descriptor " << i << " is too small (length=" << desc_len
+                            << ") to contain even one signal (signal_size=" << signal_size << ")";
+            return NIXL_ERR_INVALID_PARAM;
         }
 
-        NIXL_DEBUG << "Successfully prepared GPU signal " << i << " at address " << signal;
+        for (size_t j = 0; j < num_signals; j++) {
+            void *signal = reinterpret_cast<void *>(desc_addr + j * signal_size);
+            ret = backend->engine->prepGpuSignal(*result[i].metadataP, signal);
+
+            if (ret != NIXL_SUCCESS) {
+                NIXL_ERROR_FUNC << "failed to prepare GPU signal " << j << " in descriptor " << i
+                                << " with status: " << nixlEnumStrings::statusStr(ret);
+                return ret;
+            }
+
+            NIXL_DEBUG << "Successfully prepared GPU signal " << j << " in descriptor " << i
+                       << " at address " << signal;
+        }
     }
 
-    NIXL_DEBUG << "Successfully prepared " << result.descCount() << " GPU signals";
+    NIXL_DEBUG << "Successfully prepared GPU signals for " << result.descCount() << " descriptors";
     return NIXL_SUCCESS;
 }
 

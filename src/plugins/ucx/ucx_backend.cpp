@@ -1654,8 +1654,10 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
 
     std::vector<nixlUcxMem> local_mems;
     std::vector<const nixl::ucx::rkey *> remote_rkeys;
+    std::vector<uint64_t> remote_addrs;
     local_mems.reserve(local_descs.descCount());
     remote_rkeys.reserve(remote_descs.descCount());
+    remote_addrs.reserve(remote_descs.descCount());
 
     for (size_t i = 0; i < static_cast<size_t>(local_descs.descCount()); i++) {
         auto localMd = static_cast<nixlUcxPrivateMetadata *>(local_descs[i].metadataP);
@@ -1663,10 +1665,11 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
 
         local_mems.push_back(localMd->mem);
         remote_rkeys.push_back(&remoteMdDesc->getRkey(workerId));
+        remote_addrs.push_back(static_cast<uint64_t>(remote_descs[i].addr));
     }
 
     try {
-        gpu_req_hndl = nixl::ucx::createGpuXferReq(*ep, local_mems, remote_rkeys);
+        gpu_req_hndl = nixl::ucx::createGpuXferReq(*ep, local_mems, remote_rkeys, remote_addrs);
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
