@@ -273,7 +273,7 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
         status = A1->prepXferDlist(agent2, dst_mem_lists[update].trim(), dst_side, &extra_params1);
         assert(status != NIXL_SUCCESS);
         assert(dst_side == nullptr);
-        CHECK_NIXL_ERROR(status, "Prep xfer dlist should not be successful", agent1);
+        CHECK_NIXL_ERROR((status == NIXL_SUCCESS), "Prep xfer dlist should not be successful", agent1);
         CHECK_NIXL_ERROR((dst_side != nullptr), "Dst side is not null", agent1);
     }
 

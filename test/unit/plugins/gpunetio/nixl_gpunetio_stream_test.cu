@@ -225,7 +225,7 @@ main (int argc, char *argv[]) {
     nixl_notifs_t notifs;
     size_t buf_size = SIZE;
     uint32_t buf_num = TRANSFER_NUM_BUFFER;
-    uintptr_t data_address_ptr;
+    uintptr_t data_address_ptr = 0;
 
     /** Argument Parsing */
     if (argc < 5) {
