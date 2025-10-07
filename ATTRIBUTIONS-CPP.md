@@ -19,6 +19,48 @@ limitations under the License.
 
 This project uses the following third-party libraries. Each library is open-source and licensed under the terms indicated below.
 
+## LibFabric - 2.3.0
+
+- **Repository URL**: https://github.com/ofiwg/libfabric
+- **License URL**: https://github.com/ofiwg/libfabric/blob/v2.3.0/COPYING
+- **License name**: BSD3
+### License Text:
+
+```
+   1 Copyright (c) Intel Corporation.  All rights reserved.
+   2 Copyright (c) 2015-2019 Cisco Systems, Inc.  All rights reserved.
+   3
+   4 ==================================================================
+   5 
+   6           BSD license
+   7 
+   8 Redistribution and use in source and binary forms, with or without
+   9 modification, are permitted provided that the following conditions
+  10 are met:
+  11 
+  12   * Redistributions of source code must retain the above copyright
+  13     notice, this list of conditions and the following disclaimer.
+  14 
+  15   * Redistributions in binary form must reproduce the above
+  16     copyright notice, this list of conditions and the following
+  17     disclaimer in the documentation and/or other materials provided
+  18     with the distribution.
+  19 
+  20 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+  21 "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+  22 LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+  23 FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+  24 COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+  25 INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+  26 BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  27 LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+  28 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+  29 LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+  30 ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  31 POSSIBILITY OF SUCH DAMAGE.
+  32 
+  33 ==================================================================
+  ```
 ## glibc - 2.35
 
 - **Repository URL**: https://sourceware.org/git/?p=glibc.git
