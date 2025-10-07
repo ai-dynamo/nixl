@@ -155,13 +155,13 @@ void nixlUcxEp::setState(nixl_ucx_ep_state_t new_state)
 nixl_status_t
 nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
 {
-    ucs_status_ptr_t request      = nullptr;
+    ucs_status_ptr_t request = nullptr;
     ucp_request_param_t req_param = {
         .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
-        .flags        = flags
+        .flags = flags,
     };
 
-    switch(state) {
+    switch (state) {
     case NIXL_UCX_EP_STATE_NULL:
     case NIXL_UCX_EP_STATE_DISCONNECTED:
         // The EP has not been connected, or already disconnected.
@@ -192,21 +192,19 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
-                     ucp_err_handling_mode_t err_handling_mode)
-{
-    ucp_ep_params_t ep_params;
-    nixl_status_t status;
-
-    ep_params.field_mask      = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
-                                UCP_EP_PARAM_FIELD_ERR_HANDLER |
-                                UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-    ep_params.err_mode        = err_handling_mode;
-    ep_params.err_handler.cb  = err_cb_wrapper;
-    ep_params.err_handler.arg = reinterpret_cast<void*>(this);
-    ep_params.address         = reinterpret_cast<ucp_address_t*>(addr);
-
-    status = ucx_status_to_nixl(ucp_ep_create(worker, &ep_params, &eph));
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode) {
+    ucp_ep_params_t ep_params = {
+        .field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS | UCP_EP_PARAM_FIELD_ERR_HANDLER |
+            UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE,
+        .address = reinterpret_cast<ucp_address_t *>(addr),
+        .err_mode = err_handling_mode,
+        .err_handler =
+            {
+                .cb = err_cb_wrapper,
+                .arg = reinterpret_cast<void *>(this),
+            },
+    };
+    nixl_status_t status = ucx_status_to_nixl(ucp_ep_create(worker, &ep_params, &eph));
     if (status == NIXL_SUCCESS)
         setState(NIXL_UCX_EP_STATE_CONNECTED);
     else
@@ -246,10 +244,10 @@ nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
         return status;
     }
 
-    ucp_request_param_t param = {0};
-
-    param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
-    param.flags         = flags;
+    ucp_request_param_t param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+        .flags = flags,
+    };
 
     ucs_status_ptr_t request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
     if (UCS_PTR_IS_PTR(request)) {
@@ -345,29 +343,27 @@ nixl_status_t nixlUcxEp::estimateCost(size_t size,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlUcxEp::flushEp(nixlUcxReq &req)
-{
-    ucp_request_param_t param;
-    ucs_status_ptr_t request;
-
-    param.op_attr_mask = 0;
-    request = ucp_ep_flush_nbx(eph, &param);
+nixl_status_t
+nixlUcxEp::flushEp(nixlUcxReq &req) {
+    ucp_request_param_t param{};
+    ucs_status_ptr_t request = ucp_ep_flush_nbx(eph, &param);
 
     if (UCS_PTR_IS_PTR(request)) {
-        req = (void*)request;
+        req = (void *)request;
         return NIXL_IN_PROG;
     }
 
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
 }
 
-bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
-{
-    ucp_lib_attr_t attr;
-    attr.field_mask = UCP_LIB_ATTR_FIELD_MAX_THREAD_LEVEL;
+bool
+nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept {
+    ucp_lib_attr_t attr = {
+        .field_mask = UCP_LIB_ATTR_FIELD_MAX_THREAD_LEVEL,
+    };
     ucp_lib_query(&attr);
 
-    switch(mt_type) {
+    switch (mt_type) {
     case nixl_ucx_mt_t::SINGLE:
         return attr.max_thread_level >= UCS_THREAD_MODE_SERIALIZED;
     case nixl_ucx_mt_t::CTX:
@@ -384,9 +380,8 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                nixlUcxContext::req_cb_t fini_cb,
                                bool prog_thread,
                                unsigned long num_workers,
-                               nixl_thread_sync_t sync_mode)
-{
-    ucp_params_t ucp_params;
+                               nixl_thread_sync_t sync_mode) {
+    ucp_params_t ucp_params{};
 
     // With strict synchronization model nixlAgent serializes access to backends, with more
     // permissive models backends need to account for concurrent access and ensure their internal
@@ -478,11 +473,8 @@ namespace
        std::terminate();
    }
 
-   struct nixlUcpWorkerParams
-       : ucp_worker_params_t
-   {
-       explicit nixlUcpWorkerParams(const nixl_ucx_mt_t t)
-       {
+   struct nixlUcpWorkerParams : ucp_worker_params_t {
+       explicit nixlUcpWorkerParams(const nixl_ucx_mt_t t) : ucp_worker_params_t{} {
            field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
            thread_mode = toUcsThreadModeChecked(t);
        }
@@ -509,11 +501,12 @@ nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx, ucp_err_handling_mode_t 
     : worker(createUcpWorker(ctx), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode) {}
 
-std::string nixlUcxWorker::epAddr()
-{
-    ucp_worker_attr_t wattr;
+std::string
+nixlUcxWorker::epAddr() {
+    ucp_worker_attr_t wattr = {
+        .field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS,
+    };
 
-    wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS;
     const ucs_status_t status = ucp_worker_query(worker.get(), &wattr);
     if (UCS_OK != status) {
         throw std::runtime_error(std::string("Unable to query UCX worker address: ") +
@@ -560,12 +553,12 @@ int nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t 
     }
 
     if (nixl_mem_type == nixl_mem_t::VRAM_SEG) {
-        ucp_mem_attr_t attr;
-        attr.field_mask = UCP_MEM_ATTR_FIELD_MEM_TYPE;
+        ucp_mem_attr_t attr = {
+            .field_mask = UCP_MEM_ATTR_FIELD_MEM_TYPE,
+        };
         status = ucp_mem_query(mem.memh, &attr);
         if (status != UCS_OK) {
-            NIXL_ERROR << absl::StrFormat("Failed to ucp_mem_query: %s",
-                                          ucs_status_string(status));
+            NIXL_ERROR << absl::StrFormat("Failed to ucp_mem_query: %s", ucs_status_string(status));
             ucp_mem_unmap(ctx, mem.memh);
             return -1;
         }
@@ -607,12 +600,12 @@ constexpr std::string_view ucxGpuDeviceApiUnsupported{
 #endif
 
 
-
 size_t
 nixlUcxContext::getGpuSignalSize() const {
 #ifdef HAVE_UCX_GPU_DEVICE_API
-    ucp_context_attr_t attr;
-    attr.field_mask = UCP_ATTR_FIELD_DEVICE_COUNTER_SIZE;
+    ucp_context_attr_t attr = {
+        .field_mask = UCP_ATTR_FIELD_DEVICE_COUNTER_SIZE,
+    };
     ucs_status_t query_status = ucp_context_query(ctx, &attr);
 
     if (query_status != UCS_OK) {
@@ -631,17 +624,15 @@ nixlUcxContext::getGpuSignalSize() const {
  * Active message handling
  * =========================================== */
 
-int nixlUcxWorker::regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void* arg)
-{
-    ucp_am_handler_param_t params = {0};
-
-    params.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
-                       UCP_AM_HANDLER_PARAM_FIELD_CB |
-                       UCP_AM_HANDLER_PARAM_FIELD_ARG;
-
-    params.id = msg_id;
-    params.cb = cb;
-    params.arg = arg;
+int
+nixlUcxWorker::regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void *arg) {
+    ucp_am_handler_param_t params = {
+        .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_CB |
+            UCP_AM_HANDLER_PARAM_FIELD_ARG,
+        .id = msg_id,
+        .cb = cb,
+        .arg = arg,
+    };
 
     const ucs_status_t status = ucp_worker_set_am_recv_handler(worker.get(), &params);
 
@@ -706,9 +697,10 @@ nixlUcxWorker::prepGpuSignal([[maybe_unused]] const nixlUcxMem &mem,
         throw std::invalid_argument("Signal pointer cannot be null");
     }
 
-    ucp_device_counter_params_t params;
-    params.field_mask = UCP_DEVICE_COUNTER_PARAMS_FIELD_MEMH;
-    params.memh = mem.memh;
+    ucp_device_counter_params_t params = {
+        .field_mask = UCP_DEVICE_COUNTER_PARAMS_FIELD_MEMH,
+        .memh = mem.memh,
+    };
 
     ucs_status_t status = ucp_device_counter_init(worker.get(), &params, signal);
 
