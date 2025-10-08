@@ -574,16 +574,10 @@ main(int argc, char **argv) {
     for (nixl_backend_t b: plugins)
         std::cout << b << "\n";
 
-<<<<<<< HEAD
-    std::cout << "Using backend: " << backend << "\n";
-    ret1 = A1.getPluginParams(backend, mems1, init1);
-    ret2 = A2.getPluginParams(backend, mems2, init2);
-=======
     ret1 = A1.getPluginParams("UCX", mems1, init1);
     ret2 = A2.getPluginParams("UCX", mems2, init2);
     CHECK_NIXL_ERROR_AGENT(ret1, "Failed to get plugin params for UCX", agent1);
     CHECK_NIXL_ERROR_AGENT(ret2, "Failed to get plugin params for UCX", agent2);
->>>>>>> 5638c578 (Address comments)
 
     std::cout << "Params before init:\n";
     printParams(init1, mems1);
@@ -594,31 +588,16 @@ main(int argc, char **argv) {
     ret2 = A2.createBackend(backend, init2, bknd2);
 
     nixl_opt_args_t extra_params1, extra_params2;
-<<<<<<< HEAD
     extra_params1.backends.push_back(bknd1);
     extra_params2.backends.push_back(bknd2);
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
-
-    CHECK_NIXL_ERROR(ret1, "Failed to create UCX backend", agent1);
-    CHECK_NIXL_ERROR(ret2, "Failed to create UCX backend", agent2);
-    ret1 = A1.getBackendParams(bknd1, mems1, init1);
-    ret2 = A2.getBackendParams(bknd2, mems2, init2);
-
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
-=======
-    extra_params1.backends.push_back(ucx1);
-    extra_params2.backends.push_back(ucx2);
     CHECK_NIXL_ERROR_AGENT(ret1, "Failed to create UCX backend", agent1);
     CHECK_NIXL_ERROR_AGENT(ret2, "Failed to create UCX backend", agent2);
 
-    ret1 = A1.getBackendParams(ucx1, mems1, init1);
-    ret2 = A2.getBackendParams(ucx2, mems2, init2);
+    ret1 = A1.getBackendParams(bknd1, mems1, init1);
+    ret2 = A2.getBackendParams(bknd2, mems2, init2);
     CHECK_NIXL_ERROR_AGENT(ret1, "Failed to get UCX backend params", agent1);
     CHECK_NIXL_ERROR_AGENT(ret2, "Failed to get UCX backend params", agent2);
->>>>>>> 5638c578 (Address comments)
 
     std::cout << "Params after init:\n";
     printParams(init1, mems1);
@@ -736,12 +715,12 @@ main(int argc, char **argv) {
 
     std::cout << "Transfer verified\n";
 
-    std::cout << "performing partialMdTest with backends " << ucx1 << " " << ucx2 << "\n";
-    ret1 = partialMdTest(&A1, &A2, ucx1, ucx2);
+    std::cout << "performing partialMdTest with backends " << bknd1 << " " << bknd2 << "\n";
+    ret1 = partialMdTest(&A1, &A2, bknd1, bknd2);
     CHECK_NIXL_ERROR_AGENT(ret1, "Fail to run partialMDTest", agent1);
 
-    std::cout << "performing sideXferTest with backends " << ucx1 << " " << ucx2 << "\n";
-    ret1 = sideXferTest(&A1, &A2, req_handle, ucx2);
+    std::cout << "performing sideXferTest with backends " << bknd1 << " " << bknd2 << "\n";
+    ret1 = sideXferTest(&A1, &A2, req_handle, bknd2);
     CHECK_NIXL_ERROR_AGENT(ret1, "Fail to run sideXferTest", agent1);
 
     std::cout << "Performing local test\n";
