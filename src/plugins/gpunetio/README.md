@@ -50,5 +50,5 @@ NIXL bench also has the option to specify the DOCA GPUNetIO backend. An example 
 
 ## Caveats
 
-By default NIXL is built with `buildtype=debug` option. This is ok for correctness and debugging.
-To run for performace (e.g. with NIXL bench) t's hightly recommended to build NIXL with `buildtype=release`.
+By default NIXL is built with `buildtype=release` option for optimal performance.
+For debugging purposes, NIXL can be built with `buildtype=debug`.
