@@ -97,7 +97,9 @@ DEFINE_int32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (De
 // For example- 0:mlx5_0,mlx5_1,mlx5_2,1:mlx5_3,mlx5_4, ...
 DEFINE_string(device_list, "all", "Comma-separated device name to use for \
 		      communication (only used with nixl worker)");
-DEFINE_string(etcd_endpoints, "http://localhost:2379", "ETCD server endpoints for communication");
+DEFINE_string(etcd_endpoints,
+              "",
+              "ETCD server endpoints for communication (optional for storage backends)");
 
 // POSIX options - only used when backend is POSIX
 DEFINE_string (posix_api_type,
@@ -279,6 +281,14 @@ xferBenchConfig::loadFromFlags() {
     posix_api_type = FLAGS_posix_api_type;
     storage_enable_direct = FLAGS_storage_enable_direct;
 
+    // Validate ETCD configuration
+    if (!isStorageBackend() && etcd_endpoints.empty()) {
+        // For non-storage backends, set default ETCD endpoint
+        etcd_endpoints = "http://localhost:2379";
+        std::cout << "Using default ETCD endpoint for non-storage backend: " << etcd_endpoints
+                  << std::endl;
+    }
+
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
               (XFERBENCH_SEG_TYPE_VRAM == target_seg_type) &&
@@ -373,7 +383,11 @@ xferBenchConfig::printConfig() {
     printSeparator('*');
     printOption("Runtime (--runtime_type=[etcd])", runtime_type);
     if (runtime_type == XFERBENCH_RT_ETCD) {
-        printOption("ETCD Endpoint ", etcd_endpoints);
+        if (etcd_endpoints.empty()) {
+            printOption("ETCD Endpoint ", "disabled (storage backend)");
+        } else {
+            printOption("ETCD Endpoint ", etcd_endpoints);
+        }
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
