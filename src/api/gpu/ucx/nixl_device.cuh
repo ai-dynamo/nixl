@@ -63,11 +63,11 @@ struct nixlGpuXferReqParams {
  */
 __device__ inline nixl_status_t
 nixlGpuConvertUcsStatus(ucs_status_t status) {
-    if (UCS_STATUS_IS_ERR(status)) {
-        printf("UCX returned error: %d\n", status);
-        return NIXL_ERR_BACKEND;
+    if (!UCS_STATUS_IS_ERR(status)) {
+        return NIXL_SUCCESS;
     }
-    return NIXL_SUCCESS;
+    printf("UCX returned error: %d\n", status);
+    return NIXL_ERR_BACKEND;
 }
 
 /**
