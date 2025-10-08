@@ -547,10 +547,16 @@ void printParams(const nixl_b_params_t& params, const nixl_mem_list_t& mems) {
     }
 }
 
-int main()
-{
+int
+main(int argc, char **argv) {
     nixl_status_t ret1, ret2;
     std::string ret_s1, ret_s2;
+
+    // Backend name can be provided as the first CLI argument; default to "UCX"
+    std::string backend = "UCX";
+    if (argc > 1) {
+        backend = argv[1];
+    }
 
     // Example: assuming two agents running on the same machine,
     // with separate memory regions in DRAM
@@ -573,8 +579,9 @@ int main()
     for (nixl_backend_t b: plugins)
         std::cout << b << "\n";
 
-    ret1 = A1.getPluginParams("UCX", mems1, init1);
-    ret2 = A2.getPluginParams("UCX", mems2, init2);
+    std::cout << "Using backend: " << backend << "\n";
+    ret1 = A1.getPluginParams(backend, mems1, init1);
+    ret2 = A2.getPluginParams(backend, mems2, init2);
 
     assert (ret1 == NIXL_SUCCESS);
     assert (ret2 == NIXL_SUCCESS);
@@ -583,19 +590,19 @@ int main()
     printParams(init1, mems1);
     printParams(init2, mems2);
 
-    nixlBackendH* ucx1, *ucx2;
-    ret1 = A1.createBackend("UCX", init1, ucx1);
-    ret2 = A2.createBackend("UCX", init2, ucx2);
+    nixlBackendH *bknd1, *bknd2;
+    ret1 = A1.createBackend(backend, init1, bknd1);
+    ret2 = A2.createBackend(backend, init2, bknd2);
 
     nixl_opt_args_t extra_params1, extra_params2;
-    extra_params1.backends.push_back(ucx1);
-    extra_params2.backends.push_back(ucx2);
+    extra_params1.backends.push_back(bknd1);
+    extra_params2.backends.push_back(bknd2);
 
     assert (ret1 == NIXL_SUCCESS);
     assert (ret2 == NIXL_SUCCESS);
 
-    ret1 = A1.getBackendParams(ucx1, mems1, init1);
-    ret2 = A2.getBackendParams(ucx2, mems2, init2);
+    ret1 = A1.getBackendParams(bknd1, mems1, init1);
+    ret2 = A2.getBackendParams(bknd2, mems2, init2);
 
     assert (ret1 == NIXL_SUCCESS);
     assert (ret2 == NIXL_SUCCESS);
@@ -641,7 +648,6 @@ int main()
     // dlist1.print();
     // dlist2.print();
 
-    // sets the metadata field to a pointer to an object inside the ucx_class
     ret1 = A1.registerMem(dlist1, &extra_params1);
     ret2 = A2.registerMem(dlist2, &extra_params2);
 
@@ -721,12 +727,12 @@ int main()
 
     std::cout << "Transfer verified\n";
 
-    std::cout << "performing partialMdTest with backends " << ucx1 << " " << ucx2 << "\n";
-    ret1 = partialMdTest(&A1, &A2, ucx1, ucx2);
+    std::cout << "performing partialMdTest with backends " << bknd1 << " " << bknd2 << "\n";
+    ret1 = partialMdTest(&A1, &A2, bknd1, bknd2);
     assert (ret1 == NIXL_SUCCESS);
 
-    std::cout << "performing sideXferTest with backends " << ucx1 << " " << ucx2 << "\n";
-    ret1 = sideXferTest(&A1, &A2, req_handle, ucx2);
+    std::cout << "performing sideXferTest with backends " << bknd1 << " " << bknd2 << "\n";
+    ret1 = sideXferTest(&A1, &A2, req_handle, bknd2);
     assert (ret1 == NIXL_SUCCESS);
 
     std::cout << "Performing local test\n";
