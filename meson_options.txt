@@ -30,4 +30,6 @@ option('log_level', type: 'combo', choices: ['trace', 'debug', 'info', 'warning'
 option('rust', type: 'boolean', value: false, description: 'Build Rust bindings')
 
 # Tests
+option('build_tests', type: 'boolean', value: true, description: 'Build all tests')
+option('build_examples', type: 'boolean', value: true, description: 'Build all examples')
 option('test_all_plugins', type: 'boolean', value: false, description: 'Testing all plugins in addition to the mocks..')
