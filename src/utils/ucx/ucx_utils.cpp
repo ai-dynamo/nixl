@@ -473,20 +473,21 @@ namespace
        std::terminate();
    }
 
-   static ucp_worker_params_t toUcpWorkerParams(const nixl_ucx_mt_t t)
-   {
-       return ucp_worker_params_t{
-           .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
-           .thread_mode = toUcsThreadModeChecked(t),
-       };
-   }
+   struct nixlUcpWorkerParams : ucp_worker_params_t {
+       explicit nixlUcpWorkerParams(const nixl_ucx_mt_t t) : ucp_worker_params_t{} {
+           field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
+           thread_mode = toUcsThreadModeChecked(t);
+       }
+   };
+
+   static_assert(sizeof(nixlUcpWorkerParams) == sizeof(ucp_worker_params_t));
 
 }  // namespace
 
 ucp_worker *
 nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
     ucp_worker* worker = nullptr;
-    const ucp_worker_params_t params = toUcpWorkerParams(ctx.mt_type);
+    const nixlUcpWorkerParams params(ctx.mt_type);
     const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
     if(status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create UCX worker: ") +
