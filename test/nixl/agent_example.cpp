@@ -280,7 +280,8 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
         // Make sure not-loaded descriptors are not updated
         for (int invalid_idx = update + 1; invalid_idx < NUM_UPDATES; invalid_idx++) {
             status = A1->prepXferDlist(agent2, dst_mem_lists[invalid_idx].trim(), dst_side, &extra_params1);
-            CHECK_NIXL_ERROR_AGENT((status == NIXL_SUCCESS), "Prep xfer dlist should not be successful", agent1);
+            CHECK_NIXL_ERROR_AGENT(
+                (status == NIXL_SUCCESS), "Prep xfer dlist should not be successful", agent1);
             CHECK_NIXL_ERROR_AGENT((dst_side != nullptr), "Dst side is not null", agent1);
         }
         std::cout << "Metadata update #" << update << " completed\n";

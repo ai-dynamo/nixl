@@ -39,7 +39,7 @@ void testPerf(){
 
     gettimeofday(&end_time, NULL);
 
-    CHECK_NIXL_ERROR((dlist.descCount() != 24*64*1024), "Incorrect number of descriptors");
+    CHECK_NIXL_ERROR((dlist.descCount() != 24 * 64 * 1024), "Incorrect number of descriptors");
     timersub(&end_time, &start_time, &diff_time);
     std::cout << "add desc mode, total time for " << 24*64*1024 << " descs: "
               << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
@@ -58,7 +58,7 @@ void testPerf(){
 
     gettimeofday(&end_time, NULL);
 
-    CHECK_NIXL_ERROR((dlist.descCount() != 24*64*1024), "Incorrect number of descriptors");
+    CHECK_NIXL_ERROR((dlist.descCount() != 24 * 64 * 1024), "Incorrect number of descriptors");
     timersub(&end_time, &start_time, &diff_time);
     std::cout << "Operator [] mode, total time for " << 24*64*1024 << " descs: "
               << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
@@ -90,10 +90,10 @@ int main()
     nixlBasicDesc importDesc(buff2.serialize());
     CHECK_NIXL_ERROR(!(buff2 == importDesc), "Descriptor mismatch for buff2 and importDesc");
 
-    CHECK_NIXL_ERROR(!(buff3==buff2), "Descriptor mismatch for buff3 and buff2");
-    CHECK_NIXL_ERROR(!(buff4==buff1), "Descriptor mismatch for buff4 and buff1");
-    CHECK_NIXL_ERROR(!(buff3!=buff1), "Descriptor mismatch for buff3 and buff1");
-    CHECK_NIXL_ERROR(!(buff8!=buff7), "Descriptor mismatch for buff8 and buff7");
+    CHECK_NIXL_ERROR(!(buff3 == buff2), "Descriptor mismatch for buff3 and buff2");
+    CHECK_NIXL_ERROR(!(buff4 == buff1), "Descriptor mismatch for buff4 and buff1");
+    CHECK_NIXL_ERROR(!(buff3 != buff1), "Descriptor mismatch for buff3 and buff1");
+    CHECK_NIXL_ERROR(!(buff8 != buff7), "Descriptor mismatch for buff8 and buff7");
 
     CHECK_NIXL_ERROR(!(buff2.covers(buff3)), "Descriptor mismatch for buff2 and buff3");
     CHECK_NIXL_ERROR(!(buff4.overlaps(buff1)), "Descriptor mismatch for buff4 and buff1");
@@ -117,7 +117,8 @@ int main()
     stringd1.metaInfo = std::string("567");
 
     nixlBlobDesc importStringD(stringd1.serialize());
-    CHECK_NIXL_ERROR(!(stringd1 == importStringD), "Descriptor mismatch for stringd1 and importStringD");
+    CHECK_NIXL_ERROR(!(stringd1 == importStringD),
+                     "Descriptor mismatch for stringd1 and importStringD");
 
     std::cout << "\nSerDes Desc tests:\n";
     buff2.print("");
@@ -147,8 +148,8 @@ int main()
     meta2.devId     = 0;
     meta2.metadataP = nullptr;
 
-    CHECK_NIXL_ERROR(!(stringd1!=buff1), "Descriptor mismatch for stringd1 and buff1");
-    CHECK_NIXL_ERROR(!(stringd2==buff8), "Descriptor mismatch for stringd2 and buff8");
+    CHECK_NIXL_ERROR(!(stringd1 != buff1), "Descriptor mismatch for stringd1 and buff1");
+    CHECK_NIXL_ERROR(!(stringd2 == buff8), "Descriptor mismatch for stringd2 and buff8");
     nixlBasicDesc buff9 (stringd1);
 
     buff1.print("");
@@ -201,8 +202,10 @@ int main()
         std::cout << "Caught expected error: " << e.what() << std::endl;
     }
     dlist2.remDesc(dlist2.getIndex(meta3));
-    CHECK_NIXL_ERROR(!(dlist2.getIndex(meta3) == NIXL_ERR_NOT_FOUND), "Dlist2 descriptor not removed");
-    CHECK_NIXL_ERROR(!(dlist3.getIndex(meta1) == NIXL_ERR_NOT_FOUND), "Dlist3 descriptor not removed");
+    CHECK_NIXL_ERROR(!(dlist2.getIndex(meta3) == NIXL_ERR_NOT_FOUND),
+                     "Dlist2 descriptor not removed");
+    CHECK_NIXL_ERROR(!(dlist3.getIndex(meta1) == NIXL_ERR_NOT_FOUND),
+                     "Dlist3 descriptor not removed");
     try {
         dlist3.remDesc(dlist3.getIndex(meta4));
     } catch (const std::out_of_range& e) {
