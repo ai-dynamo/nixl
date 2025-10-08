@@ -1811,7 +1811,6 @@ nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std
     switch(ret) {
     case NIXL_IN_PROG:
         /* do not track the request */
-        // TODO: why are we releasing a request that is still in progress?
         getWorker(getWorkerId())->reqRelease(req);
     case NIXL_SUCCESS:
         break;

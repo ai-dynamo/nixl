@@ -132,21 +132,21 @@ std::string nixlMDStreamListener::recvFromClient() {
         return recvData;
 }
 
-void
-nixlMDStreamListener::recvFromClients(int clientSocket) {
-    char buffer[RECV_BUFFER_SIZE + 1];
-    int bytes_read;
+void nixlMDStreamListener::recvFromClients(int clientSocket) {
+        char    buffer[RECV_BUFFER_SIZE];
+        int     bytes_read;
 
-    while ((bytes_read = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
-        buffer[bytes_read] = '\0';
-        // Return ack
-        std::string ack = "Message received";
-        send(clientSocket, ack.c_str(), ack.size(), 0);
-        std::string recv_message(buffer);
-        NIXL_DEBUG << "Message Received" << recv_message;
-    }
-    close(clientSocket);
-    NIXL_DEBUG << "Client Disconnected";
+        while ((bytes_read = recv(clientSocket, buffer,
+                                  sizeof(buffer), 0)) > 0) {
+              buffer[bytes_read] = '\0';
+              // Return ack
+              std::string ack = "Message received";
+              send(clientSocket, ack.c_str(), ack.size(), 0);
+              std::string recv_message(buffer);
+              NIXL_DEBUG << "Message Received" << recv_message;
+        }
+        close(clientSocket);
+        NIXL_DEBUG << "Client Disconnected";
 }
 
 void nixlMDStreamListener::startListenerForClient() {
@@ -169,14 +169,12 @@ nixlMDStreamClient::~nixlMDStreamClient() {
     closeStream();
 }
 
-bool
-nixlMDStreamClient::setupClient() {
+bool nixlMDStreamClient::setupClient() {
     setupStream();
 
-    struct sockaddr_in listenerAddr {};
-
+    struct sockaddr_in listenerAddr;
     listenerAddr.sin_family = AF_INET;
-    listenerAddr.sin_port = htons(port);
+    listenerAddr.sin_port   = htons(port);
 
     if (inet_pton(AF_INET, listenerAddress.c_str(),
                   &listenerAddr.sin_addr) <= 0) {

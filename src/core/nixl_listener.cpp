@@ -35,12 +35,10 @@ namespace {
 
 static const std::string invalid_label = "invalid";
 
-int
-connectToIP(std::string ip_addr, int port) {
+int connectToIP(std::string ip_addr, int port) {
 
-    struct sockaddr_in listenerAddr {};
-
-    listenerAddr.sin_port = htons(port);
+    struct sockaddr_in listenerAddr;
+    listenerAddr.sin_port   = htons(port);
     listenerAddr.sin_family = AF_INET;
 
     if (inet_pton(AF_INET, ip_addr.c_str(), &listenerAddr.sin_addr) <= 0) {

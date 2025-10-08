@@ -54,33 +54,31 @@ createGpuXferReq(const nixlUcxEp &ep,
     ucp_elements.reserve(local_mems.size());
 
     for (size_t i = 0; i < local_mems.size(); i++) {
-        ucp_device_mem_list_elem_t ucp_elem = {
-            .field_mask = UCP_DEVICE_MEM_LIST_ELEM_FIELD_MEMH |
-                UCP_DEVICE_MEM_LIST_ELEM_FIELD_RKEY | UCP_DEVICE_MEM_LIST_ELEM_FIELD_LOCAL_ADDR |
-                UCP_DEVICE_MEM_LIST_ELEM_FIELD_REMOTE_ADDR | UCP_DEVICE_MEM_LIST_ELEM_FIELD_LENGTH,
-            .memh = local_mems[i].getMemh(),
-            .rkey = remote_rkeys[i]->get(),
-            .local_addr = local_mems[i].getBase(),
-            .remote_addr = remote_addrs[i],
-            .length = local_mems[i].getSize(),
-        };
+        ucp_device_mem_list_elem_t ucp_elem;
+        ucp_elem.field_mask = UCP_DEVICE_MEM_LIST_ELEM_FIELD_MEMH |
+            UCP_DEVICE_MEM_LIST_ELEM_FIELD_RKEY | UCP_DEVICE_MEM_LIST_ELEM_FIELD_LOCAL_ADDR |
+            UCP_DEVICE_MEM_LIST_ELEM_FIELD_REMOTE_ADDR | UCP_DEVICE_MEM_LIST_ELEM_FIELD_LENGTH;
+        ucp_elem.memh = local_mems[i].getMemh();
+        ucp_elem.rkey = remote_rkeys[i]->get();
+        ucp_elem.local_addr = local_mems[i].getBase();
+        ucp_elem.remote_addr = remote_addrs[i];
+        ucp_elem.length = local_mems[i].getSize();
         ucp_elements.push_back(ucp_elem);
     }
 
-ucp_device_mem_list_params_t params = {
-    .field_mask = UCP_DEVICE_MEM_LIST_PARAMS_FIELD_ELEMENTS |
+    ucp_device_mem_list_params_t params;
+    params.field_mask = UCP_DEVICE_MEM_LIST_PARAMS_FIELD_ELEMENTS |
         UCP_DEVICE_MEM_LIST_PARAMS_FIELD_ELEMENT_SIZE |
-        UCP_DEVICE_MEM_LIST_PARAMS_FIELD_NUM_ELEMENTS,
-    .elements = ucp_elements.data(),
-    .element_size = sizeof(ucp_device_mem_list_elem_t),
-    .num_elements = ucp_elements.size(),
-};
+        UCP_DEVICE_MEM_LIST_PARAMS_FIELD_NUM_ELEMENTS;
+    params.elements = ucp_elements.data();
+    params.element_size = sizeof(ucp_device_mem_list_elem_t);
+    params.num_elements = ucp_elements.size();
 
-ucp_device_mem_list_handle_h ucx_handle;
-ucs_status_t ucs_status = ucp_device_mem_list_create(ep.getEp(), &params, &ucx_handle);
-if (ucs_status != UCS_OK) {
-    throw std::runtime_error(std::string("Failed to create device memory list: ") +
-                             ucs_status_string(ucs_status));
+    ucp_device_mem_list_handle_h ucx_handle;
+    ucs_status_t ucs_status = ucp_device_mem_list_create(ep.getEp(), &params, &ucx_handle);
+    if (ucs_status != UCS_OK) {
+        throw std::runtime_error(std::string("Failed to create device memory list: ") +
+                                 ucs_status_string(ucs_status));
     }
 
     NIXL_DEBUG << "Created device memory list handle with " << local_mems.size() << " elements";
