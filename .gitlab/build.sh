@@ -28,14 +28,12 @@ UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 # UCX_VERSION is the version of UCX to build override default with env variable.
 UCX_VERSION=${UCX_VERSION:-v1.19.0}
-# EFA_INSTALLER_VERSION is the version of EFA installer to use, defaults to "latest"
-EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION:-latest}
-# DOCA_VERSION is the version of DOCA to install, override default with env variable.
-DOCA_VERSION=${DOCA_VERSION:-3.1.0}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
+# DOCA_VERSION is the version of DOCA to install, override default with env variable.
+DOCA_VERSION=${DOCA_VERSION:-3.1.0}
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
