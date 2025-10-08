@@ -84,7 +84,7 @@ nixlBackendEngine *createEngine(std::string name, uint32_t ndev, bool p_thread)
     init.customParams = &custom_params;
     init.type         = "UCX_MO";
 
-    ucx_mo = (nixlBackendEngine*) new nixlUcxMoEngine (&init);
+    ucx_mo = (nixlBackendEngine *)new nixlUcxMoEngine(&init);
     CHECK_NIXL_ERROR(ucx_mo->getInitErr(), "Failed to initialize worker1");
     if (ucx_mo->getInitErr()) {
         std::cout << "Failed to initialize worker1" << std::endl;
@@ -320,7 +320,7 @@ void destroyRemoteDescs(nixlBackendEngine *dst_ucx,
 {
     nixl_status_t status;
     for(int i = 0; i < dst_descs.descCount(); i++) {
-        status = dst_ucx->unloadMD (dst_descs[i].metadataP);
+        status = dst_ucx->unloadMD(dst_descs[i].metadataP);
         CHECK_NIXL_ERROR(status, "Failed to unload dst_ucx MD");
     }
 
@@ -397,7 +397,8 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
 
     cout << "\t\tData verification: " << flush;
 
-    CHECK_NIXL_ERROR((req_src_descs.descCount() != req_dst_descs.descCount()), "Data length mismatch");
+    CHECK_NIXL_ERROR((req_src_descs.descCount() != req_dst_descs.descCount()),
+                     "Data length mismatch");
     for(int i = 0; i < req_src_descs.descCount(); i++) {
         auto sdesc = req_src_descs[i];
         auto ddesc = req_dst_descs[i];
@@ -407,7 +408,7 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
         chkptr2 = getValidationPtr(req_dst_descs.getType(), (void*)ddesc.addr, len);
 
         // Perform correctness check.
-        for(size_t i = 0; i < len; i++){
+        for (size_t i = 0; i < len; i++) {
             CHECK_NIXL_ERROR((((uint8_t *)chkptr1)[i] != ((uint8_t *)chkptr2)[i]), "Data mismatch");
         }
 
@@ -457,7 +458,7 @@ void test_agent_transfer(bool p_thread,
     if (is_local) {
         agent = &agent1;
     }
-    status = ucx1->loadRemoteConnInfo (*agent, conn_info2);
+    status = ucx1->loadRemoteConnInfo(*agent, conn_info2);
     CHECK_NIXL_ERROR(status, "Failed to load ucx1 remote conn info");
     // TODO: Causes race condition - investigate conn management implementation
     // ret = ucx2->loadRemoteConnInfo (agent1, conn_info1);

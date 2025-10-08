@@ -29,7 +29,7 @@ void check_buf(void* buf, size_t len) {
 
     // Do some checks on the data.
     for(size_t i = 0; i<len; i++){
-        CHECK_NIXL_ERROR_AGENT((((uint8_t*) buf)[i] == 0xbb), "Data mismatch!", agent1);
+        CHECK_NIXL_ERROR_AGENT((((uint8_t *)buf)[i] == 0xbb), "Data mismatch!", agent1);
     }
 }
 
@@ -81,11 +81,17 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
         }
     }
 
-    CHECK_NIXL_ERROR_AGENT((mem_list1.descCount() != n_mems), "Incorrect number of descriptors", agent1);
-    CHECK_NIXL_ERROR_AGENT((mem_list2.descCount() != n_mems), "Incorrect number of descriptors", agent2);
+    CHECK_NIXL_ERROR_AGENT(
+        (mem_list1.descCount() != n_mems), "Incorrect number of descriptors", agent1);
+    CHECK_NIXL_ERROR_AGENT(
+        (mem_list2.descCount() != n_mems), "Incorrect number of descriptors", agent2);
 
-    CHECK_NIXL_ERROR_AGENT((src_list.descCount() != n_mems*descs_per_mem), "Incorrect number of descriptors", agent1);
-    CHECK_NIXL_ERROR_AGENT((dst_list.descCount() != n_mems*descs_per_mem), "Incorrect number of descriptors", agent2);
+    CHECK_NIXL_ERROR_AGENT((src_list.descCount() != n_mems * descs_per_mem),
+                           "Incorrect number of descriptors",
+                           agent1);
+    CHECK_NIXL_ERROR_AGENT((dst_list.descCount() != n_mems * descs_per_mem),
+                           "Incorrect number of descriptors",
+                           agent2);
 
     status = A1->registerMem(mem_list1, &extra_params1);
     CHECK_NIXL_ERROR_AGENT(status, "Failed to register memory", agent1);
@@ -237,7 +243,8 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
     for (int update = 0; update < NUM_UPDATES; update++) {
         nixlDlistH *dst_side;
         status = A1->prepXferDlist(agent2, dst_mem_lists[update].trim(), dst_side, &extra_params1);
-        CHECK_NIXL_ERROR_AGENT((status == NIXL_SUCCESS), "Prep xfer dlist should not be successful", agent1);
+        CHECK_NIXL_ERROR_AGENT(
+            (status == NIXL_SUCCESS), "Prep xfer dlist should not be successful", agent1);
         CHECK_NIXL_ERROR_AGENT((dst_side != nullptr), "Dst side is not null", agent1);
     }
 
@@ -721,7 +728,8 @@ main(int argc, char **argv) {
     std::vector<std::string> agent1_notifs = notif_map[agent1];
 
     CHECK_NIXL_ERROR_AGENT((agent1_notifs.size() != 1), "Incorrect notif size", agent1);
-    CHECK_NIXL_ERROR_AGENT((agent1_notifs.front() != "notification"), "Incorrect notification", agent1);
+    CHECK_NIXL_ERROR_AGENT(
+        (agent1_notifs.front() != "notification"), "Incorrect notification", agent1);
     notif_map[agent1].clear(); // Redundant, for testing
     notif_map.clear();
     n_notifs = 0;
@@ -740,7 +748,7 @@ main(int argc, char **argv) {
     extra_params1.notifMsg = "local_notif";
     extra_params1.hasNotif = true;
     ret2 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_ldst_descs, agent1, req_handle2, &extra_params1);
-    CHECK_NIXL_ERROR_AGENT (ret1, "Failed to create Xfer Req", agent1);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to create Xfer Req", agent1);
 
     status = A1.postXferReq(req_handle2);
     std::cout << "Local transfer was posted\n";
@@ -756,10 +764,12 @@ main(int argc, char **argv) {
     agent1_notifs = notif_map[agent1];
 
     CHECK_NIXL_ERROR_AGENT((agent1_notifs.size() != 1), "Incorrect notif size", agent1);
-    CHECK_NIXL_ERROR_AGENT((agent1_notifs.front() != "local_notif"), "Incorrect notification", agent1);
-    CHECK_NIXL_ERROR_AGENT((!equal_buf((void *)req_src.addr, (void *)req_ldst.addr, req_size) == true),
-                     "Buffer mismatch after transfer",
-                     agent1);
+    CHECK_NIXL_ERROR_AGENT(
+        (agent1_notifs.front() != "local_notif"), "Incorrect notification", agent1);
+    CHECK_NIXL_ERROR_AGENT(
+        (!equal_buf((void *)req_src.addr, (void *)req_ldst.addr, req_size) == true),
+        "Buffer mismatch after transfer",
+        agent1);
     ret1 = A1.releaseXferReq(req_handle);
     ret2 = A1.releaseXferReq(req_handle2);
     CHECK_NIXL_ERROR_AGENT(ret1, "Failed to release Xfer Req", agent1);

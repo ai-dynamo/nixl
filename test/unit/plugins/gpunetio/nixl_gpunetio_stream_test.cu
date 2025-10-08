@@ -316,10 +316,16 @@ main (int argc, char *argv[]) {
         std::cout << " Received checkRemoteMD from " << initiator << std::endl;
 
         data_address_ptr = (uintptr_t)data_address;
-        CHECK_NIXL_ERROR_AGENT(serdes->addBuf ("BaseAddress", &data_address_ptr, sizeof (uintptr_t)), "Failed to add BaseAddress", role);
-        CHECK_NIXL_ERROR_AGENT(serdes->addBuf ("BufferSize", &buf_size, sizeof (size_t)), "Failed to add BufferSize", role);
-        CHECK_NIXL_ERROR_AGENT(serdes->addBuf ("BufferTransfer", &buf_num, sizeof (uint32_t)), "Failed to add BufferTransfer", role);
-        CHECK_NIXL_ERROR_AGENT(serdes->addStr ("AgentMD", metadata), "Failed to add AgentMD", role);
+        CHECK_NIXL_ERROR_AGENT(serdes->addBuf("BaseAddress", &data_address_ptr, sizeof(uintptr_t)),
+                               "Failed to add BaseAddress",
+                               role);
+        CHECK_NIXL_ERROR_AGENT(serdes->addBuf("BufferSize", &buf_size, sizeof(size_t)),
+                               "Failed to add BufferSize",
+                               role);
+        CHECK_NIXL_ERROR_AGENT(serdes->addBuf("BufferTransfer", &buf_num, sizeof(uint32_t)),
+                               "Failed to add BufferTransfer",
+                               role);
+        CHECK_NIXL_ERROR_AGENT(serdes->addStr("AgentMD", metadata), "Failed to add AgentMD", role);
         std::string message = serdes->exportStr();
         while (agent.genNotif (initiator, message, &extra_params) != NIXL_SUCCESS)
             ;
@@ -429,9 +435,17 @@ main (int argc, char *argv[]) {
 
         for (const auto &notif : notifs[target]) {
             remote_serdes->importStr (notif);
-            CHECK_NIXL_ERROR_AGENT(remote_serdes->getBuf ("BaseAddress", &data_address_ptr, sizeof (uintptr_t)), "Failed to get BaseAddress", role);
-            CHECK_NIXL_ERROR_AGENT(remote_serdes->getBuf ("BufferSize", &buf_size, sizeof (size_t)), "Failed to get BufferSize", role);
-            CHECK_NIXL_ERROR_AGENT(remote_serdes->getBuf ("BufferTransfer", &buf_num, sizeof (uint32_t)), "Failed to get BufferTransfer", role);
+            CHECK_NIXL_ERROR_AGENT(
+                remote_serdes->getBuf("BaseAddress", &data_address_ptr, sizeof(uintptr_t)),
+                "Failed to get BaseAddress",
+                role);
+            CHECK_NIXL_ERROR_AGENT(remote_serdes->getBuf("BufferSize", &buf_size, sizeof(size_t)),
+                                   "Failed to get BufferSize",
+                                   role);
+            CHECK_NIXL_ERROR_AGENT(
+                remote_serdes->getBuf("BufferTransfer", &buf_num, sizeof(uint32_t)),
+                "Failed to get BufferTransfer",
+                role);
             remote_metadata = remote_serdes->getStr ("AgentMD");
             CHECK_NIXL_ERROR_AGENT((remote_metadata != ""), "Failed to get AgentMD", role);
             agent.loadRemoteMD (remote_metadata, target);
@@ -493,7 +507,9 @@ main (int argc, char *argv[]) {
             std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
             PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
-            CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG), "Failed to post Xfer Req", role);
+            CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
+                                   "Failed to post Xfer Req",
+                                   role);
 
             POP_RANGE
 
@@ -501,7 +517,9 @@ main (int argc, char *argv[]) {
             PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG), "Failed to get Xfer Status", role);
+                CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
+                                       "Failed to get Xfer Status",
+                                       role);
             }
             POP_RANGE
             // No need for cudaStreamSyncronize as CUDA kernel and Xfer are on the same stream
@@ -537,7 +555,9 @@ main (int argc, char *argv[]) {
             PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG), "Failed to get Xfer Status", role);
+                CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
+                                       "Failed to get Xfer Status",
+                                       role);
             }
             POP_RANGE
         } else {
@@ -557,7 +577,9 @@ main (int argc, char *argv[]) {
             PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG), "Failed to get Xfer Status", role);
+                CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
+                                       "Failed to get Xfer Status",
+                                       role);
             }
             POP_RANGE
 

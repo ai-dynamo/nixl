@@ -30,13 +30,12 @@
         }                                                                \
     } while (0)
 
-#define CHECK_NIXL_ERROR(result, message)                                \
-    do {                                                                 \
-        if (0 != result) {                                               \
-            std::cerr << "NIXL: " << message << " (Error code: "         \
-                      << result << ")" << std::endl;                     \
-            exit(EXIT_FAILURE);                                          \
-        }                                                                \
+#define CHECK_NIXL_ERROR(result, message)                                                       \
+    do {                                                                                        \
+        if (0 != result) {                                                                      \
+            std::cerr << "NIXL: " << message << " (Error code: " << result << ")" << std::endl; \
+            exit(EXIT_FAILURE);                                                                 \
+        }                                                                                       \
     } while (0)
 
 #endif /* UTIL_H */
