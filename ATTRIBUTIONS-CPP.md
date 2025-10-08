@@ -44,15 +44,15 @@ This project uses the following third-party libraries. Each library is open-sour
   15 Copyright © 2015      Research Organization for Information Science and Technology (RIST). All rights reserved.
   16 Copyright © 2015-2016 Intel, Inc.  All rights reserved.
   17 See COPYING in top-level directory.
-  18 
+  18
   19 ==================================================================
-  20 
+  20
   21           BSD license
-  22 
+  22
   23 Redistribution and use in source and binary forms, with or without
   24 modification, are permitted provided that the following conditions
   25 are met:
-  26 
+  26
   27 1. Redistributions of source code must retain the above copyright
   28    notice, this list of conditions and the following disclaimer.
   29 2. Redistributions in binary form must reproduce the above copyright
@@ -60,7 +60,7 @@ This project uses the following third-party libraries. Each library is open-sour
   31    documentation and/or other materials provided with the distribution.
   32 3. The name of the author may not be used to endorse or promote products
   33    derived from this software without specific prior written permission.
-  34 
+  34
   35 THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
   36 IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
   37 OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
@@ -71,7 +71,7 @@ This project uses the following third-party libraries. Each library is open-sour
   42 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
   43 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
   44 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-  45 
+  45
   46 ==================================================================
   ```
 ## libucm - 48.0-1
@@ -83,17 +83,17 @@ This project uses the following third-party libraries. Each library is open-sour
 
 ```
    1                     OpenIB.org BSD license (MIT variant)
-   2 
+   2
    3 Redistribution and use in source and binary forms, with or without
    4 modification, are permitted provided that the following conditions are met:
-   5 
+   5
    6   - Redistributions of source code must retain the above copyright notice,
    7     this list of conditions and the following disclaimer.
-   8 
+   8
    9   - Redistributions in binary form must reproduce the above copyright notice,
   10     this list of conditions and the following disclaimer in the documentation
   11     and/or other materials provided with the distribution.
-  12 
+  12
   13 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
   14 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
   15 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -111,17 +111,17 @@ This project uses the following third-party libraries. Each library is open-sour
 
 ```
    1                     OpenIB.org BSD license (MIT variant)
-   2 
+   2
    3 Redistribution and use in source and binary forms, with or without
    4 modification, are permitted provided that the following conditions are met:
-   5 
+   5
    6   - Redistributions of source code must retain the above copyright notice,
    7     this list of conditions and the following disclaimer.
-   8 
+   8
    9   - Redistributions in binary form must reproduce the above copyright notice,
   10     this list of conditions and the following disclaimer in the documentation
   11     and/or other materials provided with the distribution.
-  12 
+  12
   13 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
   14 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
   15 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -139,17 +139,17 @@ This project uses the following third-party libraries. Each library is open-sour
 
 ```
    1                     OpenIB.org BSD license (MIT variant)
-   2 
+   2
    3 Redistribution and use in source and binary forms, with or without
    4 modification, are permitted provided that the following conditions are met:
-   5 
+   5
    6   - Redistributions of source code must retain the above copyright notice,
    7     this list of conditions and the following disclaimer.
-   8 
+   8
    9   - Redistributions in binary form must reproduce the above copyright notice,
   10     this list of conditions and the following disclaimer in the documentation
   11     and/or other materials provided with the distribution.
-  12 
+  12
   13 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
   14 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
   15 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -167,17 +167,17 @@ This project uses the following third-party libraries. Each library is open-sour
 
 ```
    1                     OpenIB.org BSD license (MIT variant)
-   2 
+   2
    3 Redistribution and use in source and binary forms, with or without
    4 modification, are permitted provided that the following conditions are met:
-   5 
+   5
    6   - Redistributions of source code must retain the above copyright notice,
    7     this list of conditions and the following disclaimer.
-   8 
+   8
    9   - Redistributions in binary form must reproduce the above copyright notice,
   10     this list of conditions and the following disclaimer in the documentation
   11     and/or other materials provided with the distribution.
-  12 
+  12
   13 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
   14 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
   15 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -195,17 +195,17 @@ This project uses the following third-party libraries. Each library is open-sour
 
 ```
    1                     OpenIB.org BSD license (MIT variant)
-   2 
+   2
    3 Redistribution and use in source and binary forms, with or without
    4 modification, are permitted provided that the following conditions are met:
-   5 
+   5
    6   - Redistributions of source code must retain the above copyright notice,
    7     this list of conditions and the following disclaimer.
-   8 
+   8
    9   - Redistributions in binary form must reproduce the above copyright notice,
   10     this list of conditions and the following disclaimer in the documentation
   11     and/or other materials provided with the distribution.
-  12 
+  12
   13 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
   14 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
   15 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -226,21 +226,21 @@ This project uses the following third-party libraries. Each library is open-sour
    2 Copyright (c) 2015-2019 Cisco Systems, Inc.  All rights reserved.
    3
    4 ==================================================================
-   5 
+   5
    6           BSD license
-   7 
+   7
    8 Redistribution and use in source and binary forms, with or without
    9 modification, are permitted provided that the following conditions
   10 are met:
-  11 
+  11
   12   * Redistributions of source code must retain the above copyright
   13     notice, this list of conditions and the following disclaimer.
-  14 
+  14
   15   * Redistributions in binary form must reproduce the above
   16     copyright notice, this list of conditions and the following
   17     disclaimer in the documentation and/or other materials provided
   18     with the distribution.
-  19 
+  19
   20 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
   21 "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
   22 LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
@@ -253,7 +253,7 @@ This project uses the following third-party libraries. Each library is open-sour
   29 LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
   30 ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
   31 POSSIBILITY OF SUCH DAMAGE.
-  32 
+  32
   33 ==================================================================
   ```
 ## glibc - 2.35
