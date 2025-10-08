@@ -19,7 +19,7 @@ limitations under the License.
 
 This project uses the following third-party libraries. Each library is open-source and licensed under the terms indicated below.
 
-## hwloc - 2.3.0
+## hwloc - 2.3.0-3
 
 - **Repository URL**: https://github.com/open-mpi/hwloc
 - **License URL**: https://www.open-mpi.org/projects/hwloc/license.php
@@ -214,7 +214,7 @@ This project uses the following third-party libraries. Each library is open-sour
   18 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   19 SOFTWARE.
   ```
-## LibFabric - 2.3.0
+## libfabric - 2.3.0
 
 - **Repository URL**: https://github.com/ofiwg/libfabric
 - **License URL**: https://github.com/ofiwg/libfabric/blob/v2.3.0/COPYING
