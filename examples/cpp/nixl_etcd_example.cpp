@@ -233,6 +233,7 @@ int main() {
     CHECK_NIXL_ERROR_AGENT(ret1, "Failed to create Xfer Req", AGENT1_NAME);
 
     status = A1.postXferReq(req_handle);
+    CHECK_NIXL_ERROR_AGENT((status != NIXL_IN_PROG), "Failed to post Xfer Req", AGENT1_NAME);
 
     std::cout << "Transfer was posted\n";
 
@@ -242,8 +243,8 @@ int main() {
     while (status != NIXL_SUCCESS || n_notifs == 0) {
         if (status != NIXL_SUCCESS) status = A1.getXferStatus(req_handle);
         if (n_notifs == 0) ret2 = A2.getNotifs(notif_map);
-        CHECK_NIXL_ERROR_AGENT(status, "Failed to post Xfer Req", AGENT1_NAME);
-        CHECK_NIXL_ERROR_AGENT(ret2, "Failed to get notifs", AGENT2_NAME);
+        CHECK_NIXL_ERROR_AGENT((status > NIXL_IN_PROG), "Failed to get Xfer status", AGENT1_NAME);
+        CHECK_NIXL_ERROR_AGENT((ret2 != NIXL_SUCCESS), "Failed to get notifs", AGENT2_NAME);
         n_notifs = notif_map.size();
     }
 
