@@ -59,11 +59,13 @@ sleep 5
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
-./bin/desc_example
-./bin/agent_example
-./bin/nixl_example
-./bin/nixl_etcd_example
-./bin/ucx_backend_test
+for i in $(seq 1 10); do
+    ./bin/desc_example
+    ./bin/agent_example
+    ./bin/nixl_example
+    ./bin/nixl_etcd_example
+    ./bin/ucx_backend_test
+done
 # Skip UCX_MO backend test on GPU worker, fails VRAM transfers
 if ! $HAS_GPU ; then
     ./bin/ucx_mo_backend_test
