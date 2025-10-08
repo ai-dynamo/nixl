@@ -15,19 +15,11 @@
  * limitations under the License.
  */
 #include <iostream>
-#include <cassert>
 #include <thread>
 
 #include "ucx_backend.h"
+#include "common/util.h"
 
-#define CHECK_NIXL_ERROR(result, message, agent)                         \
-    do {                                                                 \
-        if (0 != result) {                                               \
-            std::cerr << "NIXL: " << message << " for agent " << agent   \
-                      << " (Error code: " << result << ")" << std::endl; \
-            exit(EXIT_FAILURE);                                          \
-        }                                                                \
-    } while (0)
 
 // Temporarily while fixing CI/CD pipeline
 #define USE_PTHREAD false
@@ -69,15 +61,13 @@ void test_thread(int id)
     while(!ready[!id]);
 
     ret = ucx->loadRemoteConnInfo(other, conn_info[!id]);
-    assert(ret == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(ret, "Failed to load remote conn info", my_name);
+    CHECK_NIXL_ERROR_AGENT(ret, "Failed to load remote conn info", my_name);
 
     //one-sided connect
     if(!id)
         ret = ucx->connect(other);
 
-    assert(ret == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(ret, "Failed to connect", my_name);
+    CHECK_NIXL_ERROR_AGENT(ret, "Failed to connect", my_name);
 
     done[id] = true;
     while(!done[!id])

@@ -21,4 +21,22 @@
 #define CONCAT_0(a, b) a ## b
 #define UNIQUE_NAME(name) CONCAT(name, __COUNTER__)
 
+#define CHECK_NIXL_ERROR_AGENT(result, message, agent)                   \
+    do {                                                                 \
+        if (0 != result) {                                               \
+            std::cerr << "NIXL: " << message << " for agent " << agent   \
+                      << " (Error code: " << result << ")" << std::endl; \
+            exit(EXIT_FAILURE);                                          \
+        }                                                                \
+    } while (0)
+
+#define CHECK_NIXL_ERROR(result, message)                                \
+    do {                                                                 \
+        if (0 != result) {                                               \
+            std::cerr << "NIXL: " << message << " (Error code: "         \
+                      << result << ")" << std::endl;                     \
+            exit(EXIT_FAILURE);                                          \
+        }                                                                \
+    } while (0)
+
 #endif /* UTIL_H */

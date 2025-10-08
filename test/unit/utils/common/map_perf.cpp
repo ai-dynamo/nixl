@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 #include <iostream>
-#include <cassert>
 #include <random>
 #include <algorithm>
 #include <map>
@@ -24,15 +23,7 @@
 #include <sys/time.h>
 
 #include "common/str_tools.h"
-
-#define CHECK_NIXL_ERROR(result, message, agent)                         \
-    do {                                                                 \
-        if (0 != result) {                                               \
-            std::cerr << "NIXL: " << message << " for agent " << agent   \
-                      << " (Error code: " << result << ")" << std::endl; \
-            exit(EXIT_FAILURE);                                          \
-        }                                                                \
-    } while (0)
+#include "common/util.h"
 
 std::string generate_random_string(size_t length) {
     const std::string characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -127,7 +118,7 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
     std::cout << "custom map lookup test, total time for " << n_iters << " iters: "
               << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
 
-    assert(sum1 == sum2);
+    CHECK_NIXL_ERROR_AGENT((sum1 != sum2), "Test failed", "test");
 
     gettimeofday(&start_time, NULL);
     for(int i = 0; i<n_iters; i++) {
@@ -145,19 +136,13 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
 int main()
 {
     strEqual tester;
-    assert(tester.operator() ("abcdefgh","abcdefgh") == true);
-    CHECK_NIXL_ERROR(tester.operator()("abcdefgh", "abcdefgh"), "Test failed", "test");
-    assert(tester.operator() ("abcdefgh","abdcefgh") == false);
-    CHECK_NIXL_ERROR(tester.operator()("abcdefgh", "abdcefgh"), "Test failed", "test");
-    assert(tester.operator() ("abcdefgh123","abcdefgh123") == true);
-    CHECK_NIXL_ERROR(tester.operator()("abcdefgh123", "abcdefgh123"), "Test failed", "test");
-    assert(tester.operator() ("abcdefgh123","aadcefgh123") == false);
-    CHECK_NIXL_ERROR(tester.operator()("abcdefgh123", "aadcefgh123"), "Test failed", "test");
-    assert(tester.operator() ("12345678abcdefgh","12345678abcdefgh") == true);
-    CHECK_NIXL_ERROR(
+    CHECK_NIXL_ERROR_AGENT(tester.operator()("abcdefgh", "abcdefgh"), "Test failed", "test");
+    CHECK_NIXL_ERROR_AGENT(tester.operator()("abcdefgh", "abdcefgh"), "Test failed", "test");
+    CHECK_NIXL_ERROR_AGENT(tester.operator()("abcdefgh123", "abcdefgh123"), "Test failed", "test");
+    CHECK_NIXL_ERROR_AGENT(tester.operator()("abcdefgh123", "aadcefgh123"), "Test failed", "test");
+    CHECK_NIXL_ERROR_AGENT(
         tester.operator()("12345678abcdefgh", "12345678abcdefgh"), "Test failed", "test");
-    assert(tester.operator() ("12345678abcdefgh","12345687abcdefgh") == false);
-    CHECK_NIXL_ERROR(
+    CHECK_NIXL_ERROR_AGENT(
         tester.operator()("12345678abcdefgh", "12345687abcdefgh"), "Test failed", "test");
 
     test_comparison_perf(16, 8);

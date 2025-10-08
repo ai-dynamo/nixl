@@ -17,19 +17,11 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <cassert>
 
 #include "ucx_backend.h"
+#include "common/util.h"
 
 using namespace std;
-
-#define CHECK_NIXL_ERROR(result, message)                                                       \
-    do {                                                                                        \
-        if (0 != result) {                                                                      \
-            std::cerr << "NIXL: " << message << " (Error code: " << result << ")" << std::endl; \
-            exit(EXIT_FAILURE);                                                                 \
-        }                                                                                       \
-    } while (0)
 
 
 #ifdef HAVE_CUDA
@@ -72,7 +64,7 @@ public:
 
     ~testHndlIterator() {
         /* Make sure that handler was released */
-        assert(!set);
+        CHECK_NIXL_ERROR(set, "Handler was not released");
     }
 
     bool needPrep() {
@@ -96,7 +88,7 @@ public:
 
     void setHandle(nixlBackendReqH *_handle)
     {
-        assert(!set);
+        CHECK_NIXL_ERROR(set, "Handler was not released");
         handle = _handle;
         set = true;
         if (reuse) {
@@ -105,12 +97,12 @@ public:
     }
 
     void unsetHandle() {
-        assert(set);
+        CHECK_NIXL_ERROR(!set, "Handler was not set");
         set = false;
     }
 
     nixlBackendReqH *&getHandle() {
-        assert(set);
+        CHECK_NIXL_ERROR(!set, "Handler was not set");
         return handle;
     }
 };
@@ -127,11 +119,7 @@ createEngine(std::string name, bool p_thread) {
     init.type         = "UCX";
 
     auto ucx = nixlUcxEngine::create(init).release();
-    assert(!ucx->getInitErr());
-    if (ucx->getInitErr()) {
-        std::cout << "Failed to initialize worker1" << std::endl;
-        exit(1);
-    }
+    CHECK_NIXL_ERROR(ucx->getInitErr(), "Failed to initialize worker1");
 
     return ucx;
 }
@@ -153,7 +141,6 @@ std::string memType2Str(nixl_mem_t mem_type)
     case FILE_SEG:
         return std::string("FILE");
     default:
-        assert(0);
         CHECK_NIXL_ERROR(1, "Unsupported memory type!");
     }
 }
@@ -212,10 +199,8 @@ void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
     }
 #endif
     default:
-        assert(0);
         CHECK_NIXL_ERROR(1, "Unsupported memory type!");
     }
-    assert(addr);
     CHECK_NIXL_ERROR((addr == nullptr), "Failed to allocate buffer");
 }
 
@@ -232,7 +217,6 @@ void releaseBuffer(nixl_mem_t mem_type, int dev_id, void* &addr)
         break;
 #endif
     default:
-        assert(0);
         CHECK_NIXL_ERROR(1, "Unsupported memory type!");
     }
 }
@@ -250,7 +234,6 @@ void doMemset(nixl_mem_t mem_type, int dev_id, void *addr, char byte, size_t len
         break;
 #endif
     default:
-        assert(0);
         CHECK_NIXL_ERROR(1, "Unsupported memory type!");
     }
 }
@@ -269,7 +252,6 @@ void *getValidationPtr(nixl_mem_t mem_type, void *addr, size_t len)
     }
 #endif
     default:
-        assert(0);
         CHECK_NIXL_ERROR(1, "Unsupported memory type!");
     }
 }
@@ -285,7 +267,6 @@ void *releaseValidationPtr(nixl_mem_t mem_type, void *addr)
         break;
 #endif
     default:
-        assert(0);
         CHECK_NIXL_ERROR(1, "Unsupported memory type!");
     }
     return NULL;
@@ -304,8 +285,7 @@ allocateWrongGPUTest(nixlUcxEngine *ucx, int dev_id) {
 
     int ret = ucx->registerMem(desc, VRAM_SEG, md);
 
-    assert(ret == NIXL_ERR_NOT_SUPPORTED);
-    CHECK_NIXL_ERROR((ret != NIXL_ERR_NOT_SUPPORTED), "Failed to register memory");
+    CHECK_NIXL_ERROR_AGENT(ret, "Failed to register memory", "test");
 
     releaseBuffer(VRAM_SEG, dev_id, buf);
 }
@@ -327,7 +307,6 @@ allocateAndRegister(nixlUcxEngine *ucx,
 
     int ret = ucx->registerMem(desc, mem_type, md);
 
-    assert(ret == NIXL_SUCCESS);
     CHECK_NIXL_ERROR(ret, "Failed to register memory");
 }
 
@@ -356,12 +335,10 @@ loadRemote(nixlUcxEngine *ucx,
     info.devId    = dev_id;
     ucx->getPublicData(lmd, info.metaInfo);
 
-    assert(info.metaInfo.size() > 0);
     CHECK_NIXL_ERROR((info.metaInfo.size() == 0), "Failed to get public data");
 
     // We get the data from the cetnral location and populate the backend, and receive remote_meta
     int ret = ucx->loadRemoteMD (info, mem_type, agent, rmd);
-    assert(NIXL_SUCCESS == ret);
     CHECK_NIXL_ERROR(ret, "Failed to load remote MD");
 }
 
@@ -425,13 +402,11 @@ performTransfer(nixlUcxEngine *ucx1,
     if (hiter.needPrep()) {
         nixlBackendReqH *new_handle = nullptr;
         ret3 = ucx1->prepXfer(op, req_src_descs, req_dst_descs, remote_agent, new_handle, &opt_args);
-        assert(ret3 == NIXL_SUCCESS);
         CHECK_NIXL_ERROR(ret3, "Failed to prep xfer");
         hiter.setHandle(new_handle);
     }
     nixlBackendReqH *&handle = hiter.getHandle();
     ret3 = ucx1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
-    assert( ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
     CHECK_NIXL_ERROR(ret3, "Failed to post xfer");
     CHECK_NIXL_ERROR(!((ret3 == NIXL_SUCCESS) || (ret3 == NIXL_IN_PROG)), "Failed to post xfer");
 
@@ -445,7 +420,6 @@ performTransfer(nixlUcxEngine *ucx1,
             if(progress){
                 ucx2->progress();
             }
-            assert( ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
             CHECK_NIXL_ERROR(!((ret3 == NIXL_SUCCESS) || (ret3 == NIXL_IN_PROG)),
                              "Failed to check xfer");
         }
@@ -469,14 +443,10 @@ performTransfer(nixlUcxEngine *ucx1,
             if(progress){
                 ucx1->progress();
             }
-            assert(ret3 == NIXL_SUCCESS);
             CHECK_NIXL_ERROR(ret3, "Failed to get notifs");
         }
 
-        assert(ret2 == 1);
-
-        assert(target_notifs.front().first == "Agent1");
-        assert(target_notifs.front().second == test_str);
+        CHECK_NIXL_ERROR((ret2 != 1), "Incorrect number of target notifs");
         CHECK_NIXL_ERROR((target_notifs.front().first != "Agent1"), "Incorrect front notif source");
         CHECK_NIXL_ERROR((target_notifs.front().second != test_str),
                          "Incorrect front notif message");
@@ -491,7 +461,6 @@ performTransfer(nixlUcxEngine *ucx1,
 
     // Perform correctness check.
     for(size_t i = 0; i < len; i++){
-        assert( ((uint8_t*) chkptr1)[i] == ((uint8_t*) chkptr2)[i]);
         CHECK_NIXL_ERROR((((uint8_t *)chkptr1)[i] != ((uint8_t *)chkptr2)[i]), "Data mismatch");
     }
 
@@ -517,15 +486,13 @@ test_intra_agent_transfer(bool p_thread, nixlUcxEngine *ucx, nixl_mem_t mem_type
 
     int iter = 10;
 
-    assert(ucx->supportsLocal());
+    CHECK_NIXL_ERROR(!ucx->supportsLocal(), "Failed to get conn info");
 
     //connection info is still a string
     std::string conn_info1;
     ret1 = ucx->getConnInfo(conn_info1);
-    assert(ret1 == NIXL_SUCCESS);
     CHECK_NIXL_ERROR(ret1, "Failed to get conn info");
     ret1 = ucx->loadRemoteConnInfo (agent1, conn_info1);
-    assert(ret1 == NIXL_SUCCESS);
     CHECK_NIXL_ERROR(ret1, "Failed to load remote conn info");
 
     std::cout << "Local connection complete\n";
@@ -544,7 +511,6 @@ test_intra_agent_transfer(bool p_thread, nixlUcxEngine *ucx, nixl_mem_t mem_type
     //string descs unnecessary, convert meta locally
     nixlBackendMD* rmd2;
     ret1 = ucx->loadLocalMD (lmd2, rmd2);
-    assert(ret1 == NIXL_SUCCESS);
     CHECK_NIXL_ERROR(ret1, "Failed to load local MD");
     nixl_meta_dlist_t req_src_descs (mem_type);
     populateDescs(req_src_descs, 0, addr1, desc_cnt, desc_size, lmd1);
@@ -610,15 +576,12 @@ test_inter_agent_transfer(bool p_thread,
     // location and ask for it for a remote node
     std::string conn_info1, conn_info2;
     ret = ucx1->getConnInfo(conn_info1);
-    assert(ret == NIXL_SUCCESS);
     CHECK_NIXL_ERROR(ret, "Failed to get conn info");
     ret = ucx2->getConnInfo(conn_info2);
-    assert(ret == NIXL_SUCCESS);
     CHECK_NIXL_ERROR(ret, "Failed to get conn info");
 
     // We assumed we put them to central location and now receiving it on the other process
     ret = ucx1->loadRemoteConnInfo (agent2, conn_info2);
-    assert(ret == NIXL_SUCCESS);
     CHECK_NIXL_ERROR(ret, "Failed to load remote conn info");
 
     // TODO: Causes race condition - investigate conn management implementation
@@ -690,17 +653,12 @@ test_inter_agent_transfer(bool p_thread,
         while(ret == 0){
             ret2 = ucx2->getNotifs(target_notifs);
             ret = target_notifs.size();
-            assert(ret2 == NIXL_SUCCESS);
             CHECK_NIXL_ERROR(ret2, "Failed to get notifs");
         }
 
-        assert(ret == 1);
-
-        assert(target_notifs.front().first == "Agent1");
+        CHECK_NIXL_ERROR((ret != 1), "Incorrect number of target notifs");
         CHECK_NIXL_ERROR((target_notifs.front().first != "Agent1"), "Incorrect front notif source");
-        assert(target_notifs.front().second == test_str);
-        CHECK_NIXL_ERROR((target_notifs.front().second != test_str),
-                         "Incorrect front notif message");
+        CHECK_NIXL_ERROR((target_notifs.front().second != test_str), "Incorrect front notif message");
 
         cout << "OK" << endl;
     }

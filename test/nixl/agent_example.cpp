@@ -15,21 +15,12 @@
  * limitations under the License.
  */
 #include <iostream>
-#include <cassert>
 #include <cstring>
 
 #include <sys/time.h>
 
 #include "nixl.h"
-
-#define CHECK_NIXL_ERROR(result, message, agent)                         \
-    do {                                                                 \
-        if (0 != result) {                                               \
-            std::cerr << "NIXL: " << message << " for agent " << agent   \
-                      << " (Error code: " << result << ")" << std::endl; \
-            exit(EXIT_FAILURE);                                          \
-        }                                                                \
-    } while (0)
+#include "common/util.h"
 
 std::string agent1("Agent001");
 std::string agent2("Agent002");
@@ -38,11 +29,7 @@ void check_buf(void* buf, size_t len) {
 
     // Do some checks on the data.
     for(size_t i = 0; i<len; i++){
-        assert (((uint8_t*) buf)[i] == 0xbb);
-        if (((uint8_t *)buf)[i] != 0xbb) {
-            std::cerr << "Data mismatch!" << std::endl;
-            exit(EXIT_FAILURE);
-        }
+        CHECK_NIXL_ERROR_AGENT((((uint8_t*) buf)[i] == 0xbb), "Data mismatch!", agent1);
     }
 }
 
@@ -94,34 +81,28 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
         }
     }
 
-    assert (mem_list1.descCount() == n_mems);
-    assert (mem_list2.descCount() == n_mems);
+    CHECK_NIXL_ERROR_AGENT((mem_list1.descCount() != n_mems), "Incorrect number of descriptors", agent1);
+    CHECK_NIXL_ERROR_AGENT((mem_list2.descCount() != n_mems), "Incorrect number of descriptors", agent2);
 
-    assert (src_list.descCount() == n_mems*descs_per_mem);
-    assert (dst_list.descCount() == n_mems*descs_per_mem);
+    CHECK_NIXL_ERROR_AGENT((src_list.descCount() != n_mems*descs_per_mem), "Incorrect number of descriptors", agent1);
+    CHECK_NIXL_ERROR_AGENT((dst_list.descCount() != n_mems*descs_per_mem), "Incorrect number of descriptors", agent2);
 
     status = A1->registerMem(mem_list1, &extra_params1);
-    assert (status == NIXL_SUCCESS);
-
-    CHECK_NIXL_ERROR(status, "Failed to register memory", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to register memory", agent1);
     status = A2->registerMem(mem_list2, &extra_params2);
-    assert (status == NIXL_SUCCESS);
-
-    CHECK_NIXL_ERROR(status, "Failed to register memory", agent2);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to register memory", agent2);
 
     std::string meta2;
     status = A2->getLocalMD(meta2);
-    assert (status == NIXL_SUCCESS);
-    assert (meta2.size() > 0);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to get local MD", agent2);
+    CHECK_NIXL_ERROR_AGENT((meta2.size() <= 0), "Incorrect local MD", agent2);
 
-    CHECK_NIXL_ERROR(status, "Failed to get local MD", agent2);
+
     std::string remote_name;
     status = A1->loadRemoteMD(meta2, remote_name);
-    assert (status == NIXL_SUCCESS);
-    assert (remote_name == agent2);
 
-    CHECK_NIXL_ERROR(status, "Failed to local remote MD", agent1);
-    CHECK_NIXL_ERROR((remote_name != agent2), "Incorrect remote MD received", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to local remote MD", agent1);
+    CHECK_NIXL_ERROR_AGENT((remote_name != agent2), "Incorrect remote MD received", agent1);
 
     std::cout << "perf setup done\n";
 
@@ -129,11 +110,9 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
 
     for(int i = 0; i<n_iters; i++) {
         status = A1->prepXferDlist(agent2, dst_list, dst_side[i], &extra_params1);
-        assert (status == NIXL_SUCCESS);
-        CHECK_NIXL_ERROR(status, "Failed to prep Xfer Dlist for dest", agent1);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to prep Xfer Dlist for dest", agent1);
         status = A1->prepXferDlist(NIXL_INIT_AGENT, src_list, src_side[i], &extra_params1);
-        assert (status == NIXL_SUCCESS);
-        CHECK_NIXL_ERROR(status, "Failed to pre Xfer Dlist for src", agent1);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to pre Xfer Dlist for src", agent1);
     }
 
     gettimeofday(&end_time, NULL);
@@ -158,8 +137,7 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
     extra_params1.notifMsg = "test";
     extra_params1.hasNotif = true;
     status = A1->makeXferReq(NIXL_WRITE, src_side[0], indices, dst_side[0], indices, reqh1, &extra_params1);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to make Xfer Req", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to make Xfer Req", agent1);
 
     indices.clear();
     for(int i = 0; i<(n_mems*descs_per_mem); i+=2)
@@ -167,29 +145,24 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
 
     //should print (n_mems*descs_per_mem/2) number of final descriptors
     status = A1->makeXferReq(NIXL_WRITE, src_side[0], indices, dst_side[0], indices, reqh2, &extra_params1);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to make Xfer Req", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to make Xfer Req", agent1);
 
     status = A1->releaseXferReq(reqh1);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to release Xfer Req", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to release Xfer Req", agent1);
     status = A1->releaseXferReq(reqh2);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to release Xfer Req2", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to release Xfer Req2", agent1);
 
     // Commented out to test auto deregistration
     // status = A1->deregisterMem(mem_list1, &extra_params1);
     // assert (status == NIXL_SUCCESS);
     status = A2->deregisterMem(mem_list2, &extra_params2);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to deregister memory", agent2);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to deregister memory", agent2);
 
     for(int i = 0; i<n_iters; i++){
         status = A1->releasedDlistH(src_side[i]);
-        assert (status == NIXL_SUCCESS);
-        CHECK_NIXL_ERROR(status, "Failed to release Dlist handle", agent1);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to release src Dlist handle", agent1);
         status = A1->releasedDlistH(dst_side[i]);
-        assert (status == NIXL_SUCCESS);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to release dst Dlist handle", agent1);
     }
 
     free(src_buf);
@@ -236,12 +209,9 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
     // Register memory for each update
     for (int update = 0; update < NUM_UPDATES; update++) {
         status = A1->registerMem(src_mem_lists[update], &extra_params1);
-        assert(status == NIXL_SUCCESS);
-
-        CHECK_NIXL_ERROR(status, "Failed to register memory", agent1);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to register memory", agent1);
         status = A2->registerMem(dst_mem_lists[update], &extra_params2);
-        assert(status == NIXL_SUCCESS);
-        CHECK_NIXL_ERROR(status, "Failed to register memory", agent2);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to register memory", agent2);
     }
 
     // Test metadata update with only backends and empty descriptor list
@@ -250,37 +220,30 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
     // Agent2 might have already been previously loaded.
     // Invalidate it just in case but don't care either way.
     status = A1->invalidateRemoteMD(agent2);
-    CHECK_NIXL_ERROR(status, "Failed to invalidate remote MD", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to invalidate remote MD", agent1);
 
     nixl_reg_dlist_t empty_dlist(DRAM_SEG);
     std::string partial_meta;
     status = A2->getLocalPartialMD(empty_dlist, partial_meta, NULL);
-    assert(status == NIXL_SUCCESS);
-    assert(partial_meta.size() > 0);
-    CHECK_NIXL_ERROR(status, "Failed to get local partial MD", agent2);
-    CHECK_NIXL_ERROR((partial_meta.size() <= 0), "Incorrect local partial MD", agent2);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to get local partial MD", agent2);
+    CHECK_NIXL_ERROR_AGENT((partial_meta.size() <= 0), "Incorrect local partial MD", agent2);
 
     std::string remote_name;
     status = A1->loadRemoteMD(partial_meta, remote_name);
-    assert(status == NIXL_SUCCESS);
-    assert(remote_name == agent2);
-    CHECK_NIXL_ERROR(status, "Failed to get load remote MD", agent1);
-    CHECK_NIXL_ERROR((remote_name != agent2), "Incorrect remote MD", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to get load remote MD", agent1);
+    CHECK_NIXL_ERROR_AGENT((remote_name != agent2), "Incorrect remote MD", agent1);
 
     // Make sure unregistered descriptors are not updated
     for (int update = 0; update < NUM_UPDATES; update++) {
         nixlDlistH *dst_side;
         status = A1->prepXferDlist(agent2, dst_mem_lists[update].trim(), dst_side, &extra_params1);
-        assert(status != NIXL_SUCCESS);
-        assert(dst_side == nullptr);
-        CHECK_NIXL_ERROR((status == NIXL_SUCCESS), "Prep xfer dlist should not be successful", agent1);
-        CHECK_NIXL_ERROR((dst_side != nullptr), "Dst side is not null", agent1);
+        CHECK_NIXL_ERROR_AGENT((status == NIXL_SUCCESS), "Prep xfer dlist should not be successful", agent1);
+        CHECK_NIXL_ERROR_AGENT((dst_side != nullptr), "Dst side is not null", agent1);
     }
 
     // Invalidate remote agent metadata to make sure we received connection info
     status = A1->invalidateRemoteMD(agent2);
-    assert(status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to get invalidate remote MD", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to get invalidate remote MD", agent1);
     std::cout << "Metadata update - backends only completed\n";
 
     // Main test loop - update metadata multiple times
@@ -293,33 +256,25 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
         std::cout << "Metadata update #" << update << "\n";
         // Get partial metadata from A2
         status = A2->getLocalPartialMD(dst_mem_lists[update], partial_meta, &extra_params2);
-        assert(status == NIXL_SUCCESS);
-        assert(partial_meta.size() > 0);
-        CHECK_NIXL_ERROR(status, "Failed to get local partial MD", agent2);
-        CHECK_NIXL_ERROR((partial_meta.size() <= 0), "Incorrect local partial MD", agent2);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to get local partial MD", agent2);
+        CHECK_NIXL_ERROR_AGENT((partial_meta.size() <= 0), "Incorrect local partial MD", agent2);
 
         // Load the partial metadata into A1
         std::string remote_name;
         status = A1->loadRemoteMD(partial_meta, remote_name);
-        assert(status == NIXL_SUCCESS);
-        assert(remote_name == agent2);
-        CHECK_NIXL_ERROR(status, "Failed to load remote MD", agent1);
-        CHECK_NIXL_ERROR((remote_name != agent2), "Incorrect remote MD", agent1);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to load remote MD", agent1);
+        CHECK_NIXL_ERROR_AGENT((remote_name != agent2), "Incorrect remote MD", agent1);
 
         // Make sure loaded descriptors are updated
         nixlDlistH *dst_side;
         status = A1->prepXferDlist(agent2, dst_mem_lists[update].trim(), dst_side, &extra_params1);
-        assert(status == NIXL_SUCCESS);
-        assert(dst_side != nullptr);
-        CHECK_NIXL_ERROR(status, "Failed to prep xfer dlist", agent1);
-        CHECK_NIXL_ERROR((dst_side == nullptr), "Dst side is null", agent1);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to prep xfer dlist", agent1);
+        CHECK_NIXL_ERROR_AGENT((dst_side == nullptr), "Dst side is null", agent1);
         // Make sure not-loaded descriptors are not updated
         for (int invalid_idx = update + 1; invalid_idx < NUM_UPDATES; invalid_idx++) {
             status = A1->prepXferDlist(agent2, dst_mem_lists[invalid_idx].trim(), dst_side, &extra_params1);
-            assert(status != NIXL_SUCCESS);
-            assert(dst_side == nullptr);
-            CHECK_NIXL_ERROR(status, "Prep xfer dlist should not be successful", agent1);
-            CHECK_NIXL_ERROR((dst_side != nullptr), "Dst side is not null", agent1);
+            CHECK_NIXL_ERROR_AGENT(status, "Prep xfer dlist should not be successful", agent1);
+            CHECK_NIXL_ERROR_AGENT((dst_side != nullptr), "Dst side is not null", agent1);
         }
         std::cout << "Metadata update #" << update << " completed\n";
     }
@@ -341,13 +296,11 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
     nixlDlistH *src_side, *dst_side;
 
     status = A1->prepXferDlist(NIXL_INIT_AGENT, src_xfer_list, src_side, &extra_params1);
-    assert(status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to prep xfer dlist", agent1);
-    CHECK_NIXL_ERROR((src_side == nullptr), "Src side is null", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to prep xfer dlist", agent1);
+    CHECK_NIXL_ERROR_AGENT((src_side == nullptr), "Src side is null", agent1);
     status = A1->prepXferDlist(agent2, dst_xfer_list, dst_side, &extra_params1);
-    assert(status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to prep xfer dlist", agent1);
-    CHECK_NIXL_ERROR((dst_side == nullptr), "Dst side is null", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to prep xfer dlist", agent1);
+    CHECK_NIXL_ERROR_AGENT((dst_side == nullptr), "Dst side is null", agent1);
 
     std::cout << "Transfer preparation completed\n";
 
@@ -363,15 +316,13 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
 
     // Create and post the transfer request
     status = A1->makeXferReq(NIXL_WRITE, src_side, indices, dst_side, indices, req, &extra_params1);
-    assert(status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to make xfer req", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to make xfer req", agent1);
     nixl_status_t xfer_status = A1->postXferReq(req);
 
     // Wait for transfer completion
     while (xfer_status != NIXL_SUCCESS) {
         if (xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req);
-        assert (xfer_status >= 0);
-        CHECK_NIXL_ERROR(xfer_status, "Failed to get xfer status", agent1);
+        CHECK_NIXL_ERROR_AGENT(xfer_status, "Failed to get xfer status", agent1);
     }
 
     // Verify transfer results
@@ -385,22 +336,17 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
 
     // Cleanup
     status = A1->releaseXferReq(req);
-    assert(status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to release xfer req", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to release xfer req", agent1);
     status = A1->releasedDlistH(src_side);
-    assert(status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to release xfer dlist", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to release xfer dlist", agent1);
     status = A1->releasedDlistH(dst_side);
-    assert(status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to release xfer dlist", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to release xfer dlist", agent1);
     // Deregister memory
     for (int update = 0; update < NUM_UPDATES; update++) {
         status = A1->deregisterMem(src_mem_lists[update], &extra_params1);
-        assert(status == NIXL_SUCCESS);
-        CHECK_NIXL_ERROR(status, "Failed to deregister memory", agent1);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to deregister memory", agent1);
         status = A2->deregisterMem(dst_mem_lists[update], &extra_params2);
-        assert(status == NIXL_SUCCESS);
-        CHECK_NIXL_ERROR(status, "Failed to deregister memory", agent2);
+        CHECK_NIXL_ERROR_AGENT(status, "Failed to deregister memory", agent2);
     }
 
     // Free allocated memory
@@ -425,11 +371,8 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     extra_params1.backends.push_back(src_backend);
     extra_params2.backends.push_back(dst_backend);
 
-    assert (status == NIXL_SUCCESS);
-    assert (src_backend);
-
-    CHECK_NIXL_ERROR(status, "Failed to query xfer backend", agent1);
-    CHECK_NIXL_ERROR((src_backend == nullptr), "Incorrect src backend handle", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to query xfer backend", agent1);
+    CHECK_NIXL_ERROR_AGENT((src_backend == nullptr), "Incorrect src backend handle", agent1);
 
     std::cout << "Got backend\n";
 
@@ -464,35 +407,27 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     dst_list = mem_list2.trim();
 
     status = A1->registerMem(mem_list1, &extra_params1);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to register memory", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to register memory", agent1);
     status = A2->registerMem(mem_list2, &extra_params2);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to register memory", agent2);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to register memory", agent2);
     std::string meta2;
     status = A2->getLocalMD(meta2);
-    assert (status == NIXL_SUCCESS);
-    assert (meta2.size() > 0);
-    CHECK_NIXL_ERROR(status, "Failed to get local MD", agent2);
-    CHECK_NIXL_ERROR((meta2.size() <= 0), "Incorrect local MD", agent2);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to get local MD", agent2);
+    CHECK_NIXL_ERROR_AGENT((meta2.size() <= 0), "Incorrect local MD", agent2);
     std::string remote_name;
     status = A1->loadRemoteMD(meta2, remote_name);
-    assert (status == NIXL_SUCCESS);
-    assert (remote_name == agent2);
-    CHECK_NIXL_ERROR(status, "Failed to load remote MD", agent1);
-    CHECK_NIXL_ERROR((remote_name != agent2), "Incorrect remote MD", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to load remote MD", agent1);
+    CHECK_NIXL_ERROR_AGENT((remote_name != agent2), "Incorrect remote MD", agent1);
     std::cout << "Ready to prepare side\n";
 
     nixlDlistH *src_side, *dst_side;
 
     status = A1->prepXferDlist(NIXL_INIT_AGENT, src_list, src_side, &extra_params1);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to prep xfer dlist", agent1);
-    CHECK_NIXL_ERROR((src_side == nullptr), "Src side is null", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to prep xfer dlist", agent1);
+    CHECK_NIXL_ERROR_AGENT((src_side == nullptr), "Src side is null", agent1);
     status = A1->prepXferDlist(remote_name, dst_list, dst_side, &extra_params1);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to prep xfer dlist", agent1);
-    CHECK_NIXL_ERROR((dst_side == nullptr), "Dst side is null", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to prep xfer dlist", agent1);
+    CHECK_NIXL_ERROR_AGENT((dst_side == nullptr), "Dst side is null", agent1);
     std::cout << "prep done, starting transfers\n";
 
     std::vector<int> indices1, indices2;
@@ -509,14 +444,12 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     //write first half of src_bufs to dst_bufs
     status = A1->makeXferReq(NIXL_WRITE, src_side, indices1, dst_side, indices1, req1, &extra_params1);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to make xfer req", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to make xfer req", agent1);
     nixl_status_t xfer_status = A1->postXferReq(req1);
 
     while (xfer_status != NIXL_SUCCESS) {
         if (xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req1);
-        assert (xfer_status >= 0);
-        CHECK_NIXL_ERROR(xfer_status, "Failed to get xfer status", agent1);
+        CHECK_NIXL_ERROR_AGENT(xfer_status, "Failed to get xfer status", agent1);
     }
 
     for(int i = 0; i<(n_bufs/2); i++)
@@ -526,14 +459,12 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     //read first half of dst_bufs back to second half of src_bufs
     status = A1->makeXferReq(NIXL_READ, src_side, indices2, dst_side, indices1, req2, &extra_params1);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to make xfer req", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to make xfer req", agent1);
     xfer_status = A1->postXferReq(req2);
 
     while (xfer_status != NIXL_SUCCESS) {
         if (xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req2);
-        assert (xfer_status >= 0);
-        CHECK_NIXL_ERROR(xfer_status, "Failed to get xfer status", agent1);
+        CHECK_NIXL_ERROR_AGENT(xfer_status, "Failed to get xfer status", agent1);
     }
 
     for(int i = (n_bufs/2); i<n_bufs; i++)
@@ -543,14 +474,12 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     //write second half of src_bufs to dst_bufs
     status = A1->makeXferReq(NIXL_WRITE, src_side, indices2, dst_side, indices2, req3, &extra_params1);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to make xfer req", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to make xfer req", agent1);
     xfer_status = A1->postXferReq(req3);
 
     while (xfer_status != NIXL_SUCCESS) {
         if (xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req3);
-        assert (xfer_status >= 0);
-        CHECK_NIXL_ERROR(xfer_status, "Failed to get xfer status", agent1);
+        CHECK_NIXL_ERROR_AGENT(xfer_status, "Failed to get xfer status", agent1);
     }
 
     for(int i = (n_bufs/2); i<n_bufs; i++)
@@ -559,15 +488,11 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     std::cout << "transfer 3 done\n";
 
     status = A1->releaseXferReq(req1);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to release xfer req", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to release xfer req", agent1);
     status = A1->releaseXferReq(req2);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to release xfer req2", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to release xfer req2", agent1);
     status = A1->releaseXferReq(req3);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to release xfer req3", agent1);
-    assert(status == NIXL_SUCCESS);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to release xfer req3", agent1);
 
     // Commented out to test auto deregistration
     // status = A1->deregisterMem(mem_list1, &extra_params1);
@@ -576,11 +501,9 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     // assert (status == NIXL_SUCCESS);
 
     status = A1->releasedDlistH(src_side);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to release xfer src dlist", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to release xfer src dlist", agent1);
     status = A1->releasedDlistH(dst_side);
-    assert (status == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(status, "Failed to release xfer dst dlist", agent1);
+    CHECK_NIXL_ERROR_AGENT(status, "Failed to release xfer dst dlist", agent1);
 
     for(int i = 0; i<n_bufs; i++) {
         free(src_bufs[i]);
@@ -637,23 +560,24 @@ main(int argc, char **argv) {
     std::vector<nixl_backend_t> plugins;
 
     ret1 = A1.getAvailPlugins(plugins);
-    assert (ret1 == NIXL_SUCCESS);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to get available plugins", agent1);
 
-    CHECK_NIXL_ERROR(ret1, "Failed to get available plugins", agent1);
     std::cout << "Available plugins:\n";
 
     for (nixl_backend_t b: plugins)
         std::cout << b << "\n";
 
+<<<<<<< HEAD
     std::cout << "Using backend: " << backend << "\n";
     ret1 = A1.getPluginParams(backend, mems1, init1);
     ret2 = A2.getPluginParams(backend, mems2, init2);
+=======
+    ret1 = A1.getPluginParams("UCX", mems1, init1);
+    ret2 = A2.getPluginParams("UCX", mems2, init2);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to get plugin params for UCX", agent1);
+    CHECK_NIXL_ERROR_AGENT(ret2, "Failed to get plugin params for UCX", agent2);
+>>>>>>> 5638c578 (Address comments)
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
-
-    CHECK_NIXL_ERROR(ret1, "Failed to get plugin params for UCX", agent1);
-    CHECK_NIXL_ERROR(ret2, "Failed to get plugin params for UCX", agent2);
     std::cout << "Params before init:\n";
     printParams(init1, mems1);
     printParams(init2, mems2);
@@ -663,6 +587,7 @@ main(int argc, char **argv) {
     ret2 = A2.createBackend(backend, init2, bknd2);
 
     nixl_opt_args_t extra_params1, extra_params2;
+<<<<<<< HEAD
     extra_params1.backends.push_back(bknd1);
     extra_params2.backends.push_back(bknd2);
 
@@ -676,6 +601,17 @@ main(int argc, char **argv) {
 
     assert (ret1 == NIXL_SUCCESS);
     assert (ret2 == NIXL_SUCCESS);
+=======
+    extra_params1.backends.push_back(ucx1);
+    extra_params2.backends.push_back(ucx2);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to create UCX backend", agent1);
+    CHECK_NIXL_ERROR_AGENT(ret2, "Failed to create UCX backend", agent2);
+
+    ret1 = A1.getBackendParams(ucx1, mems1, init1);
+    ret2 = A2.getBackendParams(ucx2, mems2, init2);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to get UCX backend params", agent1);
+    CHECK_NIXL_ERROR_AGENT(ret2, "Failed to get UCX backend params", agent2);
+>>>>>>> 5638c578 (Address comments)
 
     std::cout << "Params after init:\n";
     printParams(init1, mems1);
@@ -684,9 +620,6 @@ main(int argc, char **argv) {
     // // One side gets to listen, one side to initiate. Same string is passed as the last 2 steps
     // ret1 = A1->makeConnection(agent2, 0);
     // ret2 = A2->makeConnection(agent1, 1);
-
-    // assert (ret1 == NIXL_SUCCESS);
-    // assert (ret2 == NIXL_SUCCESS);
 
     // User allocates memories, and passes the corresponding address
     // and length to register with the backend
@@ -720,34 +653,23 @@ main(int argc, char **argv) {
 
     ret1 = A1.registerMem(dlist1, &extra_params1);
     ret2 = A2.registerMem(dlist2, &extra_params2);
-
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
-
-    CHECK_NIXL_ERROR(ret1, "Failed to register memory", agent1);
-    CHECK_NIXL_ERROR(ret2, "Failed to register memory", agent2);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to register memory", agent1);
+    CHECK_NIXL_ERROR_AGENT(ret2, "Failed to register memory", agent2);
 
     std::string meta1;
     ret1 = A1.getLocalMD(meta1);
     std::string meta2;
     ret2 = A2.getLocalMD(meta2);
-
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
-
-    CHECK_NIXL_ERROR(ret1, "Failed to get local MD", agent1);
-    CHECK_NIXL_ERROR(ret2, "Failed to get local MD", agent2);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to get local MD", agent1);
+    CHECK_NIXL_ERROR_AGENT(ret2, "Failed to get local MD", agent2);
 
     std::cout << "Agent1's Metadata: " << meta1 << "\n";
     std::cout << "Agent2's Metadata: " << meta2 << "\n";
 
     ret1 = A1.loadRemoteMD (meta2, ret_s1);
     ret2 = A2.loadRemoteMD (meta1, ret_s2);
-
-    CHECK_NIXL_ERROR(ret1, "Failed to load remote MD", agent1);
-    CHECK_NIXL_ERROR(ret2, "Failed to load remote MD", agent2);
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to load remote MD", agent1);
+    CHECK_NIXL_ERROR_AGENT(ret2, "Failed to load remote MD", agent2);
 
     size_t req_size = 8;
     size_t dst_offset = 8;
@@ -779,8 +701,7 @@ main(int argc, char **argv) {
     extra_params1.notifMsg = "notification";
     extra_params1.hasNotif = true;
     ret1 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_dst_descs, agent2, req_handle, &extra_params1);
-    assert (ret1 == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(ret1, "Failed to create Xfer Req", agent1);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to create Xfer Req", agent1);
 
     nixl_status_t status = A1.postXferReq(req_handle);
 
@@ -792,42 +713,34 @@ main(int argc, char **argv) {
     while (status != NIXL_SUCCESS || n_notifs == 0) {
         if (status != NIXL_SUCCESS) status = A1.getXferStatus(req_handle);
         if (n_notifs == 0) ret2 = A2.getNotifs(notif_map);
-        assert (status >= 0);
-        assert (ret2 == NIXL_SUCCESS);
-        CHECK_NIXL_ERROR((status < 0), "Failed to post Xfer Req", agent1);
-        CHECK_NIXL_ERROR(ret2, "Failed to get notifs", agent2);
+        CHECK_NIXL_ERROR_AGENT((status < 0), "Failed to post Xfer Req", agent1);
+        CHECK_NIXL_ERROR_AGENT(ret2, "Failed to get notifs", agent2);
         n_notifs = notif_map.size();
     }
 
     std::vector<std::string> agent1_notifs = notif_map[agent1];
-    assert (agent1_notifs.size() == 1);
-    assert (agent1_notifs.front() == "notification");
 
-    CHECK_NIXL_ERROR((agent1_notifs.size() != 1), "Incorrect notif size", agent1);
-    CHECK_NIXL_ERROR((agent1_notifs.front() != "notification"), "Incorrect notification", agent1);
+    CHECK_NIXL_ERROR_AGENT((agent1_notifs.size() != 1), "Incorrect notif size", agent1);
+    CHECK_NIXL_ERROR_AGENT((agent1_notifs.front() != "notification"), "Incorrect notification", agent1);
     notif_map[agent1].clear(); // Redundant, for testing
     notif_map.clear();
     n_notifs = 0;
 
     std::cout << "Transfer verified\n";
 
-    std::cout << "performing partialMdTest with backends " << bknd1 << " " << bknd2 << "\n";
-    ret1 = partialMdTest(&A1, &A2, bknd1, bknd2);
-    assert (ret1 == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(ret1, "Fail to run partialMDTest", agent1);
+    std::cout << "performing partialMdTest with backends " << ucx1 << " " << ucx2 << "\n";
+    ret1 = partialMdTest(&A1, &A2, ucx1, ucx2);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Fail to run partialMDTest", agent1);
 
-    std::cout << "performing sideXferTest with backends " << bknd1 << " " << bknd2 << "\n";
-    ret1 = sideXferTest(&A1, &A2, req_handle, bknd2);
-    assert (ret1 == NIXL_SUCCESS);
-    CHECK_NIXL_ERROR(ret1, "Fail to run sideXferTest", agent1);
+    std::cout << "performing sideXferTest with backends " << ucx1 << " " << ucx2 << "\n";
+    ret1 = sideXferTest(&A1, &A2, req_handle, ucx2);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Fail to run sideXferTest", agent1);
 
     std::cout << "Performing local test\n";
     extra_params1.notifMsg = "local_notif";
     extra_params1.hasNotif = true;
     ret2 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_ldst_descs, agent1, req_handle2, &extra_params1);
-    assert (ret2 == NIXL_SUCCESS);
-
-    CHECK_NIXL_ERROR(ret1, "Failed to create Xfer Req", agent1);
+    CHECK_NIXL_ERROR_AGENT (ret1, "Failed to create Xfer Req", agent1);
 
     status = A1.postXferReq(req_handle2);
     std::cout << "Local transfer was posted\n";
@@ -835,46 +748,33 @@ main(int argc, char **argv) {
     while (status != NIXL_SUCCESS || n_notifs == 0) {
         if (status != NIXL_SUCCESS) status = A1.getXferStatus(req_handle2);
         if (n_notifs == 0) ret2 = A1.getNotifs(notif_map);
-        assert (status >= 0);
-        assert (ret2 == NIXL_SUCCESS);
-        CHECK_NIXL_ERROR((status < 0), "Failed to post Xfer Req", agent1);
-        CHECK_NIXL_ERROR(ret2, "Failed to get notifs", agent2);
+        CHECK_NIXL_ERROR_AGENT((status < 0), "Failed to post Xfer Req", agent1);
+        CHECK_NIXL_ERROR_AGENT(ret2, "Failed to get notifs", agent2);
         n_notifs = notif_map.size();
     }
 
     agent1_notifs = notif_map[agent1];
-    assert (agent1_notifs.size() == 1);
-    assert (agent1_notifs.front() == "local_notif");
-    assert (equal_buf((void*) req_src.addr, (void*) req_ldst.addr, req_size) == true);
 
-    CHECK_NIXL_ERROR((agent1_notifs.size() != 1), "Incorrect notif size", agent1);
-    CHECK_NIXL_ERROR((agent1_notifs.front() != "local_notif"), "Incorrect notification", agent1);
-    CHECK_NIXL_ERROR((!equal_buf((void *)req_src.addr, (void *)req_ldst.addr, req_size) == true),
+    CHECK_NIXL_ERROR_AGENT((agent1_notifs.size() != 1), "Incorrect notif size", agent1);
+    CHECK_NIXL_ERROR_AGENT((agent1_notifs.front() != "local_notif"), "Incorrect notification", agent1);
+    CHECK_NIXL_ERROR_AGENT((!equal_buf((void *)req_src.addr, (void *)req_ldst.addr, req_size) == true),
                      "Buffer mismatch after transfer",
                      agent1);
     ret1 = A1.releaseXferReq(req_handle);
     ret2 = A1.releaseXferReq(req_handle2);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to release Xfer Req", agent1);
+    CHECK_NIXL_ERROR_AGENT(ret2, "Failed to release Xfer Req2", agent1);
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
-
-    CHECK_NIXL_ERROR(ret1, "Failed to release Xfer Req", agent1);
-    CHECK_NIXL_ERROR(ret2, "Failed to release Xfer Req2", agent1);
     ret1 = A1.deregisterMem(dlist1, &extra_params1);
     ret2 = A2.deregisterMem(dlist2, &extra_params2);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to deregister memory", agent1);
+    CHECK_NIXL_ERROR_AGENT(ret2, "Failed to deregister memory", agent2);
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
-
-    CHECK_NIXL_ERROR(ret1, "Failed to deregister memory", agent1);
-    CHECK_NIXL_ERROR(ret2, "Failed to deregister memory", agent2);
     //only initiator should call invalidate
     ret1 = A1.invalidateRemoteMD(agent2);
     //A2.invalidateRemoteMD(agent1);
+    CHECK_NIXL_ERROR_AGENT(ret1, "Failed to invalidate remote MD", agent1);
 
-    assert (ret1 == NIXL_SUCCESS);
-
-    CHECK_NIXL_ERROR(ret1, "Failed to invalidate remote MD", agent1);
     free(addr1);
     free(addr2);
     free(addr3);

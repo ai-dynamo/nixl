@@ -22,7 +22,7 @@
 #include <nixl_descriptors.h>
 #include <nixl_params.h>
 #include <nixl.h>
-#include <cassert>
+#include "common/util.h"
 #include "stream/metadata_stream.h"
 #include "serdes/serdes.h"
 #include <mutex>
@@ -84,12 +84,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
     /** Only send desc list */
     nixlSerDes serdes;
     nixl_status_t st = dram_for_ucx.trim().serialize(&serdes);
-    assert(st == NIXL_SUCCESS);
-
-    if (st != NIXL_SUCCESS) {
-        std::cerr << "Failed to serialize registry dlist " << st << std::endl;
-        exit(EXIT_FAILURE);
-    }
+    CHECK_NIXL_ERROR(st, "Failed to serialize registry dlist");
 
     std::cout << "Thread " << thread_id << " Wait for initiator and then send xfer descs\n";
     std::string message = serdes.exportStr();
@@ -149,12 +144,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 
         nixl_notifs_t notifs;
         nixl_status_t ret = agent.getNotifs(notifs, extra_params);
-        assert(ret >= 0);
-
-        if (ret < 0) {
-            std::cerr << "Failed to get notifs, status: " << ret << std::endl;
-            exit(EXIT_FAILURE);
-        }
+        CHECK_NIXL_ERROR(ret, "Failed to get notifs");
 
         if (notifs.size() > 0) {
             std::lock_guard<std::mutex> lock(shared_state.mtx);
@@ -204,12 +194,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 
     while (ret != NIXL_SUCCESS) {
         ret = agent.getXferStatus(treq);
-        assert(ret >= 0);
-    }
-
-    if (ret != NIXL_SUCCESS) {
-        std::cerr << "Thread " << thread_id << " Error getting transfer status " << ret << "\n";
-        exit(-1);
+        CHECK_NIXL_ERROR(ret, "Failed to get transfer status");
     }
 
     std::cout << "Thread " << thread_id << " Completed Sending Data using UCX backend\n";
