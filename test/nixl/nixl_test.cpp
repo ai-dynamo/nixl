@@ -194,7 +194,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 
     while (ret != NIXL_SUCCESS) {
         ret = agent.getXferStatus(treq);
-        CHECK_NIXL_ERROR(ret, "Failed to get transfer status");
+        CHECK_NIXL_ERROR((ret > NIXL_IN_PROG), "Failed to get transfer status");
     }
 
     std::cout << "Thread " << thread_id << " Completed Sending Data using UCX backend\n";
