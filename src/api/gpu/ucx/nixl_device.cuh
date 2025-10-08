@@ -63,11 +63,15 @@ struct nixlGpuXferReqParams {
  */
 __device__ inline nixl_status_t
 nixlGpuConvertUcsStatus(ucs_status_t status) {
-    if (status == UCS_INPROGRESS) {
+    switch (status) {
+    case UCS_OK:
+        return NIXL_SUCCESS;
+    case UCS_INPROGRESS:
         return NIXL_IN_PROG;
+    default:
+        printf("UCX returned error: %d\n", status);
+        return NIXL_ERR_BACKEND;
     }
-    printf("UCX returned error: %d\n", status);
-    return NIXL_ERR_BACKEND;
 }
 
 /**
@@ -80,9 +84,11 @@ nixlGpuConvertUcsStatus(ucs_status_t status) {
  * @param size          [in]  Size in bytes of the memory to be transferred.
  * @param channel_id    [in]  Channel ID to use for the transfer.
  * @param is_no_delay   [in]  Whether to use no-delay mode.
- * @param xfer_status   [out] Status of the transfer. If not null, use @ref
- *                            nixlGpuGetXferStatus to check for completion.
+ * @param xfer_status   [out] Status of the transfer. If not null and the operation
+ *                            returns NIXL_IN_PROG, use @ref nixlGpuGetXferStatus
+ *                            to check for completion.
  *
+ * @return NIXL_SUCCESS       Operation completed successfully.
  * @return NIXL_IN_PROG       Operation successfully posted.
  * @return NIXL_ERR_BACKEND   An error occurred in UCX backend.
  */
@@ -113,9 +119,11 @@ nixlGpuPostSingleWriteXferReq(nixlGpuXferReqH req_hndl,
  * @param signal_offset      [in]  Offset of the signal to be sent.
  * @param channel_id         [in]  Channel ID to use for the transfer.
  * @param is_no_delay        [in]  Whether to use no-delay mode.
- * @param xfer_status        [out] Status of the transfer. If not null, use @ref
- *                                 nixlGpuGetXferStatus to check for completion.
+ * @param xfer_status        [out] Status of the transfer. If not null and the operation
+ *                                 returns NIXL_IN_PROG, use @ref nixlGpuGetXferStatus
+ *                                 to check for completion.
  *
+ * @return NIXL_SUCCESS            Operation completed successfully.
  * @return NIXL_IN_PROG            Operation successfully posted.
  * @return NIXL_ERR_BACKEND        An error occurred in UCX backend.
  */
@@ -151,9 +159,11 @@ nixlGpuPostSignalXferReq(nixlGpuXferReqH req_hndl,
  * @param signal_offset      [in]  Offset of the signal to be sent.
  * @param channel_id         [in]  Channel ID to use for the transfer.
  * @param is_no_delay        [in]  Whether to use no-delay mode.
- * @param xfer_status        [out] Status of the transfer. If not null, use @ref
- *                                 nixlGpuGetXferStatus to check for completion.
+ * @param xfer_status        [out] Status of the transfer. If not null and the operation
+ *                                 returns NIXL_IN_PROG, use @ref nixlGpuGetXferStatus
+ *                                 to check for completion.
  *
+ * @return NIXL_SUCCESS            Operation completed successfully.
  * @return NIXL_IN_PROG            Operation successfully posted.
  * @return NIXL_ERR_BACKEND        An error occurred in UCX backend.
  */
@@ -198,9 +208,11 @@ nixlGpuPostPartialWriteXferReq(nixlGpuXferReqH req_hndl,
  * @param signal_offset      [in]  Offset of the signal to be sent.
  * @param channel_id         [in]  Channel ID to use for the transfer.
  * @param is_no_delay        [in]  Whether to use no-delay mode.
- * @param xfer_status        [out] Status of the transfer. If not null, use @ref
- *                                 nixlGpuGetXferStatus to check for completion.
+ * @param xfer_status        [out] Status of the transfer. If not null and the operation
+ *                                 returns NIXL_IN_PROG, use @ref nixlGpuGetXferStatus
+ *                                 to check for completion.
  *
+ * @return NIXL_SUCCESS            Operation completed successfully.
  * @return NIXL_IN_PROG            Operation successfully posted.
  * @return NIXL_ERR_BACKEND        An error occurred in UCX backend.
  */
@@ -240,15 +252,7 @@ nixlGpuGetXferStatus(nixlGpuXferStatusH &xfer_status) {
     const auto status = ucp_device_progress_req<static_cast<ucs_device_level_t>(level)>(
         &xfer_status.device_request);
 
-    switch (status) {
-    case UCS_OK:
-        return NIXL_SUCCESS;
-    case UCS_INPROGRESS:
-        return NIXL_IN_PROG;
-    default:
-        printf("UCX returned error: %d\n", status);
-        return NIXL_ERR_BACKEND;
-    }
+    return nixlGpuConvertUcsStatus(status);
 }
 
 /**
