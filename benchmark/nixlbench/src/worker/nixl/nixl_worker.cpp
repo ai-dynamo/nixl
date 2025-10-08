@@ -160,11 +160,11 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
         // Set API type parameter for POSIX backend
         if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
-            backend_params["use_aio"] = true;
-            backend_params["use_uring"] = false;
+            backend_params["use_aio"] = "true";
+            backend_params["use_uring"] = "false";
         } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
-            backend_params["use_aio"] = false;
-            backend_params["use_uring"] = true;
+            backend_params["use_aio"] = "false";
+            backend_params["use_uring"] = "true";
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
                   << std::endl;
