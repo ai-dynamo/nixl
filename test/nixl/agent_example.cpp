@@ -29,7 +29,7 @@ void check_buf(void* buf, size_t len) {
 
     // Do some checks on the data.
     for(size_t i = 0; i<len; i++){
-        CHECK_NIXL_ERROR_AGENT((((uint8_t *)buf)[i] == 0xbb), "Data mismatch!", agent1);
+        CHECK_NIXL_ERROR_AGENT(!(((uint8_t *)buf)[i] == 0xbb), "Data mismatch!", agent1);
     }
 }
 
@@ -280,7 +280,7 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
         // Make sure not-loaded descriptors are not updated
         for (int invalid_idx = update + 1; invalid_idx < NUM_UPDATES; invalid_idx++) {
             status = A1->prepXferDlist(agent2, dst_mem_lists[invalid_idx].trim(), dst_side, &extra_params1);
-            CHECK_NIXL_ERROR_AGENT(status, "Prep xfer dlist should not be successful", agent1);
+            CHECK_NIXL_ERROR_AGENT((status == NIXL_SUCCESS), "Prep xfer dlist should not be successful", agent1);
             CHECK_NIXL_ERROR_AGENT((dst_side != nullptr), "Dst side is not null", agent1);
         }
         std::cout << "Metadata update #" << update << " completed\n";
@@ -329,7 +329,7 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
     // Wait for transfer completion
     while (xfer_status != NIXL_SUCCESS) {
         if (xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req);
-        CHECK_NIXL_ERROR_AGENT(xfer_status, "Failed to get xfer status", agent1);
+        CHECK_NIXL_ERROR_AGENT((xfer_status > NIXL_IN_PROG), "Failed to get xfer status", agent1);
     }
 
     // Verify transfer results
@@ -456,7 +456,7 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     while (xfer_status != NIXL_SUCCESS) {
         if (xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req1);
-        CHECK_NIXL_ERROR_AGENT(xfer_status, "Failed to get xfer status", agent1);
+        CHECK_NIXL_ERROR_AGENT((xfer_status > NIXL_IN_PROG), "Failed to get xfer status", agent1);
     }
 
     for(int i = 0; i<(n_bufs/2); i++)
@@ -471,7 +471,7 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     while (xfer_status != NIXL_SUCCESS) {
         if (xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req2);
-        CHECK_NIXL_ERROR_AGENT(xfer_status, "Failed to get xfer status", agent1);
+        CHECK_NIXL_ERROR_AGENT((xfer_status > NIXL_IN_PROG), "Failed to get xfer status", agent1);
     }
 
     for(int i = (n_bufs/2); i<n_bufs; i++)
@@ -486,7 +486,7 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
 
     while (xfer_status != NIXL_SUCCESS) {
         if (xfer_status != NIXL_SUCCESS) xfer_status = A1->getXferStatus(req3);
-        CHECK_NIXL_ERROR_AGENT(xfer_status, "Failed to get xfer status", agent1);
+        CHECK_NIXL_ERROR_AGENT((xfer_status > NIXL_IN_PROG), "Failed to get xfer status", agent1);
     }
 
     for(int i = (n_bufs/2); i<n_bufs; i++)
