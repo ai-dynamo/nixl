@@ -32,7 +32,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 
 ## Features
 
-- **Multiple Communication Backends**: UCX, UCX_MO, GPUNETIO, Mooncake for network communication
+- **Multiple Communication Backends**: UCX, UCX_MO, GPUNETIO, Mooncake, Libfabric for network communication
 - **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3) for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
@@ -57,7 +57,9 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 - **Memory**: Minimum 8GB RAM (16GB+ recommended for compilation)
 - **Storage**: At least 20GB free disk space
 - **GPU**: NVIDIA GPU with CUDA support (for GPU features)
-- **Network**: InfiniBand/Ethernet adapters (for UCX backend)
+- **Network**:
+  - ***InfiniBand/Ethernet Adapters*** - UCX/GPUNetIO/Mooncake Backends
+  - ***Elastic Fabric Adapters (EFA) in AWS*** - UCX/Libfabric Backends
 
 ### Software Requirements
 - **Operating System**: Ubuntu 22.04/24.04 LTS (recommended) or RHEL-based
@@ -199,7 +201,7 @@ For development environments or when Docker is not available.
 - **AWS SDK C++**: For S3 object storage backend
 - **GDS**: NVIDIA GPUDirect Storage
 - **NVSHMEM**: Required for NVSHMEM worker type
-- **hwloc**: Hardware locality detection
+- **hwloc**: Hardware locality detection (required for Libfabric only)
 
 **Python Dependencies:**
 - **PyTorch**: For KV-cache benchmarks
@@ -600,6 +602,7 @@ nvcc --version
 #### UCX Build Failures
 ```bash
 # Install missing dependencies
+# Only required if UCX cannot detect RDMA libraries correctly
 sudo apt-get reinstall -y libibverbs-dev librdmacm-dev rdma-core
 
 # Clean and rebuild
@@ -652,6 +655,10 @@ ldd /usr/local/nixlbench/bin/nixlbench
 # Verify GPU access
 nvidia-smi
 
+# Check GPU / NIC Topology
+nvidia-smi topo -m
+# GPU / NIC closest to each other have PIX/PXB as the value
+
 # Check CUDA driver
 cat /proc/driver/nvidia/version
 ```
@@ -659,11 +666,17 @@ cat /proc/driver/nvidia/version
 #### Network Backend Issues
 ```bash
 # List available devices
-ibv_devices  # For InfiniBand
-ip link show  # For Ethernet
+ibv_devices  # For RDMA devices
+ibv_devinfo -v # Detailed Info on all RDMA devices
+
+ip link show  # For Ethernet devices
 
 # Test UCX
 ucx_info -d  # List UCX devices
+
+export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging
+
+export UCX_PROTO_INFO=y # See transport used by UCX
 ```
 
 ### Performance Tuning
