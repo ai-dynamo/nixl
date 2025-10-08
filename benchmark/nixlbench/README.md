@@ -440,6 +440,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 #### Device and Network Configuration
 ```
 --device_list LIST         # Comma-separated device names (default: all)
+--etcd_endpoints URL       # ETCD server URL for coordination (optional for storage backends)
 ```
 
 #### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ)
@@ -485,11 +486,50 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --obj_req_checksum TYPE    # Required checksum for S3 backend [supported, required] (default: supported)
 ```
 
-## Backend-Specific Examples
+### Using ETCD for Coordination
 
-### Network Backends
+NIXL Benchmark uses an ETCD key-value store for coordination between benchmark workers. This is useful in containerized or cloud-native environments.
 
-**UCX Backend (Default):**
+**ETCD Requirements:**
+- **Required**: Network backends (UCX, UCX_MO, GPUNETIO, Mooncake, Libfabric) and multi-node setups
+- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, S3) running as single instances
+- **Required**: Storage backends when `--etcd_endpoints` is explicitly specified
+
+**For multi-node benchmarks:**
+
+1. Ensure ETCD server is running (e.g., `docker run -p 2379:2379 quay.io/coreos/etcd`
+2. Launch multiple nixlbench instances pointing to the same ETCD server
+
+**For single-instance storage benchmarks:**
+```bash
+# No ETCD needed - just run directly
+./nixlbench --backend GDS --filepath /mnt/storage/testfile
+
+# Or with explicit ETCD if coordination is needed
+./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile
+```
+
+Note: etcd can be installed directly on host as well:
+```bash
+apt install etcd-server
+```
+
+Example:
+```bash
+# On host 1
+./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
+
+# On host 2
+./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
+```
+
+The workers automatically coordinate ranks through ETCD as they connect.
+
+### Backend-Specific Examples
+
+#### Network Backends
+
+**UCX Backend (Default)**
 ```bash
 # Basic UCX benchmark
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
@@ -511,26 +551,29 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 
 **GDS (GPU Direct Storage):**
 ```bash
-# Basic GDS benchmark
+# Basic GDS benchmark (no ETCD needed for single instance)
+./nixlbench --backend GDS --filepath /mnt/storage/testfile --storage_enable_direct
+
+# GDS with ETCD coordination
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile --storage_enable_direct
 
 # GDS with custom batch settings
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile --gds_batch_pool_size 64 --gds_batch_limit 256
+./nixlbench --backend GDS --filepath /mnt/storage/testfile --gds_batch_pool_size 64 --gds_batch_limit 256
 ```
 
 **GDS_MT (Multi-threaded GDS):**
 ```bash
-# Multi-threaded GDS
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS_MT --filepath /mnt/storage/testfile --gds_mt_num_threads 8
+# Multi-threaded GDS (no ETCD needed for single instance)
+./nixlbench --backend GDS_MT --filepath /mnt/storage/testfile --gds_mt_num_threads 8
 ```
 
 **POSIX Backend:**
 ```bash
-# POSIX with AIO
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend POSIX --filepath /mnt/storage/testfile --posix_api_type AIO
+# POSIX with AIO (no ETCD needed for single instance)
+./nixlbench --backend POSIX --filepath /mnt/storage/testfile --posix_api_type AIO
 
 # POSIX with io_uring
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend POSIX --filepath /mnt/storage/testfile --posix_api_type URING --storage_enable_direct
+./nixlbench --backend POSIX --filepath /mnt/storage/testfile --posix_api_type URING --storage_enable_direct
 ```
 
 ### Worker Types
@@ -543,26 +586,29 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 
 ### S3 Object Storage Backend
 
-For OBJ plugin benchmarking, run etcd-server and a single nixlbench instance:
+For OBJ plugin benchmarking, ETCD is optional for single instances.
 
 ```bash
-# Basic S3 benchmark using environment variables
+# Basic S3 benchmark using environment variables (no ETCD needed)
 AWS_ACCESS_KEY_ID=<access_key> AWS_SECRET_ACCESS_KEY=<secret_key> AWS_DEFAULT_REGION=<region> \
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend OBJ --obj_bucket_name <bucket_name>
+./nixlbench --backend OBJ --obj_bucket_name <bucket_name>
 
-# S3 benchmark using command line flags
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend OBJ \
+# S3 benchmark using command line flags (no ETCD needed)
+./nixlbench --backend OBJ \
   --obj_access_key <access_key> \
   --obj_secret_key <secret_key> \
   --obj_region <region> \
   --obj_bucket_name <bucket_name>
+
+# S3 benchmark with ETCD coordination (if needed)
+./nixlbench --etcd_endpoints http://etcd-server:2379 --backend OBJ --obj_bucket_name <bucket_name>
 ```
 
 **Performance Considerations:**
 Transfer times are higher than local storage, so consider reducing iterations:
 
 ```bash
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend OBJ \
+./nixlbench --backend OBJ \
   --obj_bucket_name test-bucket \
   --warmup_iter 32 --num_iter 32 --large_blk_iter_ftr 2
 ```
