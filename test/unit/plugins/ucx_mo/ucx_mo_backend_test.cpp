@@ -354,7 +354,7 @@ void performTransfer(nixlBackendEngine *ucx1, nixlBackendEngine *ucx2,
     status = ucx1->prepXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
     CHECK_NIXL_ERROR(status, "Failed to prep ucx1 xfer");
     status = ucx1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
-    CHECK_NIXL_ERROR(status, "Failed to post ucx1 xfer");
+    CHECK_NIXL_ERROR((status > NIXL_IN_PROG), "Failed to post ucx1 xfer");
 
 
     if (status == NIXL_SUCCESS) {

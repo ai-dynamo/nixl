@@ -408,7 +408,6 @@ performTransfer(nixlUcxEngine *ucx1,
     }
     nixlBackendReqH *&handle = hiter.getHandle();
     ret3 = ucx1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
-    CHECK_NIXL_ERROR(ret3, "Failed to post xfer");
     CHECK_NIXL_ERROR(!((ret3 == NIXL_SUCCESS) || (ret3 == NIXL_IN_PROG)), "Failed to post xfer");
 
     if (ret3 == NIXL_SUCCESS) {
