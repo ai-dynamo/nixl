@@ -46,6 +46,7 @@ env
 nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
+cat /sys/devices/virtual/dmi/id/product_name || true
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
@@ -62,6 +63,9 @@ cd ${INSTALL_DIR}
 ./bin/desc_example
 ./bin/agent_example
 ./bin/nixl_example
+if $TEST_LIBFABRIC ; then
+    ./bin/nixl_example LIBFABRIC
+fi
 ./bin/nixl_etcd_example
 ./bin/ucx_backend_test
 # Skip UCX_MO backend test on GPU worker, fails VRAM transfers
