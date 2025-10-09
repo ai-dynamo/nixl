@@ -276,7 +276,7 @@ void *releaseValidationPtr(nixl_mem_t mem_type, void *addr)
 
 void
 allocateWrongGPUTest(nixlUcxEngine *ucx, int dev_id) {
-    nixlBlobDesc desc;
+    nixlBlobDesc desc = {0};
     nixlBackendMD* md;
     void* buf;
 
