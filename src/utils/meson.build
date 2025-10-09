@@ -15,7 +15,9 @@
 
 subdir('common')
 subdir('serdes')
-subdir('ucx')
+if ucx_dep.found()
+    subdir('ucx')
+endif
 subdir('stream')
 subdir('file')
 
