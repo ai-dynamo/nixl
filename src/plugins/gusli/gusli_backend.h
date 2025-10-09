@@ -26,43 +26,46 @@ class nixlGusliEngine : public nixlBackendEngine {
 public:
     nixlGusliEngine(const nixlBackendInitParams *init_params);
     ~nixlGusliEngine();
+
     bool
-    supportsNotif(void) const override {
+    supportsNotif() const override {
         return false;
     }
     bool
-    supportsRemote(void) const override {
+    supportsRemote() const override {
         return false;
     }
     bool
     supportsLocal(void) const override {
         return true;
     }
-    bool
-    supportsProgTh(void) const override {
-        return false;
-    }
+
     nixl_mem_list_t
     getSupportedMems(void) const override {
         return {BLK_SEG, DRAM_SEG};
     }
+
     nixl_status_t
     connect(const std::string &remote_agent) override {
         return NIXL_SUCCESS;
     }
+
     nixl_status_t
     disconnect(const std::string &remote_agent) override {
         return NIXL_SUCCESS;
     }
+
     nixl_status_t
     loadLocalMD(nixlBackendMD *in, nixlBackendMD *&out) override {
         out = in;
         return NIXL_SUCCESS;
     }
+
     nixl_status_t
     unloadMD(nixlBackendMD *input) override {
         return NIXL_SUCCESS;
     }
+
     [[nodiscard]] nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
     [[nodiscard]] nixl_status_t
@@ -90,6 +93,7 @@ public:
 
 private:
     std::unique_ptr<gusli::global_clnt_context> lib_;
+
     [[nodiscard]] int32_t
     getGidOfBDev(uint64_t devId) const {
         gusli::backend_bdev_id bdev;

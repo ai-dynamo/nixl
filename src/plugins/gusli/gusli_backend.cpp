@@ -21,14 +21,15 @@
     do {                                                                                          \
         NIXL_ERROR << absl::StrFormat(                                                            \
             "GUSLI: %s() %s[%d]" format, __PRETTY_FUNCTION__, __FILE__, __LINE__, ##__VA_ARGS__); \
-    }                                                                                             \
-    while (0)
+    } while (0)
 #define __LOG_DBG(format, ...)                                          \
-    do { NIXL_DEBUG << absl::StrFormat("GUSLI: " format, ##__VA_ARGS__); } \
-    while (0)
+    do {                                                                \
+        NIXL_DEBUG << absl::StrFormat("GUSLI: " format, ##__VA_ARGS__); \
+    } while (0)
 #define __LOG_TRC(format, ...)                                          \
-    do { NIXL_TRACE << absl::StrFormat("GUSLI: " format, ##__VA_ARGS__); } \
-    while (0)
+    do {                                                                \
+        NIXL_TRACE << absl::StrFormat("GUSLI: " format, ##__VA_ARGS__); \
+    } while (0)
 #define __LOG_RETERR(rv, format, ...)                              \
     do {                                                           \
         __LOG_ERR("nixl_err=%d, " format, (int)rv, ##__VA_ARGS__); \
@@ -275,8 +276,9 @@ public:
         return getCompStatus();
     }
 
- private:
+private:
     gusli::io_request io; // gusli executor of 1 io
+
     void
     initCommon(void) {
         io.params.set(op).set_priority(100).set_async_pollable();
@@ -334,7 +336,7 @@ public:
         return getCompStatus();
     }
 
- private:
+private:
     std::vector<nixlGusliBackendReqHSingleBdev> child;
 };
 

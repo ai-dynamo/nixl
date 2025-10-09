@@ -18,55 +18,37 @@
 #include "backend/backend_plugin.h"
 #include "gusli_backend.h"
 
-namespace {
-[[nodiscard]] nixlBackendEngine *
-create_gusli_engine(const nixlBackendInitParams *init_params) {
-    return new nixlGusliEngine(init_params);
-}
-void
-destroy_gusli_engine(nixlBackendEngine *engine) {
-    delete engine;
-}
-[[nodiscard]] const char *
-get_plugin_name() {
-    return "GUSLI";
-} // PLUGIN_NAME
-[[nodiscard]] const char *
-get_plugin_version() {
-    return "0.1.0";
-} // PLUGIN_VERSION
+// Plugin type alias for convenience
+using gusli_plugin_t = nixlBackendPluginCreator<nixlGusliEngine>;
+
 [[nodiscard]] nixl_b_params_t
-get_backend_options() {
+get_gusli_backend_options() {
     nixl_b_params_t params;
-    params["client_name"] = "Debug unique client name (optional)";
-    params["max_num_simultaneous_requests"] = "Integer, typically ~256 (optional)";
-    params["config_file"] = "string of block devices or path to config file (mandatory)";
+    params["client_name"] = "";
+    params["max_num_simultaneous_requests"] = "256";
+    params["config_file"] = "";
     return params;
 }
 
-[[nodiscard]] nixl_mem_list_t
-get_backend_mems() {
-    return {BLK_SEG, DRAM_SEG};
-}
-
-nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
-                            create_gusli_engine,
-                            destroy_gusli_engine,
-                            get_plugin_name,
-                            get_plugin_version,
-                            get_backend_options,
-                            get_backend_mems};
-} // namespace
 #ifdef STATIC_PLUGIN_GUSLI
 nixlBackendPlugin *
 createStaticGusliPlugin() {
-    return &plugin;
+    return gusli_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                  "GUSLI",
+                                  "0.1.0",
+                                  get_gusli_backend_options(),
+                                  {BLK_SEG, DRAM_SEG});
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return &plugin;
+    return gusli_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                  "GUSLI",
+                                  "0.1.0",
+                                  get_gusli_backend_options(),
+                                  {BLK_SEG, DRAM_SEG});
 }
+
 extern "C" NIXL_PLUGIN_EXPORT void
 nixl_plugin_fini() {}
 #endif
