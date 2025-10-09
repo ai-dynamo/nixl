@@ -170,9 +170,11 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
                   << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
         std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
-                  << xferBenchConfig::gpunetio_device_list << std::endl;
+                  << xferBenchConfig::gpunetio_device_list << " OOB interface "
+                  << xferBenchConfig::gpunetio_oob_list << std::endl;
         backend_params["network_devices"] = devices[0];
         backend_params["gpu_devices"] = xferBenchConfig::gpunetio_device_list;
+        backend_params["oob_interface"] = xferBenchConfig::gpunetio_oob_list;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
         std::cout << "Mooncake backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
@@ -702,6 +704,10 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
 
     opt_args.backends.push_back(backend_engine);
     for (auto &iov_list : iov_lists) {
+        nixl_reg_dlist_t desc_list(seg_type);
+        iovListToNixlRegDlist(iov_list, desc_list);
+        CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+
         for (auto &iov : iov_list) {
             switch (seg_type) {
             case DRAM_SEG:
@@ -717,10 +723,6 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
                 exit(EXIT_FAILURE);
             }
         }
-
-        nixl_reg_dlist_t desc_list(seg_type);
-        iovListToNixlRegDlist(iov_list, desc_list);
-        CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
     }
 
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
