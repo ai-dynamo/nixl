@@ -93,13 +93,9 @@ namespace {
             if (custom_params->count("use_uring") > 0) {
                 const auto& value = custom_params->at("use_uring");
                 if (value == "true" || value == "1") {
-#ifndef HAVE_LIBURING
-                    NIXL_ERROR << "io_uring backend requested but not available - not built with liburing support";
-                    return queue_t::UNSUPPORTED;
-#endif
                     if (!QueueFactory::isUringAvailable()) {
                         NIXL_ERROR << "io_uring backend requested but not available at runtime";
-                        return queue_t::URING;
+                        return queue_t::UNSUPPORTED;
                     }
                     return queue_t::URING;
                 }
