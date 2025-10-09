@@ -31,7 +31,7 @@ void check_buf(void* buf, size_t len) {
 
     // Do some checks on the data.
     for(size_t i = 0; i<len; i++){
-        CHECK_NIXL_ERROR_AGENT(!(((uint8_t*) buf)[i] == 0xbb), "Data mismatch!", agent1);
+        CHECK_NIXL_ERROR_AGENT(!(((uint8_t *)buf)[i] == 0xbb), "Data mismatch!", agent1);
     }
 }
 
@@ -223,7 +223,8 @@ main(int argc, char **argv) {
 
     std::vector<std::string> agent1_notifs = notif_map[agent1];
     CHECK_NIXL_ERROR_AGENT((agent1_notifs.size() != 1), "Incorrect notif size", agent1);
-    CHECK_NIXL_ERROR_AGENT((agent1_notifs.front() != "notification"), "Incorrect notification", agent1);
+    CHECK_NIXL_ERROR_AGENT(
+        (agent1_notifs.front() != "notification"), "Incorrect notification", agent1);
 
     notif_map[agent1].clear(); // Redundant, for testing
     notif_map.clear();
