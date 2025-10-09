@@ -19,6 +19,243 @@ limitations under the License.
 
 This project uses the following third-party libraries. Each library is open-source and licensed under the terms indicated below.
 
+## hwloc - 2.3.0-3
+
+- **Repository URL**: https://github.com/open-mpi/hwloc
+- **License URL**: https://www.open-mpi.org/projects/hwloc/license.php
+- **License name**: BSD3
+### License Text:
+
+```
+   1 Copyright © 2004-2006 The Trustees of Indiana University and Indiana University Research and Technology Corporation.  All rights reserved.
+   2 Copyright © 2004-2005 The University of Tennessee and The University of Tennessee Research Foundation.  All rights reserved.
+   3 Copyright © 2004-2005 High Performance Computing Center Stuttgart, University of Stuttgart.  All rights reserved.
+   4 Copyright © 2004-2005 The Regents of the University of California. All rights reserved.
+   5 Copyright © 2009      CNRS
+   6 Copyright © 2009-2016 Inria.  All rights reserved.
+   7 Copyright © 2009-2015 Université Bordeaux
+   8 Copyright © 2009-2015 Cisco Systems, Inc.  All rights reserved.
+   9 Copyright © 2009-2012 Oracle and/or its affiliates.  All rights reserved.
+  10 Copyright © 2010      IBM
+  11 Copyright © 2010      Jirka Hladky
+  12 Copyright © 2012      Aleksej Saushev, The NetBSD Foundation
+  13 Copyright © 2012      Blue Brain Project, EPFL. All rights reserved.
+  14 Copyright © 2013-2014 University of Wisconsin-La Crosse. All rights reserved.
+  15 Copyright © 2015      Research Organization for Information Science and Technology (RIST). All rights reserved.
+  16 Copyright © 2015-2016 Intel, Inc.  All rights reserved.
+  17 See COPYING in top-level directory.
+  18
+  19 ==================================================================
+  20
+  21           BSD license
+  22
+  23 Redistribution and use in source and binary forms, with or without
+  24 modification, are permitted provided that the following conditions
+  25 are met:
+  26
+  27 1. Redistributions of source code must retain the above copyright
+  28    notice, this list of conditions and the following disclaimer.
+  29 2. Redistributions in binary form must reproduce the above copyright
+  30    notice, this list of conditions and the following disclaimer in the
+  31    documentation and/or other materials provided with the distribution.
+  32 3. The name of the author may not be used to endorse or promote products
+  33    derived from this software without specific prior written permission.
+  34
+  35 THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+  36 IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+  37 OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+  38 IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+  39 INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+  40 NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+  41 DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+  42 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  43 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+  44 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  45
+  46 ==================================================================
+  ```
+## libucm - 48.0-1
+
+- **Repository URL**: https://github.com/linux-rdma/rdma-core
+- **License URL**: https://github.com/linux-rdma/rdma-core/blob/master/COPYING.BSD_MIT
+- **License name**: BSD3
+### License Text:
+
+```
+   1                     OpenIB.org BSD license (MIT variant)
+   2
+   3 Redistribution and use in source and binary forms, with or without
+   4 modification, are permitted provided that the following conditions are met:
+   5
+   6   - Redistributions of source code must retain the above copyright notice,
+   7     this list of conditions and the following disclaimer.
+   8
+   9   - Redistributions in binary form must reproduce the above copyright notice,
+  10     this list of conditions and the following disclaimer in the documentation
+  11     and/or other materials provided with the distribution.
+  12
+  13 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  14 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  15 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  16 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  17 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  18 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  19 SOFTWARE.
+  ```
+## libmlx5 - 48.0-1
+
+- **Repository URL**: https://github.com/linux-rdma/rdma-core
+- **License URL**: https://github.com/linux-rdma/rdma-core/blob/master/COPYING.BSD_MIT
+- **License name**: BSD3
+### License Text:
+
+```
+   1                     OpenIB.org BSD license (MIT variant)
+   2
+   3 Redistribution and use in source and binary forms, with or without
+   4 modification, are permitted provided that the following conditions are met:
+   5
+   6   - Redistributions of source code must retain the above copyright notice,
+   7     this list of conditions and the following disclaimer.
+   8
+   9   - Redistributions in binary form must reproduce the above copyright notice,
+  10     this list of conditions and the following disclaimer in the documentation
+  11     and/or other materials provided with the distribution.
+  12
+  13 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  14 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  15 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  16 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  17 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  18 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  19 SOFTWARE.
+  ```
+## libefa - 48.0-1
+
+- **Repository URL**: https://github.com/linux-rdma/rdma-core
+- **License URL**: https://github.com/linux-rdma/rdma-core/blob/master/COPYING.BSD_MIT
+- **License name**: BSD3
+### License Text:
+
+```
+   1                     OpenIB.org BSD license (MIT variant)
+   2
+   3 Redistribution and use in source and binary forms, with or without
+   4 modification, are permitted provided that the following conditions are met:
+   5
+   6   - Redistributions of source code must retain the above copyright notice,
+   7     this list of conditions and the following disclaimer.
+   8
+   9   - Redistributions in binary form must reproduce the above copyright notice,
+  10     this list of conditions and the following disclaimer in the documentation
+  11     and/or other materials provided with the distribution.
+  12
+  13 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  14 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  15 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  16 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  17 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  18 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  19 SOFTWARE.
+  ```
+## libibverbs - 48.0-1
+
+- **Repository URL**: https://github.com/linux-rdma/rdma-core
+- **License URL**: https://github.com/linux-rdma/rdma-core/blob/master/COPYING.BSD_MIT
+- **License name**: BSD3
+### License Text:
+
+```
+   1                     OpenIB.org BSD license (MIT variant)
+   2
+   3 Redistribution and use in source and binary forms, with or without
+   4 modification, are permitted provided that the following conditions are met:
+   5
+   6   - Redistributions of source code must retain the above copyright notice,
+   7     this list of conditions and the following disclaimer.
+   8
+   9   - Redistributions in binary form must reproduce the above copyright notice,
+  10     this list of conditions and the following disclaimer in the documentation
+  11     and/or other materials provided with the distribution.
+  12
+  13 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  14 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  15 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  16 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  17 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  18 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  19 SOFTWARE.
+  ```
+## librdmacm - 48.0-1
+
+- **Repository URL**: https://github.com/linux-rdma/rdma-core
+- **License URL**: https://github.com/linux-rdma/rdma-core/blob/master/COPYING.BSD_MIT
+- **License name**: BSD3
+### License Text:
+
+```
+   1                     OpenIB.org BSD license (MIT variant)
+   2
+   3 Redistribution and use in source and binary forms, with or without
+   4 modification, are permitted provided that the following conditions are met:
+   5
+   6   - Redistributions of source code must retain the above copyright notice,
+   7     this list of conditions and the following disclaimer.
+   8
+   9   - Redistributions in binary form must reproduce the above copyright notice,
+  10     this list of conditions and the following disclaimer in the documentation
+  11     and/or other materials provided with the distribution.
+  12
+  13 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  14 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  15 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  16 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  17 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  18 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  19 SOFTWARE.
+  ```
+## libfabric - 2.3.0
+
+- **Repository URL**: https://github.com/ofiwg/libfabric
+- **License URL**: https://github.com/ofiwg/libfabric/blob/v2.3.0/COPYING
+- **License name**: BSD3
+### License Text:
+
+```
+   1 Copyright (c) Intel Corporation.  All rights reserved.
+   2 Copyright (c) 2015-2019 Cisco Systems, Inc.  All rights reserved.
+   3
+   4 ==================================================================
+   5
+   6           BSD license
+   7
+   8 Redistribution and use in source and binary forms, with or without
+   9 modification, are permitted provided that the following conditions
+  10 are met:
+  11
+  12   * Redistributions of source code must retain the above copyright
+  13     notice, this list of conditions and the following disclaimer.
+  14
+  15   * Redistributions in binary form must reproduce the above
+  16     copyright notice, this list of conditions and the following
+  17     disclaimer in the documentation and/or other materials provided
+  18     with the distribution.
+  19
+  20 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+  21 "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+  22 LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+  23 FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+  24 COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+  25 INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+  26 BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  27 LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+  28 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+  29 LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+  30 ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  31 POSSIBILITY OF SUCH DAMAGE.
+  32
+  33 ==================================================================
+  ```
 ## glibc - 2.35
 
 - **Repository URL**: https://sourceware.org/git/?p=glibc.git
