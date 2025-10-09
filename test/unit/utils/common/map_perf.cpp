@@ -23,7 +23,7 @@
 #include <sys/time.h>
 
 #include "common/str_tools.h"
-#include "common/util.h"
+#include "test_utils.h"
 
 std::string generate_random_string(size_t length) {
     const std::string characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -118,7 +118,7 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
     std::cout << "custom map lookup test, total time for " << n_iters << " iters: "
               << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
 
-    CHECK_NIXL_ERROR_AGENT((sum1 != sum2), "Test failed", "test");
+    nixl_exit_on_failure((sum1 == sum2), "Test failed", "test");
 
     gettimeofday(&start_time, NULL);
     for(int i = 0; i<n_iters; i++) {
@@ -136,14 +136,19 @@ void test_comparison_perf(const int n_entries, const size_t str_len) {
 int main()
 {
     strEqual tester;
-    CHECK_NIXL_ERROR_AGENT(tester.operator()("abcdefgh", "abcdefgh"), "Test failed", "test");
-    CHECK_NIXL_ERROR_AGENT(tester.operator()("abcdefgh", "abdcefgh"), "Test failed", "test");
-    CHECK_NIXL_ERROR_AGENT(tester.operator()("abcdefgh123", "abcdefgh123"), "Test failed", "test");
-    CHECK_NIXL_ERROR_AGENT(tester.operator()("abcdefgh123", "aadcefgh123"), "Test failed", "test");
-    CHECK_NIXL_ERROR_AGENT(
-        tester.operator()("12345678abcdefgh", "12345678abcdefgh"), "Test failed", "test");
-    CHECK_NIXL_ERROR_AGENT(
-        tester.operator()("12345678abcdefgh", "12345687abcdefgh"), "Test failed", "test");
+    nixl_exit_on_failure(
+        (tester.operator()("abcdefgh", "abcdefgh") == true), "Test failed", "test");
+    nixl_exit_on_failure(
+        (tester.operator()("abcdefgh", "abdcefgh") == false), "Test failed", "test");
+    nixl_exit_on_failure(
+        (tester.operator()("abcdefgh123", "abcdefgh123") == true), "Test failed", "test");
+    nixl_exit_on_failure(
+        (tester.operator()("abcdefgh123", "aadcefgh123") == false), "Test failed", "test");
+    nixl_exit_on_failure(
+        (tester.operator()("12345678abcdefgh", "12345678abcdefgh") == true), "Test failed", "test");
+    nixl_exit_on_failure((tester.operator()("12345678abcdefgh", "12345687abcdefgh") == false),
+                         "Test failed",
+                         "test");
 
     test_comparison_perf(16, 8);
     test_comparison_perf(16, 16);

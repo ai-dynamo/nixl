@@ -14,11 +14,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef UTIL_H
-#define UTIL_H
+#include "test_utils.h"
+#include "nixl_types.h"
+#include "common/nixl_log.h"
+#include <cstdlib>
 
-#define CONCAT(a, b) CONCAT_0(a, b)
-#define CONCAT_0(a, b) a ## b
-#define UNIQUE_NAME(name) CONCAT(name, __COUNTER__)
+void
+nixl_exit_on_failure(nixl_status_t status, std::string_view message, std::string_view agent) {
+    if (status == NIXL_SUCCESS) return;
 
-#endif /* UTIL_H */
+    NIXL_ERROR << message << (agent.empty() ? "" : " for agent " + std::string{agent}) << ": "
+               << nixlEnumStrings::statusStr(status) << " [" << status << "]";
+    exit(EXIT_FAILURE);
+}
+
+void
+nixl_exit_on_failure(bool condition, std::string_view message, std::string_view agent) {
+    if (condition) return;
+
+    NIXL_ERROR << message << (agent.empty() ? "" : " for agent " + std::string{agent});
+    exit(EXIT_FAILURE);
+}

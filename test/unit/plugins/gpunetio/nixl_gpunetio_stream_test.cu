@@ -21,7 +21,7 @@
 #include <nixl_descriptors.h>
 #include <nixl_params.h>
 #include <nixl.h>
-#include "common/util.h"
+#include "test_utils.h"
 #include "stream/metadata_stream.h"
 #include "serdes/serdes.h"
 
@@ -300,10 +300,10 @@ main (int argc, char *argv[]) {
 
     /** Register memory in both initiator and target */
     ret = agent.registerMem (local_vram_rdlist, &extra_params);
-    CHECK_NIXL_ERROR_AGENT(ret, "Failed to register memory", role);
+    nixl_exit_on_failure(ret, "Failed to register memory", role);
     local_vram = local_vram_rdlist.trim();
     ret = agent.getLocalMD(metadata);
-    CHECK_NIXL_ERROR_AGENT(ret, "Failed to get local MD", role);
+    nixl_exit_on_failure(ret, "Failed to get local MD", role);
 
     std::cout << " Start Control Path metadata exchanges \n";
     if (role == target) {
@@ -316,16 +316,16 @@ main (int argc, char *argv[]) {
         std::cout << " Received checkRemoteMD from " << initiator << std::endl;
 
         data_address_ptr = (uintptr_t)data_address;
-        CHECK_NIXL_ERROR_AGENT(serdes->addBuf("BaseAddress", &data_address_ptr, sizeof(uintptr_t)),
-                               "Failed to add BaseAddress",
-                               role);
-        CHECK_NIXL_ERROR_AGENT(serdes->addBuf("BufferSize", &buf_size, sizeof(size_t)),
-                               "Failed to add BufferSize",
-                               role);
-        CHECK_NIXL_ERROR_AGENT(serdes->addBuf("BufferTransfer", &buf_num, sizeof(uint32_t)),
-                               "Failed to add BufferTransfer",
-                               role);
-        CHECK_NIXL_ERROR_AGENT(serdes->addStr("AgentMD", metadata), "Failed to add AgentMD", role);
+        nixl_exit_on_failure(serdes->addBuf("BaseAddress", &data_address_ptr, sizeof(uintptr_t)),
+                             "Failed to add BaseAddress",
+                             role);
+        nixl_exit_on_failure(serdes->addBuf("BufferSize", &buf_size, sizeof(size_t)),
+                             "Failed to add BufferSize",
+                             role);
+        nixl_exit_on_failure(serdes->addBuf("BufferTransfer", &buf_num, sizeof(uint32_t)),
+                             "Failed to add BufferTransfer",
+                             role);
+        nixl_exit_on_failure(serdes->addStr("AgentMD", metadata), "Failed to add AgentMD", role);
         std::string message = serdes->exportStr();
         while (agent.genNotif (initiator, message, &extra_params) != NIXL_SUCCESS)
             ;
@@ -419,9 +419,9 @@ main (int argc, char *argv[]) {
         md_extra_params.port = peer_port;
 
         ret = agent.fetchRemoteMD (target, &md_extra_params);
-        CHECK_NIXL_ERROR_AGENT(ret, "Failed to fetch remote MD", role);
+        nixl_exit_on_failure(ret, "Failed to fetch remote MD", role);
         ret = agent.sendLocalMD (&md_extra_params);
-        CHECK_NIXL_ERROR_AGENT(ret, "Failed to send local MD", role);
+        nixl_exit_on_failure(ret, "Failed to send local MD", role);
         // Not used
         nixl_xfer_dlist_t descs (DRAM_SEG);
         std::cout << initiator << " waiting checkRemoteMD from " << target << std::endl;
@@ -435,19 +435,19 @@ main (int argc, char *argv[]) {
 
         for (const auto &notif : notifs[target]) {
             remote_serdes->importStr (notif);
-            CHECK_NIXL_ERROR_AGENT(
+            nixl_exit_on_failure(
                 remote_serdes->getBuf("BaseAddress", &data_address_ptr, sizeof(uintptr_t)),
                 "Failed to get BaseAddress",
                 role);
-            CHECK_NIXL_ERROR_AGENT(remote_serdes->getBuf("BufferSize", &buf_size, sizeof(size_t)),
-                                   "Failed to get BufferSize",
-                                   role);
-            CHECK_NIXL_ERROR_AGENT(
+            nixl_exit_on_failure(remote_serdes->getBuf("BufferSize", &buf_size, sizeof(size_t)),
+                                 "Failed to get BufferSize",
+                                 role);
+            nixl_exit_on_failure(
                 remote_serdes->getBuf("BufferTransfer", &buf_num, sizeof(uint32_t)),
                 "Failed to get BufferTransfer",
                 role);
             remote_metadata = remote_serdes->getStr ("AgentMD");
-            CHECK_NIXL_ERROR_AGENT((remote_metadata != ""), "Failed to get AgentMD", role);
+            nixl_exit_on_failure((remote_metadata != ""), "Failed to get AgentMD", role);
             agent.loadRemoteMD (remote_metadata, target);
         }
         notifs.clear();
@@ -548,16 +548,16 @@ main (int argc, char *argv[]) {
             std::cout << "Post the request with GPUNETIO backend transfer 2" << std::endl;
             PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
-            CHECK_NIXL_ERROR_AGENT(status, "Failed to post Xfer Req", role);
+            nixl_exit_on_failure(status, "Failed to post Xfer Req", role);
             POP_RANGE
 
             std::cout << "Waiting for completion\n";
             PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
-                                       "Failed to get Xfer Status",
-                                       role);
+                nixl_exit_on_failure(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
+                                     "Failed to get Xfer Status",
+                                     role);
             }
             POP_RANGE
         } else {
@@ -570,16 +570,16 @@ main (int argc, char *argv[]) {
             std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
             PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
-            CHECK_NIXL_ERROR_AGENT(status, "Failed to post Xfer Req", role);
+            nixl_exit_on_failure(status, "Failed to post Xfer Req", role);
             POP_RANGE
 
             std::cout << "Waiting for completion\n";
             PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
-                                       "Failed to get Xfer Status",
-                                       role);
+                nixl_exit_on_failure(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
+                                     "Failed to get Xfer Status",
+                                     role);
             }
             POP_RANGE
 
@@ -608,14 +608,14 @@ main (int argc, char *argv[]) {
             std::cout << "Post the request with GPUNETIO backend transfer 2" << std::endl;
             PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
-            CHECK_NIXL_ERROR_AGENT(status, "Failed to post Xfer Req", role);
+            nixl_exit_on_failure(status, "Failed to post Xfer Req", role);
             POP_RANGE
 
             std::cout << "Waiting for completion\n";
             PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                CHECK_NIXL_ERROR_AGENT(status, "Failed to get Xfer Status", role);
+                nixl_exit_on_failure(status, "Failed to get Xfer Status", role);
             }
             POP_RANGE
         }

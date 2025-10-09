@@ -18,7 +18,7 @@
 #include <thread>
 
 #include "ucx_backend.h"
-#include "common/util.h"
+#include "test_utils.h"
 
 
 // Temporarily while fixing CI/CD pipeline
@@ -61,13 +61,13 @@ void test_thread(int id)
     while(!ready[!id]);
 
     ret = ucx->loadRemoteConnInfo(other, conn_info[!id]);
-    CHECK_NIXL_ERROR_AGENT(ret, "Failed to load remote conn info", my_name);
+    nixl_exit_on_failure((ret == NIXL_SUCCESS), "Failed to load remote conn info", my_name);
 
     //one-sided connect
     if(!id)
         ret = ucx->connect(other);
 
-    CHECK_NIXL_ERROR_AGENT(ret, "Failed to connect", my_name);
+    nixl_exit_on_failure((ret == NIXL_SUCCESS), "Failed to connect", my_name);
 
     done[id] = true;
     while(!done[!id])
