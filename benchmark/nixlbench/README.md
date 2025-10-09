@@ -17,81 +17,335 @@ limitations under the License.
 
 # NIXL Benchmark
 
-A benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) that uses ETCD for coordination.
+A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) that uses ETCD for coordination. NIXLBench provides performance testing across multiple communication backends and storage systems, making it ideal for evaluating high-performance data transfer scenarios in distributed computing environments.
+
+## Table of Contents
+
+1. [Features](#features)
+2. [System Requirements](#system-requirements)
+3. [Quick Start](#quick-start)
+4. [Building](#building)
+5. [Usage](#usage)
+6. [Backend-Specific Examples](#backend-specific-examples)
+7. [Troubleshooting](#troubleshooting)
+8. [Support and Resources](#support-and-resources)
 
 ## Features
 
-- Benchmarks NIXL performance across multiple backends:
-  - **Network backends**: UCX, UCX_MO, GPUNETIO, Mooncake
-  - **Storage backends**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3)
-- Supports multiple communication patterns:
+- **Multiple Communication Backends**: UCX, UCX_MO, GPUNETIO, Mooncake, Libfabric for network communication
+- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3) for storage operations
+- **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
   - **One-to-many**: Single initiator to multiple targets
   - **TP (Tensor Parallel)**: Optimized for distributed training workloads
-- Tests both CPU (DRAM) and GPU (VRAM) memory transfers
-- Support for multiple worker types:
+- **Memory Type Support**: Tests both CPU (DRAM) and GPU (VRAM) memory transfers
+- **Multiple Worker Types**:
   - **NIXL worker**: Full-featured with all backend support
   - **NVSHMEM worker**: GPU-focused with VRAM-only transfers
-- Uses ETCD for worker coordination - ideal for containerized and cloud-native environments
-- Multi-threading support with configurable progress threads
-- VMM memory allocation support for CUDA Fabric
-- Comprehensive performance metrics with latency percentiles
-- Data consistency validation for reliability testing
+- **Cloud-Native Coordination**: Uses ETCD for worker coordination - ideal for containerized environments
+- **Performance Features**:
+  - Multi-threading support with configurable progress threads
+  - VMM memory allocation support for CUDA Fabric
+  - Comprehensive performance metrics with latency percentiles
+  - Data consistency validation for reliability testing
+
+## System Requirements
+
+### Hardware Requirements
+- **CPU**: x86_64 or aarch64 architecture
+- **Memory**: Minimum 8GB RAM (16GB+ recommended for compilation)
+- **Storage**: At least 20GB free disk space
+- **GPU**: NVIDIA GPU with CUDA support (for GPU features)
+- **Network**:
+  - ***InfiniBand/Ethernet Adapters*** - UCX/GPUNetIO/Mooncake Backends
+  - ***Elastic Fabric Adapters (EFA) in AWS*** - UCX/Libfabric Backends
+
+### Software Requirements
+- **Operating System**: Ubuntu 22.04/24.04 LTS (recommended) or RHEL-based
+- **Docker**: Version 20.10+ (for container builds)
+- **Git**: For source code management
+- **CUDA Toolkit**: 12.8+ (for GPU features)
+- **Python**: 3.12+ (for benchmark utilities)
+
+## Quick Start
+
+### Using Docker (Recommended)
+
+The fastest way to get started is using the pre-built Docker container:
+
+```bash
+# Clone the NIXL repository
+git clone https://github.com/ai-dynamo/nixl.git
+cd nixl/benchmark/nixlbench/contrib
+
+# Build the container with default settings
+./build.sh
+
+# Start ETCD server for coordination
+docker run -d --name etcd-server \
+  -p 2379:2379 -p 2380:2380 \
+  quay.io/coreos/etcd:v3.5.18 \
+  /usr/local/bin/etcd \
+  --data-dir=/etcd-data \
+  --listen-client-urls=http://0.0.0.0:2379 \
+  --advertise-client-urls=http://0.0.0.0:2379 \
+  --listen-peer-urls=http://0.0.0.0:2380 \
+  --initial-advertise-peer-urls=http://0.0.0.0:2380 \
+  --initial-cluster=default=http://0.0.0.0:2380
+
+# Run a basic benchmark
+docker run -it --gpus all --network host nixlbench:latest \
+  nixlbench --etcd_endpoints http://localhost:2379 --backend UCX
+```
+
+### Native Installation
+
+For development or when Docker is not available:
+
+```bash
+# Install system dependencies (Ubuntu/Debian)
+sudo apt-get update && sudo apt-get install -y \
+  build-essential cmake ninja-build pkg-config \
+  libgflags-dev libgrpc-dev libprotobuf-dev \
+  etcd-server etcd-client python3-dev python3-pip
+
+# Build and install NIXL first
+cd /path/to/nixl
+meson setup build --prefix=/usr/local/nixl --buildtype=release
+cd build && ninja && sudo ninja install
+
+# Build NIXLBench
+cd /path/to/nixlbench
+meson setup build -Dnixl_path=/usr/local/nixl --buildtype=release
+cd build && ninja && sudo ninja install
+```
 
 ## Building
 
-### Prerequisites
+### Docker Container Build (Recommended)
 
-#### Required Dependencies
-- **NIXL Library** - NVIDIA Inference Xfer Library
-- **GFlags** - Command line flag processing
-- **OpenMP** - Multi-threading support
-- **ETCD C++ client** - Coordination runtime (https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3)
+The Docker approach handles all dependencies automatically and is the most reliable method.
+
+#### Prerequisites - Docker Installation
+
+**Ubuntu/Debian:**
+```bash
+# Install Docker using convenience script
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Add user to docker group (logout/login required)
+sudo usermod -aG docker $USER
+```
+
+**RHEL/CentOS/Fedora:**
+```bash
+# Install Docker
+sudo yum install -y yum-utils
+sudo yum-config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+sudo yum install -y docker-ce docker-ce-cli containerd.io
+
+# Start Docker
+sudo systemctl start docker && sudo systemctl enable docker
+sudo usermod -aG docker $USER
+```
+
+#### Building the Container
+
+```bash
+# Navigate to the build directory
+cd nixl/benchmark/nixlbench/contrib
+
+# Basic build
+./build.sh
+
+# Advanced build options
+./build.sh --build-type debug --arch aarch64 --python-versions "3.10,3.11,3.12"
+```
+
+**Available Build Options:**
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--nixl <path>` | Path to NIXL source directory | Parent NIXL Directory |
+| `--nixlbench <path>` | Path to NIXLBench source directory | Current directory |
+| `--ucx <path>` | Path to custom UCX source (optional) | Uses base image UCX |
+| `--build-type <type>` | Build type: `debug` or `release` | `release` |
+| `--base-image <image>` | Base Docker image | `nvcr.io/nvidia/cuda-dl-base` |
+| `--base-image-tag <tag>` | Base image tag | `25.03-cuda12.8-devel-ubuntu24.04` |
+| `--arch <arch>` | Target architecture: `x86_64` or `aarch64` | Auto-detected |
+| `--python-versions <versions>` | Python versions (comma-separated) | `3.12` |
+| `--tag <tag>` | Custom Docker image tag | Auto-generated |
+| `--no-cache` | Disable Docker build cache | Cache enabled |
+
+### Native Build
+
+For development environments or when Docker is not available.
+
+#### Core Dependencies
+
+**Required:**
+- **NIXL**: Core communication library
+- **UCX**: Unified Communication X library
+- **CUDA**: NVIDIA CUDA Toolkit (≥12.8)
+- **CMake**: Build system (≥3.20)
+- **Meson**: Build system for NIXL/NIXLBench
+- **Ninja**: Build backend
+- **etcd-cpp-api**: C++ client library for etcd (required for metadata exchange)
+- **GFlags**: Command line flag processing
+- **OpenMP**: Multi-threading support
+
+**Optional:**
+- **LibFabric**: Fabric communication library
+- **DOCA**: NVIDIA DOCA SDK for GPUNetIO
+- **AWS SDK C++**: For S3 object storage backend
+- **GDS**: NVIDIA GPUDirect Storage
+- **NVSHMEM**: Required for NVSHMEM worker type
+- **hwloc**: Hardware locality detection (required for Libfabric only)
+
+**Python Dependencies:**
+- **PyTorch**: For KV-cache benchmarks
+- **NumPy**: Numerical computing
+- **PyYAML**: YAML configuration parsing
+- **Click**: Command-line interface
+- **Tabulate**: Table formatting
+
+#### System Dependencies Installation
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update && sudo apt-get install -y \
+  build-essential cmake ninja-build pkg-config \
+  autotools-dev automake libtool libz-dev flex \
+  libgtest-dev hwloc libhwloc-dev libgflags-dev \
+  libgrpc-dev libgrpc++-dev libprotobuf-dev \
+  libaio-dev liburing-dev protobuf-compiler-grpc \
+  libcpprest-dev etcd-server etcd-client \
+  pybind11-dev libclang-dev libcurl4-openssl-dev \
+  libssl-dev uuid-dev zlib1g-dev python3-dev python3-pip
+
+# Install RDMA/InfiniBand packages
+sudo apt-get reinstall -y --no-install-recommends \
+  autoconf automake libtool pkg-config make g++ \
+  libnuma-dev librdmacm-dev ibverbs-providers \
+  libibverbs-dev rdma-core ibverbs-utils libibumad-dev
+```
+
+#### CUDA Toolkit Installation
+```bash
+# Download and install CUDA 12.8
+wget https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_550.54.15_linux.run
+sudo sh cuda_12.8.0_550.54.15_linux.run
+
+# Set environment variables
+export PATH=/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+```
+
+#### UCX Installation
+```bash
+# Option 1: Use system UCX
+sudo apt-get install -y libucx-dev
+
+# Option 2: Build from source
+git clone https://github.com/openucx/ucx.git
+cd ucx
+./autogen.sh
+./contrib/configure-release --with-cuda=/usr/local/cuda --enable-mt
+make -j$(nproc) && sudo make install
+```
+
+#### etcd-cpp-api Installation (Required)
+```bash
+# Clone and build etcd-cpp-api
+git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git
+cd etcd-cpp-apiv3
+
+# Remove cpprestsdk dependency from CMake config (already installed via apt)
+sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake
+
+# Build and install
+mkdir build && cd build
+cmake .. \
+  -DBUILD_ETCD_CORE_ONLY=ON \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=/usr/local
+make -j$(nproc) && sudo make install
+sudo ldconfig
+```
 
 #### Optional Dependencies
-- **CUDA Toolkit** - Required for VRAM operations and GPU backends
-- **NVSHMEM** - Required for NVSHMEM worker type
-- **Backend-specific libraries** as needed:
-  - UCX for network communication
-  - GDS/cuFile for GPU Direct Storage
-  - io_uring for POSIX URING operations
 
-### Building with Meson
-
-Basic build:
+**LibFabric:**
 ```bash
-# Configure build
-meson setup build
-
-# Build
-cd build
-meson compile
-
-# Install (optional)
-meson install
+wget https://github.com/ofiwg/libfabric/releases/download/v2.3.0/libfabric-2.3.0.tar.bz2
+tar xjf libfabric-2.3.0.tar.bz2 && cd libfabric-2.3.0
+./configure --prefix=/usr/local --with-cuda=/usr/local/cuda --enable-cuda-dlopen --enable-efa
+make -j$(nproc) && sudo make install
 ```
 
-#### Custom Dependency Paths
-
-If dependencies are installed in non-standard locations, you can specify their paths:
-
+**AWS SDK C++ (for S3 backend):**
 ```bash
-# With custom dependency paths
-meson setup build \
-  -Dnixl_path=/path/to/nixl/installation \
-  -Dcudapath_inc=/path/to/cuda/include \
-  -Dcudapath_lib=/path/to/cuda/lib64 \
-  -Detcd_inc_path=/path/to/etcd/include \
-  -Detcd_lib_path=/path/to/etcd/lib \
-  -Dnvshmem_inc_path=/path/to/nvshmem/include \
-  -Dnvshmem_lib_path=/path/to/nvshmem/lib
-
-# To view all available meson project options
-meson configure build
+git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581
+mkdir sdk_build && cd sdk_build
+cmake ../aws-sdk-cpp/ \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_ONLY="s3" \
+  -DENABLE_TESTING=OFF \
+  -DCMAKE_INSTALL_PREFIX=/usr/local
+make -j$(nproc) && sudo make install
 ```
 
-#### Available Build Options
+**DOCA (Optional):**
+```bash
+# Add Mellanox repository and install DOCA
+wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-ubuntu2404_amd64.deb
+sudo dpkg -i doca-host_3.1.0-091000-25.07-ubuntu2404_amd64.deb
+sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
+```
+
+#### Python Environment Setup
+```bash
+# Install uv (modern Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment
+uv venv .venv --python 3.12
+source .venv/bin/activate
+
+# Install Python dependencies
+uv pip install meson pybind11 patchelf pyYAML click tabulate torch
+```
+
+#### Building NIXL and NIXLBench
+
+```bash
+# Build NIXL first
+cd /path/to/nixl
+rm -rf build && mkdir build
+uv run meson setup build --prefix=/usr/local/nixl --buildtype=release
+cd build && ninja && sudo ninja install
+
+# Update library paths
+echo "/usr/local/nixl/lib/x86_64-linux-gnu" | sudo tee /etc/ld.so.conf.d/nixl.conf
+echo "/usr/local/nixl/lib/x86_64-linux-gnu/plugins" | sudo tee -a /etc/ld.so.conf.d/nixl.conf
+sudo ldconfig
+
+# Build NIXLBench
+cd /path/to/nixlbench
+rm -rf build && mkdir build
+uv run meson setup build \
+  -Dnixl_path=/usr/local/nixl/ \
+  -Dprefix=/usr/local/nixlbench \
+  --buildtype=release
+cd build && ninja && sudo ninja install
+
+# Update PATH
+export PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
+```
+
+#### Available Meson Build Options
 - `nixl_path`: Path to NIXL installation (default: /usr/local)
 - `cudapath_inc`: Include path for CUDA
 - `cudapath_lib`: Library path for CUDA
@@ -100,33 +354,59 @@ meson configure build
 - `etcd_lib_path`: Path to ETCD C++ client library
 - `nvshmem_inc_path`: Path to NVSHMEM include directory
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
+- `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)
+- `prefix`: Installation prefix (default: /usr/local)
 
 ## Usage
 
-### Basic Usage
+### ETCD Coordination Setup
+
+NIXLBench uses ETCD for worker coordination, which is essential for multi-node benchmarking.
+
+**Start ETCD server:**
+```bash
+# Option 1: Using Docker
+docker run -d --name etcd-server \
+  -p 2379:2379 -p 2380:2380 \
+  quay.io/coreos/etcd:v3.5.18 \
+  /usr/local/bin/etcd \
+  --data-dir=/etcd-data \
+  --listen-client-urls=http://0.0.0.0:2379 \
+  --advertise-client-urls=http://0.0.0.0:2379 \
+  --listen-peer-urls=http://0.0.0.0:2380 \
+  --initial-advertise-peer-urls=http://0.0.0.0:2380 \
+  --initial-cluster=default=http://0.0.0.0:2380
+
+# Option 2: Native installation
+sudo apt install etcd-server
+sudo systemctl start etcd && sudo systemctl enable etcd
+```
+
+### Basic Usage Examples
 
 ```bash
-# Run basic UCX benchmark with VRAM transfers
+# Basic UCX benchmark with VRAM transfers
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 
-# Run storage benchmark with GDS backend
+# Storage benchmark with GDS backend
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile
 
-# Run S3 object storage benchmark
+# S3 object storage benchmark
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend OBJ --obj_bucket_name my-bucket --obj_access_key $AWS_ACCESS_KEY_ID --obj_secret_key $AWS_SECRET_ACCESS_KEY
 
-# Run multi-threaded benchmark with progress threads
+# Multi-threaded benchmark with progress threads
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --num_threads 4 --enable_pt --progress_threads 2
 ```
 
 ### Command Line Options
 
-#### Core Options
+#### Core Configuration
 ```
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
 --backend NAME             # Communication backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
+--etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
 
 #### Memory and Transfer Configuration
@@ -170,28 +450,30 @@ meson configure build
 --storage_enable_direct    # Enable direct I/O for storage operations
 ```
 
-#### GDS Backend Specific Options
+#### Backend-Specific Options
+
+**GDS Backend:**
 ```
 --gds_batch_pool_size NUM  # Batch pool size for GDS operations (default: 32)
 --gds_batch_limit NUM      # Batch limit for GDS operations (default: 128)
 ```
 
-#### GDS_MT Backend Specific Options
+**GDS_MT Backend:**
 ```
 --gds_mt_num_threads NUM   # Number of threads used by GDS MT plugin (default: 1)
 ```
 
-#### POSIX Backend Specific Options
+**POSIX Backend:**
 ```
 --posix_api_type TYPE      # API type for POSIX operations [AIO, URING] (default: AIO)
 ```
 
-#### GPUNETIO Backend Specific Options
+**GPUNETIO Backend:**
 ```
 --gpunetio_device_list LIST # Comma-separated GPU CUDA device id for GPUNETIO
 ```
 
-#### OBJ (S3) Backend Specific Options
+**OBJ (S3) Backend:**
 ```
 --obj_access_key KEY       # Access key for S3 backend
 --obj_secret_key KEY       # Secret key for S3 backend
@@ -209,8 +491,8 @@ meson configure build
 NIXL Benchmark uses an ETCD key-value store for coordination between benchmark workers. This is useful in containerized or cloud-native environments.
 
 **ETCD Requirements:**
-- **Required**: Network backends (UCX, UCX_MO, GPUNETIO, Mooncake) and multi-node setups
-- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ) running as single instances
+- **Required**: Network backends (UCX, UCX_MO, GPUNETIO, Mooncake, Libfabric) and multi-node setups
+- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, S3) running as single instances
 - **Required**: Storage backends when `--etcd_endpoints` is explicitly specified
 
 **For multi-node benchmarks:**
@@ -259,15 +541,15 @@ The workers automatically coordinate ranks through ETCD as they connect.
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX_MO
 ```
 
-**GPUNETIO Backend**
+**GPUNETIO Backend:**
 ```bash
 # DOCA GPUNetIO with specific GPU devices
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GPUNETIO --gpunetio_device_list 0,1
 ```
 
-#### Storage Backends
+### Storage Backends
 
-**GDS (GPU Direct Storage)**
+**GDS (GPU Direct Storage):**
 ```bash
 # Basic GDS benchmark (no ETCD needed for single instance)
 ./nixlbench --backend GDS --filepath /mnt/storage/testfile --storage_enable_direct
@@ -279,13 +561,13 @@ The workers automatically coordinate ranks through ETCD as they connect.
 ./nixlbench --backend GDS --filepath /mnt/storage/testfile --gds_batch_pool_size 64 --gds_batch_limit 256
 ```
 
-**GDS_MT (Multi-threaded GDS)**
+**GDS_MT (Multi-threaded GDS):**
 ```bash
 # Multi-threaded GDS (no ETCD needed for single instance)
 ./nixlbench --backend GDS_MT --filepath /mnt/storage/testfile --gds_mt_num_threads 8
 ```
 
-**POSIX Backend**
+**POSIX Backend:**
 ```bash
 # POSIX with AIO (no ETCD needed for single instance)
 ./nixlbench --backend POSIX --filepath /mnt/storage/testfile --posix_api_type AIO
@@ -294,19 +576,18 @@ The workers automatically coordinate ranks through ETCD as they connect.
 ./nixlbench --backend POSIX --filepath /mnt/storage/testfile --posix_api_type URING --storage_enable_direct
 ```
 
-#### Worker Types
+### Worker Types
 
-**NVSHMEM Worker**
+**NVSHMEM Worker:**
 ```bash
 # NVSHMEM (GPU-only, VRAM required)
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --worker_type nvshmem --initiator_seg_type VRAM --target_seg_type VRAM
 ```
 
-### Benchmarking the OBJ (S3) Backend
+### S3 Object Storage Backend
 
 For OBJ plugin benchmarking, ETCD is optional for single instances.
 
-Example:
 ```bash
 # Basic S3 benchmark using environment variables (no ETCD needed)
 AWS_ACCESS_KEY_ID=<access_key> AWS_SECRET_ACCESS_KEY=<secret_key> AWS_DEFAULT_REGION=<region> \
@@ -335,3 +616,141 @@ Transfer times are higher than local storage, so consider reducing iterations:
 **Testing Options:**
 - Test read operations: `--op_type READ`
 - Validate data consistency: `--check_consistency`
+
+### Multi-Node Coordination
+
+Launch multiple nixlbench instances pointing to the same ETCD server:
+
+```bash
+# On host 1
+./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
+
+# On host 2
+./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
+```
+
+The workers automatically coordinate ranks through ETCD as they connect.
+
+## Troubleshooting
+
+### Common Build Issues
+
+#### CUDA Not Found
+```bash
+# Ensure CUDA is in PATH
+export PATH=/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
+# Verify installation
+nvcc --version
+```
+
+#### UCX Build Failures
+```bash
+# Install missing dependencies
+# Only required if UCX cannot detect RDMA libraries correctly
+sudo apt-get reinstall -y libibverbs-dev librdmacm-dev rdma-core
+
+# Clean and rebuild
+make clean && make -j$(nproc)
+```
+
+#### etcd-cpp-api Build Issues
+```bash
+# If cpprestsdk errors occur
+sudo apt-get install -y libcpprest-dev
+
+# If protobuf version conflicts
+sudo apt-get install -y libprotobuf-dev protobuf-compiler
+
+# If etcd server is not available for testing
+sudo systemctl start etcd && sudo systemctl enable etcd
+```
+
+#### Python Environment Issues
+```bash
+# Reset virtual environment
+rm -rf .venv
+uv venv .venv --python 3.12
+source .venv/bin/activate
+uv pip install --upgrade pip setuptools wheel
+```
+
+#### Docker Build Failures
+```bash
+# Clear Docker cache
+docker system prune -a
+
+# Build with verbose output
+docker build --progress=plain --no-cache ...
+```
+
+### Runtime Issues
+
+#### Library Not Found Errors
+```bash
+# Update library cache
+sudo ldconfig
+
+# Check library paths
+ldd /usr/local/nixlbench/bin/nixlbench
+```
+
+#### GPU Access Issues
+```bash
+# Verify GPU access
+nvidia-smi
+
+# Check GPU / NIC Topology
+nvidia-smi topo -m
+# GPU / NIC closest to each other have PIX/PXB as the value
+
+# Check CUDA driver
+cat /proc/driver/nvidia/version
+```
+
+#### Network Backend Issues
+```bash
+# List available devices
+ibv_devices  # For RDMA devices
+ibv_devinfo -v # Detailed Info on all RDMA devices
+
+ip link show  # For Ethernet devices
+
+# Test UCX
+ucx_info -d  # List UCX devices
+
+export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging
+
+export UCX_PROTO_INFO=y # See transport used by UCX
+```
+
+### Performance Tuning
+
+#### CPU Affinity
+```bash
+# Bind to specific cores
+taskset -c 0-7 nixlbench ...
+
+# Use numactl for NUMA systems
+numactl --cpunodebind=0 --membind=0 nixlbench ...
+```
+
+#### Network Tuning
+```bash
+# Increase buffer sizes
+echo 'net.core.rmem_max = 134217728' | sudo tee -a /etc/sysctl.conf
+echo 'net.core.wmem_max = 134217728' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+## Support and Resources
+
+- **Documentation**: https://github.com/ai-dynamo/nixl/tree/main/benchmark/nixlbench
+- **Issues**: https://github.com/ai-dynamo/nixl/issues
+- **NVIDIA Developer Forums**: https://forums.developer.nvidia.com/
+- **UCX Documentation**: https://openucx.readthedocs.io/
+
+---
+
+*This guide covers NIXLBench build and usage procedures as of 2025. For the latest updates, please refer to the official repository.*
