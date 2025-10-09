@@ -19,7 +19,7 @@ build-backend = "mesonpy"
 
 [project]
 name = 'nixl'
-version = '0.6.0'
+version = '0.6.1'
 description = 'NIXL Python API'
 readme = 'README.md'
 license = {file = 'LICENSE'}
