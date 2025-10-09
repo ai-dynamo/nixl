@@ -97,7 +97,7 @@ steps:
     parallel: false
     run: |
       set -ex
-      docker exec -w ${CONTAINER_WORKSPACE} -e EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c "UCX_VERSION=${ucx_version} .gitlab/build.sh ${INSTALL_DIR}"
+      docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c "UCX_VERSION=${ucx_version} .gitlab/build.sh ${INSTALL_DIR}"
 
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"

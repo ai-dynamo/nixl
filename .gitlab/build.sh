@@ -152,8 +152,8 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   $SUDO ldconfig \
 )
 
-# Install DOCA & GPUNETIO packages for test pipeline only
-if [ "${JOB_BASE_NAME}" = "nixl-ci-test" ]; then
+# Install DOCA & GPUNETIO packages (skip on Ubuntu 22.04 as GPUNETIO package installation fails)
+if ! grep -q "22.04" /etc/lsb-release; then
   ( \
     cd /tmp && \
     ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
