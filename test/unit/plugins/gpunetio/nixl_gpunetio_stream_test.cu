@@ -507,9 +507,7 @@ main (int argc, char *argv[]) {
             std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
             PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
-            CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
-                                   "Failed to post Xfer Req",
-                                   role);
+            nixl_exit_on_failure((status < 0), "Failed to post Xfer Req", role);
 
             POP_RANGE
 
@@ -517,9 +515,7 @@ main (int argc, char *argv[]) {
             PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                CHECK_NIXL_ERROR_AGENT(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
-                                       "Failed to get Xfer Status",
-                                       role);
+                nixl_exit_on_failure(status < 0, "Failed to get Xfer Status", role);
             }
             POP_RANGE
             // No need for cudaStreamSyncronize as CUDA kernel and Xfer are on the same stream
