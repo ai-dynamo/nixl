@@ -15,6 +15,12 @@
 
 subdir('common')
 subdir('serdes')
-subdir('ucx')
+if ucx_dep.found()
+    subdir('ucx')
+endif
 subdir('stream')
 subdir('file')
+
+if libfabric_dep.found()
+    subdir('libfabric')
+endif

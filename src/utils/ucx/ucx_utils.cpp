@@ -397,6 +397,10 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
 
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
     ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 | UCP_FEATURE_AM;
+#ifdef HAVE_UCX_GPU_DEVICE_API
+    ucp_params.features |= UCP_FEATURE_DEVICE;
+#endif
+
     if (prog_thread)
         ucp_params.features |= UCP_FEATURE_WAKEUP;
     ucp_params.mt_workers_shared = num_workers > 1 ? 1 : 0;
@@ -602,29 +606,7 @@ constexpr std::string_view ucxGpuDeviceApiUnsupported{
 }
 #endif
 
-void
-nixlUcxContext::prepGpuSignal([[maybe_unused]] const nixlUcxMem &mem,
-                              [[maybe_unused]] void *signal) const {
-#ifdef HAVE_UCX_GPU_DEVICE_API
-    if (!signal) {
-        throw std::invalid_argument("Signal pointer cannot be null");
-    }
 
-    ucp_device_counter_init_params_t params;
-    params.field_mask = UCP_DEVICE_COUNTER_INIT_PARAMS_FIELD_MEMH;
-    params.memh = mem.memh;
-
-    // Initialize the GPU signal using UCX
-    ucs_status_t status = ucp_device_counter_init(ctx, &params, signal);
-
-    if (status != UCS_OK) {
-        throw std::runtime_error(std::string("Failed to initialize GPU signal: ") +
-                                 ucs_status_string(status));
-    }
-#else
-    throw std::runtime_error(std::string(ucxGpuDeviceApiUnsupported));
-#endif
-}
 
 size_t
 nixlUcxContext::getGpuSignalSize() const {
@@ -714,4 +696,27 @@ nixlUcxWorker::getEfd() const {
         throw std::runtime_error(err_str);
     }
     return fd;
+}
+
+void
+nixlUcxWorker::prepGpuSignal([[maybe_unused]] const nixlUcxMem &mem,
+                             [[maybe_unused]] void *signal) const {
+#ifdef HAVE_UCX_GPU_DEVICE_API
+    if (!signal) {
+        throw std::invalid_argument("Signal pointer cannot be null");
+    }
+
+    ucp_device_counter_params_t params;
+    params.field_mask = UCP_DEVICE_COUNTER_PARAMS_FIELD_MEMH;
+    params.memh = mem.memh;
+
+    ucs_status_t status = ucp_device_counter_init(worker.get(), &params, signal);
+
+    if (status != UCS_OK) {
+        throw std::runtime_error(std::string("Failed to initialize GPU signal: ") +
+                                 ucs_status_string(status));
+    }
+#else
+    throw std::runtime_error(std::string(ucxGpuDeviceApiUnsupported));
+#endif
 }

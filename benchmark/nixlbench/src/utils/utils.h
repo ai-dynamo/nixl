@@ -67,6 +67,7 @@
 // Backend types
 #define XFERBENCH_BACKEND_UCX "UCX"
 #define XFERBENCH_BACKEND_UCX_MO "UCX_MO"
+#define XFERBENCH_BACKEND_LIBFABRIC "LIBFABRIC"
 #define XFERBENCH_BACKEND_GDS "GDS"
 #define XFERBENCH_BACKEND_GDS_MT "GDS_MT"
 #define XFERBENCH_BACKEND_POSIX "POSIX"
@@ -165,6 +166,7 @@ class xferBenchConfig {
         static bool obj_use_virtual_addressing;
         static std::string obj_endpoint_override;
         static std::string obj_req_checksum;
+        static std::string obj_ca_bundle;
         static int hf3fs_iopool_size;
 
         static int

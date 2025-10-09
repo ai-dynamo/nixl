@@ -158,7 +158,10 @@ class nixlBackendEngine {
 
         // Create a GPU transfer request to GPU memory for GPU transfer.
         virtual nixl_status_t
-        createGpuXferReq(const nixlBackendReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const {
+        createGpuXferReq(const nixlBackendReqH &req_hndl,
+                         const nixl_meta_dlist_t &local_descs,
+                         const nixl_meta_dlist_t &remote_descs,
+                         nixlGpuXferReqH &gpu_req_hndl) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 

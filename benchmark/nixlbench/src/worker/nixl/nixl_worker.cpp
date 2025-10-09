@@ -95,6 +95,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
         xferBenchConfig::isStorageBackend()) {
@@ -136,6 +137,15 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         std::cout << "Init nixl worker, dev "
                   << (("all" == devices[0]) ? "all" : backend_params["device_list"]) << " rank "
                   << rank << ", type " << name << ", hostname " << hostname << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC)) {
+        if (gethostname(hostname, 256)) {
+            std::cerr << "Failed to get hostname" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
+        std::cout << "Init nixl worker, dev " << (("all" == devices[0]) ? "all" : devices[rank])
+                  << " rank " << rank << ", type " << name << ", hostname " << hostname
+                  << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)) {
         // Using default param values for GDS backend
         std::cout << "GDS backend" << std::endl;
@@ -150,11 +160,11 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
         // Set API type parameter for POSIX backend
         if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
-            backend_params["use_aio"] = true;
-            backend_params["use_uring"] = false;
+            backend_params["use_aio"] = "true";
+            backend_params["use_uring"] = "false";
         } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
-            backend_params["use_aio"] = false;
-            backend_params["use_uring"] = true;
+            backend_params["use_aio"] = "false";
+            backend_params["use_uring"] = "true";
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
                   << std::endl;
@@ -181,6 +191,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         backend_params["use_virtual_addressing"] =
             xferBenchConfig::obj_use_virtual_addressing ? "true" : "false";
         backend_params["req_checksum"] = xferBenchConfig::obj_req_checksum;
+
+        if (xferBenchConfig::obj_ca_bundle != "") {
+            backend_params["ca_bundle"] = xferBenchConfig::obj_ca_bundle;
+        }
 
         if (xferBenchConfig::obj_endpoint_override != "") {
             backend_params["endpoint_override"] = xferBenchConfig::obj_endpoint_override;
@@ -734,6 +748,7 @@ int
 xferBenchNixlWorker::exchangeMetadata() {
     int meta_sz, ret = 0;
 
+    // Skip metadata exchange for storage backends or when ETCD is not available
     if (xferBenchConfig::isStorageBackend()) {
         return 0;
     }
@@ -1040,6 +1055,12 @@ xferBenchNixlWorker::poll(size_t block_size) {
 
 int
 xferBenchNixlWorker::synchronizeStart() {
+    // For storage backends without ETCD, no synchronization needed
+    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+        std::cout << "Single instance storage backend - no synchronization needed" << std::endl;
+        return 0;
+    }
+
     if (IS_PAIRWISE_AND_SG()) {
         std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
                   << " total: " << xferBenchConfig::num_initiator_dev << " initiators and "

@@ -160,6 +160,21 @@ private:
     size_t size;
     ucp_mem_h memh;
 public:
+    [[nodiscard]] ucp_mem_h
+    getMemh() const noexcept {
+        return memh;
+    }
+
+    [[nodiscard]] void *
+    getBase() const noexcept {
+        return base;
+    }
+
+    [[nodiscard]] size_t
+    getSize() const noexcept {
+        return size;
+    }
+
     friend class nixlUcxWorker;
     friend class nixlUcxContext;
     friend class nixlUcxEp;
@@ -188,9 +203,6 @@ public:
     void memDereg(nixlUcxMem &mem);
 
     /* GPU signal management */
-    void
-    prepGpuSignal(const nixlUcxMem &mem, void *signal) const;
-
     [[nodiscard]] size_t
     getGpuSignalSize() const;
 
@@ -229,6 +241,10 @@ public:
 
     [[nodiscard]] int
     getEfd() const;
+
+    /* GPU signal management */
+    void
+    prepGpuSignal(const nixlUcxMem &mem, void *signal) const;
 
 private:
     [[nodiscard]] static ucp_worker *
