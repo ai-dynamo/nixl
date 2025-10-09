@@ -127,6 +127,7 @@ RUN mkdir aws_sdk_build && cd aws_sdk_build && \
 
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
+     sed -i '/^LFLAGS_ALL =/{/-lrt/ b; s/$/ -lrt/}' Makefile && \
      make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
      cd ..
 
