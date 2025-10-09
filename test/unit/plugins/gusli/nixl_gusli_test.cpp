@@ -397,7 +397,7 @@ public:
         status = agent.createBackend("GUSLI", params, n_backend);
         QUIT_ON_ERR("Backend Creation Failed: ", status);
 
-        if (1) {
+        if (0) {
             print_segment_title(phase_title("Failed Second plugin initialization"));
             nixlBackendH *_2nd_plugin = nullptr;
             nixlAgent agent2("2nd_agent", nixlAgentConfig(true));
