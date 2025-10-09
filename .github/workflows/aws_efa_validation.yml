@@ -10,7 +10,7 @@ jobs:
   run_aws_tests:
     name: Run AWS Tests - ${{ matrix.test_name }}
     environment: SWX_AWS
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       AWS_DEFAULT_REGION: eu-central-1
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
