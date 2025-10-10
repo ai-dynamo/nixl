@@ -15,7 +15,7 @@
 
 nixl_example = executable('nixl_example',
         'nixl_example.cpp',
-        dependencies: [nixl_dep, nixl_infra, nixl_common_deps],
+        dependencies: [nixl_dep, nixl_infra, nixl_common_deps, nixl_test_utils_dep],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         link_with: [serdes_lib],
         install: true)
@@ -23,7 +23,7 @@ nixl_example = executable('nixl_example',
 if etcd_dep.found()
     etcd_example = executable('nixl_etcd_example',
                'nixl_etcd_example.cpp',
-               dependencies: [nixl_dep, nixl_infra, nixl_common_deps],
+               dependencies: [nixl_dep, nixl_infra, nixl_common_deps, nixl_test_utils_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                link_with: [serdes_lib],
                install: true)
