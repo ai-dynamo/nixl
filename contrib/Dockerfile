@@ -79,8 +79,6 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "am
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
     libnuma-dev librdmacm-dev ibverbs-providers
-# Check that libibverbs.so exists
-RUN find / -name libibverbs.so | grep '/libibverbs.so$'
 
 WORKDIR /workspace
 RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \

@@ -116,8 +116,6 @@ $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-g
 $SUDO apt-get -qq -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
     libnuma-dev librdmacm-dev ibverbs-providers
-# Check that libibverbs.so exists
-find / -name libibverbs.so | grep '/libibverbs.so$'
 
 wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
 chmod +x rustup-init
