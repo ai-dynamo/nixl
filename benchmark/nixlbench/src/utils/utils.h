@@ -75,6 +75,7 @@
 #define XFERBENCH_BACKEND_MOONCAKE "Mooncake"
 #define XFERBENCH_BACKEND_HF3FS "HF3FS"
 #define XFERBENCH_BACKEND_OBJ "OBJ"
+#define XFERBENCH_BACKEND_GUSLI "GUSLI"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -111,6 +112,7 @@
 // Segment types
 #define XFERBENCH_SEG_TYPE_DRAM "DRAM"
 #define XFERBENCH_SEG_TYPE_VRAM "VRAM"
+#define XFERBENCH_SEG_TYPE_BLK "BLK"
 
 // Worker types
 #define XFERBENCH_WORKER_NIXL     "nixl"
@@ -168,6 +170,10 @@ class xferBenchConfig {
         static std::string obj_req_checksum;
         static std::string obj_ca_bundle;
         static int hf3fs_iopool_size;
+        static std::string gusli_client_name;
+        static int gusli_max_simultaneous_requests;
+        static std::string gusli_config_file;
+        static uint64_t gusli_bdev_byte_offset;
 
         static int
         loadFromFlags();
