@@ -258,11 +258,13 @@ public:
         d.devId = devId;
         d.len = sg_buf_size;
         d.addr = (uintptr_t)((u_int64_t)ptr + n_total_mapped_bytes);
-        out_log << "Adding SGL to bdev_io_src, devId=" << devId << ", len=" << sg_buf_size << ", addr=" << (void *)d.addr << std::endl;
+        out_log << "Adding SGL to bdev_io_src, devId=" << devId << ", len=" << sg_buf_size
+                << ", addr=" << (void *)d.addr << std::endl;
         bdev_io_src.addDesc(d);
         d.addr = bdev_byte_offset; // Dummy
         bdev_io_dst.addDesc(d);
-        out_log << "Adding SGL to bdev_io_dst, devId=" << devId << ", len=" << sg_buf_size << ", addr=" << (void *)d.addr << std::endl;
+        out_log << "Adding SGL to bdev_io_dst, devId=" << devId << ", len=" << sg_buf_size
+                << ", addr=" << (void *)d.addr << std::endl;
     }
 
     void
@@ -279,11 +281,13 @@ public:
             const size_t io_offset = (i * transfer_size);
             d.len = transfer_size;
             d.addr = (uintptr_t)((size_t)ptr + io_offset); // Offset in RAM buffer
-            out_log << "Adding SGL to bdev_io_src, devId=" << d.devId << ", len=" << d.len << ", addr=" << (void *)d.addr << std::endl;
+            out_log << "Adding SGL to bdev_io_src, devId=" << d.devId << ", len=" << d.len
+                    << ", addr=" << (void *)d.addr << std::endl;
             bdev_io_src.addDesc(d);
             d.addr = bdev_byte_offset + io_offset;
             bdev_io_dst.addDesc(d);
-            out_log << "Adding SGL to bdev_io_dst, devId=" << d.devId << ", len=" << d.len << ", addr=" << (void *)d.addr << std::endl;
+            out_log << "Adding SGL to bdev_io_dst, devId=" << d.devId << ", len=" << d.len
+                    << ", addr=" << (void *)d.addr << std::endl;
             progress_bar(float(i + 1) / num_transfers);
         }
     }
@@ -509,7 +513,8 @@ public:
                  with_sgl--) { // Test with sgl dummy range then remove it and test without it
                 single_bdev_request_build(bdev_io_src, bdev_io_dst, with_sgl);
 
-                out_log << "Building single bdev request, with_sgl=" << (with_sgl ? 'Y' : 'N') << std::endl;
+                out_log << "Building single bdev request, with_sgl=" << (with_sgl ? 'Y' : 'N')
+                        << std::endl;
 
                 const int n_ranges = (int)bdev_io_src.descCount() - with_sgl;
 

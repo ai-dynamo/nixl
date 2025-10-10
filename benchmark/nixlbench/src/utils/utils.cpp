@@ -129,9 +129,15 @@ DEFINE_int32(hf3fs_iopool_size, 64, "Size of io memory pool");
 
 // GUSLI options - only used when backend is GUSLI
 DEFINE_string(gusli_client_name, "NIXLBench", "Client name for GUSLI backend");
-DEFINE_int32(gusli_max_simultaneous_requests, 32, "Maximum number of simultaneous requests for GUSLI backend");
-DEFINE_string(gusli_config_file, "", "Configuration file content for GUSLI backend (if empty, uses default config)");
-DEFINE_uint64(gusli_bdev_byte_offset, 1048576, "Byte offset in block device for GUSLI operations (default: 1MB)");
+DEFINE_int32(gusli_max_simultaneous_requests,
+             32,
+             "Maximum number of simultaneous requests for GUSLI backend");
+DEFINE_string(gusli_config_file,
+              "",
+              "Configuration file content for GUSLI backend (if empty, uses default config)");
+DEFINE_uint64(gusli_bdev_byte_offset,
+              1048576,
+              "Byte offset in block device for GUSLI operations (default: 1MB)");
 
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";

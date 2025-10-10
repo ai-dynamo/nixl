@@ -206,20 +206,22 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // Set GUSLI backend parameters based on config from nixl_gusli_test
         backend_params["client_name"] = xferBenchConfig::gusli_client_name;
-        backend_params["max_num_simultaneous_requests"] = std::to_string(xferBenchConfig::gusli_max_simultaneous_requests);
+        backend_params["max_num_simultaneous_requests"] =
+            std::to_string(xferBenchConfig::gusli_max_simultaneous_requests);
 
         // Generate default config if not provided
         if (xferBenchConfig::gusli_config_file.empty()) {
             // Default config similar to nixl_gusli_test.cpp
             backend_params["config_file"] = "# Config file\nversion=1\n"
-                "11 F W N ./store0.bin sec=0x3\n"
-                "14 K X N /dev/zero sec=0x71\n";
+                                            "11 F W N ./store0.bin sec=0x3\n"
+                                            "14 K X N /dev/zero sec=0x71\n";
         } else {
             backend_params["config_file"] = xferBenchConfig::gusli_config_file;
         }
 
-        std::cout << "GUSLI backend with client_name: " << xferBenchConfig::gusli_client_name 
-                  << ", max_requests: " << xferBenchConfig::gusli_max_simultaneous_requests << std::endl;
+        std::cout << "GUSLI backend with client_name: " << xferBenchConfig::gusli_client_name
+                  << ", max_requests: " << xferBenchConfig::gusli_max_simultaneous_requests
+                  << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -589,7 +591,8 @@ xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id) {
     uint64_t lba_offset = xferBenchConfig::gusli_bdev_byte_offset;
 
     // Create IOV with LBA offset as address, buffer size, and device ID
-    // The device ID corresponds to the block device UUID (e.g., 11 for local file, 14 for /dev/zero)
+    // The device ID corresponds to the block device UUID (e.g., 11 for local file, 14 for
+    // /dev/zero)
     auto ret = std::optional<xferBenchIOV>(std::in_place, lba_offset, buffer_size, mem_dev_id);
 
     // Update offset for next allocation (similar to file handling)
@@ -666,7 +669,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
                 // Use device IDs from GUSLI config (11 for local file, 14 for /dev/zero)
-                int gusli_dev_id = (i % 2 == 0) ? 11 : 14;  // Alternate between devices
+                int gusli_dev_id = (i % 2 == 0) ? 11 : 14; // Alternate between devices
                 basic_desc = initBasicDescBlk(buffer_size, gusli_dev_id);
                 if (basic_desc) {
                     iov_list.push_back(basic_desc.value());
@@ -723,6 +726,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     for (int list_idx = 0; list_idx < num_threads; list_idx++) {
         std::vector<xferBenchIOV> iov_list;
+        int blk_dev_id = 0;
         for (i = 0; i < num_devices; i++) {
             std::optional<xferBenchIOV> basic_desc;
 
@@ -738,7 +742,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             case BLK_SEG:
                 // For BLK_SEG on local side, use block device descriptors
                 // Use device IDs from GUSLI config (11 for local file, 14 for /dev/zero)
-                int blk_dev_id = (i % 2 == 0) ? 11 : 14;  // Alternate between devices
+                blk_dev_id = (i % 2 == 0) ? 11 : 14; // Alternate between devices
                 basic_desc = initBasicDescBlk(buffer_size, blk_dev_id);
                 break;
             default:
