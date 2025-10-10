@@ -147,7 +147,6 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
 
-
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir sdk_build && \
     cd sdk_build && \
@@ -158,20 +157,26 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-COPY --from=nixl . /workspace/nixl
-COPY --from=nixlbench . /workspace/nixlbench
 
-WORKDIR /workspace/nixl
-
+# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
+# from the virtual environment. This means that the files reside in /root/.cache/uv,
+# which is not what we want since some systems mount user home dir into /root,
+# in which case the venv is broken when the container is started.
+# Set a custom cache directory inside /workspace to avoid this.
+ENV UV_CACHE_DIR=/workspace/.cache/uv
+RUN mkdir -p $UV_CACHE_DIR
+# Disable build isolation, i.e. uv should not create a new virtual environment for
+# building wheels.
+ENV UV_NO_BUILD_ISOLATION=1
+# Disable syncing, i.e. uv will not download packages outside uv pip commands.
+ENV UV_NO_SYNC=1
 # Create a new virtual environment
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
+ENV VIRTUAL_ENV=/workspace/.venv
 RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 # Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
 # Install python dependencies
-RUN uv pip install --upgrade meson pybind11 patchelf pyYAML click tabulate auditwheel
-
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel
 # Install PyTorch
 # Latest stable PyTorch wheels are only available for CUDA 12.x
 # Nightly PyTorch wheels are needed for CUDA 13.x images
@@ -183,6 +188,11 @@ RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
       FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION"; \
     fi && \
     uv pip install $FLAGS torch torchvision torchaudio
+
+COPY --from=nixl . /workspace/nixl
+COPY --from=nixlbench . /workspace/nixlbench
+
+WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
