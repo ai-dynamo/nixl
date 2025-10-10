@@ -41,7 +41,7 @@ UCCL engine would auto discover the right NIC to be used for the GPU based on th
 
 1) [NIXL Benchmark](https://github.com/uccl-project/uccl/blob/main/p2p/benchmarks/benchmark_nixl.py) in UCCL: Refer to  this [README](https://github.com/uccl-project/uccl/tree/main/p2p) on how to run the script.
 
-2) [NIXL connector](https://github.com/praveingk/vllm/commit/fa67cd7edff076fee4914cc316a9833c2311a65d) in vLLM.
+2) [NIXL connector](https://github.com/praveingk/vllm/commit/fa67cd7edff076fee4914cc316a9833c2311a65d) in vLLM. vLLM's NIXL connector uses `NIXL_READ`, hence set env `UCCL_RCMODE` to 1.
 
 ### Road Map
 

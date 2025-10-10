@@ -49,6 +49,7 @@ public:
 
     bool
     supportsLocal() const {
+        // TODO: Enable this when local transfers are supported
         return false;
     }
 
@@ -61,9 +62,6 @@ public:
     supportsProgTh() const {
         return false;
     }
-
-    void
-    startListener();
 
     nixl_mem_list_t
     getSupportedMems() const;
@@ -124,6 +122,9 @@ public:
     genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
 private:
+    void
+    startListener();
+
     mutable std::mutex mutex_;
     uccl_engine_t *engine_;
     std::string local_agent_name_;

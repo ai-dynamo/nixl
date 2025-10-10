@@ -162,6 +162,7 @@ nixlUcclEngine::getSupportedMems() const {
     nixl_mem_list_t mems;
     mems.push_back(DRAM_SEG);
     mems.push_back(VRAM_SEG);
+
     return mems;
 }
 
@@ -169,6 +170,7 @@ nixl_status_t
 nixlUcclEngine::getPublicData(const nixlBackendMD *meta, std::string &str) const {
     nixlUcclBackendMD *priv = (nixlUcclBackendMD *)meta;
     str = std::to_string(priv->mr_id);
+
     return NIXL_SUCCESS;
 }
 
@@ -187,6 +189,7 @@ nixlUcclEngine::getConnInfo(std::string &str) const {
     str = std::string(metadata);
     delete[] metadata;
     NIXL_DEBUG << "UCCL engine metadata: " << str;
+
     return NIXL_SUCCESS;
 }
 
@@ -224,6 +227,7 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
     connected_agents_[remote_agent] = reinterpret_cast<uint64_t>(conn);
 
     delete[] ip_addr;
+
     return NIXL_SUCCESS;
 }
 
@@ -251,6 +255,7 @@ nixlUcclEngine::disconnect(const std::string &remote_agent) {
         uccl_engine_conn_destroy(conn);
         connected_agents_.erase(remote_agent);
     }
+
     return NIXL_SUCCESS;
 }
 
@@ -320,6 +325,7 @@ nixlUcclEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
     output_md->length = input_md->length;
     output_md->ref_cnt = 1;
     output_md->mr_id = reinterpret_cast<uint64_t>(input_md->mr_id);
+
     return NIXL_SUCCESS;
 }
 
@@ -337,6 +343,7 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
     output_md->length = input.len;
     output_md->ref_cnt = 1;
     output_md->mr_id = strtoul(input.metaInfo.c_str(), NULL, 10);
+
     return NIXL_SUCCESS;
 }
 
@@ -344,6 +351,7 @@ nixl_status_t
 nixlUcclEngine::unloadMD(nixlBackendMD *input) {
     nixlUcclBackendMD *md = (nixlUcclBackendMD *)input;
     delete md;
+
     return NIXL_SUCCESS;
 }
 
@@ -461,6 +469,7 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
             }
         }
     }
+
     return NIXL_SUCCESS;
 }
 
@@ -610,6 +619,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         NIXL_DEBUG << "All transfers in handle completed, sent notification: "
                    << uccl_handle->notif_msg;
     }
+
     return (all_done) ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
@@ -662,5 +672,6 @@ nixlUcclEngine::genNotif(const std::string &remote_agent, const std::string &msg
         NIXL_ERROR << "Failed to send notify message";
         return NIXL_ERR_BACKEND;
     }
+
     return NIXL_SUCCESS;
 }
