@@ -39,10 +39,16 @@
 namespace {
 [[nodiscard]] nixl_status_t
 conErrConv(const gusli::connect_rv rv) {
-    if (rv == gusli::connect_rv::C_OK) return NIXL_SUCCESS;
-    if (rv == gusli::connect_rv::C_NO_DEVICE) return NIXL_ERR_NOT_FOUND;
-    if (rv == gusli::connect_rv::C_WRONG_ARGUMENTS) return NIXL_ERR_INVALID_PARAM;
-    return NIXL_ERR_BACKEND;
+    switch (rv) {
+        case gusli::connect_rv::C_OK:
+            return NIXL_SUCCESS;
+        case gusli::connect_rv::C_NO_DEVICE:
+            return NIXL_ERR_NOT_FOUND;
+        case gusli::connect_rv::C_WRONG_ARGUMENTS:
+            return NIXL_ERR_INVALID_PARAM;
+        default:
+            return NIXL_ERR_BACKEND;
+    }
 }
 
 [[nodiscard]] bool
@@ -87,13 +93,13 @@ verifyRequestParams(const nixl_xfer_op_t &op,
 }
 }; // namespace
 
-nixlGusliEngine::nixlGusliEngine(const nixlBackendInitParams *nixlInit)
-    : nixlBackendEngine(nixlInit) {
-    gusli::global_clnt_context::init_params gusli_params; // Convert nixl params to lib params
+void
+nixlGusliEngine::parseInitParams(const nixlBackendInitParams *nixl_init, gusli::global_clnt_context::init_params &gusli_params) {
+    // Convert nixl params to lib params
     gusli_params.log =
         stdout; // Redirect gusli logs to stdout, important errors will be printed by the plugin
-    if (nixlInit && nixlInit->customParams) {
-        const nixl_b_params_t *backParams = nixlInit->customParams;
+    if (nixl_init && nixl_init->customParams) {
+        const nixl_b_params_t *backParams = nixl_init->customParams;
         if (backParams->count("client_name") > 0)
             gusli_params.client_name = backParams->at("client_name").c_str();
         if (backParams->count("max_num_simultaneous_requests") > 0)
@@ -102,11 +108,15 @@ nixlGusliEngine::nixlGusliEngine(const nixlBackendInitParams *nixlInit)
         if (backParams->count("config_file") > 0)
             gusli_params.config_file = backParams->at("config_file").c_str();
     }
+}
+
+nixlGusliEngine::nixlGusliEngine(const nixlBackendInitParams *nixl_init)
+    : nixlBackendEngine(nixl_init) {
+    gusli::global_clnt_context::init_params gusli_params;
+    parseInitParams(nixl_init, gusli_params);
     lib_ = std::make_unique<gusli::global_clnt_context>(gusli_params);
     NIXL_ASSERT_ALWAYS(lib_->BREAKING_VERSION == 1);
 }
-
-nixlGusliEngine::~nixlGusliEngine() {}
 
 nixl_status_t
 nixlGusliEngine::registerMem(const nixlBlobDesc &mem,
@@ -116,13 +126,16 @@ nixlGusliEngine::registerMem(const nixlBlobDesc &mem,
     if ((mem_type != DRAM_SEG) && (mem_type != BLK_SEG)) return NIXL_ERR_NOT_SUPPORTED;
 
     std::unique_ptr<nixlGusliMemReq> md = std::make_unique<nixlGusliMemReq>(mem, mem_type);
+
     __LOG_DBG("register dev[0x%lx].ram_lba[%p].len=0x%lx, type=%u, md=%s",
               mem.devId,
               (void *)mem.addr,
               mem.len,
               mem_type,
               mem.metaInfo.c_str());
+
     md->ioBufs.emplace_back(gusli::io_buffer_t{.ptr = (void *)mem.addr, .byte_len = mem.len});
+
     if (mem_type == BLK_SEG) {
         // Todo: LBA of block devices, verify size, extend volume
     } else {
@@ -135,16 +148,18 @@ nixlGusliEngine::registerMem(const nixlBlobDesc &mem,
                          mem.len);
         }
     }
+
     out = (nixlBackendMD *)md.release();
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlGusliEngine::deregisterMem(nixlBackendMD *_md) {
-    nixlGusliMemReq *md = (nixlGusliMemReq *)_md;
-    if (!md) __LOG_RETERR(NIXL_ERR_INVALID_PARAM, "md==null");
-    std::unique_ptr<nixlGusliMemReq> auto_deleter =
-        std::unique_ptr<nixlGusliMemReq>(md); // Regardless of the outcome: md should be deleted
+    if (!_md) __LOG_RETERR(NIXL_ERR_INVALID_PARAM, "md==null");
+
+    // Take ownership of the memory descriptor for safe cleanup
+    std::unique_ptr<nixlGusliMemReq> md(static_cast<nixlGusliMemReq *>(_md));
+
     __LOG_DBG("unregister dev[0x%lx].ram_lba[%p].len=0x%lx, type=%u",
               md->devId,
               (void *)md->ioBufs[0].ptr,
@@ -190,11 +205,18 @@ protected:
     [[nodiscard]] nixl_status_t
     getCompStatus(void) const {
         const enum gusli::io_error_codes rv = pollableAsyncRV;
-        if (rv == gusli::io_error_codes::E_OK) return NIXL_SUCCESS;
-        if (rv == gusli::io_error_codes::E_IN_TRANSFER) return NIXL_IN_PROG;
-        if (rv == gusli::io_error_codes::E_INVAL_PARAMS) return NIXL_ERR_INVALID_PARAM;
-        if (rv == gusli::io_error_codes::E_THROTTLE_RETRY_LATER) return NIXL_ERR_NOT_ALLOWED;
-        __LOG_RETERR(NIXL_ERR_BACKEND, "IO[%c%p], io exec error rv=%d", op, this, (int)rv);
+        switch (rv) {
+            case gusli::io_error_codes::E_OK:
+                return NIXL_SUCCESS;
+            case gusli::io_error_codes::E_IN_TRANSFER:
+                return NIXL_IN_PROG;
+            case gusli::io_error_codes::E_INVAL_PARAMS:
+                return NIXL_ERR_INVALID_PARAM;
+            case gusli::io_error_codes::E_THROTTLE_RETRY_LATER:
+                return NIXL_ERR_NOT_ALLOWED;
+            default:
+                __LOG_RETERR(NIXL_ERR_BACKEND, "IO[%c%p], io exec error rv=%d", op, this, (int)rv);
+        }
     }
 };
 
@@ -206,8 +228,10 @@ public:
                                    const nixlMetaDesc &remote)
         : nixlGusliBackendReqHbase(nixlOp) {
         initCommon();
+
         io.params.init_1_rng(
             op, gid, (uint64_t)remote.addr, (uint64_t)local.len, (void *)local.addr);
+
         __LOG_IO(this,
                  ".RNG1: dev=%d, %p, 0x%zx[b], lba=0x%lx, gid=%d",
                  remote.devId,
@@ -217,15 +241,16 @@ public:
                  gid);
     }
 
-    nixlGusliBackendReqHSingleBdev(const nixl_xfer_op_t nixlOp,
+    nixlGusliBackendReqHSingleBdev(const nixl_xfer_op_t nixl_op,
                                    int32_t gid,
                                    const nixl_meta_dlist_t &local,
                                    const nixl_meta_dlist_t &remote)
-        : nixlGusliBackendReqHbase(nixlOp) {
+        : nixlGusliBackendReqHbase(nixl_op) {
         initCommon();
         const int num_ranges = remote.descCount();
         gusli::io_multi_map_t *mio =
             (gusli::io_multi_map_t *)local[0].addr; // Allocate scatter gather in the first entry
+
         mio->init_num_entries(num_ranges - 1); // First entry is the scatter gather
         if (mio->my_size() > local[0].len) {
             __LOG_ERR("mmap of sg=0x%lx[b] > is too short=0x%lx[b], Enlarge mapping or use "
@@ -234,6 +259,7 @@ public:
                       local[0].len);
             throw std::runtime_error("Failed to initialize io, See log");
         }
+
         __LOG_IO(this,
                  ".SGL: dev=%d, %p, 0x%zx[b], lba=0x%lx, gid=%d",
                  remote[0].devId,
@@ -241,6 +267,7 @@ public:
                  local[0].len,
                  remote[0].addr,
                  gid);
+
         for (int i = 1; i < num_ranges; i++) { // Skip first range
             mio->entries[i - 1].init((void *)local[i].addr, local[i].len, remote[i].addr);
             __LOG_IO(this,
@@ -251,6 +278,7 @@ public:
                      remote[i].addr,
                      i);
         }
+
         io.params.init_multi(op, gid, *mio);
     }
 
@@ -287,19 +315,19 @@ private:
 
 class nixlGusliBackendReqHCompound : public nixlGusliBackendReqHbase {
 public:
-    nixlGusliBackendReqHCompound(const nixl_xfer_op_t nixlOp,
+    nixlGusliBackendReqHCompound(const nixl_xfer_op_t nixl_op,
                                  unsigned nSubIOs,
                                  bool hasSglMem,
                                  const nixl_meta_dlist_t &local,
                                  const nixl_meta_dlist_t &remote,
                                  std::function<int32_t(uint64_t)> convertIdFunc)
-        : nixlGusliBackendReqHbase(nixlOp) {
+        : nixlGusliBackendReqHbase(nixl_op) {
         child.reserve(nSubIOs);
         const unsigned num_ranges = remote.descCount();
         unsigned i = (hasSglMem ? 1 : 0); // If supplied sgl, can't use it for now, just ignore it
         __LOG_IO(this, "_Compound IO, has_sgl=%d, nSubIOs=%u", hasSglMem, (num_ranges - i));
         for (; i < num_ranges; i++)
-            child.emplace_back(nixlOp, convertIdFunc(remote[i].devId), local[i], remote[i]);
+            child.emplace_back(nixl_op, convertIdFunc(remote[i].devId), local[i], remote[i]);
     }
 
     ~nixlGusliBackendReqHCompound() override = default;
