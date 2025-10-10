@@ -31,10 +31,14 @@ thread_dep = dependency('threads')
 
 # Check for libaio (for POSIX plugin and test)
 aio_dep = cpp.find_library('aio', required: false)
+message('aio_dep:', aio_dep.type_name())
 posix_aio = false
+linux_aio = false
 if aio_dep.found()
     posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
+    linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [aio_dep])
 endif
+
 
 # Forced to ignore this error due to:
 # https://github.com/abseil/abseil-cpp/issues/1779
