@@ -126,6 +126,7 @@ nixl_backend_handle = int
 @param listen_port Specify the port for the listener thread to listen on.
 @param capture_telemetry Whether to enable telemetry capture.
 @param num_threads Specify number of threads for the supported multi-threaded backends.
+@param device_idx Specify the GPU index to be initialized for the backend.
 @param backends List of backend names for agent to initialize.
         Default is UCX, other backends can be added to the list, or after
         agent creation, can be initialized with create_backend.
@@ -140,6 +141,7 @@ class nixl_agent_config:
         listen_port: int = 0,
         capture_telemetry: bool = False,
         num_threads: int = 0,
+        device_idx: int = 0,
         backends: list[str] = ["UCX"],
     ):
         # TODO: add backend init parameters
@@ -149,6 +151,7 @@ class nixl_agent_config:
         self.port = listen_port
         self.capture_telemetry = capture_telemetry
         self.num_threads = num_threads
+        self.device_idx = device_idx
 
 
 """
@@ -232,6 +235,11 @@ class nixl_agent:
                         init["num_threads"] = str(nixl_conf.num_threads)
                     elif bknd == "GDS_MT":
                         init["thread_count"] = str(nixl_conf.num_threads)
+                    elif bknd == "Uccl":
+                        init["num_cpus"] = str(nixl_conf.num_cpus)
+                if nixl_conf.device_idx > 0:
+                    if bknd == "Uccl":
+                        init["device_idx"] = str(nixl_conf.device_idx)
                 self.create_backend(bknd, init)
 
         self.nixl_mems = {

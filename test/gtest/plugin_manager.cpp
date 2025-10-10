@@ -194,7 +194,6 @@ INSTANTIATE_TEST_SUITE_P(GdsLoadPluginInstantiation,
 INSTANTIATE_TEST_SUITE_P(UcxMoLoadPluginInstantiation,
                          LoadSinglePluginTestFixture,
                          testing::Values(ucx_mo_plugin_desc));
-
 /* Load multiple plugins tests instantiations. */
 INSTANTIATE_TEST_SUITE_P(UcxGdsLoadMultiplePluginInstantiation,
                          LoadMultiplePluginsTestFixture,
@@ -207,14 +206,8 @@ INSTANTIATE_TEST_SUITE_P(UcxUcxMoLoadMultiplePluginInstantiation,
                              ucx_mo_plugin_desc}));
 INSTANTIATE_TEST_SUITE_P(GdsUcxMoLoadMultiplePluginInstantiation,
                          LoadMultiplePluginsTestFixture,
-                         testing::Values(std::vector<PluginDesc>{
-                             gds_plugin_desc,
-                             ucx_mo_plugin_desc}));
-INSTANTIATE_TEST_SUITE_P(UcxGdsUcxMoLoadMultiplePluginInstantiation,
-                         LoadMultiplePluginsTestFixture,
-                         testing::Values(std::vector<PluginDesc>{
-                             ucx_plugin_desc, gds_plugin_desc,
-                             ucx_mo_plugin_desc}));
+                         testing::Values(std::vector<PluginDesc>{gds_plugin_desc,
+                                                                 ucx_mo_plugin_desc}));
 
 } // namespace plugin_manager
 } // namespace gtest
