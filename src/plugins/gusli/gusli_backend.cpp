@@ -40,14 +40,14 @@ namespace {
 [[nodiscard]] nixl_status_t
 conErrConv(const gusli::connect_rv rv) {
     switch (rv) {
-        case gusli::connect_rv::C_OK:
-            return NIXL_SUCCESS;
-        case gusli::connect_rv::C_NO_DEVICE:
-            return NIXL_ERR_NOT_FOUND;
-        case gusli::connect_rv::C_WRONG_ARGUMENTS:
-            return NIXL_ERR_INVALID_PARAM;
-        default:
-            return NIXL_ERR_BACKEND;
+    case gusli::connect_rv::C_OK:
+        return NIXL_SUCCESS;
+    case gusli::connect_rv::C_NO_DEVICE:
+        return NIXL_ERR_NOT_FOUND;
+    case gusli::connect_rv::C_WRONG_ARGUMENTS:
+        return NIXL_ERR_INVALID_PARAM;
+    default:
+        return NIXL_ERR_BACKEND;
     }
 }
 
@@ -94,7 +94,8 @@ verifyRequestParams(const nixl_xfer_op_t &op,
 }; // namespace
 
 void
-nixlGusliEngine::parseInitParams(const nixlBackendInitParams *nixl_init, gusli::global_clnt_context::init_params &gusli_params) {
+nixlGusliEngine::parseInitParams(const nixlBackendInitParams *nixl_init,
+                                 gusli::global_clnt_context::init_params &gusli_params) {
     // Convert nixl params to lib params
     gusli_params.log =
         stdout; // Redirect gusli logs to stdout, important errors will be printed by the plugin
@@ -206,16 +207,16 @@ protected:
     getCompStatus(void) const {
         const enum gusli::io_error_codes rv = pollableAsyncRV;
         switch (rv) {
-            case gusli::io_error_codes::E_OK:
-                return NIXL_SUCCESS;
-            case gusli::io_error_codes::E_IN_TRANSFER:
-                return NIXL_IN_PROG;
-            case gusli::io_error_codes::E_INVAL_PARAMS:
-                return NIXL_ERR_INVALID_PARAM;
-            case gusli::io_error_codes::E_THROTTLE_RETRY_LATER:
-                return NIXL_ERR_NOT_ALLOWED;
-            default:
-                __LOG_RETERR(NIXL_ERR_BACKEND, "IO[%c%p], io exec error rv=%d", op, this, (int)rv);
+        case gusli::io_error_codes::E_OK:
+            return NIXL_SUCCESS;
+        case gusli::io_error_codes::E_IN_TRANSFER:
+            return NIXL_IN_PROG;
+        case gusli::io_error_codes::E_INVAL_PARAMS:
+            return NIXL_ERR_INVALID_PARAM;
+        case gusli::io_error_codes::E_THROTTLE_RETRY_LATER:
+            return NIXL_ERR_NOT_ALLOWED;
+        default:
+            __LOG_RETERR(NIXL_ERR_BACKEND, "IO[%c%p], io exec error rv=%d", op, this, (int)rv);
         }
     }
 };

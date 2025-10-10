@@ -97,7 +97,8 @@ private:
     std::unique_ptr<gusli::global_clnt_context> lib_;
 
     void
-    parseInitParams(const nixlBackendInitParams *nixl_init, gusli::global_clnt_context::init_params &gusli_params);
+    parseInitParams(const nixlBackendInitParams *nixl_init,
+                    gusli::global_clnt_context::init_params &gusli_params);
 
     [[nodiscard]] int32_t
     getGidOfBDev(uint64_t devId) const {
