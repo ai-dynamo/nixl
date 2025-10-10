@@ -61,8 +61,11 @@ public:
     fill(void *buffer, size_t size) {
         strcpy(test_phrase, DEF_TEST_PHRASE);
         char *p = (char *)buffer;
+        out_log << "Filling buffer " << (void *)buffer << ", size=" << size << std::endl;
         for (size_t i = 0; i < size; i += DEF_TEST_PHRASE_LEN) {
-            inject_unique(i);
+            // inject_unique(i);
+            out_log << "Filling buffer, i=" << i << ", test_phrase=" << test_phrase
+                    << "addr=" << (void *)&p[i] << std::endl;
             memcpy(&p[i], test_phrase, test_phrase_len);
         }
     }
@@ -502,6 +505,8 @@ public:
             absl::StrFormat("Generating unique data %u[MB]", n_total_mapped_bytes >> 20)));
         test_pattern.change_unique();
 
+        out_log << "Filling ptr with unique data, ptr=" << (void *)ptr
+                << ", n_total_mapped_bytes=" << n_total_mapped_bytes << std::endl;
         test_pattern.fill(ptr, n_total_mapped_bytes);
 
         out_log << "Generating unique data, with_sgl=Y, filled ptr with unique data\n" << std::endl;
