@@ -276,7 +276,8 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
         nixlDlistH *dst_side;
         status = A1->prepXferDlist(agent2, dst_mem_lists[update].trim(), dst_side, &extra_params1);
         nixl_exit_on_failure(status, "Failed to prep xfer dlist", agent1);
-        nixl_exit_on_failure((dst_side == nullptr), "Dst side is null", agent1);
+        nixl_exit_on_failure((dst_side != nullptr), "Dst side is null", agent1);
+
         // Make sure not-loaded descriptors are not updated
         for (int invalid_idx = update + 1; invalid_idx < NUM_UPDATES; invalid_idx++) {
             status = A1->prepXferDlist(agent2, dst_mem_lists[invalid_idx].trim(), dst_side, &extra_params1);

@@ -119,6 +119,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
 static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
                           const std::string &target_ip, int target_port, int thread_id,
                           SharedNotificationState &shared_state) {
+    nixl_status_t st;
     nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
     auto addrs = initMem(agent, dram_for_ucx, extra_params, MEM_VAL);
 
@@ -129,9 +130,11 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
     md_extra_params.ipAddr = target_ip;
     md_extra_params.port = target_port;
 
-    agent.fetchRemoteMD(target, &md_extra_params);
+    st = agent.fetchRemoteMD(target, &md_extra_params);
+    nixl_exit_on_failure(st, "Failed to fetch remote MD");
 
-    agent.sendLocalMD(&md_extra_params);
+    st = agent.sendLocalMD(&md_extra_params);
+    nixl_exit_on_failure(st, "Failed to send local MD");
 
     // Wait for notifications and populate shared state
     while (true) {
