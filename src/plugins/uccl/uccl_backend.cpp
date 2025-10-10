@@ -93,7 +93,7 @@ nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
     size_t dev_idx = getNixlParam(custom_params, "device_idx", 0);
     size_t num_cpus = getNixlParam(custom_params, "num_cpus", 4);
     int in_python = getNixlParam(custom_params, "in_python", 1);
-    NIXL_DEBUG << "Creating UCCL Engine for dev:" << dev_idx << " num_cpus:" << num_cpus;
+    NIXL_DEBUG << "Creating UCCL Engine for dev: " << dev_idx << ", num_cpus: " << num_cpus;
     engine_ = uccl_engine_create(dev_idx, num_cpus, (in_python == 1));
     NIXL_DEBUG << "UCCL engine created";
 
@@ -108,8 +108,6 @@ nixlUcclEngine::~nixlUcclEngine() {
                 uccl_mr_t *mr = reinterpret_cast<uccl_mr_t *>(priv->mr_id);
                 if (mr) {
                     uccl_engine_mr_destroy(mr);
-                    NIXL_DEBUG << "Deregistered memory during cleanup: " << addr
-                               << " mr_id: " << priv->mr_id;
                 }
             }
             delete priv;
@@ -121,7 +119,6 @@ nixlUcclEngine::~nixlUcclEngine() {
         if (destroyed_agents.find(agent_name) == destroyed_agents.end()) {
             uccl_conn_t *conn = reinterpret_cast<uccl_conn_t *>(conn_id);
             if (conn) {
-                NIXL_DEBUG << "Disconnecting from agent: " << agent_name;
                 uccl_engine_conn_destroy(conn);
                 destroyed_agents.insert(agent_name);
             }
@@ -131,7 +128,7 @@ nixlUcclEngine::~nixlUcclEngine() {
     connected_agents_.clear();
     if (engine_) {
         // Add a small delay to allow UCCL internal cleanup to complete
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
         uccl_engine_destroy(engine_);
         engine_ = nullptr;
     }
@@ -143,7 +140,8 @@ nixlUcclEngine::~nixlUcclEngine() {
 
 void
 nixlUcclEngine::startListener() {
-    NIXL_DEBUG << "Accepting UCCL connections";
+    // The listener waits for connections from remote agents
+    NIXL_DEBUG << "UCCL accepting connections";
     while (true) {
         char ip_buf[256];
         int remote_gpu_idx;
@@ -152,6 +150,7 @@ nixlUcclEngine::startListener() {
             NIXL_ERROR << "Failed to accept connection from remote agent";
             continue;
         }
+        // Start the listener thread to send/get notifications from the remote agent
         uccl_engine_start_listener(conn);
         NIXL_DEBUG << "Connected to remote agent: " << ip_buf;
         connected_agents_[ip_buf] = reinterpret_cast<uint64_t>(conn);
@@ -169,7 +168,6 @@ nixlUcclEngine::getSupportedMems() const {
 nixl_status_t
 nixlUcclEngine::getPublicData(const nixlBackendMD *meta, std::string &str) const {
     nixlUcclBackendMD *priv = (nixlUcclBackendMD *)meta;
-    NIXL_DEBUG << "Getting Public data for : " << priv->addr;
     str = std::to_string(priv->mr_id);
     return NIXL_SUCCESS;
 }
@@ -208,11 +206,9 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
         return NIXL_ERR_BACKEND;
     }
 
-    // Simple role coordination: agent with smaller name acts as client
-    is_client_ = local_agent_name_ < remote_agent;
     uccl_conn_t *conn = nullptr;
 
-    NIXL_DEBUG << "Acting as CLIENT, connecting to " << ip_addr << ":" << port
+    NIXL_DEBUG << "Connecting to " << ip_addr << ":" << port
                << "?gpu=" << gpu_index << std::endl;
     conn = uccl_engine_connect(engine_, ip_addr, gpu_index, port);
     if (!conn) {
@@ -503,6 +499,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     // Process each descriptor pair
+    // TODO: Use a vector send async API to send all the transfers at once
     for (size_t i = 0; i < lcnt; i++) {
         lmd = (nixlUcclBackendMD *)local[i].metadataP;
         rmd = (nixlUcclBackendMD *)remote[i].metadataP;
@@ -536,13 +533,11 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         uint64_t transfer_id = 0;
         switch (operation) {
         case NIXL_READ: {
-            NIXL_DEBUG << "Performing READ operation: receiving " << lsize << " bytes";
             result = uccl_engine_read(
                 conn, local_mr, lmd->addr, lsize, local_priv->fifo_item_data, &transfer_id);
             break;
         }
         case NIXL_WRITE:
-            NIXL_DEBUG << "Performing WRITE operation: sending " << lsize << " bytes";
             result = uccl_engine_write(conn, local_mr, lmd->addr, lsize, &transfer_id);
             break;
 
@@ -574,13 +569,11 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
 
 nixl_status_t
 nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
-    // TODO: Check transfer status if async
     if (!handle) {
         NIXL_ERROR << "Invalid handle provided to checkXfer";
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Cast to our custom handle type
     nixlUcclReqH *uccl_handle = dynamic_cast<nixlUcclReqH *>(handle);
     if (!uccl_handle) {
         NIXL_ERROR << "Invalid handle type for UCCL backend";
@@ -617,18 +610,15 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         NIXL_DEBUG << "All transfers in handle completed, sent notification: "
                    << uccl_handle->notif_msg;
     }
-    NIXL_DEBUG << "Transfer status: " << (all_done ? "COMPLETED" : "IN_PROGRESS");
     return (all_done) ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
 nixl_status_t
 nixlUcclEngine::releaseReqH(nixlBackendReqH *handle) const {
-    // TODO: Release any resources associated with the transfer handle
     if (!handle) {
-        return NIXL_SUCCESS; // Nothing to release
+        return NIXL_SUCCESS;
     }
 
-    // Cast to our custom handle type and delete it
     nixlUcclReqH *uccl_handle = dynamic_cast<nixlUcclReqH *>(handle);
     if (uccl_handle) {
         delete uccl_handle;
@@ -651,9 +641,6 @@ nixlUcclEngine::getNotifs(notif_list_t &notif_list) {
 
 nixl_status_t
 nixlUcclEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
-    NIXL_DEBUG << "UCCL Gen Notify: " << remote_agent << " msg: " << msg;
-
-    // Get the connection for this remote agent
     auto conn_iter = connected_agents_.find(remote_agent);
     if (conn_iter == connected_agents_.end()) {
         NIXL_ERROR << "No connection found for remote agent: " << remote_agent;

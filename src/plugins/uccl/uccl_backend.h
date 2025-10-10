@@ -126,14 +126,13 @@ public:
 private:
     mutable std::mutex mutex_;
     uccl_engine_t *engine_;
-    bool is_client_;
     std::string local_agent_name_;
     std::unordered_map<uint64_t, nixlUcclBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, uint64_t> connected_agents_; // agent name -> conn_id
     std::thread listener_thread_;
 };
 
-// Minimal metadata struct for UCCL memory registration
+// UCCL Backend Memory Descriptor
 class nixlUcclBackendMD : public nixlBackendMD {
 public:
     nixlUcclBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {}
@@ -147,7 +146,7 @@ public:
     char fifo_item_data[FIFO_ITEM_SIZE];
 };
 
-// Custom request handle for UCCL transfers
+// UCCL Backend Request Handle
 class nixlUcclReqH : public nixlBackendReqH {
 public:
     nixlUcclReqH(uccl_conn_t *conn) : conn(conn) {}
@@ -157,7 +156,7 @@ public:
     uccl_conn_t *conn;
     std::vector<uint64_t> transfer_ids;
     std::vector<uint64_t>
-        completed_transfer_ids; // Track completed transfers to avoid double polling
+    completed_transfer_ids;
     nixl_blob_t notif_msg;
 };
 
