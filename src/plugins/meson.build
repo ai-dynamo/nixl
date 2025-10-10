@@ -49,6 +49,12 @@ if hf3fs_lib_found.found()
     subdir('hf3fs')
 endif
 
+gusli_lib_file = 'gusli_clnt'
+gusli_lib_found = cc.find_library(gusli_lib_file, required: false)
+if gusli_lib_found.found()
+    subdir('gusli')
+endif
+
 if cuda_dep.found() and doca_gpunetio_dep.found()
     subdir('gpunetio')
 endif
