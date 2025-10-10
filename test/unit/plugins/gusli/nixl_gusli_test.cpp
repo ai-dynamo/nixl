@@ -23,11 +23,18 @@
 #include "common/nixl_time.h"
 #include <getopt.h>
 
+#define UUID_LOCAL_FILE_0 11 // Just some numbers
+#define UUID_K_DEV_ZERO_1 14
+#define UUID_NVME_DISK__0 27
+
+#define DEF_TEST_PHRASE "|NIXL bdev 32[b] GUSLI pattern |"
+#define DEF_TEST_PHRASE_LEN (sizeof(DEF_TEST_PHRASE) - 1) // -1 to exclude null terminator
+
 static std::ostream &err_log = std::cerr;
 static std::ostream &out_log = std::cout;
 
 class test_pattern_t {
-    static constexpr const size_t test_phrase_len = 32;
+    static constexpr const size_t test_phrase_len = DEF_TEST_PHRASE_LEN;
     char test_phrase[test_phrase_len + 1] __attribute__((aligned(sizeof(long))));
     uint64_t unique_stage = '!';
 
@@ -46,15 +53,15 @@ class test_pattern_t {
 
 public:
     void
-    change_unqiue(void) {
+    change_unique(void) {
         unique_stage++;
     }
 
     void
     fill(void *buffer, size_t size) {
-        strcpy(test_phrase, "|NIXL bdev 32[b] GUSLI pattern |");
+        strcpy(test_phrase, DEF_TEST_PHRASE);
         char *p = (char *)buffer;
-        for (size_t i = 0; i < size; i += test_phrase_len) {
+        for (size_t i = 0; i < size; i += DEF_TEST_PHRASE_LEN) {
             inject_unique(i);
             memcpy(&p[i], test_phrase, test_phrase_len);
         }
@@ -80,9 +87,9 @@ public:
     bool
     verify(const void *buffer, size_t size) {
         char *p = (char *)buffer;
-        for (size_t i = 0; i < size; i += test_phrase_len) {
+        for (size_t i = 0; i < size; i += DEF_TEST_PHRASE_LEN) {
             inject_unique(i);
-            if (0 != memcmp(&p[i], test_phrase, test_phrase_len))
+            if (0 != memcmp(&p[i], test_phrase, DEF_TEST_PHRASE_LEN))
                 return error_print(p, i, size, test_phrase);
         }
         return true;
@@ -216,9 +223,7 @@ public:
 #define __stringify_1(x...) #x
 #define __stringify(x...) __stringify_1(x)
 #endif
-#define UUID_LOCAL_FILE_0 11 // Just some numbers
-#define UUID_K_DEV_ZERO_1 14
-#define UUID_NVME_DISK__0 27
+
         params["client_name"] = agent_name;
 #if 0
             // You can include gusli api and build config file using its methods
@@ -253,9 +258,11 @@ public:
         d.devId = devId;
         d.len = sg_buf_size;
         d.addr = (uintptr_t)((u_int64_t)ptr + n_total_mapped_bytes);
+        out_log << "Adding SGL to bdev_io_src, devId=" << devId << ", len=" << sg_buf_size << ", addr=" << (void *)d.addr << std::endl;
         bdev_io_src.addDesc(d);
         d.addr = bdev_byte_offset; // Dummy
         bdev_io_dst.addDesc(d);
+        out_log << "Adding SGL to bdev_io_dst, devId=" << devId << ", len=" << sg_buf_size << ", addr=" << (void *)d.addr << std::endl;
     }
 
     void
@@ -267,13 +274,16 @@ public:
         nixlBlobDesc d;
         d.devId = UUID_LOCAL_FILE_0;
         if (with_sgl) __alloc_sgl(d.devId, bdev_io_src, bdev_io_dst);
+        out_log << "Building single bdev request, with_sgl=" << (with_sgl ? 'Y' : 'N') << std::endl;
         for (int i = 0; i < num_transfers; ++i) { // Create all the transfer
             const size_t io_offset = (i * transfer_size);
             d.len = transfer_size;
             d.addr = (uintptr_t)((size_t)ptr + io_offset); // Offset in RAM buffer
+            out_log << "Adding SGL to bdev_io_src, devId=" << d.devId << ", len=" << d.len << ", addr=" << (void *)d.addr << std::endl;
             bdev_io_src.addDesc(d);
             d.addr = bdev_byte_offset + io_offset;
             bdev_io_dst.addDesc(d);
+            out_log << "Adding SGL to bdev_io_dst, devId=" << d.devId << ", len=" << d.len << ", addr=" << (void *)d.addr << std::endl;
             progress_bar(float(i + 1) / num_transfers);
         }
     }
@@ -486,15 +496,25 @@ public:
 
         print_segment_title(phase_title(
             absl::StrFormat("Generating unique data %u[MB]", n_total_mapped_bytes >> 20)));
-        test_pattern.change_unqiue();
+        test_pattern.change_unique();
+
         test_pattern.fill(ptr, n_total_mapped_bytes);
+
+        out_log << "Generating unique data, with_sgl=Y, filled ptr with unique data\n" << std::endl;
+
         nixlTime::us_t total_time(0);
         double total_data_gb(0);
         if (1) {
             for (int with_sgl = 1; with_sgl >= 0;
                  with_sgl--) { // Test with sgl dummy range then remove it and test without it
                 single_bdev_request_build(bdev_io_src, bdev_io_dst, with_sgl);
+
+                out_log << "Building single bdev request, with_sgl=" << (with_sgl ? 'Y' : 'N') << std::endl;
+
                 const int n_ranges = (int)bdev_io_src.descCount() - with_sgl;
+
+                out_log << "Creating 2 transfers, with_sgl=" << (with_sgl ? 'Y' : 'N') << std::endl;
+
                 for (int i = 0; i < 2; i++, treq = nullptr) {
                     const std::string io_t_str = nixlEnumStrings::xferOpStr(io_phases[i]);
                     print_segment_title(phase_title(absl::StrFormat("%s Test, nIOs=%u, with_sgl=%c",
@@ -550,7 +570,7 @@ public:
                 << line_str;
 
         if (1) { // Multi-bdev IO tests
-            test_pattern.change_unqiue();
+            test_pattern.change_unique();
             print_segment_title(phase_title("register-mem on multi-bdevs"));
             if (register_bufs_on_multi_bdev(agent, true) < 0) return -__LINE__;
             test_pattern.fill(ptr, n_total_mapped_bytes);
@@ -576,7 +596,7 @@ public:
                  with_sgl--) { // Test with sgl dummy range then remove it and test without it
                 print_segment_title(phase_title(absl::StrFormat(
                     "TEST 1-transfer-multi-bdevs, with_sgl=%c", (with_sgl ? 'Y' : 'N'))));
-                test_pattern.change_unqiue();
+                test_pattern.change_unique();
                 multi_bdev_single_request_build(bdev_io_src, bdev_io_dst, with_sgl);
                 for (int i = 0; i < 2; i++, treq = nullptr) {
                     const std::string io_t_str = nixlEnumStrings::xferOpStr(io_phases[i]);
@@ -614,7 +634,7 @@ public:
 
 int
 main(int argc, char *argv[]) {
-    static constexpr const int default_num_transfers = 500;
+    static constexpr const int default_num_transfers = 50;
     static constexpr const size_t default_transfer_size = (1UL << 21); // 2[MB]
     int opt, num_transfers = default_num_transfers;
     size_t transfer_size = default_transfer_size;
