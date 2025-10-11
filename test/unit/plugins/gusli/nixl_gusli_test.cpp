@@ -64,8 +64,8 @@ public:
         out_log << "Filling buffer " << (void *)buffer << ", size=" << size << std::endl;
         for (size_t i = 0; i < size; i += DEF_TEST_PHRASE_LEN) {
             // inject_unique(i);
-            out_log << "Filling buffer, i=" << i << ", test_phrase=" << test_phrase
-                    << "addr=" << (void *)&p[i] << std::endl;
+            // out_log << "Filling buffer, i=" << i << ", test_phrase=" << test_phrase
+            //        << "addr=" << (void *)&p[i] << std::endl;
             memcpy(&p[i], test_phrase, test_phrase_len);
         }
     }
@@ -91,7 +91,7 @@ public:
     verify(const void *buffer, size_t size) {
         char *p = (char *)buffer;
         for (size_t i = 0; i < size; i += DEF_TEST_PHRASE_LEN) {
-            inject_unique(i);
+            // inject_unique(i);
             if (0 != memcmp(&p[i], test_phrase, DEF_TEST_PHRASE_LEN))
                 return error_print(p, i, size, test_phrase);
         }
