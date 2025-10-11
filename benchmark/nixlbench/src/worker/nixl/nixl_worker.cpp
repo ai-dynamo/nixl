@@ -63,6 +63,8 @@
             _seg_type = DRAM_SEG;                                                           \
         } else if (0 == _seg_type_str.compare("VRAM")) {                                    \
             HANDLE_VRAM_SEGMENT(_seg_type);                                                 \
+        } else if (0 == _seg_type_str.compare("BLK")) {                                     \
+            _seg_type = BLK_SEG;                                                            \
         } else {                                                                            \
             std::cerr << "Invalid segment type: " << _seg_type_str << std::endl;            \
             exit(EXIT_FAILURE);                                                             \
@@ -201,6 +203,25 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         }
 
         std::cout << "OBJ backend" << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
+        // Set GUSLI backend parameters based on config from nixl_gusli_test
+        backend_params["client_name"] = xferBenchConfig::gusli_client_name;
+        backend_params["max_num_simultaneous_requests"] =
+            std::to_string(xferBenchConfig::gusli_max_simultaneous_requests);
+
+        // Generate default config if not provided
+        if (xferBenchConfig::gusli_config_file.empty()) {
+            // Default config similar to nixl_gusli_test.cpp
+            backend_params["config_file"] = "# Config file\nversion=1\n"
+                                            "11 F W N ./store0.bin sec=0x3\n"
+                                            "14 K X N /dev/zero sec=0x71\n";
+        } else {
+            backend_params["config_file"] = xferBenchConfig::gusli_config_file;
+        }
+
+        std::cout << "GUSLI backend with client_name: " << xferBenchConfig::gusli_client_name
+                  << ", max_requests: " << xferBenchConfig::gusli_max_simultaneous_requests
+                  << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -561,6 +582,31 @@ xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
     }
 }
 
+std::optional<xferBenchIOV>
+xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id) {
+    // For block devices, we create a block device descriptor
+    // The address represents the LBA (Logical Block Address) offset in the block device
+    // Similar to how nixl_gusli_test.cpp handles block device addressing
+
+    uint64_t lba_offset = xferBenchConfig::gusli_bdev_byte_offset;
+
+    // Create IOV with LBA offset as address, buffer size, and device ID
+    // The device ID corresponds to the block device UUID (e.g., 11 for local file, 14 for
+    // /dev/zero)
+    auto ret = std::optional<xferBenchIOV>(std::in_place, lba_offset, buffer_size, mem_dev_id);
+
+    // Update offset for next allocation (similar to file handling)
+    xferBenchConfig::gusli_bdev_byte_offset += buffer_size;
+
+    return ret;
+}
+
+void
+xferBenchNixlWorker::cleanupBasicDescBlk(xferBenchIOV &iov) {
+    // No cleanup needed for block device descriptors
+    // The block device backend handles the device lifecycle
+}
+
 std::vector<std::vector<xferBenchIOV>>
 xferBenchNixlWorker::allocateMemory(int num_threads) {
     std::vector<std::vector<xferBenchIOV>> iov_lists;
@@ -616,6 +662,24 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
         }
+    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+        // GUSLI backend uses block device descriptors
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                std::optional<xferBenchIOV> basic_desc;
+                // Use device IDs from GUSLI config (11 for local file, 14 for /dev/zero)
+                int gusli_dev_id = (i % 2 == 0) ? 11 : 14; // Alternate between devices
+                basic_desc = initBasicDescBlk(buffer_size, gusli_dev_id);
+                if (basic_desc) {
+                    iov_list.push_back(basic_desc.value());
+                }
+            }
+            nixl_reg_dlist_t desc_list(BLK_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            remote_iovs.push_back(iov_list);
+        }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
         int num_files = xferBenchConfig::num_files;
@@ -662,6 +726,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     for (int list_idx = 0; list_idx < num_threads; list_idx++) {
         std::vector<xferBenchIOV> iov_list;
+        int blk_dev_id = 0;
         for (i = 0; i < num_devices; i++) {
             std::optional<xferBenchIOV> basic_desc;
 
@@ -674,6 +739,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 basic_desc = initBasicDescVram(buffer_size, i);
                 break;
 #endif
+            case BLK_SEG:
+                // For BLK_SEG on local side, use block device descriptors
+                // Use device IDs from GUSLI config (11 for local file, 14 for /dev/zero)
+                blk_dev_id = (i % 2 == 0) ? 11 : 14; // Alternate between devices
+                basic_desc = initBasicDescBlk(buffer_size, blk_dev_id);
+                break;
             default:
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
@@ -712,6 +783,9 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
                 cleanupBasicDescVram(iov);
                 break;
 #endif
+            case BLK_SEG:
+                cleanupBasicDescBlk(iov);
+                break;
             default:
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
@@ -729,6 +803,15 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
                 cleanupBasicDescObj(iov);
             }
             nixl_reg_dlist_t desc_list(OBJ_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
+        for (auto &iov_list : remote_iovs) {
+            for (auto &iov : iov_list) {
+                cleanupBasicDescBlk(iov);
+            }
+            nixl_reg_dlist_t desc_list(BLK_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
@@ -924,6 +1007,8 @@ execTransfer(nixlAgent *agent,
 
         if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
             remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
+        } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+            remote_desc = nixl_xfer_dlist_t(BLK_SEG);
         } else if (xferBenchConfig::isStorageBackend()) {
             remote_desc = nixl_xfer_dlist_t(FILE_SEG);
         }
