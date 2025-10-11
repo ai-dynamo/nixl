@@ -64,8 +64,8 @@ public:
         out_log << "Filling buffer " << (void *)buffer << ", size=" << size << std::endl;
         for (size_t i = 0; i < size; i += DEF_TEST_PHRASE_LEN) {
             // inject_unique(i);
-            // out_log << "Filling buffer, i=" << i << ", test_phrase=" << test_phrase
-            //        << "addr=" << (void *)&p[i] << std::endl;
+            out_log << "Filling buffer, i=" << i << ", test_phrase=" << test_phrase
+                    << "addr=" << (void *)&p[i] << std::endl;
             memcpy(&p[i], test_phrase, test_phrase_len);
         }
     }
@@ -195,7 +195,12 @@ public:
         sg_buf_size = num_transfers *
             32; // SG (scatter gather element is 24[b] (ptr+len+offset). Round to 32)
         sg_buf_size = ((sg_buf_size + page_size - 1) / page_size) * page_size; // Round to page size
+        out_log << "sg_buf_size=" << sg_buf_size << std::endl;
         n_total_mapped_bytes = (num_transfers * transfer_size);
+        out_log << "n_total_mapped_bytes=" << n_total_mapped_bytes << std::endl;
+        out_log << "page_size=" << page_size << std::endl;
+        out_log << "transfer_size=" << transfer_size << std::endl;
+        out_log << "num_transfers=" << num_transfers << std::endl;
     }
 
     ~gtest() {
@@ -645,7 +650,7 @@ public:
 int
 main(int argc, char *argv[]) {
     static constexpr const int default_num_transfers = 50;
-    static constexpr const size_t default_transfer_size = (1UL << 21); // 2[MB]
+    static constexpr const size_t default_transfer_size = (1UL << 4); // 2[MB]
     int opt, num_transfers = default_num_transfers;
     size_t transfer_size = default_transfer_size;
     while ((opt = getopt(argc, argv, "n:s:h")) != -1) {
