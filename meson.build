@@ -82,24 +82,44 @@ else
 endif
 
 if cuda_dep.found()
-    add_languages('CUDA')
+    add_languages('cuda')
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
 
-    # Please extend with your arch if not present in the list
-    nvcc_flags = []
-    nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
-    nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
-    add_project_arguments(nvcc_flags, language: 'cuda')
+    # Set default CUDA architectures if not specified by user
+    # Users can override with cuda_args and cuda_link_args options
+    # See README.md for details and examples
+    cuda_args_option = get_option('cuda_args')
+    cuda_link_args_option = get_option('cuda_link_args')
+
+    # Define default architectures
+    default_cuda_args = [
+        '-gencode=arch=compute_80,code=sm_80',
+        '-gencode=arch=compute_90,code=sm_90'
+    ]
+    default_cuda_link_args = [
+        '-gencode=arch=compute_80,code=sm_80',
+        '-gencode=arch=compute_90,code=sm_90'
+    ]
+
+    # Apply defaults only if user hasn't specified custom args
+    if cuda_args_option == []
+        cuda_args = default_cuda_args
+        add_project_arguments(cuda_args, language: 'cuda')
+    else
+        cuda_args = []
+    endif
+
+    if cuda_link_args_option == []
+        cuda_link_args = default_cuda_link_args
+        add_project_link_arguments(cuda_link_args, language: 'cuda')
+    else
+        cuda_link_args = []
+    endif
 
     # Refer to https://mesonbuild.com/Cuda-module.html
     add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
     add_project_arguments('-rdc=true', language: 'cuda')
-
-    nvcc_flags_link = []
-    nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
-    nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
-    add_project_link_arguments(nvcc_flags_link, language: 'cuda')
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
 endif
@@ -177,7 +197,7 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     have_gpu_side = cuda.compiles('''
             #include <ucp/api/device/ucp_device_impl.h>
             int main() { return 0; }
-        ''', dependencies : ucx_dep, args: nvcc_flags)
+        ''', dependencies : ucx_dep, args: cuda_args)
 
     have_host_side = cpp.compiles('''
             #include <ucp/api/device/ucp_host.h>
