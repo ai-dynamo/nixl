@@ -28,6 +28,7 @@ extern "C"
 #include <nixl_types.h>
 #include "backend/backend_aux.h"
 #include "absl/status/statusor.h"
+#include <unordered_map>
 
 enum class nixl_ucx_mt_t {
     SINGLE,
@@ -86,6 +87,7 @@ private:
 public:
     void err_cb(ucp_ep_h ucp_ep, ucs_status_t status);
     void* exported_batch{nullptr};
+    std::unordered_map<nixlUcxReq, ucp_batch_h> exported_batches;
 
     nixl_status_t checkTxState() const {
         switch (state) {

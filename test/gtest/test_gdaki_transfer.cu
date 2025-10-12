@@ -935,6 +935,89 @@ TEST_P(TestGdakiTransfer, partialGpuTransferIntraNodeSignalWithoutIovsWithNullSt
                mem_type, std::nullopt, std::make_optional(signal_buffers));
 }
 
+TEST_P(TestGdakiTransfer, multipleExportReleaseSameEndpoint)
+{
+    if (!isFullTransferCoordinationLevelImplemented()) {
+        GTEST_SKIP() << "Coordination level " << getCoordinationLevelName()
+                     << " is not implemented yet";
+    }
+
+    std::vector<MemBuffer> src_buffers1, dst_buffers1;
+    std::vector<MemBuffer> src_buffers2, dst_buffers2;
+    std::vector<MemBuffer> signal_buffers1, signal_buffers2;
+    constexpr size_t size = 16 * 1024;
+    constexpr size_t count = 32;
+    nixl_mem_t mem_type = VRAM_SEG;
+
+    createRegisteredMem(getAgent(SENDER_AGENT), size, count, mem_type, src_buffers1);
+    createRegisteredMem(getAgent(RECEIVER_AGENT), size, count, mem_type, dst_buffers1);
+    createRegisteredMem(getAgent(RECEIVER_AGENT), sizeof(uint64_t), 1, mem_type, signal_buffers1);
+
+    createRegisteredMem(getAgent(SENDER_AGENT), size, count, mem_type, src_buffers2);
+    createRegisteredMem(getAgent(RECEIVER_AGENT), size, count, mem_type, dst_buffers2);
+    createRegisteredMem(getAgent(RECEIVER_AGENT), sizeof(uint64_t), 1, mem_type, signal_buffers2);
+
+    exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
+
+    nixl_opt_args_t extra_params1 = {};
+    extra_params1.hasNotif = true;
+    extra_params1.notifMsg = NOTIF_MSG;
+    extra_params1.signal_addr = static_cast<uintptr_t>(signal_buffers1[0]);
+    extra_params1.signal_dev_id = 0;
+
+    nixl_opt_args_t extra_params2 = {};
+    extra_params2.hasNotif = true;
+    extra_params2.notifMsg = NOTIF_MSG;
+    extra_params2.signal_addr = static_cast<uintptr_t>(signal_buffers2[0]);
+    extra_params2.signal_dev_id = 0;
+
+    nixlXferReqH *xfer_req1 = nullptr;
+    nixl_status_t status = getAgent(SENDER_AGENT).createXferReq(
+            NIXL_WRITE,
+            makeDescList<nixlBasicDesc>(src_buffers1, mem_type),
+            makeDescList<nixlBasicDesc>(dst_buffers1, mem_type),
+            getAgentName(RECEIVER_AGENT),
+            xfer_req1, &extra_params1);
+    ASSERT_EQ(status, NIXL_SUCCESS) << "Failed to create first xfer request";
+    EXPECT_NE(xfer_req1, nullptr);
+
+    nixlXferReqH *xfer_req2 = nullptr;
+    status = getAgent(SENDER_AGENT).createXferReq(
+            NIXL_WRITE,
+            makeDescList<nixlBasicDesc>(src_buffers2, mem_type),
+            makeDescList<nixlBasicDesc>(dst_buffers2, mem_type),
+            getAgentName(RECEIVER_AGENT),
+            xfer_req2, &extra_params2);
+    ASSERT_EQ(status, NIXL_SUCCESS) << "Failed to create second xfer request";
+    EXPECT_NE(xfer_req2, nullptr);
+
+    Logger() << "Exporting first xfer request to GPU";
+    nixlGpuXferReqH *gpu_req_hndl1 = getAgent(SENDER_AGENT).exportXferReqtoGPU(xfer_req1);
+    ASSERT_NE(gpu_req_hndl1, nullptr) << "Failed to export first xfer request to GPU";
+    Logger() << "First GPU request handle: " << static_cast<void*>(gpu_req_hndl1);
+
+    Logger() << "Exporting second xfer request to GPU";
+    nixlGpuXferReqH *gpu_req_hndl2 = getAgent(SENDER_AGENT).exportXferReqtoGPU(xfer_req2);
+    ASSERT_NE(gpu_req_hndl2, nullptr) << "Failed to export second xfer request to GPU";
+    Logger() << "Second GPU request handle: " << static_cast<void*>(gpu_req_hndl2);
+
+    Logger() << "Releasing first xfer request from GPU";
+    status = getAgent(SENDER_AGENT).releaseXferReqtoGPU(xfer_req1);
+    EXPECT_EQ(status, NIXL_SUCCESS) << "Failed to release first xfer request from GPU";
+
+    Logger() << "Releasing second xfer request from GPU";
+    status = getAgent(SENDER_AGENT).releaseXferReqtoGPU(xfer_req2);
+    EXPECT_EQ(status, NIXL_SUCCESS) << "Failed to release second xfer request from GPU";
+
+    status = getAgent(SENDER_AGENT).releaseXferReq(xfer_req1);
+    EXPECT_EQ(status, NIXL_SUCCESS);
+
+    status = getAgent(SENDER_AGENT).releaseXferReq(xfer_req2);
+    EXPECT_EQ(status, NIXL_SUCCESS);
+
+    invalidateMD();
+}
+
 
 // Define coordination levels to test
 static const std::vector<TestGdakiTransferParam> coordination_levels = {

@@ -408,21 +408,24 @@ nixl_status_t nixlUcxEp::exportBatch(nixlUcxReq &req)
         exported_batch = nullptr;
         return ucx_status_to_nixl(status);
     }
+    exported_batches[req] = (ucp_batch_h)exported_batch;
 
     return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlUcxEp::releaseBatch(nixlUcxReq &req)
 {
-    if (!exported_batch) {
-        NIXL_ERROR << "No batch to release";
+    if (exported_batches.find(req) == exported_batches.end()) {
+        NIXL_ERROR << "No batch to release for this request";
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    ucs_status_t status = ucp_ep_rma_batch_release((void*)req, (ucp_batch_h)exported_batch);
+    ucs_status_t status = ucp_ep_rma_batch_release((void *)req, exported_batches[req]);
     if (status != UCS_OK) {
         NIXL_ERROR << "Failed to release UCX batch: " << ucs_status_string(status);
     }
+
+    exported_batches.erase(req);
 
     return ucx_status_to_nixl(status);
 }
