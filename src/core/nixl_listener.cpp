@@ -515,7 +515,8 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             case SOCK_SEND: {
                 try {
                     sendCommMessage(client->second, "NIXLCOMM:LOAD" + my_MD);
-                } catch (const std::runtime_error &e) {
+                }
+                catch (const std::runtime_error &e) {
                     NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
                     needs_disconnect = true;
                 }
@@ -524,7 +525,8 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             case SOCK_FETCH: {
                 try {
                     sendCommMessage(client->second, "NIXLCOMM:SEND");
-                } catch (const std::runtime_error &e) {
+                }
+                catch (const std::runtime_error &e) {
                     NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
                     needs_disconnect = true;
                 }
@@ -533,7 +535,8 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             case SOCK_INVAL: {
                 try {
                     sendCommMessage(client->second, "NIXLCOMM:INVL" + name);
-                } catch (const std::runtime_error &e) {
+                }
+                catch (const std::runtime_error &e) {
                     NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
                     needs_disconnect = true;
                 }
@@ -665,7 +668,8 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
 
                     try {
                         sendCommMessage(socket_iter->second, std::string("NIXLCOMM:LOAD" + my_MD));
-                    } catch (const std::runtime_error &e) {
+                    }
+                    catch (const std::runtime_error &e) {
                         NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
                         disconnected = true;
                         break;
