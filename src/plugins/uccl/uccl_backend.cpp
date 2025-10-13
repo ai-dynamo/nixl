@@ -211,8 +211,7 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
     uccl_conn_t *conn = nullptr;
 
-    NIXL_DEBUG << "Connecting to " << ip_addr << ":" << port
-               << "?gpu=" << gpu_index << std::endl;
+    NIXL_DEBUG << "Connecting to " << ip_addr << ":" << port << "?gpu=" << gpu_index << std::endl;
     conn = uccl_engine_connect(engine_, ip_addr, gpu_index, port);
     if (!conn) {
         NIXL_ERROR << "Failed to connect to remote agent " << remote_agent;

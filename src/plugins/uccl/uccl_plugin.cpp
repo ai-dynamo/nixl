@@ -18,18 +18,16 @@
 #include "backend/backend_plugin.h"
 #include "uccl_backend.h"
 
-
 namespace {
-    nixl_b_params_t
-    get_uccl_options() {
-        nixl_b_params_t params;
-        params["device_idx"] = "";
-        params["in_python"] = "";
-        params["num_cpus"] = "";
-        return params;
-    }
+nixl_b_params_t
+get_uccl_options() {
+    nixl_b_params_t params;
+    params["device_idx"] = "";
+    params["in_python"] = "";
+    params["num_cpus"] = "";
+    return params;
+}
 } // namespace
-
 
 // Plugin type alias for convenience
 using uccl_plugin_t = nixlBackendPluginCreator<nixlUcclEngine>;
