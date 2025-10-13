@@ -29,5 +29,6 @@ p2p_socket = executable('p2p_test',
 
 map_perf_test = executable('map_perf_test',
                            'map_perf.cpp',
+                           dependencies: [nixl_test_utils_dep],
                            include_directories: [nixl_inc_dirs, utils_inc_dirs],
                            install: true)

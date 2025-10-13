@@ -21,3 +21,6 @@ nixl_build_lib = library('nixl_build',
                         install: true)
 
 nixl_infra = declare_dependency(link_with: nixl_build_lib)
+
+# Test utilities library that can depend on nixl_dep (created after nixl_dep is defined)
+# This will be defined in a separate meson file to avoid circular dependencies

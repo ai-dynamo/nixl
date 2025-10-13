@@ -251,10 +251,11 @@ plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')
-
-if get_option('buildtype') != 'release'
-  subdir('test')
-  subdir('examples')
+if get_option('build_tests')
+    subdir('test')
+endif
+if get_option('build_examples')
+    subdir('examples')
 endif
 
 if get_option('install_headers')

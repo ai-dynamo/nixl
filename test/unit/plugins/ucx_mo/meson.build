@@ -26,7 +26,7 @@ endif
 
 ucx_backend_test = executable('ucx_mo_backend_test',
         'ucx_mo_backend_test.cpp',
-        dependencies: [nixl_dep, nixl_infra, nixl_common_deps, ucx_backend_dep, ucx_mo_backend_dep, ucx_dep] + cuda_dependencies,
+        dependencies: [nixl_dep, nixl_infra, nixl_common_deps, ucx_backend_dep, ucx_mo_backend_dep, ucx_dep] + cuda_dependencies + nixl_test_utils_dep,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         cpp_args : cpp_args,
         install: true)
