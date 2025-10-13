@@ -160,11 +160,11 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
         // Set API type parameter for POSIX backend
         if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
-            backend_params["use_aio"] = true;
-            backend_params["use_uring"] = false;
+            backend_params["use_aio"] = "true";
+            backend_params["use_uring"] = "false";
         } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
-            backend_params["use_aio"] = false;
-            backend_params["use_uring"] = true;
+            backend_params["use_aio"] = "false";
+            backend_params["use_uring"] = "true";
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
                   << std::endl;
@@ -748,6 +748,7 @@ int
 xferBenchNixlWorker::exchangeMetadata() {
     int meta_sz, ret = 0;
 
+    // Skip metadata exchange for storage backends or when ETCD is not available
     if (xferBenchConfig::isStorageBackend()) {
         return 0;
     }
@@ -1054,6 +1055,12 @@ xferBenchNixlWorker::poll(size_t block_size) {
 
 int
 xferBenchNixlWorker::synchronizeStart() {
+    // For storage backends without ETCD, no synchronization needed
+    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+        std::cout << "Single instance storage backend - no synchronization needed" << std::endl;
+        return 0;
+    }
+
     if (IS_PAIRWISE_AND_SG()) {
         std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
                   << " total: " << xferBenchConfig::num_initiator_dev << " initiators and "

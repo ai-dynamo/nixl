@@ -21,7 +21,60 @@
 
 #include <unistd.h>
 
+// Null runtime for storage backends that don't need ETCD
+class xferBenchNullRT : public xferBenchRT {
+public:
+    xferBenchNullRT() {
+        setSize(1);
+        setRank(0);
+    }
+
+    virtual ~xferBenchNullRT() {}
+
+    virtual int
+    sendInt(int *buffer, int dest_rank) override {
+        return 0;
+    }
+
+    virtual int
+    recvInt(int *buffer, int src_rank) override {
+        return 0;
+    }
+
+    virtual int
+    broadcastInt(int *buffer, size_t count, int root_rank) override {
+        return 0;
+    }
+
+    virtual int
+    sendChar(char *buffer, size_t count, int dest_rank) override {
+        return 0;
+    }
+
+    virtual int
+    recvChar(char *buffer, size_t count, int src_rank) override {
+        return 0;
+    }
+
+    virtual int
+    reduceSumDouble(double *local_value, double *global_value, int dest_rank) override {
+        *global_value = *local_value;
+        return 0;
+    }
+
+    virtual int
+    barrier(const std::string &barrier_id) override {
+        return 0;
+    }
+};
+
 static xferBenchRT *createRT(int *terminate) {
+    // For storage backends without ETCD endpoints, use null runtime
+    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+        std::cout << "Using null runtime for storage backend without ETCD" << std::endl;
+        return new xferBenchNullRT();
+    }
+
     if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
         int total = 2;
         if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
@@ -46,6 +99,11 @@ static xferBenchRT *createRT(int *terminate) {
 }
 
 int xferBenchWorker::synchronize() {
+    // For storage backends without ETCD, no synchronization needed
+    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+        return 0;
+    }
+
     if (rt->barrier("sync") != 0) {
         std::cerr << "Failed to synchronize" << std::endl;
         // assuming this is a fatal error, continue benchmarking after synchronization failure does
@@ -67,7 +125,10 @@ xferBenchWorker::xferBenchWorker(int *argc, char ***argv) {
 
     int rank = rt->getRank();
 
-    if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
+    // For storage backends without ETCD, always act as initiator
+    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+        name = "initiator";
+    } else if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
         if (rank >= 0 && rank < xferBenchConfig::num_initiator_dev) {
             name = "initiator";
         } else {

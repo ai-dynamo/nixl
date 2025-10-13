@@ -51,7 +51,7 @@ RequestPool::initializeBasePool(size_t pool_size) {
 }
 
 void
-RequestPool::release(nixlLibfabricReq *req) {
+RequestPool::release(nixlLibfabricReq *req) const {
     if (!req) {
         NIXL_WARN << "ReleaseReq on Rail " << rail_id_ << " received null request";
         return;
@@ -680,7 +680,7 @@ nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t)> callback) {
 
 // Per-rail completion processing - handles one rail's CQ with configurable blocking behavior
 nixl_status_t
-nixlLibfabricRail::progressCompletionQueue(bool use_blocking) {
+nixlLibfabricRail::progressCompletionQueue(bool use_blocking) const {
     // Completion processing
     struct fi_cq_data_entry completion;
     memset(&completion, 0, sizeof(completion));
@@ -745,7 +745,7 @@ nixlLibfabricRail::progressCompletionQueue(bool use_blocking) {
 
 // Route completion to appropriate handler (rail-specific)
 nixl_status_t
-nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) {
+nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) const {
     uint64_t flags = comp->flags;
 
     NIXL_TRACE << "Routing completion from rail " << rail_id << " with flags: " << std::hex << flags
@@ -814,7 +814,7 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) {
 
 // Handle local send completions (establishConnection, genNotif)
 nixl_status_t
-nixlLibfabricRail::processLocalSendCompletion(struct fi_cq_data_entry *comp) {
+nixlLibfabricRail::processLocalSendCompletion(struct fi_cq_data_entry *comp) const {
     // Find the request from context to access the completion callback
     nixlLibfabricReq *req = findRequestFromContext(comp->op_context);
     if (req && req->in_use) { // Only process if request is still valid and in use
@@ -840,7 +840,7 @@ nixlLibfabricRail::processLocalSendCompletion(struct fi_cq_data_entry *comp) {
 // Handle local transfer completions (both read and write operations from postXfer)
 nixl_status_t
 nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
-                                                  const char *operation_type) {
+                                                  const char *operation_type) const {
     // Find the request from context to access the completion callback
     nixlLibfabricReq *req = findRequestFromContext(comp->op_context);
     if (req && req->in_use) { // Only process if request is still valid and in use
@@ -866,7 +866,7 @@ nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
 
 // Handle remote receive completions (conn_req, conn_ack, notification messages)
 nixl_status_t
-nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) {
+nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
     // Get the request from context to access the received buffer
     nixlLibfabricReq *req = findRequestFromContext(comp->op_context);
     if (!req) {
@@ -1040,13 +1040,11 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
                << " XFER_ID: " << NIXL_GET_XFER_ID_FROM_IMM(immediate_data)
                << " dest_addr: " << dest_addr << std::dec << " context: " << &req->ctx;
 
-    // Retry logic
-    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
-    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
-                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
-
+    // Retry indefinitely until senddata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    for (int attempt = 0; attempt < max_retries; ++attempt) {
+    int attempt = 0;
+
+    while (true) {
         // Libfabric fi_senddata call
         ret = fi_senddata(
             endpoint, req->buffer, req->buffer_size, desc, immediate_data, dest_addr, &req->ctx);
@@ -1060,18 +1058,32 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
         }
 
         if (ret == -FI_EAGAIN) {
-            // Resource temporarily unavailable - retrying
-            if (attempt < max_retries - 1) {
-                NIXL_TRACE << "fi_senddata returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << (attempt + 1) << "/" << max_retries << ")";
-                usleep(retry_delay_us);
-                continue;
+            // Resource temporarily unavailable - retry indefinitely for all providers
+            attempt++;
+
+            // Log every N attempts to avoid log spam
+            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
+                NIXL_INFO << "fi_senddata still retrying EAGAIN on rail " << rail_id << " after "
+                          << attempt << " attempts";
             } else {
-                NIXL_WARN << "fi_senddata failed after " << max_retries << " attempts on rail "
-                          << rail_id << ": " << fi_strerror(-ret);
+                NIXL_TRACE << "fi_senddata returned EAGAIN on rail " << rail_id
+                           << ", retrying (attempt " << attempt << ")";
             }
+
+            // Exponential backoff with cap to avoid overwhelming the system
+            int delay_us = std::min(NIXL_LIBFABRIC_BASE_RETRY_DELAY_US * (1 + attempt / 10),
+                                    NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
+
+            // Progress completion queue to drain pending completions before retry
+            nixl_status_t progress_status = progressCompletionQueue(false);
+            if (progress_status == NIXL_SUCCESS) {
+                NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
+            }
+
+            usleep(delay_us);
+            continue;
         } else {
-            // Other error - don't retry
+            // Other error - don't retry, fail immediately
             break;
         }
     }
@@ -1101,13 +1113,11 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                << " remote_addr: " << (void *)remote_addr << " remote_key: " << remote_key
                << " context: " << &req->ctx;
 
-    // Retry logic
-    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
-    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
-                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
-
+    // Retry indefinitely until writedata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    for (int attempt = 0; attempt < max_retries; ++attempt) {
+    int attempt = 0;
+
+    while (true) {
         // Libfabric fi_writedata call
         ret = fi_writedata(endpoint,
                            local_buffer,
@@ -1128,18 +1138,32 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
         }
 
         if (ret == -FI_EAGAIN) {
-            // Resource temporarily unavailable - retrying
-            if (attempt < max_retries - 1) {
-                NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << (attempt + 1) << "/" << max_retries << ")";
-                usleep(retry_delay_us);
-                continue;
+            // Resource temporarily unavailable - retry indefinitely for all providers
+            attempt++;
+
+            // Log every N attempts to avoid log spam
+            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
+                NIXL_INFO << "fi_writedata still retrying EAGAIN on rail " << rail_id << " after "
+                          << attempt << " attempts";
             } else {
-                NIXL_WARN << "fi_writedata failed after " << max_retries << " attempts on rail "
-                          << rail_id << ": " << fi_strerror(-ret);
+                NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
+                           << ", retrying (attempt " << attempt << ")";
             }
+
+            // Exponential backoff with cap to avoid overwhelming the system
+            int delay_us = std::min(NIXL_LIBFABRIC_BASE_RETRY_DELAY_US * (1 + attempt / 10),
+                                    NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
+
+            // Progress completion queue to drain pending completions before retry
+            nixl_status_t progress_status = progressCompletionQueue(false);
+            if (progress_status == NIXL_SUCCESS) {
+                NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
+            }
+
+            usleep(delay_us);
+            continue;
         } else {
-            // Other error - don't retry
+            // Other error - don't retry, fail immediately
             break;
         }
     }
@@ -1167,13 +1191,11 @@ nixlLibfabricRail::postRead(void *local_buffer,
                << " dest_addr: " << dest_addr << " remote_addr: " << (void *)remote_addr
                << " remote_key: " << remote_key << " context: " << &req->ctx;
 
-    // Retry logic
-    const int max_retries = NIXL_LIBFABRIC_MAX_RETRIES;
-    const int retry_delay_us = (provider_name == "efa") ? NIXL_LIBFABRIC_EFA_RETRY_DELAY_US :
-                                                          NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US;
-
+    // Retry indefinitely until readdata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    for (int attempt = 0; attempt < max_retries; ++attempt) {
+    int attempt = 0;
+
+    while (true) {
         // Libfabric fi_read call
         ret = fi_read(endpoint,
                       local_buffer,
@@ -1193,18 +1215,32 @@ nixlLibfabricRail::postRead(void *local_buffer,
         }
 
         if (ret == -FI_EAGAIN) {
-            // Resource temporarily unavailable - retrying
-            if (attempt < max_retries - 1) {
-                NIXL_TRACE << "fi_read returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << (attempt + 1) << "/" << max_retries << ")";
-                usleep(retry_delay_us);
-                continue;
+            // Resource temporarily unavailable - retry indefinitely for all providers
+            attempt++;
+
+            // Log every N attempts to avoid log spam
+            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
+                NIXL_INFO << "fi_read still retrying EAGAIN on rail " << rail_id << " after "
+                          << attempt << " attempts";
             } else {
-                NIXL_WARN << "fi_read failed after " << max_retries << " attempts on rail "
-                          << rail_id << ": " << fi_strerror(-ret);
+                NIXL_TRACE << "fi_read returned EAGAIN on rail " << rail_id
+                           << ", retrying (attempt " << attempt << ")";
             }
+
+            // Exponential backoff with cap to avoid overwhelming the system
+            int delay_us = std::min(NIXL_LIBFABRIC_BASE_RETRY_DELAY_US * (1 + attempt / 10),
+                                    NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
+
+            // Progress completion queue to drain pending completions before retry
+            nixl_status_t progress_status = progressCompletionQueue(false);
+            if (progress_status == NIXL_SUCCESS) {
+                NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
+            }
+
+            usleep(delay_us);
+            continue;
         } else {
-            // Other error - don't retry
+            // Other error - don't retry, fail immediately
             break;
         }
     }
@@ -1359,17 +1395,17 @@ nixlLibfabricRail::getMemoryKey(struct fid_mr *mr) const {
 // Optimized Resource Management Methods
 
 nixlLibfabricReq *
-nixlLibfabricRail::allocateControlRequest(size_t needed_size) {
-    return control_request_pool_.allocate(needed_size);
+nixlLibfabricRail::allocateControlRequest(size_t needed_size) const {
+    return const_cast<ControlRequestPool &>(control_request_pool_).allocate(needed_size);
 }
 
 nixlLibfabricReq *
-nixlLibfabricRail::allocateDataRequest(nixlLibfabricReq::OpType op_type) {
-    return data_request_pool_.allocate(op_type);
+nixlLibfabricRail::allocateDataRequest(nixlLibfabricReq::OpType op_type) const {
+    return const_cast<DataRequestPool &>(data_request_pool_).allocate(op_type);
 }
 
 void
-nixlLibfabricRail::releaseRequest(nixlLibfabricReq *req) {
+nixlLibfabricRail::releaseRequest(nixlLibfabricReq *req) const {
     if (!req) {
         NIXL_ERROR << "Null request provided to releaseRequest on rail " << rail_id;
         return;
