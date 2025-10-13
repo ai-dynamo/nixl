@@ -31,7 +31,7 @@ A GUSLI configuration file is a simple text file with the following structure:
 2.  **Version Directive:** The file must contain a version line (e.g., `version=1`).
 3.  **Block Device Entries:** Each subsequent line defines a single block device (`bdev`).
 
-### Basic Layout
+Basic Layout:
 
 ```ini
 # Config file for gusli client lib
@@ -43,15 +43,15 @@ version=1
 ...
 ```
 
-## Block Device (`bdev`) Entry Format
+### Block Device (`bdev`) Entry Format
 
 Each `bdev` entry is a single line of space-separated values.
 
-### Syntax
+**Syntax**
 
 `id type how direct path security_cookie`
 
-### Fields
+**Fields**
 
 | Field             | Description                                                                                             | Example                  |
 | :---------------- | :------------------------------------------------------------------------------------------------------ | :----------------------- |
@@ -62,15 +62,11 @@ Each `bdev` entry is a single line of space-separated values.
 | `path`            | The path or address to the device.                                                                      | `./store0.bin`           |
 | `security_cookie` | A 16-byte UTF-8 string for server authentication. Can be `none` if not used.                            | `none`                   |
 
----
-
-## Field Details
-
-### Device ID (`id`)
+#### Device ID (`id`)
 
 The `id` is a string (up to 15 characters + null terminator) used to uniquely identify a volume within GUSLI. Simple integers represented as strings (e.g., `11`) are common.
 
-### Device Types (`type`)
+#### Device Types (`type`)
 
 The `type` field determines the backend for the block device.
 
@@ -82,7 +78,7 @@ The `type` field determines the backend for the block device.
 | `x`  | A dummy device that always fails I/O operations (for testing errors).    |
 | `s`  | A dummy device that never completes I/O (for testing timeouts).          |
 
-### Access Modes (`how`)
+#### Access Modes (`how`)
 
 The `how` field defines the access permissions for the device.
 
@@ -92,7 +88,7 @@ The `how` field defines the access permissions for the device.
 | `R`  | Read-Only access.           |
 | `X`  | Exclusive Read/Write access.  |
 
-### Path
+#### Path
 
 The `path` string's meaning depends on the device `type`:
 *   **For `F` and `K` types:** A standard filesystem path (e.g., `/mnt/data/my_file.img`, `/dev/sdc`).
@@ -100,9 +96,9 @@ The `path` string's meaning depends on the device `type`:
 
 ---
 
-## Example Configuration File
+### Example Configuration File
 
-Here is an example of a `gusli.conf` file demonstrating various device types and all primary access modes (`R`, `W`, `X`).
+Example of a `gusli.conf` file demonstrating various device types and all primary access modes (`R`, `W`, `X`).
 
 ```ini
 # ============================================
