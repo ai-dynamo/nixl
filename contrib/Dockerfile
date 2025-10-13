@@ -92,6 +92,11 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
 
+RUN git clone https://github.com/nvidia/gusli.git && \
+     cd gusli && \
+     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+     cd ..
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 ENV RUSTUP_HOME=/usr/local/rustup \
