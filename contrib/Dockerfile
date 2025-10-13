@@ -33,6 +33,7 @@ ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 ARG LIBFABRIC_VERSION="v2.3.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 
+# Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
     apt-get install -y ubuntu-keyring && \
     apt-get update -y && \
@@ -63,6 +64,18 @@ RUN apt-get update -y && \
     libhwloc-dev \
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
 
+# Add DOCA repository and install packages
+RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
+    MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
+    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    dpkg -i doca-host.deb && \
+    apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+
+# Force reinstall of RDMA packages from DOCA repository
+# Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
+# Upgrade is not sufficient if the version is the same since apt skips the installation.
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
     libnuma-dev librdmacm-dev ibverbs-providers
@@ -73,7 +86,6 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
-
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
@@ -97,18 +109,6 @@ RUN wget --tries=3 --waitretry=5 \
     ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
     rm rustup-init* && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
-
-# Add DOCA repository and install packages
-RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-    MELLANOX_OS=$(if [ "${OS}" = "ubuntu22" ]; then echo "ubuntu2204"; elif [ "${OS}" = "ubuntu24" ]; then echo "ubuntu2404"; else echo "${OS}"; fi) && \
-    wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb && \
-    dpkg -i doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb && \
-    apt-get update
-
-RUN if [ "$OS" = "ubuntu24" ]; then \
-        apt-get install -y --no-install-recommends \
-            doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev; \
-    fi
 
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
