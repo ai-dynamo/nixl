@@ -27,7 +27,7 @@
 // Parse connection string in format: ip_addr:port?gpu_index
 bool
 parseConnectionString(const std::string &conn_str, char *&ip_addr, int &port, int &gpu_index) {
-    // Exit with errror if neither : or ? is found in conn_str
+    // Exit with error if neither : or ? is found in conn_str
     size_t colon_pos = conn_str.find(':');
     if (colon_pos == std::string::npos) {
         NIXL_ERROR << "Invalid connection string format: missing colon separator";
