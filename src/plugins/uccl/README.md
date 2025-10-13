@@ -1,6 +1,6 @@
 ## UCCL Backend Plugin [Preview]
 
-[UCCL](https://github.com/uccl-project/uccl) is an efficient communication library to perform GPU memory transfers, with a focus on flexibility (evolving ML workloads) and portability (heteregenous GPUs).
+[UCCL](https://github.com/uccl-project/uccl) is an efficient communication library to perform GPU memory transfers, with a focus on flexibility (evolving ML workloads) and portability (heteregenous GPUs). UCCL provides a software transport stack which runs on the CPUs and are easily extensible to support different techniques like congestion control, multipathing, efficient loss recovery, etc.
 UCCL supports collectives, p2p communication and gpu-driven communication for expert parallelism.
 
 ## Capabilities
@@ -29,7 +29,7 @@ Example Usage to create a NIXL agent with uccl engine on GPU 0:
     config = nixl_agent_config(device_idx=0, backends=["Uccl"])
     agent = nixl_agent("agent-name", config)
     ```
-UCCL engine would auto discover the right NIC to be used for the GPU based on the PCIe distance
+UCCL engine would auto discover the right NIC to be used for the GPU based on the PCIe distance, and intialize the engine which manages communication for that NIC. This is the reason why its necessary to provide the gpu device index during agent creation.
 
 ### Environment Variables
 1. `NCCL_IB_GID_INDEX` : GID Index of the device to be used. Usually, its auto-detected. 
