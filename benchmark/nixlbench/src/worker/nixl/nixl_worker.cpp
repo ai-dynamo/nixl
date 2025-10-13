@@ -731,11 +731,11 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
             switch (seg_type) {
             case DRAM_SEG:
-            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
-                basic_desc = initBasicDescDram(buffer_size, 11);
-            } else {
-                basic_desc = initBasicDescDram(buffer_size, i);
-            }
+                if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+                    basic_desc = initBasicDescDram(buffer_size, 11);
+                } else {
+                    basic_desc = initBasicDescDram(buffer_size, i);
+                }
                 break;
 #if HAVE_CUDA
             case VRAM_SEG:
@@ -997,9 +997,9 @@ execSingleTransfer(nixlAgent *agent, nixlXferReqH *req) {
 // Helper to prepare transfer descriptors based on backend type
 static void
 prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
-                          nixl_xfer_dlist_t &remote_desc,
-                          const std::vector<xferBenchIOV> &local_iov,
-                          const std::vector<xferBenchIOV> &remote_iov) {
+                           nixl_xfer_dlist_t &remote_desc,
+                           const std::vector<xferBenchIOV> &local_iov,
+                           const std::vector<xferBenchIOV> &remote_iov) {
     // Set remote descriptor type based on backend
     if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
@@ -1017,23 +1017,25 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
 // recreate_per_iteration: true for GUSLI (bug workaround), false for standard backends
 static int
 execTransferIterations(nixlAgent *agent,
-                      const nixl_xfer_op_t op,
-                      nixl_xfer_dlist_t &local_desc,
-                      nixl_xfer_dlist_t &remote_desc,
-                      const std::string &target,
-                      nixl_opt_args_t &params,
-                      const int num_iter,
-                      xferBenchTimer &timer,
-                      xferBenchStats &thread_stats,
-                      const bool recreate_per_iteration) {
+                       const nixl_xfer_op_t op,
+                       nixl_xfer_dlist_t &local_desc,
+                       nixl_xfer_dlist_t &remote_desc,
+                       const std::string &target,
+                       nixl_opt_args_t &params,
+                       const int num_iter,
+                       xferBenchTimer &timer,
+                       xferBenchStats &thread_stats,
+                       const bool recreate_per_iteration) {
     nixlXferReqH *req = nullptr;
     nixlTime::us_t total_prepare_duration = 0;
 
     // Create request once if not recreating per iteration
     if (!recreate_per_iteration) {
-        nixl_status_t create_rc = agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
+        nixl_status_t create_rc =
+            agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
         if (NIXL_SUCCESS != create_rc) {
-            std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc) << std::endl;
+            std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc)
+                      << std::endl;
             return -1;
         }
         thread_stats.prepare_duration.add(timer.lap());
@@ -1044,9 +1046,11 @@ execTransferIterations(nixlAgent *agent,
     if (__builtin_expect(recreate_per_iteration, 0)) {
         // GUSLI path: Create/execute/release per iteration
         for (int i = 0; i < num_iter; ++i) {
-            nixl_status_t create_rc = agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
+            nixl_status_t create_rc =
+                agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
             if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
-                std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc) << std::endl;
+                std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc)
+                          << std::endl;
                 return -1;
             }
             total_prepare_duration += timer.lap();
@@ -1055,7 +1059,8 @@ execTransferIterations(nixlAgent *agent,
             nixl_status_t rc = execSingleTransfer(agent, req);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
-                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc) << std::endl;
+                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
+                          << std::endl;
                 agent->releaseXferReq(req);
                 return -1;
             }
@@ -1075,7 +1080,8 @@ execTransferIterations(nixlAgent *agent,
             nixl_status_t rc = execSingleTransfer(agent, req);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
-                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc) << std::endl;
+                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
+                          << std::endl;
                 agent->releaseXferReq(req);
                 return -1;
             }
@@ -1129,8 +1135,16 @@ execTransfer(nixlAgent *agent,
         // Execute transfers
         // GUSLI requires per-iteration request creation due to library bug
         const bool recreate_per_iteration = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
-        const int result = execTransferIterations(agent, op, local_desc, remote_desc, target, params,
-                                                 num_iter, timer, thread_stats, recreate_per_iteration);
+        const int result = execTransferIterations(agent,
+                                                  op,
+                                                  local_desc,
+                                                  remote_desc,
+                                                  target,
+                                                  params,
+                                                  num_iter,
+                                                  timer,
+                                                  thread_stats,
+                                                  recreate_per_iteration);
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;

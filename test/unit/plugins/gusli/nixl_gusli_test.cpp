@@ -430,7 +430,8 @@ public:
             }
 
             nixl_exit_on_failure((_2nd_plugin == nullptr), "2nd plugin instance could be created");
-            nixl_exit_on_failure((init_exception_caught = true), "2nd plugin creation exception not caught!");
+            nixl_exit_on_failure((init_exception_caught = true),
+                                 "2nd plugin creation exception not caught!");
         }
 
         print_segment_title(
