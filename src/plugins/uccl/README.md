@@ -24,7 +24,7 @@ Currently, the UCCL backend supports internode communication over RDMA. Intranod
 
 ### Additional Parameters
 1. `device_idx` : Specifies which GPU the UCCL engine will be affined to.
-Example Usage to create a NIXL agent with uccl engine on GPU 0: 
+Example Usage to create a NIXL agent with uccl engine on GPU 0:
     ```python
     config = nixl_agent_config(device_idx=0, backends=["Uccl"])
     agent = nixl_agent("agent-name", config)
@@ -32,7 +32,7 @@ Example Usage to create a NIXL agent with uccl engine on GPU 0:
 UCCL engine would auto discover the right NIC to be used for the GPU based on the PCIe distance, and intialize the engine which manages communication for that NIC. This is the reason why its necessary to provide the gpu device index during agent creation.
 
 ### Environment Variables
-1. `NCCL_IB_GID_INDEX` : GID Index of the device to be used. Usually, its auto-detected. 
+1. `NCCL_IB_GID_INDEX` : GID Index of the device to be used. Usually, its auto-detected.
 2. `UCCL_SOCKET_IFNAME` : The ethernet interface to be used for control socket communication.
 3. `UCCL_IB_HCA` : HCAs to be used for UCCL connection.
 4. `UCCL_RCMODE` : Set to either 0 or 1. To enable RDMA RC (Reliable Connection), set to 1. For `NIXL_READ` operations, set `UCCL_RCMODE` to 1.
