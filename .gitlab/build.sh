@@ -183,6 +183,14 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 )
 
 ( \
+  cd /tmp && \
+  git clone https://github.com/nvidia/gusli.git && \
+  cd gusli && \
+  $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+  $SUDO ldconfig
+)
+
+( \
   cd /tmp &&
   git clone --depth 1 https://github.com/google/gtest-parallel.git &&
   mkdir -p ${INSTALL_DIR}/bin &&

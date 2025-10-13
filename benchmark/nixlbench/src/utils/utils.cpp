@@ -47,12 +47,12 @@ DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 DEFINE_string(
     backend,
     XFERBENCH_BACKEND_UCX,
-    "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] \
+    "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
-              [DRAM, VRAM]");
+              [DRAM, VRAM, BLK]");
 DEFINE_string(target_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for target \
-              [DRAM, VRAM]");
+              [DRAM, VRAM, BLK]");
 DEFINE_string(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, maytoone, onetomany, tp");
 DEFINE_string(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc) [default: SG]");
 DEFINE_string(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
@@ -127,6 +127,18 @@ DEFINE_string(obj_ca_bundle, "", "Path to CA bundle for S3 backend");
 // HF3FS options - only used when backend is HF3FS
 DEFINE_int32(hf3fs_iopool_size, 64, "Size of io memory pool");
 
+// GUSLI options - only used when backend is GUSLI
+DEFINE_string(gusli_client_name, "NIXLBench", "Client name for GUSLI backend");
+DEFINE_int32(gusli_max_simultaneous_requests,
+             32,
+             "Maximum number of simultaneous requests for GUSLI backend");
+DEFINE_string(gusli_config_file,
+              "",
+              "Configuration file content for GUSLI backend (if empty, uses default config)");
+DEFINE_uint64(gusli_bdev_byte_offset,
+              1048576,
+              "Byte offset in block device for GUSLI operations (default: 1MB)");
+
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
 std::string xferBenchConfig::backend = "";
@@ -174,6 +186,10 @@ std::string xferBenchConfig::obj_endpoint_override = "";
 std::string xferBenchConfig::obj_req_checksum = "";
 std::string xferBenchConfig::obj_ca_bundle = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
+std::string xferBenchConfig::gusli_client_name = "";
+int xferBenchConfig::gusli_max_simultaneous_requests = 0;
+std::string xferBenchConfig::gusli_config_file = "";
+uint64_t xferBenchConfig::gusli_bdev_byte_offset = 0;
 
 int
 xferBenchConfig::loadFromFlags() {
@@ -226,6 +242,14 @@ xferBenchConfig::loadFromFlags() {
         // Load HD3FS-specific configurations if backend is HD3FS
         if (backend == XFERBENCH_BACKEND_HF3FS) {
             hf3fs_iopool_size = FLAGS_hf3fs_iopool_size;
+        }
+
+        // Load GUSLI-specific configurations if backend is GUSLI
+        if (backend == XFERBENCH_BACKEND_GUSLI) {
+            gusli_client_name = FLAGS_gusli_client_name;
+            gusli_max_simultaneous_requests = FLAGS_gusli_max_simultaneous_requests;
+            gusli_config_file = FLAGS_gusli_config_file;
+            gusli_bdev_byte_offset = FLAGS_gusli_bdev_byte_offset;
         }
 
         // Load OBJ-specific configurations if backend is OBJ
@@ -500,7 +524,8 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_GDS_MT == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
 }
 /**********
  * xferBench Utils

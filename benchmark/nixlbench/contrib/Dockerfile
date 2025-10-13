@@ -156,6 +156,11 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
     make -j && \
     make install
 
+RUN git clone https://github.com/nvidia/gusli.git && \
+    cd gusli && \
+    make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+    cd ..
+
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
