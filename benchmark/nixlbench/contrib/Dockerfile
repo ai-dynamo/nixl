@@ -146,13 +146,8 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-COPY --from=nixl . /workspace/nixl
-COPY --from=nixlbench . /workspace/nixlbench
-
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
-
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir sdk_build && \
@@ -161,45 +156,58 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
     make -j && \
     make install
 
-WORKDIR /workspace/nixl
-
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade meson pybind11 patchelf pyYAML click tabulate
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
+# from the virtual environment. This means that the files reside in /root/.cache/uv,
+# which is not what we want since some systems mount user home dir into /root,
+# in which case the venv is broken when the container is started.
+# Set a custom cache directory inside /workspace to avoid this.
+ENV UV_CACHE_DIR=/workspace/.cache/uv
+RUN mkdir -p $UV_CACHE_DIR
+# Disable build isolation, i.e. uv should not create a new virtual environment for
+# building wheels.
+ENV UV_NO_BUILD_ISOLATION=1
+# Disable syncing, i.e. uv will not download packages outside uv pip commands.
+ENV UV_NO_SYNC=1
+# Create a new virtual environment
+ENV VIRTUAL_ENV=/workspace/.venv
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 # Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
+# Install python dependencies
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel
+# Install PyTorch
+# Latest stable PyTorch wheels are only available for CUDA 12.x
+# Nightly PyTorch wheels are needed for CUDA 13.x images
 RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
-    uv pip install torch --index https://download.pytorch.org/whl/$CUDA_SHORT_VERSION
+    CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
+    if [ "$CUDA_MAJOR" -ge 13 ]; then \
+      FLAGS="--pre --index-url https://download.pytorch.org/whl/nightly/$CUDA_SHORT_VERSION"; \
+    else \
+      FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION"; \
+    fi && \
+    uv pip install $FLAGS torch torchvision torchaudio
+
+COPY --from=nixl . /workspace/nixl
+COPY --from=nixlbench . /workspace/nixlbench
+
+WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install
 
-ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/$ARCH-linux-gnu/plugins
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-# Create the wheel
-# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
-RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
-        uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
-    done
-
-# Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
-RUN uv pip install auditwheel && \
-    uv run auditwheel repair --exclude libcuda.so.1 /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
-
-RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+RUN uv pip install .
 
 WORKDIR /workspace/nixlbench
 
@@ -211,7 +219,7 @@ RUN ls -ll /workspace/nixlbench
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
+    meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
     cd build && ninja && ninja install
 
 WORKDIR /workspace/nixl
