@@ -236,7 +236,7 @@ class nixl_agent:
                     elif bknd == "GDS_MT":
                         init["thread_count"] = str(nixl_conf.num_threads)
                     elif bknd == "Uccl":
-                        init["num_cpus"] = str(nixl_conf.num_cpus)
+                        init["num_cpus"] = str(nixl_conf.num_threads)
                 if nixl_conf.device_idx > 0:
                     if bknd == "Uccl":
                         init["device_idx"] = str(nixl_conf.device_idx)
