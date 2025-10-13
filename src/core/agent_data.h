@@ -104,16 +104,6 @@ class nixlAgentData {
         void commWorker(nixlAgent* myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
-        // Sends a message to the peer. Returns true if successful.
-        // If not successful, the peer is disconnected, erased from the socket map
-        // and the iterator is advanced to the next peer.
-        bool
-        sendPeerMessage(nixl_socket_map_t::iterator &socket_iter, const std::string &msg);
-        // Receives a message from the peer. Returns true if successful.
-        // If not successful, the iterator is advanced to the next peer.
-        // If the peer is disconnected, it is erased from the socket map.
-        bool
-        recvPeerMessage(nixl_socket_map_t::iterator &socket_iter, std::string &msg);
         nixl_status_t
         loadConnInfo(const std::string &remote_name,
                      const nixl_backend_t &backend,
