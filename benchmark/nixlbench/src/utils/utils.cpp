@@ -66,6 +66,16 @@ DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 DEFINE_bool(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 
+// Add GDAKI options for NIXL worker
+DEFINE_bool(enable_gdaki, false, "Enable GDAKI (only used with nixl worker)");
+DEFINE_string(gdaki_gpu_device_list, "0", "Comma-separated GPU device list for GDAKI (only used with nixl worker and when enable_gdaki=1)");
+
+// GDAKI kernel configuration parameters
+DEFINE_string(gdaki_coordination_level, "block", "GPU thread coordination pattern for transfers [thread|warp|block] (default: block)");
+DEFINE_int32(gdaki_threads_per_block, 256, "Number of CUDA threads per block for GDAKI kernels (default: 256, range: 1-1024)");
+DEFINE_int32(gdaki_blocks_per_grid, 1, "Number of CUDA blocks to launch for concurrent transfers (default: 1)");
+DEFINE_bool(gdaki_enable_partial_transfers, false, "Enable testing of partial/selective transfer functionality (default: false)");
+
 // Storage backend(GDS, POSIX, HF3FS) options
 DEFINE_string (filepath, "", "File path for storage operations");
 DEFINE_int32 (num_files, 1, "Number of files used by benchmark");
@@ -112,6 +122,13 @@ int xferBenchConfig::warmup_iter = 0;
 int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
 bool xferBenchConfig::enable_vmm = false;
+bool xferBenchConfig::enable_gdaki = false;
+std::string xferBenchConfig::gdaki_gpu_device_list = "";
+// GDAKI kernel configuration parameters
+std::string xferBenchConfig::gdaki_coordination_level = "";
+int xferBenchConfig::gdaki_threads_per_block = 0;
+int xferBenchConfig::gdaki_blocks_per_grid = 0;
+bool xferBenchConfig::gdaki_enable_partial_transfers = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 int xferBenchConfig::gds_batch_pool_size = 0;
@@ -133,6 +150,43 @@ int xferBenchConfig::loadFromFlags() {
         enable_pt = FLAGS_enable_pt;
         device_list = FLAGS_device_list;
         enable_vmm = FLAGS_enable_vmm;
+        enable_gdaki = FLAGS_enable_gdaki;
+        gdaki_gpu_device_list = FLAGS_gdaki_gpu_device_list;
+
+        // Load GDAKI kernel configuration parameters
+        if (enable_gdaki) {
+            gdaki_coordination_level = FLAGS_gdaki_coordination_level;
+            gdaki_threads_per_block = FLAGS_gdaki_threads_per_block;
+            gdaki_blocks_per_grid = FLAGS_gdaki_blocks_per_grid;
+            gdaki_enable_partial_transfers = FLAGS_gdaki_enable_partial_transfers;
+
+            // Validate GDAKI configuration
+            if (gdaki_coordination_level != "thread" && gdaki_coordination_level != "warp" && gdaki_coordination_level != "block") {
+                std::cerr << "Invalid GDAKI coordination level: " << gdaki_coordination_level << ". Must be: thread, warp, or block" << std::endl;
+                return -1;
+            }
+
+            // Inform about coordination level support
+            if (gdaki_coordination_level == "thread" || gdaki_coordination_level == "warp") {
+                if (gdaki_enable_partial_transfers) {
+                    std::cout << "INFO: GDAKI using '" << gdaki_coordination_level
+                              << "' coordination with partial transfers enabled." << std::endl;
+                } else {
+                    std::cout << "INFO: GDAKI coordination level '" << gdaki_coordination_level
+                              << "' will fall back to 'block' coordination (enable partial transfers for full support)." << std::endl;
+                }
+            }
+
+            if (gdaki_threads_per_block < 1 || gdaki_threads_per_block > 1024) {
+                std::cerr << "Invalid GDAKI threads per block: " << gdaki_threads_per_block << ". Must be between 1 and 1024" << std::endl;
+                return -1;
+            }
+
+            if (gdaki_blocks_per_grid < 1) {
+                std::cerr << "Invalid GDAKI blocks per grid: " << gdaki_blocks_per_grid << ". Must be >= 1" << std::endl;
+                return -1;
+            }
+        }
 
 #if defined(HAVE_CUDA) && !defined(HAVE_CUDA_FABRIC)
         if (enable_vmm) {
@@ -169,6 +223,14 @@ int xferBenchConfig::loadFromFlags() {
         // Load HD3FS-specific configurations if backend is HD3FS
         if (backend == XFERBENCH_BACKEND_HF3FS) {
             storage_enable_direct = FLAGS_storage_enable_direct;
+        }
+
+        // If GDAKI is enabled, check for GPU device list
+        if (enable_gdaki) {
+            if (gdaki_gpu_device_list.empty()) {
+                std::cerr << "GDAKI is enabled but no GPU device list provided (--gdaki_gpu_device_list)" << std::endl;
+                return -1;
+            }
         }
     }
 
@@ -284,6 +346,14 @@ void xferBenchConfig::printConfig() {
         printOption ("Enable pt (--enable_pt=[0,1])", std::to_string (enable_pt));
         printOption ("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption ("Enable VMM (--enable_vmm=[0,1])", std::to_string (enable_vmm));
+        printOption ("Enable GDAKI (--enable_gdaki=[0,1])", std::to_string (enable_gdaki));
+        if (enable_gdaki) {
+            printOption ("GDAKI GPU device list (--gdaki_gpu_device_list=dev1,dev2,...)", gdaki_gpu_device_list);
+            printOption ("GDAKI coordination level (--gdaki_coordination_level=[thread,warp,block])", gdaki_coordination_level);
+            printOption ("GDAKI threads per block (--gdaki_threads_per_block=N)", std::to_string(gdaki_threads_per_block));
+            printOption ("GDAKI blocks per grid (--gdaki_blocks_per_grid=N)", std::to_string(gdaki_blocks_per_grid));
+            printOption ("GDAKI enable partial transfers (--gdaki_enable_partial_transfers=[0,1])", std::to_string(gdaki_enable_partial_transfers));
+        }
 
         // Print GDS options if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
