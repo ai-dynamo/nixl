@@ -664,7 +664,7 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 - `--gusli_bdev_byte_offset`: Starting LBA offset in bytes (default: 1MB)
 - `--gusli_config_file`: Custom config file content override
 
-**Notes**: 
+**Notes**:
 - Number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`
 - Direct I/O is automatically enabled for GUSLI (no need to specify `--storage_enable_direct`)
 
