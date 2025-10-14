@@ -32,7 +32,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 
 ## Features
 
-- **Multiple Communication Backends**: UCX, UCX_MO, GPUNETIO, Mooncake, Libfabric for network communication
+- **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
 - **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), GUSLI for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
@@ -420,7 +420,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 ```
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
@@ -520,7 +520,7 @@ Note: storage_enable_direct is automatically enabled for GUSLI backend
 NIXL Benchmark uses an ETCD key-value store for coordination between benchmark workers. This is useful in containerized or cloud-native environments.
 
 **ETCD Requirements:**
-- **Required**: Network backends (UCX, UCX_MO, GPUNETIO, Mooncake, Libfabric) and multi-node setups
+- **Required**: Network backends (UCX, GPUNETIO, Mooncake, Libfabric) and multi-node setups
 - **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances
 - **Required**: Storage backends when `--etcd_endpoints` is explicitly specified
 
@@ -565,9 +565,6 @@ The workers automatically coordinate ranks through ETCD as they connect.
 
 # UCX with specific devices
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
-
-# UCX Memory-Only variant
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX_MO
 ```
 
 **GPUNETIO Backend:**

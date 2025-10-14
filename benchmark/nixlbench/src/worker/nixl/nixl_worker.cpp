@@ -113,7 +113,6 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     agent->getAvailPlugins(plugins);
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
@@ -126,8 +125,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     agent->getPluginParams(backend_name, mems, backend_params);
 
-    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
 
         // No need to set device_list if all is specified
@@ -135,14 +133,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         if (devices[0] != "all" && devices.size() >= 1) {
             if (isInitiator()) {
                 backend_params["device_list"] = devices[rank];
-                if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
-                    backend_params["num_ucx_engines"] = xferBenchConfig::num_initiator_dev;
-                }
             } else {
                 backend_params["device_list"] = devices[rank - xferBenchConfig::num_initiator_dev];
-                if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
-                    backend_params["num_ucx_engines"] = xferBenchConfig::num_target_dev;
-                }
             }
         }
 

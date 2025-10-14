@@ -38,8 +38,6 @@ const PluginDesc ucx_plugin_desc{.name = "UCX",
                                  .type = PluginDesc::PluginType::Real};
 const PluginDesc gds_plugin_desc{.name = "GDS",
                                  .type = PluginDesc::PluginType::Real};
-const PluginDesc ucx_mo_plugin_desc{
-    .name = "UCX_MO", .type = PluginDesc::PluginType::Real};
 
 class LoadSinglePluginTestFixture
     : public testing::TestWithParam<PluginDesc> {
@@ -191,30 +189,11 @@ INSTANTIATE_TEST_SUITE_P(UcxLoadPluginInstantiation,
 INSTANTIATE_TEST_SUITE_P(GdsLoadPluginInstantiation,
                          LoadSinglePluginTestFixture,
                          testing::Values(gds_plugin_desc));
-INSTANTIATE_TEST_SUITE_P(UcxMoLoadPluginInstantiation,
-                         LoadSinglePluginTestFixture,
-                         testing::Values(ucx_mo_plugin_desc));
 
 /* Load multiple plugins tests instantiations. */
 INSTANTIATE_TEST_SUITE_P(UcxGdsLoadMultiplePluginInstantiation,
                          LoadMultiplePluginsTestFixture,
                          testing::Values(std::vector<PluginDesc>{
                              ucx_plugin_desc, gds_plugin_desc}));
-INSTANTIATE_TEST_SUITE_P(UcxUcxMoLoadMultiplePluginInstantiation,
-                         LoadMultiplePluginsTestFixture,
-                         testing::Values(std::vector<PluginDesc>{
-                             ucx_plugin_desc,
-                             ucx_mo_plugin_desc}));
-INSTANTIATE_TEST_SUITE_P(GdsUcxMoLoadMultiplePluginInstantiation,
-                         LoadMultiplePluginsTestFixture,
-                         testing::Values(std::vector<PluginDesc>{
-                             gds_plugin_desc,
-                             ucx_mo_plugin_desc}));
-INSTANTIATE_TEST_SUITE_P(UcxGdsUcxMoLoadMultiplePluginInstantiation,
-                         LoadMultiplePluginsTestFixture,
-                         testing::Values(std::vector<PluginDesc>{
-                             ucx_plugin_desc, gds_plugin_desc,
-                             ucx_mo_plugin_desc}));
-
 } // namespace plugin_manager
 } // namespace gtest
