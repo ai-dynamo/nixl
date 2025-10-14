@@ -111,9 +111,12 @@ NIXLBench supports GUSLI backend for storage performance benchmarking. The bench
 
 GUSLI backend requires explicit device specification using the `--device_list` parameter in format `id:type:path`.
 
-**Important**: For storage backends, the local memory is always DRAM (or VRAM), and the remote side is the storage backend (BLK for GUSLI). The operation type (`--op_type`) determines the data direction:
-- `WRITE`: DRAM → Block device (initiator has DRAM, target is BLK)
-- `READ`: Block device → DRAM (initiator has DRAM, target is BLK)
+**Important Notes**:
+- For storage backends, the local memory is always DRAM (or VRAM), and the remote side is the storage backend (BLK for GUSLI)
+- The operation type (`--op_type`) determines the data direction:
+  - `WRITE`: DRAM → Block device (initiator has DRAM, target is BLK)
+  - `READ`: Block device → DRAM (initiator has DRAM, target is BLK)
+- Direct I/O (`storage_enable_direct`) is **automatically enabled** when GUSLI backend is selected for optimal performance
 
 ```bash
 # Write to block device (DRAM → BLK)

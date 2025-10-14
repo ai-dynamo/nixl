@@ -303,6 +303,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
         std::cout << "OBJ backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
+        // GUSLI backend requires direct I/O - enable it automatically
+        if (!xferBenchConfig::storage_enable_direct) {
+            std::cout << "GUSLI backend: Automatically enabling storage_enable_direct for direct I/O" << std::endl;
+            xferBenchConfig::storage_enable_direct = true;
+        }
+
         // Parse and configure GUSLI devices from general device_list parameter
         int expected_num_devices =
             isInitiator() ? xferBenchConfig::num_initiator_dev : xferBenchConfig::num_target_dev;
@@ -326,6 +332,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         std::cout << "  Client name: " << xferBenchConfig::gusli_client_name << std::endl;
         std::cout << "  Max simultaneous requests: "
                   << xferBenchConfig::gusli_max_simultaneous_requests << std::endl;
+        std::cout << "  Direct I/O: Enabled (required)" << std::endl;
         std::cout << "  Configured devices: " << gusli_devices.size() << std::endl;
         for (const auto &dev : gusli_devices) {
             std::cout << "    Device " << dev.device_id << " [" << dev.device_type

@@ -511,6 +511,8 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --gusli_device_security LIST           # Comma-separated security flags per device (e.g., 'sec=0x3,sec=0x71')
 --gusli_bdev_byte_offset BYTES         # Starting LBA offset in bytes (default: 1048576)
 --gusli_config_file CONTENT            # Custom config file content (auto-generated if not provided)
+
+Note: storage_enable_direct is automatically enabled for GUSLI backend
 ```
 
 ### Using ETCD for Coordination
@@ -607,6 +609,8 @@ The workers automatically coordinate ranks through ETCD as they connect.
 
 GUSLI provides direct user-space access to block storage devices, supporting local files, kernel block devices, and networked GUSLI servers.
 
+**Note**: Direct I/O is automatically enabled when GUSLI backend is selected (no need to specify `--storage_enable_direct`).
+
 ```bash
 # Basic GUSLI benchmark - single file device
 ./nixlbench --backend=GUSLI \
@@ -656,11 +660,13 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 **GUSLI-Specific Parameters:**
 - `--gusli_client_name`: Client identifier (default: "NIXLBench")
 - `--gusli_max_simultaneous_requests`: Concurrent request limit (default: 32)
-- `--gusli_device_security`: Comma-separated security flags per device
+- `--gusli_device_security`: Comma-separated security flags per device (default: "sec=0x3" for each device)
 - `--gusli_bdev_byte_offset`: Starting LBA offset in bytes (default: 1MB)
 - `--gusli_config_file`: Custom config file content override
 
-**Note**: Number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`.
+**Notes**: 
+- Number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`
+- Direct I/O is automatically enabled for GUSLI (no need to specify `--storage_enable_direct`)
 
 ### Worker Types
 
