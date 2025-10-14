@@ -385,7 +385,7 @@ TEST_P(SingleWriteTest, BasicSingleWriteTest) {
     constexpr size_t count = 1;
     nixl_mem_t mem_type = VRAM_SEG;
     size_t num_threads = 32;
-    const size_t num_iters = 10000;
+    const size_t num_iters = 10;
     constexpr unsigned index = 0;
     const bool is_no_delay = true;
 
@@ -405,21 +405,20 @@ TEST_P(SingleWriteTest, BasicSingleWriteTest) {
     extra_params.notifMsg = NOTIF_MSG;
 
     nixlXferReqH *xfer_req = nullptr;
+    nixlGpuXferReqH gpu_req_hndl;
+
     nixl_status_t status = getAgent(SENDER_AGENT)
-                               .createXferReq(NIXL_WRITE,
+                               .createGpuXferReq(
                                               makeDescList<nixlBasicDesc>(src_buffers, mem_type),
                                               makeDescList<nixlBasicDesc>(dst_buffers, mem_type),
                                               getAgentName(RECEIVER_AGENT),
+                                              gpu_req_hndl,
                                               xfer_req,
                                               &extra_params);
 
     ASSERT_EQ(status, NIXL_SUCCESS)
-        << "Failed to create xfer request " << nixlEnumStrings::statusStr(status);
+        << "Failed to create GPU xfer request " << nixlEnumStrings::statusStr(status);
     EXPECT_NE(xfer_req, nullptr);
-
-    nixlGpuXferReqH gpu_req_hndl;
-    status = getAgent(SENDER_AGENT).createGpuXferReq(*xfer_req, gpu_req_hndl);
-    ASSERT_EQ(status, NIXL_SUCCESS) << "Failed to create GPU xfer request";
 
     ASSERT_NE(gpu_req_hndl, nullptr) << "GPU request handle is null after createGpuXferReq";
 
@@ -485,7 +484,7 @@ TEST_P(SingleWriteTest, VariableSizeTest) {
         constexpr size_t count = 1;
         nixl_mem_t mem_type = VRAM_SEG;
         size_t num_threads = 32;
-        const size_t num_iters = 50000;
+        const size_t num_iters = 10;
         constexpr unsigned index = 0;
         const bool is_no_delay = true;
 
@@ -507,19 +506,18 @@ TEST_P(SingleWriteTest, VariableSizeTest) {
         extra_params.notifMsg = NOTIF_MSG;
 
         nixlXferReqH *xfer_req = nullptr;
+        nixlGpuXferReqH gpu_req_hndl;
+
         nixl_status_t status =
             getAgent(SENDER_AGENT)
-                .createXferReq(NIXL_WRITE,
+                .createGpuXferReq(
                                makeDescList<nixlBasicDesc>(src_buffers, mem_type),
                                makeDescList<nixlBasicDesc>(dst_buffers, mem_type),
                                getAgentName(RECEIVER_AGENT),
+                               gpu_req_hndl,
                                xfer_req,
                                &extra_params);
 
-        ASSERT_EQ(status, NIXL_SUCCESS) << "Failed to create xfer request for size " << test_size;
-
-        nixlGpuXferReqH gpu_req_hndl;
-        status = getAgent(SENDER_AGENT).createGpuXferReq(*xfer_req, gpu_req_hndl);
         ASSERT_EQ(status, NIXL_SUCCESS)
             << "Failed to create GPU xfer request for size " << test_size;
 

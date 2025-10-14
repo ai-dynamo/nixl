@@ -32,7 +32,8 @@ nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
                  const std::vector<nixlUcxMem> &local_mems,
                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
-                 const std::vector<uint64_t> &remote_addrs);
+                 const std::vector<uint64_t> &remote_addrs,
+                 const std::vector<size_t> &remote_lengths);
 
 void
 releaseGpuXferReq(nixlGpuXferReqH gpu_req) noexcept;
