@@ -35,8 +35,8 @@
 
 // Local includes
 #include "common/nixl_time.h"
-#include "ucx/rkey.h"
-#include "ucx/ucx_utils.h"
+#include "rkey.h"
+#include "ucx_utils.h"
 
 enum ucx_cb_op_t { NOTIF_STR };
 
