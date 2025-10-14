@@ -22,6 +22,7 @@
 #include "nixl.h"
 #include "common/nixl_time.h"
 #include <getopt.h>
+#include "test_utils.h"
 
 #define UUID_LOCAL_FILE_0 11 // Just some numbers
 #define UUID_K_DEV_ZERO_1 14
@@ -61,11 +62,8 @@ public:
     fill(void *buffer, size_t size) {
         strcpy(test_phrase, DEF_TEST_PHRASE);
         char *p = (char *)buffer;
-        out_log << "Filling buffer " << (void *)buffer << ", size=" << size << std::endl;
         for (size_t i = 0; i < size; i += DEF_TEST_PHRASE_LEN) {
             // inject_unique(i);
-            out_log << "Filling buffer, i=" << i << ", test_phrase=" << test_phrase
-                    << "addr=" << (void *)&p[i] << std::endl;
             memcpy(&p[i], test_phrase, test_phrase_len);
         }
     }
@@ -213,7 +211,7 @@ public:
         nixl_b_params_t params;
         nixl_mem_list_t mems1;
         nixl_status_t ret1 = agent.getPluginParams("GUSLI", mems1, params);
-        assert(ret1 == NIXL_SUCCESS);
+        nixl_exit_on_failure(ret1, "Failed to get GUSLI plugin params", std::string(agent_name));
         if (verbose) {
             out_log << absl::StrFormat("Default Plugin params:\n");
             for (const auto &q : params) {
@@ -419,19 +417,21 @@ public:
         status = agent.createBackend("GUSLI", params, n_backend);
         QUIT_ON_ERR("Backend Creation Failed: ", status);
 
-        if (0) {
+        if (1) {
             print_segment_title(phase_title("Failed Second plugin initialization"));
             nixlBackendH *_2nd_plugin = nullptr;
             nixlAgent agent2("2nd_agent", nixlAgentConfig(true));
-            bool init_exception_cought = false;
+            bool init_exception_caught = false;
             try {
                 status = agent2.createBackend("GUSLI", params, n_backend);
             }
             catch (const std::runtime_error &e) {
-                init_exception_cought = true;
+                init_exception_caught = true;
             }
-            assert(_2nd_plugin == nullptr);
-            assert(init_exception_cought);
+
+            nixl_exit_on_failure((_2nd_plugin == nullptr), "2nd plugin instance could be created");
+            nixl_exit_on_failure((init_exception_caught = true),
+                                 "2nd plugin creation exception not caught!");
         }
 
         print_segment_title(

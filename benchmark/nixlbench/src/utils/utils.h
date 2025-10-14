@@ -174,6 +174,7 @@ class xferBenchConfig {
         static int gusli_max_simultaneous_requests;
         static std::string gusli_config_file;
         static uint64_t gusli_bdev_byte_offset;
+        static std::string gusli_device_security;
 
         static int
         loadFromFlags();

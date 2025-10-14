@@ -63,14 +63,113 @@
             _seg_type = DRAM_SEG;                                                           \
         } else if (0 == _seg_type_str.compare("VRAM")) {                                    \
             HANDLE_VRAM_SEGMENT(_seg_type);                                                 \
-        } else if (0 == _seg_type_str.compare("BLK")) {                                     \
-            _seg_type = BLK_SEG;                                                            \
         } else {                                                                            \
             std::cerr << "Invalid segment type: " << _seg_type_str << std::endl;            \
             exit(EXIT_FAILURE);                                                             \
         }                                                                                   \
         _seg_type;                                                                          \
     })
+
+// Parse GUSLI device list from device_list parameter in format "id:type:path,id:type:path,..."
+// For GUSLI backend, device_list must specify devices in GUSLI format
+static std::vector<GusliDeviceConfig>
+parseGusliDeviceList(const std::string &device_list,
+                     const std::string &security_list,
+                     int num_devices) {
+    std::vector<GusliDeviceConfig> devices;
+
+    // Parse security flags into a vector
+    std::vector<std::string> security_flags;
+    if (!security_list.empty()) {
+        std::stringstream sec_ss(security_list);
+        std::string sec_flag;
+        while (std::getline(sec_ss, sec_flag, ',')) {
+            security_flags.push_back(sec_flag);
+        }
+    }
+
+    // For GUSLI, device_list cannot be "all" - must specify devices explicitly
+    if (device_list.empty() || device_list == "all") {
+        std::cerr << "Error: GUSLI backend requires explicit device_list in format 'id:type:path'"
+                  << std::endl;
+        std::cerr << "Example: --device_list='11:F:./store0.bin,14:K:/dev/zero,20:N:t192.168.1.100'"
+                  << std::endl;
+        std::cerr << "  id: Device identifier (numeric)" << std::endl;
+        std::cerr << "  type: F (file), K (kernel block device), or N (networked server)"
+                  << std::endl;
+        std::cerr << "  path: Device path or server address (for N type, prefix with 't' for TCP "
+                     "or 'u' for UDP)"
+                  << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    std::stringstream ss(device_list);
+    std::string device_spec;
+    size_t device_count = 0;
+
+    while (std::getline(ss, device_spec, ',')) {
+        std::stringstream dev_ss(device_spec);
+        std::string id_str, type_str, path;
+
+        // Parse "id:type:path" format
+        if (std::getline(dev_ss, id_str, ':') && std::getline(dev_ss, type_str, ':') &&
+            std::getline(dev_ss, path)) {
+
+            int device_id = std::stoi(id_str);
+            char device_type = type_str[0];
+
+            if (device_type != 'F' && device_type != 'K' && device_type != 'N') {
+                std::cerr << "Invalid GUSLI device type: " << device_type
+                          << ". Must be 'F' (file), 'K' (kernel device), or 'N' (networked server)"
+                          << std::endl;
+                exit(EXIT_FAILURE);
+            }
+
+            // Use corresponding security flag or default
+            std::string sec_flag =
+                (device_count < security_flags.size()) ? security_flags[device_count] : "sec=0x3";
+
+            devices.push_back({device_id, device_type, path, sec_flag});
+            device_count++;
+        } else {
+            std::cerr << "Invalid GUSLI device specification: " << device_spec
+                      << ". Expected format: 'id:type:path'" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // Validate security flags count if provided
+    if (!security_flags.empty() && security_flags.size() != devices.size()) {
+        std::cerr << "Warning: Number of security flags (" << security_flags.size()
+                  << ") doesn't match number of devices (" << devices.size()
+                  << "). Using 'sec=0x3' for missing entries." << std::endl;
+    }
+    // Validate device count matches expected
+    if (devices.size() != static_cast<size_t>(num_devices)) {
+        std::cerr << "Error: Number of devices in device_list (" << devices.size()
+                  << ") must match num_devices (" << num_devices << ")" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    return devices;
+}
+
+// Generate GUSLI config file from device configurations
+static std::string
+generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
+    std::stringstream config;
+    config << "# Config file\nversion=1\n";
+
+    for (const auto &dev : devices) {
+        // Format: "id type access_mode shared_exclusive path security_flags"
+        // Example: "11 F W N ./store0.bin sec=0x3"
+        config << dev.device_id << " " << dev.device_type << " "
+               << "W N " // Write mode, Not shared (exclusive)
+               << dev.device_path << " " << dev.security_flags << "\n";
+    }
+
+    return config.str();
+}
 
 xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices)
     : xferBenchWorker(argc, argv) {
@@ -204,24 +303,43 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
         std::cout << "OBJ backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
-        // Set GUSLI backend parameters based on config from nixl_gusli_test
+        // GUSLI backend requires direct I/O - enable it automatically
+        if (!xferBenchConfig::storage_enable_direct) {
+            std::cout
+                << "GUSLI backend: Automatically enabling storage_enable_direct for direct I/O"
+                << std::endl;
+            xferBenchConfig::storage_enable_direct = true;
+        }
+
+        // Parse and configure GUSLI devices from general device_list parameter
+        int expected_num_devices =
+            isInitiator() ? xferBenchConfig::num_initiator_dev : xferBenchConfig::num_target_dev;
+        gusli_devices = parseGusliDeviceList(xferBenchConfig::device_list,
+                                             xferBenchConfig::gusli_device_security,
+                                             expected_num_devices);
+
+        // Set GUSLI backend parameters
         backend_params["client_name"] = xferBenchConfig::gusli_client_name;
         backend_params["max_num_simultaneous_requests"] =
             std::to_string(xferBenchConfig::gusli_max_simultaneous_requests);
 
-        // Generate default config if not provided
+        // Generate config file if not explicitly provided
         if (xferBenchConfig::gusli_config_file.empty()) {
-            // Default config similar to nixl_gusli_test.cpp
-            backend_params["config_file"] = "# Config file\nversion=1\n"
-                                            "11 F W N ./store0.bin sec=0x3\n"
-                                            "14 K X N /dev/zero sec=0x71\n";
+            backend_params["config_file"] = generateGusliConfigFile(gusli_devices);
         } else {
             backend_params["config_file"] = xferBenchConfig::gusli_config_file;
         }
 
-        std::cout << "GUSLI backend with client_name: " << xferBenchConfig::gusli_client_name
-                  << ", max_requests: " << xferBenchConfig::gusli_max_simultaneous_requests
-                  << std::endl;
+        std::cout << "GUSLI backend initialized:" << std::endl;
+        std::cout << "  Client name: " << xferBenchConfig::gusli_client_name << std::endl;
+        std::cout << "  Max simultaneous requests: "
+                  << xferBenchConfig::gusli_max_simultaneous_requests << std::endl;
+        std::cout << "  Direct I/O: Enabled (required)" << std::endl;
+        std::cout << "  Configured devices: " << gusli_devices.size() << std::endl;
+        for (const auto &dev : gusli_devices) {
+            std::cout << "    Device " << dev.device_id << " [" << dev.device_type
+                      << "]: " << dev.device_path << " (" << dev.security_flags << ")" << std::endl;
+        }
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -588,7 +706,7 @@ xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id) {
     // The address represents the LBA (Logical Block Address) offset in the block device
     // Similar to how nixl_gusli_test.cpp handles block device addressing
 
-    uint64_t lba_offset = xferBenchConfig::gusli_bdev_byte_offset;
+    static uint64_t lba_offset = xferBenchConfig::gusli_bdev_byte_offset;
 
     // Create IOV with LBA offset as address, buffer size, and device ID
     // The device ID corresponds to the block device UUID (e.g., 11 for local file, 14 for
@@ -596,7 +714,7 @@ xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id) {
     auto ret = std::optional<xferBenchIOV>(std::in_place, lba_offset, buffer_size, mem_dev_id);
 
     // Update offset for next allocation (similar to file handling)
-    xferBenchConfig::gusli_bdev_byte_offset += buffer_size;
+    lba_offset += buffer_size;
 
     return ret;
 }
@@ -664,13 +782,17 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         }
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         // GUSLI backend uses block device descriptors
+        if (gusli_devices.empty()) {
+            std::cerr << "No GUSLI devices configured" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
-                // Use device IDs from GUSLI config (11 for local file, 14 for /dev/zero)
-                int gusli_dev_id = (i % 2 == 0) ? 11 : 14; // Alternate between devices
-                basic_desc = initBasicDescBlk(buffer_size, gusli_dev_id);
+                // Use device IDs from parsed configuration (num_devices == gusli_devices.size())
+                basic_desc = initBasicDescBlk(buffer_size, gusli_devices[i].device_id);
                 if (basic_desc) {
                     iov_list.push_back(basic_desc.value());
                 }
@@ -726,25 +848,24 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     for (int list_idx = 0; list_idx < num_threads; list_idx++) {
         std::vector<xferBenchIOV> iov_list;
-        int blk_dev_id = 0;
         for (i = 0; i < num_devices; i++) {
             std::optional<xferBenchIOV> basic_desc;
 
             switch (seg_type) {
-            case DRAM_SEG:
-                basic_desc = initBasicDescDram(buffer_size, i);
+            case DRAM_SEG: {
+                // For GUSLI backend, use device ID from parsed configuration
+                int mem_dev_id = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend &&
+                                  !gusli_devices.empty()) ?
+                    gusli_devices[i].device_id :
+                    i;
+                basic_desc = initBasicDescDram(buffer_size, mem_dev_id);
                 break;
+            }
 #if HAVE_CUDA
             case VRAM_SEG:
                 basic_desc = initBasicDescVram(buffer_size, i);
                 break;
 #endif
-            case BLK_SEG:
-                // For BLK_SEG on local side, use block device descriptors
-                // Use device IDs from GUSLI config (11 for local file, 14 for /dev/zero)
-                blk_dev_id = (i % 2 == 0) ? 11 : 14; // Alternate between devices
-                basic_desc = initBasicDescBlk(buffer_size, blk_dev_id);
-                break;
             default:
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
@@ -783,9 +904,6 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
                 cleanupBasicDescVram(iov);
                 break;
 #endif
-            case BLK_SEG:
-                cleanupBasicDescBlk(iov);
-                break;
             default:
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
@@ -909,7 +1027,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }
-                } else {
+                } else if (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
                     iov_remote.len = block_size;
@@ -920,6 +1038,13 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                         file_offset += block_size;
                         fd_idx = 0;
                     }
+                } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = xferBenchConfig::gusli_bdev_byte_offset + file_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = 11;
+                    remote_iov_list.push_back(iov_remote);
+                    file_offset += block_size;
                 }
             }
             res.push_back(remote_iov_list);
@@ -980,6 +1105,120 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     return res;
 }
 
+// Helper to execute a single transfer iteration
+static inline nixl_status_t
+execSingleTransfer(nixlAgent *agent, nixlXferReqH *req) {
+    nixl_status_t rc = agent->postXferReq(req);
+    while (NIXL_IN_PROG == rc) {
+        rc = agent->getXferStatus(req);
+    }
+    return rc;
+}
+
+// Helper to prepare transfer descriptors based on backend type
+static void
+prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
+                           nixl_xfer_dlist_t &remote_desc,
+                           const std::vector<xferBenchIOV> &local_iov,
+                           const std::vector<xferBenchIOV> &remote_iov) {
+    // Set remote descriptor type based on backend
+    if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
+        remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
+    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+        remote_desc = nixl_xfer_dlist_t(BLK_SEG);
+    } else if (xferBenchConfig::isStorageBackend()) {
+        remote_desc = nixl_xfer_dlist_t(FILE_SEG);
+    }
+
+    iovListToNixlXferDlist(local_iov, local_desc);
+    iovListToNixlXferDlist(remote_iov, remote_desc);
+}
+
+// Execute transfers with configurable request lifecycle behavior
+// recreate_per_iteration: true for GUSLI (bug workaround), false for standard backends
+static int
+execTransferIterations(nixlAgent *agent,
+                       const nixl_xfer_op_t op,
+                       nixl_xfer_dlist_t &local_desc,
+                       nixl_xfer_dlist_t &remote_desc,
+                       const std::string &target,
+                       nixl_opt_args_t &params,
+                       const int num_iter,
+                       xferBenchTimer &timer,
+                       xferBenchStats &thread_stats,
+                       const bool recreate_per_iteration) {
+    nixlXferReqH *req = nullptr;
+    nixlTime::us_t total_prepare_duration = 0;
+
+    // Create request once if not recreating per iteration
+    if (!recreate_per_iteration) {
+        nixl_status_t create_rc =
+            agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
+        if (NIXL_SUCCESS != create_rc) {
+            std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc)
+                      << std::endl;
+            return -1;
+        }
+        thread_stats.prepare_duration.add(timer.lap());
+    }
+
+    // Execute transfer iterations
+    // Branch prediction hint: most backends don't recreate per iteration
+    if (__builtin_expect(recreate_per_iteration, 0)) {
+        // GUSLI path: Create/execute/release per iteration
+        for (int i = 0; i < num_iter; ++i) {
+            nixl_status_t create_rc =
+                agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
+            if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
+                std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc)
+                          << std::endl;
+                return -1;
+            }
+            total_prepare_duration += timer.lap();
+
+            thread_stats.post_duration.add(timer.lap());
+            nixl_status_t rc = execSingleTransfer(agent, req);
+
+            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
+                          << std::endl;
+                agent->releaseXferReq(req);
+                return -1;
+            }
+            thread_stats.transfer_duration.add(timer.lap());
+
+            if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) {
+                std::cout << "NIXL releaseXferReq failed" << std::endl;
+                return -1;
+            }
+        }
+        // Average prepare duration across iterations
+        thread_stats.prepare_duration.add(total_prepare_duration / num_iter);
+    } else {
+        // Standard path: Single request for all iterations
+        for (int i = 0; i < num_iter; ++i) {
+            thread_stats.post_duration.add(timer.lap());
+            nixl_status_t rc = execSingleTransfer(agent, req);
+
+            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
+                          << std::endl;
+                agent->releaseXferReq(req);
+                return -1;
+            }
+            thread_stats.transfer_duration.add(timer.lap());
+        }
+
+        // Release request once after all iterations
+        if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) {
+            std::cout << "NIXL releaseXferReq failed" << std::endl;
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 static int
 execTransfer(nixlAgent *agent,
              const std::vector<std::vector<xferBenchIOV>> &local_iovs,
@@ -1001,70 +1240,41 @@ execTransfer(nixlAgent *agent,
         const auto &local_iov = local_iovs[tid];
         const auto &remote_iov = remote_iovs[tid];
 
-        // TODO: fetch local_desc and remote_desc directly from config
+        // Prepare transfer descriptors
         nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
         nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
+        prepareTransferDescriptors(local_desc, remote_desc, local_iov, remote_iov);
 
-        if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
-            remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
-        } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
-            remote_desc = nixl_xfer_dlist_t(BLK_SEG);
-        } else if (xferBenchConfig::isStorageBackend()) {
-            remote_desc = nixl_xfer_dlist_t(FILE_SEG);
-        }
-
-        iovListToNixlXferDlist(local_iov, local_desc);
-        iovListToNixlXferDlist(remote_iov, remote_desc);
-
+        // Setup transfer parameters
         nixl_opt_args_t params;
-        nixl_b_params_t b_params;
-        nixlXferReqH *req;
-        nixl_status_t rc;
-        std::string target;
-
-        if (xferBenchConfig::isStorageBackend()) {
-            target = "initiator";
-        } else {
+        std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
+        if (!xferBenchConfig::isStorageBackend()) {
             params.notifMsg = "0xBEEF";
             params.hasNotif = true;
-            target = "target";
         }
 
-        CHECK_NIXL_ERROR(agent->createXferReq(op, local_desc, remote_desc, target, req, &params),
-                         "createXferReq failed");
+        // Execute transfers
+        // GUSLI requires per-iteration request creation due to library bug
+        const bool recreate_per_iteration = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
+        const int result = execTransferIterations(agent,
+                                                  op,
+                                                  local_desc,
+                                                  remote_desc,
+                                                  target,
+                                                  params,
+                                                  num_iter,
+                                                  timer,
+                                                  thread_stats,
+                                                  recreate_per_iteration);
 
-        const nixlTime::us_t prepare_duration = timer.lap();
-        thread_stats.prepare_duration.add(prepare_duration);
-
-        for (int i = 0; i < num_iter; i++) {
-            rc = agent->postXferReq(req);
-            const nixlTime::us_t post_duration = timer.lap();
-            thread_stats.post_duration.add(post_duration);
-            while (NIXL_IN_PROG == rc) {
-                /* XXX agent isn't const because the getXferStatus() is not const  */
-                rc = agent->getXferStatus(req);
-            }
-
-            if (NIXL_SUCCESS != rc) {
-                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
-                          << std::endl;
-                ret = -1;
-                break;
-            }
-
-            const nixlTime::us_t transfer_duration = timer.lap();
-            thread_stats.transfer_duration.add(transfer_duration);
-        }
-
-        rc = agent->releaseXferReq(req);
-        if (NIXL_SUCCESS != rc) {
-            std::cout << "NIXL releaseXferReq failed" << std::endl;
-            ret = -1;
+        if (__builtin_expect(result != 0, 0)) {
+            ret = result;
         }
 
 #pragma omp critical
         { stats.add(thread_stats); }
     }
+
     const nixlTime::us_t total_duration = total_timer.lap();
     stats.total_duration.add(total_duration);
     return ret;

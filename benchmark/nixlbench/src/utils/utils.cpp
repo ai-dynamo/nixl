@@ -50,9 +50,9 @@ DEFINE_string(
     "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
-              [DRAM, VRAM, BLK]");
+              [DRAM, VRAM]. Note: Storage backends always use DRAM locally.");
 DEFINE_string(target_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for target \
-              [DRAM, VRAM, BLK]");
+              [DRAM, VRAM]. Note: Storage backends determine remote type automatically.");
 DEFINE_string(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, maytoone, onetomany, tp");
 DEFINE_string(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc) [default: SG]");
 DEFINE_string(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
@@ -132,12 +132,19 @@ DEFINE_string(gusli_client_name, "NIXLBench", "Client name for GUSLI backend");
 DEFINE_int32(gusli_max_simultaneous_requests,
              32,
              "Maximum number of simultaneous requests for GUSLI backend");
-DEFINE_string(gusli_config_file,
-              "",
-              "Configuration file content for GUSLI backend (if empty, uses default config)");
+DEFINE_string(
+    gusli_config_file,
+    "",
+    "Configuration file content for GUSLI backend (if empty, auto-generated from device_list)");
 DEFINE_uint64(gusli_bdev_byte_offset,
               1048576,
               "Byte offset in block device for GUSLI operations (default: 1MB)");
+DEFINE_string(gusli_device_security,
+              "",
+              "Comma-separated list of security flags per device (e.g. 'sec=0x3,sec=0x71'). "
+              "If empty or fewer than devices, uses 'sec=0x3' as default. "
+              "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) "
+              "or K (kernel device).");
 
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
@@ -190,6 +197,7 @@ std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
 std::string xferBenchConfig::gusli_config_file = "";
 uint64_t xferBenchConfig::gusli_bdev_byte_offset = 0;
+std::string xferBenchConfig::gusli_device_security = "";
 
 int
 xferBenchConfig::loadFromFlags() {
@@ -250,6 +258,7 @@ xferBenchConfig::loadFromFlags() {
             gusli_max_simultaneous_requests = FLAGS_gusli_max_simultaneous_requests;
             gusli_config_file = FLAGS_gusli_config_file;
             gusli_bdev_byte_offset = FLAGS_gusli_bdev_byte_offset;
+            gusli_device_security = FLAGS_gusli_device_security;
         }
 
         // Load OBJ-specific configurations if backend is OBJ
