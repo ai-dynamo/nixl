@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,8 +20,8 @@
 #include <cstring>
 #include <iostream>
 
-#include "ucx/ucx_utils.h"
-#include "ucx/rkey.h"
+#include "ucx_utils.h"
+#include "rkey.h"
 //TODO: meson conditional build for CUDA
 //#define USE_VRAM
 
