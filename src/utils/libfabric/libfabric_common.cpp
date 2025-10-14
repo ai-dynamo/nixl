@@ -47,7 +47,7 @@ getAvailableNetworkDevices() {
     hints->caps = FI_MSG | FI_RMA; // Basic messaging and RMA
 
     hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
-    hints->mode = FI_CONTEXT | FI_CONTEXT2;
+    hints->mode = FI_CONTEXT;
     hints->ep_attr->type = FI_EP_RDM;
 
     int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
