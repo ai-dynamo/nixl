@@ -305,7 +305,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
         if (!xferBenchConfig::storage_enable_direct) {
-            std::cout << "GUSLI backend: Automatically enabling storage_enable_direct for direct I/O" << std::endl;
+            std::cout
+                << "GUSLI backend: Automatically enabling storage_enable_direct for direct I/O"
+                << std::endl;
             xferBenchConfig::storage_enable_direct = true;
         }
 
