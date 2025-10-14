@@ -63,14 +63,113 @@
             _seg_type = DRAM_SEG;                                                           \
         } else if (0 == _seg_type_str.compare("VRAM")) {                                    \
             HANDLE_VRAM_SEGMENT(_seg_type);                                                 \
-        } else if (0 == _seg_type_str.compare("BLK")) {                                     \
-            _seg_type = BLK_SEG;                                                            \
         } else {                                                                            \
             std::cerr << "Invalid segment type: " << _seg_type_str << std::endl;            \
             exit(EXIT_FAILURE);                                                             \
         }                                                                                   \
         _seg_type;                                                                          \
     })
+
+// Parse GUSLI device list from device_list parameter in format "id:type:path,id:type:path,..."
+// For GUSLI backend, device_list must specify devices in GUSLI format
+static std::vector<GusliDeviceConfig>
+parseGusliDeviceList(const std::string &device_list,
+                     const std::string &security_list,
+                     int num_devices) {
+    std::vector<GusliDeviceConfig> devices;
+
+    // Parse security flags into a vector
+    std::vector<std::string> security_flags;
+    if (!security_list.empty()) {
+        std::stringstream sec_ss(security_list);
+        std::string sec_flag;
+        while (std::getline(sec_ss, sec_flag, ',')) {
+            security_flags.push_back(sec_flag);
+        }
+    }
+
+    // For GUSLI, device_list cannot be "all" - must specify devices explicitly
+    if (device_list.empty() || device_list == "all") {
+        std::cerr << "Error: GUSLI backend requires explicit device_list in format 'id:type:path'"
+                  << std::endl;
+        std::cerr << "Example: --device_list='11:F:./store0.bin,14:K:/dev/zero,20:N:t192.168.1.100'"
+                  << std::endl;
+        std::cerr << "  id: Device identifier (numeric)" << std::endl;
+        std::cerr << "  type: F (file), K (kernel block device), or N (networked server)"
+                  << std::endl;
+        std::cerr << "  path: Device path or server address (for N type, prefix with 't' for TCP "
+                     "or 'u' for UDP)"
+                  << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    std::stringstream ss(device_list);
+    std::string device_spec;
+    size_t device_count = 0;
+
+    while (std::getline(ss, device_spec, ',')) {
+        std::stringstream dev_ss(device_spec);
+        std::string id_str, type_str, path;
+
+        // Parse "id:type:path" format
+        if (std::getline(dev_ss, id_str, ':') && std::getline(dev_ss, type_str, ':') &&
+            std::getline(dev_ss, path)) {
+
+            int device_id = std::stoi(id_str);
+            char device_type = type_str[0];
+
+            if (device_type != 'F' && device_type != 'K' && device_type != 'N') {
+                std::cerr << "Invalid GUSLI device type: " << device_type
+                          << ". Must be 'F' (file), 'K' (kernel device), or 'N' (networked server)"
+                          << std::endl;
+                exit(EXIT_FAILURE);
+            }
+
+            // Use corresponding security flag or default
+            std::string sec_flag =
+                (device_count < security_flags.size()) ? security_flags[device_count] : "sec=0x3";
+
+            devices.push_back({device_id, device_type, path, sec_flag});
+            device_count++;
+        } else {
+            std::cerr << "Invalid GUSLI device specification: " << device_spec
+                      << ". Expected format: 'id:type:path'" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // Validate security flags count if provided
+    if (!security_flags.empty() && security_flags.size() != devices.size()) {
+        std::cerr << "Warning: Number of security flags (" << security_flags.size()
+                  << ") doesn't match number of devices (" << devices.size()
+                  << "). Using 'sec=0x3' for missing entries." << std::endl;
+    }
+    // Validate device count matches expected
+    if (devices.size() != static_cast<size_t>(num_devices)) {
+        std::cerr << "Error: Number of devices in device_list (" << devices.size()
+                  << ") must match num_devices (" << num_devices << ")" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    return devices;
+}
+
+// Generate GUSLI config file from device configurations
+static std::string
+generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
+    std::stringstream config;
+    config << "# Config file\nversion=1\n";
+
+    for (const auto &dev : devices) {
+        // Format: "id type access_mode shared_exclusive path security_flags"
+        // Example: "11 F W N ./store0.bin sec=0x3"
+        config << dev.device_id << " " << dev.device_type << " "
+               << "W N " // Write mode, Not shared (exclusive)
+               << dev.device_path << " " << dev.security_flags << "\n";
+    }
+
+    return config.str();
+}
 
 xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices)
     : xferBenchWorker(argc, argv) {
@@ -204,24 +303,34 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
         std::cout << "OBJ backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
-        // Set GUSLI backend parameters based on config from nixl_gusli_test
+        // Parse and configure GUSLI devices from general device_list parameter
+        int expected_num_devices =
+            isInitiator() ? xferBenchConfig::num_initiator_dev : xferBenchConfig::num_target_dev;
+        gusli_devices = parseGusliDeviceList(xferBenchConfig::device_list,
+                                             xferBenchConfig::gusli_device_security,
+                                             expected_num_devices);
+
+        // Set GUSLI backend parameters
         backend_params["client_name"] = xferBenchConfig::gusli_client_name;
         backend_params["max_num_simultaneous_requests"] =
             std::to_string(xferBenchConfig::gusli_max_simultaneous_requests);
 
-        // Generate default config if not provided
+        // Generate config file if not explicitly provided
         if (xferBenchConfig::gusli_config_file.empty()) {
-            // Default config similar to nixl_gusli_test.cpp
-            backend_params["config_file"] = "# Config file\nversion=1\n"
-                                            "11 F W N ./store0.bin sec=0x3\n"
-                                            "14 K X N /dev/zero sec=0x71\n";
+            backend_params["config_file"] = generateGusliConfigFile(gusli_devices);
         } else {
             backend_params["config_file"] = xferBenchConfig::gusli_config_file;
         }
 
-        std::cout << "GUSLI backend with client_name: " << xferBenchConfig::gusli_client_name
-                  << ", max_requests: " << xferBenchConfig::gusli_max_simultaneous_requests
-                  << std::endl;
+        std::cout << "GUSLI backend initialized:" << std::endl;
+        std::cout << "  Client name: " << xferBenchConfig::gusli_client_name << std::endl;
+        std::cout << "  Max simultaneous requests: "
+                  << xferBenchConfig::gusli_max_simultaneous_requests << std::endl;
+        std::cout << "  Configured devices: " << gusli_devices.size() << std::endl;
+        for (const auto &dev : gusli_devices) {
+            std::cout << "    Device " << dev.device_id << " [" << dev.device_type
+                      << "]: " << dev.device_path << " (" << dev.security_flags << ")" << std::endl;
+        }
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -664,13 +773,17 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         }
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         // GUSLI backend uses block device descriptors
+        if (gusli_devices.empty()) {
+            std::cerr << "No GUSLI devices configured" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
-                // Use device IDs from GUSLI config (11 for local file, 14 for /dev/zero)
-                int gusli_dev_id = 11;
-                basic_desc = initBasicDescBlk(buffer_size, gusli_dev_id);
+                // Use device IDs from parsed configuration (num_devices == gusli_devices.size())
+                basic_desc = initBasicDescBlk(buffer_size, gusli_devices[i].device_id);
                 if (basic_desc) {
                     iov_list.push_back(basic_desc.value());
                 }
@@ -730,13 +843,15 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             std::optional<xferBenchIOV> basic_desc;
 
             switch (seg_type) {
-            case DRAM_SEG:
-                if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
-                    basic_desc = initBasicDescDram(buffer_size, 11);
-                } else {
-                    basic_desc = initBasicDescDram(buffer_size, i);
-                }
+            case DRAM_SEG: {
+                // For GUSLI backend, use device ID from parsed configuration
+                int mem_dev_id = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend &&
+                                  !gusli_devices.empty()) ?
+                    gusli_devices[i].device_id :
+                    i;
+                basic_desc = initBasicDescDram(buffer_size, mem_dev_id);
                 break;
+            }
 #if HAVE_CUDA
             case VRAM_SEG:
                 basic_desc = initBasicDescVram(buffer_size, i);
@@ -780,9 +895,6 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
                 cleanupBasicDescVram(iov);
                 break;
 #endif
-            case BLK_SEG:
-                cleanupBasicDescBlk(iov);
-                break;
             default:
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
