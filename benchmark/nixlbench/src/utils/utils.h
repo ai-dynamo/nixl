@@ -158,6 +158,7 @@ class xferBenchConfig {
         static int gds_batch_limit;
         static int gds_mt_num_threads;
         static std::string gpunetio_device_list;
+        static std::string gpunetio_oob_list;
         static long page_size;
         static std::string obj_access_key;
         static std::string obj_secret_key;

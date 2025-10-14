@@ -109,6 +109,9 @@ DEFINE_string (posix_api_type,
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
 DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
 		      communication (only used with nixl worker)");
+// DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
+DEFINE_string(gpunetio_oob_list, "", "Comma-separated OOB network interface name \
+		      for control path (only used with nixl worker)");
 
 // OBJ options - only used when backend is OBJ
 DEFINE_string(obj_access_key, "", "Access key for S3 backend");
@@ -176,6 +179,7 @@ int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
 int xferBenchConfig::gds_mt_num_threads = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
+std::string xferBenchConfig::gpunetio_oob_list = "";
 std::vector<std::string> devices = { };
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
@@ -245,6 +249,7 @@ xferBenchConfig::loadFromFlags() {
         // Load DOCA-specific configurations if backend is DOCA
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             gpunetio_device_list = FLAGS_gpunetio_device_list;
+            gpunetio_oob_list = FLAGS_gpunetio_oob_list;
         }
 
         // Load HD3FS-specific configurations if backend is HD3FS
@@ -476,6 +481,8 @@ xferBenchConfig::printConfig() {
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             printOption ("GPU CUDA Device id list (--device_list=dev1,dev2,...)",
                          gpunetio_device_list);
+            printOption("OOB network interface name for control path (--oob_list=ifface)",
+                        gpunetio_oob_list);
         }
     }
     printOption ("Initiator seg type (--initiator_seg_type=[DRAM,VRAM])", initiator_seg_type);

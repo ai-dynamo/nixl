@@ -215,6 +215,11 @@ def nixl_bench_args(func):
         help="Comma-separated GPU CUDA device id to use for communication (only used with GPUNETIO backend)",
     )(func)
     func = click.option(
+        "--gpunetio_oob_list",
+        type=str,
+        help="OOB network interface name for control path (only used with GPUNETIO backend)",
+    )(func)
+    func = click.option(
         "--hf3fs_iopool_size",
         type=int,
         help="Size of io memory pool for HF3FS backend (default: 64)",

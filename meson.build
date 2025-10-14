@@ -100,15 +100,23 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
+    message('nvcc version: ' + nvcc.version())
+    if nvcc.version().version_compare('>=12.8')
+        doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
+    else
+        warning('CUDA version is less than 12.8, GPUNETIO plugin will be disabled')
+        doca_gpunetio_dep = disabler()
+    endif
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
+    doca_gpunetio_dep = disabler()
 endif
 
 # DOCA GPUNETIO
 if cuda_dep.found()
   nvcc_cmd = find_program('nvcc', required: false)
   if nvcc_cmd.found()
-    if nvcc_cmd.version().version_compare('>=12.8') and nvcc_cmd.version().version_compare('<13.0')
+    if nvcc_cmd.version().version_compare('>=12.8')
       doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
       warning('CUDA version = ' + nvcc_cmd.version() + ', GPUNETIO plugin will be disabled')
