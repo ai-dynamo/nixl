@@ -27,15 +27,15 @@ class ucxDeviceApi : public ::testing::Test {};
 
 template<nixl_gpu_level_t level>
 __global__ void dummyKernel() {
-    const nixlGpuSignal signal { 1, 0x1000 };
     nixlGpuXferStatusH status;
 
-    [[maybe_unused]] auto result1 = nixlGpuPostSingleWriteXferReq<level>(nullptr, 0, nullptr, 0, 0);
-    [[maybe_unused]] auto result2 = nixlGpuPostSignalXferReq<level>(nullptr, 0, signal);
-    [[maybe_unused]] auto result3 = nixlGpuPostPartialWriteXferReq<level>(nullptr, 0, nullptr, nullptr, nullptr, nullptr, signal);
-    [[maybe_unused]] auto result4 = nixlGpuPostWriteXferReq<level>(nullptr, nullptr, nullptr, nullptr, signal);
+    [[maybe_unused]] auto result1 = nixlGpuPostSingleWriteXferReq<level>(nullptr, 0, 0, 0, 0);
+    [[maybe_unused]] auto result2 = nixlGpuPostSignalXferReq<level>(nullptr, 0, 1, 0);
+    [[maybe_unused]] auto result3 = nixlGpuPostPartialWriteXferReq<level>(nullptr, 0, nullptr, nullptr, nullptr, nullptr, 0, 1, 0);
+    [[maybe_unused]] auto result4 = nixlGpuPostWriteXferReq<level>(nullptr, 1, 0);
     [[maybe_unused]] auto result5 = nixlGpuGetXferStatus<level>(status);
     [[maybe_unused]] auto result6 = nixlGpuReadSignal<level>(nullptr);
+    [[maybe_unused]] auto result7 = nixlGpuWriteSignal<level>(nullptr, 0);
 }
 
 TEST_F(ucxDeviceApi, compilationTest) {

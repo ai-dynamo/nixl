@@ -159,6 +159,7 @@ static int cudaQueryAddr(void *address, bool &is_dev,
     return (CUDA_SUCCESS != result);
 }
 
+// This routine finds the CUDA context matching for the given input address.
 int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated)
 {
     bool is_dev;
@@ -169,12 +170,9 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
     was_updated = false;
 
     /* TODO: proper error codes and log outputs through this method */
-    if (expected_dev == -1)
+    if (expected_dev == -1) {
         return -1;
-
-    // incorrect dev id from first registration
-    if (myDevId != -1 && expected_dev != myDevId)
-        return -1;
+    }
 
     ret = cudaQueryAddr(address, is_dev, dev, ctx);
     if (ret) {
@@ -188,14 +186,6 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
     if (dev != expected_dev) {
         // User provided address that does not match dev_id
         return -1;
-    }
-
-    if (pthrCudaCtx) {
-        // Context was already set previously, and does not match new context
-        if (pthrCudaCtx != ctx) {
-            return -1;
-        }
-        return 0;
     }
 
     pthrCudaCtx = ctx;
@@ -1052,7 +1042,6 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
 int
 nixlUcxThreadPoolEngine::vramApplyCtx() {
-    // TODO: Check if UCX can handle context change at runtime
     if (sharedThread_) {
         sharedThread_->join();
         sharedThread_->start();
@@ -1654,8 +1643,10 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
 
     std::vector<nixlUcxMem> local_mems;
     std::vector<const nixl::ucx::rkey *> remote_rkeys;
+    std::vector<uint64_t> remote_addrs;
     local_mems.reserve(local_descs.descCount());
     remote_rkeys.reserve(remote_descs.descCount());
+    remote_addrs.reserve(remote_descs.descCount());
 
     for (size_t i = 0; i < static_cast<size_t>(local_descs.descCount()); i++) {
         auto localMd = static_cast<nixlUcxPrivateMetadata *>(local_descs[i].metadataP);
@@ -1663,10 +1654,11 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
 
         local_mems.push_back(localMd->mem);
         remote_rkeys.push_back(&remoteMdDesc->getRkey(workerId));
+        remote_addrs.push_back(static_cast<uint64_t>(remote_descs[i].addr));
     }
 
     try {
-        gpu_req_hndl = nixl::ucx::createGpuXferReq(*ep, local_mems, remote_rkeys);
+        gpu_req_hndl = nixl::ucx::createGpuXferReq(*ep, local_mems, remote_rkeys, remote_addrs);
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {

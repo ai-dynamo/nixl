@@ -55,10 +55,18 @@ RUN apt-get update -y && \
 # Add DOCA repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+
+# Force reinstall of RDMA packages from DOCA repository
+# Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
+# Upgrade is not sufficient if the version is the same since apt skips the installation.
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get -y install \
+    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
 
 # Install AWS CLI
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
@@ -112,12 +120,6 @@ ARG NPROC
 WORKDIR /workspace
 
 # Build libfabric from source
-# Install RDMA/EFA packages required for libfabric EFA provider
-RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get -y install \
-    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
-    libnuma-dev librdmacm-dev ibverbs-providers
-
-# Build libfabric from source
 RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
@@ -144,13 +146,8 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-COPY --from=nixl . /workspace/nixl
-COPY --from=nixlbench . /workspace/nixlbench
-
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
-
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir sdk_build && \
@@ -159,45 +156,63 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
     make -j && \
     make install
 
-WORKDIR /workspace/nixl
+RUN git clone https://github.com/nvidia/gusli.git && \
+    cd gusli && \
+    make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+    cd ..
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade meson pybind11 patchelf pyYAML click tabulate
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
+# from the virtual environment. This means that the files reside in /root/.cache/uv,
+# which is not what we want since some systems mount user home dir into /root,
+# in which case the venv is broken when the container is started.
+# Set a custom cache directory inside /workspace to avoid this.
+ENV UV_CACHE_DIR=/workspace/.cache/uv
+RUN mkdir -p $UV_CACHE_DIR
+# Disable build isolation, i.e. uv should not create a new virtual environment for
+# building wheels.
+ENV UV_NO_BUILD_ISOLATION=1
+# Disable syncing, i.e. uv will not download packages outside uv pip commands.
+ENV UV_NO_SYNC=1
+# Create a new virtual environment
+ENV VIRTUAL_ENV=/workspace/.venv
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 # Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
+# Install python dependencies
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel
+# Install PyTorch
+# Latest stable PyTorch wheels are only available for CUDA 12.x
+# Nightly PyTorch wheels are needed for CUDA 13.x images
 RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
-    uv pip install torch --index https://download.pytorch.org/whl/$CUDA_SHORT_VERSION
+    CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
+    if [ "$CUDA_MAJOR" -ge 13 ]; then \
+      FLAGS="--pre --index-url https://download.pytorch.org/whl/nightly/$CUDA_SHORT_VERSION"; \
+    else \
+      FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION"; \
+    fi && \
+    uv pip install $FLAGS torch torchvision torchaudio
+
+COPY --from=nixl . /workspace/nixl
+COPY --from=nixlbench . /workspace/nixlbench
+
+WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install
 
-ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib/$ARCH-linux-gnu/plugins
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-# Create the wheel
-# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
-RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
-        uv build --wheel --out-dir /tmp/dist --python $PYTHON_VERSION; \
-    done
-
-# Exclude libcuda.so.1 due to compatibility issues, should link with cuda driver library on host
-RUN uv pip install auditwheel && \
-    uv run auditwheel repair --exclude libcuda.so.1 /tmp/dist/nixl-*cp31*.whl --plat $WHL_PLATFORM --wheel-dir /workspace/nixl/dist
-
-RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+RUN uv pip install .
 
 WORKDIR /workspace/nixlbench
 
@@ -209,7 +224,7 @@ RUN ls -ll /workspace/nixlbench
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
+    meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
     cd build && ninja && ninja install
 
 WORKDIR /workspace/nixl

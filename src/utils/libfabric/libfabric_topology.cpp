@@ -590,11 +590,12 @@ nixlLibfabricTopology::isEfaDevice(hwloc_obj_t obj) const {
     if (!obj || obj->type != HWLOC_OBJ_PCI_DEVICE) {
         return false;
     }
+    NIXL_TRACE << "Checking isEfaDevice on device " << std::hex << std::showbase
+               << obj->attr->pcidev.vendor_id << " " << obj->attr->pcidev.device_id;
 
-    // Amazon EFA vendor ID is 0x1d0f, device ID can be 0xefa0, 0xefa1, or 0xefa2
+    // Amazon EFA vendor ID is 0x1d0f, device ID matches 0xefa* (wildcard for any EFA device)
     return obj->attr->pcidev.vendor_id == 0x1d0f &&
-        (obj->attr->pcidev.device_id == 0xefa0 || obj->attr->pcidev.device_id == 0xefa1 ||
-         obj->attr->pcidev.device_id == 0xefa2);
+        (obj->attr->pcidev.device_id & 0xfff0) == 0xefa0;
 }
 
 nixl_status_t
