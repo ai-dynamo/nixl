@@ -74,7 +74,7 @@ RequestPool::release(nixlLibfabricReq *req) const {
     req->chunk_offset = 0;
     req->chunk_size = 0;
     req->completion_callback = nullptr;
-    memset(&req->ctx, 0, sizeof(fi_context2));
+    memset(&req->ctx, 0, sizeof(fi_context));
 
     // Use pool_index instead of pointer arithmetic for deque compatibility
     size_t idx = req->pool_index;
@@ -413,7 +413,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     hints->caps = 0;
     hints->caps = FI_MSG | FI_RMA;
     hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
-    hints->mode = FI_CONTEXT | FI_CONTEXT2;
+    hints->mode = FI_CONTEXT;
     hints->ep_attr->type = FI_EP_RDM;
     // Configure memory registration mode based on provider capabilities
     if (provider == "tcp" || provider == "sockets") {
