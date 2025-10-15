@@ -23,6 +23,14 @@ ARG ARCH="x86_64"
 ARG UCX_REF="v1.19.0"
 ARG LIBFABRIC_VERSION="v2.3.0"
 
+COPY contrib/install_cuda.sh install_cuda.sh
+RUN chmod +x install_cuda.sh && \
+    ./install_cuda.sh
+
+ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:$PATH \
+    LD_LIBRARY_PATH==/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:$LD_LIBRARY_PATH \
+    NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
+
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
     dnf config-manager --set-enabled powertools && \
@@ -88,6 +96,7 @@ RUN git clone --recurse-submodules -b v1.73.0 --depth 1 --shallow-submodules htt
     mkdir -p cmake/build && \
     cd cmake/build && \
     cmake -DgRPC_INSTALL=ON \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DgRPC_BUILD_TESTS=OFF \
     -DBUILD_SHARED_LIBS=ON \
     -DCMAKE_CXX_STANDARD=17 \
@@ -104,7 +113,7 @@ RUN cd /workspace && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
-    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install
 
 # The base image libcurl is linked against openssl 1.x, so we need to build from source
 # in order to use openssl 3.x. This is needed to build aws-sdk-cpp.
@@ -161,6 +170,20 @@ RUN wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host-3.1.
     rpm -ivh --nodeps doca-sdk-gpunetio-*rpm && \
     # Check that gpunetio development package is installed correctly
     pkg-config --cflags --libs doca-gpunetio
+
+# Force reinstall of RDMA packages from DOCA repository
+# Reinstall needed to fix broken libibverbs-devel, which may lead to lack of Infiniband support.
+RUN dnf clean all && \
+    dnf makecache && \
+    dnf --refresh -y reinstall \
+    libibverbs \
+    libibverbs-devel \
+    rdma-core \
+    rdma-core-devel \
+    libibumad \
+    libibumad-devel \
+    numactl-devel \
+    librdmacm-devel
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
@@ -247,18 +270,18 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-# Create the wheel
-# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
-ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
-ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
-RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
-        ./contrib/build-wheel.sh \
-            --python-version $PYTHON_VERSION \
-            --platform $WHL_PLATFORM \
-            --ucx-plugins-dir /usr/lib64/ucx \
-            --nixl-plugins-dir $NIXL_PLUGIN_DIR \
-            --output-dir dist ; \
-    done
+# # Create the wheel
+# # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
+# ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
+# ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
+# RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
+#     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
+#         ./contrib/build-wheel.sh \
+#             --python-version $PYTHON_VERSION \
+#             --platform $WHL_PLATFORM \
+#             --ucx-plugins-dir /usr/lib64/ucx \
+#             --nixl-plugins-dir $NIXL_PLUGIN_DIR \
+#             --output-dir dist ; \
+#     done
 
-RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+# RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
