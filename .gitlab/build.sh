@@ -163,19 +163,6 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   $SUDO ldconfig \
 )
 
-# Install DOCA & GPUNETIO packages (skip on Ubuntu 22.04 as GPUNETIO package installation fails)
-if ! grep -q "22.04" /etc/lsb-release; then
-  ( \
-    cd /tmp && \
-    ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-    MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v${DOCA_VERSION}/host/doca-host_${DOCA_VERSION}-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
-    $SUDO dpkg -i doca-host.deb && \
-    $SUDO apt-get update && \
-    $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev doca-ofed mstflint \
-  )
-fi
-
 ( \
   cd /tmp && \
   git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
