@@ -195,19 +195,6 @@ protected:
     }
 
     void
-    completeWireup(size_t from_agent, size_t to_agent) {
-        nixl_notifs_t notifs;
-        nixl_status_t status = getAgent(from_agent).genNotif(getAgentName(to_agent), NOTIF_MSG);
-        ASSERT_EQ(status, NIXL_SUCCESS) << "Failed to complete wireup";
-
-        do {
-            nixl_status_t ret = getAgent(to_agent).getNotifs(notifs);
-            ASSERT_EQ(ret, NIXL_SUCCESS) << "Failed to get notifications during wireup";
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        } while (notifs.size() == 0);
-    }
-
-    void
     exchangeMD(size_t from_agent, size_t to_agent) {
         for (size_t i = 0; i < agents.size(); i++) {
             nixl_blob_t md;
@@ -222,8 +209,6 @@ protected:
                 EXPECT_EQ(remote_agent_name, getAgentName(i));
             }
         }
-
-        completeWireup(from_agent, to_agent);
     }
 
     void

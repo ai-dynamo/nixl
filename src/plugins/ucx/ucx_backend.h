@@ -287,6 +287,10 @@ private:
     ucx_connection_ptr_t
     getConnection(const std::string &remote_agent) const;
 
+    void
+    performConnectionEstablishment(const std::string &remote_agent,
+                                   const std::shared_ptr<nixlUcxConnection> &conn) const;
+
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
