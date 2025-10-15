@@ -159,6 +159,7 @@ static int cudaQueryAddr(void *address, bool &is_dev,
     return (CUDA_SUCCESS != result);
 }
 
+// This routine finds the CUDA context matching for the given input address.
 int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated)
 {
     bool is_dev;
@@ -169,12 +170,9 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
     was_updated = false;
 
     /* TODO: proper error codes and log outputs through this method */
-    if (expected_dev == -1)
+    if (expected_dev == -1) {
         return -1;
-
-    // incorrect dev id from first registration
-    if (myDevId != -1 && expected_dev != myDevId)
-        return -1;
+    }
 
     ret = cudaQueryAddr(address, is_dev, dev, ctx);
     if (ret) {
@@ -188,14 +186,6 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
     if (dev != expected_dev) {
         // User provided address that does not match dev_id
         return -1;
-    }
-
-    if (pthrCudaCtx) {
-        // Context was already set previously, and does not match new context
-        if (pthrCudaCtx != ctx) {
-            return -1;
-        }
-        return 0;
     }
 
     pthrCudaCtx = ctx;
@@ -1052,7 +1042,6 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
 int
 nixlUcxThreadPoolEngine::vramApplyCtx() {
-    // TODO: Check if UCX can handle context change at runtime
     if (sharedThread_) {
         sharedThread_->join();
         sharedThread_->start();

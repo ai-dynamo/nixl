@@ -15,10 +15,11 @@
  * limitations under the License.
  */
 #include <iostream>
-#include <cassert>
 #include <thread>
 
 #include "ucx_backend.h"
+#include "test_utils.h"
+
 
 // Temporarily while fixing CI/CD pipeline
 #define USE_PTHREAD false
@@ -60,13 +61,13 @@ void test_thread(int id)
     while(!ready[!id]);
 
     ret = ucx->loadRemoteConnInfo(other, conn_info[!id]);
-    assert(ret == NIXL_SUCCESS);
+    nixl_exit_on_failure((ret == NIXL_SUCCESS), "Failed to load remote conn info", my_name);
 
     //one-sided connect
     if(!id)
         ret = ucx->connect(other);
 
-    assert(ret == NIXL_SUCCESS);
+    nixl_exit_on_failure((ret == NIXL_SUCCESS), "Failed to connect", my_name);
 
     done[id] = true;
     while(!done[!id])

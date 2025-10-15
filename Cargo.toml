@@ -20,7 +20,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 description = "Low-level bindings to NIXL - NVIDIA Inference Xfer Library"
 authors = ["NIXL Developers <nixl-developers@nvidia.com>"]
