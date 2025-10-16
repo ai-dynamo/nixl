@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use super::*;
-use std::cell::Cell;
+use super::sync_manager::{BackendSyncable, SyncManager};
 
 /// Public registration descriptor used for indexing and comparisons
 #[derive(Debug, Clone, PartialEq)]
@@ -25,15 +25,53 @@ pub struct RegDescriptor {
     pub metadata: Vec<u8>,
 }
 
+/// Internal data structure for registration descriptors
+#[derive(Debug)]
+struct RegDescData {
+    descriptors: Vec<RegDescriptor>,
+}
+
+impl BackendSyncable for RegDescData {
+    type Backend = NonNull<bindings::nixl_capi_reg_dlist_s>;
+    type Error = NixlError;
+
+    fn sync_to_backend(&self, backend: &Self::Backend) -> Result<(), Self::Error> {
+        // Clear backend
+        let status = unsafe { nixl_capi_reg_dlist_clear(backend.as_ptr()) };
+        match status {
+            NIXL_CAPI_SUCCESS => {}
+            NIXL_CAPI_ERROR_INVALID_PARAM => return Err(NixlError::InvalidParam),
+            _ => return Err(NixlError::BackendError),
+        }
+
+        // Re-add all descriptors
+        for desc in &self.descriptors {
+            let status = unsafe {
+                nixl_capi_reg_dlist_add_desc(
+                    backend.as_ptr(),
+                    desc.addr as uintptr_t,
+                    desc.len,
+                    desc.dev_id,
+                    desc.metadata.as_ptr() as *const std::ffi::c_void,
+                    desc.metadata.len(),
+                )
+            };
+            match status {
+                NIXL_CAPI_SUCCESS => {}
+                NIXL_CAPI_ERROR_INVALID_PARAM => return Err(NixlError::InvalidParam),
+                _ => return Err(NixlError::BackendError),
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// A safe wrapper around a NIXL registration descriptor list
 pub struct RegDescList<'a> {
-    inner: NonNull<bindings::nixl_capi_reg_dlist_s>,
+    sync_mgr: SyncManager<RegDescData>,
     _phantom: PhantomData<&'a dyn NixlDescriptor>,
-    // Track descriptors internally for comparison purposes
-    descriptors: Vec<RegDescriptor>,
     mem_type: MemType,
-    // Private: backend C list needs to be resynchronized from descriptors
-    dirty: Cell<bool>,
 }
 
 impl<'a> RegDescList<'a> {
@@ -50,14 +88,17 @@ impl<'a> RegDescList<'a> {
                     tracing::error!("Failed to create registration descriptor list");
                     return Err(NixlError::RegDescListCreationFailed);
                 }
-                let ptr = NonNull::new(dlist).ok_or(NixlError::RegDescListCreationFailed)?;
+                let backend = NonNull::new(dlist).ok_or(NixlError::RegDescListCreationFailed)?;
+
+                let data = RegDescData {
+                    descriptors: Vec::new(),
+                };
+                let sync_mgr = SyncManager::new(data, backend);
 
                 Ok(Self {
-                    inner: ptr,
+                    sync_mgr,
                     _phantom: PhantomData,
-                    descriptors: Vec::new(),
                     mem_type,
-                    dirty: Cell::new(false),
                 })
             }
             _ => Err(NixlError::RegDescListCreationFailed),
@@ -79,14 +120,14 @@ impl<'a> RegDescList<'a> {
         dev_id: u64,
         metadata: &[u8],
     ) -> Result<(), NixlError> {
-        // Push to vector; backend will be built lazily
-        self.descriptors.push(RegDescriptor {
-            addr,
-            len,
-            dev_id,
-            metadata: metadata.to_vec(),
+        self.sync_mgr.mutate(|data| {
+            data.descriptors.push(RegDescriptor {
+                addr,
+                len,
+                dev_id,
+                metadata: metadata.to_vec(),
+            });
         });
-        self.dirty.set(true);
         Ok(())
     }
 
@@ -96,16 +137,16 @@ impl<'a> RegDescList<'a> {
     }
 
     /// Returns the number of descriptors in the list
-    pub fn desc_count(&self) -> Result<usize, NixlError> { Ok(self.descriptors.len()) }
+    pub fn desc_count(&self) -> Result<usize, NixlError> { Ok(self.sync_mgr.data().descriptors.len()) }
 
     /// Returns the number of descriptors in the list
-    pub fn len(&self) -> Result<usize, NixlError> { Ok(self.descriptors.len()) }
+    pub fn len(&self) -> Result<usize, NixlError> { Ok(self.sync_mgr.data().descriptors.len()) }
 
     /// Trims the list to the given size
     pub fn trim(&mut self) -> Result<(), NixlError> {
-        self.descriptors.shrink_to_fit();
-        // Backend capacity may differ; force rebuild on next use
-        self.dirty.set(true);
+        self.sync_mgr.mutate(|data| {
+            data.descriptors.shrink_to_fit();
+        });
         Ok(())
     }
 
@@ -113,34 +154,39 @@ impl<'a> RegDescList<'a> {
     pub fn rem_desc(&mut self, index: i32) -> Result<(), NixlError> {
         if index < 0 { return Err(NixlError::InvalidParam); }
         let idx = index as usize;
-        if idx >= self.descriptors.len() { return Err(NixlError::InvalidParam); }
-        self.descriptors.remove(idx);
-        self.dirty.set(true);
-        Ok(())
+
+        self.sync_mgr.mutate(|data| {
+            if idx >= data.descriptors.len() { return Err(NixlError::InvalidParam); }
+            data.descriptors.remove(idx);
+            Ok(())
+        })
     }
 
     /// Prints the list contents
     pub fn print(&self) -> Result<(), NixlError> {
-        self.ensure_synced()?;
-        let status = unsafe { nixl_capi_reg_dlist_print(self.inner.as_ptr()) };
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
+        self.sync_mgr.with_backend(|_data, backend| {
+            let status = unsafe { nixl_capi_reg_dlist_print(backend.as_ptr()) };
+            match status {
+                NIXL_CAPI_SUCCESS => Ok(()),
+                NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+                _ => Err(NixlError::BackendError),
+            }
+        })?
     }
 
     /// Clears all descriptors from the list
     pub fn clear(&mut self) -> Result<(), NixlError> {
-        self.descriptors.clear();
-        self.dirty.set(true);
+        self.sync_mgr.mutate(|data| {
+            data.descriptors.clear();
+        });
         Ok(())
     }
 
     /// Resizes the list to the given size
     pub fn resize(&mut self, _new_size: usize) -> Result<(), NixlError> {
-        // No-op for now; backend capacity will be adjusted on next sync
-        self.dirty.set(true);
+        self.sync_mgr.mutate(|_data| {
+            // No-op for now; backend capacity will be adjusted on next sync
+        });
         Ok(())
     }
 
@@ -153,19 +199,10 @@ impl<'a> RegDescList<'a> {
     pub fn add_storage_desc(&mut self, desc: &'a dyn NixlDescriptor) -> Result<(), NixlError> {
         // Validate memory type matches
         let desc_mem_type = desc.mem_type();
-        let list_mem_type = unsafe {
-            // Get the memory type from the list by checking first descriptor
-            let mut len = 0;
-            match nixl_capi_reg_dlist_len(self.inner.as_ptr(), &mut len) {
-                0 => Ok(()),
-                -1 => Err(NixlError::InvalidParam),
-                _ => Err(NixlError::BackendError),
-            }?;
-            if len > 0 {
-                self.get_type()?
-            } else {
-                desc_mem_type
-            }
+        let list_mem_type = if self.len()? > 0 {
+            self.get_type()?
+        } else {
+            desc_mem_type
         };
 
         if desc_mem_type != list_mem_type && list_mem_type != MemType::Unknown {
@@ -181,57 +218,8 @@ impl<'a> RegDescList<'a> {
         self.add_desc(addr, len, dev_id)
     }
 
-    /// Ensure backend list matches our vector; lazily rebuild if needed
-    fn ensure_synced(&self) -> Result<(), NixlError> {
-        if !self.dirty.get() {
-            return Ok(());
-        }
-        // Clear backend
-        let status = unsafe { nixl_capi_reg_dlist_clear(self.inner.as_ptr()) };
-        match status {
-            NIXL_CAPI_SUCCESS => {}
-            NIXL_CAPI_ERROR_INVALID_PARAM => return Err(NixlError::InvalidParam),
-            _ => return Err(NixlError::BackendError),
-        }
-        // Re-add all descriptors
-        for d in &self.descriptors {
-            let status = unsafe {
-                nixl_capi_reg_dlist_add_desc(
-                    self.inner.as_ptr(),
-                    d.addr as uintptr_t,
-                    d.len,
-                    d.dev_id,
-                    d.metadata.as_ptr() as *const std::ffi::c_void,
-                    d.metadata.len(),
-                )
-            };
-            match status {
-                NIXL_CAPI_SUCCESS => {}
-                NIXL_CAPI_ERROR_INVALID_PARAM => return Err(NixlError::InvalidParam),
-                _ => return Err(NixlError::BackendError),
-            }
-        }
-        self.dirty.set(false);
-        Ok(())
-    }
-
-    /// Find index of first descriptor matching the predicate
-    pub fn get_index<P>(&self, predicate: P) -> Option<usize>
-    where
-        P: Fn(&RegDescriptor) -> bool,
-    {
-        self.descriptors.iter().position(predicate)
-    }
-
-    /// Find index of a specific descriptor (exact match)
-    pub fn index_of(&self, desc: &RegDescriptor) -> Option<usize> {
-        self.descriptors.iter().position(|d| d == desc)
-    }
-
     pub(crate) fn handle(&self) -> *mut bindings::nixl_capi_reg_dlist_s {
-        // SAFETY: backend must be in sync before usage
-        let _ = self.ensure_synced();
-        self.inner.as_ptr()
+        self.sync_mgr.backend().map(|b| b.as_ptr()).unwrap_or(ptr::null_mut())
     }
 }
 
@@ -257,35 +245,18 @@ impl PartialEq for RegDescList<'_> {
         }
 
         // Compare internal descriptor tracking
-        // This gives us accurate comparison of actual descriptor contents
-        self.descriptors == other.descriptors
+        self.sync_mgr.data().descriptors == other.sync_mgr.data().descriptors
     }
 }
 
 impl Drop for RegDescList<'_> {
     fn drop(&mut self) {
         tracing::trace!("Dropping registration descriptor list");
-        unsafe {
-            nixl_capi_destroy_reg_dlist(self.inner.as_ptr());
+        if let Ok(backend) = self.sync_mgr.backend() {
+            unsafe {
+                nixl_capi_destroy_reg_dlist(backend.as_ptr());
+            }
         }
         tracing::trace!("Registration descriptor list dropped");
-    }
-}
-
-use std::ops::{Index, IndexMut};
-
-impl Index<usize> for RegDescList<'_> {
-    type Output = RegDescriptor;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.descriptors[index]
-    }
-}
-
-impl IndexMut<usize> for RegDescList<'_> {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        // Mutating an element requires backend resync to stay consistent
-        self.dirty.set(true);
-        &mut self.descriptors[index]
     }
 }
