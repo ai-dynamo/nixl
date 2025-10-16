@@ -175,7 +175,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$LD_LIBRARY_PATH
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
     # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade "meson>=0.64.0" pybind11 patchelf
+    uv pip install --upgrade "meson>=0.64.0" pybind11 patchelf tomlkit
 
 # Install pybind11 via apt
 RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
