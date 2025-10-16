@@ -1030,7 +1030,14 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }
-                } else if (XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend) {
+                } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = xferBenchConfig::gusli_bdev_byte_offset + file_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = 11;
+                    remote_iov_list.push_back(iov_remote);
+                    file_offset += block_size;
+                } else {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
                     iov_remote.len = block_size;
@@ -1041,13 +1048,6 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                         file_offset += block_size;
                         fd_idx = 0;
                     }
-                } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
-                    xferBenchIOV iov_remote(iov);
-                    iov_remote.addr = xferBenchConfig::gusli_bdev_byte_offset + file_offset;
-                    iov_remote.len = block_size;
-                    iov_remote.devId = 11;
-                    remote_iov_list.push_back(iov_remote);
-                    file_offset += block_size;
                 }
             }
             res.push_back(remote_iov_list);
