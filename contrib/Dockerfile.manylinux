@@ -232,11 +232,6 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
 # Set a custom cache directory inside /workspace to avoid this.
 ENV UV_CACHE_DIR=/workspace/.cache/uv
 RUN mkdir -p $UV_CACHE_DIR
-# Disable build isolation, i.e. uv should not create a new virtual environment for
-# building wheels to avoid download everything twice.
-ENV UV_NO_BUILD_ISOLATION=1
-# Disable syncing, i.e. uv will not download packages outside uv pip commands.
-ENV UV_NO_SYNC=1
 # Create a new virtual environment
 ENV VIRTUAL_ENV=/workspace/.venv
 RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
@@ -245,9 +240,8 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
 RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Install PyTorch
-RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
-    FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \
-    uv pip install $FLAGS torch torchvision torchaudio
+RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+    uv pip install torch torchvision torchaudio
 
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
@@ -274,6 +268,7 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
+    export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         ./contrib/build-wheel.sh \
             --python-version $PYTHON_VERSION \
