@@ -71,9 +71,10 @@ class nixlAgentData {
         backend_map_t                          backendEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
-        // Bookkeping for local connection metadata and user handles per backend
+        // Bookkeeping for local connection metadata, user metadata, and backend user handles
         std::unordered_map<nixl_backend_t, nixlBackendH*> backendHandles;
         std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
+        std::unordered_map<std::string, std::string>      userMD;
 
         // Local section, and Remote sections and their available common backends
         nixlLocalSection*                                        memorySection;
@@ -83,6 +84,9 @@ class nixlAgentData {
                            std::hash<std::string>, strEqual>     remoteBackends;
         std::unordered_map<std::string, nixlRemoteSection*,
                            std::hash<std::string>, strEqual>     remoteSections;
+        std::unordered_map<std::string,
+                           std::unordered_map<std::string, std::string>,
+                           std::hash<std::string>, strEqual>     remoteUserMD;
 
         // State/methods for listener thread
         nixlMDStreamListener               *listener;

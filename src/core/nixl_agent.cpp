@@ -24,6 +24,29 @@
 #include "plugin_manager.h"
 #include "common/nixl_log.h"
 
+namespace {
+nixl_status_t
+serializeUserMD(nixlSerDes &sd, const std::unordered_map<std::string, std::string> &user_md) {
+    size_t user_md_cnt = user_md.size();
+    nixl_status_t ret;
+
+    ret = sd.addBuf("UserMDs", &user_md_cnt, sizeof(user_md_cnt));
+    if(ret)
+        return ret;
+
+    for (const auto &umd : user_md) {
+        ret = sd.addStr("k", umd.first);
+        if(ret)
+            return ret;
+        ret = sd.addStr("v", umd.second);
+        if(ret)
+            return ret;
+    }
+
+    return NIXL_SUCCESS;
+}
+} // namespace
+
 static const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
@@ -1184,7 +1207,20 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
     if(ret)
         return ret;
 
+    ret = serializeUserMD(sd, data->userMD);
+    if(ret)
+        return ret;
+
     str = sd.exportStr();
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::addLocalUserMD(const std::string &key, const std::string &value) {
+    NIXL_LOCK_GUARD(data->lock);
+
+    data->userMD[key] = value;
+
     return NIXL_SUCCESS;
 }
 
@@ -1258,6 +1294,20 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
         return ret;
 
     ret = data->memorySection->serializePartial(&sd, selected_engines, descs);
+    if(ret)
+        return ret;
+
+    // Add userMD if requested via extra_params->userMdKeys
+    std::unordered_map<std::string, std::string> found_user_mds;
+    if (extra_params && extra_params->userMdKeys) {
+        for (const auto &key : *extra_params->userMdKeys) {
+            auto it = data->userMD.find(key);
+            if (it != data->userMD.end())
+                found_user_mds.emplace(it->first, it->second);
+        }
+    }
+
+    ret = serializeUserMD(sd, found_user_mds);
     if(ret)
         return ret;
 
@@ -1353,6 +1403,25 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
         return ret;
     }
 
+    size_t user_md_cnt;
+    ret = sd.getBuf("UserMDs", &user_md_cnt, sizeof(user_md_cnt));
+    if (ret) {
+        NIXL_ERROR << "Error getting user metadata count: " << nixlEnumStrings::statusStr(ret);
+        return ret;
+    }
+
+    for (size_t i = 0; i < user_md_cnt; ++i) {
+        std::string key = sd.getStr("k");
+        if (key.empty()) {
+            return NIXL_ERR_MISMATCH;
+        }
+        std::string value = sd.getStr("v");
+        if (value.empty()) {
+            return NIXL_ERR_MISMATCH;
+        }
+        data->remoteUserMD[remote_agent].emplace(key, value);
+    }
+
     agent_name = remote_agent;
     return NIXL_SUCCESS;
 }
@@ -1375,6 +1444,11 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
         for (auto & it: data->remoteBackends[remote_agent])
             data->backendEngines[it.first]->disconnect(remote_agent);
         data->remoteBackends.erase(remote_agent);
+        ret = NIXL_SUCCESS;
+    }
+
+    if (data->remoteUserMD.count(remote_agent) != 0) {
+        data->remoteUserMD.erase(remote_agent);
         ret = NIXL_SUCCESS;
     }
 
@@ -1456,6 +1530,24 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
 #else
     return NIXL_ERR_NOT_SUPPORTED;
 #endif // HAVE_ETCD
+}
+
+nixl_status_t
+nixlAgent::getRemoteUserMD(const std::string &remote_agent,
+                           const std::string &key,
+                           std::string &value) {
+    NIXL_LOCK_GUARD(data->lock);
+
+    auto remote_agent_md = data->remoteUserMD.find(remote_agent);
+    if (remote_agent_md == data->remoteUserMD.end())
+        return NIXL_ERR_NOT_FOUND;
+
+    auto key_val = remote_agent_md->second.find(key);
+    if (key_val == remote_agent_md->second.end())
+        return NIXL_ERR_NOT_FOUND;
+
+    value = key_val->second;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
