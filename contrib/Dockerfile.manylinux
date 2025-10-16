@@ -166,10 +166,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV CUDA_PATH=/usr/local/cuda
 
-WORKDIR /workspace/nixl
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    uv pip install --upgrade meson pybind11 patchelf
+WORKDIR /workspace
 
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
@@ -228,11 +225,36 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
+# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
+# from the virtual environment. This means that the files reside in /root/.cache/uv,
+# which is not what we want since some systems mount user home dir into /root,
+# in which case the venv is broken when the container is started.
+# Set a custom cache directory inside /workspace to avoid this.
+ENV UV_CACHE_DIR=/workspace/.cache/uv
+RUN mkdir -p $UV_CACHE_DIR
+# Disable build isolation, i.e. uv should not create a new virtual environment for
+# building wheels to avoid download everything twice.
+ENV UV_NO_BUILD_ISOLATION=1
+# Disable syncing, i.e. uv will not download packages outside uv pip commands.
+ENV UV_NO_SYNC=1
+# Create a new virtual environment
+ENV VIRTUAL_ENV=/workspace/.venv
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+# Activate the virtual environment
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+# Install python dependencies
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
+# Install PyTorch
+RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
+    FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \
+    uv pip install $FLAGS torch torchvision torchaudio
+
 COPY . /workspace/nixl
+WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
+    meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" && \
     cd build && \
@@ -261,4 +283,4 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --output-dir dist ; \
     done
 
-RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl
