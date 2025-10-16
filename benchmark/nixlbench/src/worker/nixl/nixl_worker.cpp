@@ -1048,7 +1048,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                         file_offset += block_size;
                         fd_idx = 0;
                     }
-               }
+                }
             }
             res.push_back(remote_iov_list);
         }
