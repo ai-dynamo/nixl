@@ -35,12 +35,7 @@ struct xferFileState {
     uint64_t offset;
 };
 
-struct GusliDeviceConfig {
-    int device_id;
-    char device_type; // 'F' for file, 'K' for kernel device
-    std::string device_path;
-    std::string security_flags;
-};
+// Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
 
 class xferBenchNixlWorker: public xferBenchWorker {
     private:
