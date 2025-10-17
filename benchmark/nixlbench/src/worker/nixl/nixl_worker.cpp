@@ -508,7 +508,7 @@ openFileWithFlags(const std::string &file_name, int flags) {
 static std::vector<xferFileState>
 createFileFds(std::string name, int num_files, const std::vector<std::string> &filenames = {}) {
     std::vector<xferFileState> fds;
-    int flags = O_RDWR | O_CREAT;
+    int flags = O_RDWR | O_CREAT | O_LARGEFILE;
 
     if (!xferBenchConfig::isStorageBackend()) {
         std::cerr << "Unknown storage backend: " << xferBenchConfig::backend << std::endl;
@@ -856,6 +856,14 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         iovListToNixlRegDlist(iov_list, desc_list);
         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
         iov_lists.push_back(iov_list);
+
+        for (auto &iov : iov_list) {
+            if (isInitiator()) {
+                memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
+            } else if (isTarget()) {
+                memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+            }
+        }
     }
 
     return iov_lists;
