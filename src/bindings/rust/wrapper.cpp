@@ -1200,12 +1200,6 @@ nixl_capi_reg_dlist_desc_count(nixl_capi_reg_dlist_t dlist, size_t* count)
 }
 
 nixl_capi_status_t
-nixl_capi_reg_dlist_len(nixl_capi_reg_dlist_t dlist, size_t* len)
-{
-  return nixl_capi_reg_dlist_desc_count(dlist, len);
-}
-
-nixl_capi_status_t
 nixl_capi_reg_dlist_is_empty(nixl_capi_reg_dlist_t dlist, bool* is_empty)
 {
   if (!dlist || !is_empty) {
