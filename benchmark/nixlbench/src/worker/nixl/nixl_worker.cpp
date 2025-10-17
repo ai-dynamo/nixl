@@ -375,11 +375,6 @@ xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
         return std::nullopt;
     }
-    if (isInitiator()) {
-        memset(addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
-    } else if (isTarget()) {
-        memset(addr, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
-    }
 
     // TODO: Does device id need to be set for DRAM?
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, mem_dev_id);
@@ -857,6 +852,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
         iov_lists.push_back(iov_list);
 
+        /* Workaround for a GUSLI registration bug which resets memory to 0 */
         for (auto &iov : iov_list) {
             if (isInitiator()) {
                 memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
