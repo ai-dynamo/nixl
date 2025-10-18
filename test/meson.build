@@ -15,4 +15,7 @@
 
 subdir('nixl')
 subdir('unit')
-subdir('gtest')
+
+if cuda_dep.found() and ucx_dep.found()
+    subdir('gtest')
+endif
