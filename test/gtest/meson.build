@@ -35,6 +35,10 @@ subdir('mocks')
 subdir('unit')
 subdir('plugins')
 
+if ucx_gpu_device_api_available
+    subdir('device_api')
+endif
+
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
 cpp_flags = []
@@ -64,11 +68,21 @@ gtest_sources = [
     'query_mem.cpp',
     'telemetry_test.cpp'
     ]
+
+if ucx_gpu_device_api_available
+    gtest_sources += device_api_test_sources
+    device_api_inc = [nixl_gpu_inc_dirs, include_directories('device_api')]
+    device_api_dep = ucx_dep
+else
+    device_api_inc = []
+    device_api_dep = []
+endif
+
 test_exe = executable('gtest',
     sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, cuda_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, file_utils_interface],
+    dependencies : [nixl_dep, nixl_common_dep, cuda_dep, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, file_utils_interface],
     link_with: [nixl_build_lib],
     install : true
 )

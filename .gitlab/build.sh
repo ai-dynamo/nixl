@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 set -o pipefail
@@ -25,6 +28,10 @@ UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 # UCX_VERSION is the version of UCX to build override default with env variable.
 UCX_VERSION=${UCX_VERSION:-v1.19.0}
+# LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
+LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
+# LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
+LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -63,7 +70,6 @@ $SUDO apt-get -qq install -y curl \
                              flex \
                              build-essential \
                              cmake \
-                             libibverbs-dev \
                              libgoogle-glog-dev \
                              libgtest-dev \
                              libgmock-dev \
@@ -88,11 +94,28 @@ $SUDO apt-get -qq install -y curl \
                              pciutils \
                              libpci-dev \
                              uuid-dev \
-                             ibverbs-utils \
                              libibmad-dev \
                              doxygen \
                              clang \
+                             hwloc \
+                             libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
+
+# Add DOCA repository and install packages
+ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
+MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
+wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb
+$SUDO dpkg -i doca-host.deb
+$SUDO apt-get update
+$SUDO apt-get upgrade -y
+$SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+
+# Force reinstall of RDMA packages from DOCA repository
+# Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
+# Upgrade is not sufficient if the version is the same since apt skips the installation.
+$SUDO apt-get -qq -y install \
+    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
 
 wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
 chmod +x rustup-init
@@ -113,10 +136,29 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
+          ${UCX_CUDA_BUILD_ARGS} \
           --enable-mt && \
         make -j && \
         make -j install-strip && \
         $SUDO ldconfig \
+)
+
+wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+( \
+  cd libfabric-* && \
+  ./autogen.sh && \
+  ./configure --prefix="${LIBFABRIC_INSTALL_DIR}" \
+              --disable-verbs \
+              --disable-psm3 \
+              --disable-opx \
+              --disable-usnic \
+              --disable-rstream \
+              --enable-efa && \
+  make -j && \
+  make install && \
+  $SUDO ldconfig \
 )
 
 ( \
@@ -140,11 +182,25 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
   $SUDO make install
 )
 
-export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/cuda/lib64"
-export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib"
-export CPATH="${INSTALL_DIR}/include:$CPATH"
+( \
+  cd /tmp && \
+  git clone https://github.com/nvidia/gusli.git && \
+  cd gusli && \
+  $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+  $SUDO ldconfig
+)
+
+( \
+  cd /tmp &&
+  git clone --depth 1 https://github.com/google/gtest-parallel.git &&
+  mkdir -p ${INSTALL_DIR}/bin &&
+  cp gtest-parallel/* ${INSTALL_DIR}/bin/
+)
+
+export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
+export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
 export PATH="${INSTALL_DIR}/bin:$PATH"
-export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:$PKG_CONFIG_PATH"
+export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH"
 export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
 export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 
@@ -153,7 +209,7 @@ export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 export UCX_TLS=^cuda_ipc
 
 # shellcheck disable=SC2086
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS}
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
 ninja -C nixl_build && ninja -C nixl_build install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.

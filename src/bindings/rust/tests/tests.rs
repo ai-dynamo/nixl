@@ -54,7 +54,6 @@ fn create_agent_with_backend(name: &str) -> Result<(Agent, OptArgs), NixlError> 
 
 
 fn create_storage_list(agent: &Agent, opt_args: &OptArgs, size: usize) -> Vec<SystemStorage> {
-    const STORAGE_SIZE: usize = 1024;
     let mut storage_list = Vec::new();
     for _ in 0..size {
         let mut storage = SystemStorage::new(1024).unwrap();
@@ -67,7 +66,7 @@ fn create_storage_list(agent: &Agent, opt_args: &OptArgs, size: usize) -> Vec<Sy
 }
 
 fn create_dlist<'a>(storage_list: &'a mut Vec<SystemStorage>) -> Result<XferDescList<'a>, NixlError> {
-    let mut dlist = XferDescList::new(MemType::Dram, false).expect("Failed to create XferDescList");
+    let mut dlist = XferDescList::new(MemType::Dram).expect("Failed to create XferDescList");
     for storage in storage_list.iter_mut() {
         dlist.add_storage_desc(storage).expect(&format!("Failed to add storage descriptor for storage"));
     }
@@ -125,6 +124,23 @@ fn create_posix_backend(agent: &Agent) -> Option<(Backend, OptArgs)> {
         .expect("Failed to add backend");
 
     Some((backend, opt_args))
+}
+
+#[test]
+fn create_agent_with_custom_config() {
+    // Ensure we can construct with non-default config
+    let cfg = AgentConfig {
+        enable_listen_thread: true,
+        listen_port: 0,
+        capture_telemetry: false,
+        ..Default::default()
+    };
+
+    let agent = Agent::new_configured("cfg_agent", &cfg)
+        .expect("Failed to create configured agent");
+
+    // basic sanity: can query available plugins
+    let _plugins = agent.get_available_plugins().expect("Failed to get plugins");
 }
 
 #[test]
@@ -262,7 +278,7 @@ fn test_get_backend_params() -> Result<(), NixlError> {
 
 #[test]
 fn test_xfer_dlist() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
 
     // Add some descriptors
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
@@ -281,7 +297,7 @@ fn test_xfer_dlist() {
 
 #[test]
 fn test_reg_dlist() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
 
     // Add some descriptors
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
@@ -305,7 +321,7 @@ fn test_storage_descriptor_lifetime() {
 
     {
         // Create a descriptor list with shorter lifetime
-        let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+        let mut dlist = XferDescList::new(MemType::Dram).unwrap();
         dlist.add_storage_desc(&storage).unwrap();
         assert_eq!(dlist.len().unwrap(), 1);
         // dlist is dropped here, but storage is still valid
@@ -320,7 +336,7 @@ fn test_multiple_storage_descriptors() {
     let storage1 = SystemStorage::new(1024).unwrap();
     let storage2 = SystemStorage::new(2048).unwrap();
 
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
 
     // Add multiple descriptors
     dlist.add_storage_desc(&storage1).unwrap();
@@ -518,10 +534,10 @@ fn test_basic_agent_lifecycle() {
     let remote_name = agent1.load_remote_md(&metadata).unwrap();
     assert_eq!(remote_name, "A2");
 
-    let mut local_xfer_dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut local_xfer_dlist = XferDescList::new(MemType::Dram).unwrap();
     local_xfer_dlist.add_storage_desc(&storage1).unwrap();
 
-    let mut remote_xfer_dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut remote_xfer_dlist = XferDescList::new(MemType::Dram).unwrap();
     remote_xfer_dlist.add_storage_desc(&storage2).unwrap();
 
     let mut xfer_args = OptArgs::new().unwrap();
@@ -718,7 +734,7 @@ fn test_check_remote_metadata() {
     // Create descriptor list with memory that exists in agent2
     let mem_type = MemType::Dram;
     let mut xfer_desc_list =
-        XferDescList::new(mem_type, false).expect("Failed to create xfer desc list");
+        XferDescList::new(mem_type).expect("Failed to create xfer desc list");
     xfer_desc_list
         .add_desc(
             unsafe { storage.as_ptr() } as usize,
@@ -740,7 +756,7 @@ fn test_check_remote_metadata() {
 
     // Create a descriptor list with invalid memory address
     let mut invalid_desc_list =
-        XferDescList::new(mem_type, false).expect("Failed to create invalid desc list");
+        XferDescList::new(mem_type).expect("Failed to create invalid desc list");
     invalid_desc_list
         .add_desc(0xdeadbeef, 1024, 0)
         .expect("Failed to add invalid descriptor");
@@ -758,56 +774,27 @@ fn test_check_remote_metadata() {
 }
 
 #[test]
-fn test_xfer_desc_list_new_and_new_sorted() {
-    let dlist = XferDescList::new(MemType::Dram, false).unwrap();
+fn test_xfer_desc_list_new() {
+    let dlist = XferDescList::new(MemType::Dram).unwrap();
     assert!(dlist.is_empty().unwrap());
-    let dlist_sorted = XferDescList::new_sorted(MemType::Dram).unwrap();
-    assert!(dlist_sorted.is_empty().unwrap());
-}
-
-#[test]
-fn test_xfer_desc_list_new_sorted_sortedness() {
-    let dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
-    let sorted = dlist.is_sorted().unwrap();
-    assert!(sorted);
-    let dlist_unsorted = XferDescList::new(MemType::Dram, false).unwrap();
-    let unsorted = dlist_unsorted.is_sorted().unwrap();
-    assert!(!unsorted);
 }
 
 #[test]
 fn test_xfer_desc_list_get_type() {
-    let dlist = XferDescList::new(MemType::Vram, false).unwrap();
+    let dlist = XferDescList::new(MemType::Vram).unwrap();
     assert_eq!(dlist.get_type().unwrap(), MemType::Vram);
 }
 
 #[test]
 fn test_xfer_desc_list_get_type_after_add() {
-    let mut dlist = XferDescList::new(MemType::Block, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Block).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     assert_eq!(dlist.get_type().unwrap(), MemType::Block);
 }
 
 #[test]
-fn test_xfer_desc_list_verify_sorted_true() {
-    let mut dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
-
-    // list size should be at least 1 to be considered sorted
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    assert!(dlist.verify_sorted().unwrap());
-}
-
-#[test]
-fn test_xfer_desc_list_verify_sorted_false() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
-    dlist.add_desc(0x2000, 0x100, 0).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap(); // out of order
-    assert!(!dlist.verify_sorted().unwrap());
-}
-
-#[test]
 fn test_xfer_desc_list_desc_count_basic() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     assert_eq!(dlist.desc_count().unwrap(), 0);
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     assert_eq!(dlist.desc_count().unwrap(), 1);
@@ -815,7 +802,7 @@ fn test_xfer_desc_list_desc_count_basic() {
 
 #[test]
 fn test_xfer_desc_list_desc_count_after_clear() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     dlist.clear().unwrap();
     assert_eq!(dlist.desc_count().unwrap(), 0);
@@ -823,35 +810,20 @@ fn test_xfer_desc_list_desc_count_after_clear() {
 
 #[test]
 fn test_xfer_desc_list_is_empty_true() {
-    let dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let dlist = XferDescList::new(MemType::Dram).unwrap();
     assert!(dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_xfer_desc_list_is_empty_false() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     assert!(!dlist.is_empty().unwrap());
 }
 
 #[test]
-fn test_xfer_desc_list_is_sorted_true() {
-    let mut dlist = XferDescList::new_sorted(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    assert!(dlist.is_sorted().unwrap());
-}
-
-#[test]
-fn test_xfer_desc_list_is_sorted_false() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
-    dlist.add_desc(0x2000, 0x100, 0).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    assert!(!dlist.is_sorted().unwrap());
-}
-
-#[test]
 fn test_xfer_desc_list_trim_basic() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     dlist.trim().unwrap();
     assert!(dlist.desc_count().unwrap() <= 1);
@@ -859,14 +831,14 @@ fn test_xfer_desc_list_trim_basic() {
 
 #[test]
 fn test_xfer_desc_list_trim_empty() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     assert!(dlist.trim().is_ok());
     assert!(dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_xfer_desc_list_rem_desc_basic() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     assert!(dlist.rem_desc(0).is_ok());
     assert!(dlist.is_empty().unwrap());
@@ -874,13 +846,13 @@ fn test_xfer_desc_list_rem_desc_basic() {
 
 #[test]
 fn test_xfer_desc_list_rem_desc_out_of_bounds() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     assert!(dlist.rem_desc(0).is_err());
 }
 
 #[test]
 fn test_xfer_desc_list_clear_basic() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     dlist.clear().unwrap();
     assert!(dlist.is_empty().unwrap());
@@ -888,20 +860,20 @@ fn test_xfer_desc_list_clear_basic() {
 
 #[test]
 fn test_xfer_desc_list_clear_empty() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     assert!(dlist.clear().is_ok());
     assert!(dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_xfer_desc_list_print_basic() {
-    let dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let dlist = XferDescList::new(MemType::Dram).unwrap();
     assert!(dlist.print().is_ok());
 }
 
 #[test]
 fn test_xfer_desc_list_print_after_add() {
-    let mut dlist = XferDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     assert!(dlist.print().is_ok());
 }
@@ -909,54 +881,27 @@ fn test_xfer_desc_list_print_after_add() {
 // ----------- RegDescList API TESTS -----------
 
 #[test]
-fn test_reg_desc_list_new_and_new_sorted() {
-    let dlist = RegDescList::new(MemType::Dram, false).unwrap();
+fn test_reg_desc_list_new() {
+    let dlist = RegDescList::new(MemType::Dram).unwrap();
     assert!(dlist.is_empty().unwrap());
-    let dlist_sorted = RegDescList::new_sorted(MemType::Dram).unwrap();
-    assert!(dlist_sorted.is_empty().unwrap());
-}
-
-#[test]
-fn test_reg_desc_list_new_sorted_sortedness() {
-    let dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
-    assert!(dlist.is_sorted().unwrap());
-    let dlist_unsorted = RegDescList::new(MemType::Dram, false).unwrap();
-    assert!(!dlist_unsorted.is_sorted().unwrap());
 }
 
 #[test]
 fn test_reg_desc_list_get_type() {
-    let dlist = RegDescList::new(MemType::Vram, false).unwrap();
+    let dlist = RegDescList::new(MemType::Vram).unwrap();
     assert_eq!(dlist.get_type().unwrap(), MemType::Vram);
 }
 
 #[test]
 fn test_reg_desc_list_get_type_after_add() {
-    let mut dlist = RegDescList::new(MemType::Block, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Block).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     assert_eq!(dlist.get_type().unwrap(), MemType::Block);
 }
 
 #[test]
-fn test_reg_desc_list_verify_sorted_true() {
-    let mut dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
-
-    // list size should be at least 1 to be considered sorted
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    assert!(dlist.verify_sorted().unwrap());
-}
-
-#[test]
-fn test_reg_desc_list_verify_sorted_false() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
-    dlist.add_desc(0x2000, 0x100, 0).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap(); // out of order
-    assert!(!dlist.verify_sorted().unwrap());
-}
-
-#[test]
 fn test_reg_desc_list_desc_count_basic() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     assert_eq!(dlist.desc_count().unwrap(), 0);
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     assert_eq!(dlist.desc_count().unwrap(), 1);
@@ -964,7 +909,7 @@ fn test_reg_desc_list_desc_count_basic() {
 
 #[test]
 fn test_reg_desc_list_desc_count_after_clear() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     dlist.clear().unwrap();
     assert_eq!(dlist.desc_count().unwrap(), 0);
@@ -972,35 +917,20 @@ fn test_reg_desc_list_desc_count_after_clear() {
 
 #[test]
 fn test_reg_desc_list_is_empty_true() {
-    let dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let dlist = RegDescList::new(MemType::Dram).unwrap();
     assert!(dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_reg_desc_list_is_empty_false() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     assert!(!dlist.is_empty().unwrap());
 }
 
 #[test]
-fn test_reg_desc_list_is_sorted_true() {
-    let mut dlist = RegDescList::new_sorted(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    assert!(dlist.is_sorted().unwrap());
-}
-
-#[test]
-fn test_reg_desc_list_is_sorted_false() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
-    dlist.add_desc(0x2000, 0x100, 0).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    assert!(!dlist.is_sorted().unwrap());
-}
-
-#[test]
 fn test_reg_desc_list_trim_basic() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     dlist.trim().unwrap();
     assert!(dlist.desc_count().unwrap() <= 1);
@@ -1008,14 +938,14 @@ fn test_reg_desc_list_trim_basic() {
 
 #[test]
 fn test_reg_desc_list_trim_empty() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     assert!(dlist.trim().is_ok());
     assert!(dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_reg_desc_list_rem_desc_basic() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     assert!(dlist.rem_desc(0).is_ok());
     assert!(dlist.is_empty().unwrap());
@@ -1023,13 +953,13 @@ fn test_reg_desc_list_rem_desc_basic() {
 
 #[test]
 fn test_reg_desc_list_rem_desc_out_of_bounds() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     assert!(dlist.rem_desc(0).is_err());
 }
 
 #[test]
 fn test_reg_desc_list_clear_basic() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     dlist.clear().unwrap();
     assert!(dlist.is_empty().unwrap());
@@ -1037,20 +967,20 @@ fn test_reg_desc_list_clear_basic() {
 
 #[test]
 fn test_reg_desc_list_clear_empty() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     assert!(dlist.clear().is_ok());
     assert!(dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_reg_desc_list_print_basic() {
-    let dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let dlist = RegDescList::new(MemType::Dram).unwrap();
     assert!(dlist.print().is_ok());
 }
 
 #[test]
 fn test_reg_desc_list_print_after_add() {
-    let mut dlist = RegDescList::new(MemType::Dram, false).unwrap();
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     dlist.add_desc(0x1000, 0x100, 0).unwrap();
     assert!(dlist.print().is_ok());
 }
@@ -1105,7 +1035,7 @@ fn test_query_mem_with_files() {
 
     // Create descriptor list with existing and non-existing files
     let mut descs =
-        RegDescList::new(MemType::File, false).expect("Failed to create descriptor list");
+        RegDescList::new(MemType::File).expect("Failed to create descriptor list");
 
     // Add blob descriptors with filenames as metadata
     for (i, file_path) in file_paths.iter().enumerate() {
@@ -1180,7 +1110,7 @@ fn test_query_mem_empty_list() {
     };
 
     // Create empty descriptor list
-    let descs = RegDescList::new(MemType::File, false).expect("Failed to create descriptor list");
+    let descs = RegDescList::new(MemType::File).expect("Failed to create descriptor list");
 
     // Query memory with empty list
     let resp = agent
@@ -1202,11 +1132,10 @@ fn test_prep_xfer_dlist_success() {
 
     // 1. Create agents and backends
     let (local_agent, opt_args) = create_agent_with_backend("local_agent").expect("Failed to create agent");
-    let (remote_agent, opt_args_remote) = create_agent_with_backend("remote_agent").expect("Failed to create agent");
+    let (remote_agent, _opt_args_remote) = create_agent_with_backend("remote_agent").expect("Failed to create agent");
 
     // 2. Create memory regions and register them
     let mut storage_list = create_storage_list(&local_agent, &opt_args, DLIST_SIZE);
-    let remote_storage_list = create_storage_list(&remote_agent, &opt_args_remote, DLIST_SIZE);
 
     {
         // 3. Create transfer descriptor list
@@ -1318,5 +1247,341 @@ fn test_make_xfer_req_invalid_indices() {
             None
         );
         assert!(result.is_err_and(|e| matches!(e, NixlError::BackendError)), "Expected InvalidParam for out-of-bounds indices");
+    }
+}
+
+// Tests for get_local_partial_md API
+#[test]
+fn test_get_local_partial_md_success() {
+    let (agent, opt_args) = create_agent_with_backend("test_agent")
+        .expect("Failed to setup agent with backend");
+    let _storage_list = create_storage_list(&agent, &opt_args, 10);
+    // Create a registration descriptor list
+    let mut reg_descs = RegDescList::new(MemType::Dram)
+        .expect("Failed to create registration descriptor list");
+    reg_descs.add_desc(0x1000, 0x100, 0)
+        .expect("Failed to add descriptor");
+    // Get local partial metadata
+    let result = agent.get_local_partial_md(&reg_descs, Some(&opt_args));
+    // Should succeed and return metadata
+    match result {
+        Ok(metadata) => {
+            assert!(!metadata.is_empty(), "Metadata should not be empty");
+            println!("Partial metadata size: {}", metadata.len());
+        }
+        Err(e) => {
+            // May fail if no partial metadata exists yet, which is acceptable
+            assert!(
+                matches!(e, NixlError::BackendError) || matches!(e, NixlError::InvalidParam),
+                "Expected BackendError or InvalidParam, got: {:?}", e
+            );
+        }
+    }
+}
+
+#[test]
+fn test_get_local_partial_md_empty_descs() {
+    let (agent, _) = create_agent_with_backend("test_agent")
+        .expect("Failed to setup agent with backend");
+    // Create empty registration descriptor list
+    let reg_descs = RegDescList::new(MemType::Dram)
+        .expect("Failed to create registration descriptor list");
+    // Try with empty descriptor list should succeed and return all available backends
+    let result = agent.get_local_partial_md(&reg_descs, None);
+    assert!(
+        result.is_ok(),
+        "get_local_partial_md should succeed with empty descriptor list"
+    );
+}
+
+// Tests for send_local_partial_md API
+#[test]
+fn test_send_local_partial_md_success() {
+    let (agent, opt_args) = create_agent_with_backend("test_agent")
+        .expect("Failed to setup agent with backend");
+    let (agent2, opt_args2) = create_agent_with_backend("test_agent2")
+        .expect("Failed to setup agent with backend");
+    let _storage_list = create_storage_list(&agent, &opt_args, 10);
+    let _remote_storage_list = create_storage_list(&agent2, &opt_args2, 10);
+
+    // Create a registration descriptor list
+    let mut reg_descs = RegDescList::new(MemType::Dram)
+        .expect("Failed to create registration descriptor list");
+    reg_descs.add_storage_desc(&_storage_list[0]).expect("Failed to add storage descriptor");
+
+    // Send local partial metadata
+    let mut opt_args_temp = OptArgs::new().expect("Failed to create opt args");
+    opt_args_temp.set_ip_addr("127.0.0.1").expect("Failed to set ip address");
+    let result = agent.send_local_partial_md(&reg_descs, Some(&opt_args_temp));
+
+    assert!(
+        result.is_ok(),
+        "send_local_partial_md should succeed"
+    );
+}
+
+// Tests for query_xfer_backend API
+#[test]
+fn test_query_xfer_backend_success() {
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+    // Create descriptor lists
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+        // Create transfer request
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "agent2",
+            None
+        ).expect("Failed to create transfer request");
+        // Query which backend will be used for this transfer
+        let result: Result<Backend, NixlError> = agent1.query_xfer_backend(&xfer_req);
+        assert!(result.is_ok(), "query_xfer_backend failed with error: {:?}", result.err());
+        let backend = result.unwrap();
+        println!("Transfer will use backend: {:?}", backend);
+   }
+}
+#[test]
+fn test_query_xfer_backend_invalid_request() {
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+    // Create descriptor lists
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+        // Create transfer request with non-existent remote agent (should fail or succeed)
+        let xfer_req_result = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "non_existent_agent",
+            None
+        );
+        assert!(xfer_req_result.is_err(), "Transfer request creation should fail for non-existent agent");
+ }
+}
+
+// Tests for get_xfer_telemetry API
+#[test]
+fn test_get_xfer_telemetry_success() {
+    env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "agent2",
+            None
+        ).expect("Failed to create transfer request");
+
+        let result = agent1.post_xfer_req(&xfer_req, Some(&opt_args));
+        assert!(result.is_ok(), "post_xfer_req failed with error: {:?}", result.err());
+
+        // Wait for transfer to complete
+        loop {
+            match agent1.get_xfer_status(&xfer_req) {
+                Ok(XferStatus::Success) => break,
+                Ok(XferStatus::InProgress) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => panic!("Failed to get transfer status: {:?}", e),
+            }
+        }
+
+        let telemetry_result = xfer_req.get_telemetry();
+        assert!(telemetry_result.is_ok(), "get_xfer_telemetry failed with error: {:?}", telemetry_result.err());
+
+        let telemetry = telemetry_result.unwrap();
+        assert!(telemetry.start_time_us > 0, "Start time should be greater than 0");
+        assert!(telemetry.total_bytes > 0, "Total bytes should be greater than 0");
+        assert!(telemetry.desc_count > 0, "Descriptor count should be greater than 0");
+
+        // Test convenience methods
+        let start_time = telemetry.start_time();
+        assert!(start_time.as_micros() == telemetry.start_time_us as u128);
+
+        let post_duration = telemetry.post_duration();
+        assert!(post_duration.as_micros() == telemetry.post_duration_us as u128);
+
+        let xfer_duration = telemetry.xfer_duration();
+        assert!(xfer_duration.as_micros() == telemetry.xfer_duration_us as u128);
+
+        let total_duration = telemetry.total_duration();
+        assert!(total_duration.as_micros() == (telemetry.post_duration_us + telemetry.xfer_duration_us) as u128);
+
+        // Test transfer rate calculation
+        let rate = telemetry.transfer_rate_bps();
+        if telemetry.xfer_duration_us > 0 {
+            assert!(rate > 0.0, "Transfer rate should be positive when transfer duration > 0");
+        }
+
+        println!("Telemetry data: {:?}", telemetry);
+        println!("Transfer rate: {:.2} MB/s", rate / 1_000_000.0);
+    }
+}
+
+#[test]
+fn test_get_xfer_telemetry_from_request() {
+    env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "agent2",
+            None
+        ).expect("Failed to create transfer request");
+
+        let result = agent1.post_xfer_req(&xfer_req, Some(&opt_args));
+        assert!(result.is_ok(), "post_xfer_req failed with error: {:?}", result.err());
+
+        // Wait for transfer to complete
+        loop {
+            match agent1.get_xfer_status(&xfer_req) {
+                Ok(XferStatus::Success) => break,
+                Ok(XferStatus::InProgress) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => panic!("Failed to get transfer status: {:?}", e),
+            }
+        }
+
+        let telemetry_result = xfer_req.get_telemetry();
+        assert!(telemetry_result.is_ok(), "get_telemetry from request failed with error: {:?}", telemetry_result.err());
+
+        let telemetry = telemetry_result.unwrap();
+        assert!(telemetry.start_time_us > 0, "Start time should be greater than 0");
+        assert!(telemetry.total_bytes > 0, "Total bytes should be greater than 0");
+        assert!(telemetry.desc_count > 0, "Descriptor count should be greater than 0");
+
+        println!("Telemetry data from request: {:?}", telemetry);
+    }
+}
+
+#[test]
+fn test_get_xfer_telemetry_without_telemetry_enabled() {
+    env::remove_var("NIXL_TELEMETRY_ENABLE");
+
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+
+    // Create descriptor lists
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "agent2",
+            None
+        ).expect("Failed to create transfer request");
+
+        let result = agent1.post_xfer_req(&xfer_req, Some(&opt_args));
+        assert!(result.is_ok(), "post_xfer_req failed with error: {:?}", result.err());
+
+        // Wait for transfer to complete
+        loop {
+            match agent1.get_xfer_status(&xfer_req) {
+                Ok(XferStatus::Success) => break,
+                Ok(XferStatus::InProgress) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => panic!("Failed to get transfer status: {:?}", e),
+            }
+        }
+
+        // Try to get telemetry data - should fail with NoTelemetry
+        let telemetry_result = xfer_req.get_telemetry();
+        assert!(telemetry_result.is_err(), "get_xfer_telemetry should fail when telemetry is disabled");
+
+        match telemetry_result.err().unwrap() {
+            NixlError::NoTelemetry => {
+                println!("Correctly received NoTelemetry error");
+            }
+            other => panic!("Expected NoTelemetry error, got: {:?}", other),
+        }
+    }
+}
+
+#[test]
+fn test_get_xfer_telemetry_before_posting() {
+    env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+
+    // Create descriptor lists
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        // Create transfer request
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "agent2",
+            None
+        ).expect("Failed to create transfer request");
+
+        // Try to get telemetry before posting the request - should fail
+        let telemetry_result = xfer_req.get_telemetry();
+        assert!(telemetry_result.is_err(), "get_xfer_telemetry should fail before transfer is posted");
+        let error = telemetry_result.err().unwrap();
+        match error {
+            NixlError::NoTelemetry | NixlError::BackendError => {
+                println!("Got expected error before posting: {:?}", error);
+            }
+            other => panic!("Expected NoTelemetry or BackendError, got: {:?}", other),
+        }
+
+        println!("Successfully tested telemetry before posting - got expected error");
     }
 }

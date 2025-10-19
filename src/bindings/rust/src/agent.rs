@@ -15,6 +15,20 @@
 
 use super::*;
 use crate::descriptors::{QueryResponseList, RegDescList};
+use crate::bindings::{
+    nixl_capi_agent_config_s as nixl_capi_agent_config_t,
+    nixl_capi_thread_sync_t, nixl_capi_create_configured_agent};
+
+impl From<ThreadSync> for nixl_capi_thread_sync_t {
+    fn from(value: ThreadSync) -> Self {
+        match value {
+            ThreadSync::None => crate::bindings::nixl_capi_thread_sync_t_NIXL_CAPI_THREAD_SYNC_NONE,
+            ThreadSync::Strict => crate::bindings::nixl_capi_thread_sync_t_NIXL_CAPI_THREAD_SYNC_STRICT,
+            ThreadSync::Rw => crate::bindings::nixl_capi_thread_sync_t_NIXL_CAPI_THREAD_SYNC_RW,
+            ThreadSync::Default => crate::bindings::nixl_capi_thread_sync_t_NIXL_CAPI_THREAD_SYNC_DEFAULT,
+        }
+    }
+}
 
 /// A NIXL agent that can create backends and manage memory
 #[derive(Debug, Clone)]
@@ -57,6 +71,48 @@ impl Agent {
             }
             _ => {
                 tracing::error!(agent.name = %name, error = "backend_error", "Failed to create NIXL agent");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Creates a new agent with the given configuration
+    pub fn new_configured(name: &str, cfg: &AgentConfig) -> Result<Self, NixlError> {
+        tracing::trace!(agent.name = %name, "Creating configured NIXL agent");
+        let c_name = CString::new(name)?;
+
+        // Prepare C ABI config
+        let mut c_cfg = nixl_capi_agent_config_t {
+            enable_prog_thread: cfg.enable_prog_thread,
+            enable_listen_thread: cfg.enable_listen_thread,
+            listen_port: cfg.listen_port,
+            thread_sync: cfg.thread_sync.into(),
+            num_workers: cfg.num_workers,
+            pthr_delay_us: cfg.pthr_delay_us,
+            lthr_delay_us: cfg.lthr_delay_us,
+            capture_telemetry: cfg.capture_telemetry,
+        };
+
+        let mut agent = ptr::null_mut();
+        let status = unsafe {
+            nixl_capi_create_configured_agent(c_name.as_ptr(), &mut c_cfg, &mut agent)
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                // SAFETY: If status is NIXL_CAPI_SUCCESS, agent is non-null
+                let handle = unsafe { NonNull::new_unchecked(agent) };
+                tracing::trace!(agent.name = %name, "Successfully created configured NIXL agent");
+                Ok(Self {
+                    inner: Arc::new(RwLock::new(AgentInner::new(handle, name.to_string()))),
+                })
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::error!(agent.name = %name, error = "invalid_param", "Failed to create configured NIXL agent");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::error!(agent.name = %name, error = "backend_error", "Failed to create configured NIXL agent");
                 Err(NixlError::BackendError)
             }
         }
@@ -237,7 +293,7 @@ impl Agent {
         descriptor: &impl NixlDescriptor,
         opt_args: Option<&OptArgs>,
     ) -> Result<RegistrationHandle, NixlError> {
-        let mut reg_dlist = RegDescList::new(descriptor.mem_type(), false)?;
+        let mut reg_dlist = RegDescList::new(descriptor.mem_type())?;
         unsafe {
             reg_dlist.add_storage_desc(descriptor)?;
 
@@ -332,6 +388,52 @@ impl Agent {
             }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to get local metadata");
+                Err(NixlError::BackendError)
+            }
+        }
+    }
+
+    /// Gets the local partial metadata as a byte array
+    ///
+    /// # Arguments
+    /// * `descs` - Registration descriptor list to get metadata for
+    /// * `opt_args` - Optional arguments for getting metadata
+    ///
+    /// # Returns
+    /// A byte array containing the local partial metadata
+    ///
+    pub fn get_local_partial_md(&self, descs: &RegDescList, opt_args: Option<&OptArgs>) -> Result<Vec<u8>, NixlError> {
+        tracing::trace!("Getting local partial metadata");
+        let mut data = std::ptr::null_mut();
+        let mut len: usize = 0;
+        let inner_guard = self.inner.write().unwrap();
+
+        let status = unsafe {
+            nixl_capi_get_local_partial_md(
+                inner_guard.handle.as_ptr(),
+                descs.handle(),
+                &mut data as *mut *mut _,
+                &mut len,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                let bytes = unsafe {
+                    let slice = std::slice::from_raw_parts(data as *const u8, len);
+                    let vec = slice.to_vec();
+                    libc::free(data as *mut libc::c_void);
+                    vec
+                };
+                tracing::trace!(metadata.size = len, "Successfully retrieved local partial metadata");
+                Ok(bytes)
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::error!(error = "invalid_param", "Failed to get local partial metadata");
+                Err(NixlError::InvalidParam)
+            }
+            _ => {
+                tracing::error!(error = "backend_error", "Failed to get local partial metadata");
                 Err(NixlError::BackendError)
             }
         }
@@ -549,6 +651,35 @@ impl Agent {
             }
         }
     }
+
+    /// Send this agent's partial metadata
+    ///
+    /// # Arguments
+    /// * `descs` - Registration descriptor list to send
+    /// * `opt_args` - Optional arguments for sending metadata
+    pub fn send_local_partial_md(&self, descs: &RegDescList, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
+        tracing::trace!("Sending local partial metadata to etcd");
+        let inner_guard = self.inner.write().unwrap();
+        let status = unsafe {
+            nixl_capi_send_local_partial_md(
+                inner_guard.handle.as_ptr(),
+                descs.handle(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                tracing::trace!("Successfully sent local partial metadata to etcd");
+                Ok(())
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => {
+                tracing::error!(error = "invalid_param", "Failed to send local partial metadata to etcd");
+                Err(NixlError::InvalidParam)
+            }
+            _ => Err(NixlError::BackendError)
+        }
+    }
+
 
     /// Fetch a remote agent's metadata from etcd
     ///
@@ -850,6 +981,36 @@ impl Agent {
         }
     }
 
+    /// Queries the backend for a transfer request
+    ///
+    /// # Arguments
+    /// * `req` - Transfer request handle after `post_xfer_req`
+    ///
+    /// # Returns
+    /// A handle to the backend used for the transfer
+    ///
+    /// # Errors
+    /// Returns a NixlError if the operation fails
+    pub fn query_xfer_backend(&self, req: &XferRequest) -> Result<Backend, NixlError> {
+        let mut backend = std::ptr::null_mut();
+        let inner_guard = self.inner.write().unwrap();
+        let status = unsafe {
+            nixl_capi_query_xfer_backend(
+                inner_guard.handle.as_ptr(),
+                req.handle(),
+                &mut backend
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                Ok(Backend{ inner: NonNull::new(backend).ok_or(NixlError::FailedToCreateBackend)? })
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+
     /// Gets notifications from other agents
     ///
     /// # Arguments
@@ -893,6 +1054,41 @@ pub(crate) struct AgentInner {
     pub(crate) handle: NonNull<bindings::nixl_capi_agent_s>,
     pub(crate) backends: HashMap<String, NonNull<bindings::nixl_capi_backend_s>>,
     pub(crate) remotes: HashSet<String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ThreadSync {
+    None,
+    Strict,
+    Rw,
+    Default,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentConfig {
+    pub enable_prog_thread: bool,
+    pub enable_listen_thread: bool,
+    pub listen_port: i32,
+    pub thread_sync: ThreadSync,
+    pub num_workers: u32,
+    pub pthr_delay_us: u64,
+    pub lthr_delay_us: u64,
+    pub capture_telemetry: bool,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            enable_prog_thread: true,
+            enable_listen_thread: false,
+            listen_port: 0,
+            thread_sync: ThreadSync::None,
+            num_workers: 1,
+            pthr_delay_us: 0,
+            lthr_delay_us: 100_000,
+            capture_telemetry: false,
+        }
+    }
 }
 
 unsafe impl Send for AgentInner {}

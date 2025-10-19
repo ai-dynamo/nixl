@@ -47,12 +47,12 @@ DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 DEFINE_string(
     backend,
     XFERBENCH_BACKEND_UCX,
-    "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] \
+    "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
-              [DRAM, VRAM]");
+              [DRAM, VRAM]. Note: Storage backends always use DRAM locally.");
 DEFINE_string(target_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for target \
-              [DRAM, VRAM]");
+              [DRAM, VRAM]. Note: Storage backends determine remote type automatically.");
 DEFINE_string(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, maytoone, onetomany, tp");
 DEFINE_string(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc) [default: SG]");
 DEFINE_string(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
@@ -97,7 +97,9 @@ DEFINE_int32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (De
 // For example- 0:mlx5_0,mlx5_1,mlx5_2,1:mlx5_3,mlx5_4, ...
 DEFINE_string(device_list, "all", "Comma-separated device name to use for \
 		      communication (only used with nixl worker)");
-DEFINE_string(etcd_endpoints, "http://localhost:2379", "ETCD server endpoints for communication");
+DEFINE_string(etcd_endpoints,
+              "",
+              "ETCD server endpoints for communication (optional for storage backends)");
 
 // POSIX options - only used when backend is POSIX
 DEFINE_string (posix_api_type,
@@ -107,6 +109,9 @@ DEFINE_string (posix_api_type,
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
 DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
 		      communication (only used with nixl worker)");
+// DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
+DEFINE_string(gpunetio_oob_list, "", "Comma-separated OOB network interface name \
+		      for control path (only used with nixl worker)");
 
 // OBJ options - only used when backend is OBJ
 DEFINE_string(obj_access_key, "", "Access key for S3 backend");
@@ -120,9 +125,29 @@ DEFINE_string(obj_endpoint_override, "", "Endpoint override for S3 backend");
 DEFINE_string(obj_req_checksum,
               XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
               "Required checksum for S3 backend [supported, required]");
+DEFINE_string(obj_ca_bundle, "", "Path to CA bundle for S3 backend");
 
 // HF3FS options - only used when backend is HF3FS
 DEFINE_int32(hf3fs_iopool_size, 64, "Size of io memory pool");
+
+// GUSLI options - only used when backend is GUSLI
+DEFINE_string(gusli_client_name, "NIXLBench", "Client name for GUSLI backend");
+DEFINE_int32(gusli_max_simultaneous_requests,
+             32,
+             "Maximum number of simultaneous requests for GUSLI backend");
+DEFINE_string(
+    gusli_config_file,
+    "",
+    "Configuration file content for GUSLI backend (if empty, auto-generated from device_list)");
+DEFINE_uint64(gusli_bdev_byte_offset,
+              1048576,
+              "Byte offset in block device for GUSLI operations (default: 1MB)");
+DEFINE_string(gusli_device_security,
+              "",
+              "Comma-separated list of security flags per device (e.g. 'sec=0x3,sec=0x71'). "
+              "If empty or fewer than devices, uses 'sec=0x3' as default. "
+              "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) "
+              "or K (kernel device).");
 
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
@@ -154,6 +179,7 @@ int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
 int xferBenchConfig::gds_mt_num_threads = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
+std::string xferBenchConfig::gpunetio_oob_list = "";
 std::vector<std::string> devices = { };
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
@@ -169,7 +195,13 @@ std::string xferBenchConfig::obj_region = "";
 bool xferBenchConfig::obj_use_virtual_addressing = false;
 std::string xferBenchConfig::obj_endpoint_override = "";
 std::string xferBenchConfig::obj_req_checksum = "";
+std::string xferBenchConfig::obj_ca_bundle = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
+std::string xferBenchConfig::gusli_client_name = "";
+int xferBenchConfig::gusli_max_simultaneous_requests = 0;
+std::string xferBenchConfig::gusli_config_file = "";
+uint64_t xferBenchConfig::gusli_bdev_byte_offset = 0;
+std::string xferBenchConfig::gusli_device_security = "";
 
 int
 xferBenchConfig::loadFromFlags() {
@@ -217,11 +249,21 @@ xferBenchConfig::loadFromFlags() {
         // Load DOCA-specific configurations if backend is DOCA
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             gpunetio_device_list = FLAGS_gpunetio_device_list;
+            gpunetio_oob_list = FLAGS_gpunetio_oob_list;
         }
 
         // Load HD3FS-specific configurations if backend is HD3FS
         if (backend == XFERBENCH_BACKEND_HF3FS) {
             hf3fs_iopool_size = FLAGS_hf3fs_iopool_size;
+        }
+
+        // Load GUSLI-specific configurations if backend is GUSLI
+        if (backend == XFERBENCH_BACKEND_GUSLI) {
+            gusli_client_name = FLAGS_gusli_client_name;
+            gusli_max_simultaneous_requests = FLAGS_gusli_max_simultaneous_requests;
+            gusli_config_file = FLAGS_gusli_config_file;
+            gusli_bdev_byte_offset = FLAGS_gusli_bdev_byte_offset;
+            gusli_device_security = FLAGS_gusli_device_security;
         }
 
         // Load OBJ-specific configurations if backend is OBJ
@@ -235,6 +277,7 @@ xferBenchConfig::loadFromFlags() {
             obj_use_virtual_addressing = FLAGS_obj_use_virtual_addressing;
             obj_endpoint_override = FLAGS_obj_endpoint_override;
             obj_req_checksum = FLAGS_obj_req_checksum;
+            obj_ca_bundle = FLAGS_obj_ca_bundle;
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -275,6 +318,14 @@ xferBenchConfig::loadFromFlags() {
     num_files = FLAGS_num_files;
     posix_api_type = FLAGS_posix_api_type;
     storage_enable_direct = FLAGS_storage_enable_direct;
+
+    // Validate ETCD configuration
+    if (!isStorageBackend() && etcd_endpoints.empty()) {
+        // For non-storage backends, set default ETCD endpoint
+        etcd_endpoints = "http://localhost:2379";
+        std::cout << "Using default ETCD endpoint for non-storage backend: " << etcd_endpoints
+                  << std::endl;
+    }
 
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
@@ -317,8 +368,8 @@ xferBenchConfig::loadFromFlags() {
         return -1;
     }
 
-    if (large_blk_iter_ftr == 0 || large_blk_iter_ftr > num_iter) {
-        std::cerr << "iter_factor must not be 0 and must be lower than num_iter" << std::endl;
+    if (large_blk_iter_ftr <= 0) {
+        std::cerr << "iter_factor must be greater than 0" << std::endl;
         return -1;
     }
 
@@ -370,7 +421,11 @@ xferBenchConfig::printConfig() {
     printSeparator('*');
     printOption("Runtime (--runtime_type=[etcd])", runtime_type);
     if (runtime_type == XFERBENCH_RT_ETCD) {
-        printOption("ETCD Endpoint ", etcd_endpoints);
+        if (etcd_endpoints.empty()) {
+            printOption("ETCD Endpoint ", "disabled (storage backend)");
+        } else {
+            printOption("ETCD Endpoint ", etcd_endpoints);
+        }
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
@@ -412,6 +467,7 @@ xferBenchConfig::printConfig() {
                         obj_endpoint_override);
             printOption("OBJ S3 required checksum (--obj_req_checksum=[supported, required])",
                         obj_req_checksum);
+            printOption("OBJ S3 CA bundle (--obj_ca_bundle=cert-path)", obj_ca_bundle);
         }
 
         if (xferBenchConfig::isStorageBackend()) {
@@ -425,6 +481,8 @@ xferBenchConfig::printConfig() {
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             printOption ("GPU CUDA Device id list (--device_list=dev1,dev2,...)",
                          gpunetio_device_list);
+            printOption("OOB network interface name for control path (--oob_list=ifface)",
+                        gpunetio_oob_list);
         }
     }
     printOption ("Initiator seg type (--initiator_seg_type=[DRAM,VRAM])", initiator_seg_type);
@@ -482,7 +540,8 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_GDS_MT == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
 }
 /**********
  * xferBench Utils

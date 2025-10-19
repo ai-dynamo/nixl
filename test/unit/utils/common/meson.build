@@ -13,13 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#if cuda_dep.found()
-#    cuda_dependencies = [cuda_dep]
-#    cpp_args = '-DUSE_VRAM'
-#else
-#    cuda_dependencies = []
-#    cpp_args = '-UUSE_VRAM'
-#endif
+if cuda_dep.found()
+    cuda_dependencies = [cuda_dep]
+    cpp_args = '-DUSE_VRAM'
+else
+    cuda_dependencies = []
+    cpp_args = '-UUSE_VRAM'
+endif
 
 p2p_socket = executable('p2p_test',
             'p2p_socket_test.cpp',
@@ -29,5 +29,6 @@ p2p_socket = executable('p2p_test',
 
 map_perf_test = executable('map_perf_test',
                            'map_perf.cpp',
+                           dependencies: [nixl_test_utils_dep],
                            include_directories: [nixl_inc_dirs, utils_inc_dirs],
                            install: true)

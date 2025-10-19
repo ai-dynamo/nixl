@@ -23,7 +23,6 @@
 #include "nixl_types.h"
 
 constexpr char TELEMETRY_BUFFER_SIZE_VAR[] = "NIXL_TELEMETRY_BUFFER_SIZE";
-constexpr char TELEMETRY_DIR_VAR[] = "NIXL_TELEMETRY_DIR";
 constexpr char TELEMETRY_RUN_INTERVAL_VAR[] = "NIXL_TELEMETRY_RUN_INTERVAL";
 
 constexpr int TELEMETRY_VERSION = 1;

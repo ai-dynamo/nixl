@@ -57,15 +57,35 @@ nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent)
 }
 
 nixl_capi_status_t
-nixl_capi_destroy_agent(nixl_capi_agent_t agent)
-{
-  return nixl_capi_stub_abort();
+nixl_capi_default_agent_config(nixl_capi_agent_config_t *out) {
+    return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_create_configured_agent(const char *name,
+                                  const nixl_capi_agent_config_t *cfg,
+                                  nixl_capi_agent_t *agent) {
+    return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_destroy_agent(nixl_capi_agent_t agent) {
+    return nixl_capi_stub_abort();
 }
 
 nixl_capi_status_t
 nixl_capi_get_local_md(nixl_capi_agent_t agent, void** data, size_t* len)
 {
   return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_get_local_partial_md(nixl_capi_agent_t agent,
+                               nixl_capi_reg_dlist_t descs,
+                               void **data,
+                               size_t *len,
+                               nixl_capi_opt_args_t opt_args) {
+    return nixl_capi_stub_abort();
 }
 
 nixl_capi_status_t
@@ -220,6 +240,16 @@ nixl_capi_opt_args_get_skip_desc_merge(nixl_capi_opt_args_t args, bool* skip_mer
 }
 
 nixl_capi_status_t
+nixl_capi_opt_args_set_ip_addr(nixl_capi_opt_args_t args, const char *ip_addr) {
+    return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_opt_args_set_port(nixl_capi_opt_args_t args, uint16_t port) {
+    return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
 nixl_capi_params_is_empty(nixl_capi_params_t params, bool* is_empty)
 {
   return nixl_capi_stub_abort();
@@ -276,9 +306,8 @@ nixl_capi_get_backend_params(
 
 // Transfer descriptor list functions
 nixl_capi_status_t
-nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t* dlist, bool sorted)
-{
-  return nixl_capi_stub_abort();
+nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_t *dlist) {
+    return nixl_capi_stub_abort();
 }
 
 nixl_capi_status_t
@@ -313,9 +342,8 @@ nixl_capi_xfer_dlist_resize(nixl_capi_xfer_dlist_t dlist, size_t new_size)
 
 // Registration descriptor list functions
 nixl_capi_status_t
-nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t* dlist, bool sorted)
-{
-  return nixl_capi_stub_abort();
+nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t *dlist) {
+    return nixl_capi_stub_abort();
 }
 
 nixl_capi_status_t
@@ -385,6 +413,13 @@ nixl_capi_status_t
 nixl_capi_get_xfer_status(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl)
 {
   return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
+                             nixl_capi_xfer_req_t req_hndl,
+                             nixl_capi_backend_t *backend) {
+    return nixl_capi_stub_abort();
 }
 
 nixl_capi_status_t

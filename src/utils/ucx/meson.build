@@ -21,8 +21,10 @@ endif
 
 ucx_utils_inc_dirs = include_directories('.')
 
+ucx_utils_sources = ['ucx_utils.cpp', 'ucx_utils.h', 'config.h', 'config.cpp', 'rkey.cpp', 'rkey.h', 'gpu_xfer_req_h.cpp', 'gpu_xfer_req_h.h']
+
 ucx_utils_lib = library('ucx_utils',
-           'ucx_utils.cpp', 'ucx_utils.h', 'config.h', 'config.cpp', 'rkey.cpp', 'rkey.h',
+           ucx_utils_sources,
            dependencies: ucx_utils_dep,
            include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
            install: true)

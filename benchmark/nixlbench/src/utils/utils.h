@@ -57,7 +57,6 @@
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
 #define MAXBW 50.0 // 400 Gbps or 50 GB/sec
 #define LARGE_BLOCK_SIZE (1LL * (1 << 20))
-#define MIN_WARMUP_ITERS 8
 
 #define XFERBENCH_INITIATOR_BUFFER_ELEMENT 0xbb
 #define XFERBENCH_TARGET_BUFFER_ELEMENT 0xaa
@@ -68,6 +67,7 @@
 // Backend types
 #define XFERBENCH_BACKEND_UCX "UCX"
 #define XFERBENCH_BACKEND_UCX_MO "UCX_MO"
+#define XFERBENCH_BACKEND_LIBFABRIC "LIBFABRIC"
 #define XFERBENCH_BACKEND_GDS "GDS"
 #define XFERBENCH_BACKEND_GDS_MT "GDS_MT"
 #define XFERBENCH_BACKEND_POSIX "POSIX"
@@ -75,6 +75,7 @@
 #define XFERBENCH_BACKEND_MOONCAKE "Mooncake"
 #define XFERBENCH_BACKEND_HF3FS "HF3FS"
 #define XFERBENCH_BACKEND_OBJ "OBJ"
+#define XFERBENCH_BACKEND_GUSLI "GUSLI"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -111,6 +112,7 @@
 // Segment types
 #define XFERBENCH_SEG_TYPE_DRAM "DRAM"
 #define XFERBENCH_SEG_TYPE_VRAM "VRAM"
+#define XFERBENCH_SEG_TYPE_BLK "BLK"
 
 // Worker types
 #define XFERBENCH_WORKER_NIXL     "nixl"
@@ -156,6 +158,7 @@ class xferBenchConfig {
         static int gds_batch_limit;
         static int gds_mt_num_threads;
         static std::string gpunetio_device_list;
+        static std::string gpunetio_oob_list;
         static long page_size;
         static std::string obj_access_key;
         static std::string obj_secret_key;
@@ -166,7 +169,13 @@ class xferBenchConfig {
         static bool obj_use_virtual_addressing;
         static std::string obj_endpoint_override;
         static std::string obj_req_checksum;
+        static std::string obj_ca_bundle;
         static int hf3fs_iopool_size;
+        static std::string gusli_client_name;
+        static int gusli_max_simultaneous_requests;
+        static std::string gusli_config_file;
+        static uint64_t gusli_bdev_byte_offset;
+        static std::string gusli_device_security;
 
         static int
         loadFromFlags();

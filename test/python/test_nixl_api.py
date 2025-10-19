@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import uuid
 
 import pytest
@@ -32,18 +33,34 @@ def one_empty_agent():
 
 
 @pytest.fixture
-def one_ucx_agent():
-    return nixl_agent(str(uuid.uuid4()))
+def one_agent(backend_name):
+    return nixl_agent(
+        str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+    )
 
 
 @pytest.fixture
-def two_ucx_agents():
-    return (nixl_agent(str(uuid.uuid4())), nixl_agent(str(uuid.uuid4())))
+def two_agents(backend_name):
+    return (
+        nixl_agent(
+            str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+        ),
+        nixl_agent(
+            str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+        ),
+    )
 
 
 @pytest.fixture
-def two_connected_ucx_agents():
-    agent1, agent2 = (nixl_agent(str(uuid.uuid4())), nixl_agent(str(uuid.uuid4())))
+def two_connected_agents(backend_name):
+    agent1, agent2 = (
+        nixl_agent(
+            str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+        ),
+        nixl_agent(
+            str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+        ),
+    )
     agent1.add_remote_agent(agent2.get_agent_metadata())
     agent2.add_remote_agent(agent1.get_agent_metadata())
     yield (agent1, agent2)
@@ -94,26 +111,26 @@ def test_make_invalid_op(one_empty_agent, two_xfer_lists):
         one_empty_agent.initialize_xfer("WR", list1, list2, "nobody")
 
 
-def test_invalid_plugin_name(one_ucx_agent):
+def test_invalid_plugin_name(one_agent):
     # "UVX" is a typo for "UCX"
-    plugin_mems = one_ucx_agent.get_plugin_mem_types("UVX")
-    plugin_params = one_ucx_agent.get_plugin_params("UVX")
+    plugin_mems = one_agent.get_plugin_mem_types("UVX")
+    plugin_params = one_agent.get_plugin_params("UVX")
 
-    backend_mems = one_ucx_agent.get_backend_mem_types("UVX")
-    backend_params = one_ucx_agent.get_backend_mem_types("UVX")
+    backend_mems = one_agent.get_backend_mem_types("UVX")
+    backend_params = one_agent.get_backend_mem_types("UVX")
 
     assert len(plugin_mems) == 0 and len(plugin_params) == 0
     assert len(backend_mems) == 0 and len(backend_params) == 0
 
 
-def test_invalid_backend_name_creation(one_ucx_agent):
+def test_invalid_backend_name_creation(one_agent):
     # "UVX" is a typo for "UCX"
     with pytest.raises(bindings.nixlNotFoundError):
-        one_ucx_agent.create_backend("UVX")
+        one_agent.create_backend("UVX")
 
 
-def test_metadata_pass(two_ucx_agents):
-    agent1, agent2 = two_ucx_agents
+def test_metadata_pass(two_agents):
+    agent1, agent2 = two_agents
 
     addr = utils.malloc_passthru(1024)
 
@@ -123,11 +140,12 @@ def test_metadata_pass(two_ucx_agents):
 
     passed_name = agent2.add_remote_agent(agent1.get_agent_metadata())
     assert passed_name == agent1.name.encode()
+    utils.free_passthru(addr)
 
 
 @pytest.mark.timeout(5)
-def test_empty_notif_tag(two_connected_ucx_agents):
-    agent1, agent2 = two_connected_ucx_agents
+def test_empty_notif_tag(two_connected_agents):
+    agent1, agent2 = two_connected_agents
 
     agent1.send_notif(agent2.name, b"whatever")
 
@@ -200,3 +218,116 @@ def test_incorrect_plugin_env(monkeypatch):
 
     with pytest.raises(RuntimeError):
         nixl_agent("bad env agent")
+
+
+def test_get_xfer_telemetry(backend_name):
+    os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
+
+    agent1 = nixl_agent(
+        str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+    )
+    agent2 = nixl_agent(
+        str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+    )
+
+    mem_size = 128
+    addr1 = utils.malloc_passthru(mem_size)
+    addr2 = utils.malloc_passthru(mem_size)
+
+    try:
+        reg1 = agent1.get_reg_descs([(addr1, mem_size, 0, "")], mem_type="DRAM")
+        reg2 = agent2.get_reg_descs([(addr2, mem_size, 0, "")], mem_type="DRAM")
+        agent1.register_memory(reg1)
+        agent2.register_memory(reg2)
+
+        agent1.add_remote_agent(agent2.get_agent_metadata())
+        src = agent1.get_xfer_descs(
+            [(addr1, mem_size // 2, 0), (addr1 + mem_size // 2, mem_size // 2, 0)],
+            mem_type="DRAM",
+        )
+        dst = agent1.get_xfer_descs(
+            [(addr2, mem_size // 2, 0), (addr2 + mem_size // 2, mem_size // 2, 0)],
+            mem_type="DRAM",
+        )
+
+        handle = agent1.initialize_xfer("WRITE", src, dst, agent2.name)
+        st = agent1.transfer(handle)
+        assert st in ("DONE", "PROC")
+
+        while True:
+            st = agent1.check_xfer_state(handle)
+            assert st in ("DONE", "PROC")
+            if st == "DONE":
+                break
+
+        telem = agent1.get_xfer_telemetry(handle)
+        assert telem.descCount == 2
+        assert telem.totalBytes == mem_size
+        assert telem.startTime > 0
+        assert telem.postDuration > 0
+        assert telem.xferDuration > 0
+        assert telem.xferDuration >= telem.postDuration
+
+        agent1.release_xfer_handle(handle)
+    finally:
+        utils.free_passthru(addr1)
+        utils.free_passthru(addr2)
+        os.environ.pop("NIXL_TELEMETRY_ENABLE")
+
+
+def test_get_xfer_telemetry_cfg(backend_name):
+    os.environ["NIXL_TELEMETRY_ENABLE"] = "m"  # invalid value not to enable
+    os.environ["NIXL_TELEMETRY_DIR"] = "/tmp/dummy"  # to be ignored
+
+    agent1 = nixl_agent(
+        str(uuid.uuid4()),
+        nixl_conf=nixl_agent_config(capture_telemetry=True, backends=[backend_name]),
+    )
+    agent2 = nixl_agent(
+        str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+    )
+
+    mem_size = 128
+    addr1 = utils.malloc_passthru(mem_size)
+    addr2 = utils.malloc_passthru(mem_size)
+
+    try:
+        reg1 = agent1.get_reg_descs([(addr1, mem_size, 0, "")], mem_type="DRAM")
+        reg2 = agent2.get_reg_descs([(addr2, mem_size, 0, "")], mem_type="DRAM")
+        agent1.register_memory(reg1)
+        agent2.register_memory(reg2)
+
+        agent1.add_remote_agent(agent2.get_agent_metadata())
+        src = agent1.get_xfer_descs(
+            [(addr1, mem_size // 2, 0), (addr1 + mem_size // 2, mem_size // 2, 0)],
+            mem_type="DRAM",
+        )
+        dst = agent1.get_xfer_descs(
+            [(addr2, mem_size // 2, 0), (addr2 + mem_size // 2, mem_size // 2, 0)],
+            mem_type="DRAM",
+        )
+
+        handle = agent1.initialize_xfer("WRITE", src, dst, agent2.name)
+        st = agent1.transfer(handle)
+        assert st in ("DONE", "PROC")
+
+        while True:
+            st = agent1.check_xfer_state(handle)
+            assert st in ("DONE", "PROC")
+            if st == "DONE":
+                break
+
+        telem = agent1.get_xfer_telemetry(handle)
+        assert telem.descCount == 2
+        assert telem.totalBytes == mem_size
+        assert telem.startTime > 0
+        assert telem.postDuration > 0
+        assert telem.xferDuration > 0
+        assert telem.xferDuration >= telem.postDuration
+
+        agent1.release_xfer_handle(handle)
+    finally:
+        utils.free_passthru(addr1)
+        utils.free_passthru(addr2)
+        os.environ.pop("NIXL_TELEMETRY_ENABLE")
+        os.environ.pop("NIXL_TELEMETRY_DIR")

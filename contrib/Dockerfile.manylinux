@@ -21,6 +21,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG ARCH="x86_64"
 ARG UCX_REF="v1.19.0"
+ARG LIBFABRIC_VERSION="v2.3.0"
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
@@ -53,6 +54,8 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     libibumad-devel \
     numactl-devel \
     librdmacm-devel \
+    hwloc \
+    hwloc-devel \
     wget \
     zlib
 
@@ -103,6 +106,31 @@ RUN cd /workspace && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install
 
+# The base image libcurl is linked against openssl 1.x, so we need to build from source
+# in order to use openssl 3.x. This is needed to build aws-sdk-cpp.
+RUN wget https://curl.se/download/curl-8.5.0.tar.gz && \
+    tar xzf curl-8.5.0.tar.gz && cd curl-8.5.0 && \
+    ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --enable-shared && \
+    make -j$(nproc) && make install
+
+RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581
+RUN mkdir aws_sdk_build && cd aws_sdk_build && \
+    export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
+    export CFLAGS="-I/usr/local/openssl3/include" && \
+    export CXXFLAGS="-I/usr/local/openssl3/include" && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_PREFIX_PATH="/usr/local/openssl3;/usr/local" \
+        -DCURL_LIBRARY=/usr/local/lib/libcurl.so \
+        -DCURL_INCLUDE_DIR=/usr/local/include \
+        -DOPENSSL_USE_STATIC_LIBS=OFF && \
+    make -j${NPROC:-$(nproc)} && make install
+
+RUN git clone https://github.com/nvidia/gusli.git && \
+     cd gusli && \
+     sed -i '/^LFLAGS_ALL =/{/-lrt/ b; s/$/ -lrt/}' Makefile && \
+     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+     cd ..
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 ENV RUSTUP_HOME=/usr/local/rustup \
@@ -122,6 +150,17 @@ RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.
     echo "$RUSTUP_SHA256 *rustup-init" | sha256sum -c - && \
     rm rustup-init && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+
+RUN wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host-3.1.0-091000_25.07_rhel89.${ARCH}.rpm && \
+    rpm -i doca-host-3.1.0-091000_25.07_rhel89.${ARCH}.rpm && \
+    dnf install -y libnl3-devel && \
+    cd /usr/share/doca-host-3.1.0/repo/Packages/ && \
+    rpm -ivh --nodeps doca-sdk-common-*rpm && \
+    rpm -ivh --nodeps doca-sdk-rdma-*rpm && \
+    rpm -ivh --nodeps doca-sdk-verbs-*rpm && \
+    rpm -ivh --nodeps doca-sdk-gpunetio-*rpm && \
+    # Check that gpunetio development package is installed correctly
+    pkg-config --cflags --libs doca-gpunetio
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
@@ -167,6 +206,27 @@ RUN cd /usr/local/src && \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
+
+# Build libfabric from source
+RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+    "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
+    tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
+    cd libfabric-* && \
+    ./autogen.sh && \
+    ./configure --prefix=/usr/local \
+                --disable-verbs \
+                --disable-psm3 \
+                --disable-opx \
+                --disable-usnic \
+                --disable-rstream \
+                --enable-efa \
+                --with-cuda=/usr/local/cuda \
+                --enable-cuda-dlopen \
+                --with-gdrcopy \
+                --enable-gdrcopy-dlopen && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig
 
 COPY . /workspace/nixl
 
