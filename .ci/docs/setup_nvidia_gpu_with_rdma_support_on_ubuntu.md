@@ -131,7 +131,7 @@ sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 ```
 
-Verify GPU access in containers using `docker run --gpus all nvcr.io/nvidia/pytorch:25.02-py3 nvidia-smi`[^1_3].
+Verify GPU access in containers using `docker run --gpus all nvcr.io/nvidia/cuda-dl-base:25.02-cuda12.8-devel-ubuntu24.04 nvidia-smi`[^1_3].
 
 ### 9. **Validation and Troubleshooting**
 
