@@ -32,8 +32,6 @@ UCX_VERSION=${UCX_VERSION:-v1.19.0}
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
-# DOCA version for GPUNetIO packages
-DOCA_VERSION=3.1.0
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
