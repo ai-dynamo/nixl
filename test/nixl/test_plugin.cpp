@@ -45,7 +45,7 @@ int verify_plugin(std::string name, nixlPluginManager& plugin_manager)
     std::cout << "\nLoading " << name << " plugin..." << std::endl;
 
     // Load the plugin
-    auto plugin_ = plugin_manager.loadPlugin(name);
+    auto plugin_ = plugin_manager.loadPlugin<nixlPluginHandle>(name);
     if (!plugin_) {
         std::cerr << "Failed to load " << name << " plugin" << std::endl;
         return -1;
