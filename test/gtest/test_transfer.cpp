@@ -558,7 +558,6 @@ TEST_P(TestTransfer, ListenerCommSize) {
 
 TEST_P(TestTransfer, GetXferTelemetryFile) {
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
-    env.addVar("NIXL_TELEMETRY_DIR", "/tmp/");
 
     // Create fresh agents that read the current env var and add them to the fixture
     addAgent(2);

@@ -37,6 +37,8 @@ export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
+export NIXL_TELEMETRY_EXPORTER_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins/telemetry/buffer
+export NIXL_TELEMETRY_EXPORTER=buffer
 # Raise exceptions for logging errors
 export NIXL_DEBUG_LOGGING=yes
 
@@ -98,7 +100,7 @@ mkdir -p /tmp/telemetry_test
 
 python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
 sleep 5
-NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
+NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_EXPORTER_OUTPUT_PATH=/tmp/telemetry_test \
 python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
 
 python3 telemetry_reader.py --telemetry_path /tmp/telemetry_test/initiator &

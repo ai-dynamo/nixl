@@ -24,6 +24,7 @@
 #include <vector>
 #include <mutex>
 #include "backend/backend_plugin.h"
+#include "base_plugin_manager.h"
 
 // Forward declarations
 class nixlBackendEngine;
@@ -35,19 +36,20 @@ struct nixlBackendInitParams;
  * operation, e.g., query operations and plugin instance creation. This allows using it in
  * multi-threading environments without lock protection.
  */
-class nixlPluginHandle {
+class nixlPluginHandle : public basePluginHandle {
 private:
-    void* handle_;         // Handle to the dynamically loaded library
-    nixlBackendPlugin* plugin_;  // Plugin interface
+    nixlBackendPlugin *plugin_;
 
 public:
-    nixlPluginHandle(void* handle, nixlBackendPlugin* plugin);
-    ~nixlPluginHandle();
+    nixlPluginHandle(std::unique_ptr<void, dlHandleDeleter> handle, nixlBackendPlugin *plugin);
+    ~nixlPluginHandle() override = default;
 
     nixlBackendEngine* createEngine(const nixlBackendInitParams* init_params) const;
     void destroyEngine(nixlBackendEngine* engine) const;
-    const char* getName() const;
-    const char* getVersion() const;
+    const char *
+    getName() const override;
+    const char *
+    getVersion() const override;
     nixl_b_params_t getBackendOptions() const;
     nixl_mem_list_t getBackendMems() const;
 };
@@ -61,18 +63,26 @@ struct nixlStaticPluginInfo {
     nixlStaticPluginCreatorFunc createFunc;
 };
 
-class nixlPluginManager {
+class nixlPluginManager : public basePluginManager {
 private:
-    std::map<nixl_backend_t, std::shared_ptr<const nixlPluginHandle>> loaded_plugins_;
-    std::vector<std::string> plugin_dirs_;
-    std::vector<nixlStaticPluginInfo> static_plugins_;
-    std::mutex lock;
+    std::vector<nixlStaticPluginInfo> staticPlugins_;
 
     void registerBuiltinPlugins();
     void registerStaticPlugin(const char* name, nixlStaticPluginCreatorFunc creator);
 
     // Private constructor for singleton pattern
     nixlPluginManager();
+
+protected:
+    bool
+    checkApiVersion(void *plugin_interface) const override;
+
+    std::shared_ptr<basePluginHandle>
+    createPluginHandle(std::unique_ptr<void, dlHandleDeleter> dl_handle,
+                       void *plugin_interface) override;
+
+    bool
+    canUnloadPlugin(const std::string &plugin_name) const override;
 
 public:
     // Singleton instance accessor
@@ -82,33 +92,17 @@ public:
     nixlPluginManager(const nixlPluginManager&) = delete;
     nixlPluginManager& operator=(const nixlPluginManager&) = delete;
 
-    std::shared_ptr<const nixlPluginHandle> loadPluginFromPath(const std::string& plugin_path);
-
-    void loadPluginsFromList(const std::string& filename);
-
-    // Load a specific plugin
-    std::shared_ptr<const nixlPluginHandle> loadPlugin(const nixl_backend_t& plugin_name);
-
-    // Search a directory for plugins
-    void discoverPluginsFromDir(const std::string& dirpath);
-
-    // Unload a plugin
-    void unloadPlugin(const nixl_backend_t& plugin_name);
-
-    // Get a plugin handle
-    std::shared_ptr<const nixlPluginHandle> getPlugin(const nixl_backend_t& plugin_name);
-
-    // Get all loaded plugin names
-    std::vector<nixl_backend_t> getLoadedPluginNames();
+    // Backend-specific plugin loading
+    void
+    loadPluginsFromList(const std::string &filename);
 
     // Get backend options
-    nixl_b_params_t getBackendOptions(const nixl_backend_t& type);
-
-    // Add a plugin directory
-    void addPluginDirectory(const std::string& directory);
+    nixl_b_params_t
+    getBackendOptions(const nixl_backend_t &type);
 
     // Static Plugin Helpers
-    const std::vector<nixlStaticPluginInfo>& getStaticPlugins();
+    const std::vector<nixlStaticPluginInfo> &
+    getStaticPlugins() const noexcept;
 };
 
 #endif // __PLUGIN_MANAGER_H

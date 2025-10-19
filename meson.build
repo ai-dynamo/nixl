@@ -266,6 +266,10 @@ if get_option('buildtype') == 'debug'
     add_project_arguments('-DNIXL_USE_PLUGIN_FILE="' + plugin_build_dir + '/pluginlist"',  language: 'cpp')
     plugfile = join_paths(plugin_build_dir, 'pluginlist')
     run_command('truncate', '-s 0', plugfile, check: true)
+
+    add_project_arguments('-DNIXL_USE_TELEMETRY_EXPORTER_PLUGIN_FILE="' + plugin_build_dir + '/telemetry_exporters_list"',  language: 'cpp')
+    telemetry_exporters_file = join_paths(plugin_build_dir, 'telemetry_exporters_list')
+    run_command('truncate', '-s 0', telemetry_exporters_file, check: true)
 endif
 
 nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core')

@@ -55,9 +55,11 @@ endif
 
 nixl_lib = library('nixl',
                    'nixl_agent.cpp',
+                   'base_plugin_manager.cpp',
                    'nixl_plugin_manager.cpp',
                    'nixl_listener.cpp',
                    'telemetry.cpp',
+                   'telemetry_plugin_manager.cpp',
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
                    link_args: ['-lstdc++fs'],
                    dependencies: nixl_lib_deps,

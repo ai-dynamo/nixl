@@ -40,6 +40,8 @@ export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
+export NIXL_TELEMETRY_EXPORTER_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins/telemetry/buffer
+export NIXL_TELEMETRY_EXPORTER=buffer
 
 echo "==== Show system info ===="
 env
@@ -69,7 +71,7 @@ fi
 ./bin/nixl_etcd_example
 ./bin/ucx_backend_test
 mkdir -p /tmp/telemetry_test
-NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
+NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_EXPORTER_OUTPUT_PATH=/tmp/telemetry_test ./bin/agent_example &
 sleep 1
 ./bin/telemetry_reader /tmp/telemetry_test/Agent001 &
 telePID=$!

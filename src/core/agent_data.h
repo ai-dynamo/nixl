@@ -116,6 +116,8 @@ class nixlAgentData {
         loadRemoteSections(const std::string &remote_name, nixlSerDes &sd);
         nixl_status_t
         invalidateRemoteData(const std::string &remote_name);
+        void
+        initializeTelemetry(const std::string &name, const nixlAgentConfig &cfg);
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);

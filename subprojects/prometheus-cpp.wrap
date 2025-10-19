@@ -1,0 +1,6 @@
+[wrap-git]
+url = https://github.com/jupp0r/prometheus-cpp.git
+revision = v1.3.0
+depth = 1
+clone-recursive = true
+method = cmake
