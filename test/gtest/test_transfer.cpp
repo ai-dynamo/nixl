@@ -93,23 +93,7 @@ private:
     const size_t size;
 };
 
-struct nixl_test_param_t {
-    std::string backend_name;
-    bool progress_thread;
-    unsigned num_workers;
-    unsigned num_threads;
-    std::string engine_config;
-};
-
-#define NIXL_INSTANTIATE_TEST(                                                           \
-    _test_name, _backend, _progress_thread, _num_workers, __num_threads, _engine_config) \
-    INSTANTIATE_TEST_SUITE_P(                                                            \
-        _test_name,                                                                      \
-        TestTransfer,                                                                    \
-        testing::ValuesIn(std::vector<nixl_test_param_t>(                                \
-            {{_backend, _progress_thread, _num_workers, __num_threads, _engine_config}})));
-
-class TestTransfer : public testing::TestWithParam<nixl_test_param_t> {
+class TestTransfer : public NixlTest {
 protected:
     nixlAgentConfig
     getConfig(int listen_port) {
@@ -172,7 +156,7 @@ protected:
 
     bool
     isProgressThreadEnabled() const {
-        return GetParam().progress_thread;
+        return GetParam().progress_thread_enabled;
     }
 
     size_t
@@ -543,10 +527,10 @@ TEST_P(TestTransfer, ListenerCommSize) {
     deregisterMem(getAgent(1), buffers, DRAM_SEG);
 }
 
-NIXL_INSTANTIATE_TEST(ucx, "UCX", true, 2, 0, "");
-NIXL_INSTANTIATE_TEST(ucx_no_pt, "UCX", false, 2, 0, "");
-NIXL_INSTANTIATE_TEST(ucx_threadpool, "UCX", true, 6, 4, "");
-NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, "UCX", false, 6, 4, "");
-NIXL_INSTANTIATE_TEST(ucx_mo, "UCX_MO", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx, TestTransfer, "UCX", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransfer, "UCX", false, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
+NIXL_INSTANTIATE_TEST(ucx_mo, TestTransfer, "UCX_MO", true, 2, 0, "");
 
 } // namespace gtest

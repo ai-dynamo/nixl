@@ -441,13 +441,15 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     }
 
     std::string elem;
+    std::string_view elem_view;
     std::stringstream stream(engine_config);
 
     while (std::getline(stream, elem, ',')) {
-        size_t pos = elem.find('=');
+        elem_view = elem;
+        size_t pos = elem_view.find('=');
 
         if (pos != std::string::npos) {
-            config.modify(elem.substr(0, pos), elem.substr(pos + 1));
+            config.modify(elem_view.substr(0, pos), elem_view.substr(pos + 1));
         }
     }
 
