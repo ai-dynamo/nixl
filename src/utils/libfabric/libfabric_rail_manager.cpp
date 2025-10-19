@@ -34,6 +34,7 @@ resetSeqId();
 
 // Static round-robin counter for rail selection
 static std::atomic<size_t> round_robin_counter{0};
+static const std::string NUM_RAILS_TAG{"num_rails"};
 
 nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
     : striping_threshold_(striping_threshold) {
@@ -136,17 +137,19 @@ nixlLibfabricRailManager::shouldUseStriping(size_t transfer_size) const {
 }
 
 nixl_status_t
-nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_type,
-                                                   void *local_addr,
-                                                   size_t transfer_size,
-                                                   uint64_t remote_base_addr,
-                                                   const std::vector<size_t> &selected_rails,
-                                                   const std::vector<struct fid_mr *> &local_mrs,
-                                                   const std::vector<uint64_t> &remote_keys,
-                                                   const std::vector<fi_addr_t> &dest_addrs,
-                                                   uint16_t agent_idx,
-                                                   std::function<void()> completion_callback,
-                                                   BinaryNotification *binary_notif) {
+nixlLibfabricRailManager::prepareAndSubmitTransfer(
+    nixlLibfabricReq::OpType op_type,
+    void *local_addr,
+    size_t transfer_size,
+    uint64_t remote_base_addr,
+    const std::vector<size_t> &selected_rails,
+    const std::vector<struct fid_mr *> &local_mrs,
+    const std::vector<uint64_t> &remote_keys,
+    const std::vector<size_t> &remote_selected_endpoints,
+    const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
+    uint16_t agent_idx,
+    std::function<void()> completion_callback,
+    BinaryNotification *binary_notif) {
     if (selected_rails.empty()) {
         NIXL_ERROR << "No rails selected for transfer";
         return NIXL_ERR_INVALID_PARAM;
@@ -154,11 +157,14 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
 
     // Determine striping strategy
     bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
-
+    NIXL_DEBUG << "use_striping: " << use_striping;
     if (!use_striping) {
         // Round-robin: use one rail for entire transfer
-        size_t rail_idx = round_robin_counter.fetch_add(1) % selected_rails.size();
-        size_t rail_id = selected_rails[rail_idx];
+        const auto counter_value = round_robin_counter.fetch_add(1);
+        const size_t rail_id = selected_rails[counter_value % selected_rails.size()];
+        const size_t remote_ep_id =
+            remote_selected_endpoints[counter_value % remote_selected_endpoints.size()];
+        NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
         nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type);
         if (!req) {
@@ -183,7 +189,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
         }
 
         req->local_mr = local_mrs[rail_id];
-        req->remote_key = remote_keys[rail_id];
+        req->remote_key = remote_keys[remote_ep_id];
         req->rail_id = rail_id;
         // Submit immediately
         nixl_status_t status;
@@ -196,7 +202,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
                                                      req->chunk_size,
                                                      fi_mr_desc(req->local_mr),
                                                      imm_data,
-                                                     dest_addrs[rail_id],
+                                                     dest_addrs.at(rail_id)[remote_ep_id],
                                                      req->remote_addr,
                                                      req->remote_key,
                                                      req);
@@ -204,7 +210,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
             status = data_rails_[rail_id]->postRead(req->local_addr,
                                                     req->chunk_size,
                                                     fi_mr_desc(req->local_mr),
-                                                    dest_addrs[rail_id],
+                                                    dest_addrs.at(rail_id)[remote_ep_id],
                                                     req->remote_addr,
                                                     req->remote_key,
                                                     req);
@@ -229,7 +235,10 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
         size_t chunk_size = transfer_size / num_rails;
         size_t remainder = transfer_size % num_rails;
         for (size_t i = 0; i < num_rails; ++i) {
-            size_t rail_id = selected_rails[i];
+            const size_t rail_id = selected_rails[i];
+            const size_t remote_ep_id =
+                remote_selected_endpoints[i % remote_selected_endpoints.size()];
+            NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id=" << remote_ep_id;
             size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
             if (current_chunk_size == 0) break;
             // Allocate request
@@ -261,7 +270,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
             }
 
             req->local_mr = local_mrs[rail_id];
-            req->remote_key = remote_keys[rail_id];
+            req->remote_key = remote_keys[remote_ep_id];
             req->rail_id = rail_id;
             nixl_status_t status;
             if (op_type == nixlLibfabricReq::WRITE) {
@@ -273,7 +282,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
                                                          req->chunk_size,
                                                          fi_mr_desc(req->local_mr),
                                                          imm_data,
-                                                         dest_addrs[rail_id],
+                                                         dest_addrs.at(rail_id)[remote_ep_id],
                                                          req->remote_addr,
                                                          req->remote_key,
                                                          req);
@@ -281,7 +290,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_t
                 status = data_rails_[rail_id]->postRead(req->local_addr,
                                                         req->chunk_size,
                                                         fi_mr_desc(req->local_mr),
-                                                        dest_addrs[rail_id],
+                                                        dest_addrs.at(rail_id)[remote_ep_id],
                                                         req->remote_addr,
                                                         req->remote_key,
                                                         req);
@@ -481,38 +490,33 @@ nixl_status_t
 nixlLibfabricRailManager::insertAllAddresses(
     RailType rail_type,
     const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
-    std::vector<fi_addr_t> &fi_addrs_out,
+    std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs_out,
     std::vector<char *> &ep_names_out) {
     auto &rails = (rail_type == RailType::DATA) ? data_rails_ : control_rails_;
     const char *rail_type_str = (rail_type == RailType::DATA) ? "data" : "control";
 
-    if (endpoints.size() != rails.size()) {
-        NIXL_ERROR << "Expected " << rails.size() << " " << rail_type_str << " endpoints, got "
-                   << endpoints.size();
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
     fi_addrs_out.clear();
     ep_names_out.clear();
-    fi_addrs_out.reserve(rails.size());
     ep_names_out.reserve(rails.size());
 
     // Process all rails in one operation
     for (size_t rail_id = 0; rail_id < rails.size(); ++rail_id) {
-        fi_addr_t fi_addr;
-        nixl_status_t status = rails[rail_id]->insertAddress(endpoints[rail_id].data(), &fi_addr);
-        if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Failed for " << rail_type_str << " rail " << rail_id;
-            return status;
+        fi_addrs_out[rail_id].reserve(endpoints.size());
+        for (const auto &endpoint : endpoints) {
+            fi_addr_t fi_addr;
+            nixl_status_t status = rails[rail_id]->insertAddress(endpoint.data(), &fi_addr);
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed for " << rail_type_str << " rail " << rail_id;
+                return status;
+            }
+            fi_addrs_out[rail_id].push_back(fi_addr);
+            NIXL_DEBUG << "Processed " << rail_type_str << " rail " << rail_id
+                       << " (fi_addr: " << fi_addr << ")";
         }
 
-        fi_addrs_out.push_back(fi_addr);
         ep_names_out.push_back(
             rails[rail_id]
                 ->ep_name); // This is char[LF_EP_NAME_MAX_LEN], will be converted to char*
-
-        NIXL_DEBUG << "Processed " << rail_type_str << " rail " << rail_id
-                   << " (fi_addr: " << fi_addr << ")";
     }
 
     NIXL_DEBUG << "Successfully processed " << rails.size() << " " << rail_type_str << " rails";
@@ -716,19 +720,20 @@ nixlLibfabricRailManager::serializeMemoryKeys(const std::vector<uint64_t> &keys,
 
 nixl_status_t
 nixlLibfabricRailManager::deserializeMemoryKeys(const std::string &serialized_data,
+                                                const size_t num_keys,
                                                 std::vector<uint64_t> &keys_out,
                                                 uint64_t &remote_addr_out) const {
     nixlSerDes ser_des;
     ser_des.importStr(serialized_data);
     // Load all rail keys instead of just one
     keys_out.clear();
-    keys_out.reserve(data_rails_.size());
-    for (size_t rail_id = 0; rail_id < data_rails_.size(); ++rail_id) {
-        std::string key_name = "key_" + std::to_string(rail_id);
+    keys_out.reserve(num_keys);
+    for (size_t idx = 0; idx < num_keys; ++idx) {
+        std::string key_name = "key_" + std::to_string(idx);
         uint64_t remote_key;
         nixl_status_t status = ser_des.getBuf(key_name.c_str(), &remote_key, sizeof(remote_key));
         if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Failed to get key " << key_name << " for rail " << rail_id;
+            NIXL_ERROR << "Failed to get key " << key_name;
             return NIXL_ERR_BACKEND;
         }
         keys_out.push_back(remote_key);
@@ -774,14 +779,13 @@ nixlLibfabricRailManager::deserializeConnectionInfo(
     // Use user prefix with standard suffixes
     std::string data_prefix = user_prefix + "_data_ep_";
     std::string control_prefix = user_prefix + "_control_ep_";
-    nixl_status_t data_status =
-        deserializeRailEndpoints(ser_des, data_prefix, data_rails_.size(), data_endpoints_out);
+    nixl_status_t data_status = deserializeRailEndpoints(ser_des, data_prefix, data_endpoints_out);
     if (data_status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to deserialize data rail endpoints with prefix: " << data_prefix;
         return data_status;
     }
-    nixl_status_t control_status = deserializeRailEndpoints(
-        ser_des, control_prefix, control_rails_.size(), control_endpoints_out);
+    nixl_status_t control_status =
+        deserializeRailEndpoints(ser_des, control_prefix, control_endpoints_out);
     if (control_status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to deserialize control rail endpoints with prefix: "
                    << control_prefix;
@@ -801,6 +805,8 @@ nixlLibfabricRailManager::serializeRailEndpoints(nixlSerDes &ser_des,
     auto &rails = (rail_type == RailType::DATA) ? data_rails_ : control_rails_;
     const char *rail_type_str = (rail_type == RailType::DATA) ? "data" : "control";
 
+    ser_des.addStr(NUM_RAILS_TAG, std::to_string(rails.size()));
+
     for (size_t rail_id = 0; rail_id < rails.size(); ++rail_id) {
         std::string rail_key = key_prefix + std::to_string(rail_id);
         const char *ep_name = rails[rail_id]->ep_name;
@@ -816,11 +822,31 @@ nixl_status_t
 nixlLibfabricRailManager::deserializeRailEndpoints(
     nixlSerDes &ser_des,
     const std::string &key_prefix,
-    size_t expected_count,
     std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints_out) const {
-    endpoints_out.resize(expected_count);
 
-    for (size_t rail_id = 0; rail_id < expected_count; ++rail_id) {
+    std::string str;
+    unsigned long num_rails_val;
+    try {
+        str = ser_des.getStr(NUM_RAILS_TAG);
+        num_rails_val = std::stoul(str);
+        if (num_rails_val > std::numeric_limits<size_t>::max()) {
+            NIXL_ERROR << "Key " << NUM_RAILS_TAG
+                       << " value out of range (size_t): " << num_rails_val;
+            return NIXL_ERR_BACKEND;
+        }
+    }
+    catch (const std::invalid_argument &) {
+        NIXL_ERROR << "Key " << NUM_RAILS_TAG << " not found or invalid.";
+        return NIXL_ERR_BACKEND;
+    }
+    catch (const std::out_of_range &) {
+        NIXL_ERROR << "Key " << NUM_RAILS_TAG << " value out of range (unsigned long): " << str;
+        return NIXL_ERR_BACKEND;
+    }
+    const size_t num_rails = static_cast<size_t>(num_rails_val);
+    endpoints_out.resize(num_rails);
+
+    for (size_t rail_id = 0; rail_id < num_rails; ++rail_id) {
         std::string rail_key = key_prefix + std::to_string(rail_id);
 
         // First check if the key exists and get its length
@@ -845,7 +871,7 @@ nixlLibfabricRailManager::deserializeRailEndpoints(
         }
     }
 
-    NIXL_DEBUG << "Successfully deserialized " << expected_count << " rail endpoints";
+    NIXL_DEBUG << "Successfully deserialized " << num_rails << " rail endpoints.";
     return NIXL_SUCCESS;
 }
 
