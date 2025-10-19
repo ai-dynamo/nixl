@@ -26,6 +26,7 @@
 #include "common/nixl_log.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
+#include "telemetry_plugin_manager.h"
 #include "util.h"
 
 using namespace std::chrono_literals;
@@ -75,21 +76,90 @@ nixlTelemetry::initializeTelemetry() {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
     }
 
-    NIXL_INFO << "Telemetry enabled, using buffer path: " << full_file_path
-              << " with size: " << buffer_size;
 
-    buffer_ = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-        full_file_path, true, TELEMETRY_VERSION, buffer_size);
+    // Check if exporter is enabled and which type to use
+    const char *exporter_type_env = std::getenv(TELEMETRY_EXPORTER_VAR);
+    if (exporter_type_env) {
+        // Use plugin-based exporter
+        std::string exporter_type = exporter_type_env;
+
+        NIXL_INFO << "Telemetry exporter enabled, type: " << exporter_type;
+
+        // Prepare initialization parameters for the exporter
+        const nixlTelemetryExporterInitParams init_params = {
+            .outputPath = std::getenv(TELEMETRY_EXPORTER_OUTPUT_PATH_VAR) ?
+                std::getenv(TELEMETRY_EXPORTER_OUTPUT_PATH_VAR) :
+                full_file_path.string(),
+            .eventLimit = buffer_size};
+
+        // Create exporter through plugin manager
+        auto &exporter_manager = nixlTelemetryPluginManager::getInstance();
+        exporter_ = exporter_manager.createExporter(exporter_type, init_params);
+
+        if (!exporter_) {
+            NIXL_WARN << "Failed to create telemetry exporter '" << exporter_type
+                      << "', falling back to buffer mode";
+            // Fall back to buffer mode
+            buffer_ = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+                full_file_path, true, TELEMETRY_VERSION, buffer_size);
+            writeTask_.callback_ = [this]() { return writeEventHelper(); };
+        } else {
+            writeTask_.callback_ = [this]() { return telemetryExporterHelper(); };
+        }
+    } else {
+        // Use buffer mode (default)
+        NIXL_INFO << "Telemetry enabled, using buffer path: " << full_file_path
+                  << " with size: " << buffer_size;
+
+        buffer_ = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+            full_file_path, true, TELEMETRY_VERSION, buffer_size);
+
+        writeTask_.callback_ = [this]() { return writeEventHelper(); };
+    }
 
     auto run_interval = std::getenv(TELEMETRY_RUN_INTERVAL_VAR) ?
         std::chrono::milliseconds(std::stoul(std::getenv(TELEMETRY_RUN_INTERVAL_VAR))) :
         DEFAULT_TELEMETRY_RUN_INTERVAL;
 
     // Update write task interval and start it
-    writeTask_.callback_ = [this]() { return writeEventHelper(); };
+
     writeTask_.interval_ = run_interval;
     writeTask_.enabled_ = true;
     registerPeriodicTask(writeTask_);
+}
+
+bool
+nixlTelemetry::telemetryExporterHelper() {
+    std::vector<nixlTelemetryEvent> next_queue;
+    next_queue.reserve(exporter_->getEventLimit());
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        events_.swap(next_queue);
+    }
+    for (auto &event : next_queue) {
+        // if full, ignore
+        exporter_->exportEvent(event);
+    }
+    // collect all events and sort them by timestamp
+    std::vector<nixlTelemetryEvent> all_events;
+    for (auto &backend : backendMap_) {
+        auto backend_events = backend.second->getTelemetryEvents();
+        for (auto &event : backend_events) {
+            // don't trust enum value coming from backend,
+            // as it might be different from the one in agent
+            event.category_ = nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND;
+            all_events.push_back(event);
+        }
+    }
+    std::sort(all_events.begin(),
+              all_events.end(),
+              [](const nixlTelemetryEvent &a, const nixlTelemetryEvent &b) {
+                  return a.timestampUs_ < b.timestampUs_;
+              });
+    for (auto &event : all_events) {
+        exporter_->exportEvent(event);
+    }
+    return true;
 }
 
 bool

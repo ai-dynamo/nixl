@@ -127,6 +127,8 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
     memorySection = new nixlLocalSection();
     const char *telemetry_env_val = std::getenv(TELEMETRY_ENABLED_VAR);
     const char *telemetry_env_dir = std::getenv(TELEMETRY_DIR_VAR);
+    const char *telemetry_env_exporter = std::getenv(TELEMETRY_EXPORTER_VAR);
+    const char *telemetry_env_exporter_plugin_dir = std::getenv(TELEMETRY_EXPORTER_PLUGIN_DIR_VAR);
 
     if (telemetry_env_val != nullptr) {
         if (!strcasecmp(telemetry_env_val, "y") || !strcasecmp(telemetry_env_val, "1") ||
@@ -136,8 +138,17 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
                 std::string telemetry_file = std::string(telemetry_env_dir) + "/" + name;
                 telemetry_ = std::make_unique<nixlTelemetry>(telemetry_file, backendEngines);
                 NIXL_DEBUG << "NIXL telemetry is enabled with output file: " << telemetry_file;
+            } else if (telemetry_env_exporter_plugin_dir != nullptr &&
+                       telemetry_env_exporter != nullptr) {
+                std::string telemetry_file =
+                    std::string(telemetry_env_exporter_plugin_dir) + "/" + telemetry_env_exporter;
+                telemetry_ = std::make_unique<nixlTelemetry>(telemetry_file, backendEngines);
+                NIXL_DEBUG << "NIXL telemetry is enabled with exporter type: "
+                           << telemetry_env_exporter
+                           << " from: " << telemetry_env_exporter_plugin_dir;
             } else {
-                NIXL_DEBUG << "NIXL telemetry is enabled without an output file";
+                NIXL_DEBUG << "NIXL telemetry is enabled without an output file or exporter plugin"
+                              "directory and exporter type";
             }
         } else if (cfg.captureTelemetry) {
             telemetryEnabled = true;
