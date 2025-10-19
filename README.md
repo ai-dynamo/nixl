@@ -260,7 +260,7 @@ cd benchmark/nixlbench
 meson setup build && cd build && ninja
 
 # Run benchmark with ETCD
-./nixlbench --etcd-endpoints http://localhost:2379 --backend UCX --initiator_seg_type VRAM
+./nixlbench --etcd-endpoints http://localhost:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 ```
 
 ## Examples
