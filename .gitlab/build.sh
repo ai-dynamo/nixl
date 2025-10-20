@@ -32,6 +32,8 @@ UCX_VERSION=${UCX_VERSION:-v1.19.0}
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
+# Python version to use
+PYTHON_VERSION="3.12"
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -57,7 +59,7 @@ ARCH=$(uname -m)
 $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
-$SUDO apt-get -qq install -y python3 \
+$SUDO apt-get -qq install -y python${PYTHON_VERSION}-dev \
                              python3-pip \
                              curl \
                              wget \
