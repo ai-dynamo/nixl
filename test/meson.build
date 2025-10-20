@@ -15,4 +15,7 @@
 
 subdir('nixl')
 subdir('unit')
-subdir('gtest')
+
+if ucx_dep.found()
+    subdir('gtest')
+endif
