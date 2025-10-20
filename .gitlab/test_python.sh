@@ -45,6 +45,9 @@ pip3 install --break-system-packages pytest
 pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
 
+# Add user pip packages to PATH
+export PATH="$HOME/.local/bin:$PATH"
+
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
 etcd_peer_port=$(get_next_tcp_port)
