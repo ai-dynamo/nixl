@@ -191,6 +191,21 @@ class xferBenchConfig {
         isStorageBackend();
 };
 
+// Shared GUSLI device config used by utils and nixl_worker
+struct GusliDeviceConfig {
+    int device_id;
+    char device_type; // 'F' for file, 'K' for kernel device, 'N' for networked server
+    std::string device_path;
+    std::string security_flags;
+};
+
+// Parser for GUSLI device list: "id:type:path,id:type:path,..."
+// security_list: comma-separated security flags; num_devices: expected device count (validation)
+std::vector<GusliDeviceConfig>
+parseGusliDeviceList(const std::string &device_list,
+                     const std::string &security_list,
+                     int num_devices);
+
 // Timer class for measuring durations at high resolution
 class xferBenchTimer {
 public:
