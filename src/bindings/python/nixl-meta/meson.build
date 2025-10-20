@@ -13,23 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-pybind_dep = dependency('pybind11')
+source_dir = meson.current_source_dir()
+build_dir = meson.current_build_dir()
 
-nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)
-
-py = import('python').find_installation('python3', pure: false)
-
-py.extension_module('_bindings',
-           'nixl_bindings.cpp',
-           subdir: ('nixl'),
-           dependencies: [nixl_dep, serdes_interface, pybind_dep],
-           include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           install: true)
-
-py.extension_module('_utils',
-           'nixl_utils.cpp',
-           subdir: ('nixl'),
-           dependencies: [pybind_dep],
-           install: true)
-
-subdir('nixl-meta')
+meta_wheel = custom_target(
+  'build_nixl_meta',
+  output: ['nixl-0.6.1-py3-none-any.whl'],
+  command: ['uv', 'build', '--wheel', '--out-dir', build_dir, source_dir],
+  install: false,
+  build_by_default: true
+)
