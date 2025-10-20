@@ -103,6 +103,13 @@ $SUDO apt-get -qq install -y python3 \
                              libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
+# Upgrade meson for Ubuntu 22.04 (distro version is too old, project requires >= 0.64.0)
+if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
+    $SUDO pip3 install --upgrade meson
+    # Ensure pip3's meson takes precedence over apt's version
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+fi
+
 # Add DOCA repository and install packages
 ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
 MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"

@@ -54,10 +54,6 @@ steps:
   - name: Build
     parallel: false
     run: |
-      if [[ "${name}" == *"ubuntu22.04"* ]]; then
-        # distro's meson version is too old project requires >= 0.64.0
-        pip3 install meson
-      fi
       .gitlab/build.sh ${NIXL_INSTALL_DIR}
 
   - name: Test CPP
