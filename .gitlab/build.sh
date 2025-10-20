@@ -32,8 +32,6 @@ UCX_VERSION=${UCX_VERSION:-v1.19.0}
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
-# Python version to use
-PYTHON_VERSION="3.12"
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -59,7 +57,7 @@ ARCH=$(uname -m)
 $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
-$SUDO apt-get -qq install -y python${PYTHON_VERSION}-dev \
+$SUDO apt-get -qq install -y python3-dev \
                              python3-pip \
                              curl \
                              wget \
@@ -105,8 +103,12 @@ $SUDO apt-get -qq install -y python${PYTHON_VERSION}-dev \
                              libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
-# Upgrade meson for Ubuntu 22.04 (distro version is too old, project requires >= 0.64.0)
+# Ubuntu 22.04 specific setup
 if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
+    # Upgrade pip for '--break-system-packages' support
+    $SUDO pip3 install --upgrade pip
+
+    # Upgrade meson (distro version 0.61.2 is too old, project requires >= 0.64.0)
     $SUDO pip3 install --upgrade meson
     # Ensure pip3's meson takes precedence over apt's version
     export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
