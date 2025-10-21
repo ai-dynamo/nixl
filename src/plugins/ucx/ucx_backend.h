@@ -204,7 +204,8 @@ public:
     getGpuSignalSize(size_t &signal_size) const override;
 
     nixl_status_t
-    prepGpuSignal(const nixlBackendMD &meta, void *signal) const override;
+    prepGpuSignal(const nixlBackendMD &meta, void *signal,
+                  const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
     int
     progress();
@@ -217,6 +218,11 @@ public:
     // public function for UCX worker to mark connections as connected
     nixl_status_t
     checkConn(const std::string &remote_agent);
+
+private:
+    // Helper to extract worker_id from opt_args->customParam
+    nixl_status_t
+    getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args, size_t *worker_id) const;
 
 protected:
     const std::vector<std::unique_ptr<nixlUcxWorker>> &
