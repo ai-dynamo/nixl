@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Ensure CUDA_HOME is set (cuda-dl-base images don't set it by default)
+export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
+
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../.ci/scripts/common.sh"
 
