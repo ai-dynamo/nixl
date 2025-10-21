@@ -33,12 +33,15 @@ matrix:
       - nvcr.io/nvidia/pytorch:25.02-py3
     arch:
       - x86_64
+    ucx_version:
+      - master
+      - v1.19.0
 
-taskName: "${name}/${arch}/${axis_index}"
+taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 env:
-  INSTALL_DIR: ${WORKSPACE}/nixl_install
-  UCX_VERSION: v1.19.0
+  CONTAINER_WORKSPACE: /workspace
+  INSTALL_DIR: ${CONTAINER_WORKSPACE}/nixl_install
   NPROC: "16"
   # Manual timeout - ci-demo doesn't handle docker exec
   TEST_TIMEOUT: 30
@@ -71,7 +74,7 @@ steps:
   - name: Build GPU Test Environment
     parallel: false
     run: |
-      docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} --build-arg WORKSPACE=${WORKSPACE} .
+      docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} --build-arg WORKSPACE=${CONTAINER_WORKSPACE} .
     onfail: docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
 
   - name: Run GPU Test Environment
@@ -93,7 +96,9 @@ steps:
   - name: Build
     parallel: false
     run: |
-      docker exec -w ${WORKSPACE} -e UCX_VERSION=${UCX_VERSION} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/build.sh ${INSTALL_DIR}"
+      set -ex
+      docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c "UCX_VERSION=${ucx_version} .gitlab/build.sh ${INSTALL_DIR}"
+
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -101,7 +106,7 @@ steps:
   - name: Test CPP
     parallel: false
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -109,7 +114,7 @@ steps:
   - name: Test Python
     parallel: false
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -117,7 +122,7 @@ steps:
   - name: Test Nixlbench
     parallel: false
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_nixlbench.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_nixlbench.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -125,7 +130,7 @@ steps:
   - name: Test Rust
     parallel: false
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -w ${WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_rust.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_rust.sh ${INSTALL_DIR}"
     always: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
