@@ -21,6 +21,7 @@
 #include <unordered_map>
 #include <optional>
 #include <chrono>
+#include <functional>
 
 
 /*** Forward declarations ***/
@@ -278,6 +279,11 @@ struct nixlXferTelemetry {
  *        for telemetry output.
  */
 using nixl_xfer_telem_t = nixlXferTelemetry;
+
+/**
+ * @brief A typedef for a function to be called when a remote agent's etcd key is deleted
+ */
+using nixl_etcd_deletion_callback_t = std::function<nixl_status_t(const std::string &remote_agent,void* user_data)>;
 
 /**
  * @brief A define for an empty string, that indicates the descriptor list is being

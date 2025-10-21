@@ -61,6 +61,19 @@ class nixlAgentConfig {
          */
         std::chrono::microseconds etcdWatchTimeout;
 
+
+        /**
+         * @var ETCD deletion callback
+         *      Callback function to be called when a remote agent's etcd key is deleted
+         */
+        nixl_etcd_deletion_callback_t etcd_deletion_callback;
+        /**
+         * @var ETCD deletion callback user data
+         *      User data to be passed to the deletion callback function
+         */
+        void* const etcd_deletion_callback_user_data;
+
+
         /**
          * @brief  Agent configuration constructor for enabling various features.
          * @param use_prog_thread    flag to determine use of progress thread
@@ -72,6 +85,8 @@ class nixlAgentConfig {
          * @param lthr_delay_us      Optional delay for listener thread in us
          * @param capture_telemetry  Optional flag to enable telemetry capture
          * @param etcd_watch_timeout Optional timeout for etcd watch operations in microseconds
+         * @param etcd_deletion_callback Callback function to be called when a remote agent's etcd key is deleted
+         * @param etcd_deletion_callback_user_data User data to be passed to the deletion callback function
          */
         nixlAgentConfig(const bool use_prog_thread,
                         const bool use_listen_thread = false,
@@ -82,7 +97,9 @@ class nixlAgentConfig {
                         const uint64_t lthr_delay_us = 100000,
                         const bool capture_telemetry = false,
                         const std::chrono::microseconds &etcd_watch_timeout =
-                            std::chrono::microseconds(5000000))
+                            std::chrono::microseconds(5000000),
+                        const nixl_etcd_deletion_callback_t &etcd_deletion_callback = nullptr,
+                        void* etcd_deletion_callback_user_data = nullptr)
             : useProgThread(use_prog_thread),
               useListenThread(use_listen_thread),
               listenPort(port),
@@ -90,7 +107,9 @@ class nixlAgentConfig {
               captureTelemetry(capture_telemetry),
               pthrDelay(pthr_delay_us),
               lthrDelay(lthr_delay_us),
-              etcdWatchTimeout(etcd_watch_timeout) {}
+              etcdWatchTimeout(etcd_watch_timeout),
+              etcd_deletion_callback(etcd_deletion_callback),
+              etcd_deletion_callback_user_data(etcd_deletion_callback_user_data) {}
 
         /**
          * @brief Copy constructor for nixlAgentConfig object
