@@ -32,7 +32,7 @@ ARG _GID=30
 ARG _LOGIN=svc-nixl
 ARG _GROUP=hardware
 ARG _HOME=/home/$_LOGIN
-ARG WORKSPACE
+ARG WORKSPACE=/workspace
 
 # Labels for documentation
 LABEL maintainer="NVIDIA NIXL Team"
