@@ -220,9 +220,9 @@ public:
     checkConn(const std::string &remote_agent);
 
 private:
-    // Helper to extract worker_id from opt_args->customParam
-    nixl_status_t
-    getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args, size_t *worker_id) const;
+    // Helper to extract worker_id from opt_args->customParam or nullopt if not found
+    std::optional<size_t>
+    getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const;
 
 protected:
     const std::vector<std::unique_ptr<nixlUcxWorker>> &
