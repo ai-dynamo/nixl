@@ -1399,7 +1399,7 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const {
 
             if (worker_id >= getSharedWorkersSize()) {
                 NIXL_WARN << "Invalid worker_id " << worker_id << " (must be < "
-                           << getSharedWorkersSize() << ")";
+                          << getSharedWorkersSize() << ")";
                 return std::nullopt;
             }
 
