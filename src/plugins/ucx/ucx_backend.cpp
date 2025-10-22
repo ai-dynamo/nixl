@@ -1388,7 +1388,7 @@ nixlUcxEngine::getWorkerId() const {
     return it->second;
 }
 
-std::optional<size_t>
+[[nodiscard]] std::optional<size_t>
 nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const {
     if (!opt_args || opt_args->customParam.empty()) {
         return std::nullopt;
@@ -1729,8 +1729,8 @@ nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta,
         auto *ucx_meta = static_cast<const nixlUcxPrivateMetadata *>(&meta);
 
         auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
-        if (opt_worker_id.has_value()) {
-            getWorker(opt_worker_id.value())->prepGpuSignal(ucx_meta->mem, signal);
+        if (opt_worker_id) {
+            getWorker(*opt_worker_id)->prepGpuSignal(ucx_meta->mem, signal);
         } else {
             getWorker(getWorkerId())->prepGpuSignal(ucx_meta->mem, signal);
         }
