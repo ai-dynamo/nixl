@@ -1087,8 +1087,12 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
 
 // Helper to execute a single transfer iteration
 static inline nixl_status_t
-execSingleTransfer(nixlAgent *agent, nixlXferReqH *req) {
+execSingleTransfer(nixlAgent *agent,
+                   nixlXferReqH *req,
+                   xferBenchTimer &timer,
+                   xferBenchStats &thread_stats) {
     nixl_status_t rc = agent->postXferReq(req);
+    thread_stats.post_duration.add(timer.lap());
     while (NIXL_IN_PROG == rc) {
         rc = agent->getXferStatus(req);
     }
@@ -1156,8 +1160,7 @@ execTransferIterations(nixlAgent *agent,
             }
             total_prepare_duration += timer.lap();
 
-            thread_stats.post_duration.add(timer.lap());
-            nixl_status_t rc = execSingleTransfer(agent, req);
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
@@ -1177,8 +1180,7 @@ execTransferIterations(nixlAgent *agent,
     } else {
         // Standard path: Single request for all iterations
         for (int i = 0; i < num_iter; ++i) {
-            thread_stats.post_duration.add(timer.lap());
-            nixl_status_t rc = execSingleTransfer(agent, req);
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
