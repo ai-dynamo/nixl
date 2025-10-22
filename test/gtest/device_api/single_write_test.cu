@@ -149,7 +149,7 @@ protected:
         nixl_b_params_t params;
 
         if (getBackendName() == "UCX") {
-            params["num_workers"] = "32";
+            params["num_workers"] = std::to_string(numWorkers);
         }
 
         return params;
@@ -162,10 +162,6 @@ protected:
         }
 
         auto params = getBackendParams();
-        auto it = params.find("num_workers");
-        if (it != params.end()) {
-            num_workers_ = std::stoull(it->second);
-        }
 
         for (size_t i = 0; i < 2; i++) {
             agents.emplace_back(std::make_unique<nixlAgent>(getAgentName(i), getConfig()));
@@ -204,35 +200,35 @@ protected:
     completeWireup(size_t from_agent, size_t to_agent,
                   const std::vector<MemBuffer> &wireup_src,
                   const std::vector<MemBuffer> &wireup_dst) {
-        nixl_opt_args_t warmup_params = {};
+        nixl_opt_args_t wireup_params;
 
-        for (size_t worker_id = 0; worker_id < num_workers_; worker_id++) {
-            warmup_params.customParam = "worker_id=" + std::to_string(worker_id);
+        for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
+            wireup_params.customParam = "worker_id=" + std::to_string(worker_id);
 
-            nixlXferReqH *warmup_req = nullptr;
+            nixlXferReqH *wireup_req = nullptr;
             nixl_status_t status = getAgent(from_agent)
                                        .createXferReq(NIXL_WRITE,
                                                       makeDescList<nixlBasicDesc>(wireup_src, VRAM_SEG),
                                                       makeDescList<nixlBasicDesc>(wireup_dst, VRAM_SEG),
                                                       getAgentName(to_agent),
-                                                      warmup_req,
-                                                      &warmup_params);
+                                                      wireup_req,
+                                                      &wireup_params);
 
-            ASSERT_EQ(status, NIXL_SUCCESS) << "Failed to create warmup request for worker " << worker_id;
+            ASSERT_EQ(status, NIXL_SUCCESS) << "Failed to create wireup request for worker " << worker_id;
 
-            status = getAgent(from_agent).postXferReq(warmup_req);
+            status = getAgent(from_agent).postXferReq(wireup_req);
             ASSERT_TRUE(status == NIXL_SUCCESS || status == NIXL_IN_PROG)
-                << "Failed to post warmup for worker " << worker_id;
+                << "Failed to post wireup for worker " << worker_id;
 
             nixl_status_t xfer_status;
             do {
-                xfer_status = getAgent(from_agent).getXferStatus(warmup_req);
+                xfer_status = getAgent(from_agent).getXferStatus(wireup_req);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             } while (xfer_status == NIXL_IN_PROG);
 
             ASSERT_EQ(xfer_status, NIXL_SUCCESS) << "Warmup failed for worker " << worker_id;
 
-            status = getAgent(from_agent).releaseXferReq(warmup_req);
+            status = getAgent(from_agent).releaseXferReq(wireup_req);
             ASSERT_EQ(status, NIXL_SUCCESS);
         }
     }
@@ -350,7 +346,7 @@ protected:
 protected:
     static constexpr size_t SENDER_AGENT = 0;
     static constexpr size_t RECEIVER_AGENT = 1;
-    size_t num_workers_ = 32;
+    static constexpr size_t numWorkers = 32;
 
 private:
     static constexpr uint64_t DEV_ID = 0;
@@ -615,11 +611,11 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
     nixl_mem_t mem_type = VRAM_SEG;
     size_t num_threads = 32;
 
-    std::vector<std::vector<MemBuffer>> src_buffers(num_workers_);
-    std::vector<std::vector<MemBuffer>> dst_buffers(num_workers_);
-    std::vector<uint32_t> patterns(num_workers_);
+    std::vector<std::vector<MemBuffer>> src_buffers(numWorkers);
+    std::vector<std::vector<MemBuffer>> dst_buffers(numWorkers);
+    std::vector<uint32_t> patterns(numWorkers);
 
-    for (size_t worker_id = 0; worker_id < num_workers_; worker_id++) {
+    for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
         createRegisteredMem(getAgent(SENDER_AGENT), size, 1, mem_type, src_buffers[worker_id]);
         createRegisteredMem(getAgent(RECEIVER_AGENT), size, 1, mem_type, dst_buffers[worker_id]);
 
@@ -634,10 +630,10 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
     extra_params.hasNotif = true;
     extra_params.notifMsg = NOTIF_MSG;
 
-    std::vector<nixlXferReqH *> xfer_reqs(num_workers_);
-    std::vector<nixlGpuXferReqH> gpu_req_hndls(num_workers_);
+    std::vector<nixlXferReqH *> xfer_reqs(numWorkers);
+    std::vector<nixlGpuXferReqH> gpu_req_hndls(numWorkers);
 
-    for (size_t worker_id = 0; worker_id < num_workers_; worker_id++) {
+    for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
         extra_params.customParam = "worker_id=" + std::to_string(worker_id);
 
         nixl_status_t status = getAgent(SENDER_AGENT)
@@ -658,7 +654,7 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
     unsigned long long *end_time_ptr = nullptr;
     initTimingPublic(&start_time_ptr, &end_time_ptr);
 
-    for (size_t worker_id = 0; worker_id < num_workers_; worker_id++) {
+    for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
         nixl_status_t status = dispatchLaunchSingleWriteTest(GetParam(), num_threads,
                                                              gpu_req_hndls[worker_id], index,
                                                              0, 0, size, num_iters, is_no_delay,
@@ -666,7 +662,7 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
         ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel launch failed for worker " << worker_id;
     }
 
-    for (size_t worker_id = 0; worker_id < num_workers_; worker_id++) {
+    for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
         uint32_t dst_data;
         cudaMemcpy(&dst_data, static_cast<void *>(dst_buffers[worker_id][0]),
                    sizeof(uint32_t), cudaMemcpyDeviceToHost);
@@ -676,12 +672,12 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
             << ", Got: 0x" << dst_data;
     }
 
-    Logger() << "MultipleWorkers test: " << num_workers_ << " workers with explicit selection verified";
+    Logger() << "MultipleWorkers test: " << numWorkers << " workers with explicit selection verified";
 
     cudaFree(start_time_ptr);
     cudaFree(end_time_ptr);
 
-    for (size_t worker_id = 0; worker_id < num_workers_; worker_id++) {
+    for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
         getAgent(SENDER_AGENT).releaseGpuXferReq(gpu_req_hndls[worker_id]);
         nixl_status_t status = getAgent(SENDER_AGENT).releaseXferReq(xfer_reqs[worker_id]);
         EXPECT_EQ(status, NIXL_SUCCESS);

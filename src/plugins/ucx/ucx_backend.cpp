@@ -1398,7 +1398,7 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const {
                 std::stoull(opt_args->customParam.substr(pos + worker_id_key.length()));
 
             if (worker_id >= getSharedWorkersSize()) {
-                NIXL_ERROR << "Invalid worker_id " << worker_id << " (must be < "
+                NIXL_WARN << "Invalid worker_id " << worker_id << " (must be < "
                            << getSharedWorkersSize() << ")";
                 return std::nullopt;
             }
@@ -1723,13 +1723,9 @@ nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta,
 
         auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
         if (opt_worker_id.has_value()) {
-            // Prepare signal on specific worker
             getWorker(opt_worker_id.value())->prepGpuSignal(ucx_meta->mem, signal);
         } else {
-            // No worker_id specified - prepare on ALL workers (safest default)
-            for (const auto &worker : uws) {
-                worker->prepGpuSignal(ucx_meta->mem, signal);
-            }
+            getWorker(getWorkerId())->prepGpuSignal(ucx_meta->mem, signal);
         }
 
         return NIXL_SUCCESS;
