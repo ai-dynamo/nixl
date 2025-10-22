@@ -607,21 +607,25 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
     constexpr size_t size = 4 * 1024;
     constexpr size_t num_iters = 100;
     constexpr unsigned index = 0;
-    const bool is_no_delay = true;
-    nixl_mem_t mem_type = VRAM_SEG;
-    size_t num_threads = 32;
+    constexpr bool is_no_delay = true;
+    constexpr nixl_mem_t mem_type = VRAM_SEG;
+    constexpr size_t num_threads = 32;
 
     std::vector<std::vector<MemBuffer>> src_buffers(numWorkers);
     std::vector<std::vector<MemBuffer>> dst_buffers(numWorkers);
-    std::vector<uint32_t> patterns(numWorkers);
+    std::vector<std::vector<uint32_t>> patterns(numWorkers);
 
     for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
         createRegisteredMem(getAgent(SENDER_AGENT), size, 1, mem_type, src_buffers[worker_id]);
         createRegisteredMem(getAgent(RECEIVER_AGENT), size, 1, mem_type, dst_buffers[worker_id]);
 
-        patterns[worker_id] = 0xDEAD0000 | worker_id;
-        cudaMemcpy(static_cast<void *>(src_buffers[worker_id][0]), &patterns[worker_id],
-                   sizeof(uint32_t), cudaMemcpyHostToDevice);
+        size_t num_elements = size / sizeof(uint32_t);
+        patterns[worker_id].resize(num_elements);
+        for (size_t i = 0; i < num_elements; i++) {
+            patterns[worker_id][i] = 0xDEAD0000 | worker_id;
+        }
+        cudaMemcpy(static_cast<void *>(src_buffers[worker_id][0]), patterns[worker_id].data(),
+                   size, cudaMemcpyHostToDevice);
     }
 
     exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
@@ -650,8 +654,8 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
         ASSERT_EQ(status, NIXL_SUCCESS) << "Failed to create GPU xfer request for worker " << worker_id;
     }
 
-    unsigned long long *start_time_ptr = nullptr;
-    unsigned long long *end_time_ptr = nullptr;
+    unsigned long long *start_time_ptr;
+    unsigned long long *end_time_ptr;
     initTimingPublic(&start_time_ptr, &end_time_ptr);
 
     for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
@@ -663,13 +667,12 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
     }
 
     for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
-        uint32_t dst_data;
-        cudaMemcpy(&dst_data, static_cast<void *>(dst_buffers[worker_id][0]),
-                   sizeof(uint32_t), cudaMemcpyDeviceToHost);
+        std::vector<uint32_t> received(size / sizeof(uint32_t));
+        cudaMemcpy(received.data(), static_cast<void *>(dst_buffers[worker_id][0]),
+                   size, cudaMemcpyDeviceToHost);
 
-        EXPECT_EQ(dst_data, patterns[worker_id])
-            << "Worker " << worker_id << " data failed. Expected: 0x" << std::hex << patterns[worker_id]
-            << ", Got: 0x" << dst_data;
+        EXPECT_EQ(received, patterns[worker_id])
+            << "Worker " << worker_id << " full buffer verification failed";
     }
 
     Logger() << "MultipleWorkers test: " << numWorkers << " workers with explicit selection verified";
