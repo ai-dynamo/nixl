@@ -1087,7 +1087,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
 
 // Helper to execute a single transfer iteration
 static inline nixl_status_t
-execSingleTransfer(nixlAgent *agent, nixlXferReqH *req,
+execSingleTransfer(nixlAgent *agent,
+                   nixlXferReqH *req,
                    xferBenchTimer &timer,
                    xferBenchStats &thread_stats) {
     nixl_status_t rc = agent->postXferReq(req);
