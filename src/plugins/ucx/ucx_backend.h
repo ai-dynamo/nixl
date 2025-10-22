@@ -204,7 +204,8 @@ public:
     getGpuSignalSize(size_t &signal_size) const override;
 
     nixl_status_t
-    prepGpuSignal(const nixlBackendMD &meta, void *signal,
+    prepGpuSignal(const nixlBackendMD &meta,
+                  void *signal,
                   const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
     int
