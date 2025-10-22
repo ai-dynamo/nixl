@@ -1390,24 +1390,31 @@ nixlUcxEngine::getWorkerId() const {
 
 std::optional<size_t>
 nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const {
-    if (opt_args && !opt_args->customParam.empty()) {
-        constexpr std::string_view worker_id_key = "worker_id=";
-        size_t pos = opt_args->customParam.find(worker_id_key);
-        if (pos != std::string::npos) {
-            size_t worker_id =
-                std::stoull(opt_args->customParam.substr(pos + worker_id_key.length()));
-
-            if (worker_id >= getSharedWorkersSize()) {
-                NIXL_WARN << "Invalid worker_id " << worker_id << " (must be < "
-                          << getSharedWorkersSize() << ")";
-                return std::nullopt;
-            }
-
-            return worker_id;
-        }
+    if (!opt_args || opt_args->customParam.empty()) {
+        return std::nullopt;
     }
 
-    return std::nullopt;
+    constexpr std::string_view worker_id_key = "worker_id=";
+    size_t pos = opt_args->customParam.find(worker_id_key);
+    if (pos == std::string::npos) {
+        return std::nullopt;
+    }
+
+    try {
+        size_t worker_id =
+            std::stoull(opt_args->customParam.substr(pos + worker_id_key.length()));
+
+        if (worker_id >= getSharedWorkersSize()) {
+            NIXL_WARN << "Invalid worker_id " << worker_id << " (must be < "
+                      << getSharedWorkersSize() << ")";
+            return std::nullopt;
+        }
+
+        return worker_id;
+    } catch (const std::exception &e) {
+        NIXL_WARN << "Failed to parse worker_id from customParam: " << e.what();
+        return std::nullopt;
+    }
 }
 
 nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
