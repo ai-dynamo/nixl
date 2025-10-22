@@ -65,7 +65,14 @@ def set_log_level_by_env(nixl_logger: logging.Logger) -> None:
     if env_log_level:
         try:
             # Convert string to logging level
-            numeric_level = getattr(logging, env_log_level.upper(), None)
+            numeric_level = {
+                "TRACE": logging.DEBUG,
+                "DEBUG": logging.DEBUG,
+                "INFO": logging.INFO,
+                "WARN": logging.WARNING,
+                "ERROR": logging.ERROR,
+                "FATAL": logging.CRITICAL,
+            }.get(env_log_level.upper())
             if not isinstance(numeric_level, int):
                 raise ValueError(f"Invalid log level: {env_log_level}")
 
