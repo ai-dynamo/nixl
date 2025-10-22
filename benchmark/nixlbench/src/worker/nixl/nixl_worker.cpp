@@ -1180,7 +1180,6 @@ execTransferIterations(nixlAgent *agent,
     } else {
         // Standard path: Single request for all iterations
         for (int i = 0; i < num_iter; ++i) {
-            thread_stats.post_duration.add(timer.lap());
             nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
