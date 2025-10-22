@@ -46,7 +46,7 @@ TestSingleWriteKernel(nixlGpuXferReqH req_hdnl,
     for (size_t i = 0; i < num_iters; ++i) {
         status = nixlGpuPostSingleWriteXferReq<level>(
             req_hdnl, index, src_offset, remote_offset, size, is_no_delay, xfer_status_ptr);
-        if (status != NIXL_SUCCESS) {
+        if (status != NIXL_IN_PROG) {
             printf("Thread %d: nixlGpuPostSingleWriteXferReq failed iteration %lu: status=%d (0x%x)\n",
                    threadIdx.x,
                    (unsigned long)i,
@@ -385,7 +385,7 @@ TEST_P(SingleWriteTest, BasicSingleWriteTest) {
     constexpr size_t count = 1;
     nixl_mem_t mem_type = VRAM_SEG;
     size_t num_threads = 32;
-    const size_t num_iters = 10000;
+    const size_t num_iters = 1000; // TODO: return to 10000 once UCX fixes the progress bugs
     constexpr unsigned index = 0;
     const bool is_no_delay = true;
 
@@ -485,7 +485,7 @@ TEST_P(SingleWriteTest, VariableSizeTest) {
         constexpr size_t count = 1;
         nixl_mem_t mem_type = VRAM_SEG;
         size_t num_threads = 32;
-        const size_t num_iters = 50000;
+        const size_t num_iters = 1000; // TODO: return to 50000 once UCX fixes the progress bugs
         constexpr unsigned index = 0;
         const bool is_no_delay = true;
 
