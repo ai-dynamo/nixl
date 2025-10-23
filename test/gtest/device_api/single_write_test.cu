@@ -197,14 +197,14 @@ protected:
     // TODO: remove this function once a blocking CreateGpuXferReq is implemented
     void
     completeWireup(size_t from_agent, size_t to_agent,
-                  const std::vector<MemBuffer> &wireup_src,
-                  const std::vector<MemBuffer> &wireup_dst) {
+                   const std::vector<MemBuffer> &wireup_src,
+                   const std::vector<MemBuffer> &wireup_dst) {
         nixl_opt_args_t wireup_params;
 
         for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
             wireup_params.customParam = "worker_id=" + std::to_string(worker_id);
 
-            nixlXferReqH *wireup_req = nullptr;
+            nixlXferReqH *wireup_req;
             nixl_status_t status = getAgent(from_agent)
                                        .createXferReq(NIXL_WRITE,
                                                       makeDescList<nixlBasicDesc>(wireup_src, VRAM_SEG),
@@ -618,7 +618,7 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
         createRegisteredMem(getAgent(SENDER_AGENT), size, 1, mem_type, src_buffers[worker_id]);
         createRegisteredMem(getAgent(RECEIVER_AGENT), size, 1, mem_type, dst_buffers[worker_id]);
 
-        size_t num_elements = size / sizeof(uint32_t);
+        constexpr size_t num_elements = size / sizeof(uint32_t);
         patterns[worker_id].resize(num_elements);
         for (size_t i = 0; i < num_elements; i++) {
             patterns[worker_id][i] = 0xDEAD0000 | worker_id;

@@ -223,7 +223,7 @@ public:
 private:
     // Helper to extract worker_id from opt_args->customParam or nullopt if not found
     [[nodiscard]] std::optional<size_t>
-    getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const;
+    getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const noexcept;
 
 protected:
     const std::vector<std::unique_ptr<nixlUcxWorker>> &

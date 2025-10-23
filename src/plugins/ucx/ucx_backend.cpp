@@ -1388,7 +1388,7 @@ nixlUcxEngine::getWorkerId() const {
     return it->second;
 }
 
-[[nodiscard]] std::optional<size_t>
+std::optional<size_t>
 nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const {
     if (!opt_args || opt_args->customParam.empty()) {
         return std::nullopt;
@@ -1430,7 +1430,7 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
     /* TODO: try to get from a pool first */
-    auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
+    const auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
     size_t worker_id = opt_worker_id.value_or(getWorkerId());
     auto *ucx_handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
 
@@ -1728,7 +1728,7 @@ nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta,
     try {
         auto *ucx_meta = static_cast<const nixlUcxPrivateMetadata *>(&meta);
 
-        auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
+        const auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
         if (opt_worker_id) {
             getWorker(*opt_worker_id)->prepGpuSignal(ucx_meta->mem, signal);
         } else {
