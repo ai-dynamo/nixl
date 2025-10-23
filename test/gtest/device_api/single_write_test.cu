@@ -194,50 +194,8 @@ protected:
         agent.registerMem(reg_list);
     }
 
-    // TODO: remove this function once a blocking CreateGpuXferReq is implemented
-    void
-    completeWireup(size_t from_agent, size_t to_agent,
-                   const std::vector<MemBuffer> &wireup_src,
-                   const std::vector<MemBuffer> &wireup_dst) {
-        nixl_opt_args_t wireup_params;
-
-        for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
-            wireup_params.customParam = "worker_id=" + std::to_string(worker_id);
-
-            nixlXferReqH *wireup_req;
-            nixl_status_t status = getAgent(from_agent)
-                                       .createXferReq(NIXL_WRITE,
-                                                      makeDescList<nixlBasicDesc>(wireup_src, VRAM_SEG),
-                                                      makeDescList<nixlBasicDesc>(wireup_dst, VRAM_SEG),
-                                                      getAgentName(to_agent),
-                                                      wireup_req,
-                                                      &wireup_params);
-
-            ASSERT_EQ(status, NIXL_SUCCESS) << "Failed to create wireup request for worker " << worker_id;
-
-            status = getAgent(from_agent).postXferReq(wireup_req);
-            ASSERT_TRUE(status == NIXL_SUCCESS || status == NIXL_IN_PROG)
-                << "Failed to post wireup for worker " << worker_id;
-
-            nixl_status_t xfer_status;
-            do {
-                xfer_status = getAgent(from_agent).getXferStatus(wireup_req);
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            } while (xfer_status == NIXL_IN_PROG);
-
-            ASSERT_EQ(xfer_status, NIXL_SUCCESS) << "Warmup failed for worker " << worker_id;
-
-            status = getAgent(from_agent).releaseXferReq(wireup_req);
-            ASSERT_EQ(status, NIXL_SUCCESS);
-        }
-    }
-
     void
     exchangeMD(size_t from_agent, size_t to_agent) {
-        std::vector<MemBuffer> wireup_src, wireup_dst;
-        createRegisteredMem(getAgent(from_agent), 64, 1, VRAM_SEG, wireup_src);
-        createRegisteredMem(getAgent(to_agent), 64, 1, VRAM_SEG, wireup_dst);
-
         for (size_t i = 0; i < agents.size(); i++) {
             nixl_blob_t md;
             nixl_status_t status = agents[i]->getLocalMD(md);
@@ -251,8 +209,6 @@ protected:
                 EXPECT_EQ(remote_agent_name, getAgentName(i));
             }
         }
-
-        completeWireup(from_agent, to_agent, wireup_src, wireup_dst);
     }
 
     void
