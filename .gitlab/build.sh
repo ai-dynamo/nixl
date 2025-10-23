@@ -103,7 +103,9 @@ $SUDO apt-get -qq install -y curl \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
 # UV is needed for wheel building
-$SUDO pip install --upgrade uv
+export UV_INSTALL_DIR="${INSTALL_DIR}/bin"
+mkdir -p "$UV_INSTALL_DIR"
+wget --tries=3 --waitretry=5 -O - https://astral.sh/uv/install.sh | sh
 
 # Add DOCA repository and install packages
 ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
