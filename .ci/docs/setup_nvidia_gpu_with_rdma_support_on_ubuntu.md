@@ -93,9 +93,15 @@ GDS is bundled with CUDA ≥11.4 but requires explicit enabling:
 
 ```bash
 sudo echo "options nvidia NVreg_EnableGpuDirectStorage=1" > /etc/modprobe.d/nvidia-gds.conf
+
+# Configure PeerMappingOverride for GPU-Initiated RDMA support
+sudo echo "options nvidia NVreg_RegistryDwords=\"PeerMappingOverride=1;\"" > /etc/modprobe.d/nvidia.conf
+
 sudo update-initramfs -u
 sudo reboot
 ```
+
+The `PeerMappingOverride=1` option is required for proper GPU peer-to-peer communication in RDMA environments.
 
 ### 6. **Enable Kernel Modules at Boot**
 

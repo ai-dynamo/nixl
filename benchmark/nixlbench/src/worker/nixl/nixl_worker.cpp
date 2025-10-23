@@ -70,89 +70,7 @@
         _seg_type;                                                                          \
     })
 
-// Parse GUSLI device list from device_list parameter in format "id:type:path,id:type:path,..."
-// For GUSLI backend, device_list must specify devices in GUSLI format
-static std::vector<GusliDeviceConfig>
-parseGusliDeviceList(const std::string &device_list,
-                     const std::string &security_list,
-                     int num_devices) {
-    std::vector<GusliDeviceConfig> devices;
-
-    // Parse security flags into a vector
-    std::vector<std::string> security_flags;
-    if (!security_list.empty()) {
-        std::stringstream sec_ss(security_list);
-        std::string sec_flag;
-        while (std::getline(sec_ss, sec_flag, ',')) {
-            security_flags.push_back(sec_flag);
-        }
-    }
-
-    // For GUSLI, device_list cannot be "all" - must specify devices explicitly
-    if (device_list.empty() || device_list == "all") {
-        std::cerr << "Error: GUSLI backend requires explicit device_list in format 'id:type:path'"
-                  << std::endl;
-        std::cerr << "Example: --device_list='11:F:./store0.bin,14:K:/dev/zero,20:N:t192.168.1.100'"
-                  << std::endl;
-        std::cerr << "  id: Device identifier (numeric)" << std::endl;
-        std::cerr << "  type: F (file), K (kernel block device), or N (networked server)"
-                  << std::endl;
-        std::cerr << "  path: Device path or server address (for N type, prefix with 't' for TCP "
-                     "or 'u' for UDP)"
-                  << std::endl;
-        exit(EXIT_FAILURE);
-    }
-
-    std::stringstream ss(device_list);
-    std::string device_spec;
-    size_t device_count = 0;
-
-    while (std::getline(ss, device_spec, ',')) {
-        std::stringstream dev_ss(device_spec);
-        std::string id_str, type_str, path;
-
-        // Parse "id:type:path" format
-        if (std::getline(dev_ss, id_str, ':') && std::getline(dev_ss, type_str, ':') &&
-            std::getline(dev_ss, path)) {
-
-            int device_id = std::stoi(id_str);
-            char device_type = type_str[0];
-
-            if (device_type != 'F' && device_type != 'K' && device_type != 'N') {
-                std::cerr << "Invalid GUSLI device type: " << device_type
-                          << ". Must be 'F' (file), 'K' (kernel device), or 'N' (networked server)"
-                          << std::endl;
-                exit(EXIT_FAILURE);
-            }
-
-            // Use corresponding security flag or default
-            std::string sec_flag =
-                (device_count < security_flags.size()) ? security_flags[device_count] : "sec=0x3";
-
-            devices.push_back({device_id, device_type, path, sec_flag});
-            device_count++;
-        } else {
-            std::cerr << "Invalid GUSLI device specification: " << device_spec
-                      << ". Expected format: 'id:type:path'" << std::endl;
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    // Validate security flags count if provided
-    if (!security_flags.empty() && security_flags.size() != devices.size()) {
-        std::cerr << "Warning: Number of security flags (" << security_flags.size()
-                  << ") doesn't match number of devices (" << devices.size()
-                  << "). Using 'sec=0x3' for missing entries." << std::endl;
-    }
-    // Validate device count matches expected
-    if (devices.size() != static_cast<size_t>(num_devices)) {
-        std::cerr << "Error: Number of devices in device_list (" << devices.size()
-                  << ") must match num_devices (" << num_devices << ")" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-
-    return devices;
-}
+// Reuse parser from utils
 
 // Generate GUSLI config file from device configurations
 static std::string
@@ -457,11 +375,6 @@ xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
         return std::nullopt;
     }
-    if (isInitiator()) {
-        memset(addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
-    } else if (isTarget()) {
-        memset(addr, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
-    }
 
     // TODO: Does device id need to be set for DRAM?
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, mem_dev_id);
@@ -562,10 +475,35 @@ xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
 }
 #endif /* HAVE_CUDA */
 
+// Helper to open a single file with appropriate flags
+static std::optional<xferFileState>
+openFileWithFlags(const std::string &file_name, int flags) {
+    uint64_t file_size = 0;
+    if (XFERBENCH_OP_READ == xferBenchConfig::op_type) {
+        struct stat st;
+        if (::stat(file_name.c_str(), &st) == 0) {
+            std::cout << "File " << file_name << " exists, size: " << st.st_size << std::endl;
+            file_size = st.st_size;
+        } else {
+            std::cout << "File " << file_name << " does not exist, will be created." << std::endl;
+        }
+    }
+
+    int fd = open(file_name.c_str(), flags, 0744);
+    if (fd < 0) {
+        std::cerr << "Failed to open file: " << file_name << " with error: " << strerror(errno)
+                  << std::endl;
+        return std::nullopt;
+    }
+
+    return xferFileState{fd, file_size, 0};
+}
+
+// Create file descriptors from explicit filenames or auto-generate
 static std::vector<xferFileState>
-createFileFds(std::string name, int num_files) {
+createFileFds(std::string name, int num_files, const std::vector<std::string> &filenames = {}) {
     std::vector<xferFileState> fds;
-    int flags = O_RDWR | O_CREAT;
+    int flags = O_RDWR | O_CREAT | O_LARGEFILE;
 
     if (!xferBenchConfig::isStorageBackend()) {
         std::cerr << "Unknown storage backend: " << xferBenchConfig::backend << std::endl;
@@ -576,6 +514,30 @@ createFileFds(std::string name, int num_files) {
         flags |= O_DIRECT;
     }
 
+    // Use provided filenames if available
+    if (!filenames.empty()) {
+        if (filenames.size() != static_cast<size_t>(num_files)) {
+            std::cerr << "Error: Number of filenames (" << filenames.size()
+                      << ") doesn't match num_files (" << num_files << ")" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
+        for (const auto &file_name : filenames) {
+            std::cout << "Opening file: " << file_name << std::endl;
+            auto fstate = openFileWithFlags(file_name, flags);
+            if (!fstate) {
+                // Cleanup already opened files
+                for (auto &fd : fds) {
+                    close(fd.fd);
+                }
+                return {};
+            }
+            fds.push_back(fstate.value());
+        }
+        return fds;
+    }
+
+    // Auto-generate filenames (backward compatibility)
     const std::string file_path = xferBenchConfig::filepath != "" ?
         xferBenchConfig::filepath :
         std::filesystem::current_path().string();
@@ -587,28 +549,15 @@ createFileFds(std::string name, int num_files) {
         std::string file_name = file_path + file_name_prefix + name + "_" + std::to_string(i);
         std::cout << "Creating file: " << file_name << std::endl;
 
-        uint64_t file_size = 0;
-        if (XFERBENCH_OP_READ == xferBenchConfig::op_type) {
-            struct stat st;
-            if (::stat(file_name.c_str(), &st) == 0) {
-                std::cout << "File " << file_name << " exists, size: " << st.st_size << std::endl;
-                file_size = st.st_size;
-            } else {
-                std::cout << "File " << file_name << " does not exist, will be created."
-                          << std::endl;
-            }
-        }
-
-        int fd = open(file_name.c_str(), flags, 0744);
-        if (fd < 0) {
-            std::cerr << "Failed to open file: " << file_name << " with error: " << strerror(errno)
-                      << std::endl;
+        auto fstate = openFileWithFlags(file_name, flags);
+        if (!fstate) {
+            // Cleanup already opened files
             for (int j = 0; j < i; j++) {
                 close(fds[j].fd);
             }
             return {};
         }
-        fds.emplace_back(xferFileState{fd, file_size, 0});
+        fds.push_back(fstate.value());
     }
     return fds;
 }
@@ -789,6 +738,23 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             exit(EXIT_FAILURE);
         }
 
+        if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+            for (auto &device : gusli_devices) {
+                if (device.device_type == 'F') {
+                    std::vector<xferFileState> fstate =
+                        createFileFds(getName(), 1, {device.device_path});
+                    if (!initBasicDescFile(
+                            xferBenchConfig::total_buffer_size, fstate[0], device.device_id)) {
+                        std::cerr << "Failed to create file: " << device.device_path << std::endl;
+                        for (auto &f : fstate) {
+                            close(f.fd);
+                        }
+                        exit(EXIT_FAILURE);
+                    }
+                }
+            }
+        }
+
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
@@ -885,6 +851,17 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         iovListToNixlRegDlist(iov_list, desc_list);
         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
         iov_lists.push_back(iov_list);
+
+        /* Workaround for a GUSLI registration bug which resets memory to 0 */
+        if (seg_type == DRAM_SEG) {
+            for (auto &iov : iov_list) {
+                if (isInitiator()) {
+                    memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
+                } else if (isTarget()) {
+                    memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+                }
+            }
+        }
     }
 
     return iov_lists;
@@ -1034,7 +1011,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = xferBenchConfig::gusli_bdev_byte_offset + file_offset;
                     iov_remote.len = block_size;
-                    iov_remote.devId = 11;
+                    iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
                     file_offset += block_size;
                 } else {
@@ -1110,8 +1087,12 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
 
 // Helper to execute a single transfer iteration
 static inline nixl_status_t
-execSingleTransfer(nixlAgent *agent, nixlXferReqH *req) {
+execSingleTransfer(nixlAgent *agent,
+                   nixlXferReqH *req,
+                   xferBenchTimer &timer,
+                   xferBenchStats &thread_stats) {
     nixl_status_t rc = agent->postXferReq(req);
+    thread_stats.post_duration.add(timer.lap());
     while (NIXL_IN_PROG == rc) {
         rc = agent->getXferStatus(req);
     }
@@ -1179,8 +1160,7 @@ execTransferIterations(nixlAgent *agent,
             }
             total_prepare_duration += timer.lap();
 
-            thread_stats.post_duration.add(timer.lap());
-            nixl_status_t rc = execSingleTransfer(agent, req);
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
@@ -1200,8 +1180,7 @@ execTransferIterations(nixlAgent *agent,
     } else {
         // Standard path: Single request for all iterations
         for (int i = 0; i < num_iter; ++i) {
-            thread_stats.post_duration.add(timer.lap());
-            nixl_status_t rc = execSingleTransfer(agent, req);
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
