@@ -84,7 +84,7 @@ TMP_DIR=$(mktemp -d)
 uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
 
 # Bundle libraries
-uv pip install auditwheel patchelf
+uv pip install auditwheel patchelf pybind11
 
 uv run auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' $TMP_DIR/nixl-*.whl --plat $WHL_PLATFORM --wheel-dir $OUTPUT_DIR
 
