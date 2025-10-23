@@ -185,15 +185,8 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
 RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel
 # Install PyTorch
-# Latest stable PyTorch wheels are only available for CUDA 12.x
-# Nightly PyTorch wheels are needed for CUDA 13.x images
 RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
-    CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
-    if [ "$CUDA_MAJOR" -ge 13 ]; then \
-      FLAGS="--pre --index-url https://download.pytorch.org/whl/nightly/$CUDA_SHORT_VERSION"; \
-    else \
-      FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION"; \
-    fi && \
+    FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \
     uv pip install $FLAGS torch torchvision torchaudio
 
 COPY --from=nixl . /workspace/nixl
