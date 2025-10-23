@@ -209,12 +209,14 @@ export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 export UCX_TLS=^cuda_ipc
 
 # shellcheck disable=SC2086
+# Enable verbose meson output via environment variable
+export MESON_LOG_LEVEL=debug
 meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
-ninja -C nixl_build && ninja -C nixl_build install
+ninja -v -C nixl_build && ninja -v -C nixl_build install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
 # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
 
 cd benchmark/nixlbench
 meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
-ninja -C nixlbench_build && ninja -C nixlbench_build install
+ninja -v -C nixlbench_build && ninja -v -C nixlbench_build install
