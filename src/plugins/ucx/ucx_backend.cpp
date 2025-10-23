@@ -1389,7 +1389,7 @@ nixlUcxEngine::getWorkerId() const {
 }
 
 std::optional<size_t>
-nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const {
+nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const noexcept {
     if (!opt_args || opt_args->customParam.empty()) {
         return std::nullopt;
     }
