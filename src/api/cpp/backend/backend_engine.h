@@ -177,7 +177,9 @@ class nixlBackendEngine {
 
         // Initialize a signal for GPU transfer using memory handle from descriptor
         virtual nixl_status_t
-        prepGpuSignal(const nixlBackendMD &meta, void *signal) const {
+        prepGpuSignal(const nixlBackendMD &meta,
+                      void *signal,
+                      const nixl_opt_b_args_t *opt_args = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 

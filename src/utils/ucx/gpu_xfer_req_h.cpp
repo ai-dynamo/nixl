@@ -81,7 +81,8 @@ createGpuXferReq(const nixlUcxEp &ep,
                                  ucs_status_string(ucs_status));
     }
 
-    NIXL_DEBUG << "Created device memory list handle with " << local_mems.size() << " elements";
+    NIXL_DEBUG << "Created device memory list: ep=" << ep.getEp() << " handle=" << ucx_handle
+               << " num_elements=" << local_mems.size();
     return reinterpret_cast<nixlGpuXferReqH>(ucx_handle);
 }
 
