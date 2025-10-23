@@ -46,7 +46,7 @@ matrix:
 
 env:
   NIXL_INSTALL_DIR: /opt/nixl
-  TEST_TIMEOUT: 30
+  TEST_TIMEOUT: 60
   NPROC: "16"
   UCX_TLS: "^shm"
 

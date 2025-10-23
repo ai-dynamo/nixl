@@ -39,6 +39,8 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 # Raise exceptions for logging errors
 export NIXL_DEBUG_LOGGING=yes
+# Control ninja parallelism during pip build (NPROC set by build-matrix.yaml)
+export NINJAJOBS="$NPROC"
 
 pip3 install --break-system-packages .
 pip3 install --break-system-packages pytest
