@@ -384,8 +384,8 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                nixlUcxContext::req_cb_t fini_cb,
                                bool prog_thread,
                                unsigned long num_workers,
-                               nixl_thread_sync_t sync_mode)
-{
+                               nixl_thread_sync_t sync_mode,
+                               const std::string &engine_config) {
     ucp_params_t ucp_params;
 
     // With strict synchronization model nixlAgent serializes access to backends, with more
@@ -448,6 +448,19 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         config.modify ("MAX_RMA_RAILS", "4");
     } else {
         config.modify ("MAX_RMA_RAILS", "2");
+    }
+
+    std::string elem;
+    std::string_view elem_view;
+    std::stringstream stream(engine_config);
+
+    while (std::getline(stream, elem, ',')) {
+        elem_view = elem;
+        size_t pos = elem_view.find('=');
+
+        if (pos != std::string::npos) {
+            config.modify(elem_view.substr(0, pos), elem_view.substr(pos + 1));
+        }
     }
 
     const auto status = ucp_init (&ucp_params, config.getUcpConfig(), &ctx);
