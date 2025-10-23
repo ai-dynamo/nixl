@@ -213,7 +213,8 @@ RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
 RUN cd src/bindings/rust && cargo build --release --locked
 
 # Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
-RUN ./contrib/build-wheel.sh \
+RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
+    ./contrib/build-wheel.sh \
     --python-version $DEFAULT_PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
     --ucx-plugins-dir $UCX_PLUGIN_DIR \
