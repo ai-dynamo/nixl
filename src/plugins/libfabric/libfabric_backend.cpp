@@ -1035,7 +1035,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         int gpu_id = local[desc_idx].devId;
 
         NIXL_DEBUG << "Processing descriptor " << desc_idx << " GPU " << gpu_id
-                   << " addr: " << transfer_addr << " size: " << transfer_size;
+                   << " local_addr: " << transfer_addr << " size: " << transfer_size
+                   << " remote_addr: " << (void *)remote[desc_idx].addr;
 
         NIXL_DEBUG << "DEBUG: remote_agent='" << remote_agent << "' localAgent='" << localAgent
                    << "'";
@@ -1071,11 +1072,14 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         }
 
         // Prepare and submit transfer for remote agents
+        // Use descriptor's specific target address
+        uint64_t remote_target_addr = remote[desc_idx].addr;
+
         nixl_status_t status = rail_manager.prepareAndSubmitTransfer(
             op_type,
             transfer_addr,
             transfer_size,
-            remote_md->remote_buf_addr_,
+            remote_target_addr,
             local_md->selected_rails_,
             local_md->rail_mr_list_,
             remote_md->rail_remote_key_list_,

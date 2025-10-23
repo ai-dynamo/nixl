@@ -32,7 +32,10 @@ if __name__ == "__main__":
     buf_size = 256
     # Allocate memory and register with NIXL
 
-    logger.info("Using NIXL Plugins from:\n%s", os.environ["NIXL_PLUGIN_DIR"])
+    logger.info(
+        "Using NIXL Plugins from:\n%s",
+        os.environ.get("NIXL_PLUGIN_DIR", "default location"),
+    )
 
     # Example using nixl_agent_config
     agent_config = nixl_agent_config(backends=["UCX"])
