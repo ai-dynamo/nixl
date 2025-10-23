@@ -16,13 +16,19 @@
 source_dir = meson.current_source_dir()
 build_dir = meson.current_build_dir()
 
-uv = find_program('uv', required: false)
+configure_file(
+  input: 'pyproject.toml.in',
+  output: 'pyproject.toml',
+  configuration: { 'VERSION': meson.project_version() }
+)
 
+uv = find_program('uv', required: false)
 if uv.found()
+  wheel_name = 'nixl-@0@-py3-none-any.whl'.format(meson.project_version())
   meta_wheel = custom_target(
     'build_nixl_meta',
-    output: ['nixl-0.6.1-py3-none-any.whl'],
-    command: [uv, 'build', '--wheel', '--out-dir', build_dir, source_dir],
+    output: [wheel_name],
+    command: [uv, 'build', '--wheel', '--out-dir', build_dir, build_dir],
     install: false,
     build_by_default: true
   )
