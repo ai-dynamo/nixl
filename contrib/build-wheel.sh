@@ -73,22 +73,13 @@ done
 set -e
 set -x
 
-# Check for required dependencies
-if ! command -v uv &> /dev/null; then
-    echo "Required dependency: uv is not installed. Please install it from https://astral.sh/uv/install.sh"
-    exit 1
-fi
-
 # Build the wheel
 TMP_DIR=$(mktemp -d)
 uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
 
-# Bundle libraries
-uv pip install auditwheel patchelf pybind11
+auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' $TMP_DIR/nixl-*.whl --plat $WHL_PLATFORM --wheel-dir $OUTPUT_DIR
 
-uv run auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' $TMP_DIR/nixl-*.whl --plat $WHL_PLATFORM --wheel-dir $OUTPUT_DIR
-
-uv run ./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $OUTPUT_DIR/*.whl
+./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $OUTPUT_DIR/*.whl
 
 # Clean up
 rm -rf "$TMP_DIR"

@@ -169,7 +169,7 @@ ENV CUDA_PATH=/usr/local/cuda
 WORKDIR /workspace/nixl
 ENV VIRTUAL_ENV=/workspace/nixl/.venv
 RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    uv pip install --upgrade meson pybind11 patchelf
+    uv pip install --upgrade meson pybind11 patchelf auditwheel
 
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
@@ -253,6 +253,7 @@ ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
+        export PATH=$VIRTUAL_ENV/bin:$PATH && \
         ./contrib/build-wheel.sh \
             --python-version $PYTHON_VERSION \
             --platform $WHL_PLATFORM \
