@@ -16,10 +16,16 @@
 source_dir = meson.current_source_dir()
 build_dir = meson.current_build_dir()
 
-meta_wheel = custom_target(
-  'build_nixl_meta',
-  output: ['nixl-0.6.1-py3-none-any.whl'],
-  command: ['uv', 'build', '--wheel', '--out-dir', build_dir, source_dir],
-  install: false,
-  build_by_default: true
-)
+uv = find_program('uv', required: false)
+
+if uv.found()
+  meta_wheel = custom_target(
+    'build_nixl_meta',
+    output: ['nixl-0.6.1-py3-none-any.whl'],
+    command: [uv, 'build', '--wheel', '--out-dir', build_dir, source_dir],
+    install: false,
+    build_by_default: true
+  )
+else
+  warning('uv not found, skipping meta package build')
+endif
