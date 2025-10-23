@@ -24,8 +24,8 @@ timeout_minutes: 240
 
 # label is defined at jenkins slave configuration, we want to run the job on a gpu agent and be able to esaly replace it without having to change this file
 runs_on_agents:
-  - {nodeLabel: 'H100'}
-  # - {nodeLabel: 'DGX'}
+  # - {nodeLabel: 'H100'}
+  - {nodeLabel: 'DGX'}
 
 matrix:
   axes:
@@ -35,7 +35,7 @@ matrix:
       - x86_64
     ucx_version:
       - master
-      - v1.19.0
+      # - v1.19.0
 
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 

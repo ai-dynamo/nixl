@@ -57,7 +57,7 @@ ARCH=$(uname -m)
 $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
-$SUDO apt-get -qq install -y curl \
+$SUDO apt-get -qq install -y strace curl \
                              wget \
                              libnuma-dev \
                              numactl \
@@ -208,8 +208,14 @@ export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 # UCX transfers and can cause contention with local collectives.
 export UCX_TLS=^cuda_ipc
 
+curl -I https://github.com/taskflow/taskflow/archive/refs/tags/v3.10.0.tar.gz
+curl -I https://sourceforge.net/projects/asio/files/asio/1.30.2%20%28Stable%29/asio-1.30.2.tar.gz/download
+curl -I https://wrapdb.mesonbuild.com/v2/asio_1.30.2-2/get_patch
+
+python3 -c "import urllib.request; urllib.request.urlopen('https://github.com/taskflow/taskflow/archive/refs/tags/v3.10.0.tar.gz')"
+
 # shellcheck disable=SC2086
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
+strace -f meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" 2>&1 | tee meson-strace.log
 ninja -C nixl_build && ninja -C nixl_build install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
