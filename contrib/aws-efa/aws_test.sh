@@ -47,7 +47,7 @@ if [ -z "$GITHUB_REF" ] || [ -z "$GITHUB_SERVER_URL" ] || [ -z "$GITHUB_REPOSITO
 fi
 
 test_cmd="$1"
-export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda-dl-base:25.03-cuda12.8-devel-ubuntu24.04"}
+export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04"}
 
 # Set Git checkout command based on GITHUB_REF
 case "$GITHUB_REF" in

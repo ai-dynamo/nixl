@@ -34,7 +34,7 @@ kubernetes:
   requests: "{memory: 8Gi, cpu: 8000m}"
 
 runs_on_dockers:
-  - { name: "ubuntu24.04-cuda-dl-base", url: "nvcr.io/nvidia/cuda-dl-base:25.03-cuda12.8-devel-ubuntu24.04" }
+  - { name: "ubuntu24.04-cuda-dl-base", url: "nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04" }
   - { name: "ubuntu22.04-cuda-dl-base", url: "nvcr.io/nvidia/cuda-dl-base:24.10-cuda12.6-devel-ubuntu22.04" }
   - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", category: 'tool', privileged: true }
 
