@@ -161,13 +161,11 @@ protected:
             FAIL() << "Failed to set CUDA device 0";
         }
 
-        auto params = getBackendParams();
-
         for (size_t i = 0; i < 2; i++) {
             agents.emplace_back(std::make_unique<nixlAgent>(getAgentName(i), getConfig()));
             nixlBackendH *backend_handle = nullptr;
             nixl_status_t status =
-                agents.back()->createBackend(getBackendName(), params, backend_handle);
+                agents.back()->createBackend(getBackendName(), getBackendParams(), backend_handle);
             ASSERT_EQ(status, NIXL_SUCCESS);
             EXPECT_NE(backend_handle, nullptr);
             backend_handles.push_back(backend_handle);
@@ -196,6 +194,7 @@ protected:
         agent.registerMem(reg_list);
     }
 
+    // TODO: remove this function once a blocking CreateGpuXferReq is implemented
     void
     completeWireup(size_t from_agent, size_t to_agent,
                   const std::vector<MemBuffer> &wireup_src,
