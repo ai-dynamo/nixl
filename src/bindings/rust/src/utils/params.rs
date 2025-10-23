@@ -52,9 +52,9 @@ impl<'a> Iterator for ParamIterator<'a> {
         };
 
         match status {
-            0 if !has_next => None,
+            0 if key_ptr.is_null() => None,
             0 => {
-                // SAFETY: If status is 0, both pointers are valid null-terminated strings
+                // SAFETY: If status is 0 and key_ptr is not null, both pointers are valid null-terminated strings
                 let result = unsafe {
                     let key = CStr::from_ptr(key_ptr).to_str().unwrap();
                     let value = CStr::from_ptr(value_ptr).to_str().unwrap();
@@ -80,6 +80,86 @@ impl Drop for ParamIterator<'_> {
 impl Params {
     pub(crate) fn new(inner: NonNull<bindings::nixl_capi_params_s>) -> Self {
         Self { inner }
+    }
+
+    /// Creates a new empty Params object
+    pub(crate) fn create() -> Result<Self, NixlError> {
+        let mut params = ptr::null_mut();
+
+        let status = unsafe { nixl_capi_create_params(&mut params) };
+
+        match status {
+            0 => {
+                let inner = unsafe { NonNull::new_unchecked(params) };
+                Ok(Self { inner })
+            }
+            -1 => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Creates a new Params object from an iteratable
+    ///
+    /// # Example
+    /// ```ignore
+    /// use std::collections::HashMap;
+    ///
+    /// let map = HashMap::from([
+    ///     ("access_key", "*********"),
+    ///     ("secret_key", "*********"),
+    ///     ("bucket", "my-bucket"),
+    /// ]);
+    ///
+    /// let params = Params::try_from_iter(map.iter().map(|(k, v)| (*k, *v)))?;
+    /// ```
+    pub fn try_from_iter<I, K, V>(iter: I) -> Result<Self, NixlError>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let mut params = Self::create()?;
+        for (key, value) in iter {
+            params.set(key.as_ref(), value.as_ref())?;
+        }
+        Ok(params)
+    }
+
+    /// Creates a new Params object by copying from another Params
+    ///
+    /// # Example
+    /// ```ignore
+    /// let original_params = agent.get_plugin_params("OBJ")?.1;
+    /// let mut modified_params = original_params.try_clone()?;
+    /// modified_params.set("bucket", "my-custom-bucket")?;
+    /// ```
+    pub fn try_clone(&self) -> Result<Self, NixlError> {
+        let mut params = Self::create()?;
+
+        if let Ok(iter) = self.iter() {
+            for pair in iter {
+                let pair = pair?;
+                params.set(pair.key, pair.value)?;
+            }
+        }
+
+        Ok(params)
+    }
+
+    /// Sets a key-value pair in the parameters (overwrites if exists)
+    pub fn set(&mut self, key: &str, value: &str) -> Result<(), NixlError> {
+        let c_key = CString::new(key)?;
+        let c_value = CString::new(value)?;
+
+        let status = unsafe {
+            nixl_capi_params_add(self.inner.as_ptr(), c_key.as_ptr(), c_value.as_ptr())
+        };
+
+        match status {
+            0 => Ok(()),
+            -1 => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
     }
 
     /// Returns true if the parameters are empty
