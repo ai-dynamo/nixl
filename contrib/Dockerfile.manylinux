@@ -238,7 +238,7 @@ RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 # Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
-RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click setuptools tabulate auditwheel tomlkit
 # Install PyTorch
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     uv pip install torch torchvision torchaudio
@@ -278,5 +278,8 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --nixl-plugins-dir $NIXL_PLUGIN_DIR \
             --output-dir dist ; \
     done
+
+# Copy the meta package wheel to the output directory
+RUN cp build/src/bindings/python/nixl-meta/nixl*.whl dist/
 
 RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl

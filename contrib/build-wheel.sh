@@ -87,9 +87,10 @@ PKG_NAME="nixl-cu${CUDA_MAJOR}"
 uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
 
 # Bundle libraries
-auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' $TMP_DIR/nixl*.whl --plat $WHL_PLATFORM --wheel-dir $OUTPUT_DIR
-
-./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $OUTPUT_DIR/*.whl
+mkdir $TMP_DIR/dist
+auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' $TMP_DIR/nixl*.whl --plat $WHL_PLATFORM --wheel-dir $TMP_DIR/dist
+./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $TMP_DIR/dist/*.whl
+cp $TMP_DIR/dist/*.whl $OUTPUT_DIR
 
 # Clean up
 rm -rf "$TMP_DIR"
