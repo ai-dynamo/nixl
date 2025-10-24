@@ -29,11 +29,14 @@ dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
-# Check for libaio (for POSIX plugin and test)
+# Check for POSIX AIO support for the POSIX plugin and test (it is part of GLIBC)
+posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
+
+# Check for libaio (for LINUX AIO plugin and test)
 aio_dep = cpp.find_library('aio', required: false)
-posix_aio = false
+linux_aio = false
 if aio_dep.found()
-    posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
+    linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [aio_dep])
 endif
 
 # Forced to ignore this error due to:
