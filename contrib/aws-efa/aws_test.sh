@@ -30,7 +30,7 @@ usage() {
     echo "  GITHUB_REPOSITORY - GitHub repository (e.g., \"ai-dynamo/nixl\")"
     echo ""
     echo "Optional environment variables:"
-    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda-dl-base:25.03-cuda12.8-devel-ubuntu24.04)"
+    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04)"
     echo "  TEST_TIMEOUT      - Timeout for test execution in minutes"
     exit 1
 }

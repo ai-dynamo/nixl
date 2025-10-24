@@ -19,9 +19,6 @@ ARG OS
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
-# Make /workspace writable
-RUN chmod 777 /workspace
-
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"

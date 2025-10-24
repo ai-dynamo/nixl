@@ -26,9 +26,6 @@ ARG BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
 
 FROM ${BASE_IMAGE}
 
-# Make /workspace writable
-RUN chmod 777 /workspace
-
 # Build arguments
 ARG _UID=148069
 ARG _GID=30

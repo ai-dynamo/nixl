@@ -23,9 +23,6 @@ ARG DEFAULT_PYTHON_VERSION="3.12"
 # --- Stage 1: Common OS setup ---
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
 
-# Make /workspace writable
-RUN chmod 777 /workspace
-
 # Re-declare for use in this stage
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
