@@ -107,9 +107,6 @@ if cuda_dep.found()
         warning('CUDA version is less than 12.8, GPUNETIO plugin will be disabled')
         doca_gpunetio_dep = disabler()
     endif
-else
-    warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
-    doca_gpunetio_dep = disabler()
 endif
 
 # DOCA GPUNETIO
