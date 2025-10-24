@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Ensure CUDA_HOME is set (cuda-dl-base images don't set it by default)
+export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
+
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../.ci/scripts/common.sh"
 
@@ -53,11 +56,16 @@ fi
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
+# Make /workspace writable (if it exists)
+[ -d /workspace ] && $SUDO chmod 777 /workspace
+
 # Some docker images are with broken installations:
 $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
-$SUDO apt-get -qq install -y curl \
+$SUDO apt-get -qq install -y python3-dev \
+                             python3-pip \
+                             curl \
                              wget \
                              libnuma-dev \
                              numactl \
@@ -100,6 +108,17 @@ $SUDO apt-get -qq install -y curl \
                              hwloc \
                              libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
+
+# Ubuntu 22.04 specific setup
+if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
+    # Upgrade pip for '--break-system-packages' support
+    $SUDO pip3 install --upgrade pip
+
+    # Upgrade meson (distro version 0.61.2 is too old, project requires >= 0.64.0)
+    $SUDO pip3 install --upgrade meson
+    # Ensure pip3's meson takes precedence over apt's version
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+fi
 
 # Add DOCA repository and install packages
 ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
@@ -210,11 +229,11 @@ export UCX_TLS=^cuda_ipc
 
 # shellcheck disable=SC2086
 meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
-ninja -C nixl_build && ninja -C nixl_build install
+ninja -j${NPROC:-$(nproc)} -C nixl_build && ninja -j${NPROC:-$(nproc)} -C nixl_build install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
 # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
 
 cd benchmark/nixlbench
 meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
-ninja -C nixlbench_build && ninja -C nixlbench_build install
+ninja -j${NPROC:-$(nproc)} -C nixlbench_build && ninja -j${NPROC:-$(nproc)} -C nixlbench_build install

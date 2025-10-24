@@ -40,10 +40,14 @@ export NIXL_PREFIX=${INSTALL_DIR}
 # Raise exceptions for logging errors
 export NIXL_DEBUG_LOGGING=yes
 
-pip3 install --break-system-packages .
+# Control ninja parallelism during pip build to prevent OOM (NPROC set by build-matrix.yaml)
+pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC:-$(nproc)}" .
 pip3 install --break-system-packages pytest
 pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
+
+# Add user pip packages to PATH
+export PATH="$HOME/.local/bin:$PATH"
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
