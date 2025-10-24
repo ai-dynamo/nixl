@@ -214,6 +214,7 @@ RUN cd src/bindings/rust && cargo build --release --locked
 
 # Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
 RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
+    mkdir -p dist && \
     ./contrib/build-wheel.sh \
     --python-version $DEFAULT_PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
