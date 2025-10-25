@@ -183,7 +183,7 @@ RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 # Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
-RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Install PyTorch
 RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
     FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \

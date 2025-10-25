@@ -166,10 +166,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV CUDA_PATH=/usr/local/cuda
 
-WORKDIR /workspace/nixl
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    uv pip install --upgrade meson pybind11 patchelf
+WORKDIR /workspace
 
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
@@ -228,11 +225,30 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
+# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
+# from the virtual environment. This means that the files reside in /root/.cache/uv,
+# which is not what we want since some systems mount user home dir into /root,
+# in which case the venv is broken when the container is started.
+# Set a custom cache directory inside /workspace to avoid this.
+ENV UV_CACHE_DIR=/workspace/.cache/uv
+RUN mkdir -p $UV_CACHE_DIR
+# Create a new virtual environment
+ENV VIRTUAL_ENV=/workspace/.venv
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+# Activate the virtual environment
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+# Install python dependencies
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click setuptools tabulate auditwheel tomlkit
+# Install PyTorch
+RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+    uv pip install torch torchvision torchaudio
+
 COPY . /workspace/nixl
+WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
+    meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" && \
     cd build && \
@@ -252,7 +268,10 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
+    export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+    mkdir -p dist && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
+        export PATH=$VIRTUAL_ENV/bin:$PATH && \
         ./contrib/build-wheel.sh \
             --python-version $PYTHON_VERSION \
             --platform $WHL_PLATFORM \
@@ -261,4 +280,7 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --output-dir dist ; \
     done
 
-RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+# Copy the meta package wheel to the output directory
+RUN cp build/src/bindings/python/nixl-meta/nixl*.whl dist/
+
+RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl

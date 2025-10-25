@@ -189,9 +189,12 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
     """
     temp_dir = extract_wheel(wheel_path)
 
-    pkg_libs_dir = os.path.join(temp_dir, "nixl.libs")
+    pkg_name = wheel_path.split("/")[-1].split("-")[0]
+    pkg_libs_dir = os.path.join(temp_dir, f"{pkg_name}.libs")
     if not os.path.exists(pkg_libs_dir):
-        raise FileNotFoundError(f"nixl.libs directory not found in wheel: {wheel_path}")
+        raise FileNotFoundError(
+            f"{pkg_name}.libs directory not found in wheel: {wheel_path}"
+        )
 
     logger.debug("Listing existing libs:")
     name_map = get_repaired_lib_name_map(pkg_libs_dir)

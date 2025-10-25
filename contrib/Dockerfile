@@ -167,15 +167,33 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
+# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
+# from the virtual environment. This means that the files reside in /root/.cache/uv,
+# which is not what we want since some systems mount user home dir into /root,
+# in which case the venv is broken when the container is started.
+# Set a custom cache directory inside /workspace to avoid this.
+ENV UV_CACHE_DIR=/workspace/.cache/uv
+RUN mkdir -p $UV_CACHE_DIR
+# Disable build isolation, i.e. uv should not create a new virtual environment for
+# building wheels. This is faster as it skips installing dependencies twice.
+ENV UV_NO_BUILD_ISOLATION=1
+# Disable syncing, i.e. uv will not download packages outside uv pip commands.
+ENV UV_NO_SYNC=1
+# Create a new virtual environment
+ENV VIRTUAL_ENV=/workspace/.venv
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+# Activate the virtual environment
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+# Install python dependencies
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
+# Install PyTorch
+RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+    uv pip install torch torchvision torchaudio
+
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$LD_LIBRARY_PATH
-
-ENV VIRTUAL_ENV=/workspace/nixl/.venv
-RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
-    # pybind11 pip install needed for ubuntu 22.04
-    uv pip install --upgrade "meson>=0.64.0" pybind11 patchelf
 
 # Install pybind11 via apt
 RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
@@ -183,7 +201,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
     mkdir build && \
-    uv run meson setup -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH build/ --prefix=$NIXL_PREFIX && \
+    meson setup -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH build/ --prefix=$NIXL_PREFIX && \
     cd build && \
     ninja && \
     ninja install
@@ -195,11 +213,13 @@ RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
 RUN cd src/bindings/rust && cargo build --release --locked
 
 # Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
-RUN ./contrib/build-wheel.sh \
+RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
+    mkdir -p dist && \
+    ./contrib/build-wheel.sh \
     --python-version $DEFAULT_PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
     --ucx-plugins-dir $UCX_PLUGIN_DIR \
     --nixl-plugins-dir $NIXL_PLUGIN_DIR \
     --output-dir /workspace/nixl/dist
 
-RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl
