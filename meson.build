@@ -21,6 +21,20 @@ project('nixl', 'CPP', version: '0.6.1',
     meson_version: '>= 0.64.0'
 )
 
+build_plugins_opt = get_option('build_plugins')
+enabled_plugins = build_plugins_opt == '' ? [] : build_plugins_opt.split(',')
+
+should_build_plugin = {}
+foreach plugin : ['UCX', 'UCX_MO', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'Mooncake', 'HF3FS', 'GUSLI', 'GPUNETIO']
+    should_build_plugin += {plugin: enabled_plugins.length() == 0 or plugin in enabled_plugins}
+endforeach
+
+if enabled_plugins.length() == 0
+    message('Building all available plugins')
+else
+    message('Building only selected plugins: ' + build_plugins_opt)
+endif
+
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
 fs = import('fs')
