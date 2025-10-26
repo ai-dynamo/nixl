@@ -56,9 +56,6 @@ fi
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
-# Make /workspace writable (if it exists)
-[ -d /workspace ] && $SUDO chmod 777 /workspace
-
 # Some docker images are with broken installations:
 $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
