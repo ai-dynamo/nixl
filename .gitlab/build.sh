@@ -183,7 +183,7 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   cd etcd-cpp-apiv3 && \
   mkdir build && cd build && \
   cmake .. && \
-  make -j"${NPROC:-$(nproc)}" && \
+  make -j"$NPROC" && \
   $SUDO make install && \
   $SUDO ldconfig \
 )
@@ -194,7 +194,7 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   mkdir aws_sdk_build && \
   cd aws_sdk_build && \
   cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-  make -j"${NPROC:-$(nproc)}" && \
+  make -j"$NPROC" && \
   $SUDO make install
 )
 
@@ -226,11 +226,11 @@ export UCX_TLS=^cuda_ipc
 
 # shellcheck disable=SC2086
 meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
-ninja -j${NPROC:-$(nproc)} -C nixl_build && ninja -j${NPROC:-$(nproc)} -C nixl_build install
+ninja -j"$NPROC" -C nixl_build && ninja -j"$NPROC" -C nixl_build install
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
 # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
 
 cd benchmark/nixlbench
 meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
-ninja -j${NPROC:-$(nproc)} -C nixlbench_build && ninja -j${NPROC:-$(nproc)} -C nixlbench_build install
+ninja -j"$NPROC" -C nixlbench_build && ninja -j"$NPROC" -C nixlbench_build install

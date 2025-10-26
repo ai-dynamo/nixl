@@ -89,3 +89,6 @@ fi
 
 # Default to false, unless TEST_LIBFABRIC is set. AWS EFA tests must set it to true.
 export TEST_LIBFABRIC=${TEST_LIBFABRIC:-false}
+
+# Set default parallelism for make/ninja (can be overridden by NPROC env var)
+export NPROC=${NPROC:-$(nproc)}
