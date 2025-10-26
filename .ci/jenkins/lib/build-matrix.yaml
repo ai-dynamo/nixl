@@ -6,7 +6,7 @@
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
 # - Docker Images: Specifies the container images used for different build stages
-#   - cuda-dl-base images (25.02 for Ubuntu 24.04, 24.10 for Ubuntu 22.04) for building and testing
+#   - cuda-dl-base images (25.06 for Ubuntu 24.04, 24.10 for Ubuntu 22.04) for building and testing
 #   - Podman image for container builds
 # - Matrix Axes: Defines build variations (currently x86_64 architecture)
 # - Build Steps: Sequential steps for building, testing, and container creation
