@@ -19,7 +19,7 @@ from typing import Optional, Union
 import numpy as np
 import torch
 
-from . import _bindings as nixlBind
+from . import _bindings as nixlBind  # type: ignore
 from .logging import get_logger
 
 # Get logger using centralized configuration
