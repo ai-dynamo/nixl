@@ -30,7 +30,7 @@ for pkg in candidates:
 
 if _pkg is None:
     raise ImportError(
-        "Could not find CUDA-specific NIXL package. Please install NIXL with `pip install nixl[cu12]` or `pip install nixl[cu13]`"
+        "Could not find CUDA-specific NIXL package. Please install NIXL with either `pip install nixl[cu12]` or `pip install nixl[cu13]`"
     )
 
 submodules = ["_api", "_utils", "logging"]
