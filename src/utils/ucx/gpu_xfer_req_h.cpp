@@ -76,7 +76,7 @@ createGpuXferReq(const nixlUcxEp &ep,
     params.element_size = sizeof(ucp_device_mem_list_elem_t);
     params.num_elements = ucp_elements.size();
 
-    ucp_worker_h worker = ep.getWorker();
+    nixlUcxWorker &worker = ep.getWorker();
     auto start = std::chrono::steady_clock::now();
     constexpr auto timeout = std::chrono::milliseconds(500);
     ucp_device_mem_list_handle_h ucx_handle;
@@ -84,7 +84,7 @@ createGpuXferReq(const nixlUcxEp &ep,
     // Workaround: loop until wireup is completed
     while ((ucs_status = ucp_device_mem_list_create(ep.getEp(), &params, &ucx_handle)) ==
            UCS_ERR_NOT_CONNECTED) {
-        ucp_worker_progress(worker);
+        worker.progress();
 
         if (std::chrono::steady_clock::now() - start > timeout) {
             throw std::runtime_error("Timeout waiting for endpoint wireup completion");

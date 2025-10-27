@@ -83,6 +83,7 @@ namespace nixl::ucx {
 class rkey;
 }
 class nixlUcxMem;
+class nixlUcxWorker;
 
 class nixlUcxEp {
     enum nixl_ucx_ep_state_t {
@@ -93,7 +94,7 @@ class nixlUcxEp {
     };
 private:
     ucp_ep_h            eph{nullptr};
-    ucp_worker_h worker{nullptr};
+    nixlUcxWorker &worker;
     nixl_ucx_ep_state_t state{NIXL_UCX_EP_STATE_NULL};
 
     void setState(nixl_ucx_ep_state_t new_state);
@@ -117,7 +118,7 @@ public:
         }
     }
 
-    nixlUcxEp(ucp_worker_h worker, void* addr, ucp_err_handling_mode_t err_handling_mode);
+    nixlUcxEp(nixlUcxWorker &worker, void* addr, ucp_err_handling_mode_t err_handling_mode);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp&) = delete;
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
@@ -154,7 +155,7 @@ public:
         return eph;
     }
 
-    [[nodiscard]] ucp_worker_h
+    [[nodiscard]] nixlUcxWorker&
     getWorker() const noexcept {
         return worker;
     }
@@ -251,6 +252,11 @@ public:
     /* GPU signal management */
     void
     prepGpuSignal(const nixlUcxMem &mem, void *signal) const;
+
+    [[nodiscard]] ucp_worker_h
+    getWorkerHandle() const noexcept {
+        return worker.get();
+    }
 
 private:
     [[nodiscard]] static ucp_worker *
