@@ -32,20 +32,22 @@ Example Usage to create a NIXL agent with uccl engine on GPU 0:
 UCCL engine would auto discover the right NIC to be used for the GPU based on the PCIe distance, and intialize the engine which manages communication for that NIC. This is the reason why its necessary to provide the gpu device index during agent creation.
 
 ### Environment Variables
-1. `NCCL_IB_GID_INDEX` : GID Index of the device to be used. Usually, its auto-detected.
-2. `UCCL_SOCKET_IFNAME` : The ethernet interface to be used for control socket communication.
-3. `UCCL_IB_HCA` : HCAs to be used for UCCL connection.
-4. `UCCL_RCMODE` : Set to either 0 or 1. To enable RDMA RC (Reliable Connection), set to 1. For `NIXL_READ` operations, set `UCCL_RCMODE` to 1.
+
+Refer to [README](https://github.com/uccl-project/uccl/tree/main/collective/rdma#environment-variables-in-uccl) for the complete list of environment variables that can be set to customize UCCL.
+
+**Important**: For `NIXL_READ` operations set `UCCL_RCMODE=1`. By default, UCCL uses RDMA UC (Unreliable Connection). However, `READ` operations need to operate on RDMA RC (Reliable Connection).
 
 ### Usage References
 
 1) [NIXL Benchmark](https://github.com/uccl-project/uccl/blob/main/p2p/benchmarks/benchmark_nixl.py) in UCCL: Refer to  this [README](https://github.com/uccl-project/uccl/tree/main/p2p) on how to run the script.
 
-2) [NIXL connector](https://github.com/praveingk/vllm/commit/fa67cd7edff076fee4914cc316a9833c2311a65d) in vLLM. vLLM's NIXL connector uses `NIXL_READ`, hence set env `UCCL_RCMODE` to 1.
+2) [NIXL connector](https://github.com/praveingk/vllm/commit/fa67cd7edff076fee4914cc316a9833c2311a65d) in vLLM. vLLM's NIXL connector uses `NIXL_READ` operations, hence set env `UCCL_RCMODE` to 1.
 
 ### Road Map
 
 - [ ] Add Intra-node communication support
+
+- [ ] Add Progress Thread support
 
 - [ ] Add asynchronous posting of reads over multiple workers to mitigate latency increase upon fragmentation
 
