@@ -13,23 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-pybind_dep = dependency('pybind11')
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
 
-nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)
+[project]
+name = "nixl"
+version = "@VERSION@"
+description = "Meta package for nixl CUDA variants"
+readme = "README.md"
+requires-python = ">=3.9"
 
-py = import('python').find_installation('python3', pure: false)
+dependencies = []
 
-py.extension_module('_bindings',
-           'nixl_bindings.cpp',
-           subdir: ('nixl'),
-           dependencies: [nixl_dep, serdes_interface, pybind_dep],
-           include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           install: true)
-
-py.extension_module('_utils',
-           'nixl_utils.cpp',
-           subdir: ('nixl'),
-           dependencies: [pybind_dep],
-           install: true)
-
-subdir('nixl-meta')
+[project.optional-dependencies]
+cu12 = ["nixl-cu12>=@VERSION@"]
+cu13 = ["nixl-cu13>=@VERSION@"]

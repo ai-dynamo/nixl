@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -13,23 +15,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-pybind_dep = dependency('pybind11')
+import argparse
 
-nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)
+import tomlkit
 
-py = import('python').find_installation('python3', pure: false)
+parser = argparse.ArgumentParser()
+parser.add_argument("--set-name", type=str, help="Set the project name")
+parser.add_argument("file", type=str, help="The toml file to modify")
+args = parser.parse_args()
 
-py.extension_module('_bindings',
-           'nixl_bindings.cpp',
-           subdir: ('nixl'),
-           dependencies: [nixl_dep, serdes_interface, pybind_dep],
-           include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           install: true)
+with open(args.file) as f:
+    doc = tomlkit.parse(f.read())
 
-py.extension_module('_utils',
-           'nixl_utils.cpp',
-           subdir: ('nixl'),
-           dependencies: [pybind_dep],
-           install: true)
+if args.set_name:
+    doc["project"]["name"] = args.set_name
 
-subdir('nixl-meta')
+with open(args.file, "w") as f:
+    f.write(tomlkit.dumps(doc))
