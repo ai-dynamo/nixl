@@ -83,7 +83,8 @@ if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
     exit 1
 fi
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
-./contrib/tomlutil.py --set-name $PKG_NAME pyproject.toml
+PKG_DIR="nixl_cu${CUDA_MAJOR}"
+./contrib/tomlutil.py --wheel-name $PKG_NAME --wheel-dir $PKG_DIR pyproject.toml
 uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
 
 # Bundle libraries

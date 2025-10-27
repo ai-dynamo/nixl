@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-source_dir = meson.current_source_dir()
 build_dir = meson.current_build_dir()
 
 configure_file(
@@ -21,6 +20,14 @@ configure_file(
   output: 'pyproject.toml',
   configuration: { 'VERSION': meson.project_version() }
 )
+
+configure_file(
+  input: 'README.md',
+  output: 'README.md',
+  copy: true
+)
+
+subdir('nixl')
 
 uv = find_program('uv', required: false)
 if uv.found()
