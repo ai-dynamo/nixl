@@ -192,10 +192,8 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
-                     ucp_err_handling_mode_t err_handling_mode)
-    : worker(worker)
-{
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode)
+    : worker(worker) {
     ucp_ep_params_t ep_params;
     nixl_status_t status;
 
