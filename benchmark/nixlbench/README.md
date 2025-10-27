@@ -33,7 +33,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, UCX_MO, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3) for storage operations
+- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), GUSLI for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -200,6 +200,7 @@ For development environments or when Docker is not available.
 - **DOCA**: NVIDIA DOCA SDK for GPUNetIO
 - **AWS SDK C++**: For S3 object storage backend
 - **GDS**: NVIDIA GPUDirect Storage
+- **GUSLI**: G3+ User Space Access Library for direct block device access
 - **NVSHMEM**: Required for NVSHMEM worker type
 - **hwloc**: Hardware locality detection (required for Libfabric only)
 
@@ -304,6 +305,21 @@ sudo dpkg -i doca-host_3.1.0-091000-25.07-ubuntu2404_amd64.deb
 sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 ```
 
+**GUSLI (Optional - for GUSLI backend):**
+```bash
+# Clone and build GUSLI
+git clone https://github.com/nvidia/gusli.git
+cd gusli
+make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0
+
+# Install library and headers
+sudo cp libgusli_clnt.so /usr/lib/
+sudo cp gusli_*.hpp /usr/include/
+sudo ldconfig
+```
+
+**Note**: GUSLI must be built before building NIXL. See [GUSLI Plugin README](../../src/plugins/gusli/README.md) for detailed installation and usage instructions.
+
 #### Python Environment Setup
 ```bash
 # Install uv (modern Python package manager)
@@ -404,7 +420,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 ```
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] (default: UCX)
+--backend NAME             # Communication backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
@@ -486,13 +502,26 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --obj_req_checksum TYPE    # Required checksum for S3 backend [supported, required] (default: supported)
 ```
 
+**GUSLI Backend:**
+```
+--device_list LIST                     # Device specs in format 'id:type:path' (e.g., '11:F:./store0.bin,27:K:/dev/nvme0n1')
+                                       # Type: F (file), K (kernel device), N (networked server with t/u prefix)
+--gusli_client_name NAME               # Client identifier (default: NIXLBench)
+--gusli_max_simultaneous_requests NUM  # Concurrent request limit (default: 32)
+--gusli_device_security LIST           # Comma-separated security flags per device (e.g., 'sec=0x3,sec=0x71')
+--gusli_bdev_byte_offset BYTES         # Starting LBA offset in bytes (default: 1048576)
+--gusli_config_file CONTENT            # Custom config file content (auto-generated if not provided)
+
+Note: storage_enable_direct is automatically enabled for GUSLI backend
+```
+
 ### Using ETCD for Coordination
 
 NIXL Benchmark uses an ETCD key-value store for coordination between benchmark workers. This is useful in containerized or cloud-native environments.
 
 **ETCD Requirements:**
 - **Required**: Network backends (UCX, UCX_MO, GPUNETIO, Mooncake, Libfabric) and multi-node setups
-- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, S3) running as single instances
+- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances
 - **Required**: Storage backends when `--etcd_endpoints` is explicitly specified
 
 **For multi-node benchmarks:**
@@ -575,6 +604,69 @@ The workers automatically coordinate ranks through ETCD as they connect.
 # POSIX with io_uring
 ./nixlbench --backend POSIX --filepath /mnt/storage/testfile --posix_api_type URING --storage_enable_direct
 ```
+
+**GUSLI Backend (G3+ User Space Access Library):**
+
+GUSLI provides direct user-space access to block storage devices, supporting local files, kernel block devices, and networked GUSLI servers.
+
+**Note**: Direct I/O is automatically enabled when GUSLI backend is selected (no need to specify `--storage_enable_direct`).
+
+```bash
+# Basic GUSLI benchmark - single file device
+./nixlbench --backend=GUSLI \
+           --device_list="11:F:./store0.bin" \
+           --num_initiator_dev=1 \
+           --num_target_dev=1 \
+           --op_type=WRITE
+
+# NVMe device with custom security
+./nixlbench --backend=GUSLI \
+           --device_list="27:K:/dev/nvme0n1" \
+           --gusli_device_security="sec=0x7" \
+           --num_initiator_dev=1 \
+           --num_target_dev=1 \
+           --op_type=READ
+
+# Multi-device configuration
+./nixlbench --backend=GUSLI \
+           --device_list="11:F:./store0.bin,14:K:/dev/zero,27:K:/dev/nvme0n1" \
+           --gusli_device_security="sec=0x3,sec=0x71,sec=0x7" \
+           --num_initiator_dev=3 \
+           --num_target_dev=3 \
+           --op_type=WRITE
+
+# Networked GUSLI server (TCP)
+./nixlbench --backend=GUSLI \
+           --device_list="20:N:t192.168.1.100" \
+           --gusli_device_security="sec=0x10" \
+           --num_initiator_dev=1 \
+           --num_target_dev=1 \
+           --op_type=WRITE
+
+# High concurrency with multiple threads
+./nixlbench --backend=GUSLI \
+           --device_list="27:K:/dev/nvme0n1" \
+           --gusli_max_simultaneous_requests=128 \
+           --num_threads=8 \
+           --total_buffer_size=$((16*1024*1024*1024)) \
+           --op_type=WRITE
+```
+
+**GUSLI Device Types:**
+- `F`: File-backed storage (e.g., `11:F:./store0.bin`)
+- `K`: Kernel block device (e.g., `27:K:/dev/nvme0n1`, `14:K:/dev/zero`)
+- `N`: Networked GUSLI server with protocol prefix (e.g., `20:N:t192.168.1.100` for TCP, `21:N:u10.0.0.5` for UDP)
+
+**GUSLI-Specific Parameters:**
+- `--gusli_client_name`: Client identifier (default: "NIXLBench")
+- `--gusli_max_simultaneous_requests`: Concurrent request limit (default: 32)
+- `--gusli_device_security`: Comma-separated security flags per device (default: "sec=0x3" for each device)
+- `--gusli_bdev_byte_offset`: Starting LBA offset in bytes (default: 1MB)
+- `--gusli_config_file`: Custom config file content override
+
+**Notes**:
+- Number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`
+- Direct I/O is automatically enabled for GUSLI (no need to specify `--storage_enable_direct`)
 
 ### Worker Types
 

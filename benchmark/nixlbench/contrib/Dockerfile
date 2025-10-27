@@ -156,6 +156,11 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
     make -j && \
     make install
 
+RUN git clone https://github.com/nvidia/gusli.git && \
+    cd gusli && \
+    make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+    cd ..
+
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -178,17 +183,10 @@ RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 # Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
-RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Install PyTorch
-# Latest stable PyTorch wheels are only available for CUDA 12.x
-# Nightly PyTorch wheels are needed for CUDA 13.x images
 RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
-    CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
-    if [ "$CUDA_MAJOR" -ge 13 ]; then \
-      FLAGS="--pre --index-url https://download.pytorch.org/whl/nightly/$CUDA_SHORT_VERSION"; \
-    else \
-      FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION"; \
-    fi && \
+    FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \
     uv pip install $FLAGS torch torchvision torchaudio
 
 COPY --from=nixl . /workspace/nixl
