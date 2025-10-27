@@ -24,8 +24,11 @@ description = "Meta package for nixl CUDA variants"
 readme = "README.md"
 requires-python = ">=3.9"
 
-dependencies = []
+dependencies = ["nixl-cu12>=@VERSION@"]
 
 [project.optional-dependencies]
 cu12 = ["nixl-cu12>=@VERSION@"]
 cu13 = ["nixl-cu13>=@VERSION@"]
+
+[tool.setuptools]
+packages = ["nixl"]

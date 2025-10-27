@@ -13,20 +13,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-source_dir = meson.current_source_dir()
+fs = import('fs')
+
 build_dir = meson.current_build_dir()
 
-configure_file(
+pyproject_toml = configure_file(
   input: 'pyproject.toml.in',
   output: 'pyproject.toml',
   configuration: { 'VERSION': meson.project_version() }
 )
+
+readme_md = fs.copyfile('README.md')
+
+nixl_sources = files('nixl/__init__.py')
+
+subdir('nixl')
 
 uv = find_program('uv', required: false)
 if uv.found()
   wheel_name = 'nixl-@0@-py3-none-any.whl'.format(meson.project_version())
   meta_wheel = custom_target(
     'build_nixl_meta',
+    input: [pyproject_toml, readme_md] + nixl_sources,
     output: [wheel_name],
     command: [uv, 'build', '--wheel', '--out-dir', build_dir, build_dir],
     install: false,
