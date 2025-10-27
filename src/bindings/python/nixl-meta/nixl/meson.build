@@ -13,8 +13,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-configure_file(
-  input: '__init__.py',
-  output: '__init__.py',
-  copy: true
-)
+fs = import('fs')
+fs.copyfile('__init__.py')

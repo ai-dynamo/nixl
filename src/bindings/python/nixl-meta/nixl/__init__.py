@@ -31,7 +31,7 @@ if _pkg is None:
         "Could not find CUDA-specific NIXL package. Please install NIXL with `pip install nixl[cu12]` or `pip install nixl[cu13]`"
     )
 
-submodules = ["_api", "_utils", "logging"]
+submodules = ["_api", "_bindings", "_utils", "logging"]
 for sub_name in submodules:
     # Import submodule from actual wheel
     module = importlib.import_module(f"{pkg}.{sub_name}")
