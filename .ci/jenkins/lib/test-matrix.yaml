@@ -42,7 +42,6 @@ taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 env:
   CONTAINER_WORKSPACE: /workspace
   INSTALL_DIR: ${CONTAINER_WORKSPACE}/nixl_install
-  NPROC: "16"
   # Manual timeout - ci-demo doesn't handle docker exec
   TEST_TIMEOUT: 30
 
