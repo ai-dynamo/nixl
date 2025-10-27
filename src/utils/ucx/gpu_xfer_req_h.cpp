@@ -77,7 +77,7 @@ createGpuXferReq(const nixlUcxEp &ep,
     params.element_size = sizeof(ucp_device_mem_list_elem_t);
     params.num_elements = ucp_elements.size();
 
-    auto start = std::chrono::steady_clock::now();
+    const auto start = std::chrono::steady_clock::now();
     constexpr auto timeout = std::chrono::milliseconds(500);
     ucp_device_mem_list_handle_h ucx_handle;
     ucs_status_t ucs_status;
@@ -87,7 +87,8 @@ createGpuXferReq(const nixlUcxEp &ep,
         worker.progress();
 
         if (std::chrono::steady_clock::now() - start > timeout) {
-            throw std::runtime_error("Timeout waiting for endpoint wireup completion has been exceeded");
+            throw std::runtime_error(
+                "Timeout waiting for endpoint wireup completion has been exceeded");
         }
     }
 
