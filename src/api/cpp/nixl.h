@@ -326,7 +326,7 @@ class nixlAgent {
          * @param  gpu_req_hndl [out] GPU transfer request handle
          * @return nixl_status_t Error code if call was not successful
          *
-         * @note   This call may block briefly until the associated connection is established.
+         * @note   This call may block until the associated connection is established.
          */
         nixl_status_t
         createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const;

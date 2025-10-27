@@ -21,6 +21,8 @@
 #include "rkey.h"
 #include "config.h"
 
+#include <chrono>
+
 extern "C" {
 #ifdef HAVE_UCX_GPU_DEVICE_API
 #include <ucp/api/device/ucp_host.h>
@@ -75,12 +77,18 @@ createGpuXferReq(const nixlUcxEp &ep,
     params.num_elements = ucp_elements.size();
 
     ucp_worker_h worker = ep.getWorker();
+    auto start = std::chrono::steady_clock::now();
+    constexpr auto timeout = std::chrono::milliseconds(500);
     ucp_device_mem_list_handle_h ucx_handle;
     ucs_status_t ucs_status;
     // Workaround: loop until wireup is completed
     while ((ucs_status = ucp_device_mem_list_create(ep.getEp(), &params, &ucx_handle)) ==
            UCS_ERR_NOT_CONNECTED) {
         ucp_worker_progress(worker);
+
+        if (std::chrono::steady_clock::now() - start > timeout) {
+            throw std::runtime_error("Timeout waiting for endpoint wireup completion");
+        }
     }
 
     if (ucs_status != UCS_OK) {
