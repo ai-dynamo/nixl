@@ -15,17 +15,14 @@
 
 import os
 
-import nixl
-
-__all__ = ["nixl"]
-
 if "NIXL_PLUGIN_DIR" not in os.environ:
     # name for local installation
-    plugin_dir = nixl.__file__[:-16] + ".nixl.mesonpy.libs/plugins/"
+    package_root = os.path.dirname(__file__)
+    plugin_dir = os.path.join(package_root, ".nixl.mesonpy.libs/plugins/")
 
-    # name for pypi installation
+    # fallback for PyPI installation
     if not os.path.isdir(plugin_dir):
-        plugin_dir = nixl.__file__[:-16] + ".nixl_pybind.mesonpy.libs/plugins/"
+        plugin_dir = os.path.join(package_root, ".nixl_pybind.mesonpy.libs/plugins/")
 
     if os.path.isdir(plugin_dir):
         os.environ["NIXL_PLUGIN_DIR"] = plugin_dir

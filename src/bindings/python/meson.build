@@ -19,16 +19,18 @@ nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc
 
 py = import('python').find_installation('python3', pure: false)
 
+wheel_dir = get_option('wheel_dir')
+
 py.extension_module('_bindings',
            'nixl_bindings.cpp',
-           subdir: ('nixl'),
+           subdir: (wheel_dir),
            dependencies: [nixl_dep, serdes_interface, pybind_dep],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            install: true)
 
 py.extension_module('_utils',
            'nixl_utils.cpp',
-           subdir: ('nixl'),
+           subdir: (wheel_dir),
            dependencies: [pybind_dep],
            install: true)
 

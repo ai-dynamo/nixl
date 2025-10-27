@@ -41,6 +41,7 @@ export NIXL_PREFIX=${INSTALL_DIR}
 export NIXL_DEBUG_LOGGING=yes
 
 pip3 install --break-system-packages .
+pip3 install --break-system-packages dist/nixl-*none-any.whl
 pip3 install --break-system-packages pytest
 pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq

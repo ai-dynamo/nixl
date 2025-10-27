@@ -122,6 +122,11 @@ chmod +x rustup-init
 ./rustup-init -y --default-toolchain 1.86.0
 export PATH="$HOME/.cargo/bin:$PATH"
 
+wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O install_uv.sh
+chmod +x install_uv.sh
+./install_uv.sh
+export PATH="$HOME/.local/bin:$PATH"
+
 curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
@@ -211,6 +216,7 @@ export UCX_TLS=^cuda_ipc
 # shellcheck disable=SC2086
 meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
 ninja -C nixl_build && ninja -C nixl_build install
+mkdir -p dist && cp nixl_build/src/bindings/python/nixl-meta/nixl-*.whl dist/
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
 # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc

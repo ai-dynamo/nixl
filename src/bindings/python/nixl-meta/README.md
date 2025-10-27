@@ -7,3 +7,5 @@ Install one of:
 pip install "nixl[cu12]"   # for CUDA 12
 pip install "nixl[cu13]"   # for CUDA 13
 ```
+
+If both are installed, the higher version will be used.
