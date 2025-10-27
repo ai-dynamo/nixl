@@ -192,8 +192,9 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(nixlUcxWorker &worker, void *addr, ucp_err_handling_mode_t err_handling_mode)
-    : worker(worker) {
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
+                     ucp_err_handling_mode_t err_handling_mode)
+{
     ucp_ep_params_t ep_params;
     nixl_status_t status;
 
@@ -205,7 +206,7 @@ nixlUcxEp::nixlUcxEp(nixlUcxWorker &worker, void *addr, ucp_err_handling_mode_t 
     ep_params.err_handler.arg = reinterpret_cast<void*>(this);
     ep_params.address         = reinterpret_cast<ucp_address_t*>(addr);
 
-    status = ucx_status_to_nixl(ucp_ep_create(worker.getWorkerHandle(), &ep_params, &eph));
+    status = ucx_status_to_nixl(ucp_ep_create(worker, &ep_params, &eph));
     if (status == NIXL_SUCCESS)
         setState(NIXL_UCX_EP_STATE_CONNECTED);
     else
@@ -527,7 +528,7 @@ std::string nixlUcxWorker::epAddr()
 absl::StatusOr<std::unique_ptr<nixlUcxEp>> nixlUcxWorker::connect(void* addr, std::size_t size)
 {
     try {
-        return std::make_unique<nixlUcxEp>(*this, addr, err_handling_mode_);
+        return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_);
     } catch (const std::exception &e) {
         return absl::UnavailableError(e.what());
     }
