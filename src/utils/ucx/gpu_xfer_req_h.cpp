@@ -88,7 +88,7 @@ createGpuXferReq(const nixlUcxEp &ep,
 
         if (std::chrono::steady_clock::now() - start > timeout) {
             throw std::runtime_error("Timeout waiting for endpoint wireup completion");
-         }
+        }
     }
 
     if (ucs_status != UCS_OK) {
