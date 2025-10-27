@@ -93,6 +93,7 @@ class nixlUcxEp {
     };
 private:
     ucp_ep_h            eph{nullptr};
+    ucp_worker_h        worker{nullptr};
     nixl_ucx_ep_state_t state{NIXL_UCX_EP_STATE_NULL};
 
     void setState(nixl_ucx_ep_state_t new_state);
@@ -151,6 +152,11 @@ public:
     [[nodiscard]] ucp_ep_h
     getEp() const noexcept {
         return eph;
+    }
+
+    [[nodiscard]] ucp_worker_h
+    getWorker() const noexcept {
+        return worker;
     }
 };
 
