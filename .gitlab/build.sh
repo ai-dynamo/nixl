@@ -122,6 +122,11 @@ chmod +x rustup-init
 ./rustup-init -y --default-toolchain 1.86.0
 export PATH="$HOME/.cargo/bin:$PATH"
 
+wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O install_uv.sh
+chmod +x install_uv.sh
+./install_uv.sh
+export PATH="$HOME/.local/bin:$PATH"
+
 curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
