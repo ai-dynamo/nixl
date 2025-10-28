@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.7.0',
+project('nixl', 'CPP', version: '0.7.1',
     default_options: ['buildtype=debug',
                 'werror=true',
                 'cpp_std=c++17',
