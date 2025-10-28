@@ -18,7 +18,7 @@ requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "p
 build-backend = "mesonpy"
 
 [project]
-name = 'nixl'
+name = 'nixl-cu12'
 version = '0.6.1'
 description = 'NIXL Python API'
 readme = 'README.md'
@@ -34,4 +34,4 @@ dependencies = ["torch", "numpy"]
 profile = "black"
 
 [tool.meson-python.args]
-setup = ['-Dinstall_headers=false']
+setup = ['-Dinstall_headers=false', '-Dwheel_dir=nixl_cu12']

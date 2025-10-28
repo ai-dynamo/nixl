@@ -222,4 +222,5 @@ RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
     --nixl-plugins-dir $NIXL_PLUGIN_DIR \
     --output-dir /workspace/nixl/dist
 
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
+RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl

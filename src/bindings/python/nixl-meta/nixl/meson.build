@@ -13,11 +13,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-py = import('python').find_installation('python3', pure: false)
-
-wheel_dir = get_option('wheel_dir')
-
-py.install_sources('_api.py', subdir: (wheel_dir))
-py.install_sources('__init__.py', subdir: (wheel_dir))
-py.install_sources('py.typed', subdir: (wheel_dir))
-py.install_sources('logging.py', subdir: (wheel_dir))
+fs = import('fs')
+fs.copyfile('__init__.py')

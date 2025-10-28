@@ -42,6 +42,7 @@ export NIXL_DEBUG_LOGGING=yes
 
 # Control ninja parallelism during pip build to prevent OOM (NPROC from common.sh)
 pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
+pip3 install --break-system-packages dist/nixl-*none-any.whl
 pip3 install --break-system-packages pytest
 pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
