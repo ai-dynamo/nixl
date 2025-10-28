@@ -25,6 +25,10 @@ pyproject_toml = configure_file(
 
 readme_md = fs.copyfile('README.md')
 
+source_root = meson.project_source_root()
+root_license_path = join_paths(source_root, 'LICENSE')
+license_path = fs.copyfile(root_license_path)
+
 nixl_sources = files('nixl/__init__.py')
 
 subdir('nixl')
@@ -34,7 +38,7 @@ if uv.found()
   wheel_name = 'nixl-@0@-py3-none-any.whl'.format(meson.project_version())
   meta_wheel = custom_target(
     'build_nixl_meta',
-    input: [pyproject_toml, readme_md] + nixl_sources,
+    input: [pyproject_toml, readme_md, license_path] + nixl_sources,
     output: [wheel_name],
     command: [uv, 'build', '--wheel', '--out-dir', build_dir, build_dir],
     install: false,
