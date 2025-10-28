@@ -20,9 +20,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nixl"
 version = "@VERSION@"
-description = "Meta package for nixl CUDA variants"
+description = "NIXL Python API meta package for CUDA variants"
 readme = "README.md"
+license = {file = 'LICENSE'}
 requires-python = ">=3.9"
+authors = [
+  {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
+]
 
 dependencies = ["nixl-cu12>=@VERSION@"]
 
