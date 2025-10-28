@@ -50,7 +50,7 @@ getAvailableNetworkDevices() {
     hints->mode = FI_CONTEXT;
     hints->ep_attr->type = FI_EP_RDM;
 
-    int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
+    int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
     if (ret) {
         NIXL_ERROR << "fi_getinfo failed " << fi_strerror(-ret);
         fi_freeinfo(hints);

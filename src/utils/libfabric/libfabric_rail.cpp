@@ -425,12 +425,14 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         hints->domain_attr->mr_mode =
             FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
         hints->domain_attr->mr_key_size = 2;
+        // Enable HMEM capability for GPU memory support
+        hints->caps |= FI_HMEM;
     }
     hints->domain_attr->name = strdup(device_name.c_str());
     hints->domain_attr->threading = FI_THREAD_SAFE;
     try {
         // Get fabric info for this specific device
-        int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
+        int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
         if (ret) {
             NIXL_ERROR << "fi_getinfo failed for rail " << rail_id << ": " << fi_strerror(-ret);
             throw std::runtime_error("fi_getinfo failed for rail " + std::to_string(rail_id));
@@ -1254,6 +1256,8 @@ nixlLibfabricRail::postRead(void *local_buffer,
 nixl_status_t
 nixlLibfabricRail::registerMemory(void *buffer,
                                   size_t length,
+                                  nixl_mem_t mem_type,
+                                  int gpu_id,
                                   struct fid_mr **mr_out,
                                   uint64_t *key_out) const {
     if (!buffer || !mr_out || !key_out) {
@@ -1294,8 +1298,32 @@ nixlLibfabricRail::registerMemory(void *buffer,
                << " buffer=" << buffer << " length=" << length << " access_flags=0x" << std::hex
                << provider_access_flags << std::dec << " requested_key=" << requested_key;
 
-    int ret =
-        fi_mr_reg(domain, buffer, length, provider_access_flags, 0, requested_key, 0, &mr, NULL);
+    // Use fi_mr_regattr for enhanced memory registration control
+    struct fi_mr_attr mr_attr = {};
+    mr_attr.access = provider_access_flags;
+    mr_attr.offset = 0;
+    mr_attr.requested_key = requested_key;
+    mr_attr.context = nullptr;
+    mr_attr.auth_key_size = 0;
+    mr_attr.auth_key = nullptr;
+
+    // Set HMEM interface based on memory type
+    if (mem_type == VRAM_SEG) {
+        mr_attr.iface = FI_HMEM_CUDA;
+        mr_attr.device.cuda = gpu_id;
+        NIXL_DEBUG << "CUDA memory registration - iface: FI_HMEM_CUDA, device.cuda: " << gpu_id;
+    } else {
+        mr_attr.iface = FI_HMEM_SYSTEM;
+        NIXL_DEBUG << "System memory registration - iface: FI_HMEM_SYSTEM";
+    }
+
+    struct iovec iov;
+    iov.iov_base = buffer;
+    iov.iov_len = length;
+    mr_attr.mr_iov = &iov;
+    mr_attr.iov_count = 1;
+
+    int ret = fi_mr_regattr(domain, &mr_attr, 0, &mr);
     if (ret) {
         NIXL_ERROR << "fi_mr_reg failed on rail " << rail_id << ": " << fi_strerror(-ret)
                    << " (buffer=" << buffer << ", length=" << length
