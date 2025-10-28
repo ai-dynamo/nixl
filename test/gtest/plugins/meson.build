@@ -13,6 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if not should_build_plugin.get('OBJ')
+    message('OBJ plugin not enabled, skipping plugins_gtest build')
+    subdir_done()
+endif
+
 aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
 if not aws_s3.found()
     message('aws-cpp-sdk-s3 not found, skipping plugins_gtest build')
