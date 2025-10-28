@@ -185,10 +185,6 @@ if nvshmem_available
     ]
 endif
 
-if not etcd_available
-    error('No runtime available or not found')
-endif
-
 if nvshmem_available
     # Use nvcc directly for compilation and linking
     nvcc = find_program('nvcc')
