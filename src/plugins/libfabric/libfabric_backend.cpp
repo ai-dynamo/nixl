@@ -835,6 +835,7 @@ nixlLibfabricEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
         NIXL_DEBUG << "Added rail " << rail_id << " key: " << input_md->rail_key_list_[rail_id];
     }
 
+    pub_md->derive_remote_selected_endpoints();
     pub_md->remote_buf_addr_ = reinterpret_cast<uint64_t>(input_md->buffer_);
     pub_md->conn_ = connections_[localAgent];
 
@@ -1040,36 +1041,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
         NIXL_DEBUG << "DEBUG: remote_agent='" << remote_agent << "' localAgent='" << localAgent
                    << "'";
-
-        // Check for same-agent (local) transfer - handle with direct memcpy
-        if (remote_agent == localAgent) {
-            NIXL_DEBUG << "Same-agent transfer detected from localAgent= " << localAgent
-                       << "to remote_agent " << remote_agent << "for descriptor " << desc_idx
-                       << ", using memcpy fallback for " << transfer_size << " bytes";
-
-            // For same-agent transfers, we need to copy directly between the descriptor addresses
-            // The remote[desc_idx].addr should be the target address for the transfer
-            void *remote_addr = reinterpret_cast<void *>(remote[desc_idx].addr);
-
-            NIXL_DEBUG << "About to perform memcpy: local_addr=" << transfer_addr
-                       << " remote_addr=" << remote_addr << " size=" << transfer_size;
-
-            if (op_type == nixlLibfabricReq::WRITE) {
-                // Write: copy from local_addr to remote_addr
-                std::memcpy(remote_addr, transfer_addr, transfer_size);
-                NIXL_DEBUG << "Same-agent memcpy write completed: " << transfer_addr << " -> "
-                           << remote_addr << " (" << transfer_size << " bytes)";
-            } else {
-                // Read: copy from remote_addr to local_addr
-                std::memcpy(transfer_addr, remote_addr, transfer_size);
-                NIXL_DEBUG << "Same-agent memcpy read completed: " << remote_addr << " -> "
-                           << transfer_addr << " (" << transfer_size << " bytes)";
-            }
-
-            NIXL_DEBUG << "Successfully processed same-agent descriptor " << desc_idx
-                       << " using memcpy fallback";
-            continue; // Skip the rail manager transfer for this descriptor
-        }
 
         // Prepare and submit transfer for remote agents
         // Use descriptor's specific target address
