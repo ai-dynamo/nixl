@@ -22,7 +22,8 @@ utils_sources = [
 utils_deps = [
   cuda_dep,
   openmp_dep,
-  cxxopts_dep
+  cxxopts_dep,
+  tomlplusplus_dep
 ]
 
 utils_lib = static_library('utils',
