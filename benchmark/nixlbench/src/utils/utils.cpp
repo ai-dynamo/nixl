@@ -36,6 +36,8 @@
 
 enum xferBenchParamType { XBPT_STRING, XBPT_BOOL, XBPT_UINT64, XBPT_INT32, __XBPT_LAST };
 
+#define CONFIG_FILE_PARAM_NAME "config_file"
+
 struct xferBenchParamInfo {
     std::string name;
     std::string help;
@@ -255,6 +257,9 @@ xferBenchConfig::parseConfig(int argc, char *argv[]) {
     cxxopts::Options options("nixlbench", "NIXL Benchmark Tool");
 
     options.add_options()("help", "Print usage");
+    options.add_options()(CONFIG_FILE_PARAM_NAME,
+                          "Config file (default: none)",
+                          cxxopts::value<std::string>()->default_value(""));
 
     for (const auto &param : xbench_params) {
         switch (param.type) {
@@ -297,9 +302,46 @@ xferBenchConfig::parseConfig(int argc, char *argv[]) {
     return loadParams(result);
 }
 
+// getParamValue() provides a parameter value, giving priority to explicitly passed
+// parameters over those specified in the config_file or set as defaults.
+template<class T>
+T
+xferBenchConfig::getParamValue(std::unique_ptr<toml::table> &tbl,
+                               cxxopts::ParseResult &result,
+                               std::string_view name) {
+    if (tbl != nullptr && !result.count(name.data())) {
+        // config_file exists and the parameter is not specified explicitly ->
+        // try to read the value from config_file first
+        try {
+            return tbl->at_path(name).value<T>().value();
+        }
+        catch (std::exception &) {
+            // the parameter is not in the config_file -> fallback to ParseResult
+        }
+    }
+
+    // return the default value from ParseResult
+    return result[name.data()].as<T>();
+}
+
 int
 xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
-#define NB_ARG(name) result[#name].as<decltype(name)>()
+    std::unique_ptr<toml::table> tbl;
+
+    if (result.count(CONFIG_FILE_PARAM_NAME)) {
+        /* if config_file parameter specified - try to read the config from file */
+        std::string config_file = result[CONFIG_FILE_PARAM_NAME].as<std::string>();
+        try {
+            tbl = std::make_unique<toml::table>(toml::parse_file(config_file));
+        }
+        catch (const toml::parse_error &err) {
+            std::cerr << "Failed to load config file: " << config_file << ": " << err.what()
+                      << std::endl;
+            return -1;
+        }
+    }
+
+#define NB_ARG(name) getParamValue<decltype(name)>(tbl, result, #name)
 
     benchmark_group = NB_ARG(benchmark_group);
     runtime_type = NB_ARG(runtime_type);
