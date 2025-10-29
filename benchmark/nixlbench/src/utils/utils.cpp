@@ -222,17 +222,20 @@ std::string xferBenchConfig::gusli_device_security = "";
 
 int
 xferBenchConfig::loadFromFlags() {
-    benchmark_group = FLAGS_benchmark_group;
-    runtime_type = FLAGS_runtime_type;
-    worker_type = FLAGS_worker_type;
+#define NB_ARG(name) \
+    FLAGS_ ##name
+
+    benchmark_group = NB_ARG(benchmark_group);
+    runtime_type = NB_ARG(runtime_type);
+    worker_type = NB_ARG(worker_type);
 
     // Only load NIXL-specific configurations if using NIXL worker
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        backend = FLAGS_backend;
-        enable_pt = FLAGS_enable_pt;
-        progress_threads = FLAGS_progress_threads;
-        device_list = FLAGS_device_list;
-        enable_vmm = FLAGS_enable_vmm;
+        backend = NB_ARG(backend);
+        enable_pt = NB_ARG(enable_pt);
+        progress_threads = NB_ARG(progress_threads);
+        device_list = NB_ARG(device_list);
+        enable_vmm = NB_ARG(enable_vmm);
 
 #if defined(HAVE_CUDA) && !defined(HAVE_CUDA_FABRIC)
         if (enable_vmm) {
@@ -242,17 +245,17 @@ xferBenchConfig::loadFromFlags() {
 #endif
         // Load GDS-specific configurations if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
-            gds_batch_pool_size = FLAGS_gds_batch_pool_size;
-            gds_batch_limit = FLAGS_gds_batch_limit;
+            gds_batch_pool_size = NB_ARG(gds_batch_pool_size);
+            gds_batch_limit = NB_ARG(gds_batch_limit);
         }
 
         if (backend == XFERBENCH_BACKEND_GDS_MT) {
-            gds_mt_num_threads = FLAGS_gds_mt_num_threads;
+            gds_mt_num_threads = NB_ARG(gds_mt_num_threads);
         }
 
         // Load POSIX-specific configurations if backend is POSIX
         if (backend == XFERBENCH_BACKEND_POSIX) {
-            posix_api_type = FLAGS_posix_api_type;
+            posix_api_type = NB_ARG(posix_api_type);
 
             // Validate POSIX API type
             if (posix_api_type != XFERBENCH_POSIX_API_AIO &&
@@ -266,36 +269,36 @@ xferBenchConfig::loadFromFlags() {
 
         // Load DOCA-specific configurations if backend is DOCA
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
-            gpunetio_device_list = FLAGS_gpunetio_device_list;
-            gpunetio_oob_list = FLAGS_gpunetio_oob_list;
+            gpunetio_device_list = NB_ARG(gpunetio_device_list);
+            gpunetio_oob_list = NB_ARG(gpunetio_oob_list);
         }
 
         // Load HD3FS-specific configurations if backend is HD3FS
         if (backend == XFERBENCH_BACKEND_HF3FS) {
-            hf3fs_iopool_size = FLAGS_hf3fs_iopool_size;
+            hf3fs_iopool_size = NB_ARG(hf3fs_iopool_size);
         }
 
         // Load GUSLI-specific configurations if backend is GUSLI
         if (backend == XFERBENCH_BACKEND_GUSLI) {
-            gusli_client_name = FLAGS_gusli_client_name;
-            gusli_max_simultaneous_requests = FLAGS_gusli_max_simultaneous_requests;
-            gusli_config_file = FLAGS_gusli_config_file;
-            gusli_bdev_byte_offset = FLAGS_gusli_bdev_byte_offset;
-            gusli_device_security = FLAGS_gusli_device_security;
+            gusli_client_name = NB_ARG(gusli_client_name);
+            gusli_max_simultaneous_requests = NB_ARG(gusli_max_simultaneous_requests);
+            gusli_config_file = NB_ARG(gusli_config_file);
+            gusli_bdev_byte_offset = NB_ARG(gusli_bdev_byte_offset);
+            gusli_device_security = NB_ARG(gusli_device_security);
         }
 
         // Load OBJ-specific configurations if backend is OBJ
         if (backend == XFERBENCH_BACKEND_OBJ) {
-            obj_access_key = FLAGS_obj_access_key;
-            obj_secret_key = FLAGS_obj_secret_key;
-            obj_session_token = FLAGS_obj_session_token;
-            obj_bucket_name = FLAGS_obj_bucket_name;
-            obj_scheme = FLAGS_obj_scheme;
-            obj_region = FLAGS_obj_region;
-            obj_use_virtual_addressing = FLAGS_obj_use_virtual_addressing;
-            obj_endpoint_override = FLAGS_obj_endpoint_override;
-            obj_req_checksum = FLAGS_obj_req_checksum;
-            obj_ca_bundle = FLAGS_obj_ca_bundle;
+            obj_access_key = NB_ARG(obj_access_key);
+            obj_secret_key = NB_ARG(obj_secret_key);
+            obj_session_token = NB_ARG(obj_session_token);
+            obj_bucket_name = NB_ARG(obj_bucket_name);
+            obj_scheme = NB_ARG(obj_scheme);
+            obj_region = NB_ARG(obj_region);
+            obj_use_virtual_addressing = NB_ARG(obj_use_virtual_addressing);
+            obj_endpoint_override = NB_ARG(obj_endpoint_override);
+            obj_req_checksum = NB_ARG(obj_req_checksum);
+            obj_ca_bundle = NB_ARG(obj_ca_bundle);
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -314,28 +317,28 @@ xferBenchConfig::loadFromFlags() {
         }
     }
 
-    initiator_seg_type = FLAGS_initiator_seg_type;
-    target_seg_type = FLAGS_target_seg_type;
-    scheme = FLAGS_scheme;
-    mode = FLAGS_mode;
-    op_type = FLAGS_op_type;
-    check_consistency = FLAGS_check_consistency;
-    total_buffer_size = FLAGS_total_buffer_size;
-    num_initiator_dev = FLAGS_num_initiator_dev;
-    num_target_dev = FLAGS_num_target_dev;
-    start_block_size = FLAGS_start_block_size;
-    max_block_size = FLAGS_max_block_size;
-    start_batch_size = FLAGS_start_batch_size;
-    max_batch_size = FLAGS_max_batch_size;
-    num_iter = FLAGS_num_iter;
-    large_blk_iter_ftr = FLAGS_large_blk_iter_ftr;
-    warmup_iter = FLAGS_warmup_iter;
-    num_threads = FLAGS_num_threads;
-    etcd_endpoints = FLAGS_etcd_endpoints;
-    filepath = FLAGS_filepath;
-    num_files = FLAGS_num_files;
-    posix_api_type = FLAGS_posix_api_type;
-    storage_enable_direct = FLAGS_storage_enable_direct;
+    initiator_seg_type = NB_ARG(initiator_seg_type);
+    target_seg_type = NB_ARG(target_seg_type);
+    scheme = NB_ARG(scheme);
+    mode = NB_ARG(mode);
+    op_type = NB_ARG(op_type);
+    check_consistency = NB_ARG(check_consistency);
+    total_buffer_size = NB_ARG(total_buffer_size);
+    num_initiator_dev = NB_ARG(num_initiator_dev);
+    num_target_dev = NB_ARG(num_target_dev);
+    start_block_size = NB_ARG(start_block_size);
+    max_block_size = NB_ARG(max_block_size);
+    start_batch_size = NB_ARG(start_batch_size);
+    max_batch_size = NB_ARG(max_batch_size);
+    num_iter = NB_ARG(num_iter);
+    large_blk_iter_ftr = NB_ARG(large_blk_iter_ftr);
+    warmup_iter = NB_ARG(warmup_iter);
+    num_threads = NB_ARG(num_threads);
+    etcd_endpoints = NB_ARG(etcd_endpoints);
+    filepath = NB_ARG(filepath);
+    num_files = NB_ARG(num_files);
+    posix_api_type = NB_ARG(posix_api_type);
+    storage_enable_direct = NB_ARG(storage_enable_direct);
 
     // Validate ETCD configuration
     if (!isStorageBackend() && etcd_endpoints.empty()) {
@@ -421,6 +424,7 @@ xferBenchConfig::loadFromFlags() {
     }
 
     return 0;
+#undef NB_ARG
 }
 
 void
