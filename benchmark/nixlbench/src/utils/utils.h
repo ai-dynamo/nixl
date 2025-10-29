@@ -29,6 +29,7 @@
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
 #include "utils/external/cxxopts.hpp"
+#include "utils/external/toml.hpp"
 
 #if HAVE_CUDA
 #include <cuda.h>
@@ -198,6 +199,11 @@ public:
 protected:
     static int
     loadParams(cxxopts::ParseResult &results);
+    template<class T>
+    static T
+    getParamValue(std::unique_ptr<toml::table> &tbl,
+                  cxxopts::ParseResult &result,
+                  std::string_view name);
 };
 
 // Shared GUSLI device config used by utils and nixl_worker
