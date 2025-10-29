@@ -33,7 +33,7 @@ if __name__ == "__main__":
     # Allocate memory and register with NIXL
 
     logger.info(
-        "Using NIXL Plugins from:\n%s",
+        "Using NIXL Plugins from: %s",
         os.environ.get("NIXL_PLUGIN_DIR", "default location"),
     )
 
