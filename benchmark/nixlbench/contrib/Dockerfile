@@ -205,7 +205,7 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-RUN uv pip install .
+RUN uv pip install . && uv pip install build/src/bindings/python/nixl-meta/nixl-*.whl
 
 WORKDIR /workspace/nixlbench
 
