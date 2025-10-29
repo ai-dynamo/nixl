@@ -35,19 +35,42 @@
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
 
+enum xferBenchParamType
+{
+    XBPT_STRING,
+    XBPT_BOOL,
+    XBPT_UINT64,
+    XBPT_INT32,
+    __XBPT_LAST
+};
+
+struct xferBenchParamInfo
+{
+    const char *name;
+    const char *help;
+    xferBenchParamType type;
+    union {
+        const char *str;
+        bool b;
+        uint64_t u64;
+        int32_t i32;
+    } def_value;
+};
+
 // Define gflags params
 #define NB_ARG_STRING(param_name, def_val, help_text) \
-    DEFINE_string(param_name, def_val, help_text);
+    { .name = # param_name, .help = help_text, .type = XBPT_STRING, .def_value = { .str = def_val } },
 #define NB_ARG_BOOL(param_name, def_val, help_text) \
-    DEFINE_bool(param_name, def_val, help_text);
+    { .name = # param_name, .help = help_text, .type = XBPT_BOOL, .def_value = { .b = def_val } },
 #define NB_ARG_UINT64(param_name, def_val, help_text) \
-    DEFINE_uint64(param_name, def_val, help_text);
+    { .name = # param_name, .help = help_text, .type = XBPT_UINT64, .def_value = { .u64 = def_val} },
 #define NB_ARG_INT32(param_name, def_val, help_text) \
-    DEFINE_int32(param_name, def_val, help_text);
+    { .name = # param_name, .help = help_text, .type = XBPT_INT32, .def_value = { .i32 = def_val } },
 
 /**********
  * xferBench Config
  **********/
+const xferBenchParamInfo xbench_params[] = {
 NB_ARG_STRING(benchmark_group, "default", \
               "Name of benchmark group. Use different names to run multiple benchmarks in parallel " \
               "(Default: default)")
@@ -135,6 +158,7 @@ NB_ARG_STRING(gusli_device_security, "", \
               "If empty or fewer than devices, uses 'sec=0x3' as default. " \
               "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) " \
               "or K (kernel device).")
+};
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT64
@@ -196,9 +220,52 @@ uint64_t xferBenchConfig::gusli_bdev_byte_offset = 0;
 std::string xferBenchConfig::gusli_device_security = "";
 
 int
-xferBenchConfig::loadFromFlags() {
+xferBenchConfig::parseConfig(int argc, char *argv[])
+{
+    cxxopts::Options options("nixlbench", "NIXL Benchmark Tool");
+
+    options.add_options()
+        ("help", "Print usage");
+
+    for (size_t i = 0; i < sizeof(xbench_params) / sizeof(xbench_params[0]); i++) {
+        const xferBenchParamInfo *param = &xbench_params[i];
+
+        switch (param->type) {
+        case XBPT_STRING:
+            options.add_options()
+                (param->name, param->help, cxxopts::value<std::string>()->default_value(param->def_value.str));
+            break;
+        case XBPT_BOOL:
+            options.add_options()
+                (param->name, param->help, cxxopts::value<bool>()->default_value(param->def_value.b ? "true" : "false"));
+            break;
+        case XBPT_UINT64:
+            options.add_options()
+                (param->name, param->help, cxxopts::value<uint64_t>()->default_value(std::to_string(param->def_value.u64)));
+            break;
+        case XBPT_INT32:
+            options.add_options()
+                (param->name, param->help, cxxopts::value<int32_t>()->default_value(std::to_string(param->def_value.i32)));
+            break;
+        default:
+            std::cerr << param->name << ": unsupported param type: " << param->type << std::endl;
+            return -1;
+        }
+    }
+
+    auto result = options.parse(argc, argv);
+    if (result.count("help")) {
+      std::cout << options.help() << std::endl;
+      return -1;
+    }
+
+    return loadParams(result);
+}
+
+int
+xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
 #define NB_ARG(name) \
-    FLAGS_ ##name
+    result[#name].as<decltype(name)>()
 
     benchmark_group = NB_ARG(benchmark_group);
     runtime_type = NB_ARG(runtime_type);
