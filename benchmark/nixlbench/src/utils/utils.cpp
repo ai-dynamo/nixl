@@ -35,131 +35,177 @@
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
 
-// Define gflags params
-#define NB_ARG_STRING(param_name, def_val, help_text) DEFINE_string(param_name, def_val, help_text);
-#define NB_ARG_BOOL(param_name, def_val, help_text) DEFINE_bool(param_name, def_val, help_text);
-#define NB_ARG_UINT64(param_name, def_val, help_text) DEFINE_uint64(param_name, def_val, help_text);
-#define NB_ARG_INT32(param_name, def_val, help_text) DEFINE_int32(param_name, def_val, help_text);
+enum xferBenchParamType { XBPT_STRING, XBPT_BOOL, XBPT_UINT64, XBPT_INT32, __XBPT_LAST };
+
+struct xferBenchParamInfo {
+    const char *name;
+    const char *help;
+    xferBenchParamType type;
+
+    union {
+        const char *str;
+        bool b;
+        uint64_t u64;
+        int32_t i32;
+    } def_value;
+};
+
+// Abstraction macros to facilitate transition to boost::program_options.
+#define NB_ARG_STRING(param_name, def_val, help_text)                               \
+    {                                                                               \
+        .name = #param_name, .help = help_text, .type = XBPT_STRING, .def_value = { \
+            .str = def_val                                                          \
+        }                                                                           \
+    }
+#define NB_ARG_BOOL(param_name, def_val, help_text)                                             \
+    {                                                                                           \
+        .name = #param_name, .help = help_text, .type = XBPT_BOOL, .def_value = {.b = def_val } \
+    }
+#define NB_ARG_UINT64(param_name, def_val, help_text)                               \
+    {                                                                               \
+        .name = #param_name, .help = help_text, .type = XBPT_UINT64, .def_value = { \
+            .u64 = def_val                                                          \
+        }                                                                           \
+    }
+#define NB_ARG_INT32(param_name, def_val, help_text)                                               \
+    {                                                                                              \
+        .name = #param_name, .help = help_text, .type = XBPT_INT32, .def_value = {.i32 = def_val } \
+    }
 
 /**********
  * xferBench Config
  **********/
-NB_ARG_STRING(benchmark_group,
-              "default",
-              "Name of benchmark group. Use different names to run multiple benchmarks in parallel "
-              "(Default: default)");
-NB_ARG_STRING(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
-NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
-NB_ARG_STRING(
-    backend,
-    XFERBENCH_BACKEND_UCX,
-    "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
-              (only used with nixl worker)");
-NB_ARG_STRING(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
-              [DRAM, VRAM]. Note: Storage backends always use DRAM locally.");
-NB_ARG_STRING(target_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for target \
-              [DRAM, VRAM]. Note: Storage backends determine remote type automatically.");
-NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, maytoone, onetomany, tp");
-NB_ARG_STRING(mode,
-              XFERBENCH_MODE_SG,
-              "MODE: SG (Single GPU per proc), MG (Multi GPU per proc) [default: SG]");
-NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
-NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check");
-NB_ARG_UINT64(total_buffer_size, 8LL * 1024 * (1 << 20), "Total buffer \
-              size across device for each process (Default: 80 GiB)");
-NB_ARG_UINT64(start_block_size, 4 * (1 << 10), "Max size of block \
-              (Default: 4 KiB)");
-NB_ARG_UINT64(max_block_size, 64 * (1 << 20), "Max size of block \
-              (Default: 64 MiB)");
-NB_ARG_UINT64(start_batch_size, 1, "Starting size of batch (Default: 1)");
-NB_ARG_UINT64(max_batch_size, 1, "Max size of batch (starts from 1)");
-NB_ARG_INT32(num_iter, 1000, "Max iterations");
-NB_ARG_INT32(large_blk_iter_ftr,
-             16,
-             "factor to reduce test iteration when testing large block size(>1MB)");
-NB_ARG_INT32(warmup_iter, 100, "Number of warmup iterations before timing");
-NB_ARG_INT32(
-    num_threads,
-    1,
-    "Number of threads used by benchmark."
-    " Num_iter must be greater or equal than num_threads and equally divisible by num_threads."
-    " (Default: 1)");
-NB_ARG_INT32(num_initiator_dev, 1, "Number of device in initiator process");
-NB_ARG_INT32(num_target_dev, 1, "Number of device in target process");
-NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
-NB_ARG_UINT64(progress_threads, 0, "Number of progress threads (default: 0)");
-NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
+const xferBenchParamInfo xbench_params[] = {
+    NB_ARG_STRING(
+        benchmark_group,
+        "default",
+        "Name of benchmark group. Use different names to run multiple benchmarks in parallel "
+        "(Default: default)"),
+    NB_ARG_STRING(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]"),
+    NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]"),
+    NB_ARG_STRING(backend,
+                  XFERBENCH_BACKEND_UCX,
+                  "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
+                  "GUSLI] (only used with nixl worker)"),
+    NB_ARG_STRING(initiator_seg_type,
+                  XFERBENCH_SEG_TYPE_DRAM,
+                  "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends "
+                  "always use DRAM locally."),
+    NB_ARG_STRING(target_seg_type,
+                  XFERBENCH_SEG_TYPE_DRAM,
+                  "Type of memory segment for target [DRAM, VRAM]. Note: Storage backends "
+                  "determine remote type automatically."),
+    NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, maytoone, onetomany, tp"),
+    NB_ARG_STRING(mode,
+                  XFERBENCH_MODE_SG,
+                  "MODE: SG (Single GPU per proc), MG (Multi GPU per proc) [default: SG]"),
+    NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE"),
+    NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check"),
+    NB_ARG_UINT64(total_buffer_size,
+                  8LL * 1024 * (1 << 20),
+                  "Total buffer size across device for each process (Default: 80 GiB)"),
+    NB_ARG_UINT64(start_block_size, 4 * (1 << 10), "Max size of block (Default: 4 KiB)"),
+    NB_ARG_UINT64(max_block_size, 64 * (1 << 20), "Max size of block (Default: 64 MiB)"),
+    NB_ARG_UINT64(start_batch_size, 1, "Starting size of batch (Default: 1)"),
+    NB_ARG_UINT64(max_batch_size, 1, "Max size of batch (starts from 1)"),
+    NB_ARG_INT32(num_iter, 1000, "Max iterations"),
+    NB_ARG_INT32(large_blk_iter_ftr,
+                 16,
+                 "factor to reduce test iteration when testing large block size(>1MB)"),
+    NB_ARG_INT32(warmup_iter, 100, "Number of warmup iterations before timing"),
+    NB_ARG_INT32(
+        num_threads,
+        1,
+        "Number of threads used by benchmark."
+        " Num_iter must be greater or equal than num_threads and equally divisible by num_threads."
+        " (Default: 1)"),
+    NB_ARG_INT32(num_initiator_dev, 1, "Number of device in initiator process"),
+    NB_ARG_INT32(num_target_dev, 1, "Number of device in target process"),
+    NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)"),
+    NB_ARG_UINT64(progress_threads, 0, "Number of progress threads (default: 0)"),
+    NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested"),
 
-// Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
-NB_ARG_STRING(filepath, "", "File path for storage operations");
-NB_ARG_INT32(num_files, 1, "Number of files used by benchmark");
-NB_ARG_BOOL(storage_enable_direct, false, "Enable direct I/O for storage operations");
+    // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
+    NB_ARG_STRING(filepath, "", "File path for storage operations"),
+    NB_ARG_INT32(num_files, 1, "Number of files used by benchmark"),
+    NB_ARG_BOOL(storage_enable_direct, false, "Enable direct I/O for storage operations"),
 
-// GDS options - only used when backend is GDS
-NB_ARG_INT32(gds_batch_pool_size,
-             32,
-             "Batch pool size for GDS operations (default: 32, only used with GDS backend)");
-NB_ARG_INT32(gds_batch_limit,
-             128,
-             "Batch limit for GDS operations (default: 128, only used with GDS backend)");
-NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (Default: 1)");
+    // GDS options - only used when backend is GDS
+    NB_ARG_INT32(gds_batch_pool_size,
+                 32,
+                 "Batch pool size for GDS operations (default: 32, only used with GDS backend)"),
+    NB_ARG_INT32(gds_batch_limit,
+                 128,
+                 "Batch limit for GDS operations (default: 128, only used with GDS backend)"),
+    NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (Default: 1)"),
 
-// TODO: We should take rank wise device list as input to extend support
-// <rank>:<device_list>, ...
-// For example- 0:mlx5_0,mlx5_1,mlx5_2,1:mlx5_3,mlx5_4, ...
-NB_ARG_STRING(device_list, "all", "Comma-separated device name to use for \
-		      communication (only used with nixl worker)");
-NB_ARG_STRING(etcd_endpoints,
-              "",
-              "ETCD server endpoints for communication (optional for storage backends)");
+    // TODO: We should take rank wise device list as input to extend support
+    // <rank>:<device_list>, ...
+    // For example- 0:mlx5_0,mlx5_1,mlx5_2,1:mlx5_3,mlx5_4, ...
+    NB_ARG_STRING(
+        device_list,
+        "all",
+        "Comma-separated device name to use for communication (only used with nixl worker)"),
+    NB_ARG_STRING(etcd_endpoints,
+                  "",
+                  "ETCD server endpoints for communication (optional for storage backends)"),
 
-// POSIX options - only used when backend is POSIX
-NB_ARG_STRING(posix_api_type,
-              XFERBENCH_POSIX_API_AIO,
-              "API type for POSIX operations [AIO, URING, POSIXAIO] (only used with POSIX backend)");
+    // POSIX options - only used when backend is POSIX
+    NB_ARG_STRING(
+        posix_api_type,
+        XFERBENCH_POSIX_API_AIO,
+        "API type for POSIX operations [AIO, URING, POSIXAIO] (only used with POSIX backend)"),
 
-// DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
-NB_ARG_STRING(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
-		      communication (only used with nixl worker)");
-// DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
-NB_ARG_STRING(gpunetio_oob_list, "", "Comma-separated OOB network interface name \
-		      for control path (only used with nixl worker)");
+    // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
+    NB_ARG_STRING(
+        gpunetio_device_list,
+        "0",
+        "Comma-separated GPU CUDA device id to use for communication (only used with nixl worker)"),
+    // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
+    NB_ARG_STRING(
+        gpunetio_oob_list,
+        "",
+        "Comma-separated OOB network interface name for control path (only used with nixl worker)"),
 
-// OBJ options - only used when backend is OBJ
-NB_ARG_STRING(obj_access_key, "", "Access key for S3 backend");
-NB_ARG_STRING(obj_secret_key, "", "Secret key for S3 backend");
-NB_ARG_STRING(obj_session_token, "", "Session token for S3 backend");
-NB_ARG_STRING(obj_bucket_name, XFERBENCH_OBJ_BUCKET_NAME_DEFAULT, "Bucket name for S3 backend");
-NB_ARG_STRING(obj_scheme, XFERBENCH_OBJ_SCHEME_HTTP, "HTTP scheme for S3 backend [http, https]");
-NB_ARG_STRING(obj_region, XFERBENCH_OBJ_REGION_EU_CENTRAL_1, "Region for S3 backend");
-NB_ARG_BOOL(obj_use_virtual_addressing, false, "Use virtual addressing for S3 backend");
-NB_ARG_STRING(obj_endpoint_override, "", "Endpoint override for S3 backend");
-NB_ARG_STRING(obj_req_checksum,
-              XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
-              "Required checksum for S3 backend [supported, required]");
-NB_ARG_STRING(obj_ca_bundle, "", "Path to CA bundle for S3 backend");
+    // OBJ options - only used when backend is OBJ
+    NB_ARG_STRING(obj_access_key, "", "Access key for S3 backend"),
+    NB_ARG_STRING(obj_secret_key, "", "Secret key for S3 backend"),
+    NB_ARG_STRING(obj_session_token, "", "Session token for S3 backend"),
+    NB_ARG_STRING(obj_bucket_name, XFERBENCH_OBJ_BUCKET_NAME_DEFAULT, "Bucket name for S3 backend"),
+    NB_ARG_STRING(obj_scheme,
+                  XFERBENCH_OBJ_SCHEME_HTTP,
+                  "HTTP scheme for S3 backend [http, https]"),
+    NB_ARG_STRING(obj_region, XFERBENCH_OBJ_REGION_EU_CENTRAL_1, "Region for S3 backend"),
+    NB_ARG_BOOL(obj_use_virtual_addressing, false, "Use virtual addressing for S3 backend"),
+    NB_ARG_STRING(obj_endpoint_override, "", "Endpoint override for S3 backend"),
+    NB_ARG_STRING(obj_req_checksum,
+                  XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
+                  "Required checksum for S3 backend [supported, required]"),
+    NB_ARG_STRING(obj_ca_bundle, "", "Path to CA bundle for S3 backend"),
 
-// HF3FS options - only used when backend is HF3FS
-NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
+    // HF3FS options - only used when backend is HF3FS
+    NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool"),
 
-// GUSLI options - only used when backend is GUSLI
-NB_ARG_STRING(gusli_client_name, "NIXLBench", "Client name for GUSLI backend");
-NB_ARG_INT32(gusli_max_simultaneous_requests,
-             32,
-             "Maximum number of simultaneous requests for GUSLI backend");
-NB_ARG_STRING(
-    gusli_config_file,
-    "",
-    "Configuration file content for GUSLI backend (if empty, auto-generated from device_list)");
-NB_ARG_UINT64(gusli_bdev_byte_offset,
-              1048576,
-              "Byte offset in block device for GUSLI operations (default: 1MB)");
-NB_ARG_STRING(gusli_device_security,
-              "",
-              "Comma-separated list of security flags per device (e.g. 'sec=0x3,sec=0x71'). "
-              "If empty or fewer than devices, uses 'sec=0x3' as default. "
-              "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) "
-              "or K (kernel device).");
+    // GUSLI options - only used when backend is GUSLI
+    NB_ARG_STRING(gusli_client_name, "NIXLBench", "Client name for GUSLI backend"),
+    NB_ARG_INT32(gusli_max_simultaneous_requests,
+                 32,
+                 "Maximum number of simultaneous requests for GUSLI backend"),
+    NB_ARG_STRING(
+        gusli_config_file,
+        "",
+        "Configuration file content for GUSLI backend (if empty, auto-generated from device_list)"),
+    NB_ARG_UINT64(gusli_bdev_byte_offset,
+                  1048576,
+                  "Byte offset in block device for GUSLI operations (default: 1MB)"),
+    NB_ARG_STRING(
+        gusli_device_security,
+        "",
+        "Comma-separated list of security flags per device (e.g. 'sec=0x3,sec=0x71'). "
+        "If empty or fewer than devices, uses 'sec=0x3' as default. "
+        "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) "
+        "or K (kernel device)."),
+};
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT64
@@ -221,9 +267,60 @@ uint64_t xferBenchConfig::gusli_bdev_byte_offset = 0;
 std::string xferBenchConfig::gusli_device_security = "";
 
 int
-xferBenchConfig::loadFromFlags() {
-#define NB_ARG(name) \
-    FLAGS_ ##name
+xferBenchConfig::parseConfig(int argc, char *argv[]) {
+    po::options_description desc("NIXL Benchmark Tool");
+
+    desc.add_options()("help", "Print usage");
+
+    for (size_t i = 0; i < sizeof(xbench_params) / sizeof(xbench_params[0]); i++) {
+        const xferBenchParamInfo *param = &xbench_params[i];
+
+        switch (param->type) {
+        case XBPT_STRING:
+            desc.add_options()(param->name,
+                               po::value<std::string>()->default_value(param->def_value.str),
+                               param->help);
+            break;
+        case XBPT_BOOL:
+            desc.add_options()(
+                param->name, po::value<bool>()->default_value(param->def_value.b), param->help);
+            break;
+        case XBPT_UINT64:
+            desc.add_options()(param->name,
+                               po::value<uint64_t>()->default_value(param->def_value.u64),
+                               param->help);
+            break;
+        case XBPT_INT32:
+            desc.add_options()(param->name,
+                               po::value<int32_t>()->default_value(param->def_value.i32),
+                               param->help);
+            break;
+        default:
+            std::cerr << param->name << ": unsupported param type: " << param->type << std::endl;
+            return -1;
+        }
+    }
+
+    po::variables_map vm;
+    try {
+        po::store(po::parse_command_line(argc, argv, all_desc), vm);
+    } catch (const po::error &e) {
+        std::cerr << "Error parsing command line: " << e.what() << std::endl;
+        return -1;
+    }
+    po::notify(vm);
+
+    if (vm.count("help")) {
+        std::cout << desc << std::endl;
+        return -1;
+    }
+
+    return loadParams(vm);
+}
+
+int
+xferBenchConfig::loadParams(po::variables_map &vm) {
+#define NB_ARG(name) vm[#name].as<decltype(name)>()
 
     benchmark_group = NB_ARG(benchmark_group);
     runtime_type = NB_ARG(runtime_type);

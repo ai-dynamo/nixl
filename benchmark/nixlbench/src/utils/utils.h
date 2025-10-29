@@ -26,8 +26,11 @@
 #include <variant>
 #include <vector>
 #include <optional>
+#include <boost/program_options.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
+
+namespace po = boost::program_options;
 
 #if HAVE_CUDA
 #include <cuda.h>
@@ -181,7 +184,7 @@ public:
     static std::string gusli_device_security;
 
     static int
-    loadFromFlags();
+    parseConfig(int argc, char *argv[]);
     static void
     printConfig();
     static void
@@ -192,6 +195,10 @@ public:
     parseDeviceList();
     static bool
     isStorageBackend();
+
+protected:
+    static int
+    loadParams(po::variables_map &vm);
 };
 
 // Shared GUSLI device config used by utils and nixl_worker
