@@ -76,6 +76,7 @@ struct xferBenchParamInfo {
  * xferBench Config
  **********/
 const xferBenchParamInfo xbench_params[] = {
+    NB_ARG_STRING(config_file, "", "Config file (Default: None)"),
     NB_ARG_STRING(
         benchmark_group,
         "default",
@@ -206,6 +207,7 @@ const xferBenchParamInfo xbench_params[] = {
 #undef NB_ARG_BOOL
 #undef NB_ARG_STRING
 
+std::string xferBenchConfig::config_file = "";
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
 std::string xferBenchConfig::backend = "";
@@ -309,9 +311,44 @@ xferBenchConfig::parseConfig(int argc, char *argv[]) {
     return loadParams(result);
 }
 
+// getParamValue() provides a parameter value, giving priority to explicitly passed
+// parameters over those specified in the config_file or set as defaults.
+template<class T>
+T
+xferBenchConfig::getParamValue(const std::unique_ptr<inih::INIReader> &ini,
+                               cxxopts::ParseResult &result,
+                               const char *name) {
+    if (ini && !result.count(name)) {
+        // config_file exists and the parameter is not specified explicitly ->
+        // try to read the value from config_file first
+        try {
+            return ini->Get<T>("global", name);
+        }
+        catch (const std::runtime_error &) {
+            // the parameter is not in the config_file -> fallback to ParseResult
+        }
+    }
+
+    return result[name].as<T>();
+}
+
 int
 xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
-#define NB_ARG(name) result[#name].as<decltype(name)>()
+    std::unique_ptr<inih::INIReader> ini;
+
+    if (result.count("config_file")) {
+        /* if config_file parameter specified - try to read the config from file */
+        config_file = result["config_file"].as<std::string>();
+        try {
+            ini = std::make_unique<inih::INIReader>(config_file);
+        }
+        catch (const std::runtime_error &e) {
+            std::cerr << "Failed to load ini: " << e.what() << std::endl;
+            return -1;
+        }
+    }
+
+#define NB_ARG(name) getParamValue<decltype(name)>(ini, result, #name)
 
     benchmark_group = NB_ARG(benchmark_group);
     runtime_type = NB_ARG(runtime_type);

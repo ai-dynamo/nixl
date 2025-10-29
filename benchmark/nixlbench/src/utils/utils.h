@@ -29,6 +29,7 @@
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
 #include "utils/external/cxxopts.hpp"
+#include "utils/external/ini.h"
 
 #if HAVE_CUDA
 #include <cuda.h>
@@ -128,6 +129,7 @@
 
 class xferBenchConfig {
 public:
+    static std::string config_file;
     static std::string runtime_type;
     static std::string worker_type;
     static std::string backend;
@@ -197,6 +199,11 @@ public:
 protected:
     static int
     loadParams(cxxopts::ParseResult &result);
+    template<class T>
+    static T
+    getParamValue(const std::unique_ptr<inih::INIReader> &ini,
+                  cxxopts::ParseResult &result,
+                  const char *name);
 };
 
 // Shared GUSLI device config used by utils and nixl_worker
