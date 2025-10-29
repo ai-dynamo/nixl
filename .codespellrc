@@ -1,2 +1,3 @@
 [codespell]
-ignore-words-list = crate, trait, dyn, async
+exclude-file = ./benchmark/nixlbench/src/utils/external/cxxopts.hpp
+ignore-words-list = crate, trait, dyn
