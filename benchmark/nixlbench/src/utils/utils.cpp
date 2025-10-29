@@ -24,6 +24,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <utility>
+#include <fstream>
 #include <iomanip>
 #include <omp.h>
 #if HAVE_CUDA
@@ -268,32 +269,31 @@ std::string xferBenchConfig::gusli_device_security = "";
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
-    po::options_description desc("NIXL Benchmark Tool");
-
-    desc.add_options()("help", "Print usage");
+    po::options_description common_desc(
+        "Common Options (can be set in command line or in config file)");
 
     for (size_t i = 0; i < sizeof(xbench_params) / sizeof(xbench_params[0]); i++) {
         const xferBenchParamInfo *param = &xbench_params[i];
 
         switch (param->type) {
         case XBPT_STRING:
-            desc.add_options()(param->name,
-                               po::value<std::string>()->default_value(param->def_value.str),
-                               param->help);
+            common_desc.add_options()(param->name,
+                                      po::value<std::string>()->default_value(param->def_value.str),
+                                      param->help);
             break;
         case XBPT_BOOL:
-            desc.add_options()(
+            common_desc.add_options()(
                 param->name, po::value<bool>()->default_value(param->def_value.b), param->help);
             break;
         case XBPT_UINT64:
-            desc.add_options()(param->name,
-                               po::value<uint64_t>()->default_value(param->def_value.u64),
-                               param->help);
+            common_desc.add_options()(param->name,
+                                      po::value<uint64_t>()->default_value(param->def_value.u64),
+                                      param->help);
             break;
         case XBPT_INT32:
-            desc.add_options()(param->name,
-                               po::value<int32_t>()->default_value(param->def_value.i32),
-                               param->help);
+            common_desc.add_options()(param->name,
+                                      po::value<int32_t>()->default_value(param->def_value.i32),
+                                      param->help);
             break;
         default:
             std::cerr << param->name << ": unsupported param type: " << param->type << std::endl;
@@ -301,17 +301,51 @@ xferBenchConfig::parseConfig(int argc, char *argv[]) {
         }
     }
 
+    po::options_description cmd_line_desc("Command Line Only Options");
+    cmd_line_desc.add_options()("help", "Print usage");
+    cmd_line_desc.add_options()("config_file", po::value<std::string>(), "Config file (default: none). "
+                                "If a parameter exists in the config file and is also explicitly "
+                                "specified on the command line, the latter takes precedence.");
+
+    po::options_description all_desc("NIXL Benchmark Tool Options");
+    all_desc.add(common_desc).add(cmd_line_desc);
+
+    // We want to prioritize command line options over config file options. So, if a parameter
+    // exists in the config file and is also explicitly specified on the command line, the latter
+    // takes precedence.
+    // To do so, we leverage the fact that the po::store function does not change the value of an
+    // option if it's already assigned.
     po::variables_map vm;
+    // First, we parse the command line options.
     try {
         po::store(po::parse_command_line(argc, argv, all_desc), vm);
     } catch (const po::error &e) {
         std::cerr << "Error parsing command line: " << e.what() << std::endl;
         return -1;
     }
+    // Then, we parse the config file options, if provided.
+    if (vm.count("config_file")) {
+        std::string config_file = vm["config_file"].as<std::string>();
+        std::ifstream config_file_stream(config_file);
+        if (!config_file_stream.is_open()) {
+            std::cerr << "Failed to open config file: " << config_file << std::endl;
+            return -1;
+        }
+        // Now, we parse the config file options, but do not store already assigned by command line
+        // options in the variables map.
+        try {
+            po::store(po::parse_config_file(config_file_stream, common_desc), vm);
+        } catch (const po::error &e) {
+            std::cerr << "Error parsing config file: " << e.what() << std::endl;
+            config_file_stream.close();
+            return -1;
+        }
+        config_file_stream.close();
+    }
     po::notify(vm);
 
     if (vm.count("help")) {
-        std::cout << desc << std::endl;
+        std::cout << all_desc << std::endl;
         return -1;
     }
 
