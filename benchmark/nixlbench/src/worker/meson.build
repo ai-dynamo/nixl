@@ -22,7 +22,8 @@ worker_deps = [
   cuda_dep,
   openmp_dep,
   etcd_dep,
-  cxxopts_dep
+  cxxopts_dep,
+  tomlplusplus_dep
 ]
 
 worker_lib = static_library('worker',

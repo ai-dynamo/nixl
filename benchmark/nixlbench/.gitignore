@@ -3,3 +3,6 @@ subprojects/packagecache/
 # cxxopts
 subprojects/cxxopts-*
 
+# tomlplusplus
+subprojects/tomlplusplus-*
+

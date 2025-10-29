@@ -112,6 +112,9 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 # Check for cxxopts
 cxxopts_dep = dependency('cxxopts', required: true)
 
+# Check for tomlplusplus (header only)
+tomlplusplus_dep = dependency('tomlplusplus', required: true, default_options: ['build_lib=false', 'compile_library=false'])
+
 # Ensure etcd is available
 etcd_available = etcd_dep.found()
 if etcd_available
@@ -166,7 +169,7 @@ configure_file(
     install_dir: get_option('includedir') / 'nixlbench'
 )
 
-deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, cxxopts_dep]
+deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, cxxopts_dep, tomlplusplus_dep]
 args = []
 if etcd_available
     deps += [etcd_dep]
