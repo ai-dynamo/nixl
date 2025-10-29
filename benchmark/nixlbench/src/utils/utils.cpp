@@ -38,44 +38,34 @@
 /**********
  * xferBench Config
  **********/
-DEFINE_string(benchmark_group,
-              "default",
+DEFINE_string(benchmark_group, "default",
               "Name of benchmark group. Use different names to run multiple benchmarks in parallel "
               "(Default: default)");
 DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
 DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
-DEFINE_string(
-    backend,
-    XFERBENCH_BACKEND_UCX,
-    "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
-              (only used with nixl worker)");
-DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
-              [DRAM, VRAM]. Note: Storage backends always use DRAM locally.");
-DEFINE_string(target_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for target \
-              [DRAM, VRAM]. Note: Storage backends determine remote type automatically.");
+DEFINE_string(backend, XFERBENCH_BACKEND_UCX,
+              "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI]"
+              " (only used with nixl worker)");
+DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator"
+              " [DRAM, VRAM]. Note: Storage backends always use DRAM locally.");
+DEFINE_string(target_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for target"
+              " [DRAM, VRAM]. Note: Storage backends determine remote type automatically.");
 DEFINE_string(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, maytoone, onetomany, tp");
 DEFINE_string(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc) [default: SG]");
 DEFINE_string(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
 DEFINE_bool(check_consistency, false, "Enable Consistency Check");
-DEFINE_uint64(total_buffer_size, 8LL * 1024 * (1 << 20), "Total buffer \
-              size across device for each process (Default: 80 GiB)");
-DEFINE_uint64(start_block_size, 4 * (1 << 10), "Max size of block \
-              (Default: 4 KiB)");
-DEFINE_uint64(max_block_size, 64 * (1 << 20), "Max size of block \
-              (Default: 64 MiB)");
+DEFINE_uint64(total_buffer_size, 8LL * 1024 * (1 << 20), "Total buffer"
+              " size across device for each process (Default: 80 GiB)");
+DEFINE_uint64(start_block_size, 4 * (1 << 10), "Max size of block (Default: 4 KiB)");
+DEFINE_uint64(max_block_size, 64 * (1 << 20), "Max size of block (Default: 64 MiB)");
 DEFINE_uint64(start_batch_size, 1, "Starting size of batch (Default: 1)");
 DEFINE_uint64(max_batch_size, 1, "Max size of batch (starts from 1)");
 DEFINE_int32(num_iter, 1000, "Max iterations");
-DEFINE_int32(large_blk_iter_ftr,
-             16,
-             "factor to reduce test iteration when testing large block size(>1MB)");
+DEFINE_int32(large_blk_iter_ftr, 16, "factor to reduce test iteration when testing large block size(>1MB)");
 DEFINE_int32(warmup_iter, 100, "Number of warmup iterations before timing");
-DEFINE_int32 (
-    num_threads,
-    1,
-    "Number of threads used by benchmark."
-    " Num_iter must be greater or equal than num_threads and equally divisible by num_threads."
-    " (Default: 1)");
+DEFINE_int32 (num_threads, 1, "Number of threads used by benchmark."
+              " Num_iter must be greater or equal than num_threads and equally divisible by num_threads."
+              " (Default: 1)");
 DEFINE_int32(num_initiator_dev, 1, "Number of device in initiator process");
 DEFINE_int32(num_target_dev, 1, "Number of device in target process");
 DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
@@ -95,23 +85,21 @@ DEFINE_int32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (De
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
 // For example- 0:mlx5_0,mlx5_1,mlx5_2,1:mlx5_3,mlx5_4, ...
-DEFINE_string(device_list, "all", "Comma-separated device name to use for \
-		      communication (only used with nixl worker)");
-DEFINE_string(etcd_endpoints,
-              "",
+DEFINE_string(device_list, "all", "Comma-separated device name to use for"
+              " communication (only used with nixl worker)");
+DEFINE_string(etcd_endpoints, "",
               "ETCD server endpoints for communication (optional for storage backends)");
 
 // POSIX options - only used when backend is POSIX
-DEFINE_string (posix_api_type,
-               XFERBENCH_POSIX_API_AIO,
+DEFINE_string (posix_api_type, XFERBENCH_POSIX_API_AIO,
                "API type for POSIX operations [AIO, URING] (only used with POSIX backend)");
 
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
-DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
-		      communication (only used with nixl worker)");
+DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for"
+              " communication (only used with nixl worker)");
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
-DEFINE_string(gpunetio_oob_list, "", "Comma-separated OOB network interface name \
-		      for control path (only used with nixl worker)");
+DEFINE_string(gpunetio_oob_list, "", "Comma-separated OOB network interface name"
+              " for control path (only used with nixl worker)");
 
 // OBJ options - only used when backend is OBJ
 DEFINE_string(obj_access_key, "", "Access key for S3 backend");
@@ -122,8 +110,7 @@ DEFINE_string(obj_scheme, XFERBENCH_OBJ_SCHEME_HTTP, "HTTP scheme for S3 backend
 DEFINE_string(obj_region, XFERBENCH_OBJ_REGION_EU_CENTRAL_1, "Region for S3 backend");
 DEFINE_bool(obj_use_virtual_addressing, false, "Use virtual addressing for S3 backend");
 DEFINE_string(obj_endpoint_override, "", "Endpoint override for S3 backend");
-DEFINE_string(obj_req_checksum,
-              XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
+DEFINE_string(obj_req_checksum, XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
               "Required checksum for S3 backend [supported, required]");
 DEFINE_string(obj_ca_bundle, "", "Path to CA bundle for S3 backend");
 
@@ -132,18 +119,13 @@ DEFINE_int32(hf3fs_iopool_size, 64, "Size of io memory pool");
 
 // GUSLI options - only used when backend is GUSLI
 DEFINE_string(gusli_client_name, "NIXLBench", "Client name for GUSLI backend");
-DEFINE_int32(gusli_max_simultaneous_requests,
-             32,
+DEFINE_int32(gusli_max_simultaneous_requests, 32,
              "Maximum number of simultaneous requests for GUSLI backend");
-DEFINE_string(
-    gusli_config_file,
-    "",
+DEFINE_string(gusli_config_file, "",
     "Configuration file content for GUSLI backend (if empty, auto-generated from device_list)");
-DEFINE_uint64(gusli_bdev_byte_offset,
-              1048576,
+DEFINE_uint64(gusli_bdev_byte_offset, 1048576,
               "Byte offset in block device for GUSLI operations (default: 1MB)");
-DEFINE_string(gusli_device_security,
-              "",
+DEFINE_string(gusli_device_security, "",
               "Comma-separated list of security flags per device (e.g. 'sec=0x3,sec=0x71'). "
               "If empty or fewer than devices, uses 'sec=0x3' as default. "
               "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) "
