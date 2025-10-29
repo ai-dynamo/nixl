@@ -825,23 +825,30 @@ nixlLibfabricEngine::getPublicData(const nixlBackendMD *meta, std::string &str) 
 }
 
 nixl_status_t
-nixlLibfabricEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
-    nixlLibfabricPrivateMetadata *input_md = static_cast<nixlLibfabricPrivateMetadata *>(input);
+nixlLibfabricEngine::loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
+                                        void *buffer,
+                                        std::shared_ptr<nixlLibfabricConnection> conn,
+                                        nixlBackendMD *&output) {
     auto pub_md = std::make_unique<nixlLibfabricPublicMetadata>();
-    // Store all rail keys instead of just the first one
-    pub_md->rail_remote_key_list_.reserve(input_md->rail_key_list_.size());
-    for (size_t rail_id = 0; rail_id < input_md->rail_key_list_.size(); ++rail_id) {
-        pub_md->rail_remote_key_list_.push_back(input_md->rail_key_list_[rail_id]);
-        NIXL_DEBUG << "Added rail " << rail_id << " key: " << input_md->rail_key_list_[rail_id];
-    }
 
+    pub_md->rail_remote_key_list_ = std::move(rail_keys);
     pub_md->derive_remote_selected_endpoints();
-    pub_md->remote_buf_addr_ = reinterpret_cast<uint64_t>(input_md->buffer_);
-    pub_md->conn_ = connections_[localAgent];
+    pub_md->remote_buf_addr_ = reinterpret_cast<uint64_t>(buffer);
+    pub_md->conn_ = conn;
 
     output = pub_md.release();
-    NIXL_DEBUG << "Loading Local MD with " << input_md->rail_key_list_.size() << " rail keys";
+    NIXL_DEBUG << "Metadata loaded with"
+               << " Remote addr: " << (void *)pub_md->remote_buf_addr_ << " Remote keys for "
+               << pub_md->rail_remote_key_list_.size() << " rails"
+               << " Remote fi_addr: " << pub_md->conn_->rail_remote_addr_list_[0][0];
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlLibfabricEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
+    nixlLibfabricPrivateMetadata *input_md = static_cast<nixlLibfabricPrivateMetadata *>(input);
+    return loadMetadataHelper(
+        input_md->rail_key_list_, input_md->buffer_, connections_[localAgent], output);
 }
 
 nixl_status_t
@@ -870,19 +877,8 @@ nixlLibfabricEngine::loadRemoteMD(const nixlBlobDesc &input,
         return status;
     }
 
-    // Engine handles connection management and metadata object creation
-    auto pub_md = std::make_unique<nixlLibfabricPublicMetadata>();
-    pub_md->conn_ = conn_it->second;
-    pub_md->rail_remote_key_list_ = std::move(remote_keys);
-    pub_md->derive_remote_selected_endpoints();
-    pub_md->remote_buf_addr_ = remote_addr;
-    NIXL_DEBUG << "Remote metadata loaded with"
-               << " Remote addr: " << (void *)pub_md->remote_buf_addr_ << " Remote keys for "
-               << pub_md->rail_remote_key_list_.size() << " rails"
-               << " Remote fi_addr: " << pub_md->conn_->rail_remote_addr_list_[0][0];
-
-    output = pub_md.release();
-    return NIXL_SUCCESS;
+    return loadMetadataHelper(
+        remote_keys, reinterpret_cast<void *>(remote_addr), conn_it->second, output);
 }
 
 nixl_status_t
@@ -1075,8 +1071,9 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     NIXL_DEBUG << "Processing complete: submitted "
                << backend_handle->binary_notif.expected_completions << " requests from "
-               << desc_count << " descriptors" << " with "
-               << backend_handle->binary_notif.expected_completions << " total XFER_IDs";
+               << desc_count << " descriptors"
+               << " with " << backend_handle->binary_notif.expected_completions
+               << " total XFER_IDs";
 
     // For same-agent transfers, we need to set the total to 0 since we bypassed all rail operations
     if (remote_agent == localAgent) {
@@ -1548,7 +1545,6 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id) {
     // Check if any notifications can now be completed (after releasing the lock)
     checkPendingNotifications();
 }
-
 
 /****************************************
  * Notification Queuing Helper Methods
