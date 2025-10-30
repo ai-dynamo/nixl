@@ -31,7 +31,6 @@ env:
   REGISTRY_REPO: "sw-nbu-swx-nixl-docker-local/verification"
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
-  NPROC: "16"
 
 taskName: "${BUILD_TARGET}/${arch}/${axis_index}"
 

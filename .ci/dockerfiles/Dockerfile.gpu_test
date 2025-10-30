@@ -3,7 +3,7 @@
 # This Dockerfile creates a GPU-enabled test environment for NIXL (NVIDIA I/O eXchange Layer)
 # development and testing. It provides a containerized environment with:
 #
-# - NVIDIA PyTorch base image with CUDA support
+# - NVIDIA cuda-dl-base image with CUDA support
 # - Non-root user setup for security
 # - Sudo access for package installation and system configuration
 # - Optimized for CI/CD pipeline testing
@@ -13,7 +13,7 @@
 #   docker run --gpus all --privileged -it nixl-gpu-test
 #
 # Build arguments:
-#   BASE_IMAGE: Base NVIDIA PyTorch image (default: nvcr.io/nvidia/pytorch:25.02-py3)
+#   BASE_IMAGE: Base NVIDIA cuda-dl-base image (default: nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04)
 #   _UID: User ID for the non-root user (default: 148069)
 #   _GID: Group ID for the user (default: 30)
 #   _LOGIN: Username (default: svc-nixl)
@@ -22,7 +22,7 @@
 #   WORKSPACE: Workspace directory path
 #
 
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.02-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
 
 FROM ${BASE_IMAGE}
 
@@ -41,7 +41,7 @@ LABEL version="1.0"
 
 # Update package list and install required packages in one layer
 RUN apt-get update && \
-    apt-get install -y sudo \
+    apt-get install -y sudo python3 python3-pip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -58,6 +58,9 @@ RUN mkdir -p /etc/sudoers.d && \
     echo "${_LOGIN} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${_LOGIN} && \
     chmod 440 /etc/sudoers.d/${_LOGIN} && \
     chown root:root /etc/sudoers.d/${_LOGIN}
+
+# Create and set permissions for workspace directory
+RUN mkdir -p ${WORKSPACE} && chmod 777 ${WORKSPACE}
 
 # Copy workspace into container (workaround for files disappearing from workspace)
 COPY --chown="${_UID}":"${_GID}" . ${WORKSPACE}

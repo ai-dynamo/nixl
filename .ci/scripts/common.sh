@@ -78,6 +78,11 @@ max_gtest_port=$((tcp_port_max + gtest_offset))
 # Check if a GPU is present
 nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
 
+# Ensure CUDA_HOME is set if CUDA is installed (cuda-dl-base images don't set it by default)
+if [ -d "/usr/local/cuda" ] && [ -z "$CUDA_HOME" ]; then
+    export CUDA_HOME=/usr/local/cuda
+fi
+
 if $HAS_GPU && test -d "$CUDA_HOME"
 then
     UCX_CUDA_BUILD_ARGS="--with-cuda=${CUDA_HOME}"
@@ -89,3 +94,24 @@ fi
 
 # Default to false, unless TEST_LIBFABRIC is set. AWS EFA tests must set it to true.
 export TEST_LIBFABRIC=${TEST_LIBFABRIC:-false}
+
+# Set default parallelism for make/ninja (can be overridden by NPROC env var)
+if [ -z "$NPROC" ]; then
+    # In containers, calculate based on memory limits to avoid OOM
+    if [[ -f /.dockerenv  ||  -f /run/.containerenv  ||  -n "${KUBERNETES_SERVICE_HOST}" ]]; then
+        if [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+            limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
+        elif [ -f /sys/fs/cgroup/memory.max ]; then
+            limit=$(cat /sys/fs/cgroup/memory.max)
+        else
+            limit=$((4 * 1024 * 1024 * 1024))
+        fi
+        # Use 1 process per GB of memory, max 16
+        nproc=$((limit / (1024 * 1024 * 1024)))
+        nproc=$((nproc > 16 ? 16 : nproc))
+        nproc=$((nproc < 1 ? 1 : nproc))
+    else
+        nproc=$(nproc --all)
+    fi
+    export NPROC=$nproc
+fi
