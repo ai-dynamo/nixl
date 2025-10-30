@@ -78,7 +78,7 @@ createGpuXferReq(const nixlUcxEp &ep,
     params.num_elements = ucp_elements.size();
 
     const auto start = std::chrono::steady_clock::now();
-    constexpr auto timeout = std::chrono::milliseconds(500);
+    constexpr auto timeout = std::chrono::seconds(5);
     ucp_device_mem_list_handle_h ucx_handle;
     ucs_status_t ucs_status;
     // Workaround: loop until wireup is completed
