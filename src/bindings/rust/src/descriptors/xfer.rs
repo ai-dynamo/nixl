@@ -14,11 +14,56 @@
 // limitations under the License.
 
 use super::*;
+use super::sync_manager::{BackendSyncable, SyncManager};
+
+/// Public transfer descriptor used for indexing and comparisons
+#[derive(Debug, Clone, PartialEq)]
+pub struct XferDescriptor {
+    pub addr: usize,
+    pub len: usize,
+    pub dev_id: u64,
+}
+
+/// Internal data structure for transfer descriptors
+#[derive(Debug)]
+struct XferDescData {
+    descriptors: Vec<XferDescriptor>,
+}
+
+impl BackendSyncable for XferDescData {
+    type Backend = NonNull<bindings::nixl_capi_xfer_dlist_s>;
+    type Error = NixlError;
+
+    fn sync_to_backend(&self, backend: &Self::Backend) -> Result<(), Self::Error> {
+        // Clear backend
+        let status = unsafe { nixl_capi_xfer_dlist_clear(backend.as_ptr()) };
+        match status {
+            NIXL_CAPI_SUCCESS => {}
+            NIXL_CAPI_ERROR_INVALID_PARAM => return Err(NixlError::InvalidParam),
+            _ => return Err(NixlError::BackendError),
+        }
+
+        // Re-add all descriptors
+        for desc in &self.descriptors {
+            let status = unsafe {
+                nixl_capi_xfer_dlist_add_desc(backend.as_ptr(), desc.addr as uintptr_t, desc.len, desc.dev_id)
+            };
+            match status {
+                NIXL_CAPI_SUCCESS => {}
+                NIXL_CAPI_ERROR_INVALID_PARAM => return Err(NixlError::InvalidParam),
+                _ => return Err(NixlError::BackendError),
+            }
+        }
+
+        Ok(())
+    }
+}
 
 /// A safe wrapper around a NIXL transfer descriptor list
 pub struct XferDescList<'a> {
-    inner: NonNull<bindings::nixl_capi_xfer_dlist_s>,
+    sync_mgr: SyncManager<XferDescData>,
     _phantom: PhantomData<&'a dyn NixlDescriptor>,
+    mem_type: MemType,
 }
 
 impl<'a> XferDescList<'a> {
@@ -32,10 +77,16 @@ impl<'a> XferDescList<'a> {
         match status {
             NIXL_CAPI_SUCCESS => {
                 // SAFETY: If status is NIXL_CAPI_SUCCESS, dlist is non-null
-                let inner = unsafe { NonNull::new_unchecked(dlist) };
+                let backend = unsafe { NonNull::new_unchecked(dlist) };
+                let data = XferDescData {
+                    descriptors: Vec::new(),
+                };
+                let sync_mgr = SyncManager::new(data, backend);
+
                 Ok(Self {
-                    inner,
+                    sync_mgr,
                     _phantom: PhantomData,
+                    mem_type,
                 })
             }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
@@ -44,31 +95,18 @@ impl<'a> XferDescList<'a> {
     }
 
     pub fn as_ptr(&self) -> *mut bindings::nixl_capi_xfer_dlist_s {
-        self.inner.as_ptr()
+        self.sync_mgr.backend().map(|b| b.as_ptr()).unwrap_or(ptr::null_mut())
     }
 
     /// Returns the memory type of the transfer descriptor list
-    pub fn get_type(&self) -> Result<MemType, NixlError> {
-        let mut mem_type = 0;
-        let status = unsafe { nixl_capi_xfer_dlist_get_type(self.inner.as_ptr(), &mut mem_type) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(MemType::from(mem_type)),
-            _ => Err(NixlError::BackendError),
-        }
-    }
+    pub fn get_type(&self) -> Result<MemType, NixlError> { Ok(self.mem_type) }
 
     /// Adds a descriptor to the list
     pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
-        let status = unsafe {
-            nixl_capi_xfer_dlist_add_desc(self.inner.as_ptr(), addr as uintptr_t, len, dev_id)
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
+        self.sync_mgr.modify(|data| {
+            data.descriptors.push(XferDescriptor { addr, len, dev_id });
+        });
+        Ok(())
     }
 
     /// Returns true if the list is empty
@@ -77,81 +115,61 @@ impl<'a> XferDescList<'a> {
     }
 
     /// Returns the number of descriptors in the list
-    pub fn desc_count(&self) -> Result<usize, NixlError> {
-        let mut count = 0;
-        let status = unsafe { nixl_capi_xfer_dlist_desc_count(self.inner.as_ptr(), &mut count) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(count),
-            _ => Err(NixlError::BackendError),
-        }
-    }
+    pub fn desc_count(&self) -> Result<usize, NixlError> { Ok(self.sync_mgr.data().descriptors.len()) }
 
     /// Returns the number of descriptors in the list
-    pub fn len(&self) -> Result<usize, NixlError> {
-        let mut len = 0;
-        let status = unsafe { nixl_capi_xfer_dlist_len(self.inner.as_ptr(), &mut len) };
+    pub fn len(&self) -> Result<usize, NixlError> { Ok(self.sync_mgr.data().descriptors.len()) }
 
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(len),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
-    }
-
-     /// Trims the list to the given size
-     pub fn trim(&mut self) -> Result<(), NixlError> {
-        let status = unsafe { nixl_capi_xfer_dlist_trim(self.inner.as_ptr()) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
+    /// Trims the list to the given size
+    pub fn trim(&mut self) -> Result<(), NixlError> {
+        self.sync_mgr.modify(|data| {
+            data.descriptors.shrink_to_fit();
+        });
+        Ok(())
     }
 
     /// Removes the descriptor at the given index
     pub fn rem_desc(&mut self, index: i32) -> Result<(), NixlError> {
-        let status = unsafe { nixl_capi_xfer_dlist_rem_desc(self.inner.as_ptr(), index) };
+        if index < 0 { return Err(NixlError::InvalidParam); }
+        let idx = index as usize;
 
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
+        self.sync_mgr.modify(|data| {
+            if idx >= data.descriptors.len() { return Err(NixlError::InvalidParam); }
+            data.descriptors.remove(idx);
+            Ok(())
+        })
     }
 
     /// Clears all descriptors from the list
     pub fn clear(&mut self) -> Result<(), NixlError> {
-        let status = unsafe { nixl_capi_xfer_dlist_clear(self.inner.as_ptr()) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
+        self.sync_mgr.modify(|data| {
+            data.descriptors.clear();
+        });
+        Ok(())
     }
 
     /// Prints the list contents
     pub fn print(&self) -> Result<(), NixlError> {
-        let status = unsafe { nixl_capi_xfer_dlist_print(self.inner.as_ptr()) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
+        self.sync_mgr.with_backend(|_data, backend| {
+            let status = unsafe { nixl_capi_xfer_dlist_print(backend.as_ptr()) };
+            match status {
+                NIXL_CAPI_SUCCESS => Ok(()),
+                NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+                _ => Err(NixlError::BackendError),
+            }
+        })?
     }
 
     /// Resizes the list to the given size
     pub fn resize(&mut self, new_size: usize) -> Result<(), NixlError> {
-        let status = unsafe { nixl_capi_xfer_dlist_resize(self.inner.as_ptr(), new_size) };
-
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
+        self.sync_mgr.modify(|data| {
+            data.descriptors.resize(new_size, XferDescriptor {
+                addr: 0,
+                len: 0,
+                dev_id: 0,
+            });
+        });
+        Ok(())
     }
 
     /// Add a descriptor from a type implementing NixlDescriptor
@@ -166,20 +184,7 @@ impl<'a> XferDescList<'a> {
     ) -> Result<(), NixlError> {
         // Validate memory type matches
         let desc_mem_type = desc.mem_type();
-        let list_mem_type = unsafe {
-            // Get the memory type from the list by checking first descriptor
-            let mut len = 0;
-            match nixl_capi_xfer_dlist_len(self.inner.as_ptr(), &mut len) {
-                0 => Ok(()),
-                -1 => Err(NixlError::InvalidParam),
-                _ => Err(NixlError::BackendError),
-            }?;
-            if len > 0 {
-                self.get_type().unwrap()
-            } else {
-                desc_mem_type
-            }
-        };
+        let list_mem_type = if self.len().unwrap_or(0) > 0 { self.get_type().unwrap() } else { desc_mem_type };
 
         if desc_mem_type != list_mem_type && list_mem_type != MemType::Unknown {
             return Err(NixlError::InvalidParam);
@@ -195,15 +200,42 @@ impl<'a> XferDescList<'a> {
     }
 
     pub(crate) fn handle(&self) -> *mut bindings::nixl_capi_xfer_dlist_s {
-        self.inner.as_ptr()
+        self.sync_mgr.backend().map(|b| b.as_ptr()).unwrap_or(ptr::null_mut())
+    }
+}
+
+impl std::fmt::Debug for XferDescList<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mem_type = self.get_type().unwrap_or(MemType::Unknown);
+        let len = self.len().unwrap_or(0);
+        let desc_count = self.desc_count().unwrap_or(0);
+
+        f.debug_struct("XferDescList")
+            .field("mem_type", &mem_type)
+            .field("len", &len)
+            .field("desc_count", &desc_count)
+            .finish()
+    }
+}
+
+impl PartialEq for XferDescList<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare memory types first
+        if self.mem_type != other.mem_type {
+            return false;
+        }
+
+        // Compare internal descriptor tracking
+        self.sync_mgr.data().descriptors == other.sync_mgr.data().descriptors
     }
 }
 
 impl Drop for XferDescList<'_> {
     fn drop(&mut self) {
-        // SAFETY: self.inner is guaranteed to be valid by NonNull
-        unsafe {
-            nixl_capi_destroy_xfer_dlist(self.inner.as_ptr());
+        if let Ok(backend) = self.sync_mgr.backend() {
+            unsafe {
+                nixl_capi_destroy_xfer_dlist(backend.as_ptr());
+            }
         }
     }
 }

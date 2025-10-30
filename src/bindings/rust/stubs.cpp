@@ -363,12 +363,6 @@ nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist,
 }
 
 nixl_capi_status_t
-nixl_capi_reg_dlist_len(nixl_capi_reg_dlist_t dlist, size_t* len)
-{
-  return nixl_capi_stub_abort();
-}
-
-nixl_capi_status_t
 nixl_capi_reg_dlist_clear(nixl_capi_reg_dlist_t dlist)
 {
   return nixl_capi_stub_abort();
