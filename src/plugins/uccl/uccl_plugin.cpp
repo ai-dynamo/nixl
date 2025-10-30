@@ -22,7 +22,6 @@ namespace {
 nixl_b_params_t
 get_uccl_options() {
     nixl_b_params_t params;
-    params["device_idx"] = "";
     params["in_python"] = "";
     params["num_cpus"] = "";
     return params;

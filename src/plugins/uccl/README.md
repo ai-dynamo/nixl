@@ -22,14 +22,13 @@ Currently, the UCCL backend supports internode communication over RDMA. Intranod
 
 ## Usage Guide
 
-### Additional Parameters
-1. `device_idx` : Specifies which GPU the UCCL engine will be affined to.
-Example Usage to create a NIXL agent with uccl engine on GPU 0:
+Example Usage to create a NIXL agent with uccl engine:
+
     ```python
-    config = nixl_agent_config(device_idx=0, backends=["Uccl"])
+    config = nixl_agent_config(backends=["UCCL"])
     agent = nixl_agent("agent-name", config)
     ```
-UCCL engine would auto discover the right NIC to be used for the GPU based on the PCIe distance, and intialize the engine which manages communication for that NIC. This is the reason why its necessary to provide the gpu device index during agent creation.
+UCCL engine would auto discover the right NIC to be used for the GPU based on the PCIe distance during memory registration based on the data locality.
 
 ### Environment Variables
 
