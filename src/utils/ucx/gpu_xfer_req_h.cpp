@@ -35,7 +35,7 @@ namespace nixl::ucx {
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
-                 nixlUcxWorker &worker,
+                 const std::vector<std::unique_ptr<nixlUcxWorker>> &all_workers,
                  const std::vector<nixlUcxMem> &local_mems,
                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
                  const std::vector<uint64_t> &remote_addrs) {
@@ -84,7 +84,9 @@ createGpuXferReq(const nixlUcxEp &ep,
     // Workaround: loop until wireup is completed
     while ((ucs_status = ucp_device_mem_list_create(ep.getEp(), &params, &ucx_handle)) ==
            UCS_ERR_NOT_CONNECTED) {
-        worker.progress();
+        for (const auto &w : all_workers) {
+            w->progress();
+        }
 
         if (std::chrono::steady_clock::now() - start > timeout) {
             throw std::runtime_error(
@@ -112,7 +114,7 @@ releaseGpuXferReq(nixlGpuXferReqH gpu_req) noexcept {
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
-                 nixlUcxWorker &worker,
+                 const std::vector<std::unique_ptr<nixlUcxWorker>> &all_workers,
                  const std::vector<nixlUcxMem> &local_mems,
                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
                  const std::vector<uint64_t> &remote_addrs) {

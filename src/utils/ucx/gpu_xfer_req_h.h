@@ -19,6 +19,7 @@
 #define NIXL_SRC_UTILS_UCX_GPU_XFER_REQ_H_H
 
 #include <vector>
+#include <memory>
 
 #include "nixl_types.h"
 
@@ -31,7 +32,7 @@ class rkey;
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
-                 nixlUcxWorker &worker,
+                 const std::vector<std::unique_ptr<nixlUcxWorker>> &all_workers,
                  const std::vector<nixlUcxMem> &local_mems,
                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
                  const std::vector<uint64_t> &remote_addrs);
