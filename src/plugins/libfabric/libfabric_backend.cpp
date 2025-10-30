@@ -825,22 +825,30 @@ nixlLibfabricEngine::getPublicData(const nixlBackendMD *meta, std::string &str) 
 }
 
 nixl_status_t
-nixlLibfabricEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
-    nixlLibfabricPrivateMetadata *input_md = static_cast<nixlLibfabricPrivateMetadata *>(input);
+nixlLibfabricEngine::loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
+                                        void *buffer,
+                                        std::shared_ptr<nixlLibfabricConnection> conn,
+                                        nixlBackendMD *&output) {
     auto pub_md = std::make_unique<nixlLibfabricPublicMetadata>();
-    // Store all rail keys instead of just the first one
-    pub_md->rail_remote_key_list_.reserve(input_md->rail_key_list_.size());
-    for (size_t rail_id = 0; rail_id < input_md->rail_key_list_.size(); ++rail_id) {
-        pub_md->rail_remote_key_list_.push_back(input_md->rail_key_list_[rail_id]);
-        NIXL_DEBUG << "Added rail " << rail_id << " key: " << input_md->rail_key_list_[rail_id];
-    }
 
-    pub_md->remote_buf_addr_ = reinterpret_cast<uint64_t>(input_md->buffer_);
-    pub_md->conn_ = connections_[localAgent];
+    pub_md->rail_remote_key_list_ = std::move(rail_keys);
+    pub_md->derive_remote_selected_endpoints();
+    pub_md->remote_buf_addr_ = reinterpret_cast<uint64_t>(buffer);
+    pub_md->conn_ = conn;
 
     output = pub_md.release();
-    NIXL_DEBUG << "Loading Local MD with " << input_md->rail_key_list_.size() << " rail keys";
+    NIXL_DEBUG << "Metadata loaded with"
+               << " Remote addr: " << (void *)pub_md->remote_buf_addr_ << " Remote keys for "
+               << pub_md->rail_remote_key_list_.size() << " rails"
+               << " Remote fi_addr: " << pub_md->conn_->rail_remote_addr_list_[0][0];
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlLibfabricEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
+    nixlLibfabricPrivateMetadata *input_md = static_cast<nixlLibfabricPrivateMetadata *>(input);
+    return loadMetadataHelper(
+        input_md->rail_key_list_, input_md->buffer_, connections_[localAgent], output);
 }
 
 nixl_status_t
@@ -869,19 +877,8 @@ nixlLibfabricEngine::loadRemoteMD(const nixlBlobDesc &input,
         return status;
     }
 
-    // Engine handles connection management and metadata object creation
-    auto pub_md = std::make_unique<nixlLibfabricPublicMetadata>();
-    pub_md->conn_ = conn_it->second;
-    pub_md->rail_remote_key_list_ = std::move(remote_keys);
-    pub_md->derive_remote_selected_endpoints();
-    pub_md->remote_buf_addr_ = remote_addr;
-    NIXL_DEBUG << "Remote metadata loaded with"
-               << " Remote addr: " << (void *)pub_md->remote_buf_addr_ << " Remote keys for "
-               << pub_md->rail_remote_key_list_.size() << " rails"
-               << " Remote fi_addr: " << pub_md->conn_->rail_remote_addr_list_[0][0];
-
-    output = pub_md.release();
-    return NIXL_SUCCESS;
+    return loadMetadataHelper(
+        remote_keys, reinterpret_cast<void *>(remote_addr), conn_it->second, output);
 }
 
 nixl_status_t
@@ -1041,36 +1038,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         NIXL_DEBUG << "DEBUG: remote_agent='" << remote_agent << "' localAgent='" << localAgent
                    << "'";
 
-        // Check for same-agent (local) transfer - handle with direct memcpy
-        if (remote_agent == localAgent) {
-            NIXL_DEBUG << "Same-agent transfer detected from localAgent= " << localAgent
-                       << "to remote_agent " << remote_agent << "for descriptor " << desc_idx
-                       << ", using memcpy fallback for " << transfer_size << " bytes";
-
-            // For same-agent transfers, we need to copy directly between the descriptor addresses
-            // The remote[desc_idx].addr should be the target address for the transfer
-            void *remote_addr = reinterpret_cast<void *>(remote[desc_idx].addr);
-
-            NIXL_DEBUG << "About to perform memcpy: local_addr=" << transfer_addr
-                       << " remote_addr=" << remote_addr << " size=" << transfer_size;
-
-            if (op_type == nixlLibfabricReq::WRITE) {
-                // Write: copy from local_addr to remote_addr
-                std::memcpy(remote_addr, transfer_addr, transfer_size);
-                NIXL_DEBUG << "Same-agent memcpy write completed: " << transfer_addr << " -> "
-                           << remote_addr << " (" << transfer_size << " bytes)";
-            } else {
-                // Read: copy from remote_addr to local_addr
-                std::memcpy(transfer_addr, remote_addr, transfer_size);
-                NIXL_DEBUG << "Same-agent memcpy read completed: " << remote_addr << " -> "
-                           << transfer_addr << " (" << transfer_size << " bytes)";
-            }
-
-            NIXL_DEBUG << "Successfully processed same-agent descriptor " << desc_idx
-                       << " using memcpy fallback";
-            continue; // Skip the rail manager transfer for this descriptor
-        }
-
         // Prepare and submit transfer for remote agents
         // Use descriptor's specific target address
         uint64_t remote_target_addr = remote[desc_idx].addr;
@@ -1104,8 +1071,9 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     NIXL_DEBUG << "Processing complete: submitted "
                << backend_handle->binary_notif.expected_completions << " requests from "
-               << desc_count << " descriptors" << " with "
-               << backend_handle->binary_notif.expected_completions << " total XFER_IDs";
+               << desc_count << " descriptors"
+               << " with " << backend_handle->binary_notif.expected_completions
+               << " total XFER_IDs";
 
     // For same-agent transfers, we need to set the total to 0 since we bypassed all rail operations
     if (remote_agent == localAgent) {
@@ -1577,7 +1545,6 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id) {
     // Check if any notifications can now be completed (after releasing the lock)
     checkPendingNotifications();
 }
-
 
 /****************************************
  * Notification Queuing Helper Methods
