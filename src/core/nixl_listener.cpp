@@ -197,10 +197,16 @@ private:
         return ss.str();
     }
 
+    nixl_etcd_deletion_callback_t etcd_deletion_callback = nullptr;
+    void* etcd_deletion_callback_user_data = nullptr;
 public:
     nixlEtcdClient(const std::string &my_agent_name,
-                   const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000))
-        : watchTimeout_(timeout) {
+                   const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000),
+                   const nixl_etcd_deletion_callback_t &etcd_deletion_callback = nullptr,
+                   void* etcd_deletion_callback_user_data = nullptr)
+        : watchTimeout_(timeout),
+          etcd_deletion_callback(etcd_deletion_callback),
+          etcd_deletion_callback_user_data(etcd_deletion_callback_user_data) {
         const char* etcd_endpoints = std::getenv("NIXL_ETCD_ENDPOINTS");
         if (!etcd_endpoints || strlen(etcd_endpoints) == 0) {
             throw std::runtime_error("No etcd endpoints provided");
@@ -423,7 +429,12 @@ public:
         for (const auto &agent : tmp_invalidated_agents) {
             NIXL_DEBUG << "Invalidated agent: " << agent;
             agentWatchers.erase(agent);
-            nixl_status_t ret = my_agent->invalidateRemoteMD(agent);
+            nixl_status_t ret;
+            if (etcd_deletion_callback != nullptr) {
+                ret = etcd_deletion_callback(agent, etcd_deletion_callback_user_data);
+            } else {
+                ret = my_agent->invalidateRemoteMD(agent);
+            }
             if (ret != NIXL_SUCCESS)
                 NIXL_ERROR << "Failed to invalidate remote metadata for agent: " << agent << ": " << ret;
             else
@@ -441,7 +452,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
     std::unique_ptr<nixlEtcdClient> etcdClient = nullptr;
     // useEtcd is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
     if(useEtcd) {
-        etcdClient = std::make_unique<nixlEtcdClient>(name, config.etcdWatchTimeout);
+        etcdClient = std::make_unique<nixlEtcdClient>(name, config.etcdWatchTimeout, config.etcd_deletion_callback, config.etcd_deletion_callback_user_data);
     }
 #endif // HAVE_ETCD
 
