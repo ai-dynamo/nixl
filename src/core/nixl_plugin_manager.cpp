@@ -403,10 +403,6 @@ void nixlPluginManager::registerBuiltinPlugins() {
     NIXL_REGISTER_STATIC_PLUGIN(UCX)
 #endif
 
-#ifdef STATIC_PLUGIN_UCX_MO
-    NIXL_REGISTER_STATIC_PLUGIN(UCX_MO)
-#endif
-
 #ifdef STATIC_PLUGIN_GDS
 #ifndef DISABLE_GDS_BACKEND
     NIXL_REGISTER_STATIC_PLUGIN(GDS)

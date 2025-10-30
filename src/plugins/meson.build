@@ -13,11 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_backend_inc_dirs = include_directories('./ucx')
-
 if ucx_dep.found()
     subdir('ucx')
-    subdir('ucx_mo')
 endif
 
 subdir('posix')  # Always try to build POSIX backend, it will handle its own dependencies
