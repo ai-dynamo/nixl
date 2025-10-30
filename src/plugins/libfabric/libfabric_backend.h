@@ -286,7 +286,11 @@ private:
     processConnectionRequest(uint16_t agent_idx,
                              const std::string &serialized_data,
                              nixlLibfabricRail *rail);
-
+    nixl_status_t
+    loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
+                       void *buffer,
+                       std::shared_ptr<nixlLibfabricConnection> conn,
+                       nixlBackendMD *&output);
 
 #ifdef HAVE_CUDA
     // CUDA context management methods
