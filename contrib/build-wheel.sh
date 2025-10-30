@@ -73,23 +73,24 @@ done
 set -e
 set -x
 
-# Check for required dependencies
-if ! command -v uv &> /dev/null; then
-    echo "Required dependency: uv is not installed. Please install it from https://astral.sh/uv/install.sh"
-    exit 1
-fi
-
 # Build the wheel
 TMP_DIR=$(mktemp -d)
+
+CUDA_MAJOR=$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | cut -d'.' -f1)
+# Must be 12 or 13
+if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
+    echo "Invalid CUDA_MAJOR: '$CUDA_MAJOR'"
+    exit 1
+fi
+PKG_NAME="nixl-cu${CUDA_MAJOR}"
+./contrib/tomlutil.py --set-name $PKG_NAME pyproject.toml
 uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
 
 # Bundle libraries
-uv pip install auditwheel patchelf
-
-uv run auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' $TMP_DIR/nixl-*.whl --plat $WHL_PLATFORM --wheel-dir $OUTPUT_DIR
-
-uv run ./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $OUTPUT_DIR/*.whl
+mkdir $TMP_DIR/dist
+auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' $TMP_DIR/nixl*.whl --plat $WHL_PLATFORM --wheel-dir $TMP_DIR/dist
+./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $TMP_DIR/dist/*.whl
+cp $TMP_DIR/dist/*.whl $OUTPUT_DIR
 
 # Clean up
 rm -rf "$TMP_DIR"
-

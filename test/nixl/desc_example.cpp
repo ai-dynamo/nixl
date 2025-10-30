@@ -16,10 +16,11 @@
  */
 #include <iostream>
 #include <string>
-#include <cassert>
+
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_aux.h"
+#include "test_utils.h"
 
 #include <sys/time.h>
 
@@ -38,7 +39,7 @@ void testPerf(){
 
     gettimeofday(&end_time, NULL);
 
-    assert(dlist.descCount() == 24*64*1024);
+    nixl_exit_on_failure((dlist.descCount() == 24 * 64 * 1024), "Incorrect number of descriptors");
     timersub(&end_time, &start_time, &diff_time);
     std::cout << "add desc mode, total time for " << 24*64*1024 << " descs: "
               << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
@@ -57,7 +58,7 @@ void testPerf(){
 
     gettimeofday(&end_time, NULL);
 
-    assert(dlist.descCount() == 24*64*1024);
+    nixl_exit_on_failure((dlist.descCount() == 24 * 64 * 1024), "Incorrect number of descriptors");
     timersub(&end_time, &start_time, &diff_time);
     std::cout << "Operator [] mode, total time for " << 24*64*1024 << " descs: "
               << diff_time.tv_sec << "s " << diff_time.tv_usec << "us \n";
@@ -87,27 +88,27 @@ int main()
     nixlBasicDesc buff8 (1010,31,0);
 
     nixlBasicDesc importDesc(buff2.serialize());
-    assert(buff2 == importDesc);
+    nixl_exit_on_failure((buff2 == importDesc), "Descriptor mismatch for buff2 and importDesc");
 
-    assert (buff3==buff2);
-    assert (buff4==buff1);
-    assert (buff3!=buff1);
-    assert (buff8!=buff7);
+    nixl_exit_on_failure((buff3 == buff2), "Descriptor mismatch for buff3 and buff2");
+    nixl_exit_on_failure((buff4 == buff1), "Descriptor mismatch for buff4 and buff1");
+    nixl_exit_on_failure((buff3 != buff1), "Descriptor mismatch for buff3 and buff1");
+    nixl_exit_on_failure((buff8 != buff7), "Descriptor mismatch for buff8 and buff7");
 
-    assert (buff2.covers(buff3));
-    assert (buff4.overlaps(buff1));
-    assert (!buff1.covers(buff2));
-    assert (!buff1.overlaps(buff2));
-    assert (!buff2.covers(buff1));
-    assert (!buff2.overlaps(buff1));
-    assert (buff2.overlaps(buff5));
-    assert (buff5.overlaps(buff2));
-    assert (!buff2.covers(buff5));
-    assert (!buff5.covers(buff2));
-    assert (!buff1.covers(buff6));
-    assert (!buff6.covers(buff1));
-    assert (buff1.covers(buff7));
-    assert (!buff7.covers(buff1));
+    nixl_exit_on_failure((buff2.covers(buff3)), "Descriptor buff2 does not cover buff3");
+    nixl_exit_on_failure((buff4.overlaps(buff1)), "Descriptor buff4 does not overlap buff1");
+    nixl_exit_on_failure(!(buff1.covers(buff2)), "Descriptor buff1 does not cover buff2");
+    nixl_exit_on_failure(!(buff1.overlaps(buff2)), "Descriptor buff1 does not overlap buff2");
+    nixl_exit_on_failure(!(buff2.covers(buff1)), "Descriptor buff2 does not cover buff1");
+    nixl_exit_on_failure(!(buff2.overlaps(buff1)), "Descriptor buff2 does not overlap buff1");
+    nixl_exit_on_failure((buff2.overlaps(buff5)), "Descriptor buff2 does not overlap buff5");
+    nixl_exit_on_failure((buff5.overlaps(buff2)), "Descriptor buff5 does not overlap buff2");
+    nixl_exit_on_failure(!(buff2.covers(buff5)), "Descriptor buff2 does not cover buff5");
+    nixl_exit_on_failure(!(buff5.covers(buff2)), "Descriptor buff5 does not cover buff2");
+    nixl_exit_on_failure(!(buff1.covers(buff6)), "Descriptor buff1 does not cover buff6");
+    nixl_exit_on_failure(!(buff6.covers(buff1)), "Descriptor buff6 does not cover buff1");
+    nixl_exit_on_failure((buff1.covers(buff7)), "Descriptor buff1 does not cover buff7");
+    nixl_exit_on_failure(!(buff7.covers(buff1)), "Descriptor buff7 does not cover buff1");
 
     nixlBlobDesc stringd1;
     stringd1.addr   = 2392382;
@@ -116,7 +117,8 @@ int main()
     stringd1.metaInfo = std::string("567");
 
     nixlBlobDesc importStringD(stringd1.serialize());
-    assert(stringd1 == importStringD);
+    nixl_exit_on_failure((stringd1 == importStringD),
+                         "Descriptor stringd1 does not match importStringD");
 
     std::cout << "\nSerDes Desc tests:\n";
     buff2.print("");
@@ -146,8 +148,8 @@ int main()
     meta2.devId     = 0;
     meta2.metadataP = nullptr;
 
-    assert (stringd1!=buff1);
-    assert (stringd2==buff8);
+    nixl_exit_on_failure((stringd1 != buff1), "Descriptor stringd1 matches buff1");
+    nixl_exit_on_failure((stringd2 == buff8), "Descriptor stringd2 does not match buff8");
     nixlBasicDesc buff9 (stringd1);
 
     buff1.print("");
@@ -200,8 +202,10 @@ int main()
         std::cout << "Caught expected error: " << e.what() << std::endl;
     }
     dlist2.remDesc(dlist2.getIndex(meta3));
-    assert(dlist2.getIndex(meta3)== NIXL_ERR_NOT_FOUND);
-    assert(dlist3.getIndex(meta1)== NIXL_ERR_NOT_FOUND);
+    nixl_exit_on_failure((dlist2.getIndex(meta3) == NIXL_ERR_NOT_FOUND),
+                         "Dlist2 descriptor not removed");
+    nixl_exit_on_failure((dlist3.getIndex(meta1) == NIXL_ERR_NOT_FOUND),
+                         "Dlist3 descriptor not removed");
     try {
         dlist3.remDesc(dlist3.getIndex(meta4));
     } catch (const std::out_of_range& e) {
@@ -277,13 +281,13 @@ int main()
     nixlSerDes* ser_des = new nixlSerDes();
     nixlSerDes* ser_des2 = new nixlSerDes();
 
-    assert(dlist10.serialize(ser_des) == 0);
+    nixl_exit_on_failure((dlist10.serialize(ser_des) == 0), "Failed to serialize dlist10");
     nixl_xfer_dlist_t importList (ser_des);;
-    assert(importList == dlist10);
+    nixl_exit_on_failure((importList == dlist10), "Descriptor importList does not match dlist10");
 
-    assert(dlist20.serialize(ser_des2) == 0);
+    nixl_exit_on_failure((dlist20.serialize(ser_des2) == 0), "Failed to serialize dlist20");
     nixl_reg_dlist_t importSList (ser_des2);
-    assert(importSList == dlist20);
+    nixl_exit_on_failure((importSList == dlist20), "Descriptor importSList does not match dlist20");
 
     dlist10.print();
     std::cout << "this should be a copy:\n";

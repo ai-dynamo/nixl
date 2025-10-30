@@ -31,3 +31,5 @@ py.extension_module('_utils',
            subdir: ('nixl'),
            dependencies: [pybind_dep],
            install: true)
+
+subdir('nixl-meta')
