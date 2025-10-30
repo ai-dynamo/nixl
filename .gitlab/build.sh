@@ -53,6 +53,12 @@ fi
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
+# Skip dependency installation if running in pre-built base image
+if [ -n "${NIXL_BASE_IMAGE_ENV}" ]; then
+    UCX_INSTALL_DIR=/usr
+    LIBFABRIC_INSTALL_DIR=/usr/local
+else
+
 # Some docker images are with broken installations:
 $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
@@ -214,6 +220,8 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   mkdir -p ${INSTALL_DIR}/bin &&
   cp gtest-parallel/* ${INSTALL_DIR}/bin/
 )
+
+fi # end NIXL_BASE_IMAGE_ENV check
 
 export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
 export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
