@@ -17,7 +17,7 @@ ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="25.06-cuda12.9-devel-ubuntu24.04"
 ARG OS
 
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS nixl-deps-base
 
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
@@ -62,7 +62,29 @@ RUN apt-get update -y && \
     clang \
     hwloc \
     libhwloc-dev \
-    libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
+    libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
+    python3-dev \
+    python3-pip \
+    curl \
+    wget \
+    libnuma-dev \
+    numactl \
+    git \
+    libiberty-dev \
+    libgoogle-glog-dev \
+    libgmock-dev \
+    libjsoncpp-dev \
+    libpython3-dev \
+    libboost-all-dev \
+    meson \
+    pkg-config \
+    pybind11-dev \
+    net-tools \
+    iproute2 \
+    pciutils \
+    libpci-dev \
+    libibmad-dev \
+    doxygen
 
 # Add DOCA repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
@@ -184,11 +206,26 @@ ENV VIRTUAL_ENV=/workspace/.venv
 RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 # Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+# Allow Python to find system-installed packages even when venv is active
+# Include both python3.10 and python3.12 paths for Ubuntu 22.04/24.04 compatibility
+ENV PYTHONPATH="/usr/local/lib/python3.12/dist-packages:/usr/local/lib/python3.10/dist-packages:${PYTHONPATH}"
 # Install python dependencies
 RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Install PyTorch
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     uv pip install torch torchvision torchaudio
+
+# Stage 2: Build NIXL (default stage)
+FROM nixl-deps-base
+
+# Re-declare ARGs needed in this stage
+ARG NIXL_PREFIX="/usr/local/nixl"
+ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/x86_64-linux-gnu/plugins"
+ARG ARCH="x86_64"
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_PREFIX="/usr"
+ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
