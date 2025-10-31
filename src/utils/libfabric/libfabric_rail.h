@@ -398,6 +398,9 @@ private:
     ControlRequestPool control_request_pool_;
     DataRequestPool data_request_pool_;
 
+    // Provider capability flags
+    bool provider_supports_hmem_;
+
 
     nixl_status_t
     processCompletionQueueEntry(struct fi_cq_data_entry *comp) const;
