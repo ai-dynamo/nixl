@@ -34,4 +34,4 @@ dependencies = ["torch", "numpy"]
 profile = "black"
 
 [tool.meson-python.args]
-setup = ['-Dinstall_headers=false', '-Dwheel_dir=nixl_cu12']
+setup = ['-Dinstall_headers=false']

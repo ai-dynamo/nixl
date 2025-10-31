@@ -28,7 +28,6 @@ option('static_plugins', type: 'string', value: '', description: 'Plugins to be 
 option('build_docs', type: 'boolean', value: false, description: 'Build Doxygen documentation')
 option('log_level', type: 'combo', choices: ['trace', 'debug', 'info', 'warning', 'error', 'fatal', 'auto'], value: 'auto', description: 'Log Level (auto: auto-detect based on build type: trace for debug builds, info for release builds)')
 option('rust', type: 'boolean', value: false, description: 'Build Rust bindings')
-option('wheel_dir', type : 'string', value : 'nixl', description : 'Set a custom Python wheel dir (e.g. nixl_cu12)')
 
 # Tests
 option('build_tests', type: 'boolean', value: true, description: 'Build all tests')
