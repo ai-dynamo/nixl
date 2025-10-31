@@ -221,6 +221,7 @@ nixl_capi_get_local_partial_md(nixl_capi_agent_t agent,
         }
         // Copy the data
         memcpy(*data, blob.data(), blob.size());
+        *len = blob.size();
         return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
     }
     catch (...) {
