@@ -21,6 +21,8 @@
 #include "rkey.h"
 #include "config.h"
 
+#include <chrono>
+
 extern "C" {
 #ifdef HAVE_UCX_GPU_DEVICE_API
 #include <ucp/api/device/ucp_host.h>
@@ -33,6 +35,7 @@ namespace nixl::ucx {
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
+                 const std::vector<std::unique_ptr<nixlUcxWorker>> &all_workers,
                  const std::vector<nixlUcxMem> &local_mems,
                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
                  const std::vector<uint64_t> &remote_addrs) {
@@ -74,8 +77,23 @@ createGpuXferReq(const nixlUcxEp &ep,
     params.element_size = sizeof(ucp_device_mem_list_elem_t);
     params.num_elements = ucp_elements.size();
 
+    const auto start = std::chrono::steady_clock::now();
+    constexpr auto timeout = std::chrono::seconds(5);
     ucp_device_mem_list_handle_h ucx_handle;
-    ucs_status_t ucs_status = ucp_device_mem_list_create(ep.getEp(), &params, &ucx_handle);
+    ucs_status_t ucs_status;
+    // Workaround: loop until wireup is completed
+    while ((ucs_status = ucp_device_mem_list_create(ep.getEp(), &params, &ucx_handle)) ==
+           UCS_ERR_NOT_CONNECTED) {
+        for (const auto &w : all_workers) {
+            w->progress();
+        }
+
+        if (std::chrono::steady_clock::now() - start > timeout) {
+            throw std::runtime_error(
+                "Timeout waiting for endpoint wireup completion has been exceeded");
+        }
+    }
+
     if (ucs_status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create device memory list: ") +
                                  ucs_status_string(ucs_status));
@@ -96,6 +114,7 @@ releaseGpuXferReq(nixlGpuXferReqH gpu_req) noexcept {
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
+                 const std::vector<std::unique_ptr<nixlUcxWorker>> &all_workers,
                  const std::vector<nixlUcxMem> &local_mems,
                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
                  const std::vector<uint64_t> &remote_addrs) {
