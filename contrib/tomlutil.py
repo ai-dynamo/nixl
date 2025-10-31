@@ -21,7 +21,6 @@ import tomlkit
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--wheel-name", type=str, help="Set the project name")
-parser.add_argument("--wheel-dir", type=str, help="Set the wheel dir")
 parser.add_argument("file", type=str, help="The toml file to modify")
 args = parser.parse_args()
 
@@ -36,22 +35,6 @@ if args.wheel_name:
     # name = "<wheel_name>"
     # ```
     doc["project"]["name"] = args.wheel_name
-
-if args.wheel_dir:
-    # Set the wheel dir
-    # Example:
-    # ```toml
-    # [tool.meson-python.args]
-    # setup = ["-Dinstall_headers=false", "-Dwheel_dir=<wheel_dir>"]
-    # ```
-    if "meson-python" not in doc["tool"]:
-        doc["tool"]["meson-python"] = tomlkit.table()
-    if "args" not in doc["tool"]["meson-python"]:
-        doc["tool"]["meson-python"]["args"] = tomlkit.table()
-    setup = doc["tool"]["meson-python"]["args"].get("setup", [])
-    setup = [s for s in setup if not s.startswith("-Dwheel_dir=")]
-    setup.append(f"-Dwheel_dir={args.wheel_dir}")
-    doc["tool"]["meson-python"]["args"]["setup"] = setup
 
 with open(args.file, "w") as f:
     f.write(tomlkit.dumps(doc))
