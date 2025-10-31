@@ -71,6 +71,8 @@ namespace {
         switch (type) {
             case queue_t::AIO: return "AIO";
             case queue_t::URING: return "URING";
+            case queue_t::LINUXAIO:
+                return "LINUXAIO";
             case queue_t::UNSUPPORTED: return "UNSUPPORTED";
             default: return "UNKNOWN";
         }
@@ -93,15 +95,23 @@ namespace {
             if (custom_params->count("use_uring") > 0) {
                 const auto& value = custom_params->at("use_uring");
                 if (value == "true" || value == "1") {
-#ifndef HAVE_LIBURING
-                    NIXL_ERROR << "io_uring backend requested but not available - not built with liburing support";
-                    return queue_t::UNSUPPORTED;
-#endif
                     if (!QueueFactory::isUringAvailable()) {
                         NIXL_ERROR << "io_uring backend requested but not available at runtime";
-                        return queue_t::URING;
+                        return queue_t::UNSUPPORTED;
                     }
                     return queue_t::URING;
+                }
+            }
+
+            // Then check if linux_aio is explicitly requested
+            if (custom_params->count("use_linux_aio") > 0) {
+                const auto &value = custom_params->at("use_linux_aio");
+                if (value == "true" || value == "1") {
+                    if (!QueueFactory::isLinuxAioAvailable()) {
+                        NIXL_ERROR << "linux_aio backend requested but not available at runtime";
+                        return queue_t::UNSUPPORTED;
+                    }
+                    return queue_t::LINUXAIO;
                 }
             }
         }
@@ -151,6 +161,9 @@ nixl_status_t nixlPosixBackendReqH::initQueues() {
                 break;
             case nixlPosixQueue::queue_t::URING:
                 queue = QueueFactory::createUringQueue(queue_depth_, operation);
+                break;
+            case nixlPosixQueue::queue_t::LINUXAIO:
+                queue = QueueFactory::createLinuxAioQueue(queue_depth_, operation);
                 break;
             default:
                 NIXL_ERROR << absl::StrFormat("Invalid queue type: %s", to_string(queue_type_));
@@ -245,6 +258,9 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
                 break;
             case nixlPosixQueue::queue_t::URING:
                 params["use_uring"] = "true";
+                break;
+            case nixlPosixQueue::queue_t::LINUXAIO:
+                params["use_linux_aio"] = "true";
                 break;
             default:
                 NIXL_ERROR << absl::StrFormat("Invalid queue type: %s", to_string(queue_type_));
