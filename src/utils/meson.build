@@ -21,6 +21,6 @@ endif
 subdir('stream')
 subdir('file')
 
-if libfabric_dep.found()
+if libfabric_dep.found() and not get_option('disable_libfabric_backend')
     subdir('libfabric')
 endif
