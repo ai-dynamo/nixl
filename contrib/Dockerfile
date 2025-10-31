@@ -22,14 +22,12 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS nixl-deps-base
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
-ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REF="v1.19.0"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
 ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
-ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 ARG LIBFABRIC_VERSION="v2.3.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 
@@ -58,7 +56,6 @@ RUN apt-get update -y && \
     flex \
     libgtest-dev \
     build-essential \
-    python3.12-dev \
     clang \
     hwloc \
     libhwloc-dev \
@@ -203,14 +200,13 @@ ENV UV_NO_BUILD_ISOLATION=1
 ENV UV_NO_SYNC=1
 # Create a new virtual environment
 ENV VIRTUAL_ENV=/workspace/.venv
-RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python /usr/bin/python3 --system-site-packages
 # Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-# Allow Python to find system-installed packages even when venv is active
-# Include both python3.10 and python3.12 paths for Ubuntu 22.04/24.04 compatibility
-ENV PYTHONPATH="/usr/local/lib/python3.12/dist-packages:/usr/local/lib/python3.10/dist-packages:${PYTHONPATH}"
-# Install python dependencies
-RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
+# Allow Python to find packages installed with --break-system-packages when venv is active
+ENV PYTHONPATH=/usr/local/lib/python3/dist-packages:${PYTHONPATH}
+# Install python dependencies (including modern pip for --config-settings support)
+RUN uv pip install --upgrade pip setuptools wheel build meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Install PyTorch
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     uv pip install torch torchvision torchaudio
@@ -222,7 +218,6 @@ FROM nixl-deps-base
 ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/x86_64-linux-gnu/plugins"
 ARG ARCH="x86_64"
-ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
@@ -251,13 +246,15 @@ RUN cd src/bindings/rust && cargo build --release --locked
 
 # Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
 RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
+    PYTHON_VERSION=$(python3 --version | cut -d" " -f2 | cut -d. -f1,2) && \
     mkdir -p dist && \
     ./contrib/build-wheel.sh \
-    --python-version $DEFAULT_PYTHON_VERSION \
+    --python-version $PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
     --ucx-plugins-dir $UCX_PLUGIN_DIR \
     --nixl-plugins-dir $NIXL_PLUGIN_DIR \
     --output-dir /workspace/nixl/dist
 
 RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl
+RUN PYTHON_VERSION=$(python3 --version | cut -d" " -f2 | cut -d. -f1,2 | tr -d .) && \
+    uv pip install dist/nixl*cp${PYTHON_VERSION}*.whl dist/nixl-*-none-any.whl

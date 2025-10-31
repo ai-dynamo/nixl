@@ -46,6 +46,14 @@ runs_on_dockers:
       arch: "x86_64",
       build_args: "--target nixl-deps-base"
     }
+  - {
+      file: "contrib/Dockerfile",
+      name: "ubuntu22.04-nixl-deps",
+      uri: "$arch/$name",
+      tag: "latest",
+      arch: "x86_64",
+      build_args: "--target nixl-deps-base --build-arg BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04"
+    }
   # - {
   #     file: "contrib/Dockerfile",
   #     name: "ubuntu24.04-nixl-deps",
@@ -53,14 +61,6 @@ runs_on_dockers:
   #     tag: "latest",
   #     arch: "aarch64",
   #     build_args: "--target nixl-deps-base"
-  #   }
-  # - {
-  #     file: "contrib/Dockerfile",
-  #     name: "ubuntu22.04-nixl-deps",
-  #     uri: "$arch/$name",
-  #     tag: "latest",
-  #     arch: "x86_64",
-  #     build_args: "--target nixl-deps-base --build-arg BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04"
   #   }
   # - {
   #     file: "contrib/Dockerfile",
