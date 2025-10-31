@@ -280,7 +280,10 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --output-dir dist ; \
     done
 
-# Copy the meta package wheel to the output directory
-RUN cp build/src/bindings/python/nixl-meta/nixl*.whl dist/
+# Copy the meta package wheel to the dist directory, which will be used to push to PyPI.
+# Only do this for the CUDA 12 builds, since by default nixl depends on nixl-cu12.
+RUN if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "12" ]; then \
+      cp build/src/bindings/python/nixl-meta/nixl*.whl dist/; \
+    fi
 
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl build/src/bindings/python/nixl-meta/nixl*.whl
