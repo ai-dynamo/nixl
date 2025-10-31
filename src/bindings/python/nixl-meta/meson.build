@@ -33,17 +33,12 @@ nixl_sources = files('nixl/__init__.py')
 
 subdir('nixl')
 
-uv = find_program('uv', required: false)
-if uv.found()
-  wheel_name = 'nixl-@0@-py3-none-any.whl'.format(meson.project_version())
-  meta_wheel = custom_target(
-    'build_nixl_meta',
-    input: [pyproject_toml, readme_md, license_path] + nixl_sources,
-    output: [wheel_name],
-    command: [uv, 'build', '--wheel', '--out-dir', build_dir, build_dir],
-    install: false,
-    build_by_default: true
-  )
-else
-  warning('uv not found, skipping meta package build')
-endif
+wheel_name = 'nixl-@0@-py3-none-any.whl'.format(meson.project_version())
+meta_wheel = custom_target(
+  'build_nixl_meta',
+  input: [pyproject_toml, readme_md, license_path] + nixl_sources,
+  output: [wheel_name],
+  command: ['python', '-m', 'build', '--wheel', '--outdir', build_dir, build_dir],
+  install: false,
+  build_by_default: true
+)
