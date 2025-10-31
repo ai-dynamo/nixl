@@ -19,6 +19,7 @@
 
 #include "common/cyclic_buffer.h"
 #include "telemetry_event.h"
+#include "telemetry/telemetry_exporter.h"
 #include "mem_section.h"
 #include "nixl_types.h"
 
@@ -81,8 +82,11 @@ private:
     updateData(const std::string &event_name, nixl_telemetry_category_t category, uint64_t value);
     bool
     writeEventHelper();
+    bool
+    telemetryExporterHelper();
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
+    std::unique_ptr<nixlTelemetryExporter> exporter_;
     std::mutex mutex_;
     asio::thread_pool pool_;
     periodicTask writeTask_;
