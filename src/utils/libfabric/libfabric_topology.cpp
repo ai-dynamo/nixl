@@ -381,7 +381,7 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
     // This ensures consistency between device discovery and PCIe mapping
     hints->fabric_attr->prov_name = strdup(provider_name.c_str());
 
-    int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
+    int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
     if (ret) {
         NIXL_ERROR << "fi_getinfo failed for PCIe mapping with provider " << provider_name << ": "
                    << fi_strerror(-ret);
