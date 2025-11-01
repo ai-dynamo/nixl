@@ -40,6 +40,14 @@ export NIXL_PREFIX=${INSTALL_DIR}
 # Raise exceptions for logging errors
 export NIXL_DEBUG_LOGGING=yes
 
+# Set the correct wheel name based on the CUDA version
+cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
+case "$cuda_major" in
+    12|13) echo "CUDA $cuda_major detected" ;;
+    *) echo "Error: Unsupported CUDA version $cuda_major"; exit 1 ;;
+esac
+pip3 install --break-system-packages tomlkit
+./contrib/tomlutil.py --wheel-name "nixl-cu${cuda_major}" pyproject.toml
 # Control ninja parallelism during pip build to prevent OOM (NPROC from common.sh)
 pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
 pip3 install --break-system-packages dist/nixl-*none-any.whl
