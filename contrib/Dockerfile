@@ -17,19 +17,17 @@ ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="25.06-cuda12.9-devel-ubuntu24.04"
 ARG OS
 
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS nixl-deps-base
 
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
-ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REF="v1.19.0"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
 ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
-ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 ARG LIBFABRIC_VERSION="v2.3.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 
@@ -58,17 +56,41 @@ RUN apt-get update -y && \
     flex \
     libgtest-dev \
     build-essential \
-    python3.12-dev \
     clang \
     hwloc \
     libhwloc-dev \
-    libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
+    libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
+    python3-dev \
+    python3-pip \
+    curl \
+    wget \
+    libnuma-dev \
+    numactl \
+    git \
+    libiberty-dev \
+    libgoogle-glog-dev \
+    libgmock-dev \
+    libjsoncpp-dev \
+    libpython3-dev \
+    libboost-all-dev \
+    meson \
+    pkg-config \
+    pybind11-dev \
+    net-tools \
+    iproute2 \
+    pciutils \
+    libpci-dev \
+    libibmad-dev \
+    doxygen && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Add DOCA repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
     wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
+    rm -f doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
@@ -78,24 +100,29 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "am
 # Upgrade is not sufficient if the version is the same since apt skips the installation.
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
-    libnuma-dev librdmacm-dev ibverbs-providers
+    libnuma-dev librdmacm-dev ibverbs-providers && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
-    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install && \
+    cd /workspace && rm -rf etcd-cpp-apiv3
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    make -j${NPROC:-$(nproc)} && make install
+    make -j${NPROC:-$(nproc)} && make install && \
+    cd /workspace && rm -rf aws-sdk-cpp aws_sdk_build
 
-RUN git clone https://github.com/nvidia/gusli.git && \
+RUN git clone --depth 1 https://github.com/nvidia/gusli.git && \
      cd gusli && \
      make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
-     cd ..
+     cd .. && \
+     rm -rf gusli
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -138,16 +165,19 @@ RUN cd /usr/local/src && \
          --enable-mt &&              \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
-     ldconfig
+     ldconfig && \
+     cd /usr/local/src && rm -rf ucx
 
 RUN cd /tmp && \
      git clone --depth 1 https://github.com/google/gtest-parallel.git && \
      mkdir -p /usr/local/bin && \
-     cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/
+     cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/ && \
+     rm -rf gtest-parallel
 ENV PATH=/usr/local/bin:$PATH
 
 # Build libfabric from source
-RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+RUN cd /tmp && \
+    wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
     cd libfabric-* && \
@@ -165,7 +195,8 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
                 --enable-gdrcopy-dlopen && \
     make -j${NPROC:-$(nproc)} && \
     make install && \
-    ldconfig
+    ldconfig && \
+    cd /tmp && rm -rf libfabric-*
 
 # By default, uv downloads python packages to $HOME/.cache/uv and hard links them
 # from the virtual environment. This means that the files reside in /root/.cache/uv,
@@ -181,14 +212,27 @@ ENV UV_NO_BUILD_ISOLATION=1
 ENV UV_NO_SYNC=1
 # Create a new virtual environment
 ENV VIRTUAL_ENV=/workspace/.venv
-RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python /usr/bin/python3 --system-site-packages
 # Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-# Install python dependencies
-RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
+# Allow Python to find packages installed with --break-system-packages when venv is active
+ENV PYTHONPATH=/usr/local/lib/python3/dist-packages:${PYTHONPATH}
+# Install python dependencies (including modern pip for --config-settings support)
+RUN uv pip install --upgrade pip setuptools wheel build meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Install PyTorch
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     uv pip install torch torchvision torchaudio
+
+# Stage 2: Build NIXL (default stage)
+FROM nixl-deps-base
+
+# Re-declare ARGs needed in this stage
+ARG NIXL_PREFIX="/usr/local/nixl"
+ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/x86_64-linux-gnu/plugins"
+ARG ARCH="x86_64"
+ARG UCX_PREFIX="/usr"
+ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
@@ -214,13 +258,15 @@ RUN cd src/bindings/rust && cargo build --release --locked
 
 # Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
 RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
+    PYTHON_VERSION=$(python3 --version | cut -d" " -f2 | cut -d. -f1,2) && \
     mkdir -p dist && \
     ./contrib/build-wheel.sh \
-    --python-version $DEFAULT_PYTHON_VERSION \
+    --python-version $PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
     --ucx-plugins-dir $UCX_PLUGIN_DIR \
     --nixl-plugins-dir $NIXL_PLUGIN_DIR \
     --output-dir /workspace/nixl/dist
 
 RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl
+RUN PYTHON_VERSION=$(python3 --version | cut -d" " -f2 | cut -d. -f1,2 | tr -d .) && \
+    uv pip install dist/nixl*cp${PYTHON_VERSION}*.whl dist/nixl-*-none-any.whl
