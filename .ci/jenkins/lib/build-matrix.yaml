@@ -43,7 +43,7 @@ runs_on_dockers:
       name: "ubuntu24.04-nixl-deps",
       uri: "$arch/$name",
       tag: "02112025",
-      build_args: "--target nixl-base"
+      build_args: "--target nixl-base --build-arg ARCH=$arch"
     }
   # - {
   #     file: "contrib/Dockerfile",
@@ -58,7 +58,7 @@ matrix:
   axes:
     arch:
       - x86_64
-      # - aarch64
+      - aarch64
 
 env:
   NIXL_BASE_IMAGE_ENV: "true"
