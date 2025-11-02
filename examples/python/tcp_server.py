@@ -14,17 +14,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
- 
+
 """
 Simple TCP server for NIXL metadata exchange.
 
 Provides a lightweight key-value store for exchanging metadata between processes.
 """
 
-from socketserver import ThreadingTCPServer, StreamRequestHandler
-from threading import Thread, Lock
-import socket
 import json
+import socket
+from socketserver import StreamRequestHandler, ThreadingTCPServer
+from threading import Lock, Thread
+
 from nixl.logging import get_logger
 
 logger = get_logger(__name__)
@@ -40,9 +41,9 @@ class MetadataHandler(StreamRequestHandler):
         try:
             line = self.rfile.readline().strip().decode()
             request = json.loads(line)
-            
+
             cmd = request.get("cmd")
-            
+
             if cmd == "SET":
                 # Store metadata: {"cmd": "SET", "key": "...", "value": ...}
                 key = request.get("key")
@@ -50,7 +51,7 @@ class MetadataHandler(StreamRequestHandler):
                 with _lock:
                     _metadata[key] = value
                 response = {"status": "OK"}
-                
+
             elif cmd == "GET":
                 # Retrieve metadata: {"cmd": "GET", "key": "..."}
                 key = request.get("key")
@@ -60,12 +61,12 @@ class MetadataHandler(StreamRequestHandler):
                     response = {"status": "OK", "value": value}
                 else:
                     response = {"status": "ERROR", "message": f"Key '{key}' not found"}
-                    
+
             elif cmd == "GET_ALL":
                 # Get all metadata: {"cmd": "GET_ALL"}
                 with _lock:
                     response = {"status": "OK", "data": dict(_metadata)}
-                    
+
             elif cmd == "DELETE":
                 # Delete metadata: {"cmd": "DELETE", "key": "..."}
                 key = request.get("key")
@@ -75,24 +76,25 @@ class MetadataHandler(StreamRequestHandler):
                         response = {"status": "OK"}
                     else:
                         response = {"status": "ERROR", "message": f"Key '{key}' not found"}
-                        
+
             elif cmd == "CLEAR":
                 # Clear all metadata: {"cmd": "CLEAR"}
                 with _lock:
                     _metadata.clear()
                 response = {"status": "OK"}
-                
+
             else:
                 response = {"status": "ERROR", "message": f"Unknown command: {cmd}"}
-            
+
             self.wfile.write((json.dumps(response) + "\n").encode())
-            
+
         except json.JSONDecodeError:
             error = {"status": "ERROR", "message": "Invalid JSON"}
             self.wfile.write((json.dumps(error) + "\n").encode())
         except Exception as e:
             error = {"status": "ERROR", "message": str(e)}
             self.wfile.write((json.dumps(error) + "\n").encode())
+
 
 # --- TCPServer subclass to reuse port immediately ---
 class ReusableTCPServer(ThreadingTCPServer):

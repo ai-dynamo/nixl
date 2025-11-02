@@ -21,13 +21,14 @@ These utilities provide a safe and efficient way to work with raw memory pointer
 """
 
 import ctypes
+
 import numpy as np
 
 
 def write_uint64(addr, value):
     """
     Write uint64 to local memory using NumPy.
-    
+
     Args:
         addr: Memory address (integer)
         value: 64-bit unsigned integer value to write
@@ -41,10 +42,10 @@ def write_uint64(addr, value):
 def read_uint64(addr):
     """
     Read uint64 from local memory using NumPy.
-    
+
     Args:
         addr: Memory address (integer)
-    
+
     Returns:
         64-bit unsigned integer value
     """
@@ -57,11 +58,11 @@ def read_uint64(addr):
 def write_data(addr, data):
     """
     Write data to local memory using NumPy.
-    
+
     Args:
         addr: Memory address (integer)
         data: Data to write (NumPy array, bytes, or bytearray)
-    
+
     Raises:
         TypeError: If data type is not supported
     """
@@ -72,7 +73,7 @@ def write_data(addr, data):
         src_arr = np.frombuffer(data, dtype=np.uint8)
     else:
         raise TypeError(f"Unsupported data type: {type(data)}")
-    
+
     # Create a NumPy view of the destination and copy
     char_buffer = (ctypes.c_char * len(src_arr)).from_address(addr)
     dst_arr = np.ndarray(src_arr.shape, dtype=np.uint8, buffer=char_buffer)
@@ -82,11 +83,11 @@ def write_data(addr, data):
 def read_data(addr, size):
     """
     Read data from local memory using NumPy.
-    
+
     Args:
         addr: Memory address (integer)
         size: Number of bytes to read
-    
+
     Returns:
         NumPy array containing the read data
     """
@@ -94,4 +95,3 @@ def read_data(addr, size):
     char_buffer = (ctypes.c_char * size).from_address(addr)
     arr = np.ndarray((size,), dtype=np.uint8, buffer=char_buffer)
     return arr.copy()
-

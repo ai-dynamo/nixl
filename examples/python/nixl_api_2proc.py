@@ -19,16 +19,17 @@ import os
 import time
 from multiprocessing import Process
 
-import nixl._utils as nixl_utils
-from nixl._api import nixl_agent, nixl_agent_config
-from nixl.logging import get_logger
 import tcp_server
 from nixl_metadata_utils import (
     publish_agent_metadata,
-    retrieve_agent_metadata,
     publish_descriptors,
-    retrieve_descriptors
+    retrieve_agent_metadata,
+    retrieve_descriptors,
 )
+
+import nixl._utils as nixl_utils
+from nixl._api import nixl_agent, nixl_agent_config
+from nixl.logging import get_logger
 
 # Configure logging
 logger = get_logger(__name__)
@@ -38,7 +39,7 @@ def target_process():
     """Target process - receives data"""
     buf_size = 256
     logger.info("[target] Starting target process")
-    
+
     # Create agent
     agent_config = nixl_agent_config(backends=["UCX"])
     nixl_agent1 = nixl_agent("target", agent_config)
@@ -60,20 +61,20 @@ def target_process():
     publish_agent_metadata(nixl_agent1, "target_meta")
     publish_descriptors(nixl_agent1, agent1_xfer_descs, "target_descs")
     logger.info("[target] Published metadata and xfer descriptors to TCP server")
-    
+
     # Wait for initiator to complete transfers
     logger.info("[target] Waiting for transfers...")
-    
+
     # Check for transfer 1 completion
     while not nixl_agent1.check_remote_xfer_done("initiator", b"UUID1"):
         time.sleep(0.001)
     logger.info("[target] Transfer 1 done")
-    
-    # Check for transfer 2 completion  
+
+    # Check for transfer 2 completion
     while not nixl_agent1.check_remote_xfer_done("initiator", b"UUID2"):
         time.sleep(0.001)
     logger.info("[target] Transfer 2 done")
-    
+
     # Cleanup
     nixl_agent1.deregister_memory(agent1_reg_descs)
     nixl_utils.free_passthru(addr1)
@@ -84,7 +85,7 @@ def initiator_process():
     """Initiator process - sends data"""
     buf_size = 256
     logger.info("[initiator] Starting initiator process")
-    
+
     # Create agent
     nixl_agent2 = nixl_agent("initiator", None)
     addr3 = nixl_utils.malloc_passthru(buf_size * 2)
@@ -104,7 +105,7 @@ def initiator_process():
     remote_name = retrieve_agent_metadata(nixl_agent2, "target_meta", role_name="initiator")
     if not remote_name:
         return
-    
+
     agent1_xfer_descs = retrieve_descriptors(nixl_agent2, "target_descs")
     logger.info("[initiator] Successfully retrieved target descriptors")
 
@@ -179,13 +180,13 @@ def initiator_process():
     nixl_agent2.remove_remote_agent("target")
     nixl_agent2.deregister_memory(agent2_reg_descs)
     nixl_utils.free_passthru(addr3)
-    
+
     logger.info("[initiator] Initiator process complete")
 
 
 if __name__ == "__main__":
     logger.info("Using NIXL Plugins from:\n%s", os.environ["NIXL_PLUGIN_DIR"])
-    
+
     # Start TCP metadata server
     logger.info("[main] Starting TCP metadata server...")
     try:
@@ -194,20 +195,20 @@ if __name__ == "__main__":
     except OSError:
         pass  # Server may already be running
     tcp_server.clear_metadata("127.0.0.1", 9998)
-    
+
     logger.info("[main] Starting target and initiator processes...")
-    
+
     # Start both processes
     target_proc = Process(target=target_process)
     initiator_proc = Process(target=initiator_process)
-    
+
     target_proc.start()
     initiator_proc.start()
-    
+
     # Wait for both to complete
     target_proc.join()
     initiator_proc.join()
-    
+
     if target_proc.exitcode == 0 and initiator_proc.exitcode == 0:
         logger.info("[main] ✓ Test Complete - Both processes succeeded!")
     else:
