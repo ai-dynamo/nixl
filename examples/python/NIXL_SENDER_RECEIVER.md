@@ -98,7 +98,7 @@ publish_descriptors(agent, tail_descs, "receiver_tail_desc")
 publish_descriptors(agent, head_descs, "receiver_head_desc")
 
 # Retrieve remote agent
-remote_name = retrieve_agent_metadata(agent, "sender_meta", 
+remote_name = retrieve_agent_metadata(agent, "sender_meta",
                                      timeout=10.0, role_name="receiver")
 sender_descs = retrieve_descriptors(agent, "sender_tail_desc")
 ```
@@ -108,7 +108,7 @@ sender_descs = retrieve_descriptors(agent, "sender_tail_desc")
 # Prepare reusable transfer handles
 local_prep = agent.prep_xfer_dlist("NIXL_INIT_AGENT", local_list, "DRAM")
 remote_prep = agent.prep_xfer_dlist(remote_name, remote_descs, "DRAM")
-xfer_handle = agent.make_prepped_xfer("WRITE", local_prep, [0], 
+xfer_handle = agent.make_prepped_xfer("WRITE", local_prep, [0],
                                       remote_prep, [0], b"UUID")
 ```
 
@@ -318,5 +318,5 @@ Sender's Memory:
 
 ## License
 
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.  
+SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0

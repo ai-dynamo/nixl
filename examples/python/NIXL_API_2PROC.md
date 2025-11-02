@@ -131,7 +131,7 @@ publish_agent_metadata(nixl_agent1, "target_meta")
 publish_descriptors(nixl_agent1, agent1_xfer_descs, "target_descs")
 
 # Initiator: Retrieve
-remote_name = retrieve_agent_metadata(nixl_agent2, "target_meta", 
+remote_name = retrieve_agent_metadata(nixl_agent2, "target_meta",
                                      timeout=10.0, role_name="initiator")
 agent1_xfer_descs = retrieve_descriptors(nixl_agent2, "target_descs")
 ```
@@ -315,6 +315,6 @@ while nixl_agent2.check_xfer_state(xfer_handle_1) != "DONE":
 
 ## License
 
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.  
+SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
