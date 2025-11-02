@@ -83,40 +83,50 @@ RUN apt-get update -y && \
     pciutils \
     libpci-dev \
     libibmad-dev \
-    doxygen
+    doxygen && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Add DOCA repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
     wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
+    rm -f doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Force reinstall of RDMA packages from DOCA repository
 # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
 # Upgrade is not sufficient if the version is the same since apt skips the installation.
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
-    libnuma-dev librdmacm-dev ibverbs-providers
+    libnuma-dev librdmacm-dev ibverbs-providers && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
-    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install && \
+    cd /workspace && rm -rf etcd-cpp-apiv3
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    make -j${NPROC:-$(nproc)} && make install
+    make -j${NPROC:-$(nproc)} && make install && \
+    cd /workspace && rm -rf aws-sdk-cpp aws_sdk_build
 
-RUN git clone https://github.com/nvidia/gusli.git && \
+RUN git clone --depth 1 https://github.com/nvidia/gusli.git && \
      cd gusli && \
      make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
-     cd ..
+     cd .. && \
+     rm -rf gusli
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -159,16 +169,19 @@ RUN cd /usr/local/src && \
          --enable-mt &&              \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
-     ldconfig
+     ldconfig && \
+     cd /usr/local/src && rm -rf ucx
 
 RUN cd /tmp && \
      git clone --depth 1 https://github.com/google/gtest-parallel.git && \
      mkdir -p /usr/local/bin && \
-     cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/
+     cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/ && \
+     rm -rf gtest-parallel
 ENV PATH=/usr/local/bin:$PATH
 
 # Build libfabric from source
-RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+RUN cd /tmp && \
+    wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
     cd libfabric-* && \
@@ -186,7 +199,8 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
                 --enable-gdrcopy-dlopen && \
     make -j${NPROC:-$(nproc)} && \
     make install && \
-    ldconfig
+    ldconfig && \
+    cd /tmp && rm -rf libfabric-*
 
 # Stage 2: Build NIXL (default stage)
 FROM nixl-base
