@@ -280,6 +280,7 @@ public:
                    size_t length,
                    nixl_mem_t mem_type,
                    int gpu_id,
+                   enum fi_hmem_iface iface,
                    struct fid_mr **mr_out,
                    uint64_t *key_out) const;
 

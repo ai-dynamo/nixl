@@ -327,20 +327,13 @@ nixlLibfabricRailManager::selectRailsForMemory(void *mem_addr,
                                                int gpu_id,
                                                const std::string &gpu_pci_bus_id) const {
     if (mem_type == VRAM_SEG) {
-#ifdef HAVE_CUDA
         if (gpu_id < 0) {
             NIXL_ERROR << "Invalid GPU ID " << gpu_id << " for VRAM memory " << mem_addr;
             return {}; // Return empty vector to indicate failure
         }
 
-        // Use PCI bus ID provided by caller (queried in backend layer)
-        if (gpu_pci_bus_id.empty()) {
-            NIXL_ERROR << "Empty PCI bus ID provided for VRAM memory " << mem_addr;
-            return {}; // Return empty vector to indicate failure
-        }
-
         // Get EFA devices for this PCI bus ID
-        std::vector<std::string> gpu_efa_devices = topology->getEfaDevicesForGPUPci(gpu_pci_bus_id);
+        std::vector<std::string> gpu_efa_devices = topology->getEfaDevicesForPci(gpu_pci_bus_id);
         if (gpu_efa_devices.empty()) {
             NIXL_ERROR << "No EFA devices found for PCI " << gpu_pci_bus_id;
             return {}; // Return empty vector to indicate failure
@@ -374,10 +367,6 @@ nixlLibfabricRailManager::selectRailsForMemory(void *mem_addr,
         NIXL_DEBUG << "VRAM memory " << mem_addr << " on GPU-PCI " << gpu_pci_bus_id << " will use "
                    << gpu_rails.size() << " rails total";
         return gpu_rails;
-#else
-        NIXL_ERROR << "VRAM memory type not supported without CUDA";
-        return {};
-#endif
     }
     if (mem_type == DRAM_SEG) {
         // For DRAM, use all available rails for maximum bandwidth
@@ -421,6 +410,11 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
+    enum fi_hmem_iface iface = FI_HMEM_SYSTEM;
+    if (mem_type == VRAM_SEG) {
+        iface = topology->getMrAttrIface(gpu_id);
+    }
+
     // Resize output vectors to match all rails
     mr_list_out.resize(data_rails_.size(), nullptr);
     key_list_out.clear();
@@ -447,7 +441,7 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         uint64_t key;
         // Pass gpu_id parameter to individual rail's registerMemory calls
         nixl_status_t status =
-            data_rails_[rail_idx]->registerMemory(buffer, length, mem_type, gpu_id, &mr, &key);
+            data_rails_[rail_idx]->registerMemory(buffer, length, mem_type, gpu_id, iface, &mr, &key);
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to register memory on rail " << rail_idx;
             // Cleanup already registered MRs

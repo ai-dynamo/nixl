@@ -23,6 +23,7 @@ libfabric_plugin_deps = [
     libfabric_dep,
     serdes_interface,
     libfabric_utils_dep,
+    dependency('dl', required: true)
 ]
 
 compile_flags = ['-DHAVE_LIBFABRIC']

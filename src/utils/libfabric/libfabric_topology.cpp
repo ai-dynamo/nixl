@@ -34,6 +34,7 @@
 
 nixlLibfabricTopology::nixlLibfabricTopology()
     : num_gpus(0),
+      num_nvidia_gpus(0),
       num_numa_nodes(0),
       num_devices(0),
       topology_discovered(false),
@@ -85,11 +86,13 @@ nixlLibfabricTopology::discoverTopology() {
             NIXL_ERROR << "Failed to discover hwloc topology";
             return status;
         }
-        // Build GPU to EFA mapping based on PCIe topology
-        status = buildGpuToEfaMapping();
-        if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Failed to build GPU to EFA mapping";
-            return status;
+        // Build nVidia GPU to EFA mapping based on PCIe topology
+        if (num_nvidia_gpus > 0) {
+            status = buildGpuToEfaMapping();
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed to build GPU to EFA mapping";
+                return status;
+            }
         }
     } else {
         // For TCP/sockets devices, bypass complex topology discovery
@@ -135,7 +138,7 @@ nixlLibfabricTopology::discoverEfaDevices() {
 }
 
 std::vector<std::string>
-nixlLibfabricTopology::getEfaDevicesForGPUPci(const std::string &pci_bus_id) const {
+nixlLibfabricTopology::getEfaDevicesForPci(const std::string &pci_bus_id) const {
     // Normalize PCI bus ID format to match hwloc format
     // CUDA format: "0000:59:00.0" → hwloc format: "0:59:00.0"
     unsigned int domain, bus, device, function;
@@ -150,12 +153,22 @@ nixlLibfabricTopology::getEfaDevicesForGPUPci(const std::string &pci_bus_id) con
                  function);
         std::string normalized_id(normalized_pci);
 
-        auto it = pci_to_efa_devices.find(normalized_id);
-        if (it != pci_to_efa_devices.end()) {
+        // GPU query, lookup based on GPU BDF
+        if (auto it = pci_to_efa_devices.find(normalized_id);
+            it != pci_to_efa_devices.end()) {
             NIXL_DEBUG << "Found EFA devices for PCI " << pci_bus_id << " (normalized to "
                        << normalized_id << ")";
             return it->second;
         }
+
+        // Neuron query, lookup based on EFA BDF
+        if (auto it = pcie_to_libfabric_map.find(normalized_id);
+            it != pcie_to_libfabric_map.end()) {
+            NIXL_DEBUG << "Found EFA devices for PCI " << pci_bus_id << " (normalized to "
+                       << normalized_id << ")";
+            return { it->second };
+        }
+
         // PCI ID parsed successfully but not found in mapping
         NIXL_WARN << "PCI bus ID " << pci_bus_id << " (normalized to " << normalized_id
                   << ") not found in GPU-EFA mapping, returning all devices";
@@ -315,28 +328,33 @@ nixlLibfabricTopology::discoverHwlocTopology() {
 nixl_status_t
 nixlLibfabricTopology::discoverGpusWithHwloc() {
     num_gpus = 0;
+    num_nvidia_gpus = 0;
     // Find all PCI devices and log detailed information
+    static const char* vendor_names[2] = { "NEURON", "NVIDIA" };
     hwloc_obj_t pci_obj = nullptr;
     while ((pci_obj = hwloc_get_next_pcidev(hwloc_topology, pci_obj)) != nullptr) {
-        if (isNvidiaGpu(pci_obj)) {
+        const bool is_nvidia_gpu = isNvidiaGpu(pci_obj);
+        if (is_nvidia_gpu || isNeuronGpu(pci_obj)) {
             std::string pcie_addr = getPcieAddressFromHwlocObj(pci_obj);
             // Get device and vendor info
             uint16_t vendor_id = pci_obj->attr->pcidev.vendor_id;
             uint16_t device_id = pci_obj->attr->pcidev.device_id;
             uint16_t class_id = pci_obj->attr->pcidev.class_id;
 
-            NIXL_TRACE << "Found NVIDIA GPU " << num_gpus << ": " << pcie_addr
+            NIXL_TRACE << "Found " << vendor_names[is_nvidia_gpu] << " GPU " << num_gpus << ": " << pcie_addr
                        << " (vendor=" << std::hex << vendor_id << ", device=" << device_id
                        << ", class=" << class_id << std::dec << ")";
 
             num_gpus++;
+            num_nvidia_gpus += is_nvidia_gpu;
         }
     }
 
-    NIXL_TRACE << "Discovered " << num_gpus << " NVIDIA GPUs via hwloc";
+    NIXL_TRACE << "Discovered " << num_gpus << " "
+               << vendor_names[num_gpus == num_nvidia_gpus] << " GPUs via hwloc";
 
     // If we found more than 8 GPUs on P5en, investigate further
-    if (num_gpus > 8) {
+    if (num_nvidia_gpus > 8) {
         NIXL_WARN << "Found " << num_gpus
                   << " NVIDIA GPUs, but P5en should have 8. Investigating...";
 
@@ -603,6 +621,27 @@ nixlLibfabricTopology::isNvidiaGpu(hwloc_obj_t obj) const {
     // Class 0x302 is 3D controller (GPU), 0x680 is other devices (network, etc.)
     uint16_t class_id = obj->attr->pcidev.class_id;
     return (class_id >= 0x300 && class_id < 0x400);
+}
+
+bool
+nixlLibfabricTopology::isNeuronGpu(hwloc_obj_t obj) const {
+    if (!obj || obj->type != HWLOC_OBJ_PCI_DEVICE) {
+        return false;
+    }
+    // Amazon vendor ID is 0x1d0f
+    if (obj->attr->pcidev.vendor_id != 0x1d0f) {
+        return false;
+    }
+    static const uint16_t NEURON_DEVICE_IDS[] = {
+      0x7264,  // INF2
+      0x7164,  // TRN1
+      0x7364,  // TRN2
+      0x7564,  // TRN3_DEVICE_0
+      0x7565,  // TRN3_DEVICE_1
+    };
+    return std::find(std::begin(NEURON_DEVICE_IDS),
+                     std::end(NEURON_DEVICE_IDS),
+                     obj->attr->pcidev.device_id) != std::end(NEURON_DEVICE_IDS);
 }
 
 bool
