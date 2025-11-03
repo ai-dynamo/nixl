@@ -299,6 +299,11 @@ public:
         std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_endpoints_out,
         std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &control_endpoints_out) const;
 
+    const nixlLibfabricTopology *
+    getTopology() const {
+        return topology.get();
+    }
+
 private:
     size_t striping_threshold_;
 

@@ -43,6 +43,7 @@ private:
 
     // System information
     int num_gpus;
+    int num_nvidia_gpus;
     int num_numa_nodes;
     int num_devices;
 
@@ -119,6 +120,8 @@ private:
     bool
     isNvidiaGpu(hwloc_obj_t obj) const;
     bool
+    isNeuronGpu(hwloc_obj_t obj) const;
+    bool
     isEfaDevice(hwloc_obj_t obj) const;
 
 public:
@@ -127,12 +130,17 @@ public:
 
     // GPU-based queries (main interface)
     std::vector<std::string>
-    getEfaDevicesForGPUPci(const std::string &pci_bus_id) const;
+    getEfaDevicesForPci(const std::string &pci_bus_id) const;
 
     // System information
     int
     getNumGpus() const {
         return num_gpus;
+    }
+
+    int
+    getNumNvidiaGpus() const {
+        return num_nvidia_gpus;
     }
 
     const std::vector<std::string> &
@@ -153,6 +161,10 @@ public:
 
     bool
     isValidDevice(const std::string &efa_device) const;
+
+    enum fi_hmem_iface getMrAttrIface(int gpu_id) const {
+        return (gpu_id < num_nvidia_gpus) ? FI_HMEM_CUDA : FI_HMEM_NEURON;
+    }
 
     // Debug/info
     void

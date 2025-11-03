@@ -20,6 +20,7 @@
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
 
+#include <dlfcn.h>
 #include <limits>
 #include <cstring>
 #include <unistd.h>
@@ -28,6 +29,54 @@
 #include <numeric>
 
 #include "absl/strings/numbers.h"
+#include "libfabric/libfabric_topology.h"
+
+
+/****************************************
+ * Neuron Address Query
+ *****************************************/
+namespace {
+
+void *dlopen_libnrt() {
+    static void *const handle = dlopen("libnrt.so.1", RTLD_NOW);
+    return handle;
+}
+
+template <class Fn>
+Fn *_load_nrt_symbol(const char *fn_name, Fn *) {
+    void *libnrt_handle = dlopen_libnrt();
+    if (libnrt_handle) {
+       return reinterpret_cast<Fn *>(dlsym(libnrt_handle, fn_name));
+    }
+    return nullptr;
+}
+
+#define LOAD_NRT_SYMBOL(sym) _load_nrt_symbol(#sym, &sym)
+
+int nrt_get_attached_efa_bdf(const void *va, char *efa_bdf, size_t *len)
+{
+    static const auto fn = LOAD_NRT_SYMBOL(nrt_get_attached_efa_bdf);
+    if (fn == nullptr) {
+        NIXL_ERROR << "Could not resolve libnrt symbol: " << __func__;
+        return -1;
+    }
+    return fn(va, efa_bdf, len);
+}
+
+int nrtQueryAddr(const void *va, std::string *efa_bdf)
+{
+    char buf[] = "0000:00:00.0";
+    size_t buflen = sizeof(buf);
+
+    if (nrt_get_attached_efa_bdf(va, buf, &buflen) == 0) {
+        efa_bdf->assign(buf, buflen);
+        return 0;
+    }
+
+    return -1;
+}
+
+}  // namespace
 
 #ifdef HAVE_CUDA
 // CUDA error checking macros
@@ -753,7 +802,8 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     std::string pci_bus_id = "";
 #ifdef HAVE_CUDA
     // Handle CUDA memory registration with GPU Direct RDMA support
-    if (nixl_mem == VRAM_SEG) {
+    if (nixl_mem == VRAM_SEG && rail_manager.getTopology()->getNumNvidiaGpus() > 0) {
+
         // For multi-GPU support, skip CUDA address workaround
         if (cuda_addr_wa_) {
             bool need_restart;
@@ -793,6 +843,15 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     }
 #endif
 
+    if (nixl_mem == VRAM_SEG && rail_manager.getTopology()->getNumNvidiaGpus() == 0) {
+        int ret = nrtQueryAddr((void *)mem.addr, &pci_bus_id);
+        if (ret) {
+            NIXL_ERROR << "Could not query EFA device from emmory " << (void *)mem.addr;
+            // Fall back to all rails.
+        }
+        NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for GPU " << mem.devId;
+    }
+
     // Initialize vectors to accommodate all possible rails (for indexing consistency)
     priv->rail_mr_list_.resize(rail_manager.getNumDataRails(), nullptr);
     priv->rail_key_list_.clear();
@@ -800,7 +859,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
 
 #ifdef HAVE_CUDA
     // Set CUDA context before libfabric operations for VRAM
-    if (nixl_mem == VRAM_SEG) {
+    if (nixl_mem == VRAM_SEG && rail_manager.getTopology()->getNumNvidiaGpus() > 0) {
         vramApplyCtx();
     }
 #endif
