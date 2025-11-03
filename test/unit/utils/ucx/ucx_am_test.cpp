@@ -104,14 +104,12 @@ int main()
     std::cout << "first active message complete\n";
 
     /* Test second callback */
-    uint32_t flags = 0;
-    flags |= UCP_AM_SEND_FLAG_RNDV;
-
     bool buffer_freed = false;
     ret = ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(hdr), big_buffer, 8192, 0, req,
-                        [&buffer_freed](void* buffer) {
+                        [&buffer_freed](void* request, void *buffer) {
                             buffer_freed = true;
                             free(buffer);
+                            ucp_request_free(request);
                         });
     assert (ret >= 0);
 

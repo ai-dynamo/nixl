@@ -288,7 +288,7 @@ private:
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,
                   const std::string &msg,
-                  nixlUcxReq &req,
+                  nixlUcxReq *req,
                   const std::unique_ptr<nixlUcxEp> &ep) const;
 
     ucx_connection_ptr_t

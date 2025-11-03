@@ -272,20 +272,13 @@ void nixlUcxEngine::vramFiniCtx()
 
 class nixlUcxIntReq {
 public:
-    bool
-    is_complete() const {
-        return completed_;
-    }
-
-    void
-    completed() {
-        completed_ = true;
+    operator nixlUcxReq() noexcept {
+        return static_cast<nixlUcxReq>(this);
     }
 
     void
     setConnection(nixlUcxConnection *conn) {
         conn_ = conn;
-        completed_ = false;
     }
 
     nixl_status_t
@@ -295,7 +288,6 @@ public:
     }
 
 private:
-    bool completed_ = false;
     nixlUcxConnection *conn_;
 };
 
@@ -312,10 +304,10 @@ private:
 
     // Notification to be sent after completion of all requests
     struct Notif {
-	    std::string agent;
-	    nixl_blob_t payload;
-	    Notif(const std::string& remote_agent, const nixl_blob_t& msg)
-		    : agent(remote_agent), payload(msg) {}
+        std::string agent;
+        nixl_blob_t payload;
+        Notif(const std::string& remote_agent, const nixl_blob_t& msg)
+           : agent(remote_agent), payload(msg) {}
     };
     std::optional<Notif> notif;
 
@@ -350,12 +342,13 @@ public:
     release() {
         // TODO: Error log: uncompleted requests found! Cancelling ...
         for (nixlUcxIntReq *req : requests_) {
-            if (!req->is_complete()) {
+            nixl_status_t ret = ucx_status_to_nixl(ucp_request_check_status(req));
+            if (ret == NIXL_IN_PROG) {
                 // TODO: Need process this properly.
                 // it may not be enough to cancel UCX request
-                worker->reqCancel((nixlUcxReq)req);
+                worker->reqCancel(req);
             }
-            worker->reqRelease((nixlUcxReq)req);
+            worker->reqRelease(req);
         }
         requests_.clear();
         connections_.clear();
@@ -373,36 +366,37 @@ public:
         while (worker->progress())
             ;
 
-        /* Go over all request updating their status */
+        /* If last request is incomplete, return NIXL_IN_PROG early without
+         * checking other requests */
+        nixlUcxIntReq *req = requests_.back();
+        nixl_status_t ret = ucx_status_to_nixl(ucp_request_check_status(req));
+        if (ret == NIXL_IN_PROG) {
+            return NIXL_IN_PROG;
+        } else if (ret != NIXL_SUCCESS) {
+            nixl_status_t conn_status = req->checkConnection(worker_id);
+            return (conn_status == NIXL_SUCCESS) ? ret : conn_status;
+        }
+
+        /* Last request completed successfully, all the others must be in the
+         * same state. TODO: remove extra checks? */
+        size_t incomplete_reqs = 0;
         nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxIntReq *req : requests_) {
-            nixl_status_t ret;
-            if (!req->is_complete()) {
-                ret = ucx_status_to_nixl(ucp_request_check_status((nixlUcxReq)req));
-                switch (ret) {
-                case NIXL_SUCCESS:
-                    /* Mark as completed */
-                    req->completed();
-                    break;
-                case NIXL_IN_PROG:
+            nixl_status_t ret = ucx_status_to_nixl(ucp_request_check_status(req));
+            if (__builtin_expect(ret == NIXL_SUCCESS, 0)) {
+                worker->reqRelease(req);
+            } else if (ret == NIXL_IN_PROG) {
+                if (out_ret == NIXL_SUCCESS) {
                     out_ret = NIXL_IN_PROG;
-                    break;
-                default:
-                    // Any other ret value is ERR and will be returned
-                    nixl_status_t conn_status = req->checkConnection(worker_id);
-                    return (conn_status == NIXL_SUCCESS) ? ret : conn_status;
                 }
+                requests_[incomplete_reqs++] = req;
+            } else {
+                // Any other ret value is ERR and will be returned
+                nixl_status_t conn_status = req->checkConnection(worker_id);
+                out_ret = (conn_status == NIXL_SUCCESS) ? ret : conn_status;
             }
         }
 
-        size_t incomplete_reqs = 0;
-        for (nixlUcxIntReq *req : requests_) {
-            if (req->is_complete()) {
-                worker->reqRelease((nixlUcxReq)req);
-            } else {
-                requests_[incomplete_reqs++] = req;
-            }
-        }
         requests_.resize(incomplete_reqs);
         return out_ret;
     }
@@ -1561,7 +1555,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
             nixlUcxReq req;
             auto rmd = (nixlUcxPublicMetadata *)remote[0].metadataP;
             ret = notifSendPriv(
-                remote_agent, opt_args->notifMsg, req, rmd->conn->getEp(int_handle->getWorkerId()));
+                remote_agent, opt_args->notifMsg, &req, rmd->conn->getEp(int_handle->getWorkerId()));
             if (_retHelper(ret, int_handle, req, rmd->conn)) {
                 return ret;
             }
@@ -1597,7 +1591,7 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 
     nixlUcxReq req;
     nixl_status_t status =
-        notifSendPriv(notif->agent, notif->payload, req, conn->getEp(intHandle->getWorkerId()));
+        notifSendPriv(notif->agent, notif->payload, &req, conn->getEp(intHandle->getWorkerId()));
     notif.reset();
     status = _retHelper(status, intHandle, req, conn);
     if (status != NIXL_SUCCESS) {
@@ -1732,7 +1726,7 @@ int nixlUcxEngine::progress() {
 nixl_status_t
 nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
-                             nixlUcxReq &req,
+                             nixlUcxReq *req,
                              const std::unique_ptr<nixlUcxEp> &ep) const {
     nixlSerDes ser_des;
     nixl_status_t ret;
@@ -1742,11 +1736,21 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     // TODO: replace with mpool for performance
 
     std::string *buffer = new std::string(ser_des.exportStr());
+    nixlUcxReq tmp_req;
     ret = ep->sendAm(NOTIF_STR, NULL, 0, (void *)buffer->data(), buffer->size(),
-                     UCP_AM_SEND_FLAG_EAGER, req,
-                     [&buffer](void* ptr) { delete buffer; });
+                     UCP_AM_SEND_FLAG_EAGER, tmp_req,
+                     [buffer, req](void *request, void* ptr) {
+                        delete buffer;
+                        if (nullptr == req) {
+                            /* Caller is not interested in the request, free it */
+                            ucp_request_free(request);
+                        }
+                     });
     if (ret != NIXL_SUCCESS && ret != NIXL_IN_PROG) {
+        /* Failed to send active message, delete buffer */
         delete buffer;
+    } else if (req != nullptr) {
+        *req = tmp_req;
     }
     return ret;
 }
@@ -1802,24 +1806,14 @@ nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
 
 nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg) const
 {
-    nixl_status_t ret;
-    nixlUcxReq req;
-
     auto conn = getConnection(remote_agent);
     if (!conn) {
         return NIXL_ERR_NOT_FOUND;
     }
 
-    ret = notifSendPriv(remote_agent, msg, req, conn->getEp(getWorkerId()));
-    switch(ret) {
-    case NIXL_IN_PROG:
-        /* do not track the request */
-        getWorker(getWorkerId())->reqRelease(req);
-    case NIXL_SUCCESS:
-        break;
-    default:
-        /* error case */
-        return ret;
+    nixl_status_t ret = notifSendPriv(remote_agent, msg, nullptr, conn->getEp(getWorkerId()));
+    if (ret == NIXL_IN_PROG) {
+        ret = NIXL_SUCCESS;
     }
-    return NIXL_SUCCESS;
+    return ret;
 }

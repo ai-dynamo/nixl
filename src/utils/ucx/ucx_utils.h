@@ -125,7 +125,7 @@ public:
     nixlUcxEp(const nixlUcxEp&) = delete;
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
-    using amDeleter = std::function<void(void* buffer)>;
+    using amDeleter = std::function<void(void* request, void *buffer)>;
 
     /* Active message handling */
     nixl_status_t sendAm(unsigned msg_id,

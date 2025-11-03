@@ -243,7 +243,7 @@ void
 nixlUcxEp::sendAmCallback(void* request, ucs_status_t status, void *user_data)
 {
     nixlUcxAmCbCtx *ctx = (nixlUcxAmCbCtx *)user_data;
-    ctx->second(ctx->first);
+    ctx->second(request, ctx->first);
     delete ctx;
 }
 
@@ -267,7 +267,8 @@ nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
     if (deleter) {
         ctx = std::make_unique<nixlUcxAmCbCtx>(buffer, deleter);
         param.op_attr_mask |= UCP_OP_ATTR_FIELD_CALLBACK |
-                              UCP_OP_ATTR_FIELD_USER_DATA;
+                              UCP_OP_ATTR_FIELD_USER_DATA |
+                              UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
         param.cb.send = sendAmCallback;
         param.user_data = ctx.get();
     }
@@ -684,7 +685,7 @@ nixl_status_t nixlUcxWorker::test(nixlUcxReq req)
 
 void nixlUcxWorker::reqRelease(nixlUcxReq req)
 {
-    ucp_request_free((void*)req);
+    ucp_request_free(req);
 }
 
 void nixlUcxWorker::reqCancel(nixlUcxReq req)
