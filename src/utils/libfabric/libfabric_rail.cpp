@@ -714,7 +714,7 @@ nixlLibfabricRail::progressCompletionQueue(bool use_blocking) const {
 
         if (use_blocking && blocking_cq_sread_supported) {
             // Blocking read using fi_cq_sread (used by CM thread)
-            ret = fi_cq_sread(cq, &completion, 1, nullptr, NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_SEC);
+            ret = fi_cq_sread(cq, &completion, 1, nullptr, NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_MS);
         } else {
             // Non-blocking read (used by progress thread or fallback)
             ret = fi_cq_read(cq, &completion, 1);
