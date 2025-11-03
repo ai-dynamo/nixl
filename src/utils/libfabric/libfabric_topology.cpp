@@ -356,8 +356,8 @@ nixlLibfabricTopology::discoverEfaDevicesWithHwloc() {
                << num_devices;
 
     if (hwloc_efa_count != num_devices) {
-        NIXL_WARN << "Mismatch between hwloc (" << hwloc_efa_count << ") and libfabric ("
-                  << num_devices << ") EFA device counts";
+        NIXL_DEBUG << "Mismatch between hwloc (" << hwloc_efa_count << ") and libfabric ("
+                   << num_devices << ") EFA device counts";
     }
 
     return NIXL_SUCCESS;
