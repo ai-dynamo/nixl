@@ -54,7 +54,7 @@ def remote_storage_transfer(
 
     iterations_str = bytes(f"{iterations:04d}", "utf-8")
     # Send the descriptors that you want to read into or write from
-    logger.info(f"Sending {operation} request to {remote_agent_name}")
+    logger.info(f"Sending %s request to %s", operation.decode("utf-8"), remote_agent_name)
     test_descs_str = my_agent.get_serialized_descs(my_mem_descs)
 
     start_time = time.time()
@@ -66,7 +66,7 @@ def remote_storage_transfer(
 
     end_time = time.time()
 
-    logger.info(f"Time for {iterations} iterations: {end_time - start_time} seconds")
+    logger.info(f"Time for %d iterations: %f seconds", iterations, end_time - start_time)
 
 
 def connect_to_agents(my_agent, agents_file):
@@ -81,12 +81,12 @@ def connect_to_agents(my_agent, agents_file):
                 my_agent.fetch_remote_metadata(parts[0], parts[1], int(parts[2]))
 
                 while my_agent.check_remote_metadata(parts[0]) is False:
-                    logger.info(f"Waiting for remote metadata for {parts[0]}...")
+                    logger.info(f"Waiting for remote metadata for %s...", parts[0])
                     time.sleep(0.2)
 
-                logger.info(f"Remote metadata for {parts[0]} fetched")
+                logger.info(f"Remote metadata for %s fetched", parts[0])
             else:
-                logger.error(f"Invalid line in {agents_file}: {line}")
+                logger.error(f"Invalid line in %s: %s", agents_file, line)
                 exit(-1)
 
     logger.info("All remote metadata fetched")
@@ -102,7 +102,7 @@ def pipeline_reads(
         s = 0
         futures = []
 
-        while n < iterations and s < iterations:
+        while n < iterations or s < iterations:
             if s == 0:
                 futures.append(
                     executor.submit(
@@ -166,24 +166,20 @@ def pipeline_writes(
 ):
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         n = 0
-        s = 0
+        s = 1
         futures = []
 
-        while n < iterations and s < iterations:
-            if s == 0:
-                futures.append(
-                    executor.submit(
-                        execute_transfer,
-                        my_agent,
-                        my_mem_descs,
-                        sent_descs,
-                        req_agent,
-                        "READ",
-                    )
-                )
-                s += 1
-                continue
-
+        futures.append(
+            executor.submit(
+                execute_transfer,
+                my_agent,
+                my_mem_descs,
+                sent_descs,
+                req_agent,
+                "READ",
+            )
+        )
+        while n < iterations or s < iterations:
             if s == iterations:
                 futures.append(
                     executor.submit(
@@ -250,7 +246,7 @@ def handle_remote_transfer_request(my_agent, my_mem_descs, my_file_descs):
 
         iterations = int(recv_msg[4:8])
 
-        logger.info(f"Performing {operation} with {iterations} iterations")
+        logger.info(f"Performing %s with %d iterations", operation, iterations)
 
         sent_descs = my_agent.deserialize_descs(recv_msg[8:])
 
@@ -287,11 +283,9 @@ def run_client(
             ["GDS_MT"],
         )
 
-    end_time = time.time()
+    elapsed = time.time() - start_time
 
-    elapsed = end_time - start_time
-
-    logger.info(f"Time for {iterations} WRITE iterations: {elapsed} seconds")
+    logger.info(f"Time for %d WRITE iterations: %f seconds", iterations, elapsed)
 
     start_time = time.time()
 
@@ -305,11 +299,9 @@ def run_client(
             ["GDS_MT"],
         )
 
-    end_time = time.time()
+    elapsed = time.time() - start_time
 
-    elapsed = end_time - start_time
-
-    logger.info(f"Time for {iterations} READ iterations: {elapsed} seconds")
+    logger.info(f"Time for %d READ iterations: %f seconds", iterations, elapsed)
 
     logger.info("Local transfer test complete")
 
