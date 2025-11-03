@@ -271,8 +271,6 @@ void nixlUcxEngine::vramFiniCtx()
 
 class nixlUcxIntReq {
 public:
-    std::unique_ptr<std::string> amBuffer;
-
     bool
     is_complete() const {
         return completed_;
@@ -1768,12 +1766,12 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     ser_des.addStr("msg", msg);
     // TODO: replace with mpool for performance
 
-    auto buffer = std::make_unique<std::string>(ser_des.exportStr());
-    ret = ep->sendAm(
-        NOTIF_STR, NULL, 0, (void *)buffer->data(), buffer->size(), UCP_AM_SEND_FLAG_EAGER, req);
-    if (ret == NIXL_IN_PROG) {
-        nixlUcxIntReq* nReq = (nixlUcxIntReq*)req;
-        nReq->amBuffer = std::move(buffer);
+    std::string *buffer = new std::string(ser_des.exportStr());
+    ret = ep->sendAm(NOTIF_STR, NULL, 0, (void *)buffer->data(), buffer->size(),
+                     UCP_AM_SEND_FLAG_EAGER, req,
+                     [&buffer](void* ptr) { delete buffer; });
+    if (ret != NIXL_SUCCESS && ret != NIXL_IN_PROG) {
+        delete buffer;
     }
     return ret;
 }

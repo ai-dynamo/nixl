@@ -236,10 +236,22 @@ nixl_status_t nixlUcxEp::disconnect_nb()
  * Active message handling
  * =========================================== */
 
+using nixlUcxAmCbCtx = std::pair<void*, nixlUcxEp::amDeleter>;
+using nixlUcxAmCbCtxPtr = std::unique_ptr<nixlUcxAmCbCtx>;
+
+void
+nixlUcxEp::sendAmCallback(void* request, ucs_status_t status, void *user_data)
+{
+    nixlUcxAmCbCtx *ctx = (nixlUcxAmCbCtx *)user_data;
+    ctx->second(ctx->first);
+    delete ctx;
+}
+
 nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
                                 void* hdr, size_t hdr_len,
                                 void* buffer, size_t len,
-                                uint32_t flags, nixlUcxReq &req)
+                                uint32_t flags, nixlUcxReq &req,
+                                amDeleter deleter)
 {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
@@ -251,10 +263,22 @@ nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
     param.flags         = flags;
 
+    nixlUcxAmCbCtxPtr ctx;
+    if (deleter) {
+        ctx = std::make_unique<nixlUcxAmCbCtx>(buffer, deleter);
+        param.op_attr_mask |= UCP_OP_ATTR_FIELD_CALLBACK |
+                              UCP_OP_ATTR_FIELD_USER_DATA;
+        param.cb.send = sendAmCallback;
+        param.user_data = ctx.get();
+    }
+
     ucs_status_ptr_t request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
     if (UCS_PTR_IS_PTR(request)) {
+        ctx.release();
         req = (void*)request;
         return NIXL_IN_PROG;
+    } else {
+        req = nullptr;
     }
 
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));

@@ -82,11 +82,6 @@ int main()
         auto result = w[!i].connect((void*)addr.data(), addr.size());
         assert(result.ok());
         ep[!i] = std::move(*result);
-
-	//no need for mem_reg with active messages
-	//assert (0 == w[i].mem_reg(buffer[i], 128, mem[i]));
-        //assert (0 == w[i].mem_addr(mem[i], addr, size));
-        //assert (0 == w[!i].rkey_import(ep[!i], (void*) addr, size, rkey[!i]));
     }
 
     /* Register active message callbacks */
@@ -98,12 +93,12 @@ int main()
     w[0].progress();
 
     /* Test first callback */
-    ret = ep[1]->sendAm(check_cb_id, &hdr, sizeof(struct sample_header), (void*) &buffer, sizeof(buffer), 0, req);
-    assert (ret == 0);
+    ret = ep[1]->sendAm(check_cb_id, &hdr, sizeof(hdr), (void*) &buffer, sizeof(buffer), 0, req);
+    assert (ret >= 0);
 
-    while (ret == 0){
-	    ret = w[1].test(req);
-	    w[0].progress();
+    while (ret == NIXL_IN_PROG){
+        ret = w[1].test(req);
+        w[0].progress();
     }
 
     std::cout << "first active message complete\n";
@@ -112,18 +107,22 @@ int main()
     uint32_t flags = 0;
     flags |= UCP_AM_SEND_FLAG_RNDV;
 
-    ret =  ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(struct sample_header), big_buffer, 8192, flags, req);
-    assert (ret == 0);
+    bool buffer_freed = false;
+    ret = ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(hdr), big_buffer, 8192, 0, req,
+                        [&buffer_freed](void* buffer) {
+                            buffer_freed = true;
+                            free(buffer);
+                        });
+    assert (ret >= 0);
 
-    while (ret == 0){
-	    ret = w[1].test(req);
-	    w[0].progress();
+    while (ret == NIXL_IN_PROG){
+        ret = w[1].test(req);
+        w[0].progress();
     }
 
+    assert(buffer_freed);
     std::cout << "second active message complete\n";
 
     //make sure callbacks are complete
     w[0].progress();
-
-    free (big_buffer);
 }

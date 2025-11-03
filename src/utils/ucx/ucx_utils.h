@@ -100,6 +100,10 @@ private:
 
     /* Connection */
     nixl_status_t disconnect_nb();
+
+    static void
+    sendAmCallback(void* request, ucs_status_t status, void *user_data);
+
 public:
     void err_cb(ucp_ep_h ucp_ep, ucs_status_t status);
 
@@ -121,11 +125,14 @@ public:
     nixlUcxEp(const nixlUcxEp&) = delete;
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
+    using amDeleter = std::function<void(void* buffer)>;
+
     /* Active message handling */
     nixl_status_t sendAm(unsigned msg_id,
                          void* hdr, size_t hdr_len,
                          void* buffer, size_t len,
-                         uint32_t flags, nixlUcxReq &req);
+                         uint32_t flags, nixlUcxReq &req,
+                         amDeleter deleter = nullptr);
 
     /* Data access */
     [[nodiscard]] nixl_status_t
