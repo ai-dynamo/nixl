@@ -54,7 +54,9 @@ def remote_storage_transfer(
 
     iterations_str = bytes(f"{iterations:04d}", "utf-8")
     # Send the descriptors that you want to read into or write from
-    logger.info("Sending %s request to %s", operation.decode("utf-8"), remote_agent_name)
+    logger.info(
+        "Sending %s request to %s", operation.decode("utf-8"), remote_agent_name
+    )
     test_descs_str = my_agent.get_serialized_descs(my_mem_descs)
 
     start_time = time.time()
