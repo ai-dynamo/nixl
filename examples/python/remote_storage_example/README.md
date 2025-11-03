@@ -115,7 +115,7 @@ Remote writes are implemented as a read from network following by a storage writ
 
 ### Pipelining
 
-To improve performance of the remote storage server, we can pipeline operations to network and storage. This pipelining allows multiple threads to handle each request. However, in order to maintain correctness, the order of network and storage must happen in order for each individual remote storage operation. To do this, we implemented a simple pipelining scheme.
+To improve performance of the remote storage server, we can pipeline operations to network and storage. This pipelining allows multiple threads to handle each request. However, in order to maintain correctness, the order of network and storage must happen in order for each individual remote storage operation. To do this, we implemented a simple pipelining scheme. This pipeline for remote writes is implemented as a simple read into NIXL descriptors from the network, followed by a write to storage (also through NIXL, but a different plugin). A remote read is similar, just reading into NIXL descriptors from storage and then writing to network. 
 
 ![Remote Operation Pipelines](storage_pipelines.png)
 
