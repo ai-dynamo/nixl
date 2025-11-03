@@ -40,19 +40,19 @@ kubernetes:
 runs_on_dockers:
   - {
       file: "contrib/Dockerfile",
-      name: "ubuntu24.04-nixl-deps",
+      name: "ubuntu24.04-nixl-base",
       uri: "$arch/$name",
-      tag: "02112025",
+      tag: "20251103",
       build_args: "--target nixl-base --build-arg ARCH=$arch"
     }
   - {
       file: "contrib/Dockerfile",
-      name: "ubuntu22.04-nixl-deps",
+      name: "ubuntu22.04-nixl-base",
       uri: "$arch/$name",
-      tag: "02112025",
+      tag: "20251103",
       build_args: "--target nixl-base --build-arg ARCH=$arch --build-arg BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04"
     }
-  # - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", category: 'tool', privileged: true }
+  - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", category: 'tool', privileged: true }
 
 matrix:
   axes:
