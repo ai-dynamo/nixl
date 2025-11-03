@@ -58,7 +58,6 @@ RUN apt-get update -y && \
     flex \
     libgtest-dev \
     build-essential \
-    python3.12-dev \
     clang \
     hwloc \
     libhwloc-dev \
@@ -146,8 +145,11 @@ RUN wget --tries=3 --waitretry=5 \
     rm rustup-init* && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-RUN rm -rf /usr/lib/ucx
-RUN rm -rf /opt/hpcx/ucx
+# Clean up old UCX installations to avoid conflicts
+RUN rm -rf /usr/lib/ucx /opt/hpcx/ucx /usr/local/ucx && \
+    ARCH=$(uname -m) && \
+    rm -f /usr/lib/${ARCH}-linux-gnu/libucs* /usr/lib/${ARCH}-linux-gnu/libucp* \
+          /usr/lib/${ARCH}-linux-gnu/libuct* /usr/lib/${ARCH}-linux-gnu/libucm* 2>/dev/null || true
 
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
