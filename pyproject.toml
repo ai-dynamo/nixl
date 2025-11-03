@@ -14,12 +14,12 @@
 # limitations under the License.
 
 [build-system]
-requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest"]
+requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest", "build", "setuptools"]
 build-backend = "mesonpy"
 
 [project]
 name = 'nixl-cu12'
-version = '0.7.0'
+version = '0.7.1'
 description = 'NIXL Python API'
 readme = 'README.md'
 license = {file = 'LICENSE'}
@@ -34,4 +34,4 @@ dependencies = ["torch", "numpy"]
 profile = "black"
 
 [tool.meson-python.args]
-setup = ['-Dinstall_headers=false', '-Dwheel_dir=nixl_cu12']
+setup = ['-Dinstall_headers=false']

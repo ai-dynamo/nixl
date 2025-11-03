@@ -390,7 +390,8 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
       provider_name(provider),
       blocking_cq_sread_supported(true),
       control_request_pool_(NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL, id),
-      data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id) {
+      data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id),
+      provider_supports_hmem_(false) {
     // Initialize all pointers to nullptr
     info = nullptr;
     fabric = nullptr;
@@ -411,7 +412,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         throw std::runtime_error("Failed to allocate fi_info for rail " + std::to_string(rail_id));
     }
     hints->caps = 0;
-    hints->caps = FI_MSG | FI_RMA;
+    hints->caps = FI_MSG | FI_RMA | FI_HMEM; // Try with FI_HMEM first
     hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
     hints->mode = FI_CONTEXT;
     hints->ep_attr->type = FI_EP_RDM;
@@ -429,12 +430,32 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     hints->domain_attr->name = strdup(device_name.c_str());
     hints->domain_attr->threading = FI_THREAD_SAFE;
     try {
-        // Get fabric info for this specific device
-        int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
-        if (ret) {
-            NIXL_ERROR << "fi_getinfo failed for rail " << rail_id << ": " << fi_strerror(-ret);
-            throw std::runtime_error("fi_getinfo failed for rail " + std::to_string(rail_id));
+        // Get fabric info for this specific device - first try with FI_HMEM
+        int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
+
+        // If no provider found with FI_HMEM, retry without it
+        if (ret || !info) {
+            NIXL_INFO << "No provider found with FI_HMEM capability for rail " << rail_id
+                      << ", retrying without FI_HMEM";
+
+            // Retry without FI_HMEM
+            hints->caps = FI_MSG | FI_RMA;
+            hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
+
+            ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
+            if (ret) {
+                NIXL_ERROR << "fi_getinfo failed for rail " << rail_id << ": " << fi_strerror(-ret);
+                throw std::runtime_error("fi_getinfo failed for rail " + std::to_string(rail_id));
+            }
+
+            provider_supports_hmem_ = false;
+            NIXL_INFO << "Using provider without FI_HMEM support for rail " << rail_id;
+        } else {
+            // Provider found with FI_HMEM
+            provider_supports_hmem_ = true;
+            NIXL_INFO << "Using provider with FI_HMEM support for rail " << rail_id;
         }
+
         // Create fabric for this rail
         ret = fi_fabric(info->fabric_attr, &fabric, NULL);
         if (ret) {
@@ -1254,6 +1275,8 @@ nixlLibfabricRail::postRead(void *local_buffer,
 nixl_status_t
 nixlLibfabricRail::registerMemory(void *buffer,
                                   size_t length,
+                                  nixl_mem_t mem_type,
+                                  int gpu_id,
                                   struct fid_mr **mr_out,
                                   uint64_t *key_out) const {
     if (!buffer || !mr_out || !key_out) {
@@ -1294,8 +1317,38 @@ nixlLibfabricRail::registerMemory(void *buffer,
                << " buffer=" << buffer << " length=" << length << " access_flags=0x" << std::hex
                << provider_access_flags << std::dec << " requested_key=" << requested_key;
 
-    int ret =
-        fi_mr_reg(domain, buffer, length, provider_access_flags, 0, requested_key, 0, &mr, NULL);
+    // Use fi_mr_regattr for enhanced memory registration control
+    struct fi_mr_attr mr_attr = {};
+    mr_attr.access = provider_access_flags;
+    mr_attr.offset = 0;
+    mr_attr.requested_key = requested_key;
+    mr_attr.context = nullptr;
+    mr_attr.auth_key_size = 0;
+    mr_attr.auth_key = nullptr;
+
+    // Set HMEM interface based on memory type and provider capability
+    if (mem_type == VRAM_SEG) {
+        if (provider_supports_hmem_) {
+            mr_attr.iface = FI_HMEM_CUDA;
+            mr_attr.device.cuda = gpu_id;
+            NIXL_DEBUG << "CUDA memory registration - iface: FI_HMEM_CUDA, device.cuda: " << gpu_id;
+        } else {
+            NIXL_WARN << "VRAM memory requested but provider does not support FI_HMEM - falling "
+                         "back to system memory registration";
+            mr_attr.iface = FI_HMEM_SYSTEM;
+        }
+    } else {
+        mr_attr.iface = FI_HMEM_SYSTEM;
+        NIXL_DEBUG << "System memory registration - iface: FI_HMEM_SYSTEM";
+    }
+
+    struct iovec iov;
+    iov.iov_base = buffer;
+    iov.iov_len = length;
+    mr_attr.mr_iov = &iov;
+    mr_attr.iov_count = 1;
+
+    int ret = fi_mr_regattr(domain, &mr_attr, 0, &mr);
     if (ret) {
         NIXL_ERROR << "fi_mr_reg failed on rail " << rail_id << ": " << fi_strerror(-ret)
                    << " (buffer=" << buffer << ", length=" << length
