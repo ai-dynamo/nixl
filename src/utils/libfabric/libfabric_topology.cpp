@@ -119,7 +119,7 @@ nixlLibfabricTopology::discoverEfaDevices() {
 
     // Set device type based on discovered provider
     if (provider_name == "efa") {
-        NIXL_INFO << "Discovered " << num_devices << " EFA-Direct devices";
+        NIXL_INFO << "Discovered " << num_devices << " EFA devices";
     } else if (provider_name == "sockets") {
         NIXL_INFO << "Discovered " << num_devices << " socket devices (TCP fallback)";
     } else if (provider_name == "none" || all_devices.empty()) {
@@ -129,7 +129,7 @@ nixlLibfabricTopology::discoverEfaDevices() {
 
     for (size_t i = 0; i < all_devices.size(); ++i) {
         NIXL_TRACE << "Network device " << i << ": " << all_devices[i]
-                   << " (provider: " << provider_name << ")";
+                   << " (provider=" << provider_name << ")";
     }
     return NIXL_SUCCESS;
 }
@@ -306,9 +306,9 @@ nixlLibfabricTopology::discoverGpusWithHwloc() {
             uint16_t device_id = pci_obj->attr->pcidev.device_id;
             uint16_t class_id = pci_obj->attr->pcidev.class_id;
 
-            NIXL_TRACE << "Found NVIDIA GPU " << num_gpus << ": " << pcie_addr << " (vendor=0x"
-                       << std::hex << vendor_id << ", device=0x" << device_id << ", class=0x"
-                       << class_id << std::dec << ")";
+            NIXL_TRACE << "Found NVIDIA GPU " << num_gpus << ": " << pcie_addr
+                       << " (vendor=" << std::hex << vendor_id << ", device=" << device_id
+                       << ", class=" << class_id << std::dec << ")";
 
             num_gpus++;
         }
@@ -330,8 +330,8 @@ nixlLibfabricTopology::discoverGpusWithHwloc() {
                 uint16_t device_id = pci_obj->attr->pcidev.device_id;
                 uint16_t class_id = pci_obj->attr->pcidev.class_id;
 
-                NIXL_WARN << "NVIDIA device " << gpu_count << ": " << pcie_addr << " (device=0x"
-                          << std::hex << device_id << ", class=0x" << class_id << std::dec << ")";
+                NIXL_WARN << "NVIDIA device " << gpu_count << ": " << pcie_addr << " (device"
+                          << std::hex << device_id << ", class=" << class_id << std::dec << ")";
                 gpu_count++;
             }
         }
@@ -356,8 +356,8 @@ nixlLibfabricTopology::discoverEfaDevicesWithHwloc() {
                << num_devices;
 
     if (hwloc_efa_count != num_devices) {
-        NIXL_WARN << "Mismatch between hwloc (" << hwloc_efa_count << ") and libfabric ("
-                  << num_devices << ") EFA device counts";
+        NIXL_DEBUG << "Mismatch between hwloc (" << hwloc_efa_count << ") and libfabric ("
+                   << num_devices << ") EFA device counts";
     }
 
     return NIXL_SUCCESS;
@@ -409,7 +409,7 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
                 libfabric_to_pcie_map[libfabric_name] = pcie_address;
 
                 NIXL_TRACE << "Mapped PCIe " << pcie_address << " → Libfabric " << libfabric_name
-                           << " (provider: " << provider_name << ")";
+                           << " (provider=" << provider_name << ")";
             }
         }
     }

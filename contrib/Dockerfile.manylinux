@@ -21,7 +21,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG ARCH="x86_64"
 ARG UCX_REF="v1.19.0"
-ARG LIBFABRIC_VERSION="v2.3.0"
+ARG LIBFABRIC_VERSION="v1.21.0"
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
