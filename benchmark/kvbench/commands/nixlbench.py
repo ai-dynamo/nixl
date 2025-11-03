@@ -63,6 +63,7 @@ class NIXLBench:
         benchmark_group="default",
         gds_mt_num_threads=1,
         gpunetio_device_list="0",
+        gpunetio_oob_list="",
         hf3fs_iopool_size=64,
         obj_access_key="",
         obj_secret_key="",
@@ -115,6 +116,7 @@ class NIXLBench:
             worker_type (str, optional): Type of worker. Defaults to "nixl".
             gds_mt_num_threads (int, optional): Number of threads for GDS_MT plugin. Defaults to 1.
             gpunetio_device_list (str, optional): GPU device list for GPUNETIO plugin. Defaults to "0".
+            gpunetio_oob_list (str, optional): OOB network interface name for control path for GPUNETIO plugin. Defaults to "".
             hf3fs_iopool_size (int, optional): IO pool size for HF3FS plugin. Defaults to 64.
             obj_access_key (str, optional): Access key for OBJ/S3 plugin. Defaults to "".
             obj_secret_key (str, optional): Secret key for OBJ/S3 plugin. Defaults to "".
@@ -162,6 +164,7 @@ class NIXLBench:
         self.worker_type = worker_type
         self.gds_mt_num_threads = gds_mt_num_threads
         self.gpunetio_device_list = gpunetio_device_list
+        self.gpunetio_oob_list = gpunetio_oob_list
         self.hf3fs_iopool_size = hf3fs_iopool_size
         self.obj_access_key = obj_access_key
         self.obj_secret_key = obj_secret_key
@@ -320,6 +323,7 @@ class NIXLBench:
             "worker_type": self.worker_type,
             "gds_mt_num_threads": self.gds_mt_num_threads,
             "gpunetio_device_list": self.gpunetio_device_list,
+            "gpunetio_oob_list": self.gpunetio_oob_list,
             "hf3fs_iopool_size": self.hf3fs_iopool_size,
             "obj_access_key": self.obj_access_key,
             "obj_secret_key": self.obj_secret_key,
@@ -379,6 +383,7 @@ class NIXLBench:
             "benchmark_group": "default",
             "gds_mt_num_threads": 1,
             "gpunetio_device_list": "0",
+            "gpunetio_oob_list": "",
             "hf3fs_iopool_size": 64,
             "obj_access_key": "",
             "obj_secret_key": "",

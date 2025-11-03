@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
 set -e
 set -x
 set -o pipefail
@@ -25,10 +28,8 @@ UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 # UCX_VERSION is the version of UCX to build override default with env variable.
 UCX_VERSION=${UCX_VERSION:-v1.19.0}
-# EFA_INSTALLER_VERSION is the version of EFA installer to use, defaults to "latest"
-EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION:-latest}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
-LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
+LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 
@@ -56,7 +57,9 @@ ARCH=$(uname -m)
 $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
-$SUDO apt-get -qq install -y curl \
+$SUDO apt-get -qq install -y python3-dev \
+                             python3-pip \
+                             curl \
                              wget \
                              libnuma-dev \
                              numactl \
@@ -69,7 +72,6 @@ $SUDO apt-get -qq install -y curl \
                              flex \
                              build-essential \
                              cmake \
-                             libibverbs-dev \
                              libgoogle-glog-dev \
                              libgtest-dev \
                              libgmock-dev \
@@ -94,7 +96,6 @@ $SUDO apt-get -qq install -y curl \
                              pciutils \
                              libpci-dev \
                              uuid-dev \
-                             ibverbs-utils \
                              libibmad-dev \
                              doxygen \
                              clang \
@@ -102,10 +103,42 @@ $SUDO apt-get -qq install -y curl \
                              libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
+# Ubuntu 22.04 specific setup
+if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
+    # Upgrade pip for '--break-system-packages' support
+    $SUDO pip3 install --upgrade pip
+
+    # Upgrade meson (distro version 0.61.2 is too old, project requires >= 0.64.0)
+    $SUDO pip3 install --upgrade meson
+    # Ensure pip3's meson takes precedence over apt's version
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+fi
+
+# Add DOCA repository and install packages
+ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
+MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
+wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb
+$SUDO dpkg -i doca-host.deb
+$SUDO apt-get update
+$SUDO apt-get upgrade -y
+$SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+
+# Force reinstall of RDMA packages from DOCA repository
+# Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
+# Upgrade is not sufficient if the version is the same since apt skips the installation.
+$SUDO apt-get -qq -y install \
+    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
+
 wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
 chmod +x rustup-init
 ./rustup-init -y --default-toolchain 1.86.0
 export PATH="$HOME/.cargo/bin:$PATH"
+
+wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O install_uv.sh
+chmod +x install_uv.sh
+./install_uv.sh
+export PATH="$HOME/.local/bin:$PATH"
 
 curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
@@ -121,19 +154,11 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
+          ${UCX_CUDA_BUILD_ARGS} \
           --enable-mt && \
         make -j && \
         make -j install-strip && \
         $SUDO ldconfig \
-)
-
-wget --tries=3 --waitretry=5 -O "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-tar xzf "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-rm "aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz"
-( \
-  cd aws-efa-installer && \
-  $SUDO ./efa_installer.sh -y --minimal --skip-kmod --skip-limit-conf --no-verify && \
-  $SUDO ldconfig \
 )
 
 wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
@@ -160,7 +185,7 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   cd etcd-cpp-apiv3 && \
   mkdir build && cd build && \
   cmake .. && \
-  make -j"${NPROC:-$(nproc)}" && \
+  make -j"$NPROC" && \
   $SUDO make install && \
   $SUDO ldconfig \
 )
@@ -171,12 +196,26 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   mkdir aws_sdk_build && \
   cd aws_sdk_build && \
   cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-  make -j"${NPROC:-$(nproc)}" && \
+  make -j"$NPROC" && \
   $SUDO make install
 )
 
-export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/cuda/lib64"
-export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${INSTALL_DIR}/lib:${LIBFABRIC_INSTALL_DIR}/lib"
+( \
+  cd /tmp && \
+  git clone https://github.com/nvidia/gusli.git && \
+  cd gusli && \
+  $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+  $SUDO ldconfig
+)
+
+( \
+  cd /tmp &&
+  git clone --depth 1 https://github.com/google/gtest-parallel.git &&
+  mkdir -p ${INSTALL_DIR}/bin &&
+  cp gtest-parallel/* ${INSTALL_DIR}/bin/
+)
+
+export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
 export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
 export PATH="${INSTALL_DIR}/bin:$PATH"
 export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -189,11 +228,12 @@ export UCX_TLS=^cuda_ipc
 
 # shellcheck disable=SC2086
 meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
-ninja -C nixl_build && ninja -C nixl_build install
+ninja -j"$NPROC" -C nixl_build && ninja -j"$NPROC" -C nixl_build install
+mkdir -p dist && cp nixl_build/src/bindings/python/nixl-meta/nixl-*.whl dist/
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
 # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
 
 cd benchmark/nixlbench
 meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
-ninja -C nixlbench_build && ninja -C nixlbench_build install
+ninja -j"$NPROC" -C nixlbench_build && ninja -j"$NPROC" -C nixlbench_build install

@@ -159,6 +159,7 @@ static int cudaQueryAddr(void *address, bool &is_dev,
     return (CUDA_SUCCESS != result);
 }
 
+// This routine finds the CUDA context matching for the given input address.
 int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated)
 {
     bool is_dev;
@@ -169,12 +170,9 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
     was_updated = false;
 
     /* TODO: proper error codes and log outputs through this method */
-    if (expected_dev == -1)
+    if (expected_dev == -1) {
         return -1;
-
-    // incorrect dev id from first registration
-    if (myDevId != -1 && expected_dev != myDevId)
-        return -1;
+    }
 
     ret = cudaQueryAddr(address, is_dev, dev, ctx);
     if (ret) {
@@ -188,14 +186,6 @@ int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_
     if (dev != expected_dev) {
         // User provided address that does not match dev_id
         return -1;
-    }
-
-    if (pthrCudaCtx) {
-        // Context was already set previously, and does not match new context
-        if (pthrCudaCtx != ctx) {
-            return -1;
-        }
-        return 0;
     }
 
     pthrCudaCtx = ctx;
@@ -1052,7 +1042,6 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
 int
 nixlUcxThreadPoolEngine::vramApplyCtx() {
-    // TODO: Check if UCX can handle context change at runtime
     if (sharedThread_) {
         sharedThread_->join();
         sharedThread_->start();
@@ -1399,6 +1388,35 @@ nixlUcxEngine::getWorkerId() const {
     return it->second;
 }
 
+std::optional<size_t>
+nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const noexcept {
+    if (!opt_args || opt_args->customParam.empty()) {
+        return std::nullopt;
+    }
+
+    constexpr std::string_view worker_id_key = "worker_id=";
+    size_t pos = opt_args->customParam.find(worker_id_key);
+    if (pos == std::string::npos) {
+        return std::nullopt;
+    }
+
+    try {
+        size_t worker_id = std::stoull(opt_args->customParam.substr(pos + worker_id_key.length()));
+
+        if (worker_id >= getSharedWorkersSize()) {
+            NIXL_WARN << "Invalid worker_id " << worker_id << " (must be < "
+                      << getSharedWorkersSize() << ")";
+            return std::nullopt;
+        }
+
+        return worker_id;
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "Failed to parse worker_id from customParam: " << e.what();
+        return std::nullopt;
+    }
+}
+
 nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
@@ -1412,7 +1430,8 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
     /* TODO: try to get from a pool first */
-    size_t worker_id = getWorkerId();
+    const auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
+    size_t worker_id = opt_worker_id.value_or(getWorkerId());
     auto *ucx_handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
 
     handle = ucx_handle;
@@ -1654,8 +1673,10 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
 
     std::vector<nixlUcxMem> local_mems;
     std::vector<const nixl::ucx::rkey *> remote_rkeys;
+    std::vector<uint64_t> remote_addrs;
     local_mems.reserve(local_descs.descCount());
     remote_rkeys.reserve(remote_descs.descCount());
+    remote_addrs.reserve(remote_descs.descCount());
 
     for (size_t i = 0; i < static_cast<size_t>(local_descs.descCount()); i++) {
         auto localMd = static_cast<nixlUcxPrivateMetadata *>(local_descs[i].metadataP);
@@ -1663,10 +1684,13 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
 
         local_mems.push_back(localMd->mem);
         remote_rkeys.push_back(&remoteMdDesc->getRkey(workerId));
+        remote_addrs.push_back(static_cast<uint64_t>(remote_descs[i].addr));
     }
 
     try {
-        gpu_req_hndl = nixl::ucx::createGpuXferReq(*ep, local_mems, remote_rkeys);
+        gpu_req_hndl = nixl::ucx::createGpuXferReq(*ep, local_mems, remote_rkeys, remote_addrs);
+        NIXL_TRACE << "Created device memory list: ep=" << ep->getEp() << " handle=" << gpu_req_hndl
+                   << " worker_id=" << workerId << " num_elements=" << local_mems.size();
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -1698,10 +1722,19 @@ nixlUcxEngine::getGpuSignalSize(size_t &signal_size) const {
 }
 
 nixl_status_t
-nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta, void *signal) const {
+nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta,
+                             void *signal,
+                             const nixl_opt_b_args_t *opt_args) const {
     try {
         auto *ucx_meta = static_cast<const nixlUcxPrivateMetadata *>(&meta);
-        getWorker(getWorkerId())->prepGpuSignal(ucx_meta->mem, signal);
+
+        const auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
+        if (opt_worker_id) {
+            getWorker(*opt_worker_id)->prepGpuSignal(ucx_meta->mem, signal);
+        } else {
+            getWorker(getWorkerId())->prepGpuSignal(ucx_meta->mem, signal);
+        }
+
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {

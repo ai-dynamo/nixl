@@ -61,24 +61,26 @@
         try {{
             // Trigger the actual build and test jobs in parallel
             parallel build: {{
-                def build = build job: 'nixl-ci-build', parameters: [
+                def buildJob = 'nixl-ci-build'
+                def build = build job: buildJob, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ], propagate: false
-                currentBuild.description += "<br>Job: <a href='${{build.absoluteUrl}}'>nixl-ci-build</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
+                currentBuild.description += "<br>Job: <a href='${{JENKINS_URL}}blue/organizations/jenkins/NIXL%2F${{buildJob}}/detail/${{buildJob}}/${{build.number}}/pipeline/'>${{buildJob}}</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
                 if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
                   currentBuild.result = build.result
-                  error("Build CI failed")
+                  error("Job ${{buildJob}} failed")
                 }}
             }}, test: {{
-                def build = build job: 'nixl-ci-test', parameters: [
+                def buildJob = 'nixl-ci-test'
+                def build = build job: buildJob, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ], propagate: false
-                currentBuild.description += "<br>Job: <a href='${{build.absoluteUrl}}'>nixl-ci-test</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
+                currentBuild.description += "<br>Job: <a href='${{JENKINS_URL}}blue/organizations/jenkins/NIXL%2F${{buildJob}}/detail/${{buildJob}}/${{build.number}}/pipeline/'>${{buildJob}}</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
                 if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
                   currentBuild.result = build.result
-                  error("Test CI failed")
+                  error("Job ${{buildJob}} failed")
                 }}
             }},
             failFast: false  // Continue even if some parallel jobs fail
@@ -267,7 +269,7 @@
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
-          description: "NIXL version to use (tag like 0.6.0, branch name, or commit hash)"
+          description: "NIXL version to use (tag like 0.7.1, branch name, or commit hash)"
       - string:
           name: "UCX_VERSION"
           default: "v1.19.0"
@@ -278,7 +280,7 @@
           description: "Base Docker image for the container build"
       - string:
           name: "BASE_IMAGE_TAG"
-          default: "25.03-cuda12.8-devel-ubuntu24.04"
+          default: "25.06-cuda12.9-devel-ubuntu24.04"
           description: "Tag for the base Docker image"
       - string:
           name: "TAG_SUFFIX"
@@ -292,7 +294,7 @@
           description: >
             Update the latest tag for this architecture.<br/>
             When enabled, also creates: <code>&lt;base-image-tag&gt;-&lt;arch&gt;-latest</code><br/>
-            Example: <code>25.03-cuda12.8-devel-ubuntu24.04-aarch64-latest</code><br/>
+            Example: <code>25.06-cuda12.9-devel-ubuntu24.04-aarch64-latest</code><br/>
       - string:
           name: "MAIL_TO"
           default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"

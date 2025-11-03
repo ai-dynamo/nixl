@@ -119,7 +119,7 @@ nixlLibfabricTopology::discoverEfaDevices() {
 
     // Set device type based on discovered provider
     if (provider_name == "efa") {
-        NIXL_INFO << "Discovered " << num_devices << " EFA-Direct devices";
+        NIXL_INFO << "Discovered " << num_devices << " EFA devices";
     } else if (provider_name == "sockets") {
         NIXL_INFO << "Discovered " << num_devices << " socket devices (TCP fallback)";
     } else if (provider_name == "none" || all_devices.empty()) {
@@ -129,7 +129,7 @@ nixlLibfabricTopology::discoverEfaDevices() {
 
     for (size_t i = 0; i < all_devices.size(); ++i) {
         NIXL_TRACE << "Network device " << i << ": " << all_devices[i]
-                   << " (provider: " << provider_name << ")";
+                   << " (provider=" << provider_name << ")";
     }
     return NIXL_SUCCESS;
 }
@@ -198,11 +198,23 @@ nixlLibfabricTopology::initHwlocTopology() {
     if (hwloc_topology) {
         cleanupHwlocTopology();
     }
+
+    // Initialize hwloc_topology to nullptr first for safety
+    hwloc_topology = nullptr;
+
     int ret = hwloc_topology_init(&hwloc_topology);
     if (ret != 0) {
         NIXL_ERROR << "Failed to initialize hwloc topology: " << ret;
+        hwloc_topology = nullptr;
         return NIXL_ERR_BACKEND;
     }
+
+    // Verify topology was properly initialized
+    if (!hwloc_topology) {
+        NIXL_ERROR << "hwloc_topology_init succeeded but topology is null";
+        return NIXL_ERR_BACKEND;
+    }
+
     // Enable I/O device discovery - this is the key to seeing EFA devices!
 #if (HWLOC_API_VERSION >= 0x00020000)
     enum hwloc_type_filter_e filter = HWLOC_TYPE_FILTER_KEEP_ALL;
@@ -218,13 +230,30 @@ nixlLibfabricTopology::initHwlocTopology() {
         NIXL_WARN << "Failed to set WHOLE_IO flag: " << ret << ", continuing anyway";
     }
 #endif
+
+    // Add additional safety check before loading
+    if (!hwloc_topology) {
+        NIXL_ERROR << "hwloc topology became null before loading";
+        return NIXL_ERR_BACKEND;
+    }
+
     ret = hwloc_topology_load(hwloc_topology);
     if (ret != 0) {
         NIXL_ERROR << "Failed to load hwloc topology: " << ret;
-        hwloc_topology_destroy(hwloc_topology);
-        hwloc_topology = nullptr;
+        // Clean up the partially initialized topology to prevent double-free
+        if (hwloc_topology) {
+            hwloc_topology_destroy(hwloc_topology);
+            hwloc_topology = nullptr;
+        }
         return NIXL_ERR_BACKEND;
     }
+
+    // Final verification that topology loaded successfully
+    if (!hwloc_topology) {
+        NIXL_ERROR << "hwloc topology became null after loading";
+        return NIXL_ERR_BACKEND;
+    }
+
     NIXL_TRACE << "hwloc topology initialized successfully with IO device support";
     return NIXL_SUCCESS;
 }
@@ -277,9 +306,9 @@ nixlLibfabricTopology::discoverGpusWithHwloc() {
             uint16_t device_id = pci_obj->attr->pcidev.device_id;
             uint16_t class_id = pci_obj->attr->pcidev.class_id;
 
-            NIXL_TRACE << "Found NVIDIA GPU " << num_gpus << ": " << pcie_addr << " (vendor=0x"
-                       << std::hex << vendor_id << ", device=0x" << device_id << ", class=0x"
-                       << class_id << std::dec << ")";
+            NIXL_TRACE << "Found NVIDIA GPU " << num_gpus << ": " << pcie_addr
+                       << " (vendor=" << std::hex << vendor_id << ", device=" << device_id
+                       << ", class=" << class_id << std::dec << ")";
 
             num_gpus++;
         }
@@ -301,8 +330,8 @@ nixlLibfabricTopology::discoverGpusWithHwloc() {
                 uint16_t device_id = pci_obj->attr->pcidev.device_id;
                 uint16_t class_id = pci_obj->attr->pcidev.class_id;
 
-                NIXL_WARN << "NVIDIA device " << gpu_count << ": " << pcie_addr << " (device=0x"
-                          << std::hex << device_id << ", class=0x" << class_id << std::dec << ")";
+                NIXL_WARN << "NVIDIA device " << gpu_count << ": " << pcie_addr << " (device"
+                          << std::hex << device_id << ", class=" << class_id << std::dec << ")";
                 gpu_count++;
             }
         }
@@ -327,8 +356,8 @@ nixlLibfabricTopology::discoverEfaDevicesWithHwloc() {
                << num_devices;
 
     if (hwloc_efa_count != num_devices) {
-        NIXL_WARN << "Mismatch between hwloc (" << hwloc_efa_count << ") and libfabric ("
-                  << num_devices << ") EFA device counts";
+        NIXL_DEBUG << "Mismatch between hwloc (" << hwloc_efa_count << ") and libfabric ("
+                   << num_devices << ") EFA device counts";
     }
 
     return NIXL_SUCCESS;
@@ -352,7 +381,7 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
     // This ensures consistency between device discovery and PCIe mapping
     hints->fabric_attr->prov_name = strdup(provider_name.c_str());
 
-    int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
+    int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
     if (ret) {
         NIXL_ERROR << "fi_getinfo failed for PCIe mapping with provider " << provider_name << ": "
                    << fi_strerror(-ret);
@@ -380,7 +409,7 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
                 libfabric_to_pcie_map[libfabric_name] = pcie_address;
 
                 NIXL_TRACE << "Mapped PCIe " << pcie_address << " → Libfabric " << libfabric_name
-                           << " (provider: " << provider_name << ")";
+                           << " (provider=" << provider_name << ")";
             }
         }
     }
@@ -561,11 +590,12 @@ nixlLibfabricTopology::isEfaDevice(hwloc_obj_t obj) const {
     if (!obj || obj->type != HWLOC_OBJ_PCI_DEVICE) {
         return false;
     }
+    NIXL_TRACE << "Checking isEfaDevice on device " << std::hex << std::showbase
+               << obj->attr->pcidev.vendor_id << " " << obj->attr->pcidev.device_id;
 
-    // Amazon EFA vendor ID is 0x1d0f, device ID can be 0xefa0, 0xefa1, or 0xefa2
+    // Amazon EFA vendor ID is 0x1d0f, device ID matches 0xefa* (wildcard for any EFA device)
     return obj->attr->pcidev.vendor_id == 0x1d0f &&
-        (obj->attr->pcidev.device_id == 0xefa0 || obj->attr->pcidev.device_id == 0xefa1 ||
-         obj->attr->pcidev.device_id == 0xefa2);
+        (obj->attr->pcidev.device_id & 0xfff0) == 0xefa0;
 }
 
 nixl_status_t

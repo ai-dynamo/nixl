@@ -102,13 +102,22 @@ $ ninja install
 
 ### Build Options
 
-NIXL supports several build options that can be specified during the meson setup phase:
+#### Release build
 
 ```bash
-# Basic build setup with default options
-$ meson setup <name_of_build_dir>
+$ meson setup <name_of_build_dir> --buildtype=release
+```
 
-# Setup with custom options (example)
+#### Debug build (default)
+
+```bash
+$ meson setup <name_of_build_dir>
+```
+
+#### NIXL-specific build options
+
+```bash
+# Example with custom options
 $ meson setup <name_of_build_dir> \
     -Dbuild_docs=true \           # Build Doxygen documentation
     -Ducx_path=/path/to/ucx \     # Custom UCX installation path
@@ -153,6 +162,7 @@ Or build from source:
 ```bash
 # From the root nixl directory
 pip install .
+pip install <name_of_build_dir>/src/bindings/python/nixl-meta/nixl-*.whl
 ```
 
 For Python examples, see [examples/python/](examples/python/).

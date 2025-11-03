@@ -38,7 +38,7 @@ class nixlLibfabricConnection;
  *
  */
 struct nixlLibfabricReq {
-    fi_context2 ctx; ///< Libfabric context for operation tracking
+    fi_context ctx; ///< Libfabric context for operation tracking
     size_t rail_id; ///< Rail ID that owns this request
     size_t pool_index; ///< Index in the pool for deque compatibility
     uint32_t xfer_id; ///< Pre-assigned globally unique transfer ID
@@ -73,7 +73,7 @@ struct nixlLibfabricReq {
           remote_addr(0),
           local_mr(nullptr),
           remote_key(0) {
-        memset(&ctx, 0, sizeof(fi_context2));
+        memset(&ctx, 0, sizeof(fi_context));
     }
 };
 
@@ -88,7 +88,7 @@ public:
 
     /** Release request back to the pool */
     virtual void
-    release(nixlLibfabricReq *req);
+    release(nixlLibfabricReq *req) const;
 
     /** Find request by libfabric context pointer */
     nixlLibfabricReq *
@@ -125,8 +125,8 @@ protected:
     void
     initializeBasePool(size_t pool_size);
 
-    std::deque<nixlLibfabricReq> requests_; ///< Expandable request pool
-    std::stack<size_t> free_indices_; ///< Stack of available request indices
+    mutable std::deque<nixlLibfabricReq> requests_; ///< Expandable request pool
+    mutable std::stack<size_t> free_indices_; ///< Stack of available request indices
     size_t rail_id_; ///< Rail ID for this pool
     size_t initial_pool_size_; ///< Original pool size for expansion calculations
     mutable std::mutex pool_mutex_; ///< Thread safety protection
@@ -276,7 +276,12 @@ public:
     // Memory registration methods
     /** Register memory buffer with libfabric */
     nixl_status_t
-    registerMemory(void *buffer, size_t length, struct fid_mr **mr_out, uint64_t *key_out) const;
+    registerMemory(void *buffer,
+                   size_t length,
+                   nixl_mem_t mem_type,
+                   int gpu_id,
+                   struct fid_mr **mr_out,
+                   uint64_t *key_out) const;
 
     /** Deregister memory from libfabric */
     nixl_status_t
@@ -332,7 +337,7 @@ public:
 
     /** Process completion queue with batching support */
     nixl_status_t
-    progressCompletionQueue(bool use_blocking = false);
+    progressCompletionQueue(bool use_blocking = false) const;
 
     // Callback registration methods
     /** Set callback for notification message processing */
@@ -356,15 +361,15 @@ public:
     // Optimized resource management methods
     /** Allocate control request with size validation */
     [[nodiscard]] nixlLibfabricReq *
-    allocateControlRequest(size_t needed_size);
+    allocateControlRequest(size_t needed_size) const;
 
     /** Allocate data request for specified operation */
     [[nodiscard]] nixlLibfabricReq *
-    allocateDataRequest(nixlLibfabricReq::OpType op_type);
+    allocateDataRequest(nixlLibfabricReq::OpType op_type) const;
 
     /** Release request back to appropriate pool */
     void
-    releaseRequest(nixlLibfabricReq *req);
+    releaseRequest(nixlLibfabricReq *req) const;
 
     /** Find request from libfabric context pointer */
     nixlLibfabricReq *
@@ -393,15 +398,18 @@ private:
     ControlRequestPool control_request_pool_;
     DataRequestPool data_request_pool_;
 
+    // Provider capability flags
+    bool provider_supports_hmem_;
+
 
     nixl_status_t
-    processCompletionQueueEntry(struct fi_cq_data_entry *comp);
+    processCompletionQueueEntry(struct fi_cq_data_entry *comp) const;
     nixl_status_t
-    processLocalSendCompletion(struct fi_cq_data_entry *comp);
+    processLocalSendCompletion(struct fi_cq_data_entry *comp) const;
     nixl_status_t
-    processLocalTransferCompletion(struct fi_cq_data_entry *comp, const char *operation_type);
+    processLocalTransferCompletion(struct fi_cq_data_entry *comp, const char *operation_type) const;
     nixl_status_t
-    processRecvCompletion(struct fi_cq_data_entry *comp);
+    processRecvCompletion(struct fi_cq_data_entry *comp) const;
     nixl_status_t
     processRemoteWriteCompletion(struct fi_cq_data_entry *comp) const;
 };

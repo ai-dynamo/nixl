@@ -82,7 +82,7 @@ test_exe = executable('gtest',
     sources : gtest_sources,
     include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, cuda_dep, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, file_utils_interface],
+    dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, file_utils_interface],
     link_with: [nixl_build_lib],
     install : true
 )
@@ -98,7 +98,7 @@ if get_option('b_sanitize').split(',').contains('thread')
         sources : ['main.cpp', 'mocks/gmock_engine.cpp', 'multi_threading.cpp'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         cpp_args : cpp_flags,
-        dependencies : [nixl_dep, nixl_infra, cuda_dep, gtest_dep, gmock_dep],
+        dependencies : [nixl_dep, nixl_infra, cuda_dependencies, gtest_dep, gmock_dep],
         link_with: [nixl_build_lib],
     )
 

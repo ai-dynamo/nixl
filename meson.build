@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.6.0',
+project('nixl', 'CPP', version: '0.7.1',
     default_options: ['buildtype=debug',
                 'werror=true',
                 'cpp_std=c++17',
@@ -100,12 +100,48 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
+    message('nvcc version: ' + nvcc.version())
+    if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
+        doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
+    else
+        warning('GPUNETIO plugin not supported in CUDA version: ' + nvcc.version())
+        doca_gpunetio_dep = disabler()
+    endif
+
+    # Set the Python CUDA-specific wheel directory
+    cuda_version_major = nvcc.version().split('.')[0]
+    if cuda_version_major == '12'
+        cuda_wheel_dir = 'nixl_cu12'
+    elif cuda_version_major == '13'
+        cuda_wheel_dir = 'nixl_cu13'
+    else
+        error('Unsupported CUDA version: ' + cuda_version_major)
+    endif
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
+    doca_gpunetio_dep = disabler()
+    warning('CUDA not found, cannot autodetect wheel dir; defaulting to nixl_cu12')
+    cuda_wheel_dir = 'nixl_cu12'
 endif
 
-# DOCA
-doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
+# DOCA GPUNETIO
+if cuda_dep.found()
+  nvcc_cmd = find_program('nvcc', required: false)
+  if nvcc_cmd.found()
+    if nvcc_cmd.version().version_compare('>=12.8') and nvcc_cmd.version().version_compare('<13.0')
+      doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
+    else
+      warning('CUDA version = ' + nvcc_cmd.version() + ', GPUNETIO plugin will be disabled')
+      doca_gpunetio_dep = disabler()
+    endif
+  else
+    warning('nvcc not found, GPUNETIO plugin will be disabled')
+    doca_gpunetio_dep = disabler()
+  endif
+else
+  warning('CUDA not found, GPUNETIO plugin will be disabled')
+  doca_gpunetio_dep = disabler()
+endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
 etcd_dep = dependency('etcd-cpp-api', required : false)
@@ -235,10 +271,11 @@ plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')
-
-if get_option('buildtype') != 'release'
+if get_option('build_tests') and get_option('buildtype') != 'release'
   subdir('test')
-  subdir('examples')
+endif
+if get_option('build_examples')
+    subdir('examples')
 endif
 
 if get_option('install_headers')

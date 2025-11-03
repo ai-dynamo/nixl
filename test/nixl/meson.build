@@ -15,26 +15,26 @@
 
 desc_example = executable('desc_example',
            'desc_example.cpp',
-           dependencies: [nixl_dep, nixl_infra],
+           dependencies: [nixl_dep, nixl_infra, nixl_test_utils_dep],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            link_with: [serdes_lib],
            install: true)
 
 agent_example = executable('agent_example',
            'agent_example.cpp',
-           dependencies: [nixl_dep, nixl_infra],
+           dependencies: [nixl_dep, nixl_infra, nixl_test_utils_dep],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            link_with: [serdes_lib],
            install: true)
 
 nixl_test_app  = executable('nixl_test', 'nixl_test.cpp',
-                           dependencies: [nixl_dep, nixl_infra, stream_interface, thread_dep],
+                           dependencies: [nixl_dep, nixl_infra, stream_interface, thread_dep, nixl_test_utils_dep],
                            include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/utils/serdes'],
                            link_with: [serdes_lib], install: true)
 
 plugin_test = executable('test_plugin',
                         'test_plugin.cpp',
-                        dependencies: [nixl_dep, nixl_common_dep, cuda_dep],
+                        dependencies: [nixl_dep, nixl_common_dep, cuda_dep, nixl_test_utils_dep],
                         include_directories: [nixl_inc_dirs, utils_inc_dirs],
                         install: true)
 
