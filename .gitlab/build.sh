@@ -53,10 +53,10 @@ fi
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
-# Skip dependency installation if running in pre-built base image
+# Skip dependency installation if running in pre-built nixl-base image
 if [ -n "${NIXL_BASE_IMAGE_ENV}" ]; then
-    UCX_INSTALL_DIR=/usr
-    LIBFABRIC_INSTALL_DIR=/usr/local
+    # Use pre-installed libfabric from base image
+    LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-/usr/local}
 else
 
 # Some docker images are with broken installations:
@@ -135,27 +135,6 @@ chmod +x install_uv.sh
 ./install_uv.sh
 export PATH="$HOME/.local/bin:$PATH"
 
-curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
-( \
-  cd openucx-ucx* && \
-  ./autogen.sh && \
-  ./configure \
-          --prefix="${UCX_INSTALL_DIR}" \
-          --enable-shared \
-          --disable-static \
-          --disable-doxygen-doc \
-          --enable-optimizations \
-          --enable-cma \
-          --enable-devel-headers \
-          --with-verbs \
-          --with-dm \
-          ${UCX_CUDA_BUILD_ARGS} \
-          --enable-mt && \
-        make -j && \
-        make -j install-strip && \
-        $SUDO ldconfig \
-)
-
 wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
@@ -211,6 +190,28 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 )
 
 fi # end NIXL_BASE_IMAGE_ENV check
+
+# Build UCX
+curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
+( \
+  cd openucx-ucx* && \
+  ./autogen.sh && \
+  ./configure \
+          --prefix="${UCX_INSTALL_DIR}" \
+          --enable-shared \
+          --disable-static \
+          --disable-doxygen-doc \
+          --enable-optimizations \
+          --enable-cma \
+          --enable-devel-headers \
+          --with-verbs \
+          --with-dm \
+          ${UCX_CUDA_BUILD_ARGS} \
+          --enable-mt && \
+        make -j && \
+        make -j install-strip && \
+        $SUDO ldconfig \
+)
 
 # Ubuntu 22.04 specific setup
 if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then

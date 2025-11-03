@@ -94,9 +94,8 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "am
     rm -f doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+    # no cleanup, next step needs the repo
 
 # Force reinstall of RDMA packages from DOCA repository
 # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
@@ -151,29 +150,6 @@ RUN rm -rf /usr/lib/ucx /opt/hpcx/ucx /usr/local/ucx && \
     rm -f /usr/lib/${ARCH}-linux-gnu/libucs* /usr/lib/${ARCH}-linux-gnu/libucp* \
           /usr/lib/${ARCH}-linux-gnu/libuct* /usr/lib/${ARCH}-linux-gnu/libucm* 2>/dev/null || true
 
-RUN cd /usr/local/src && \
-     git clone https://github.com/openucx/ucx.git && \
-     cd ucx && 			     \
-     git checkout $UCX_REF &&        \
-     ./autogen.sh && ./configure     \
-         --prefix=$UCX_PREFIX        \
-         --enable-shared             \
-         --disable-static            \
-         --disable-doxygen-doc       \
-         --enable-optimizations      \
-         --enable-cma                \
-         --enable-devel-headers      \
-         --with-cuda=/usr/local/cuda \
-         --with-verbs                \
-         --with-dm                   \
-         --with-gdrcopy=/usr/local   \
-         --with-efa                  \
-         --enable-mt &&              \
-     make -j${NPROC:-$(nproc)} &&                \
-     make -j${NPROC:-$(nproc)} install-strip &&  \
-     ldconfig && \
-     cd /usr/local/src && rm -rf ucx
-
 RUN cd /tmp && \
      git clone --depth 1 https://github.com/google/gtest-parallel.git && \
      mkdir -p /usr/local/bin && \
@@ -182,8 +158,7 @@ RUN cd /tmp && \
 ENV PATH=/usr/local/bin:$PATH
 
 # Build libfabric from source
-RUN cd /tmp && \
-    wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
     cd libfabric-* && \
@@ -206,6 +181,17 @@ RUN cd /tmp && \
 
 # Stage 2: Build NIXL (default stage)
 FROM nixl-base
+
+# Re-declare ARGs needed in this stage
+ARG ARCH="x86_64"
+ARG NIXL_PREFIX="/usr/local/nixl"
+ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_REF="v1.19.0"
+ARG UCX_PREFIX="/usr"
+ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG LIBFABRIC_INSTALL_PATH="/usr/local"
+ARG NPROC
 
 # By default, uv downloads python packages to $HOME/.cache/uv and hard links them
 # from the virtual environment. This means that the files reside in /root/.cache/uv,
@@ -230,14 +216,29 @@ RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click t
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     uv pip install torch torchvision torchaudio
 
-# Re-declare ARGs needed in this stage
-ARG NIXL_PREFIX="/usr/local/nixl"
-ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/x86_64-linux-gnu/plugins"
-ARG ARCH="x86_64"
-ARG DEFAULT_PYTHON_VERSION="3.12"
-ARG UCX_PREFIX="/usr"
-ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
-ARG LIBFABRIC_INSTALL_PATH="/usr/local"
+# Build UCX in Stage 2 for build-container.sh (CI uses build.sh to build UCX)
+RUN cd /usr/local/src && \
+     git clone https://github.com/openucx/ucx.git && \
+     cd ucx && \
+     git checkout $UCX_REF && \
+     ./autogen.sh && ./configure \
+         --prefix=$UCX_PREFIX \
+         --enable-shared \
+         --disable-static \
+         --disable-doxygen-doc \
+         --enable-optimizations \
+         --enable-cma \
+         --enable-devel-headers \
+         --with-cuda=/usr/local/cuda \
+         --with-verbs \
+         --with-dm \
+         --with-gdrcopy=/usr/local \
+         --with-efa \
+         --enable-mt && \
+     make -j${NPROC:-$(nproc)} && \
+     make -j${NPROC:-$(nproc)} install-strip && \
+     ldconfig && \
+     cd /usr/local/src && rm -rf ucx
 
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
