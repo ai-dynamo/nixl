@@ -24,6 +24,7 @@
 #include <optional>
 #include <limits>
 #include <future>
+#include <set>
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
@@ -282,8 +283,9 @@ public:
     }
 
     void
-    setConnection(ucx_connection_ptr_t conn) {
+    setConnection(nixlUcxConnection *conn) {
         conn_ = conn;
+        completed_ = false;
     }
 
     nixl_status_t
@@ -294,33 +296,8 @@ public:
 
 private:
     bool completed_ = false;
-    ucx_connection_ptr_t conn_;
+    nixlUcxConnection *conn_;
 };
-
-static void
-nixlUcxReqSetConnection(nixlUcxReq req, ucx_connection_ptr_t conn) {
-    nixlUcxIntReq *req_int = reinterpret_cast<nixlUcxIntReq *>(req);
-    req_int->setConnection(conn);
-}
-
-static void _internalRequestInit(void *request)
-{
-    /* Initialize request in-place (aka "placement new")*/
-    new(request) nixlUcxIntReq;
-}
-
-static void _internalRequestFini(void *request)
-{
-    /* Finalize request */
-    nixlUcxIntReq *req = (nixlUcxIntReq*)request;
-    req->~nixlUcxIntReq();
-}
-
-
-static void _internalRequestReset(nixlUcxIntReq *req) {
-    _internalRequestFini((void *)req);
-    _internalRequestInit((void *)req);
-}
 
 /****************************************
  * Backend request management
@@ -329,6 +306,7 @@ static void _internalRequestReset(nixlUcxIntReq *req) {
 class nixlUcxBackendH : public nixlBackendReqH {
 private:
     std::vector<nixlUcxIntReq *> requests_;
+    std::set<ucx_connection_ptr_t> connections_;
     nixlUcxWorker *worker;
     size_t worker_id;
 
@@ -356,8 +334,11 @@ public:
     }
 
     void
-    append(nixlUcxIntReq *req) {
-        requests_.push_back(req);
+    append(nixlUcxReq req, ucx_connection_ptr_t conn) {
+        nixlUcxIntReq *req_int = reinterpret_cast<nixlUcxIntReq *>(req);
+        req_int->setConnection(conn.get());
+        requests_.push_back(req_int);
+        connections_.insert(conn);
     }
 
     virtual bool
@@ -374,10 +355,10 @@ public:
                 // it may not be enough to cancel UCX request
                 worker->reqCancel((nixlUcxReq)req);
             }
-            _internalRequestReset(req);
             worker->reqRelease((nixlUcxReq)req);
         }
         requests_.clear();
+        connections_.clear();
         return NIXL_SUCCESS;
     }
 
@@ -417,7 +398,6 @@ public:
         size_t incomplete_reqs = 0;
         for (nixlUcxIntReq *req : requests_) {
             if (req->is_complete()) {
-                _internalRequestReset(req);
                 worker->reqRelease((nixlUcxReq)req);
             } else {
                 requests_[incomplete_reqs++] = req;
@@ -1127,8 +1107,6 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     uc = std::make_unique<nixlUcxContext>(devs,
                                           sizeof(nixlUcxIntReq),
-                                          _internalRequestInit,
-                                          _internalRequestFini,
                                           init_params.enableProgTh,
                                           num_workers,
                                           init_params.syncMode);
@@ -1358,10 +1336,7 @@ _retHelper(nixl_status_t ret, nixlUcxBackendH *hndl, nixlUcxReq &req, ucx_connec
     /* if transfer wasn't immediately completed */
     switch(ret) {
     case NIXL_IN_PROG:
-        // TODO: this cast does not look safe
-        // We need to allocate a vector of nixlUcxIntReq and set nixlUcxReqt
-        hndl->append((nixlUcxIntReq *)req);
-        nixlUcxReqSetConnection(req, conn);
+        hndl->append(req, conn);
     case NIXL_SUCCESS:
         // Nothing to do
         break;

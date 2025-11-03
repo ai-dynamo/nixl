@@ -404,8 +404,6 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
 
 nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                size_t req_size,
-                               nixlUcxContext::req_cb_t init_cb,
-                               nixlUcxContext::req_cb_t fini_cb,
                                bool prog_thread,
                                unsigned long num_workers,
                                nixl_thread_sync_t sync_mode)
@@ -432,16 +430,6 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     if (req_size) {
         ucp_params.request_size = req_size;
         ucp_params.field_mask |= UCP_PARAM_FIELD_REQUEST_SIZE;
-    }
-
-    if (init_cb) {
-        ucp_params.request_init = init_cb;
-        ucp_params.field_mask |= UCP_PARAM_FIELD_REQUEST_INIT;
-    }
-
-    if (fini_cb) {
-        ucp_params.request_cleanup = fini_cb;
-        ucp_params.field_mask |= UCP_PARAM_FIELD_REQUEST_CLEANUP;
     }
 
     nixl::ucx::config config;
