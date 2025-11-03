@@ -109,17 +109,6 @@ $SUDO apt-get -qq install -y python3-dev \
                              libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
-# Ubuntu 22.04 specific setup
-if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
-    # Upgrade pip for '--break-system-packages' support
-    $SUDO pip3 install --upgrade pip
-
-    # Upgrade meson (distro version 0.61.2 is too old, project requires >= 0.64.0)
-    $SUDO pip3 install --upgrade meson
-    # Ensure pip3's meson takes precedence over apt's version
-    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-fi
-
 # Add DOCA repository and install packages
 ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
 MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
@@ -222,6 +211,16 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 )
 
 fi # end NIXL_BASE_IMAGE_ENV check
+
+# Ubuntu 22.04 specific setup
+if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
+    # Upgrade pip for '--break-system-packages' support
+    $SUDO pip3 install --upgrade pip
+    # Upgrade meson (distro version 0.61.2 is too old, project requires >= 0.64.0)
+    $SUDO pip3 install --upgrade meson
+    # Ensure pip3's meson takes precedence over apt's version
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+fi
 
 export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
 export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"

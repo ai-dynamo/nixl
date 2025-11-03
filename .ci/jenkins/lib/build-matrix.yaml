@@ -45,13 +45,13 @@ runs_on_dockers:
       tag: "02112025",
       build_args: "--target nixl-base --build-arg ARCH=$arch"
     }
-  # - {
-  #     file: "contrib/Dockerfile",
-  #     name: "ubuntu22.04-nixl-deps",
-  #     uri: "$arch/$name",
-  #     tag: "02112025",
-  #     build_args: "--target nixl-base --build-arg BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04"
-  #   }
+  - {
+      file: "contrib/Dockerfile",
+      name: "ubuntu22.04-nixl-deps",
+      uri: "$arch/$name",
+      tag: "02112025",
+      build_args: "--target nixl-base --build-arg ARCH=$arch --build-arg BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04"
+    }
   # - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", category: 'tool', privileged: true }
 
 matrix:
