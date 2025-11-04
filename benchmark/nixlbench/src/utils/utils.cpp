@@ -105,7 +105,7 @@ DEFINE_string(etcd_endpoints,
 DEFINE_string(
     posix_api_type,
     XFERBENCH_POSIX_API_AIO,
-    "API type for POSIX operations [AIO, URING, LINUXAIO] (only used with POSIX backend)");
+    "API type for POSIX operations [AIO, URING, POSIXAIO] (only used with POSIX backend)");
 
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
 DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
@@ -241,9 +241,9 @@ xferBenchConfig::loadFromFlags() {
             // Validate POSIX API type
             if (posix_api_type != XFERBENCH_POSIX_API_AIO &&
                 posix_api_type != XFERBENCH_POSIX_API_URING &&
-                posix_api_type != XFERBENCH_POSIX_API_LINUXAIO) {
+                posix_api_type != XFERBENCH_POSIX_API_POSIXAIO) {
                 std::cerr << "Invalid POSIX API type: " << posix_api_type
-                          << ". Must be one of [AIO, URING, LINUXAIO]" << std::endl;
+                          << ". Must be one of [AIO, URING, POSIXAIO]" << std::endl;
                 return -1;
             }
         }
@@ -452,7 +452,7 @@ xferBenchConfig::printConfig() {
 
         // Print POSIX options if backend is POSIX
         if (backend == XFERBENCH_BACKEND_POSIX) {
-            printOption("POSIX API type (--posix_api_type=[AIO,URING,LINUXAIO])", posix_api_type);
+            printOption("POSIX API type (--posix_api_type=[AIO,URING,POSIXAIO])", posix_api_type);
         }
 
         // Print OBJ options if backend is OBJ

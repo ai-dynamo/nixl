@@ -74,7 +74,8 @@ namespace {
 }
 
 // Public functions implementation
-std::unique_ptr<nixlPosixQueue> QueueFactory::createAioQueue(int num_entries, nixl_xfer_op_t operation) {
+std::unique_ptr<nixlPosixQueue>
+QueueFactory::createPosixAioQueue(int num_entries, nixl_xfer_op_t operation) {
     return std::make_unique<aioQueue>(num_entries, operation);
 }
 

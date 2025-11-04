@@ -34,7 +34,7 @@ class nixlPosixQueue {
         enum class queue_t {
             AIO,
             URING,
-            LINUXAIO,
+            POSIXAIO,
             UNSUPPORTED,
         };
 };
