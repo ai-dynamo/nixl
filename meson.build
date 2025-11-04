@@ -128,7 +128,7 @@ endif
 if cuda_dep.found()
   nvcc_cmd = find_program('nvcc', required: false)
   if nvcc_cmd.found()
-    if nvcc_cmd.version().version_compare('>=12.8') and nvcc_cmd.version().version_compare('<13.0')
+    if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
       doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
       warning('CUDA version = ' + nvcc_cmd.version() + ', GPUNETIO plugin will be disabled')
@@ -213,7 +213,7 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     have_gpu_side = cuda.compiles('''
             #include <ucp/api/device/ucp_device_impl.h>
             int main() { return 0; }
-        ''', dependencies : ucx_dep, args: nvcc_flags)
+        ''', dependencies : [ucx_dep, doca_gpunetio_dep], args: nvcc_flags)
 
     have_host_side = cpp.compiles('''
             #include <ucp/api/device/ucp_host.h>
@@ -230,6 +230,7 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     'GPU-side compile'   : have_gpu_side,
     'Host-side compile'  : have_host_side,
     'nvcc available'     : nvcc_prog.found(),
+    'DOCA GPUNETIO found': doca_gpunetio_dep.found(),
   }, section: 'UCX GPU Device API', bool_yn: true)
 endif
 
