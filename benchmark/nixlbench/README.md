@@ -279,8 +279,8 @@ sudo ldconfig
 
 **LibFabric:**
 ```bash
-wget https://github.com/ofiwg/libfabric/releases/download/v2.3.0/libfabric-2.3.0.tar.bz2
-tar xjf libfabric-2.3.0.tar.bz2 && cd libfabric-2.3.0
+wget https://github.com/ofiwg/libfabric/releases/download/v1.21.0/libfabric-1.21.0.tar.bz2
+tar xjf libfabric-1.21.0.tar.bz2 && cd libfabric-1.21.0
 ./configure --prefix=/usr/local --with-cuda=/usr/local/cuda --enable-cuda-dlopen --enable-efa
 make -j$(nproc) && sudo make install
 ```
