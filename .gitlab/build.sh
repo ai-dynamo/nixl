@@ -56,7 +56,7 @@ ARCH=$(uname -m)
 # Skip dependency installation if running in pre-built nixl-base image
 if [ -n "${NIXL_BASE_IMAGE_ENV}" ]; then
     # Use pre-installed libfabric from base image
-    LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-/usr/local}
+    LIBFABRIC_INSTALL_DIR=/usr/local
 else
 
 # Some docker images are with broken installations:
