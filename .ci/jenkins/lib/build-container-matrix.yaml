@@ -82,6 +82,7 @@ steps:
     enable: ${ENABLE_NIXL_BUILD}
     run: |
       export UCX_REF="${UCX_VERSION}"
+      export BUILD_TYPE="debug"
 
       "contrib/build-container.sh" \
         --base-image "${BASE_IMAGE}" \

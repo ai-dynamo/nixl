@@ -196,6 +196,9 @@ BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
+if [ -n "$BUILD_TYPE" ]; then
+    BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
+fi
 
 show_build_options
 
