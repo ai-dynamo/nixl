@@ -52,6 +52,32 @@ fn create_agent_with_backend(name: &str) -> Result<(Agent, OptArgs), NixlError> 
     Ok((agent, opt_args))
 }
 
+// Trait for testing common descriptor list operations
+trait DescListTestTrait: PartialEq + std::fmt::Debug {
+    fn new(mem_type: MemType) -> Result<Self, NixlError> where Self: Sized;
+    fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError>;
+}
+
+impl<'a> DescListTestTrait for RegDescList<'a> {
+    fn new(mem_type: MemType) -> Result<Self, NixlError> {
+        RegDescList::new(mem_type)
+    }
+    
+    fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
+        RegDescList::add_desc(self, addr, len, dev_id)
+    }
+}
+
+impl<'a> DescListTestTrait for XferDescList<'a> {
+    fn new(mem_type: MemType) -> Result<Self, NixlError> {
+        XferDescList::new(mem_type)
+    }
+    
+    fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
+        XferDescList::add_desc(self, addr, len, dev_id)
+    }
+}
+
 
 fn create_storage_list(agent: &Agent, opt_args: &OptArgs, size: usize) -> Vec<SystemStorage> {
     let mut storage_list = Vec::new();
@@ -1587,133 +1613,115 @@ fn test_get_xfer_telemetry_before_posting() {
 }
 
 // Tests for equality operators on RegDescList and XferDescList
+
 #[test]
-fn test_descriptor_list_equality() {
-    // Test RegDescList equality scenarios
-    {
-        // 1. Empty lists of same type should be equal
-        let reg_list1 = RegDescList::new(MemType::Dram).unwrap();
-        let reg_list2 = RegDescList::new(MemType::Dram).unwrap();
-        assert_eq!(reg_list1, reg_list2);
-        assert!(!(reg_list1 != reg_list2));
-
-        // 2. Lists with different memory types should not be equal
-        let reg_list_vram = RegDescList::new(MemType::Vram).unwrap();
-        assert_ne!(reg_list1, reg_list_vram);
-        assert!(!(reg_list1 == reg_list_vram));
-
-        // 3. Lists with same descriptors should be equal
-        let mut reg_list3 = RegDescList::new(MemType::Dram).unwrap();
-        let mut reg_list4 = RegDescList::new(MemType::Dram).unwrap();
-
-        reg_list3.add_desc(0x1000, 0x100, 0).unwrap();
-        reg_list3.add_desc(0x2000, 0x200, 1).unwrap();
-
-        reg_list4.add_desc(0x1000, 0x100, 0).unwrap();
-        reg_list4.add_desc(0x2000, 0x200, 1).unwrap();
-
-        assert_eq!(reg_list3, reg_list4);
-        assert!(!(reg_list3 != reg_list4));
-
-        // 4. Lists with different descriptors should not be equal
-        let mut reg_list5 = RegDescList::new(MemType::Dram).unwrap();
-        let mut reg_list6 = RegDescList::new(MemType::Dram).unwrap();
-
-        reg_list5.add_desc(0x1000, 0x100, 0).unwrap();
-        reg_list6.add_desc(0x2000, 0x200, 1).unwrap();
-
-        assert_ne!(reg_list5, reg_list6);
-        assert!(!(reg_list5 == reg_list6));
-
-        // 5. Lists with different lengths should not be equal
-        let mut reg_list7 = RegDescList::new(MemType::Dram).unwrap();
-        let reg_list8 = RegDescList::new(MemType::Dram).unwrap();
-
-        reg_list7.add_desc(0x1000, 0x100, 0).unwrap();
-
-        assert_ne!(reg_list7, reg_list8);
-        assert!(!(reg_list7 == reg_list8));
-
-        // 6. Lists with same descriptors but different order should not be equal
-        let mut reg_list9 = RegDescList::new(MemType::Dram).unwrap();
-        let mut reg_list10 = RegDescList::new(MemType::Dram).unwrap();
-
-        reg_list9.add_desc(0x1000, 0x100, 0).unwrap();
-        reg_list9.add_desc(0x2000, 0x200, 1).unwrap();
-
-        reg_list10.add_desc(0x2000, 0x200, 1).unwrap();
-        reg_list10.add_desc(0x1000, 0x100, 0).unwrap();
-
-        assert_ne!(reg_list9, reg_list10);
-        assert!(!(reg_list9 == reg_list10));
-
-        // 7. Lists with same descriptors but different metadata should not be equal
-        let mut reg_list11 = RegDescList::new(MemType::Dram).unwrap();
-        let mut reg_list12 = RegDescList::new(MemType::Dram).unwrap();
-
-        reg_list11.add_desc_with_meta(0x1000, 0x100, 0, b"metadata1").unwrap();
-        reg_list12.add_desc_with_meta(0x1000, 0x100, 0, b"metadata2").unwrap();
-
-        assert_ne!(reg_list11, reg_list12);
-        assert!(!(reg_list11 == reg_list12));
+fn test_desc_list_equality_empty() {
+    fn test_impl<T: DescListTestTrait>() {
+        let list1 = T::new(MemType::Dram).unwrap();
+        let list2 = T::new(MemType::Dram).unwrap();
+        assert_eq!(list1, list2);
+        assert!(!(list1 != list2));
     }
 
-    // Test XferDescList equality scenarios (same tests as RegDescList)
-    {
-        // 1. Empty lists of same type should be equal
-        let xfer_list1 = XferDescList::new(MemType::Dram).unwrap();
-        let xfer_list2 = XferDescList::new(MemType::Dram).unwrap();
-        assert_eq!(xfer_list1, xfer_list2);
-        assert!(!(xfer_list1 != xfer_list2));
+    test_impl::<RegDescList>();
+    test_impl::<XferDescList>();
+}
 
-        // 2. Lists with different memory types should not be equal
-        let xfer_list_vram = XferDescList::new(MemType::Vram).unwrap();
-        assert_ne!(xfer_list1, xfer_list_vram);
-        assert!(!(xfer_list1 == xfer_list_vram));
-
-        // 3. Lists with same descriptors should be equal
-        let mut xfer_list3 = XferDescList::new(MemType::Dram).unwrap();
-        let mut xfer_list4 = XferDescList::new(MemType::Dram).unwrap();
-
-        xfer_list3.add_desc(0x1000, 0x100, 0).unwrap();
-        xfer_list3.add_desc(0x2000, 0x200, 1).unwrap();
-
-        xfer_list4.add_desc(0x1000, 0x100, 0).unwrap();
-        xfer_list4.add_desc(0x2000, 0x200, 1).unwrap();
-
-        assert_eq!(xfer_list3, xfer_list4);
-        assert!(!(xfer_list3 != xfer_list4));
-
-        // 4. Lists with different descriptors should not be equal
-        let mut xfer_list5 = XferDescList::new(MemType::Dram).unwrap();
-        let mut xfer_list6 = XferDescList::new(MemType::Dram).unwrap();
-
-        xfer_list5.add_desc(0x1000, 0x100, 0).unwrap();
-        xfer_list6.add_desc(0x2000, 0x200, 1).unwrap();
-
-        assert_ne!(xfer_list5, xfer_list6);
-        assert!(!(xfer_list5 == xfer_list6));
-
-        // 5. Lists with different lengths should not be equal
-        let mut xfer_list7 = XferDescList::new(MemType::Dram).unwrap();
-        let xfer_list8 = XferDescList::new(MemType::Dram).unwrap();
-
-        xfer_list7.add_desc(0x1000, 0x100, 0).unwrap();
-
-        assert_ne!(xfer_list7, xfer_list8);
-        assert!(!(xfer_list7 == xfer_list8));
-
-        // 6. Lists with same descriptors but different order should not be equal
-        let mut xfer_list9 = XferDescList::new(MemType::Dram).unwrap();
-        let mut xfer_list10 = XferDescList::new(MemType::Dram).unwrap();
-
-        xfer_list9.add_desc(0x1000, 0x100, 0).unwrap();
-        xfer_list9.add_desc(0x2000, 0x200, 1).unwrap();
-
-        xfer_list10.add_desc(0x2000, 0x200, 1).unwrap();
-        xfer_list10.add_desc(0x1000, 0x100, 0).unwrap();
-
-        assert_ne!(xfer_list9, xfer_list10);
-        assert!(!(xfer_list9 == xfer_list10));
+#[test]
+fn test_desc_list_equality_memory_types() {
+    fn test_impl<T: DescListTestTrait>() {
+        let list_dram = T::new(MemType::Dram).unwrap();
+        let list_vram = T::new(MemType::Vram).unwrap();
+        assert_ne!(list_dram, list_vram);
+        assert!(!(list_dram == list_vram));
     }
+
+    test_impl::<RegDescList>();
+    test_impl::<XferDescList>();
+}
+
+#[test]
+fn test_desc_list_equality_same_descriptors() {
+    fn test_impl<T: DescListTestTrait>() {
+        let mut list1 = T::new(MemType::Dram).unwrap();
+        let mut list2 = T::new(MemType::Dram).unwrap();
+
+        list1.add_desc(0x1000, 0x100, 0).unwrap();
+        list1.add_desc(0x2000, 0x200, 1).unwrap();
+
+        list2.add_desc(0x1000, 0x100, 0).unwrap();
+        list2.add_desc(0x2000, 0x200, 1).unwrap();
+
+        assert_eq!(list1, list2);
+        assert!(!(list1 != list2));
+    }
+
+    test_impl::<RegDescList>();
+    test_impl::<XferDescList>();
+}
+
+#[test]
+fn test_desc_list_equality_different_descriptors() {
+    fn test_impl<T: DescListTestTrait>() {
+        let mut list1 = T::new(MemType::Dram).unwrap();
+        let mut list2 = T::new(MemType::Dram).unwrap();
+
+        list1.add_desc(0x1000, 0x100, 0).unwrap();
+        list2.add_desc(0x2000, 0x200, 1).unwrap();
+
+        assert_ne!(list1, list2);
+        assert!(!(list1 == list2));
+    }
+
+    test_impl::<RegDescList>();
+    test_impl::<XferDescList>();
+}
+
+#[test]
+fn test_desc_list_equality_different_lengths() {
+    fn test_impl<T: DescListTestTrait>() {
+        let mut list1 = T::new(MemType::Dram).unwrap();
+        let list2 = T::new(MemType::Dram).unwrap();
+
+        list1.add_desc(0x1000, 0x100, 0).unwrap();
+
+        assert_ne!(list1, list2);
+        assert!(!(list1 == list2));
+    }
+
+    test_impl::<RegDescList>();
+    test_impl::<XferDescList>();
+}
+
+#[test]
+fn test_desc_list_equality_order_matters() {
+    fn test_impl<T: DescListTestTrait>() {
+        let mut list1 = T::new(MemType::Dram).unwrap();
+        let mut list2 = T::new(MemType::Dram).unwrap();
+
+        list1.add_desc(0x1000, 0x100, 0).unwrap();
+        list1.add_desc(0x2000, 0x200, 1).unwrap();
+
+        list2.add_desc(0x2000, 0x200, 1).unwrap();
+        list2.add_desc(0x1000, 0x100, 0).unwrap();
+
+        assert_ne!(list1, list2);
+        assert!(!(list1 == list2));
+    }
+
+    test_impl::<RegDescList>();
+    test_impl::<XferDescList>();
+}
+
+// RegDescList-specific test: metadata affects equality
+#[test]
+fn test_reg_desc_list_equality_metadata() {
+    let mut list1 = RegDescList::new(MemType::Dram).unwrap();
+    let mut list2 = RegDescList::new(MemType::Dram).unwrap();
+
+    list1.add_desc_with_meta(0x1000, 0x100, 0, b"metadata1").unwrap();
+    list2.add_desc_with_meta(0x1000, 0x100, 0, b"metadata2").unwrap();
+
+    assert_ne!(list1, list2);
+    assert!(!(list1 == list2));
 }
