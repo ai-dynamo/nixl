@@ -159,7 +159,7 @@ impl RegistrationHandle {
             );
             let mut reg_dlist = RegDescList::new(self.mem_type)?;
             unsafe {
-                reg_dlist.add_desc(self.ptr, self.size, self.dev_id)?;
+                reg_dlist.add_desc(self.ptr, self.size, self.dev_id);
                 let _opt_args = OptArgs::new().unwrap();
                 nixl_capi_deregister_mem(
                     agent.write().unwrap().handle.as_ptr(),

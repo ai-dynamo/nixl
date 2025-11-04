@@ -15,6 +15,7 @@
 
 use super::*;
 use super::sync_manager::{BackendSyncable, SyncManager};
+use std::ops::{Index, IndexMut};
 
 /// Public registration descriptor used for indexing and comparisons
 #[derive(Debug, Clone, PartialEq)]
@@ -108,7 +109,7 @@ impl<'a> RegDescList<'a> {
     pub fn get_type(&self) -> Result<MemType, NixlError> { Ok(self.mem_type) }
 
     /// Adds a descriptor to the list
-    pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
+    pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) {
         self.add_desc_with_meta(addr, len, dev_id, &[])
     }
 
@@ -119,16 +120,13 @@ impl<'a> RegDescList<'a> {
         len: usize,
         dev_id: u64,
         metadata: &[u8],
-    ) -> Result<(), NixlError> {
-        self.sync_mgr.modify(|data| {
-            data.descriptors.push(RegDescriptor {
-                addr,
-                len,
-                dev_id,
-                metadata: metadata.to_vec(),
-            });
+    ) {
+        self.sync_mgr.data_mut().descriptors.push(RegDescriptor {
+            addr,
+            len,
+            dev_id,
+            metadata: metadata.to_vec(),
         });
-        Ok(())
     }
 
     /// Returns true if the list is empty
@@ -143,11 +141,8 @@ impl<'a> RegDescList<'a> {
     pub fn len(&self) -> Result<usize, NixlError> { Ok(self.sync_mgr.data().descriptors.len()) }
 
     /// Trims the list to the given size
-    pub fn trim(&mut self) -> Result<(), NixlError> {
-        self.sync_mgr.modify(|data| {
-            data.descriptors.shrink_to_fit();
-        });
-        Ok(())
+    pub fn trim(&mut self) {
+        self.sync_mgr.data_mut().descriptors.shrink_to_fit();
     }
 
     /// Removes the descriptor at the given index
@@ -155,44 +150,52 @@ impl<'a> RegDescList<'a> {
         if index < 0 { return Err(NixlError::InvalidParam); }
         let idx = index as usize;
 
-        self.sync_mgr.modify(|data| {
-            if idx >= data.descriptors.len() { return Err(NixlError::InvalidParam); }
-            data.descriptors.remove(idx);
-            Ok(())
-        })
+        let data = self.sync_mgr.data_mut();
+        if idx >= data.descriptors.len() {
+            return Err(NixlError::InvalidParam);
+        }
+        data.descriptors.remove(idx);
+        Ok(())
     }
 
     /// Prints the list contents
     pub fn print(&self) -> Result<(), NixlError> {
-        self.sync_mgr.with_backend(|_data, backend| {
-            let status = unsafe { nixl_capi_reg_dlist_print(backend.as_ptr()) };
-            match status {
-                NIXL_CAPI_SUCCESS => Ok(()),
-                NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-                _ => Err(NixlError::BackendError),
-            }
-        })?
+        let backend = self.sync_mgr.backend()?;
+        let status = unsafe { nixl_capi_reg_dlist_print(backend.as_ptr()) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
     }
 
     /// Clears all descriptors from the list
-    pub fn clear(&mut self) -> Result<(), NixlError> {
-        self.sync_mgr.modify(|data| {
-            data.descriptors.clear();
-        });
-        Ok(())
+    pub fn clear(&mut self) {
+        self.sync_mgr.data_mut().descriptors.clear();
     }
 
     /// Resizes the list to the given size
-    pub fn resize(&mut self, new_size: usize) -> Result<(), NixlError> {
-        self.sync_mgr.modify(|data| {
-            data.descriptors.resize(new_size, RegDescriptor {
-                addr: 0,
-                len: 0,
-                dev_id: 0,
-                metadata: Vec::new(),
-            });
+    pub fn resize(&mut self, new_size: usize) {
+        self.sync_mgr.data_mut().descriptors.resize(new_size, RegDescriptor {
+            addr: 0,
+            len: 0,
+            dev_id: 0,
+            metadata: Vec::new(),
         });
-        Ok(())
+    }
+
+    /// Safe immutable access to descriptor by index
+    pub fn get(&self, index: usize) -> Result<&RegDescriptor, NixlError> {
+        self.sync_mgr.data().descriptors
+            .get(index)
+            .ok_or(NixlError::InvalidParam)
+    }
+
+    /// Safe mutable access to descriptor by index
+    pub fn get_mut(&mut self, index: usize) -> Result<&mut RegDescriptor, NixlError> {
+        self.sync_mgr.data_mut().descriptors
+            .get_mut(index)
+            .ok_or(NixlError::InvalidParam)
     }
 
     /// Add a descriptor from a type implementing NixlDescriptor
@@ -220,7 +223,8 @@ impl<'a> RegDescList<'a> {
         let dev_id = desc.device_id();
 
         // Add to list
-        self.add_desc(addr, len, dev_id)
+        self.add_desc(addr, len, dev_id);
+        Ok(())
     }
 
     pub(crate) fn handle(&self) -> *mut bindings::nixl_capi_reg_dlist_s {
@@ -251,6 +255,23 @@ impl PartialEq for RegDescList<'_> {
 
         // Compare internal descriptor tracking
         self.sync_mgr.data().descriptors == other.sync_mgr.data().descriptors
+    }
+}
+
+// Implement Index trait for immutable indexing (list[i])
+impl Index<usize> for RegDescList<'_> {
+    type Output = RegDescriptor;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.sync_mgr.data().descriptors[index]
+    }
+}
+
+// Implement IndexMut trait for mutable indexing (list[i] = value)
+impl IndexMut<usize> for RegDescList<'_> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        // data_mut() automatically marks dirty
+        &mut self.sync_mgr.data_mut().descriptors[index]
     }
 }
 

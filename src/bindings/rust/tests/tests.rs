@@ -55,16 +55,22 @@ fn create_agent_with_backend(name: &str) -> Result<(Agent, OptArgs), NixlError> 
 // Trait for testing common descriptor list operations
 trait DescListTestTrait: PartialEq + std::fmt::Debug {
     fn new(mem_type: MemType) -> Result<Self, NixlError> where Self: Sized;
-    fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError>;
+    fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64);
+    #[allow(dead_code)]
+    fn len(&self) -> Result<usize, NixlError>;
 }
 
 impl<'a> DescListTestTrait for RegDescList<'a> {
     fn new(mem_type: MemType) -> Result<Self, NixlError> {
         RegDescList::new(mem_type)
     }
-    
-    fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
+
+    fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) {
         RegDescList::add_desc(self, addr, len, dev_id)
+    }
+
+    fn len(&self) -> Result<usize, NixlError> {
+        RegDescList::len(self)
     }
 }
 
@@ -72,12 +78,15 @@ impl<'a> DescListTestTrait for XferDescList<'a> {
     fn new(mem_type: MemType) -> Result<Self, NixlError> {
         XferDescList::new(mem_type)
     }
-    
-    fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
+
+    fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) {
         XferDescList::add_desc(self, addr, len, dev_id)
     }
-}
 
+    fn len(&self) -> Result<usize, NixlError> {
+        XferDescList::len(self)
+    }
+}
 
 fn create_storage_list(agent: &Agent, opt_args: &OptArgs, size: usize) -> Vec<SystemStorage> {
     let mut storage_list = Vec::new();
@@ -307,18 +316,18 @@ fn test_xfer_dlist() {
     let mut dlist = XferDescList::new(MemType::Dram).unwrap();
 
     // Add some descriptors
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    dlist.add_desc(0x2000, 0x200, 1).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
+    dlist.add_desc(0x2000, 0x200, 1);
 
     // Check length
     assert_eq!(dlist.len().unwrap(), 2);
 
     // Clear list
-    dlist.clear().unwrap();
+    dlist.clear();
     assert_eq!(dlist.len().unwrap(), 0);
 
     // Resize list
-    dlist.resize(5).unwrap();
+    dlist.resize(5);
 }
 
 #[test]
@@ -326,18 +335,18 @@ fn test_reg_dlist() {
     let mut dlist = RegDescList::new(MemType::Dram).unwrap();
 
     // Add some descriptors
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    dlist.add_desc(0x2000, 0x200, 1).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
+    dlist.add_desc(0x2000, 0x200, 1);
 
     // Check length
     assert_eq!(dlist.len().unwrap(), 2);
 
     // Clear list
-    dlist.clear().unwrap();
+    dlist.clear();
     assert_eq!(dlist.len().unwrap(), 0);
 
     // Resize list
-    dlist.resize(5).unwrap();
+    dlist.resize(5);
 }
 
 #[test]
@@ -766,8 +775,7 @@ fn test_check_remote_metadata() {
             unsafe { storage.as_ptr() } as usize,
             storage.size(),
             storage.device_id(),
-        )
-        .expect("Failed to add descriptor");
+        );
 
     // Update metadata after registration
     let metadata = agent2
@@ -784,8 +792,7 @@ fn test_check_remote_metadata() {
     let mut invalid_desc_list =
         XferDescList::new(mem_type).expect("Failed to create invalid desc list");
     invalid_desc_list
-        .add_desc(0xdeadbeef, 1024, 0)
-        .expect("Failed to add invalid descriptor");
+        .add_desc(0xdeadbeef, 1024, 0);
 
     // Check with invalid descriptor list - should return false
     assert!(!agent1.check_remote_metadata("agent2", Some(&invalid_desc_list)));
@@ -814,7 +821,7 @@ fn test_xfer_desc_list_get_type() {
 #[test]
 fn test_xfer_desc_list_get_type_after_add() {
     let mut dlist = XferDescList::new(MemType::Block).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
     assert_eq!(dlist.get_type().unwrap(), MemType::Block);
 }
 
@@ -822,15 +829,15 @@ fn test_xfer_desc_list_get_type_after_add() {
 fn test_xfer_desc_list_desc_count_basic() {
     let mut dlist = XferDescList::new(MemType::Dram).unwrap();
     assert_eq!(dlist.desc_count().unwrap(), 0);
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
     assert_eq!(dlist.desc_count().unwrap(), 1);
 }
 
 #[test]
 fn test_xfer_desc_list_desc_count_after_clear() {
     let mut dlist = XferDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    dlist.clear().unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
+    dlist.clear();
     assert_eq!(dlist.desc_count().unwrap(), 0);
 }
 
@@ -843,29 +850,29 @@ fn test_xfer_desc_list_is_empty_true() {
 #[test]
 fn test_xfer_desc_list_is_empty_false() {
     let mut dlist = XferDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
     assert!(!dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_xfer_desc_list_trim_basic() {
     let mut dlist = XferDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    dlist.trim().unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
+    dlist.trim();
     assert!(dlist.desc_count().unwrap() <= 1);
 }
 
 #[test]
 fn test_xfer_desc_list_trim_empty() {
     let mut dlist = XferDescList::new(MemType::Dram).unwrap();
-    assert!(dlist.trim().is_ok());
+    dlist.trim();
     assert!(dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_xfer_desc_list_rem_desc_basic() {
     let mut dlist = XferDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
     assert!(dlist.rem_desc(0).is_ok());
     assert!(dlist.is_empty().unwrap());
 }
@@ -879,15 +886,15 @@ fn test_xfer_desc_list_rem_desc_out_of_bounds() {
 #[test]
 fn test_xfer_desc_list_clear_basic() {
     let mut dlist = XferDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    dlist.clear().unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
+    dlist.clear();
     assert!(dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_xfer_desc_list_clear_empty() {
     let mut dlist = XferDescList::new(MemType::Dram).unwrap();
-    assert!(dlist.clear().is_ok());
+    dlist.clear();
     assert!(dlist.is_empty().unwrap());
 }
 
@@ -900,7 +907,7 @@ fn test_xfer_desc_list_print_basic() {
 #[test]
 fn test_xfer_desc_list_print_after_add() {
     let mut dlist = XferDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
     assert!(dlist.print().is_ok());
 }
 
@@ -921,7 +928,7 @@ fn test_reg_desc_list_get_type() {
 #[test]
 fn test_reg_desc_list_get_type_after_add() {
     let mut dlist = RegDescList::new(MemType::Block).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
     assert_eq!(dlist.get_type().unwrap(), MemType::Block);
 }
 
@@ -929,15 +936,15 @@ fn test_reg_desc_list_get_type_after_add() {
 fn test_reg_desc_list_desc_count_basic() {
     let mut dlist = RegDescList::new(MemType::Dram).unwrap();
     assert_eq!(dlist.desc_count().unwrap(), 0);
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
     assert_eq!(dlist.desc_count().unwrap(), 1);
 }
 
 #[test]
 fn test_reg_desc_list_desc_count_after_clear() {
     let mut dlist = RegDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    dlist.clear().unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
+    dlist.clear();
     assert_eq!(dlist.desc_count().unwrap(), 0);
 }
 
@@ -950,29 +957,29 @@ fn test_reg_desc_list_is_empty_true() {
 #[test]
 fn test_reg_desc_list_is_empty_false() {
     let mut dlist = RegDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
     assert!(!dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_reg_desc_list_trim_basic() {
     let mut dlist = RegDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    dlist.trim().unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
+    dlist.trim();
     assert!(dlist.desc_count().unwrap() <= 1);
 }
 
 #[test]
 fn test_reg_desc_list_trim_empty() {
     let mut dlist = RegDescList::new(MemType::Dram).unwrap();
-    assert!(dlist.trim().is_ok());
+    dlist.trim();
     assert!(dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_reg_desc_list_rem_desc_basic() {
     let mut dlist = RegDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
     assert!(dlist.rem_desc(0).is_ok());
     assert!(dlist.is_empty().unwrap());
 }
@@ -986,15 +993,15 @@ fn test_reg_desc_list_rem_desc_out_of_bounds() {
 #[test]
 fn test_reg_desc_list_clear_basic() {
     let mut dlist = RegDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
-    dlist.clear().unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
+    dlist.clear();
     assert!(dlist.is_empty().unwrap());
 }
 
 #[test]
 fn test_reg_desc_list_clear_empty() {
     let mut dlist = RegDescList::new(MemType::Dram).unwrap();
-    assert!(dlist.clear().is_ok());
+    dlist.clear();
     assert!(dlist.is_empty().unwrap());
 }
 
@@ -1007,7 +1014,7 @@ fn test_reg_desc_list_print_basic() {
 #[test]
 fn test_reg_desc_list_print_after_add() {
     let mut dlist = RegDescList::new(MemType::Dram).unwrap();
-    dlist.add_desc(0x1000, 0x100, 0).unwrap();
+    dlist.add_desc(0x1000, 0x100, 0);
     assert!(dlist.print().is_ok());
 }
 
@@ -1064,15 +1071,13 @@ fn test_query_mem_with_files() {
         RegDescList::new(MemType::File).expect("Failed to create descriptor list");
 
     // Add blob descriptors with filenames as metadata
-    for (i, file_path) in file_paths.iter().enumerate() {
-        descs
-            .add_desc_with_meta(
-                DESCRIPTOR_ADDR,
-                DESCRIPTOR_SIZE,
-                DESCRIPTOR_DEV_ID,
-                file_path.to_string_lossy().as_bytes(),
-            )
-            .expect(&format!("Failed to add descriptor for file {}", i + 1));
+    for file_path in &file_paths {
+        descs.add_desc_with_meta(
+            DESCRIPTOR_ADDR,
+            DESCRIPTOR_SIZE,
+            DESCRIPTOR_DEV_ID,
+            file_path.to_string_lossy().as_bytes(),
+        );
     }
 
     // Query memory
@@ -1285,8 +1290,7 @@ fn test_get_local_partial_md_success() {
     // Create a registration descriptor list
     let mut reg_descs = RegDescList::new(MemType::Dram)
         .expect("Failed to create registration descriptor list");
-    reg_descs.add_desc(0x1000, 0x100, 0)
-        .expect("Failed to add descriptor");
+    reg_descs.add_desc(0x1000, 0x100, 0);
     // Get local partial metadata
     let result = agent.get_local_partial_md(&reg_descs, Some(&opt_args));
     // Should succeed and return metadata
@@ -1646,11 +1650,11 @@ fn test_desc_list_equality_same_descriptors() {
         let mut list1 = T::new(MemType::Dram).unwrap();
         let mut list2 = T::new(MemType::Dram).unwrap();
 
-        list1.add_desc(0x1000, 0x100, 0).unwrap();
-        list1.add_desc(0x2000, 0x200, 1).unwrap();
+        list1.add_desc(0x1000, 0x100, 0);
+        list1.add_desc(0x2000, 0x200, 1);
 
-        list2.add_desc(0x1000, 0x100, 0).unwrap();
-        list2.add_desc(0x2000, 0x200, 1).unwrap();
+        list2.add_desc(0x1000, 0x100, 0);
+        list2.add_desc(0x2000, 0x200, 1);
 
         assert_eq!(list1, list2);
         assert!(!(list1 != list2));
@@ -1666,8 +1670,8 @@ fn test_desc_list_equality_different_descriptors() {
         let mut list1 = T::new(MemType::Dram).unwrap();
         let mut list2 = T::new(MemType::Dram).unwrap();
 
-        list1.add_desc(0x1000, 0x100, 0).unwrap();
-        list2.add_desc(0x2000, 0x200, 1).unwrap();
+        list1.add_desc(0x1000, 0x100, 0);
+        list2.add_desc(0x2000, 0x200, 1);
 
         assert_ne!(list1, list2);
         assert!(!(list1 == list2));
@@ -1683,7 +1687,7 @@ fn test_desc_list_equality_different_lengths() {
         let mut list1 = T::new(MemType::Dram).unwrap();
         let list2 = T::new(MemType::Dram).unwrap();
 
-        list1.add_desc(0x1000, 0x100, 0).unwrap();
+        list1.add_desc(0x1000, 0x100, 0);
 
         assert_ne!(list1, list2);
         assert!(!(list1 == list2));
@@ -1699,11 +1703,11 @@ fn test_desc_list_equality_order_matters() {
         let mut list1 = T::new(MemType::Dram).unwrap();
         let mut list2 = T::new(MemType::Dram).unwrap();
 
-        list1.add_desc(0x1000, 0x100, 0).unwrap();
-        list1.add_desc(0x2000, 0x200, 1).unwrap();
+        list1.add_desc(0x1000, 0x100, 0);
+        list1.add_desc(0x2000, 0x200, 1);
 
-        list2.add_desc(0x2000, 0x200, 1).unwrap();
-        list2.add_desc(0x1000, 0x100, 0).unwrap();
+        list2.add_desc(0x2000, 0x200, 1);
+        list2.add_desc(0x1000, 0x100, 0);
 
         assert_ne!(list1, list2);
         assert!(!(list1 == list2));
@@ -1719,9 +1723,137 @@ fn test_reg_desc_list_equality_metadata() {
     let mut list1 = RegDescList::new(MemType::Dram).unwrap();
     let mut list2 = RegDescList::new(MemType::Dram).unwrap();
 
-    list1.add_desc_with_meta(0x1000, 0x100, 0, b"metadata1").unwrap();
-    list2.add_desc_with_meta(0x1000, 0x100, 0, b"metadata2").unwrap();
+    list1.add_desc_with_meta(0x1000, 0x100, 0, b"metadata1");
+    list2.add_desc_with_meta(0x1000, 0x100, 0, b"metadata2");
 
     assert_ne!(list1, list2);
     assert!(!(list1 == list2));
+}
+
+// Tests for Index trait (immutable indexing)
+#[test]
+fn test_desc_list_immutable_index_access() {
+    macro_rules! test_impl {
+        ($list_type:ty, $mem_type:expr) => {{
+            let mut list = <$list_type>::new($mem_type).unwrap();
+            list.add_desc(0x1000, 0x100, 0);
+            list.add_desc(0x2000, 0x200, 1);
+
+            // Test indexing - direct field access
+            assert_eq!(list[0].addr, 0x1000);
+            assert_eq!(list[0].len, 0x100);
+            assert_eq!(list[0].dev_id, 0);
+
+            assert_eq!(list[1].addr, 0x2000);
+            assert_eq!(list[1].len, 0x200);
+            assert_eq!(list[1].dev_id, 1);
+        }};
+    }
+
+    test_impl!(RegDescList, MemType::Dram);
+    test_impl!(XferDescList, MemType::Vram);
+}
+
+// Test for IndexMut trait (mutable indexing)
+#[test]
+fn test_desc_list_mutable_index_modification() {
+    macro_rules! test_impl {
+        ($list_type:ty, $mem_type:expr, $new_addr:expr, $new_len:expr, $new_dev_id:expr) => {{
+            let mut list = <$list_type>::new($mem_type).unwrap();
+            list.add_desc(0x1000, 0x100, 0);
+            list.add_desc(0x2000, 0x200, 1);
+
+            // Mutate via index - direct field access
+            list[0].addr = $new_addr;
+            list[0].len = $new_len;
+            list[1].dev_id = $new_dev_id;
+
+            // Verify changes
+            assert_eq!(list[0].addr, $new_addr);
+            assert_eq!(list[0].len, $new_len);
+            assert_eq!(list[1].dev_id, $new_dev_id);
+
+            // Verify the list still has 2 elements
+            assert_eq!(list.len().unwrap(), 2);
+        }};
+    }
+
+    test_impl!(RegDescList, MemType::Dram, 0x3000, 0x300, 42);
+    test_impl!(XferDescList, MemType::Vram, 0x4000, 0x400, 99);
+}
+
+// Test out-of-bounds indexing panics (expected behavior)
+#[test]
+#[should_panic]
+fn test_desc_list_immutable_index_panics_on_out_of_bounds() {
+    let list = RegDescList::new(MemType::Dram).unwrap();
+    let _ = &list[0]; // Should panic - empty list
+}
+
+#[test]
+#[should_panic]
+fn test_desc_list_mutable_index_panics_on_out_of_bounds() {
+    let mut list = XferDescList::new(MemType::Dram).unwrap();
+    list.add_desc(0x1000, 0x100, 0);
+    list[5].addr = 0x9999; // Should panic - index 5 doesn't exist
+}
+
+// Tests for safe get() method
+#[test]
+fn test_desc_list_safe_get_method() {
+    // Test RegDescList
+    let mut reg_list = RegDescList::new(MemType::Dram).unwrap();
+    reg_list.add_desc(0x1000, 0x100, 0);
+    reg_list.add_desc(0x2000, 0x200, 1);
+
+    // Valid access
+    let desc = reg_list.get(0).unwrap();
+    assert_eq!(desc.addr, 0x1000);
+    assert_eq!(desc.len, 0x100);
+
+    // Out of bounds should return error
+    assert!(reg_list.get(10).is_err());
+
+    // Test XferDescList
+    let mut xfer_list = XferDescList::new(MemType::Vram).unwrap();
+    xfer_list.add_desc(0x3000, 0x300, 2);
+
+    let desc = xfer_list.get(0).unwrap();
+    assert_eq!(desc.addr, 0x3000);
+    assert_eq!(desc.len, 0x300);
+
+    assert!(xfer_list.get(5).is_err());
+}
+
+// Tests for safe get_mut() method
+#[test]
+fn test_desc_list_safe_get_mut_method() {
+    // Test RegDescList
+    let mut reg_list = RegDescList::new(MemType::Dram).unwrap();
+    reg_list.add_desc(0x1000, 0x100, 0);
+
+    // Valid mutable access
+    {
+        let desc = reg_list.get_mut(0).unwrap();
+        desc.addr = 0x5000;
+        desc.len = 0x500;
+    }
+
+    assert_eq!(reg_list[0].addr, 0x5000);
+    assert_eq!(reg_list[0].len, 0x500);
+
+    // Out of bounds should return error
+    assert!(reg_list.get_mut(10).is_err());
+
+    // Test XferDescList
+    let mut xfer_list = XferDescList::new(MemType::Vram).unwrap();
+    xfer_list.add_desc(0x2000, 0x200, 1);
+
+    {
+        let desc = xfer_list.get_mut(0).unwrap();
+        desc.dev_id = 99;
+    }
+
+    assert_eq!(xfer_list[0].dev_id, 99);
+    assert!(xfer_list.get_mut(5).is_err());
 }
