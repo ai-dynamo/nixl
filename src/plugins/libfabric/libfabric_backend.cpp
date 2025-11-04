@@ -836,11 +836,11 @@ nixlLibfabricEngine::loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
     pub_md->remote_buf_addr_ = reinterpret_cast<uint64_t>(buffer);
     pub_md->conn_ = conn;
 
-    output = pub_md.release();
     NIXL_DEBUG << "Metadata loaded with"
                << " Remote addr: " << (void *)pub_md->remote_buf_addr_ << " Remote keys for "
                << pub_md->rail_remote_key_list_.size() << " rails"
                << " Remote fi_addr: " << pub_md->conn_->rail_remote_addr_list_[0][0];
+    output = pub_md.release();
     return NIXL_SUCCESS;
 }
 
