@@ -53,9 +53,8 @@ int main()
     vector<string> devs;
     devs.push_back("mlx5_0");
 
-    nixlUcxContext c[2] = {
-        {devs, 0, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
-        {devs, 0, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
+    nixlUcxContext c[2] = {{devs, 0, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
+                           {devs, 0, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
 
     nixlUcxWorker w[2] = {
         nixlUcxWorker(c[0]),
@@ -93,10 +92,10 @@ int main()
     w[0].progress();
 
     /* Test first callback */
-    ret = ep[1]->sendAm(check_cb_id, &hdr, sizeof(hdr), (void*) &buffer, sizeof(buffer), 0, req);
-    assert (ret >= 0);
+    ret = ep[1]->sendAm(check_cb_id, &hdr, sizeof(hdr), (void *)&buffer, sizeof(buffer), 0, req);
+    assert(ret >= 0);
 
-    while (ret == NIXL_IN_PROG){
+    while (ret == NIXL_IN_PROG) {
         ret = w[1].test(req);
         w[0].progress();
     }
@@ -105,15 +104,15 @@ int main()
 
     /* Test second callback */
     bool buffer_freed = false;
-    ret = ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(hdr), big_buffer, 8192, 0, req,
-                        [&buffer_freed](void* request, void *buffer) {
-                            buffer_freed = true;
-                            free(buffer);
-                            ucp_request_free(request);
-                        });
-    assert (ret >= 0);
+    auto deleter = [&buffer_freed](void *request, void *buffer) {
+        buffer_freed = true;
+        free(buffer);
+        ucp_request_free(request);
+    };
+    ret = ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(hdr), big_buffer, 8192, 0, req, deleter);
+    assert(ret >= 0);
 
-    while (ret == NIXL_IN_PROG){
+    while (ret == NIXL_IN_PROG) {
         ret = w[1].test(req);
         w[0].progress();
     }

@@ -102,7 +102,7 @@ private:
     nixl_status_t disconnect_nb();
 
     static void
-    sendAmCallback(void* request, ucs_status_t status, void *user_data);
+    sendAmCallback(void *request, ucs_status_t status, void *user_data);
 
 public:
     void err_cb(ucp_ep_h ucp_ep, ucs_status_t status);
@@ -125,14 +125,18 @@ public:
     nixlUcxEp(const nixlUcxEp&) = delete;
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
-    using amDeleter = std::function<void(void* request, void *buffer)>;
+    using amDeleter = std::function<void(void *request, void *buffer)>;
 
     /* Active message handling */
-    nixl_status_t sendAm(unsigned msg_id,
-                         void* hdr, size_t hdr_len,
-                         void* buffer, size_t len,
-                         uint32_t flags, nixlUcxReq &req,
-                         amDeleter deleter = nullptr);
+    nixl_status_t
+    sendAm(unsigned msg_id,
+           void *hdr,
+           size_t hdr_len,
+           void *buffer,
+           size_t len,
+           uint32_t flags,
+           nixlUcxReq &req,
+           amDeleter deleter = nullptr);
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -192,6 +196,7 @@ private:
     /* Local UCX stuff */
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
+
 public:
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size,

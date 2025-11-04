@@ -306,8 +306,10 @@ private:
     struct Notif {
         std::string agent;
         nixl_blob_t payload;
-        Notif(const std::string& remote_agent, const nixl_blob_t& msg)
-           : agent(remote_agent), payload(msg) {}
+
+        Notif(const std::string &remote_agent, const nixl_blob_t &msg)
+            : agent(remote_agent),
+              payload(msg) {}
     };
     std::optional<Notif> notif;
 
@@ -1099,11 +1101,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
         err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
     }
 
-    uc = std::make_unique<nixlUcxContext>(devs,
-                                          sizeof(nixlUcxIntReq),
-                                          init_params.enableProgTh,
-                                          num_workers,
-                                          init_params.syncMode);
+    uc = std::make_unique<nixlUcxContext>(
+        devs, sizeof(nixlUcxIntReq), init_params.enableProgTh, num_workers, init_params.syncMode);
 
     for (size_t i = 0; i < num_workers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
@@ -1554,8 +1553,10 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         if (ret == NIXL_SUCCESS) {
             nixlUcxReq req;
             auto rmd = (nixlUcxPublicMetadata *)remote[0].metadataP;
-            ret = notifSendPriv(
-                remote_agent, opt_args->notifMsg, &req, rmd->conn->getEp(int_handle->getWorkerId()));
+            ret = notifSendPriv(remote_agent,
+                                opt_args->notifMsg,
+                                &req,
+                                rmd->conn->getEp(int_handle->getWorkerId()));
             if (_retHelper(ret, int_handle, req, rmd->conn)) {
                 return ret;
             }
@@ -1736,16 +1737,23 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     // TODO: replace with mpool for performance
 
     std::string *buffer = new std::string(ser_des.exportStr());
+    auto deleter = [buffer, req](void *request, void *ptr) {
+        delete buffer;
+        if (nullptr == req) {
+            /* Caller is not interested in the request, free it */
+            ucp_request_free(request);
+        }
+    };
+
     nixlUcxReq tmp_req;
-    ret = ep->sendAm(NOTIF_STR, NULL, 0, (void *)buffer->data(), buffer->size(),
-                     UCP_AM_SEND_FLAG_EAGER, tmp_req,
-                     [buffer, req](void *request, void* ptr) {
-                        delete buffer;
-                        if (nullptr == req) {
-                            /* Caller is not interested in the request, free it */
-                            ucp_request_free(request);
-                        }
-                     });
+    ret = ep->sendAm(NOTIF_STR,
+                     NULL,
+                     0,
+                     (void *)buffer->data(),
+                     buffer->size(),
+                     UCP_AM_SEND_FLAG_EAGER,
+                     tmp_req,
+                     deleter);
     if (ret != NIXL_SUCCESS && ret != NIXL_IN_PROG) {
         /* Failed to send active message, delete buffer */
         delete buffer;
@@ -1804,8 +1812,8 @@ nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg) const
-{
+nixl_status_t
+nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
     auto conn = getConnection(remote_agent);
     if (!conn) {
         return NIXL_ERR_NOT_FOUND;

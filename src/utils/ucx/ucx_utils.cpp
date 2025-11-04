@@ -236,23 +236,25 @@ nixl_status_t nixlUcxEp::disconnect_nb()
  * Active message handling
  * =========================================== */
 
-using nixlUcxAmCbCtx = std::pair<void*, nixlUcxEp::amDeleter>;
+using nixlUcxAmCbCtx = std::pair<void *, nixlUcxEp::amDeleter>;
 using nixlUcxAmCbCtxPtr = std::unique_ptr<nixlUcxAmCbCtx>;
 
 void
-nixlUcxEp::sendAmCallback(void* request, ucs_status_t status, void *user_data)
-{
+nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
     nixlUcxAmCbCtx *ctx = (nixlUcxAmCbCtx *)user_data;
     ctx->second(request, ctx->first);
     delete ctx;
 }
 
-nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
-                                void* hdr, size_t hdr_len,
-                                void* buffer, size_t len,
-                                uint32_t flags, nixlUcxReq &req,
-                                amDeleter deleter)
-{
+nixl_status_t
+nixlUcxEp::sendAm(unsigned msg_id,
+                  void *hdr,
+                  size_t hdr_len,
+                  void *buffer,
+                  size_t len,
+                  uint32_t flags,
+                  nixlUcxReq &req,
+                  amDeleter deleter) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
@@ -266,9 +268,8 @@ nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
     nixlUcxAmCbCtxPtr ctx;
     if (deleter) {
         ctx = std::make_unique<nixlUcxAmCbCtx>(buffer, deleter);
-        param.op_attr_mask |= UCP_OP_ATTR_FIELD_CALLBACK |
-                              UCP_OP_ATTR_FIELD_USER_DATA |
-                              UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
+        param.op_attr_mask |=
+            UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA | UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
         param.cb.send = sendAmCallback;
         param.user_data = ctx.get();
     }
@@ -407,8 +408,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                size_t req_size,
                                bool prog_thread,
                                unsigned long num_workers,
-                               nixl_thread_sync_t sync_mode)
-{
+                               nixl_thread_sync_t sync_mode) {
     ucp_params_t ucp_params;
 
     // With strict synchronization model nixlAgent serializes access to backends, with more
