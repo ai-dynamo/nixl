@@ -241,7 +241,7 @@ using nixl_ucx_am_cb_ctx_ptr_t = std::unique_ptr<nixl_ucx_am_cb_ctx_t>;
 
 void
 nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
-    nixl_ucx_am_cb_ctx_t *ctx = (nixl_ucx_am_cb_ctx_t *)user_data;
+    auto ctx = static_cast<nixl_ucx_am_cb_ctx_t *>(user_data);
     ctx->second(request, ctx->first);
     delete ctx;
 }

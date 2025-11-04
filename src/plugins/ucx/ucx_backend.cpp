@@ -329,7 +329,7 @@ public:
 
     void
     append(nixlUcxReq req, ucx_connection_ptr_t conn) {
-        nixlUcxIntReq *req_int = reinterpret_cast<nixlUcxIntReq *>(req);
+        auto req_int = static_cast<nixlUcxIntReq *>(req);
         req_int->setConnection(conn.get());
         requests_.push_back(req_int);
         connections_.insert(conn);
@@ -1555,8 +1555,8 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
             auto rmd = (nixlUcxPublicMetadata *)remote[0].metadataP;
             ret = notifSendPriv(remote_agent,
                                 opt_args->notifMsg,
-                                &req,
-                                rmd->conn->getEp(int_handle->getWorkerId()));
+                                rmd->conn->getEp(int_handle->getWorkerId()),
+                                &req);
             if (_retHelper(ret, int_handle, req, rmd->conn)) {
                 return ret;
             }
@@ -1592,7 +1592,7 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 
     nixlUcxReq req;
     nixl_status_t status =
-        notifSendPriv(notif->agent, notif->payload, &req, conn->getEp(intHandle->getWorkerId()));
+        notifSendPriv(notif->agent, notif->payload, conn->getEp(intHandle->getWorkerId()), &req);
     notif.reset();
     status = _retHelper(status, intHandle, req, conn);
     if (status != NIXL_SUCCESS) {
@@ -1727,8 +1727,8 @@ int nixlUcxEngine::progress() {
 nixl_status_t
 nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
-                             nixlUcxReq *req,
-                             const std::unique_ptr<nixlUcxEp> &ep) const {
+                             const std::unique_ptr<nixlUcxEp> &ep,
+                             nixlUcxReq *req) const {
     nixlSerDes ser_des;
     nixl_status_t ret;
 
@@ -1737,11 +1737,11 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     // TODO: replace with mpool for performance
 
     std::string *buffer = new std::string(ser_des.exportStr());
-    auto deleter = [buffer, req](void *request, void *ptr) {
+    auto deleter = [buffer, req](void *completed_request, void *ptr) {
         delete buffer;
         if (nullptr == req) {
             /* Caller is not interested in the request, free it */
-            ucp_request_free(request);
+            ucp_request_free(completed_request);
         }
     };
 
@@ -1819,7 +1819,7 @@ nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixl_status_t ret = notifSendPriv(remote_agent, msg, nullptr, conn->getEp(getWorkerId()));
+    nixl_status_t ret = notifSendPriv(remote_agent, msg, conn->getEp(getWorkerId()));
     if (ret == NIXL_IN_PROG) {
         ret = NIXL_SUCCESS;
     }
