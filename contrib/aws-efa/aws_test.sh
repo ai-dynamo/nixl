@@ -64,7 +64,7 @@ setup_cmd="set -x && \
     git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && \
     cd nixl && \
     ${GIT_CHECKOUT_CMD}"
-build_cmd=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${UCX_INSTALL_DIR} --buildtype=debug"
+build_cmd=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${UCX_INSTALL_DIR}"
 
 # Add timeout only if TEST_TIMEOUT is set (expects minutes)
 if [ -n "$TEST_TIMEOUT" ]; then
