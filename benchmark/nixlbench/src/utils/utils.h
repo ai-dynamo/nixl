@@ -158,6 +158,7 @@ class xferBenchConfig {
         static int gds_batch_limit;
         static int gds_mt_num_threads;
         static std::string gpunetio_device_list;
+        static std::string gpunetio_oob_list;
         static long page_size;
         static std::string obj_access_key;
         static std::string obj_secret_key;
@@ -174,6 +175,7 @@ class xferBenchConfig {
         static int gusli_max_simultaneous_requests;
         static std::string gusli_config_file;
         static uint64_t gusli_bdev_byte_offset;
+        static std::string gusli_device_security;
 
         static int
         loadFromFlags();
@@ -188,6 +190,21 @@ class xferBenchConfig {
         static bool
         isStorageBackend();
 };
+
+// Shared GUSLI device config used by utils and nixl_worker
+struct GusliDeviceConfig {
+    int device_id;
+    char device_type; // 'F' for file, 'K' for kernel device, 'N' for networked server
+    std::string device_path;
+    std::string security_flags;
+};
+
+// Parser for GUSLI device list: "id:type:path,id:type:path,..."
+// security_list: comma-separated security flags; num_devices: expected device count (validation)
+std::vector<GusliDeviceConfig>
+parseGusliDeviceList(const std::string &device_list,
+                     const std::string &security_list,
+                     int num_devices);
 
 // Timer class for measuring durations at high resolution
 class xferBenchTimer {
