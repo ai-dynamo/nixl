@@ -107,7 +107,9 @@ int main()
     auto deleter = [&buffer_freed](void *request, void *buffer) {
         buffer_freed = true;
         free(buffer);
-        ucp_request_free(request);
+        if (request != nullptr) {
+            ucp_request_free(request);
+        }
     };
     ret = ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(hdr), big_buffer, 8192, 0, req, deleter);
     assert(ret >= 0);

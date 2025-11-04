@@ -1739,7 +1739,7 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
     std::string *buffer = new std::string(ser_des.exportStr());
     auto deleter = [buffer, req](void *completed_request, void *ptr) {
         delete buffer;
-        if (nullptr == req) {
+        if ((req == nullptr) && (completed_request != nullptr)) {
             /* Caller is not interested in the request, free it */
             ucp_request_free(completed_request);
         }
@@ -1747,17 +1747,14 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
 
     nixlUcxReq tmp_req;
     ret = ep->sendAm(NOTIF_STR,
-                     NULL,
+                     nullptr,
                      0,
                      (void *)buffer->data(),
                      buffer->size(),
                      UCP_AM_SEND_FLAG_EAGER,
                      tmp_req,
                      deleter);
-    if (ret != NIXL_SUCCESS && ret != NIXL_IN_PROG) {
-        /* Failed to send active message, delete buffer */
-        delete buffer;
-    } else if (req != nullptr) {
+    if (req != nullptr) {
         *req = tmp_req;
     }
     return ret;

@@ -268,8 +268,7 @@ nixlUcxEp::sendAm(unsigned msg_id,
     nixl_ucx_am_cb_ctx_ptr_t ctx;
     if (deleter) {
         ctx = std::make_unique<nixl_ucx_am_cb_ctx_t>(buffer, deleter);
-        param.op_attr_mask |=
-            UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA | UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
+        param.op_attr_mask |= UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA;
         param.cb.send = sendAmCallback;
         param.user_data = ctx.get();
     }
@@ -281,6 +280,9 @@ nixlUcxEp::sendAm(unsigned msg_id,
         return NIXL_IN_PROG;
     } else {
         req = nullptr;
+        if (deleter) {
+            deleter(nullptr, buffer);
+        }
     }
 
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
