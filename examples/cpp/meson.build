@@ -34,3 +34,7 @@ telemetry_reader = executable('telemetry_reader',
            dependencies: [nixl_dep, nixl_common_deps],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            install: true)
+
+if get_option('build_nixl_ep')
+    subdir('nixl_ep')
+endif
