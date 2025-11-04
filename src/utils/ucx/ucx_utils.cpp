@@ -236,12 +236,12 @@ nixl_status_t nixlUcxEp::disconnect_nb()
  * Active message handling
  * =========================================== */
 
-using nixlUcxAmCbCtx = std::pair<void *, nixlUcxEp::amDeleter>;
-using nixlUcxAmCbCtxPtr = std::unique_ptr<nixlUcxAmCbCtx>;
+using nixl_ucx_am_cb_ctx_t = std::pair<void *, nixlUcxEp::am_deleter_t>;
+using nixl_ucx_am_cb_ctx_ptr_t = std::unique_ptr<nixl_ucx_am_cb_ctx_t>;
 
 void
 nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
-    nixlUcxAmCbCtx *ctx = (nixlUcxAmCbCtx *)user_data;
+    nixl_ucx_am_cb_ctx_t *ctx = (nixl_ucx_am_cb_ctx_t *)user_data;
     ctx->second(request, ctx->first);
     delete ctx;
 }
@@ -254,7 +254,7 @@ nixlUcxEp::sendAm(unsigned msg_id,
                   size_t len,
                   uint32_t flags,
                   nixlUcxReq &req,
-                  amDeleter deleter) {
+                  am_deleter_t deleter) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
@@ -265,9 +265,9 @@ nixlUcxEp::sendAm(unsigned msg_id,
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
     param.flags         = flags;
 
-    nixlUcxAmCbCtxPtr ctx;
+    nixl_ucx_am_cb_ctx_ptr_t ctx;
     if (deleter) {
-        ctx = std::make_unique<nixlUcxAmCbCtx>(buffer, deleter);
+        ctx = std::make_unique<nixl_ucx_am_cb_ctx_t>(buffer, deleter);
         param.op_attr_mask |=
             UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA | UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
         param.cb.send = sendAmCallback;

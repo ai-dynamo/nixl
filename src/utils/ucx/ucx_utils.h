@@ -125,7 +125,7 @@ public:
     nixlUcxEp(const nixlUcxEp&) = delete;
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
-    using amDeleter = std::function<void(void *request, void *buffer)>;
+    using am_deleter_t = std::function<void(void *request, void *buffer)>;
 
     /* Active message handling */
     nixl_status_t
@@ -136,7 +136,7 @@ public:
            size_t len,
            uint32_t flags,
            nixlUcxReq &req,
-           amDeleter deleter = nullptr);
+           am_deleter_t deleter = nullptr);
 
     /* Data access */
     [[nodiscard]] nixl_status_t
