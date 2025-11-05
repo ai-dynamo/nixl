@@ -135,7 +135,7 @@ public:
            void *buffer,
            size_t len,
            uint32_t flags,
-           nixlUcxReq &req,
+           nixlUcxReq *req = nullptr,
            am_deleter_t deleter = nullptr);
 
     /* Data access */

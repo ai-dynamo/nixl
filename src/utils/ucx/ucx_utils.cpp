@@ -253,7 +253,7 @@ nixlUcxEp::sendAm(unsigned msg_id,
                   void *buffer,
                   size_t len,
                   uint32_t flags,
-                  nixlUcxReq &req,
+                  nixlUcxReq *req,
                   am_deleter_t deleter) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
@@ -276,10 +276,11 @@ nixlUcxEp::sendAm(unsigned msg_id,
     ucs_status_ptr_t request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
     if (UCS_PTR_IS_PTR(request)) {
         ctx.release();
-        req = (void*)request;
+        if (req != nullptr) {
+            *req = static_cast<nixlUcxReq>(request);
+        }
         return NIXL_IN_PROG;
     } else {
-        req = nullptr;
         if (deleter) {
             deleter(nullptr, buffer);
         }

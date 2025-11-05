@@ -1730,7 +1730,6 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::unique_ptr<nixlUcxEp> &ep,
                              nixlUcxReq *req) const {
     nixlSerDes ser_des;
-    nixl_status_t ret;
 
     ser_des.addStr("name", localAgent);
     ser_des.addStr("msg", msg);
@@ -1745,19 +1744,14 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
         }
     };
 
-    nixlUcxReq tmp_req;
-    ret = ep->sendAm(NOTIF_STR,
-                     nullptr,
-                     0,
-                     (void *)buffer->data(),
-                     buffer->size(),
-                     UCP_AM_SEND_FLAG_EAGER,
-                     tmp_req,
-                     deleter);
-    if (req != nullptr) {
-        *req = tmp_req;
-    }
-    return ret;
+    return ep->sendAm(NOTIF_STR,
+                      nullptr,
+                      0,
+                      (void *)buffer->data(),
+                      buffer->size(),
+                      UCP_AM_SEND_FLAG_EAGER,
+                      req,
+                      deleter);
 }
 
 ucx_connection_ptr_t

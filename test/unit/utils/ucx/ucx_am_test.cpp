@@ -92,7 +92,7 @@ int main()
     w[0].progress();
 
     /* Test first callback */
-    ret = ep[1]->sendAm(check_cb_id, &hdr, sizeof(hdr), (void *)&buffer, sizeof(buffer), 0, req);
+    ret = ep[1]->sendAm(check_cb_id, &hdr, sizeof(hdr), (void *)&buffer, sizeof(buffer), 0, &req);
     assert(ret >= 0);
 
     while (ret == NIXL_IN_PROG) {
@@ -111,7 +111,7 @@ int main()
             ucp_request_free(request);
         }
     };
-    ret = ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(hdr), big_buffer, 8192, 0, req, deleter);
+    ret = ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(hdr), big_buffer, 8192, 0, &req, deleter);
     assert(ret >= 0);
 
     while (ret == NIXL_IN_PROG) {
@@ -123,5 +123,5 @@ int main()
     std::cout << "second active message complete\n";
 
     //make sure callbacks are complete
-    w[0].progress();
+    while(w[0].progress());
 }
