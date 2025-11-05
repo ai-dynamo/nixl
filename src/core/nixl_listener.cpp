@@ -662,6 +662,10 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
 }
 
 void nixlAgentData::enqueueCommWork(nixl_comm_req_t request){
+    if (agentShutdown) {
+        NIXL_WARN << "Agent shutting down, unable to accept new requests";
+        return;
+    }
     std::lock_guard<std::mutex> lock(commLock);
     commQueue.push_back(std::move(request));
 }
