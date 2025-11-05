@@ -14,7 +14,7 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.06-cuda12.9-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
 
 # UCX argument is either "upstream" (default installed in base image) or "custom" (build from source)
 ARG UCX="upstream"

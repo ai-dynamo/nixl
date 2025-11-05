@@ -280,7 +280,7 @@
           description: "Base Docker image for the container build"
       - string:
           name: "BASE_IMAGE_TAG"
-          default: "25.06-cuda12.9-devel-ubuntu24.04"
+          default: "25.10-cuda13.0-devel-ubuntu24.04"
           description: "Tag for the base Docker image"
       - string:
           name: "TAG_SUFFIX"
@@ -294,7 +294,7 @@
           description: >
             Update the latest tag for this architecture.<br/>
             When enabled, also creates: <code>&lt;base-image-tag&gt;-&lt;arch&gt;-latest</code><br/>
-            Example: <code>25.06-cuda12.9-devel-ubuntu24.04-aarch64-latest</code><br/>
+            Example: <code>25.10-cuda13.0-devel-ubuntu24.04-aarch64-latest</code><br/>
       - string:
           name: "MAIL_TO"
           default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
