@@ -195,8 +195,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
     if (data->useEtcd || cfg.useListenThread) {
         data->commThreadStop = false;
         data->agentShutdown = false;
-        data->commThread =
-            std::thread(&nixlAgentData::commWorker, data.get(), this);
+        data->commThread = std::thread(&nixlAgentData::commWorker, data.get(), std::ref(*this));
     }
 }
 
@@ -209,6 +208,15 @@ nixlAgent::~nixlAgent() {
 
         data->commThreadStop = true;
         if(data->commThread.joinable()) data->commThread.join();
+
+        try {
+            if (data->commThreadException_) {
+                std::rethrow_exception(data->commThreadException_);
+            }
+        }
+        catch (const std::exception &e) {
+            NIXL_WARN << "Communication thread threw an exception: " << e.what();
+        }
 
         // Close remaining connections from comm thread
         for (auto &[remote, fd] : data->remoteSockets) {

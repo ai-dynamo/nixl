@@ -439,8 +439,18 @@ public:
 
 } // unnamed namespace
 
-void nixlAgentData::commWorker(nixlAgent* myAgent){
+void
+nixlAgentData::commWorker(nixlAgent &myAgent) noexcept {
+    try {
+        commWorkerInternal(&myAgent);
+    }
+    catch (...) {
+        commThreadException_ = std::current_exception();
+    }
+}
 
+void
+nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
 #if HAVE_ETCD
     std::unique_ptr<nixlEtcdClient> etcdClient = nullptr;
     // useEtcd is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
