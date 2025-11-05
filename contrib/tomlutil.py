@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -13,25 +15,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[build-system]
-requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest", "build", "setuptools"]
-build-backend = "mesonpy"
+import argparse
 
-[project]
-name = 'nixl-cu12'
-version = '0.7.1'
-description = 'NIXL Python API'
-readme = 'README.md'
-license = {file = 'LICENSE'}
-requires-python = '>=3.9'
-authors = [
-  {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
-]
+import tomlkit
 
-dependencies = ["torch", "numpy"]
+parser = argparse.ArgumentParser()
+parser.add_argument("--wheel-name", type=str, help="Set the project name")
+parser.add_argument("file", type=str, help="The toml file to modify")
+args = parser.parse_args()
 
-[tool.isort]
-profile = "black"
+with open(args.file) as f:
+    doc = tomlkit.parse(f.read())
 
-[tool.meson-python.args]
-setup = ['-Dinstall_headers=false']
+if args.wheel_name:
+    # Set the wheel name
+    # Example:
+    # ```toml
+    # [project]
+    # name = "<wheel_name>"
+    # ```
+    doc["project"]["name"] = args.wheel_name
+
+with open(args.file, "w") as f:
+    f.write(tomlkit.dumps(doc))

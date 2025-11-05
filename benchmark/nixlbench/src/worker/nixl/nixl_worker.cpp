@@ -633,7 +633,17 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
         CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, iov.padded_size),
                                 "Failed to free reserved address");
     } else {
-        CHECK_CUDA_ERROR(cudaFree((void *)iov.addr), "Failed to deallocate CUDA buffer");
+        /*
+         * CUDA streams allow for concurrent execution of kernels and memory operations. However,
+         * memory management functions like cudaFree are implicitly synchronized with all streams to
+         * guarantee safety. This means cudaFree will wait for all kernels (in any stream) that
+         * might use the memory to finish before actually freeing it.
+         * If the application hangs on cudaFree due to kernels running in other streams, switching
+         * to cudaFreeAsync can allow the host to proceed without waiting for the entire device
+         * synchronization.
+         */
+        CHECK_CUDA_ERROR(cudaFreeAsync((void *)iov.addr, 0), "Failed to deallocate CUDA buffer");
+        CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize stream 0");
     }
 }
 #endif /* HAVE_CUDA */
@@ -1087,8 +1097,12 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
 
 // Helper to execute a single transfer iteration
 static inline nixl_status_t
-execSingleTransfer(nixlAgent *agent, nixlXferReqH *req) {
+execSingleTransfer(nixlAgent *agent,
+                   nixlXferReqH *req,
+                   xferBenchTimer &timer,
+                   xferBenchStats &thread_stats) {
     nixl_status_t rc = agent->postXferReq(req);
+    thread_stats.post_duration.add(timer.lap());
     while (NIXL_IN_PROG == rc) {
         rc = agent->getXferStatus(req);
     }
@@ -1156,8 +1170,7 @@ execTransferIterations(nixlAgent *agent,
             }
             total_prepare_duration += timer.lap();
 
-            thread_stats.post_duration.add(timer.lap());
-            nixl_status_t rc = execSingleTransfer(agent, req);
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
@@ -1177,8 +1190,7 @@ execTransferIterations(nixlAgent *agent,
     } else {
         // Standard path: Single request for all iterations
         for (int i = 0; i < num_iter; ++i) {
-            thread_stats.post_duration.add(timer.lap());
-            nixl_status_t rc = execSingleTransfer(agent, req);
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)

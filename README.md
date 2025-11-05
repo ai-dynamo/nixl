@@ -162,6 +162,7 @@ Or build from source:
 ```bash
 # From the root nixl directory
 pip install .
+pip install <name_of_build_dir>/src/bindings/python/nixl-meta/nixl-*.whl
 ```
 
 For Python examples, see [examples/python/](examples/python/).
