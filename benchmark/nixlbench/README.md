@@ -172,7 +172,7 @@ cd nixl/benchmark/nixlbench/contrib
 | `--ucx <path>` | Path to custom UCX source (optional) | Uses base image UCX |
 | `--build-type <type>` | Build type: `debug` or `release` | `release` |
 | `--base-image <image>` | Base Docker image | `nvcr.io/nvidia/cuda-dl-base` |
-| `--base-image-tag <tag>` | Base image tag | `25.03-cuda12.8-devel-ubuntu24.04` |
+| `--base-image-tag <tag>` | Base image tag | `25.06-cuda12.9-devel-ubuntu24.04` |
 | `--arch <arch>` | Target architecture: `x86_64` or `aarch64` | Auto-detected |
 | `--python-versions <versions>` | Python versions (comma-separated) | `3.12` |
 | `--tag <tag>` | Custom Docker image tag | Auto-generated |
@@ -279,8 +279,8 @@ sudo ldconfig
 
 **LibFabric:**
 ```bash
-wget https://github.com/ofiwg/libfabric/releases/download/v2.3.0/libfabric-2.3.0.tar.bz2
-tar xjf libfabric-2.3.0.tar.bz2 && cd libfabric-2.3.0
+wget https://github.com/ofiwg/libfabric/releases/download/v1.21.0/libfabric-1.21.0.tar.bz2
+tar xjf libfabric-1.21.0.tar.bz2 && cd libfabric-1.21.0
 ./configure --prefix=/usr/local --with-cuda=/usr/local/cuda --enable-cuda-dlopen --enable-efa
 make -j$(nproc) && sudo make install
 ```

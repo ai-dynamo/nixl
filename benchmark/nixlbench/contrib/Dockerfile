@@ -14,7 +14,7 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="25.06-cuda12.9-devel-ubuntu24.04"
 
 # UCX argument is either "upstream" (default installed in base image) or "custom" (build from source)
 ARG UCX="upstream"
@@ -114,7 +114,7 @@ ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 ARG BUILD_TYPE="release"
-ARG LIBFABRIC_VERSION="v2.3.0"
+ARG LIBFABRIC_VERSION="v1.21.0"
 ARG NPROC
 
 WORKDIR /workspace
@@ -205,7 +205,10 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-RUN uv pip install .
+RUN CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
+    ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
+    uv pip install . && \
+    uv pip install build/src/bindings/python/nixl-meta/nixl-*.whl
 
 WORKDIR /workspace/nixlbench
 

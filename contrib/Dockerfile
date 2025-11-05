@@ -14,7 +14,7 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.03-cuda12.8-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="25.06-cuda12.9-devel-ubuntu24.04"
 ARG OS
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
@@ -30,7 +30,7 @@ ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
-ARG LIBFABRIC_VERSION="v2.3.0"
+ARG LIBFABRIC_VERSION="v1.21.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 
 # Install build dependencies from Ubuntu repository
