@@ -13,11 +13,23 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 ## Pre-build Distributions
 ### PyPI Wheel
 
-The nixl python API and libraries, including UCX, are available directly through PyPI:
+The nixl python API and libraries, including UCX, are available directly through PyPI.
+
+It can be installed for CUDA 12 with:
 
 ```
-pip install nixl
+pip install nixl[cu12]
 ```
+
+For CUDA 13 with:
+
+```
+pip install nixl[cu13]
+```
+
+For backwards compatibility, `pip install nixl` installs automatically `nixl[cu12]`, continuing to work seamlessly for CUDA 12 users without requiring changes to downstream project dependencies.
+
+If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environment, `nixl-cu13` takes precedence.
 
 ## Prerequisites for source build
 ### Ubuntu:
@@ -30,7 +42,7 @@ pip install nixl
 
 ### Python
 
-`$ pip3 install meson ninja pybind11`
+`$ pip3 install meson ninja pybind11 tomlkit`
 
 ### UCX
 
@@ -151,18 +163,37 @@ $ ninja
 
 NIXL provides Python bindings through pybind11. For detailed Python API documentation, see [docs/python_api.md](docs/python_api.md).
 
-The preferred way to install the Python bindings is through pip:
+The preferred way to install the Python bindings is through pip from PyPI:
 
 ```bash
-pip install nixl
+pip install nixl[cu12]
 ```
 
-Or build from source:
+Or for CUDA 13 with:
 
 ```bash
-# From the root nixl directory
+pip install nixl[cu13]
+```
+
+To build and install the Python bindings from source, you have to build and install separately the platform-specific package and the `nixl` meta-package:
+
+On CUDA 12:
+
+```
 pip install .
-pip install <name_of_build_dir>/src/bindings/python/nixl-meta/nixl-*.whl
+meson setup build
+ninja -C build
+pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
+```
+
+On CUDA 13:
+
+```
+pip install .
+./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
+meson setup build
+ninja -C build
+pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
 
 For Python examples, see [examples/python/](examples/python/).
