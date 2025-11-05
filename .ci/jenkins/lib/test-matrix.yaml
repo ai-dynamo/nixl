@@ -17,34 +17,40 @@
 
 job: nixl-ci-test
 
-# Fail job if one of the steps fails or continue
-failFast: false
+registry_host: harbor.mellanox.com
+registry_auth: nixl_harbor_credentials
+registry_path: /nixl
 
+failFast: false
 timeout_minutes: 240
 
-# label is defined at jenkins slave configuration, we want to run the job on a gpu agent and be able to esaly replace it without having to change this file
 runs_on_agents:
   - {nodeLabel: 'H100'}
   # - {nodeLabel: 'DGX'}
 
+runs_on_dockers:
+  - {
+      file: "contrib/Dockerfile",
+      name: "ubuntu24.04-nixl-base",
+      uri: "$arch/$name",
+      tag: "20251103",
+      build_args: "--target nixl-base --build-arg ARCH=$arch",
+      nodeLabel: "H100"
+    }
+
 matrix:
   axes:
-    image:
-      - nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
     arch:
       - x86_64
     ucx_version:
       - master
       - v1.19.0
 
-taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
-
 env:
-  CONTAINER_WORKSPACE: /workspace
-  INSTALL_DIR: ${CONTAINER_WORKSPACE}/nixl_install
-  # Manual timeout - ci-demo doesn't handle docker exec
+  NIXL_BASE_IMAGE_ENV: "true"
+  NIXL_INSTALL_DIR: /opt/nixl
   TEST_TIMEOUT: 30
-  # NPROC for bare-metal: containers see all host CPUs, need to limit parallelism
+  UCX_TLS: "^shm"
   NPROC: 16
 
 steps:
@@ -52,89 +58,45 @@ steps:
     parallel: false
     run: |
       set +ex
-      # print kernel version
       uname -r
-      # print ofed info
-      ofed_info -s
-      # print nvidia drivers info
-      lsmod | grep nvidia_peermem
-      lsmod | grep gdrdrv
-      lsmod | grep nvidia_fs
-      # print nvidia-smi
-      nvidia-smi
-      nvidia-smi topo -m
-      # print MPS info
-      pgrep -a mps
-      # print compute mode
-      nvidia-smi -q | grep -i "compute mode"
-      # check rdma status
-      ibv_devinfo
-      #ib_write_bw
-
-
-  - name: Build GPU Test Environment
-    parallel: false
-    run: |
-      docker build -t "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" -f .ci/dockerfiles/Dockerfile.gpu_test --build-arg BASE_IMAGE=${image} --build-arg WORKSPACE=${CONTAINER_WORKSPACE} .
-    onfail: docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-
-  - name: Run GPU Test Environment
-    parallel: false
-    run: |
-      docker run -dt --name "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" \
-        --ulimit memlock=-1:-1 \
-        --network=host \
-        --ipc=host \
-        --cap-add=SYS_PTRACE \
-        --gpus all \
-        --device=/dev/infiniband \
-        --device=/dev/gdrdrv \
-        "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-    onfail: |
-      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      ofed_info -s || true
+      lsmod | grep nvidia_peermem || true
+      lsmod | grep gdrdrv || true
+      lsmod | grep nvidia_fs || true
+      nvidia-smi || true
+      nvidia-smi topo -m || true
+      pgrep -a mps || true
+      nvidia-smi -q | grep -i "compute mode" || true
+      ibv_devinfo || true
 
   - name: Build
     parallel: false
     run: |
-      set -ex
-      docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c "UCX_VERSION=${ucx_version} .gitlab/build.sh ${INSTALL_DIR}"
-
-    onfail: |
-      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      UCX_VERSION=${ucx_version} .gitlab/build.sh ${NIXL_INSTALL_DIR}
 
   - name: Test CPP
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
-    onfail: |
-      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
 
   - name: Test Python
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
-    onfail: |
-      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
 
   - name: Test Nixlbench
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_nixlbench.sh ${INSTALL_DIR}"
-    onfail: |
-      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      .gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}
 
   - name: Test Rust
     parallel: false
+    timeout: "${TEST_TIMEOUT}"
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_rust.sh ${INSTALL_DIR}"
-    always: |
-      docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
-      docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
+      .gitlab/test_rust.sh ${NIXL_INSTALL_DIR}
 
 # once this fix is merged we can use the following to stop/kill/rm the container instead of the cleanup command in each step
 # https://github.com/Mellanox/ci-demo/pull/111
