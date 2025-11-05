@@ -123,6 +123,6 @@ int main()
     std::cout << "second active message complete\n";
 
     //make sure callbacks are complete
-    while(w[0].progress())
+    while (w[0].progress())
         ;
 }
