@@ -13,25 +13,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[build-system]
-requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest", "build", "setuptools"]
-build-backend = "mesonpy"
-
-[project]
-name = 'nixl-cu12'
-version = '0.7.1'
-description = 'NIXL Python API'
-readme = 'README.md'
-license = {file = 'LICENSE'}
-requires-python = '>=3.9'
-authors = [
-  {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
-]
-
-dependencies = ["torch", "numpy"]
-
-[tool.isort]
-profile = "black"
-
-[tool.meson-python.args]
-setup = ['-Dinstall_headers=false']
+fs = import('fs')
+fs.copyfile('__init__.py')
