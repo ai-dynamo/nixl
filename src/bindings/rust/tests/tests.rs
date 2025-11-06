@@ -1862,23 +1862,31 @@ fn test_desc_list_safe_get_mut_method() {
 #[test]
 fn test_desc_list_serialize_empty() {
     macro_rules! test_empty {
-        ($list_type:ty, $type_name:expr) => {{
+        ($list_type:ty) => {{
             let empty_list = <$list_type>::new(MemType::Dram).unwrap();
             let serialized = empty_list.serialize().unwrap();
-            assert!(!serialized.is_empty(), "Serialized empty {} should contain metadata", $type_name);
-            println!("Empty {} serialized to {} bytes", $type_name, serialized.len());
+            assert!(
+                !serialized.is_empty(),
+                "Serialized empty {} should contain metadata",
+                std::any::type_name::<$list_type>()
+            );
+            println!(
+                "Empty {} serialized to {} bytes",
+                std::any::type_name::<$list_type>(),
+                serialized.len()
+            );
         }};
     }
 
-    test_empty!(RegDescList, "RegDescList");
-    test_empty!(XferDescList, "XferDescList");
+    test_empty!(RegDescList);
+    test_empty!(XferDescList);
 }
 
 // Test: List with descriptors serializes to larger size than empty list
 #[test]
 fn test_desc_list_serialize_with_data() {
     macro_rules! test_with_data {
-        ($list_type:ty, $type_name:expr) => {{
+        ($list_type:ty) => {{
             let empty_list = <$list_type>::new(MemType::Dram).unwrap();
             let serialized_empty = empty_list.serialize().unwrap();
 
@@ -1887,22 +1895,30 @@ fn test_desc_list_serialize_with_data() {
             list.add_desc(0x2000, 0x200, 1);
             let serialized = list.serialize().unwrap();
 
-            assert!(serialized.len() > serialized_empty.len(),
-                    "{} with descriptors should serialize to larger size: {} > {}",
-                    $type_name, serialized.len(), serialized_empty.len());
-            println!("{} with 2 descriptors serialized to {} bytes", $type_name, serialized.len());
+            assert!(
+                serialized.len() > serialized_empty.len(),
+                "{} with descriptors should serialize to larger size: {} > {}",
+                std::any::type_name::<$list_type>(),
+                serialized.len(),
+                serialized_empty.len()
+            );
+            println!(
+                "{} with 2 descriptors serialized to {} bytes",
+                std::any::type_name::<$list_type>(),
+                serialized.len()
+            );
         }};
     }
 
-    test_with_data!(RegDescList, "RegDescList");
-    test_with_data!(XferDescList, "XferDescList");
+    test_with_data!(RegDescList);
+    test_with_data!(XferDescList);
 }
 
 // Test: Different memory types produce different serializations
 #[test]
 fn test_desc_list_serialize_memory_types() {
     macro_rules! test_memory_types {
-        ($list_type:ty, $type_name:expr) => {{
+        ($list_type:ty) => {{
             let mut list1 = <$list_type>::new(MemType::Vram).unwrap();
             list1.add_desc(0x1000, 0x100, 0);
             let serialized1 = list1.serialize().unwrap();
@@ -1911,19 +1927,24 @@ fn test_desc_list_serialize_memory_types() {
             list2.add_desc(0x1000, 0x100, 0);
             let serialized2 = list2.serialize().unwrap();
 
-            assert_ne!(serialized1, serialized2, "{}: different memory types should serialize differently", $type_name);
+            assert_ne!(
+                serialized1,
+                serialized2,
+                "{}: different memory types should serialize differently",
+                std::any::type_name::<$list_type>()
+            );
         }};
     }
 
-    test_memory_types!(RegDescList, "RegDescList");
-    test_memory_types!(XferDescList, "XferDescList");
+    test_memory_types!(RegDescList);
+    test_memory_types!(XferDescList);
 }
 
 // Test: Deterministic serialization (same descriptors produce same bytes)
 #[test]
 fn test_desc_list_serialize_deterministic() {
     macro_rules! test_deterministic {
-        ($list_type:ty, $type_name:expr) => {{
+        ($list_type:ty) => {{
             let mut list1 = <$list_type>::new(MemType::Vram).unwrap();
             list1.add_desc(0x1000, 0x100, 0);
             list1.add_desc(0x2000, 0x200, 1);
@@ -1934,76 +1955,97 @@ fn test_desc_list_serialize_deterministic() {
             list2.add_desc(0x2000, 0x200, 1);
             let serialized2 = list2.serialize().unwrap();
 
-            assert_eq!(serialized1, serialized2, "{}: same descriptors should serialize identically", $type_name);
+            assert_eq!(
+                serialized1,
+                serialized2,
+                "{}: same descriptors should serialize identically",
+                std::any::type_name::<$list_type>()
+            );
         }};
     }
 
-    test_deterministic!(RegDescList, "RegDescList");
-    test_deterministic!(XferDescList, "XferDescList");
+    test_deterministic!(RegDescList);
+    test_deterministic!(XferDescList);
 }
 
 // Test: Round-trip serialization (serialize then deserialize)
 #[test]
 fn test_desc_list_serialize_round_trip() {
     macro_rules! test_round_trip {
-        ($list_type:ty, $type_name:expr) => {{
+        ($list_type:ty) => {{
             let mut list = <$list_type>::new(MemType::Vram).unwrap();
             list.add_desc(0x1000, 0x100, 0);
             list.add_desc(0x2000, 0x200, 1);
             let serialized = list.serialize().unwrap();
 
             let deserialized = <$list_type>::deserialize(&serialized).unwrap();
-            assert_eq!(list, deserialized, "{}: round-trip should produce equivalent lists", $type_name);
+            assert_eq!(
+                list,
+                deserialized,
+                "{}: round-trip should produce equivalent lists",
+                std::any::type_name::<$list_type>()
+            );
             assert_eq!(deserialized.get_type().unwrap(), MemType::Vram);
             assert_eq!(deserialized.len().unwrap(), 2);
-            println!("{} round-trip successful", $type_name);
+            println!("{} round-trip successful", std::any::type_name::<$list_type>());
         }};
     }
 
-    test_round_trip!(RegDescList, "RegDescList");
-    test_round_trip!(XferDescList, "XferDescList");
+    test_round_trip!(RegDescList);
+    test_round_trip!(XferDescList);
 }
 
 // Test: Empty list round-trip
 #[test]
 fn test_desc_list_serialize_empty_round_trip() {
     macro_rules! test_empty_round_trip {
-        ($list_type:ty, $type_name:expr) => {{
+        ($list_type:ty) => {{
             let empty_list = <$list_type>::new(MemType::Dram).unwrap();
             let serialized = empty_list.serialize().unwrap();
             let deserialized = <$list_type>::deserialize(&serialized).unwrap();
-            assert_eq!(empty_list, deserialized, "{}: empty list round-trip should work", $type_name);
+            assert_eq!(
+                empty_list,
+                deserialized,
+                "{}: empty list round-trip should work",
+                std::any::type_name::<$list_type>()
+            );
         }};
     }
 
-    test_empty_round_trip!(RegDescList, "RegDescList");
-    test_empty_round_trip!(XferDescList, "XferDescList");
+    test_empty_round_trip!(RegDescList);
+    test_empty_round_trip!(XferDescList);
 }
 
 // Test: Deserialization error cases
 #[test]
 fn test_desc_list_deserialize_errors() {
     macro_rules! test_deserialize_errors {
-        ($list_type:ty, $type_name:expr) => {{
+        ($list_type:ty) => {{
             let invalid_data = vec![0xFF, 0xFF, 0xFF];
-            assert!(<$list_type>::deserialize(&invalid_data).is_err(),
-                    "{}: invalid data should return error", $type_name);
+            assert!(
+                <$list_type>::deserialize(&invalid_data).is_err(),
+                "{}: invalid data should return error",
+                std::any::type_name::<$list_type>()
+            );
 
             let empty_data = vec![];
-            assert!(<$list_type>::deserialize(&empty_data).is_err(),
-                    "{}: empty data should return error", $type_name);
+            assert!(
+                <$list_type>::deserialize(&empty_data).is_err(),
+                "{}: empty data should return error",
+                std::any::type_name::<$list_type>()
+            );
         }};
     }
 
-    test_deserialize_errors!(RegDescList, "RegDescList");
-    test_deserialize_errors!(XferDescList, "XferDescList");
+    test_deserialize_errors!(RegDescList);
+    test_deserialize_errors!(XferDescList);
 }
 
 // Test: Order sensitivity (descriptor order matters in serialization)
 #[test]
 fn test_desc_list_serialize_order_sensitivity() {
     macro_rules! test_order_sensitivity {
-        ($list_type:ty, $type_name:expr) => {{
+        ($list_type:ty) => {{
             let mut list1 = <$list_type>::new(MemType::Vram).unwrap();
             list1.add_desc(0x1000, 0x100, 0);
             list1.add_desc(0x2000, 0x200, 1);
@@ -2014,12 +2056,17 @@ fn test_desc_list_serialize_order_sensitivity() {
             list2.add_desc(0x1000, 0x100, 0);
             let serialized2 = list2.serialize().unwrap();
 
-            assert_ne!(serialized1, serialized2, "{}: different order should serialize differently", $type_name);
+            assert_ne!(
+                serialized1,
+                serialized2,
+                "{}: different order should serialize differently",
+                std::any::type_name::<$list_type>()
+            );
         }};
     }
 
-    test_order_sensitivity!(RegDescList, "RegDescList");
-    test_order_sensitivity!(XferDescList, "XferDescList");
+    test_order_sensitivity!(RegDescList);
+    test_order_sensitivity!(XferDescList);
 }
 
 // Test: RegDescList-specific metadata serialization
