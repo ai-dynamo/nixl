@@ -2089,3 +2089,97 @@ fn test_reg_desc_list_serialize_metadata() {
     let deserialized_meta = RegDescList::deserialize(&serialized_meta).unwrap();
     assert_eq!(reg_list_meta, deserialized_meta, "Metadata round-trip should work");
 }
+
+// Test: Serialization with real storage using create_storage_list
+#[test]
+fn test_desc_list_serialize_with_real_storage() {
+    const STORAGE_COUNT: usize = 5;
+    const SERIALIZATION_ITERATIONS: usize = 3;
+
+    // Create agent and backend
+    let (agent, opt_args) =
+        create_agent_with_backend("test_agent").expect("Failed to create agent with backend");
+
+    // Create real storage using helper function
+    let storage_list = create_storage_list(&agent, &opt_args, STORAGE_COUNT);
+
+    // Macro to test serialization/deserialization with multiple iterations
+    macro_rules! test_serialization {
+        ($list_type:ty, $storage_iter:expr) => {{
+            let mut original_list =
+                <$list_type>::new(MemType::Dram).expect("Failed to create descriptor list");
+            for storage in $storage_iter {
+                original_list
+                    .add_storage_desc(storage)
+                    .expect("Failed to add storage descriptor");
+            }
+
+            // Initial serialization
+            let mut current_serialized = original_list
+                .serialize()
+                .expect(&format!("Failed to serialize {}", std::any::type_name::<$list_type>()));
+            println!(
+                "{} with {} storage objects serialized to {} bytes",
+                std::any::type_name::<$list_type>(),
+                STORAGE_COUNT,
+                current_serialized.len()
+            );
+
+            let mut current_list = original_list;
+            let initial_serialized = current_serialized.clone();
+
+            // Perform multiple serialization/deserialization iterations
+            for iteration in 0..SERIALIZATION_ITERATIONS {
+                // Deserialize
+                let deserialized = <$list_type>::deserialize(&current_serialized).expect(
+                    &format!(
+                        "Failed to deserialize {} at iteration {}",
+                        std::any::type_name::<$list_type>(),
+                        iteration
+                    ),
+                );
+
+                // Verify deserialized list equals current list
+                assert_eq!(
+                    current_list,
+                    deserialized,
+                    "{}: Iteration {}: Deserialized list should equal current list",
+                    std::any::type_name::<$list_type>(),
+                    iteration
+                );
+
+                // Verify properties on first iteration
+                if iteration == 0 {
+                    assert_eq!(deserialized.len().unwrap(), STORAGE_COUNT);
+                    assert_eq!(deserialized.get_type().unwrap(), MemType::Dram);
+                }
+
+                // Serialize again
+                let reserialized = deserialized
+                    .serialize()
+                    .expect(&format!("Failed to reserialize at iteration {}", iteration));
+
+                // Verify deterministic serialization (same bytes across iterations)
+                assert_eq!(
+                    initial_serialized,
+                    reserialized,
+                    "{}: Iteration {}: Serialization should produce identical bytes",
+                    std::any::type_name::<$list_type>(),
+                    iteration
+                );
+
+                current_list = deserialized;
+                current_serialized = reserialized;
+            }
+
+            println!(
+                "{} passed {} serialization iterations",
+                std::any::type_name::<$list_type>(),
+                SERIALIZATION_ITERATIONS
+            );
+        }};
+    }
+
+    test_serialization!(XferDescList, storage_list.iter());
+    test_serialization!(RegDescList, storage_list.iter());
+}
