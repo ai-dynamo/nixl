@@ -72,7 +72,7 @@ def nixl_bench_args(func):
     func = click.option(
         "--backend",
         type=str,
-        help="Communication backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] (default: UCX)",
+        help="Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] (default: UCX)",
     )(func)
     func = click.option(
         "--worker_type",

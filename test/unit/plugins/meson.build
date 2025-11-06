@@ -15,7 +15,6 @@
 
 if ucx_dep.found()
     subdir('ucx')
-    subdir('ucx_mo')
 endif
 subdir('posix')
 
