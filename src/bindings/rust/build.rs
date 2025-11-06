@@ -191,17 +191,19 @@ fn build_nixl(cc_builder: &mut cc::Build) {
 fn build_stubs(cc_builder: &mut cc::Build) {
     println!("cargo:warning=Building with stub API - NIXL functions will abort if called");
 
+    cc_builder.shared_flag(true);
     cc_builder.file("stubs.cpp");
-
-    cc_builder.compile("nixl_stubs");
+    cc_builder.compile("nixl");
 
     // Link against C++ standard library only
+    println!("cargo:rustc-link-lib=dylib=nixl");
     println!("cargo:rustc-link-lib=dylib=stdc++");
 
     // Tell cargo to invalidate the built crate whenever the stubs change
     println!("cargo:rerun-if-changed=stubs.cpp");
     println!("cargo:rerun-if-changed=wrapper.h");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    println!("cargo:rustc-link-search=native={}", out_path.display());
     let mut builder = bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg("-std=c++17")
