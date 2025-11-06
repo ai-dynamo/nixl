@@ -213,7 +213,9 @@ fn run_build(use_stub_api: bool) {
         .flag("-Wno-unused-parameter")
         .flag("-Wno-unused-variable");
 
-    if !use_stub_api {
+    let use_stubs = use_stub_api || matches!(env::var("NIXL_STUBS"), Ok(_));
+
+    if !use_stubs {
         build_nixl(&mut cc_builder);
     } else {
         build_stubs(&mut cc_builder);
