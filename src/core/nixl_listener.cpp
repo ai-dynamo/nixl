@@ -106,18 +106,22 @@ sendCommMessage(int fd, const std::string& msg) {
     };
 
     for (size_t i = 0, offset = 0, sent = 0; i < iov_size;) {
-        auto bytes = send(fd, static_cast<char *>(iov[i].iov_base) + offset, iov[i].iov_len - offset, 0);
+        auto bytes = send(fd,
+                          static_cast<char *>(iov[i].iov_base) + offset,
+                          iov[i].iov_len - offset,
+                          MSG_NOSIGNAL);
         if (bytes < 0) {
             if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             }
 
             throw std::runtime_error(
-                    absl::StrFormat("sendCommMessage(fd=%d) %zu/%zu bytes failed, errno=%d",
-                                    fd,
-                                    sent,
-                                    size + sizeof(size),
-                                    errno));
+                absl::StrFormat("sendCommMessage(fd=%d, msg=%s) %zu/%zu bytes failed, errno=%d",
+                                fd,
+                                msg.c_str(),
+                                sent,
+                                size + sizeof(size),
+                                errno));
         }
 
         offset += bytes;
@@ -435,8 +439,18 @@ public:
 
 } // unnamed namespace
 
-void nixlAgentData::commWorker(nixlAgent* myAgent){
+void
+nixlAgentData::commWorker(nixlAgent &myAgent) noexcept {
+    try {
+        commWorkerInternal(&myAgent);
+    }
+    catch (...) {
+        commThreadException_ = std::current_exception();
+    }
+}
 
+void
+nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
 #if HAVE_ETCD
     std::unique_ptr<nixlEtcdClient> etcdClient = nullptr;
     // useEtcd is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
