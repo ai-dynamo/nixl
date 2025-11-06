@@ -191,19 +191,27 @@ fn build_nixl(cc_builder: &mut cc::Build) {
 fn build_stubs(cc_builder: &mut cc::Build) {
     println!("cargo:warning=Building with stub API - NIXL functions will abort if called");
 
+    // Build stub shared library
     cc_builder.shared_flag(true);
     cc_builder.file("stubs.cpp");
     cc_builder.compile("nixl");
 
-    // Link against C++ standard library only
+    // Get output directory where the .so will be placed
+    let out_dir = env::var("OUT_DIR").unwrap();
+    
+    // Add OUT_DIR to library search path FIRST
+    println!("cargo:rustc-link-search=native={}", out_dir);
+    
+    // Then link against libraries (order matters!)
     println!("cargo:rustc-link-lib=dylib=nixl");
     println!("cargo:rustc-link-lib=dylib=stdc++");
 
-    // Tell cargo to invalidate the built crate whenever the stubs change
+    // Tell cargo to invalidate the built crate whenever files change
     println!("cargo:rerun-if-changed=stubs.cpp");
     println!("cargo:rerun-if-changed=wrapper.h");
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    println!("cargo:rustc-link-search=native={}", out_path.display());
+
+    // Generate bindings
+    let out_path = PathBuf::from(&out_dir);
     let mut builder = bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg("-std=c++17")
@@ -212,6 +220,7 @@ fn build_stubs(cc_builder: &mut cc::Build) {
         .clang_arg("-I../../core")
         .clang_arg("-x")
         .clang_arg("c++");
+
     builder
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
