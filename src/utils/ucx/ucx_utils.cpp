@@ -280,10 +280,8 @@ nixlUcxEp::sendAm(unsigned msg_id,
             *req = static_cast<nixlUcxReq>(request);
         }
         return NIXL_IN_PROG;
-    } else {
-        if (deleter) {
-            deleter(nullptr, buffer);
-        }
+    } else if (deleter) {
+        deleter(nullptr, buffer);
     }
 
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));

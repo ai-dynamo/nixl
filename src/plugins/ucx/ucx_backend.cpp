@@ -297,8 +297,8 @@ private:
 
 class nixlUcxBackendH : public nixlBackendReqH {
 private:
-    std::vector<nixlUcxIntReq *> requests_;
     std::set<ucx_connection_ptr_t> connections_;
+    std::vector<nixlUcxIntReq *> requests_;
     nixlUcxWorker *worker;
     size_t worker_id;
 
