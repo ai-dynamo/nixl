@@ -91,13 +91,14 @@ class nixlAgentData {
                            std::hash<std::string>, strEqual>     remoteSections;
 
         // State/methods for listener thread
-        nixlMDStreamListener               *listener;
-        std::map<nixl_socket_peer_t, int>  remoteSockets;
-        std::thread                        commThread;
-        std::vector<nixl_comm_req_t>       commQueue;
-        std::mutex                         commLock;
-        bool                               commThreadStop;
-        bool                               useEtcd;
+        nixlMDStreamListener *listener;
+        std::map<nixl_socket_peer_t, int> remoteSockets;
+        std::thread commThread;
+        std::vector<nixl_comm_req_t> commQueue;
+        std::mutex commLock;
+        std::atomic<bool> commThreadStop;
+        std::atomic<bool> agentShutdown;
+        bool useEtcd;
         std::unique_ptr<nixlTelemetry> telemetry_;
         std::exception_ptr commThreadException_;
 
