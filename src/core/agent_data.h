@@ -99,7 +99,12 @@ class nixlAgentData {
         bool                               commThreadStop;
         bool                               useEtcd;
         std::unique_ptr<nixlTelemetry> telemetry_;
-        void commWorker(nixlAgent* myAgent);
+        std::exception_ptr commThreadException_;
+
+        void
+        commWorker(nixlAgent &myAgent) noexcept;
+        void
+        commWorkerInternal(nixlAgent *myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
         nixl_status_t
