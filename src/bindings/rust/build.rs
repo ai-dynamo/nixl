@@ -188,25 +188,50 @@ fn build_nixl(cc_builder: &mut cc::Build) {
         .expect("Couldn't write bindings!");
 }
 
-fn build_stubs(cc_builder: &mut cc::Build) {
+fn build_stubs(_cc_builder: &mut cc::Build) {
     println!("cargo:warning=Building with stub API - NIXL functions will abort if called");
 
-    // Build stub shared library
-    cc_builder.shared_flag(true);
-    cc_builder.file("stubs.cpp");
-    cc_builder.compile("nixl");
-
-    // Get output directory where the .so will be placed
     let out_dir = env::var("OUT_DIR").unwrap();
+    let obj_file = format!("{}/stubs.o", out_dir);
+    let so_file = format!("{}/libnixl.so", out_dir);
     
-    // Add OUT_DIR to library search path FIRST
+    // Compile stubs.cpp to object file
+    use std::process::Command;
+    let status = Command::new("g++")
+        .args(&["-c", "-fPIC", "-std=c++17"])
+        .arg("-I../../api/cpp")
+        .arg("-I../../infra")
+        .arg("-I../../core")
+        .arg("stubs.cpp")
+        .arg("-o")
+        .arg(&obj_file)
+        .status()
+        .expect("Failed to compile stubs.cpp");
+    
+    if !status.success() {
+        panic!("Failed to compile stubs");
+    }
+    
+    // Link into shared library
+    let status = Command::new("g++")
+        .args(&["-shared", "-o", &so_file])
+        .arg(&obj_file)
+        .arg("-lstdc++")
+        .status()
+        .expect("Failed to link shared library");
+    
+    if !status.success() {
+        panic!("Failed to create shared library");
+    }
+    
+    println!("cargo:warning=Created stub library: {}", so_file);
+    
+    // Add OUT_DIR to library search path
     println!("cargo:rustc-link-search=native={}", out_dir);
-    
-    // Then link against libraries (order matters!)
     println!("cargo:rustc-link-lib=dylib=nixl");
     println!("cargo:rustc-link-lib=dylib=stdc++");
 
-    // Tell cargo to invalidate the built crate whenever files change
+    // Rerun triggers
     println!("cargo:rerun-if-changed=stubs.cpp");
     println!("cargo:rerun-if-changed=wrapper.h");
 
