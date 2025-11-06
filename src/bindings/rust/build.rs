@@ -202,6 +202,14 @@ fn build_stubs(cc_builder: &mut cc::Build) {
     println!("cargo:rerun-if-changed=stubs.cpp");
     println!("cargo:rerun-if-changed=wrapper.h");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let mut builder = bindgen::Builder::default()
+        .header("wrapper.h")
+        .clang_arg("-std=c++17")
+        .clang_arg("-I../../api/cpp")
+        .clang_arg("-I../../infra")
+        .clang_arg("-I../../core")
+        .clang_arg("-x")
+        .clang_arg("c++");
     builder
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
