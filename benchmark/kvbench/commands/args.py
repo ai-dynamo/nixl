@@ -170,7 +170,7 @@ def nixl_bench_args(func):
     func = click.option(
         "--posix_api_type",
         type=str,
-        help="API type for POSIX operations [AIO, URING] (only used with POSIX backend",
+        help="API type for POSIX operations [AIO, URING, POSIXAIO] (only used with POSIX backend",
     )(func)
     func = click.option(
         "--enable_vmm",
