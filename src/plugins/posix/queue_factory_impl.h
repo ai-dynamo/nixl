@@ -21,11 +21,19 @@
 #include "posix_queue.h"
 
 namespace QueueFactory {
-    std::unique_ptr<nixlPosixQueue> createAioQueue(int num_entries, nixl_xfer_op_t operation);
+std::unique_ptr<nixlPosixQueue>
+createPosixAioQueue(int num_entries, nixl_xfer_op_t operation);
 
-    std::unique_ptr<nixlPosixQueue> createUringQueue(int num_entries, nixl_xfer_op_t operation);
+std::unique_ptr<nixlPosixQueue>
+createUringQueue(int num_entries, nixl_xfer_op_t operation);
 
-    bool isUringAvailable();
-};
+std::unique_ptr<nixlPosixQueue>
+createLinuxAioQueue(int num_entries, nixl_xfer_op_t operation);
+
+bool
+isLinuxAioAvailable();
+bool
+isUringAvailable();
+}; // namespace QueueFactory
 
 #endif // QUEUE_FACTORY_IMPL_H

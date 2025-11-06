@@ -31,11 +31,12 @@ class nixlPosixQueue {
         virtual nixl_status_t checkCompleted() = 0;
         virtual nixl_status_t prepIO(int fd, void* buf, size_t len, off_t offset) = 0;
 
-    enum class queue_t {
-        AIO,
-        URING,
-        UNSUPPORTED,
-    };
+        enum class queue_t {
+            AIO,
+            URING,
+            POSIXAIO,
+            UNSUPPORTED,
+        };
 };
 
 #endif // POSIX_QUEUE_H
