@@ -12,17 +12,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-import os
-
-if "NIXL_PLUGIN_DIR" not in os.environ:
-    # name for local installation
-    package_root = os.path.dirname(__file__)
-    plugin_dir = os.path.join(package_root, ".nixl.mesonpy.libs/plugins/")
-
-    # fallback for PyPI installation
-    if not os.path.isdir(plugin_dir):
-        plugin_dir = os.path.join(package_root, ".nixl_pybind.mesonpy.libs/plugins/")
-
-    if os.path.isdir(plugin_dir):
-        os.environ["NIXL_PLUGIN_DIR"] = plugin_dir
