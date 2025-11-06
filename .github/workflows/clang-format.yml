@@ -16,9 +16,10 @@ jobs:
     - name: Check clang-format on changed lines
       run: |
         FILE_PATTERN='\.(cpp|h|cc|c|cxx|hpp|cu|cuh)$'
+        EXCLUDED_PATTERN='benchmark/nixlbench/src/utils/external/'
 
         echo "### Modified C/C++ files:"
-        FILES=$(git diff --name-only HEAD^1 HEAD | grep -E "$FILE_PATTERN") || true
+        FILES=$(git diff --name-only HEAD^1 HEAD | grep -E "$FILE_PATTERN" | grep -vE "$EXCLUDED_PATTERN") || true
         [ -z "$FILES" ] && echo "(none)" || echo "$FILES"
 
         echo "### clang format errors:"
