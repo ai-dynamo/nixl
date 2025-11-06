@@ -481,7 +481,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 
 **POSIX Backend:**
 ```
---posix_api_type TYPE      # API type for POSIX operations [AIO, URING] (default: AIO)
+--posix_api_type TYPE      # API type for POSIX operations [AIO, URING, POSIXAIO] (default: AIO)
 ```
 
 **GPUNETIO Backend:**
