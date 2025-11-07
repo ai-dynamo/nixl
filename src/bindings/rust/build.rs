@@ -108,6 +108,7 @@ fn build_nixl(cc_builder: &mut cc::Build) {
 
     // Add all possible library paths
     println!("cargo:rustc-link-search=native={}", nixl_lib_path);
+    println!("cargo:rustc-link-search=native={}", nixl_root_path);
     println!("cargo:rustc-link-search=native={}/lib", nixl_root_path);
     println!("cargo:rustc-link-search=native={}/lib64", nixl_root_path);
     println!("cargo:rustc-link-search=native={}/lib/x86_64-linux-gnu", nixl_root_path);
