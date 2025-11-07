@@ -59,7 +59,7 @@ steps:
     parallel: false
     timeout: "${TEST_TIMEOUT}"
     run: |
-      .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
+      for i in $(seq 1 30); do .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR} ; done
 
   - name: Test Python
     parallel: false
