@@ -13,9 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use os_info;
 use std::env;
 use std::path::PathBuf;
-use os_info;
 
 fn get_lib_path(nixl_root_path: &str, arch: &str) -> String {
     let os_info = os_info::get();
@@ -77,14 +77,30 @@ fn get_nixl_libs() -> Option<Vec<pkg_config::Library>> {
         pkg_config::probe_library("etcd-cpp-api"),
         pkg_config::probe_library("ucx"),
     ) {
-        (Ok(nixl), Ok(nixl_build), Ok(nixl_common), Ok(stream), Ok(serdes), Ok(ucx_utils), Ok(etcd), Ok(ucx)) => {
-            Some(vec![nixl, nixl_build, nixl_common, stream, serdes, ucx_utils, etcd, ucx])
-        }
+        (
+            Ok(nixl),
+            Ok(nixl_build),
+            Ok(nixl_common),
+            Ok(stream),
+            Ok(serdes),
+            Ok(ucx_utils),
+            Ok(etcd),
+            Ok(ucx),
+        ) => Some(vec![
+            nixl,
+            nixl_build,
+            nixl_common,
+            stream,
+            serdes,
+            ucx_utils,
+            etcd,
+            ucx,
+        ]),
         _ => None,
     }
 }
 
-fn build_nixl(cc_builder: &mut cc::Build) {
+fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     let nixl_root_path =
         env::var("NIXL_PREFIX").unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
 
@@ -94,7 +110,7 @@ fn build_nixl(cc_builder: &mut cc::Build) {
     let nixl_include_path = format!("{}/include", nixl_root_path);
     let nixl_include_paths = [
         &nixl_include_path,
-        "../../api/cpp",
+        //"../../api/cpp",
         "../../infra",
         "../../core",
         "/usr/include",
@@ -110,7 +126,10 @@ fn build_nixl(cc_builder: &mut cc::Build) {
     println!("cargo:rustc-link-search=native={}", nixl_lib_path);
     println!("cargo:rustc-link-search=native={}/lib", nixl_root_path);
     println!("cargo:rustc-link-search=native={}/lib64", nixl_root_path);
-    println!("cargo:rustc-link-search=native={}/lib/x86_64-linux-gnu", nixl_root_path);
+    println!(
+        "cargo:rustc-link-search=native={}/lib/x86_64-linux-gnu",
+        nixl_root_path
+    );
 
     // Try to use pkg-config if available
     if let Some(libs) = get_nixl_libs() {
@@ -124,10 +143,7 @@ fn build_nixl(cc_builder: &mut cc::Build) {
         println!("cargo:warning=pkg-config not available, using manual library paths");
     }
 
-    cc_builder
-        .file("wrapper.cpp")
-        .includes(nixl_include_paths);
-
+    cc_builder.file("wrapper.cpp").includes(nixl_include_paths);
 
     println!("cargo:rustc-link-search={}", nixl_lib_path);
 
@@ -138,10 +154,10 @@ fn build_nixl(cc_builder: &mut cc::Build) {
     }
 
     // Compile the wrapper C++ code
-    cc_builder.compile("nixl_wrapper");
+    cc_builder.try_compile("nixl_wrapper")?;
 
     // Get the output path for bindings
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let out_path = PathBuf::from(env::var("OUT_DIR")?);
 
     // Generate bindings with minimal configuration
     let mut builder = bindgen::Builder::default()
@@ -182,9 +198,10 @@ fn build_nixl(cc_builder: &mut cc::Build) {
     builder
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
-        .expect("Unable to generate bindings")
-        .write_to_file(out_path.join("bindings.rs"))
-        .expect("Couldn't write bindings!");
+        .map_err(|_| anyhow::anyhow!("Unable to generate bindings"))?
+        .write_to_file(out_path.join("bindings.rs"))?;
+
+    Ok(())
 }
 
 fn build_stubs(cc_builder: &mut cc::Build) {
@@ -200,20 +217,55 @@ fn build_stubs(cc_builder: &mut cc::Build) {
     // Tell cargo to invalidate the built crate whenever the stubs change
     println!("cargo:rerun-if-changed=stubs.cpp");
     println!("cargo:rerun-if-changed=wrapper.h");
+
+    // Get the output path for bindings
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    // Generate bindings with minimal configuration
+    bindgen::Builder::default()
+        .header("wrapper.h")
+        .clang_arg("-std=c++17")
+        .clang_arg("-x")
+        .clang_arg("c++")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .generate()
+        .expect("Unable to generate bindings")
+        .write_to_file(out_path.join("bindings.rs"))
+        .expect("Couldn't write bindings!");
 }
 
-fn run_build(use_stub_api: bool) {
-    let mut cc_builder = cc::Build::new();
-    cc_builder
+fn create_builder() -> cc::Build {
+    let mut builder = cc::Build::new();
+    builder
         .cpp(true)
         .compiler("g++")
         .flag("-std=c++17")
         .flag("-fPIC")
         .flag("-Wno-unused-parameter")
         .flag("-Wno-unused-variable");
+    builder
+}
+
+fn run_build(use_stub_api: bool) {
+    let mut cc_builder = create_builder();
 
     if !use_stub_api {
-        build_nixl(&mut cc_builder);
+        let allow_fallback = env::var("NIXL_ALLOW_STUBS_FALLBACK")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+
+        if let Err(e) = build_nixl(&mut cc_builder) {
+            if allow_fallback {
+                println!(
+                    "cargo:warning=NIXL build failed: {}, falling back to stub API",
+                    e
+                );
+                let mut stub_builder = create_builder();
+                build_stubs(&mut stub_builder);
+            } else {
+                panic!("Failed to build NIXL: {}", e);
+            }
+        }
     } else {
         build_stubs(&mut cc_builder);
     }
