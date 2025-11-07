@@ -46,6 +46,7 @@ env
 nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
+cat /sys/devices/virtual/dmi/id/product_name || true
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
@@ -59,17 +60,14 @@ sleep 5
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
-for i in $(seq 1 10); do
-    ./bin/desc_example
-    ./bin/agent_example
-    ./bin/nixl_example
-    ./bin/nixl_etcd_example
-    ./bin/ucx_backend_test
-done
-# Skip UCX_MO backend test on GPU worker, fails VRAM transfers
-if ! $HAS_GPU ; then
-    ./bin/ucx_mo_backend_test
+./bin/desc_example
+./bin/agent_example
+./bin/nixl_example
+if $TEST_LIBFABRIC ; then
+    ./bin/nixl_example LIBFABRIC
 fi
+./bin/nixl_etcd_example
+./bin/ucx_backend_test
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
 sleep 1
@@ -81,7 +79,7 @@ kill -s INT $telePID
 # POSIX test disabled until we solve io_uring and Docker compatibility
 
 ./bin/nixl_posix_test -n 128 -s 1048576
-
+./bin/nixl_gusli_test -n 4 -s 16
 ./bin/ucx_backend_multi
 ./bin/serdes_test
 

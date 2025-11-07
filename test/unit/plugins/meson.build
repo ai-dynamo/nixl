@@ -15,7 +15,6 @@
 
 if ucx_dep.found()
     subdir('ucx')
-    subdir('ucx_mo')
 endif
 subdir('posix')
 
@@ -46,4 +45,11 @@ hf3fs_lib_file = 'hf3fs_api_shared'
 hf3fs_lib_found = cc.find_library(hf3fs_lib_file, dirs: [hf3fs_lib_path], required: false)
 if hf3fs_lib_found.found()
     subdir('hf3fs')
+endif
+
+gusli_lib_path = '/usr/lib/'
+gusli_lib_file = 'gusli_clnt'
+gusli_lib_found = cc.find_library(gusli_lib_file, dirs: [gusli_lib_path], required: false)
+if gusli_lib_found.found()
+    subdir('gusli')
 endif

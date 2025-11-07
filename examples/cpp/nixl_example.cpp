@@ -21,6 +21,8 @@
 #include <sys/time.h>
 
 #include "nixl.h"
+#include "test_utils.h"
+
 
 std::string agent1("Agent001");
 std::string agent2("Agent002");
@@ -29,7 +31,7 @@ void check_buf(void* buf, size_t len) {
 
     // Do some checks on the data.
     for(size_t i = 0; i<len; i++){
-        assert (((uint8_t*) buf)[i] == 0xbb);
+        nixl_exit_on_failure((((uint8_t *)buf)[i] == 0xbb), "Data mismatch!", agent1);
     }
 }
 
@@ -64,10 +66,16 @@ void printParams(const nixl_b_params_t& params, const nixl_mem_list_t& mems) {
     }
 }
 
-int main()
-{
+int
+main(int argc, char **argv) {
     nixl_status_t ret1, ret2;
     std::string ret_s1, ret_s2;
+
+    // Backend name can be provided as the first CLI argument; default to "UCX"
+    std::string backend = "UCX";
+    if (argc > 1) {
+        backend = argv[1];
+    }
 
     // Example: assuming two agents running on the same machine,
     // with separate memory regions in DRAM
@@ -83,39 +91,40 @@ int main()
     std::vector<nixl_backend_t> plugins;
 
     ret1 = A1.getAvailPlugins(plugins);
-    assert (ret1 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to get available plugins", agent1);
 
     std::cout << "Available plugins:\n";
 
     for (nixl_backend_t b: plugins)
         std::cout << b << "\n";
 
-    ret1 = A1.getPluginParams("UCX", mems1, init1);
-    ret2 = A2.getPluginParams("UCX", mems2, init2);
+    std::cout << "Using backend: " << backend << "\n";
+    ret1 = A1.getPluginParams(backend, mems1, init1);
+    ret2 = A2.getPluginParams(backend, mems2, init2);
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to get plugin params", agent1);
+    nixl_exit_on_failure(ret2, "Failed to get plugin params", agent2);
 
     std::cout << "Params before init:\n";
     printParams(init1, mems1);
     printParams(init2, mems2);
 
-    nixlBackendH* ucx1, *ucx2;
-    ret1 = A1.createBackend("UCX", init1, ucx1);
-    ret2 = A2.createBackend("UCX", init2, ucx2);
+    nixlBackendH *bknd1, *bknd2;
+    ret1 = A1.createBackend(backend, init1, bknd1);
+    ret2 = A2.createBackend(backend, init2, bknd2);
 
     nixl_opt_args_t extra_params1, extra_params2;
-    extra_params1.backends.push_back(ucx1);
-    extra_params2.backends.push_back(ucx2);
+    extra_params1.backends.push_back(bknd1);
+    extra_params2.backends.push_back(bknd2);
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to create " + backend + " backend", agent1);
+    nixl_exit_on_failure(ret2, "Failed to create " + backend + " backend", agent2);
 
-    ret1 = A1.getBackendParams(ucx1, mems1, init1);
-    ret2 = A2.getBackendParams(ucx2, mems2, init2);
+    ret1 = A1.getBackendParams(bknd1, mems1, init1);
+    ret2 = A2.getBackendParams(bknd2, mems2, init2);
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to get " + backend + " backend params", agent1);
+    nixl_exit_on_failure(ret2, "Failed to get " + backend + " backend params", agent2);
 
     std::cout << "Params after init:\n";
     printParams(init1, mems1);
@@ -152,28 +161,24 @@ int main()
     // dlist1.print();
     // dlist2.print();
 
-    // sets the metadata field to a pointer to an object inside the ucx_class
     ret1 = A1.registerMem(dlist1, &extra_params1);
     ret2 = A2.registerMem(dlist2, &extra_params2);
-
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to register memory", agent1);
+    nixl_exit_on_failure(ret2, "Failed to register memory", agent2);
 
     std::string meta1;
     ret1 = A1.getLocalMD(meta1);
     std::string meta2;
     ret2 = A2.getLocalMD(meta2);
-
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to get local MD", agent1);
+    nixl_exit_on_failure(ret2, "Failed to get local MD", agent2);
 
     std::cout << "Agent1's Metadata: " << meta1 << "\n";
     std::cout << "Agent2's Metadata: " << meta2 << "\n";
 
     ret1 = A1.loadRemoteMD (meta2, ret_s1);
 
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to load remote MD", agent1);
 
     size_t req_size = 8;
     size_t dst_offset = 8;
@@ -198,9 +203,10 @@ int main()
     extra_params1.notifMsg = "notification";
     extra_params1.hasNotif = true;
     ret1 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_dst_descs, agent2, req_handle, &extra_params1);
-    assert (ret1 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to create Xfer Req", agent1);
 
     nixl_status_t status = A1.postXferReq(req_handle);
+    nixl_exit_on_failure((status >= NIXL_SUCCESS), "Failed to post Xfer Req", agent1);
 
     std::cout << "Transfer was posted\n";
 
@@ -210,14 +216,16 @@ int main()
     while (status != NIXL_SUCCESS || n_notifs == 0) {
         if (status != NIXL_SUCCESS) status = A1.getXferStatus(req_handle);
         if (n_notifs == 0) ret2 = A2.getNotifs(notif_map);
-        assert (status >= 0);
-        assert (ret2 == NIXL_SUCCESS);
+        nixl_exit_on_failure((status >= NIXL_SUCCESS), "Failed to post Xfer Req", agent1);
+        nixl_exit_on_failure(ret2, "Failed to get notifs", agent2);
         n_notifs = notif_map.size();
     }
 
     std::vector<std::string> agent1_notifs = notif_map[agent1];
-    assert (agent1_notifs.size() == 1);
-    assert (agent1_notifs.front() == "notification");
+    nixl_exit_on_failure((agent1_notifs.size() == 1), "Incorrect notif size", agent1);
+    nixl_exit_on_failure(
+        (agent1_notifs.front() == "notification"), "Incorrect notification", agent1);
+
     notif_map[agent1].clear(); // Redundant, for testing
     notif_map.clear();
     n_notifs = 0;
@@ -225,16 +233,16 @@ int main()
     std::cout << "Transfer verified\n";
 
     ret1 = A1.releaseXferReq(req_handle);
-    assert (ret1 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to release Xfer Req", agent1);
 
     ret1 = A1.deregisterMem(dlist1, &extra_params1);
     ret2 = A2.deregisterMem(dlist2, &extra_params2);
-    assert (ret1 == NIXL_SUCCESS);
-    assert (ret2 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to deregister memory", agent1);
+    nixl_exit_on_failure(ret2, "Failed to deregister memory", agent2);
 
     //only initiator should call invalidate
     ret1 = A1.invalidateRemoteMD(agent2);
-    assert (ret1 == NIXL_SUCCESS);
+    nixl_exit_on_failure(ret1, "Failed to invalidate remote MD", agent1);
 
     free(addr1);
     free(addr2);

@@ -16,32 +16,37 @@
  */
 
 #include "backend/backend_plugin.h"
-#include "ucx_mo_backend.h"
-#include "ucx_utils.h"
-
-namespace {
-nixl_b_params_t
-get_ucx_mo_options() {
-    nixl_b_params_t params = get_ucx_backend_common_options();
-    params["num_ucx_engines"] = "8";
-    return params;
-}
-} // namespace
+#include "gusli_backend.h"
 
 // Plugin type alias for convenience
-using ucx_mo_plugin_t = nixlBackendPluginCreator<nixlUcxMoEngine>;
+using gusli_plugin_t = nixlBackendPluginCreator<nixlGusliEngine>;
 
-#ifdef STATIC_PLUGIN_UCX_MO
+[[nodiscard]] nixl_b_params_t
+get_gusli_backend_options() {
+    nixl_b_params_t params;
+    params["client_name"] = "";
+    params["max_num_simultaneous_requests"] = "256";
+    params["config_file"] = "";
+    return params;
+}
+
+#ifdef STATIC_PLUGIN_GUSLI
 nixlBackendPlugin *
-createStaticUCX_MOPlugin() {
-    return ucx_mo_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "UCX_MO", "0.1.0", get_ucx_mo_options(), {DRAM_SEG, VRAM_SEG});
+createStaticGusliPlugin() {
+    return gusli_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                  "GUSLI",
+                                  "0.1.0",
+                                  get_gusli_backend_options(),
+                                  {BLK_SEG, DRAM_SEG});
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return ucx_mo_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "UCX_MO", "0.1.0", get_ucx_mo_options(), {DRAM_SEG, VRAM_SEG});
+    return gusli_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                  "GUSLI",
+                                  "0.1.0",
+                                  get_gusli_backend_options(),
+                                  {BLK_SEG, DRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
