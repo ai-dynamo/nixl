@@ -52,6 +52,15 @@ else
     message('liburing not found, building with AIO support only')
 endif
 
+if linux_aio
+    compile_defs += ['-DHAVE_LINUXAIO']
+    posix_sources += ['linux_aio_queue.cpp']
+    plugin_link_args += ['-laio']
+    message('Linux AIO found, adding Linux AIO support')
+else
+    message('Linux AIO not found, building with POSIX AIO support only')
+endif
+
 if 'POSIX' in static_plugins
     posix_backend_lib = static_library('POSIX',
         posix_sources,

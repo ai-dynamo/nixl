@@ -35,6 +35,8 @@ struct xferFileState {
     uint64_t offset;
 };
 
+// Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
+
 class xferBenchNixlWorker: public xferBenchWorker {
     private:
         nixlAgent* agent;
@@ -42,6 +44,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
         nixl_mem_t seg_type;
         std::vector<xferFileState> remote_fds;
         std::vector<std::vector<xferBenchIOV>> remote_iovs;
+        std::vector<GusliDeviceConfig> gusli_devices;
+
     public:
         xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices);
         ~xferBenchNixlWorker();  // Custom destructor to clean up resources
@@ -81,6 +85,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
         initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
         void
         cleanupBasicDescObj(xferBenchIOV &basic_desc);
+        std::optional<xferBenchIOV>
+        initBasicDescBlk(size_t buffer_size, int mem_dev_id);
+        void
+        cleanupBasicDescBlk(xferBenchIOV &basic_desc);
 };
 
 #endif // __NIXL_WORKER_H

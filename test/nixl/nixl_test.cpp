@@ -22,7 +22,7 @@
 #include <nixl_descriptors.h>
 #include <nixl_params.h>
 #include <nixl.h>
-#include <cassert>
+#include "test_utils.h"
 #include "stream/metadata_stream.h"
 #include "serdes/serdes.h"
 #include <mutex>
@@ -83,11 +83,14 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
 
     /** Only send desc list */
     nixlSerDes serdes;
-    assert(dram_for_ucx.trim().serialize(&serdes) == NIXL_SUCCESS);
+    nixl_status_t st = dram_for_ucx.trim().serialize(&serdes);
+    nixl_exit_on_failure(st, "Failed to serialize registry dlist");
 
     std::cout << "Thread " << thread_id << " Wait for initiator and then send xfer descs\n";
     std::string message = serdes.exportStr();
-    while (agent.genNotif(initiator, message, extra_params) != NIXL_SUCCESS);
+    while (agent.genNotif(initiator, message, extra_params) != NIXL_SUCCESS) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
     std::cout << "Thread " << thread_id << " End Control Path metadata exchanges\n";
 
     std::cout << "Thread " << thread_id << " Start Data Path Exchanges\n";
@@ -118,6 +121,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
 static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
                           const std::string &target_ip, int target_port, int thread_id,
                           SharedNotificationState &shared_state) {
+    nixl_status_t st;
     nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
     auto addrs = initMem(agent, dram_for_ucx, extra_params, MEM_VAL);
 
@@ -128,9 +132,11 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
     md_extra_params.ipAddr = target_ip;
     md_extra_params.port = target_port;
 
-    agent.fetchRemoteMD(target, &md_extra_params);
+    st = agent.fetchRemoteMD(target, &md_extra_params);
+    nixl_exit_on_failure(st, "Failed to fetch remote MD");
 
-    agent.sendLocalMD(&md_extra_params);
+    st = agent.sendLocalMD(&md_extra_params);
+    nixl_exit_on_failure(st, "Failed to send local MD");
 
     // Wait for notifications and populate shared state
     while (true) {
@@ -143,7 +149,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 
         nixl_notifs_t notifs;
         nixl_status_t ret = agent.getNotifs(notifs, extra_params);
-        assert(ret >= 0);
+        nixl_exit_on_failure(ret, "Failed to get notifs");
 
         if (notifs.size() > 0) {
             std::lock_guard<std::mutex> lock(shared_state.mtx);
@@ -193,8 +199,9 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 
     while (ret != NIXL_SUCCESS) {
         ret = agent.getXferStatus(treq);
-        assert(ret >= 0);
+        nixl_exit_on_failure((ret >= NIXL_SUCCESS), "Failed to get transfer status");
     }
+
     std::cout << "Thread " << thread_id << " Completed Sending Data using UCX backend\n";
     agent.releaseXferReq(treq);
     agent.invalidateLocalMD(&md_extra_params);

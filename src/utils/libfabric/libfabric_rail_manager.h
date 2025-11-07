@@ -138,14 +138,15 @@ public:
     /** Insert addresses into address vectors for all rails of specified type
      * @param rail_type Type of rails to operate on (DATA or CONTROL)
      * @param endpoints Remote endpoint addresses to insert
-     * @param fi_addrs_out Libfabric address handles for inserted endpoints
+     * @param fi_addrs_out Libfabric address handles for inserted endpoints,
+     *                     indexed by local rail id.
      * @param ep_names_out Local endpoint names for reference
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
     insertAllAddresses(RailType rail_type,
                        const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
-                       std::vector<fi_addr_t> &fi_addrs_out,
+                       std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs_out,
                        std::vector<char *> &ep_names_out);
     /** Clean up connection resources for specified rail type
      * @param rail_type Type of rails to clean up (DATA or CONTROL)
@@ -163,6 +164,7 @@ public:
      * @param selected_rails Rails to use for the transfer
      * @param local_mrs Local memory registrations
      * @param remote_keys Remote access keys
+     * @param remote_selected_endpoints Selected remote endpoints, where remote keys are registered
      * @param dest_addrs Destination addresses for each rail
      * @param agent_idx Remote agent index for immediate data
      * @param completion_callback Callback for completion notification
@@ -177,7 +179,8 @@ public:
                              const std::vector<size_t> &selected_rails,
                              const std::vector<struct fid_mr *> &local_mrs,
                              const std::vector<uint64_t> &remote_keys,
-                             const std::vector<fi_addr_t> &dest_addrs,
+                             const std::vector<size_t> &remote_selected_endpoints,
+                             const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t agent_idx,
                              std::function<void()> completion_callback,
                              BinaryNotification *binary_notif);
@@ -260,12 +263,14 @@ public:
     serializeMemoryKeys(const std::vector<uint64_t> &keys, void *buffer, std::string &str) const;
     /** Deserialize memory keys and remote address
      * @param serialized_data Serialized memory information
+     * @param num_keys Number of keys
      * @param keys_out Remote access keys for all rails
      * @param remote_addr_out Remote buffer address
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
     deserializeMemoryKeys(const std::string &serialized_data,
+                          const size_t num_keys,
                           std::vector<uint64_t> &keys_out,
                           uint64_t &remote_addr_out) const;
     // SerDes-based Connection Info Serialization
@@ -322,7 +327,6 @@ private:
     deserializeRailEndpoints(
         nixlSerDes &ser_des,
         const std::string &key_prefix,
-        size_t expected_count,
         std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints_out) const;
 };
 

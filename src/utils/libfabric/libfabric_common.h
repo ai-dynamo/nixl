@@ -34,7 +34,7 @@
 
 // Libfabric configuration constants
 #define NIXL_LIBFABRIC_DEFAULT_CONTROL_RAILS 1
-#define NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_SEC 1
+#define NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_MS 1000
 #define NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD (128 * 1024) // 128KB
 #define LF_EP_NAME_MAX_LEN 56
 
@@ -42,6 +42,14 @@
 #define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 1024 // SEND/RECV operations (1:1 with buffers)
 #define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/read operations (no buffers)
 #define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192
+
+// Retry configuration constants
+#define NIXL_LIBFABRIC_MAX_RETRIES 10
+#define NIXL_LIBFABRIC_EFA_RETRY_DELAY_US 100
+#define NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US 1000
+#define NIXL_LIBFABRIC_BASE_RETRY_DELAY_US 1000 // Base 1ms delay between retries
+#define NIXL_LIBFABRIC_MAX_RETRY_DELAY_US 100000 // Max 100ms delay between retries
+#define NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS 100 // Log every N attempts to avoid spam
 
 // The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
 // | 4-bit MSG TYPE flag | 8-bit agent index | 16-bit XFER_ID | 4-bit SEQ_ID |

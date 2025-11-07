@@ -118,7 +118,7 @@ These arguments are used by both `plan` and `profile` commands:
 | -------- | ----------- |
 | `--source` | Source of the nixl descriptors [file, memory, gpu] (default: file) |
 | `--destination` | Destination of the nixl descriptors [file, memory, gpu] (default: memory) |
-| `--backend` | Communication backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] (default: UCX) |
+| `--backend` | Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] (default: UCX) |
 | `--worker_type` | Worker to use to transfer data [nixl, nvshmem] (default: nixl) |
 | `--initiator_seg_type` | Memory segment type for initiator [DRAM, VRAM] (default: DRAM) |
 | `--target_seg_type` | Memory segment type for target [DRAM, VRAM] (default: DRAM) |

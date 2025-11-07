@@ -16,16 +16,12 @@
  */
 #pragma once
 
-
-#ifdef __cplusplus
-#include <cstdbool>
-#include <cstddef>
-#include <cstdint>
-extern "C" {
-#else
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 // Status codes for our C API
@@ -312,7 +308,6 @@ nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist,
                              uint64_t dev_id,
                              const void *metadata,
                              size_t metadata_len);
-nixl_capi_status_t nixl_capi_reg_dlist_len(nixl_capi_reg_dlist_t dlist, size_t* len);
 nixl_capi_status_t nixl_capi_reg_dlist_desc_count(nixl_capi_reg_dlist_t dlist, size_t* count);
 nixl_capi_status_t nixl_capi_reg_dlist_is_empty(nixl_capi_reg_dlist_t dlist, bool* is_empty);
 nixl_capi_status_t nixl_capi_reg_dlist_trim(nixl_capi_reg_dlist_t dlist);
