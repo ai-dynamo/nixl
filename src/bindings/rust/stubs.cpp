@@ -533,6 +533,17 @@ nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
 }
 
 nixl_capi_status_t
+nixl_capi_estimate_xfer_cost(nixl_capi_agent_t agent,
+                             nixl_capi_xfer_req_t req_hndl,
+                             nixl_capi_opt_args_t opt_args,
+                             int64_t *duration_us,
+                             int64_t *err_margin_us,
+                             nixl_capi_cost_t *method)
+{
+  return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
 nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req)
 {
   return nixl_capi_stub_abort();
@@ -640,7 +651,7 @@ nixl_capi_query_mem(nixl_capi_agent_t agent,
 nixl_capi_status_t
 nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
-                             nixl_capi_params_t *params)
+                             nixl_capi_xfer_telemetry_t telemetry)
 {
   return nixl_capi_stub_abort();
 }
