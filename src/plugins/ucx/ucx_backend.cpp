@@ -266,39 +266,13 @@ void nixlUcxEngine::vramFiniCtx()
 }
 
 /****************************************
- * UCX request management
-*****************************************/
-
-
-class nixlUcxIntReq {
-public:
-    operator nixlUcxReq() noexcept {
-        return static_cast<nixlUcxReq>(this);
-    }
-
-    void
-    setConnection(nixlUcxConnection *conn) {
-        conn_ = conn;
-    }
-
-    nixl_status_t
-    checkConnection(size_t ep_id) const {
-        NIXL_ASSERT(conn_) << "Connection is not set";
-        return conn_->getEp(ep_id)->checkTxState();
-    }
-
-private:
-    nixlUcxConnection *conn_;
-};
-
-/****************************************
  * Backend request management
 *****************************************/
 
 class nixlUcxBackendH : public nixlBackendReqH {
 private:
     std::set<ucx_connection_ptr_t> connections_;
-    std::vector<nixlUcxIntReq *> requests_;
+    std::vector<nixlUcxReq> requests_;
     nixlUcxWorker *worker;
     size_t worker_id;
 
@@ -329,9 +303,7 @@ public:
 
     void
     append(nixlUcxReq req, ucx_connection_ptr_t conn) {
-        auto req_int = static_cast<nixlUcxIntReq *>(req);
-        req_int->setConnection(conn.get());
-        requests_.push_back(req_int);
+        requests_.push_back(req);
         connections_.insert(conn);
     }
 
@@ -343,7 +315,7 @@ public:
     virtual nixl_status_t
     release() {
         // TODO: Error log: uncompleted requests found! Cancelling ...
-        for (nixlUcxIntReq *req : requests_) {
+        for (nixlUcxReq req : requests_) {
             nixl_status_t ret = ucx_status_to_nixl(ucp_request_check_status(req));
             if (ret == NIXL_IN_PROG) {
                 // TODO: Need process this properly.
@@ -370,20 +342,19 @@ public:
 
         /* If last request is incomplete, return NIXL_IN_PROG early without
          * checking other requests */
-        nixlUcxIntReq *req = requests_.back();
+        nixlUcxReq req = requests_.back();
         nixl_status_t ret = ucx_status_to_nixl(ucp_request_check_status(req));
         if (ret == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
         } else if (ret != NIXL_SUCCESS) {
-            nixl_status_t conn_status = req->checkConnection(worker_id);
-            return (conn_status == NIXL_SUCCESS) ? ret : conn_status;
+            return checkConnection(ret);
         }
 
         /* Last request completed successfully, all the others must be in the
          * same state. TODO: remove extra checks? */
         size_t incomplete_reqs = 0;
         nixl_status_t out_ret = NIXL_SUCCESS;
-        for (nixlUcxIntReq *req : requests_) {
+        for (nixlUcxReq req : requests_) {
             nixl_status_t ret = ucx_status_to_nixl(ucp_request_check_status(req));
             if (__builtin_expect(ret == NIXL_SUCCESS, 0)) {
                 worker->reqRelease(req);
@@ -394,8 +365,7 @@ public:
                 requests_[incomplete_reqs++] = req;
             } else {
                 // Any other ret value is ERR and will be returned
-                nixl_status_t conn_status = req->checkConnection(worker_id);
-                out_ret = (conn_status == NIXL_SUCCESS) ? ret : conn_status;
+                out_ret = checkConnection(ret);
             }
         }
 
@@ -417,6 +387,18 @@ public:
 
     size_t getWorkerId() const {
         return worker_id;
+    }
+
+    nixl_status_t
+    checkConnection(nixl_status_t status = NIXL_SUCCESS) const {
+        NIXL_ASSERT(!connections_.empty());
+        for (auto conn : connections_) {
+            nixl_status_t conn_status = conn->getEp(worker_id)->checkTxState();
+            if (conn_status != NIXL_SUCCESS) {
+                return conn_status;
+            }
+        }
+        return status;
     }
 };
 
@@ -1102,7 +1084,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     }
 
     uc = std::make_unique<nixlUcxContext>(
-        devs, sizeof(nixlUcxIntReq), init_params.enableProgTh, num_workers, init_params.syncMode);
+        devs, init_params.enableProgTh, num_workers, init_params.syncMode);
 
     for (size_t i = 0; i < num_workers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));

@@ -73,8 +73,8 @@ int main()
     // TODO: pass dev name for testing
     // in CI it would be goot to test both SHM and IB
     //devs.push_back("mlx5_0");
-    nixlUcxContext c[2] = {{devs, 0, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
-                           {devs, 0, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
+    nixlUcxContext c[2] = {{devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
+                           {devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
 
     nixlUcxWorker w[2] = {
         nixlUcxWorker(c[0]),
