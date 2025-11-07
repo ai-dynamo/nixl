@@ -53,9 +53,8 @@ int main()
     vector<string> devs;
     devs.push_back("mlx5_0");
 
-    nixlUcxContext c[2] = {
-        {devs, 0, nullptr, nullptr, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
-        {devs, 0, nullptr, nullptr, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
+    nixlUcxContext c[2] = {{devs, 0, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
+                           {devs, 0, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
 
     nixlUcxWorker w[2] = {
         nixlUcxWorker(c[0]),
@@ -82,11 +81,6 @@ int main()
         auto result = w[!i].connect((void*)addr.data(), addr.size());
         assert(result.ok());
         ep[!i] = std::move(*result);
-
-	//no need for mem_reg with active messages
-	//assert (0 == w[i].mem_reg(buffer[i], 128, mem[i]));
-        //assert (0 == w[i].mem_addr(mem[i], addr, size));
-        //assert (0 == w[!i].rkey_import(ep[!i], (void*) addr, size, rkey[!i]));
     }
 
     /* Register active message callbacks */
@@ -98,32 +92,37 @@ int main()
     w[0].progress();
 
     /* Test first callback */
-    ret = ep[1]->sendAm(check_cb_id, &hdr, sizeof(struct sample_header), (void*) &buffer, sizeof(buffer), 0, req);
-    assert (ret == 0);
+    ret = ep[1]->sendAm(check_cb_id, &hdr, sizeof(hdr), (void *)&buffer, sizeof(buffer), 0, &req);
+    assert(ret >= 0);
 
-    while (ret == 0){
-	    ret = w[1].test(req);
-	    w[0].progress();
+    while (ret == NIXL_IN_PROG) {
+        ret = w[1].test(req);
+        w[0].progress();
     }
 
     std::cout << "first active message complete\n";
 
     /* Test second callback */
-    uint32_t flags = 0;
-    flags |= UCP_AM_SEND_FLAG_RNDV;
+    bool buffer_freed = false;
+    auto deleter = [&buffer_freed](void *request, void *buffer) {
+        buffer_freed = true;
+        free(buffer);
+        if (request != nullptr) {
+            ucp_request_free(request);
+        }
+    };
+    ret = ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(hdr), big_buffer, 8192, 0, &req, deleter);
+    assert(ret >= 0);
 
-    ret =  ep[1]->sendAm(rndv_cb_id, &hdr, sizeof(struct sample_header), big_buffer, 8192, flags, req);
-    assert (ret == 0);
-
-    while (ret == 0){
-	    ret = w[1].test(req);
-	    w[0].progress();
+    while (ret == NIXL_IN_PROG) {
+        ret = w[1].test(req);
+        w[0].progress();
     }
 
+    assert(buffer_freed);
     std::cout << "second active message complete\n";
 
     //make sure callbacks are complete
-    w[0].progress();
-
-    free (big_buffer);
+    while (w[0].progress())
+        ;
 }
