@@ -36,10 +36,10 @@ Any other Libfabric providers should also work but have not been validated in pr
 
 ```bash
 # Basic build setup with default options
-$ meson setup build
+$ meson setup <name_of_build_dir>
 
 # Setup with custom options (example)
-$ meson setup build \
+$ meson setup <name_of_build_dir> \
     -Dlibfabric_path=/path/to/libfabric
 
 # Build and install
