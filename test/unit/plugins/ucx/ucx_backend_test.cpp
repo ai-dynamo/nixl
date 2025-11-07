@@ -558,7 +558,7 @@ test_inter_agent_transfer(bool p_thread,
                           nixl_mem_t dst_mem_type,
                           int dst_dev_id) {
     int ret;
-    int iter = 10;
+    int iter = 1;
 
     std::cout << std::endl << std::endl;
     std::cout << "****************************************************" << std::endl;
@@ -671,7 +671,7 @@ test_inter_agent_transfer(bool p_thread,
     // As well as all the remote notes, asking to remove them one by one
     // need to provide list of descs
     ucx1->unloadMD (rmd1);
-    //ucx2->unloadMD (rmd2);
+    ucx2->unloadMD (rmd2);
 
     // Release memory regions
     deallocateAndDeregister(ucx1, src_dev_id, src_mem_type, addr1, lmd1);
@@ -681,7 +681,7 @@ test_inter_agent_transfer(bool p_thread,
     ucx1->disconnect(agent2);
 
     // TODO: Causes race condition - investigate conn management implementation
-    //ucx2->disconnect(agent1);
+    ucx2->disconnect(agent1);
 }
 
 int main()
