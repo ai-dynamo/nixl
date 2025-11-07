@@ -36,11 +36,6 @@ def transfer(
     layers,
     num_blocks,
 ):
-    # Ensure remote metadata has arrived.
-    ready = False
-    while not ready:
-        ready = agent.check_remote_metadata("server")
-
     # Handshake to server.
     agent.send_notif("server", "SYN")
 
@@ -57,11 +52,6 @@ def transfer(
 
     assert local_prep_handle != 0
     assert remote_prep_handle != 0
-
-    # Ensure remote metadata, again.
-    ready = False
-    while not ready:
-        ready = agent.check_remote_metadata("server")
 
     start = time.monotonic()
 
@@ -103,7 +93,7 @@ def transfer(
     end = time.monotonic()
     ratio = len(indices) / len(addrs)
     logger.info(
-        "Throughput: %f Mib/sec, in %f sec",
+        "Throughput: %f MiB/sec, in %f sec",
         size_in_bytes * ratio / (end - start) / 1024 / 1024,
         (end - start),
     )
@@ -178,6 +168,12 @@ def main():
 
     logger.info("Client sending to %s", args.ip)
     agent.fetch_remote_metadata("server", args.ip, args.port)
+
+    # Check if remote server is available.
+    ready = False
+    while not ready:
+        ready = agent.check_remote_metadata("server")
+
     agent.send_local_metadata(args.ip, args.port)
 
     # Prepare descriptor list.
