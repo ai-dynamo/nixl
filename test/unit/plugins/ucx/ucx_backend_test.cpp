@@ -393,7 +393,7 @@ performTransfer(nixlUcxEngine *ucx1,
     std::string test_str("test");
     std::cout << "\t" << op2string(op, use_notif) << " from " << addr1 << " to " << addr2 << "\n";
 
-    nixl_opt_b_args_t opt_args;
+    nixl_opt_b_args_t opt_args{};
     opt_args.notifMsg = test_str;
     opt_args.hasNotif = use_notif;
 
