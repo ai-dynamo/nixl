@@ -1903,4 +1903,7 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
         return NIXL_CAPI_ERROR_BACKEND;
     }
 }
+bool nixl_capi_is_stub() {
+    return false;
+}
 } // extern "C"
