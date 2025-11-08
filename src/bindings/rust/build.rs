@@ -251,12 +251,12 @@ fn run_build(use_stub_api: bool) {
     let mut cc_builder = create_builder();
 
     if !use_stub_api {
-        let allow_fallback = env::var("NIXL_ALLOW_STUBS_FALLBACK")
+        let no_fallback = env::var("NIXL_NO_STUBS_FALLBACK")
             .map(|v| v == "1")
             .unwrap_or(false);
 
         if let Err(e) = build_nixl(&mut cc_builder) {
-            if allow_fallback {
+            if !no_fallback {
                 println!(
                     "cargo:warning=NIXL build failed: {}, falling back to stub API",
                     e
