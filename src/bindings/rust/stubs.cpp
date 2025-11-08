@@ -656,4 +656,9 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
   return nixl_capi_stub_abort();
 }
 
+bool nixl_capi_is_stub()
+{
+  return true;
+}
+
 }  // extern "C"

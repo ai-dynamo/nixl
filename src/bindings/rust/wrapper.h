@@ -355,6 +355,7 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_xfer_telemetry_t telemetry);
 
+bool nixl_capi_is_stub();
 
 #ifdef __cplusplus
 }
