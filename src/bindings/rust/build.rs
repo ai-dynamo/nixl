@@ -201,6 +201,21 @@ fn build_stubs(cc_builder: &mut cc::Build) {
     // Tell cargo to invalidate the built crate whenever the stubs change
     println!("cargo:rerun-if-changed=stubs.cpp");
     println!("cargo:rerun-if-changed=wrapper.h");
+
+    // Get the output path for bindings
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    // Generate bindings with minimal configuration
+    bindgen::Builder::default()
+        .header("wrapper.h")
+        .clang_arg("-std=c++17")
+        .clang_arg("-x")
+        .clang_arg("c++")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .generate()
+        .expect("Unable to generate bindings")
+        .write_to_file(out_path.join("bindings.rs"))
+        .expect("Couldn't write bindings!");
 }
 
 fn run_build(use_stub_api: bool) {
