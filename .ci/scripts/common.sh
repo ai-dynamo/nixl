@@ -98,7 +98,7 @@ export TEST_LIBFABRIC=${TEST_LIBFABRIC:-false}
 # Set default parallelism for make/ninja (can be overridden by NPROC env var)
 if [ -z "$NPROC" ]; then
     # In containers, calculate based on memory limits to avoid OOM
-    if [[ -f /.dockerenv  ||  -f /run/.containerenv  ||  -n "${KUBERNETES_SERVICE_HOST}" ]]; then
+    if [ -f /.dockerenv ] || [ -f /run/.containerenv ] || [ -n "${KUBERNETES_SERVICE_HOST}" ]; then
         if [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
             limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
         elif [ -f /sys/fs/cgroup/memory.max ]; then
