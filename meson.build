@@ -129,7 +129,8 @@ endif
 
 # DOCA GPUNETIO
 if cuda_dep.found()
-  if nvcc.found()
+  nvcc_cmd = find_program('nvcc', required: false)
+  if nvcc_cmd.found()
     if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
       doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
