@@ -126,12 +126,11 @@ endif
 
 # DOCA GPUNETIO
 if cuda_dep.found()
-  nvcc_cmd = find_program('nvcc', required: false)
-  if nvcc_cmd.found()
+  if nvcc.found()
     if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
       doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
-      warning('CUDA version = ' + nvcc_cmd.version() + ', GPUNETIO plugin will be disabled')
+      warning('CUDA version = ' + nvcc.version() + ', GPUNETIO plugin will be disabled')
       doca_gpunetio_dep = disabler()
     endif
   else
@@ -210,6 +209,7 @@ nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
 if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     cuda = meson.get_compiler('cuda')
+    # TODO: Expose doca_gpunetio_dep through UCX
     have_gpu_side = cuda.compiles('''
             #include <ucp/api/device/ucp_device_impl.h>
             int main() { return 0; }
