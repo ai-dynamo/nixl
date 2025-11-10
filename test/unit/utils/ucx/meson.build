@@ -18,39 +18,36 @@ if cuda_dep.found()
     ucx_utils_dep += [ cuda_dep ]
 endif
 
-if get_option('buildtype') != 'release'
+# TODO: Revert to build tests after passing buildtype debug to build-container.sh from external CI gitlab
+ucx_worker_bin = executable('ucx_worker_test',
+           'ucx_worker_test.cpp',
+           dependencies: ucx_utils_dep,
+           include_directories: [nixl_inc_dirs,utils_inc_dirs],
+           link_with: ucx_utils_lib,
+           install: true)
 
-    ucx_worker_bin = executable('ucx_worker_test',
-               'ucx_worker_test.cpp',
-               dependencies: ucx_utils_dep,
-               include_directories: [nixl_inc_dirs,utils_inc_dirs],
-               link_with: ucx_utils_lib,
-               install: true)
+ucx_am_bin = executable('ucx_am_test',
+           'ucx_am_test.cpp',
+           dependencies: ucx_utils_dep,
+           include_directories: [nixl_inc_dirs,utils_inc_dirs],
+           link_with: ucx_utils_lib,
+           install: true)
 
-    ucx_am_bin = executable('ucx_am_test',
-               'ucx_am_test.cpp',
-               dependencies: ucx_utils_dep,
-               include_directories: [nixl_inc_dirs,utils_inc_dirs],
-               link_with: ucx_utils_lib,
-               install: true)
+if cuda_dep.found()
+    ucx_worker_cuda_bin = executable('ucx_worker_test_cuda',
+                   'ucx_worker_test.cpp',
+                   dependencies: ucx_utils_dep,
+                   include_directories: [nixl_inc_dirs,utils_inc_dirs],
+                   cpp_args : '-DUSE_VRAM',
+                   link_with: ucx_utils_lib,
+                   install: true)
 
-    if cuda_dep.found()
-        ucx_worker_cuda_bin = executable('ucx_worker_test_cuda',
-                       'ucx_worker_test.cpp',
-                       dependencies: ucx_utils_dep,
-                       include_directories: [nixl_inc_dirs,utils_inc_dirs],
-                       cpp_args : '-DUSE_VRAM',
-                       link_with: ucx_utils_lib,
-                       install: true)
-
-        ucx_am_cuda_bin = executable('ucx_am_test_cuda',
-                       'ucx_am_test.cpp',
-                       dependencies: ucx_utils_dep,
-                       include_directories: [nixl_inc_dirs,utils_inc_dirs],
-                       cpp_args : '-DUSE_VRAM',
-                       link_with: ucx_utils_lib,
-                       install: true)
-
-    endif
+    ucx_am_cuda_bin = executable('ucx_am_test_cuda',
+                   'ucx_am_test.cpp',
+                   dependencies: ucx_utils_dep,
+                   include_directories: [nixl_inc_dirs,utils_inc_dirs],
+                   cpp_args : '-DUSE_VRAM',
+                   link_with: ucx_utils_lib,
+                   install: true)
 
 endif
