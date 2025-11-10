@@ -281,8 +281,8 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     done
 
 # Copy the meta package wheel to the dist directory, which will be used to push to PyPI.
-# Only do this for the CUDA 13 builds, since by default nixl depends on nixl-cu13.
-RUN if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "13" ]; then \
+# Only do this for the CUDA 12 builds, since by default nixl depends on nixl-cu12.
+RUN if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "12" ]; then \
       cp build/src/bindings/python/nixl-meta/nixl*.whl dist/; \
     fi
 
