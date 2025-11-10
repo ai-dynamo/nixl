@@ -213,6 +213,11 @@ public:
     [[nodiscard]] size_t
     getGpuSignalSize() const;
 
+    [[nodiscard]] nixl_ucx_mt_t
+    getMtType() const noexcept {
+        return mt_type;
+    }
+
     friend class nixlUcxWorker;
 };
 
@@ -220,8 +225,9 @@ public:
 
 class nixlUcxWorker {
 public:
-    explicit nixlUcxWorker(
-        const nixlUcxContext &,
+    nixlUcxWorker(
+        const nixlUcxContext &ctx,
+        nixl_ucx_mt_t mt_type,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
 
     nixlUcxWorker( nixlUcxWorker&& ) = delete;
@@ -255,7 +261,7 @@ public:
 
 private:
     [[nodiscard]] static ucp_worker *
-    createUcpWorker(const nixlUcxContext &);
+    createUcpWorker(const nixlUcxContext &, nixl_ucx_mt_t mt_type);
 
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     ucp_err_handling_mode_t err_handling_mode_;
