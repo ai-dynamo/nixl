@@ -23,6 +23,7 @@
 #include "common/nixl_log.h"
 #if HAVE_ETCD
 #include <etcd/SyncClient.hpp>
+#include <etcd/KeepAlive.hpp>
 #include <etcd/Watcher.hpp>
 #include <future>
 #endif // HAVE_ETCD
@@ -209,8 +210,8 @@ private:
 public:
     nixlEtcdClient(const std::string &my_agent_name,
                    const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000),
-                   const std::chrono::seconds &heartbeat_interval = std::chrono::seconds(2))
-        : watchTimeout_(timeout) {
+                   const std::chrono::seconds &heartbeat = std::chrono::seconds(2))
+        : watchTimeout_(timeout), heartbeat_interval(heartbeat) {
         const char* etcd_endpoints = std::getenv("NIXL_ETCD_ENDPOINTS");
         if (!etcd_endpoints || strlen(etcd_endpoints) == 0) {
             throw std::runtime_error("No etcd endpoints provided");
@@ -245,15 +246,12 @@ public:
         }
     }
 
-    void startHeartbeatThread(std::chrono::seconds interval = std::chrono::seconds(10)) {
-        auto lease = etcd->leasekeepalive(interval.count());
-        while (!heartbeat_thread_stop) {
-            if (!lease.is_ok()) {
-                NIXL_ERROR << "Failed to renew lease: " << lease.error_message();
-                return;
-            }
-            lease = etcd->leasekeepalive(interval.count());
-            std::this_thread::sleep_for(interval);
+    void startHeartbeatThread(uint64_t lease_id) {
+        while (!heartbeat_thread_stop) { 
+	    //keep alive for twice the heartbeat interval
+	    etcd::KeepAlive keepalive(*etcd, (heartbeat_interval.count())*2, lease_id);
+	    keepalive.Check();
+            std::this_thread::sleep_for(heartbeat_interval);
         }
     }
 
@@ -268,13 +266,23 @@ public:
 
         try {
             std::string metadata_key = makeKey(agent_name, metadata_type);
-            etcd::Response response = etcd->put(metadata_key, metadata);
+	    etcd::Response response = etcd->leasegrant((heartbeat_interval.count())*2);
+	    uint64_t lease_id = response.value().lease();
+
+	    if (response.is_ok()) {
+
+                NIXL_DEBUG << "Successfully leased " << lease_id;
+            } else {
+                NIXL_ERROR << "Failed to get lease";
+                return NIXL_ERR_BACKEND;
+            }
+
+	    response = etcd->put(metadata_key, metadata, lease_id);
 
             if (response.is_ok()) {
                 NIXL_DEBUG << "Successfully stored " << metadata_type
                            << " in etcd with key: " << metadata_key << " (rev "
                            << response.value().modified_index() << ")";
-                return NIXL_SUCCESS;
             } else {
                 NIXL_ERROR << "Failed to store " << metadata_type << " in etcd: " << response.error_message();
                 return NIXL_ERR_BACKEND;
@@ -282,10 +290,9 @@ public:
 
             if (!heartbeat_thread_start) {
                 heartbeat_thread_start = true;
-                heartbeat_thread = std::thread([this]() {
-                    startHeartbeatThread(heartbeat_interval);
-                });
+                heartbeat_thread = std::thread(&nixlEtcdClient::startHeartbeatThread, this, lease_id);
             }
+            return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
             NIXL_ERROR << "Error sending " << metadata_type << " to etcd: " << e.what();
