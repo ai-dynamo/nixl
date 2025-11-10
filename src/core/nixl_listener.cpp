@@ -193,6 +193,11 @@ private:
                         std::hash<std::string>, strEqual> agentWatchers;
     std::chrono::microseconds watchTimeout_;
 
+    std::thread heartbeat_thread;
+    std::atomic<bool> heartbeat_thread_start = false;
+    std::atomic<bool> heartbeat_thread_stop = false;
+    std::chrono::seconds heartbeat_interval;
+
     // Helper function to create etcd key
     std::string makeKey(const std::string& agent_name,
                         const std::string& metadata_type) {
@@ -203,7 +208,8 @@ private:
 
 public:
     nixlEtcdClient(const std::string &my_agent_name,
-                   const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000))
+                   const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000),
+                   const std::chrono::seconds &heartbeat_interval = std::chrono::seconds(2))
         : watchTimeout_(timeout) {
         const char* etcd_endpoints = std::getenv("NIXL_ETCD_ENDPOINTS");
         if (!etcd_endpoints || strlen(etcd_endpoints) == 0) {
@@ -232,6 +238,25 @@ public:
         }
     }
 
+    ~nixlEtcdClient() {
+        heartbeat_thread_stop = true;
+        if (heartbeat_thread.joinable()) {
+            heartbeat_thread.join();
+        }
+    }
+
+    void startHeartbeatThread(std::chrono::seconds interval = std::chrono::seconds(10)) {
+        auto lease = etcd->leasekeepalive(interval.count());
+        while (!heartbeat_thread_stop) {
+            if (!lease.is_ok()) {
+                NIXL_ERROR << "Failed to renew lease: " << lease.error_message();
+                return;
+            }
+            lease = etcd->leasekeepalive(interval.count());
+            std::this_thread::sleep_for(interval);
+        }
+    }
+
     // Store metadata in etcd
     nixl_status_t storeMetadataInEtcd(const std::string& agent_name,
                                       const std::string& metadata_type,
@@ -254,13 +279,19 @@ public:
                 NIXL_ERROR << "Failed to store " << metadata_type << " in etcd: " << response.error_message();
                 return NIXL_ERR_BACKEND;
             }
+
+            if (!heartbeat_thread_start) {
+                heartbeat_thread_start = true;
+                heartbeat_thread = std::thread([this]() {
+                    startHeartbeatThread(heartbeat_interval);
+                });
+            }
         }
         catch (const std::exception &e) {
             NIXL_ERROR << "Error sending " << metadata_type << " to etcd: " << e.what();
             return NIXL_ERR_BACKEND;
         }
     }
-
     // Remove all agent's metadata from etcd
     nixl_status_t removeMetadataFromEtcd(const std::string& agent_name) {
         if (!etcd) {
@@ -455,7 +486,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
     std::unique_ptr<nixlEtcdClient> etcdClient = nullptr;
     // useEtcd is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
     if(useEtcd) {
-        etcdClient = std::make_unique<nixlEtcdClient>(name, config.etcdWatchTimeout);
+        etcdClient = std::make_unique<nixlEtcdClient>(name, config.etcdWatchTimeout, config.etcdHeartbeatInterval);
     }
 #endif // HAVE_ETCD
 
@@ -528,18 +559,18 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
             }
 
             switch(req_command) {
-            case SOCK_SEND: {
-                sendCommMessage(client_fd, "NIXLCOMM:LOAD" + my_MD);
-                break;
-            }
-            case SOCK_FETCH: {
-                sendCommMessage(client_fd, "NIXLCOMM:SEND");
-                break;
-            }
-            case SOCK_INVAL: {
-                sendCommMessage(client_fd, "NIXLCOMM:INVL" + name);
-                break;
-            }
+                case SOCK_SEND: {
+                    sendCommMessage(client_fd, "NIXLCOMM:LOAD" + my_MD);
+                    break;
+                }
+                case SOCK_FETCH: {
+                    sendCommMessage(client_fd, "NIXLCOMM:SEND");
+                    break;
+                }
+                case SOCK_INVAL: {
+                    sendCommMessage(client_fd, "NIXLCOMM:INVL" + name);
+                    break;
+                }
 #if HAVE_ETCD
                 // ETCD operations using existing methods
                 case ETCD_SEND:
