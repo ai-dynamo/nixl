@@ -46,4 +46,7 @@ export NIXL_PREFIX=${INSTALL_DIR}
 
 cargo test -- --test-threads=1
 
+# test stubs build
+cargo build --features stub-api
+
 cargo package
