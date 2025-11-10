@@ -62,6 +62,12 @@ class nixlAgentConfig {
         std::chrono::microseconds etcdWatchTimeout;
 
         /**
+         * @var ETCD heartbeat interval in seconds
+         *      Interval for renewing etcd lease after metadata is stored.
+         */
+        std::chrono::seconds etcdHeartbeatInterval;
+
+        /**
          * @brief  Agent configuration constructor for enabling various features.
          * @param use_prog_thread    flag to determine use of progress thread
          * @param use_listen_thread  Optional flag to determine use of listener thread
