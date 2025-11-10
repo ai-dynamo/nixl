@@ -225,10 +225,9 @@ public:
 
 class nixlUcxWorker {
 public:
-    nixlUcxWorker(
-        const nixlUcxContext &ctx,
-        nixl_ucx_mt_t mt_type,
-        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
+    nixlUcxWorker(const nixlUcxContext &ctx,
+                  nixl_ucx_mt_t mt_type,
+                  ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
 
     nixlUcxWorker( nixlUcxWorker&& ) = delete;
     nixlUcxWorker( const nixlUcxWorker& ) = delete;

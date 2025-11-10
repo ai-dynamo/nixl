@@ -292,7 +292,8 @@ public:
         : worker(worker),
           worker_id(worker_id) {}
 
-    auto& notification() {
+    auto &
+    notification() {
         return notif;
     }
 
@@ -304,7 +305,7 @@ public:
     nixl_status_t
     append(nixl_status_t status, nixlUcxReq req, ucx_connection_ptr_t conn) {
         connections_.insert(conn);
-        switch(status) {
+        switch (status) {
         case NIXL_IN_PROG:
             requests_.push_back(req);
             break;
@@ -319,7 +320,7 @@ public:
         return NIXL_SUCCESS;
     }
 
-    const std::set<ucx_connection_ptr_t>&
+    const std::set<ucx_connection_ptr_t> &
     getConnections() const {
         return connections_;
     }
@@ -1106,8 +1107,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     size_t num_shared_workers = num_workers - num_threads;
     for (size_t i = 0; i < num_workers; i++) {
         nixl_ucx_mt_t mt_type = (i < num_shared_workers) ?
-                                    uc->getMtType() :   /* Shared workers use default lock */
-                                    nixl_ucx_mt_t::CTX; /* Disable lock for dedicated workers */
+            uc->getMtType() : /* Shared workers use default lock */
+            nixl_ucx_mt_t::CTX; /* Disable lock for dedicated workers */
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, mt_type, err_handling_mode));
     }
 
@@ -1457,23 +1458,23 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
     batchResult result = {NIXL_SUCCESS, 0, nullptr};
 
     for (size_t i = start_idx; i < end_idx; ++i) {
-        void *laddr = (void*) local[i].addr;
+        void *laddr = (void *)local[i].addr;
         size_t lsize = local[i].len;
         uint64_t raddr = (uint64_t)remote[i].addr;
         NIXL_ASSERT(lsize == remote[i].len);
 
-        auto *lmd = (nixlUcxPrivateMetadata*) local[i].metadataP;
-        auto *rmd = (nixlUcxPublicMetadata*) remote[i].metadataP;
-        auto &rmdEp = rmd->conn->getEp(worker_id);
-        if (__builtin_expect(rmdEp.get() != &ep, 0)) {
+        auto *lmd = (nixlUcxPrivateMetadata *)local[i].metadataP;
+        auto *rmd = (nixlUcxPublicMetadata *)remote[i].metadataP;
+        auto &rmd_ep = rmd->conn->getEp(worker_id);
+        if (__builtin_expect(rmd_ep.get() != &ep, 0)) {
             break;
         }
 
         ++result.size;
         nixlUcxReq req;
         nixl_status_t ret = operation == NIXL_READ ?
-                            ep.read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
-                            ep.write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
+            ep.read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
+            ep.write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
 
         if (ret == NIXL_IN_PROG) {
             if (__builtin_expect(result.req != nullptr, 1)) {
@@ -1516,7 +1517,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     for (size_t i = start_idx; i < end_idx;) {
         /* Send requests to a single EP */
-        auto *rmd = (nixlUcxPublicMetadata*) remote[i].metadataP;
+        auto *rmd = (nixlUcxPublicMetadata *)remote[i].metadataP;
         auto &ep = rmd->conn->getEp(workerId);
         auto result = sendXferRangeBatch(*ep, operation, local, remote, workerId, i, end_idx);
 
