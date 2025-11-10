@@ -1483,8 +1483,10 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
             result.req = req;
         } else if (ret != NIXL_SUCCESS) {
             result.status = ret;
-            ucp_request_free(result.req);
-            result.req = nullptr;
+            if (result.req != nullptr) {
+                ucp_request_free(result.req);
+                result.req = nullptr;
+            }
             break;
         }
     }
