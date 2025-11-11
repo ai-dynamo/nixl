@@ -89,7 +89,7 @@ int main()
     nixl_status_t ret;
     size_t buf_size = 128 * 1024 * 1024; /* Use large buffer to ensure non-inline transfer */
     size_t i;
-    [[maybe_unused]] nixl_mem_t nixl_mem_type;
+    nixl_mem_t nixl_mem_type;
 
 #ifdef USE_VRAM
     checkCudaError(cudaSetDevice(gpu_id), "Failed to set device");
