@@ -66,7 +66,6 @@
 
 // Backend types
 #define XFERBENCH_BACKEND_UCX "UCX"
-#define XFERBENCH_BACKEND_UCX_MO "UCX_MO"
 #define XFERBENCH_BACKEND_LIBFABRIC "LIBFABRIC"
 #define XFERBENCH_BACKEND_GDS "GDS"
 #define XFERBENCH_BACKEND_GDS_MT "GDS_MT"
@@ -80,6 +79,7 @@
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
 #define XFERBENCH_POSIX_API_URING "URING"
+#define XFERBENCH_POSIX_API_POSIXAIO "POSIXAIO"
 
 // OBJ S3 scheme types
 #define XFERBENCH_OBJ_SCHEME_HTTP "http"
@@ -190,6 +190,21 @@ class xferBenchConfig {
         static bool
         isStorageBackend();
 };
+
+// Shared GUSLI device config used by utils and nixl_worker
+struct GusliDeviceConfig {
+    int device_id;
+    char device_type; // 'F' for file, 'K' for kernel device, 'N' for networked server
+    std::string device_path;
+    std::string security_flags;
+};
+
+// Parser for GUSLI device list: "id:type:path,id:type:path,..."
+// security_list: comma-separated security flags; num_devices: expected device count (validation)
+std::vector<GusliDeviceConfig>
+parseGusliDeviceList(const std::string &device_list,
+                     const std::string &security_list,
+                     int num_devices);
 
 // Timer class for measuring durations at high resolution
 class xferBenchTimer {

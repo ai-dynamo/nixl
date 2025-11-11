@@ -47,7 +47,7 @@ DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 DEFINE_string(
     backend,
     XFERBENCH_BACKEND_UCX,
-    "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
+    "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]. Note: Storage backends always use DRAM locally.");
@@ -102,9 +102,10 @@ DEFINE_string(etcd_endpoints,
               "ETCD server endpoints for communication (optional for storage backends)");
 
 // POSIX options - only used when backend is POSIX
-DEFINE_string (posix_api_type,
-               XFERBENCH_POSIX_API_AIO,
-               "API type for POSIX operations [AIO, URING] (only used with POSIX backend)");
+DEFINE_string(
+    posix_api_type,
+    XFERBENCH_POSIX_API_AIO,
+    "API type for POSIX operations [AIO, URING, POSIXAIO] (only used with POSIX backend)");
 
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
 DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
@@ -239,9 +240,10 @@ xferBenchConfig::loadFromFlags() {
 
             // Validate POSIX API type
             if (posix_api_type != XFERBENCH_POSIX_API_AIO &&
-                posix_api_type != XFERBENCH_POSIX_API_URING) {
+                posix_api_type != XFERBENCH_POSIX_API_URING &&
+                posix_api_type != XFERBENCH_POSIX_API_POSIXAIO) {
                 std::cerr << "Invalid POSIX API type: " << posix_api_type
-                          << ". Must be one of [AIO, URING]" << std::endl;
+                          << ". Must be one of [AIO, URING, POSIXAIO]" << std::endl;
                 return -1;
             }
         }
@@ -429,8 +431,7 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,UCX_MO,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])",
-                    backend);
+        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])", backend);
         printOption ("Enable pt (--enable_pt=[0,1])", std::to_string (enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption ("Device list (--device_list=dev1,dev2,...)", device_list);
@@ -450,7 +451,7 @@ xferBenchConfig::printConfig() {
 
         // Print POSIX options if backend is POSIX
         if (backend == XFERBENCH_BACKEND_POSIX) {
-            printOption ("POSIX API type (--posix_api_type=[AIO,URING])", posix_api_type);
+            printOption("POSIX API type (--posix_api_type=[AIO,URING,POSIXAIO])", posix_api_type);
         }
 
         // Print OBJ options if backend is OBJ
@@ -573,8 +574,92 @@ static bool allBytesAre(void* buffer, size_t size, uint8_t value) {
     return true; // All bytes match the value
 }
 
+// Implement GUSLI device parser (declared in utils.h) so it can be reused by both utils and worker
+std::vector<GusliDeviceConfig>
+parseGusliDeviceList(const std::string &device_list,
+                     const std::string &security_list,
+                     int num_devices) {
+    std::vector<GusliDeviceConfig> devices;
+
+    // Parse security flags
+    std::vector<std::string> security_flags;
+    if (!security_list.empty()) {
+        std::stringstream sec_ss(security_list);
+        std::string sec_flag;
+        while (std::getline(sec_ss, sec_flag, ',')) {
+            security_flags.push_back(sec_flag);
+        }
+    }
+
+    // For GUSLI, device_list cannot be "all" - must specify devices explicitly
+    if (device_list.empty() || device_list == "all") {
+        std::cerr << "Error: GUSLI backend requires explicit device_list in format 'id:type:path'"
+                  << std::endl;
+        std::cerr << "Example: --device_list='11:F:./store0.bin,14:K:/dev/zero,20:N:t192.168.1.100'"
+                  << std::endl;
+        std::cerr << "  id: Device identifier (numeric)" << std::endl;
+        std::cerr << "  type: F (file), K (kernel block device), or N (networked server)"
+                  << std::endl;
+        std::cerr << "  path: Device path or server address (for N type, prefix with 't' for TCP "
+                     "or 'u' for UDP)"
+                  << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    std::stringstream ss(device_list);
+    std::string device_spec;
+    size_t device_count = 0;
+
+    while (std::getline(ss, device_spec, ',')) {
+        std::stringstream dev_ss(device_spec);
+        std::string id_str, type_str, path;
+        if (std::getline(dev_ss, id_str, ':') && std::getline(dev_ss, type_str, ':') &&
+            std::getline(dev_ss, path)) {
+            int device_id = std::stoi(id_str);
+            char device_type = type_str[0];
+            if (device_type != 'F' && device_type != 'K' && device_type != 'N') {
+                std::cerr << "Invalid GUSLI device type: " << device_type
+                          << ". Must be 'F' (file), 'K' (kernel device), or 'N' (networked server)"
+                          << std::endl;
+                exit(EXIT_FAILURE);
+            }
+            std::string sec_flag =
+                (device_count < security_flags.size()) ? security_flags[device_count] : "sec=0x3";
+            devices.push_back({device_id, device_type, path, sec_flag});
+            device_count++;
+        } else {
+            std::cerr << "Invalid GUSLI device specification: " << device_spec
+                      << ". Expected format: 'id:type:path'" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (!security_flags.empty() && security_flags.size() != devices.size()) {
+        std::cerr << "Warning: Number of security flags (" << security_flags.size()
+                  << ") doesn't match number of devices (" << devices.size()
+                  << "). Using 'sec=0x3' for missing entries." << std::endl;
+    }
+
+    if (num_devices > 0 && devices.size() != static_cast<size_t>(num_devices)) {
+        std::cerr << "Error: Number of devices in device_list (" << devices.size()
+                  << ") must match num_devices (" << num_devices << ")" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    return devices;
+}
+
 void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     int i = 0, j = 0;
+    static bool gusli_devmap_init = false;
+    static std::vector<GusliDeviceConfig> gusli_devs;
+    if (!gusli_devmap_init && xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
+        gusli_devs = parseGusliDeviceList(xferBenchConfig::device_list,
+                                          xferBenchConfig::gusli_device_security,
+                                          xferBenchConfig::num_initiator_dev);
+        gusli_devmap_init = true;
+    }
+    bool pass_check_consistency = true;
     for (const auto &iov_list: iov_lists) {
         for(const auto &iov: iov_list) {
             void *addr = NULL;
@@ -603,7 +688,18 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                         addr = (void *)iov.addr;
                     }
                 } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
-                    addr = calloc(1, len);
+                    // Allocate buffer (handle alignment for direct I/O if requested)
+                    if (xferBenchConfig::storage_enable_direct) {
+                        void *aligned = nullptr;
+                        if (posix_memalign(&aligned, xferBenchConfig::page_size, len) != 0) {
+                            std::cerr << "Failed to allocate aligned buffer of size: " << len
+                                      << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        addr = aligned;
+                    } else {
+                        addr = calloc(1, len);
+                    }
                     is_allocated = true;
                     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
                         if (!getObjS3(iov.metaInfo)) {
@@ -623,6 +719,39 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                         }
                         close(fd);
                         unlink(iov.metaInfo.c_str());
+                    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
+                        // Map device id -> path via device_list and read from the bdev at LBA
+                        // offset
+                        auto it = std::find_if(
+                            gusli_devs.begin(), gusli_devs.end(), [&](const GusliDeviceConfig &m) {
+                                return m.device_id == iov.devId;
+                            });
+                        if (it == gusli_devs.end()) {
+                            std::cerr << "Failed to locate GUSLI device id " << iov.devId
+                                      << " in device_list. Cannot validate." << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        if (it->device_type != 'F' && it->device_type != 'K') {
+                            std::cerr << "GUSLI device type '" << it->device_type
+                                      << "' not supported for consistency validation" << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        int oflags = O_RDONLY;
+                        if (xferBenchConfig::storage_enable_direct) oflags |= O_DIRECT;
+                        int fd = open(it->device_path.c_str(), oflags);
+                        if (fd < 0) {
+                            std::cerr << "Failed to open GUSLI device path: " << it->device_path
+                                      << " with error: " << strerror(errno) << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        ssize_t rc = pread(fd, addr, len, iov.addr);
+                        if (rc < 0) {
+                            std::cerr << "Failed to read from GUSLI device: " << it->device_path
+                                      << " with error: " << strerror(errno) << std::endl;
+                            close(fd);
+                            exit(EXIT_FAILURE);
+                        }
+                        close(fd);
                     } else {
                         ssize_t rc = pread(iov.devId, addr, len, iov.addr);
                         if (rc < 0) {
@@ -665,6 +794,7 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             rc = allBytesAre(addr, len, check_val);
             if (true != rc) {
                 std::cerr << "Consistency check failed for iov " << i << ":" << j << std::endl;
+                pass_check_consistency = false;
             }
             // Free the addr only if is allocated here
             if (is_allocated) {
@@ -673,6 +803,10 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             j++;
         }
         i++;
+    }
+    if (!pass_check_consistency) {
+        std::cerr << "Consistency check failed" << std::endl;
+        exit(EXIT_FAILURE);
     }
 }
 

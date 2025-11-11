@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.6.1',
+project('nixl', 'CPP', version: '0.7.1',
     default_options: ['buildtype=debug',
                 'werror=true',
                 'cpp_std=c++17',
@@ -29,11 +29,14 @@ dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
-# Check for libaio (for POSIX plugin and test)
+# Check for POSIX AIO support for the POSIX plugin and test (it is part of GLIBC)
+posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
+
+# Check for libaio (for LINUX AIO plugin and test)
 aio_dep = cpp.find_library('aio', required: false)
-posix_aio = false
+linux_aio = false
 if aio_dep.found()
-    posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
+    linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [aio_dep])
 endif
 
 # Forced to ignore this error due to:
@@ -101,22 +104,34 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
-    if nvcc.version().version_compare('>=12.8')
+    if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
         doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
-        warning('CUDA version is less than 12.8, GPUNETIO plugin will be disabled')
+        warning('GPUNETIO plugin not supported in CUDA version: ' + nvcc.version())
         doca_gpunetio_dep = disabler()
+    endif
+
+    # Set the Python CUDA-specific wheel directory
+    cuda_version_major = nvcc.version().split('.')[0]
+    if cuda_version_major == '12'
+        cuda_wheel_dir = 'nixl_cu12'
+    elif cuda_version_major == '13'
+        cuda_wheel_dir = 'nixl_cu13'
+    else
+        error('Unsupported CUDA version: ' + cuda_version_major)
     endif
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
+    warning('CUDA not found, cannot autodetect wheel dir; defaulting to nixl_cu12')
+    cuda_wheel_dir = 'nixl_cu12'
 endif
 
 # DOCA GPUNETIO
 if cuda_dep.found()
   nvcc_cmd = find_program('nvcc', required: false)
   if nvcc_cmd.found()
-    if nvcc_cmd.version().version_compare('>=12.8')
+    if nvcc_cmd.version().version_compare('>=12.8') and nvcc_cmd.version().version_compare('<13.0')
       doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
       warning('CUDA version = ' + nvcc_cmd.version() + ', GPUNETIO plugin will be disabled')

@@ -119,7 +119,7 @@ protected:
     {
         nixl_b_params_t params;
 
-        if (getBackendName() == "UCX" || getBackendName() == "UCX_MO") {
+        if (getBackendName() == "UCX") {
             params["num_workers"] = std::to_string(getNumWorkers());
             params["num_threads"] = std::to_string(getNumThreads());
             params["split_batch_size"] = "32";
@@ -539,11 +539,6 @@ TEST_P(TestTransfer, NotificationOnly) {
 }
 
 TEST_P(TestTransfer, SelfNotification) {
-    // UCX_MO does not support local communication
-    if (getBackendName() == "UCX_MO") {
-        GTEST_SKIP() << "UCX_MO does not support local communication";
-    }
-
     constexpr size_t repeat = 100;
     constexpr size_t num_threads = 4;
     doNotificationTest(
@@ -726,6 +721,5 @@ NIXL_INSTANTIATE_TEST(ucx, TestTransfer, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransfer, "UCX", false, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
-NIXL_INSTANTIATE_TEST(ucx_mo, TestTransfer, "UCX_MO", true, 2, 0, "");
 
 } // namespace gtest
