@@ -23,7 +23,7 @@ int main() {
     int i = 0xff;
     std::string s = "testString";
     std::string t1 = "i", t2 = "s";
-    int ret;
+    [[maybe_unused]] int ret;
 
     nixlSerDes sd;
 
