@@ -37,11 +37,6 @@ matrix:
     ucx_version:
       - master
       - v1.20.x
-  include:
-    - cuda_ver: cuda12
-      image: nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
-    - cuda_ver: cuda13
-      image: nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04
 
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
