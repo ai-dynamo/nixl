@@ -14,7 +14,7 @@
 # limitations under the License.
 
 project('nixl', 'CPP', version: '0.7.1',
-    default_options: ['buildtype=debug',
+    default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
                 'prefix=/opt/nvidia/nvda_nixl'],

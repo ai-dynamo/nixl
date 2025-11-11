@@ -22,6 +22,7 @@ ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG ARCH="x86_64"
 ARG UCX_REF="v1.20.x"
 ARG LIBFABRIC_VERSION="v1.21.0"
+ARG BUILD_TYPE="release"
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
@@ -248,7 +249,7 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
+    meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" && \
     cd build && \

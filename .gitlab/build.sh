@@ -227,7 +227,7 @@ export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 export UCX_TLS=^cuda_ipc
 
 # shellcheck disable=SC2086
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
 ninja -j"$NPROC" -C nixl_build && ninja -j"$NPROC" -C nixl_build install
 mkdir -p dist && cp nixl_build/src/bindings/python/nixl-meta/nixl-*.whl dist/
 

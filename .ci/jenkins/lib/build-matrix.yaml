@@ -89,4 +89,4 @@ steps:
       ln -sfT $(type -p podman) /usr/bin/docker
       # install git for building container image
       yum install -y git
-      contrib/build-container.sh --no-cache
+      contrib/build-container.sh --build-type debug --no-cache

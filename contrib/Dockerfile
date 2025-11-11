@@ -32,6 +32,7 @@ ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
+ARG BUILD_TYPE="release"
 
 # Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
@@ -201,7 +202,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
     mkdir build && \
-    meson setup -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH build/ --prefix=$NIXL_PREFIX && \
+    meson setup -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install
