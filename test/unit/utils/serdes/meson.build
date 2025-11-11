@@ -13,9 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# TODO: Revert to build tests after passing buildtype debug to build-container.sh from external CI gitlab
-serdes_test_bin = executable('serdes_test',
-           'serdes_test.cpp',
-           include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           link_with: serdes_lib,
-           install: true)
+if get_option('buildtype') != 'release'
+
+  serdes_test_bin = executable('serdes_test',
+             'serdes_test.cpp',
+             include_directories: [nixl_inc_dirs, utils_inc_dirs],
+             link_with: serdes_lib,
+             install: true)
+endif
