@@ -35,7 +35,7 @@ ARCH=$(uname -m)
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
-UCX_REF=${UCX_REF:-v1.19.0}
+UCX_REF=${UCX_REF:-v1.20.x}
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 

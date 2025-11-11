@@ -35,7 +35,7 @@ matrix:
       - x86_64
     ucx_version:
       - master
-      - v1.19.0
+      - v1.20.x
 
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
