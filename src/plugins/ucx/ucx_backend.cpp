@@ -1107,7 +1107,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     uc = std::make_unique<nixlUcxContext>(devs,
                                           sizeof(nixlUcxIntReq),
                                           init_params.enableProgTh,
-                                          num_workers, init_params.syncMode,
+                                          num_workers,
+                                          init_params.syncMode,
                                           engine_config);
 
     for (size_t i = 0; i < num_workers; i++) {
