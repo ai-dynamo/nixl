@@ -104,7 +104,7 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
-    if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<14.0')
+    if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
         doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
         warning('GPUNETIO plugin not supported in CUDA version: ' + nvcc.version())
@@ -131,7 +131,7 @@ endif
 if cuda_dep.found()
   nvcc_cmd = find_program('nvcc', required: false)
   if nvcc_cmd.found()
-    if nvcc_cmd.version().version_compare('>=12.8') and nvcc_cmd.version().version_compare('<14.0')
+    if nvcc_cmd.version().version_compare('>=12.8') and nvcc_cmd.version().version_compare('<13.0')
       doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
       warning('CUDA version = ' + nvcc_cmd.version() + ', GPUNETIO plugin will be disabled')
