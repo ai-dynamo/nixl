@@ -56,8 +56,7 @@ int main()
     nixlUcxContext c[2] = {{devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
                            {devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
 
-    nixlUcxWorker w[2] = {nixlUcxWorker(c[0]),
-                          nixlUcxWorker(c[1])};
+    nixlUcxWorker w[2] = {nixlUcxWorker(c[0]), nixlUcxWorker(c[1])};
     std::unique_ptr<nixlUcxEp> ep[2];
     nixlUcxReq req;
     uint64_t buffer;
