@@ -46,14 +46,15 @@ If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environ
 
 ### UCX
 
-NIXL was tested with UCX version 1.19.0.
+NIXL was tested with UCX version 1.20.x.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
-$ wget https://github.com/openucx/ucx/releases/download/v1.19.0/ucx-1.19.0.tar.gz
-$ tar xzf ucx-1.19.0.tar.gz
-$ cd ucx-1.19.0
+$ git clone https://github.com/openucx/ucx.git
+$ cd ucx
+$ git checkout v1.20.x
+$ ./autogen.sh
 $ ./configure                          \
     --enable-shared                    \
     --disable-static                   \
