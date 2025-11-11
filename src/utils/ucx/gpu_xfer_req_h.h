@@ -25,7 +25,6 @@
 
 class nixlUcxEp;
 class nixlUcxMem;
-class nixlUcxWorker;
 
 namespace nixl::ucx {
 class rkey;

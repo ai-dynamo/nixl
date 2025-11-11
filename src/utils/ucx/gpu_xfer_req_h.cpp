@@ -78,7 +78,19 @@ createGpuXferReq(const nixlUcxEp &ep,
     params.num_elements = ucp_elements.size();
 
     const auto start = std::chrono::steady_clock::now();
-    constexpr auto timeout = std::chrono::seconds(5);
+    constexpr int default_timeout_ms = 5000;
+    int timeout_ms = default_timeout_ms;
+    const char *timeout_env = getenv("NIXL_UCX_GPU_XFER_TIMEOUT_MS");
+    if (timeout_env) {
+        timeout_ms = atoi(timeout_env);
+        if (timeout_ms <= 0) {
+            NIXL_WARN << "Invalid NIXL_UCX_GPU_XFER_TIMEOUT_MS value: " << timeout_env
+                      << ", using default " << default_timeout_ms << " ms";
+            timeout_ms = default_timeout_ms;
+        }
+    }
+    const auto timeout = std::chrono::milliseconds(timeout_ms);
+
     ucp_device_mem_list_handle_h ucx_handle;
     ucs_status_t ucs_status;
     while ((ucs_status = ucp_device_mem_list_create(ep.getEp(), &params, &ucx_handle)) ==
@@ -87,6 +99,7 @@ createGpuXferReq(const nixlUcxEp &ep,
             throw std::runtime_error(
                 "Timeout waiting for endpoint wireup completion has been exceeded");
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     if (ucs_status != UCS_OK) {
