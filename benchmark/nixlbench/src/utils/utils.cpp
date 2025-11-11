@@ -659,6 +659,7 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                                           xferBenchConfig::num_initiator_dev);
         gusli_devmap_init = true;
     }
+    bool pass_check_consistency = true;
     for (const auto &iov_list: iov_lists) {
         for(const auto &iov: iov_list) {
             void *addr = NULL;
@@ -793,6 +794,7 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             rc = allBytesAre(addr, len, check_val);
             if (true != rc) {
                 std::cerr << "Consistency check failed for iov " << i << ":" << j << std::endl;
+                pass_check_consistency = false;
             }
             // Free the addr only if is allocated here
             if (is_allocated) {
@@ -801,6 +803,10 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             j++;
         }
         i++;
+    }
+    if (!pass_check_consistency) {
+        std::cerr << "Consistency check failed" << std::endl;
+        exit(EXIT_FAILURE);
     }
 }
 
