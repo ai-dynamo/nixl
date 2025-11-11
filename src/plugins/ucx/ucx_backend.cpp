@@ -1103,7 +1103,8 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     : nixlBackendEngine(&init_params),
-      sharedWorkerIndex_(1) {
+      sharedWorkerIndex_(1),
+      progressThreadEnabled_(init_params.enableProgTh) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -1659,6 +1660,11 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
 
     if (local_descs.descCount() == 0) {
         NIXL_ERROR << "Empty descriptor lists";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (!progressThreadEnabled_) {
+        NIXL_ERROR << "Progress thread must be enabled for GPU transfer requests";
         return NIXL_ERR_INVALID_PARAM;
     }
 
