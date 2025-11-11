@@ -38,7 +38,11 @@ WHL_PYTHON_VERSIONS="3.12"
 UCX_REF=${UCX_REF:-v1.19.0}
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
-BUILD_TYPE="release"
+if [ "$CI" = "true" ]; then
+    BUILD_TYPE="debug"
+else
+    BUILD_TYPE="release"
+fi
 
 get_options() {
     while :; do
