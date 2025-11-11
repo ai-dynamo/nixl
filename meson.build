@@ -274,8 +274,7 @@ plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')
-# TODO: Revert to build tests after passing buildtype debug to build-container.sh from external CI gitlab
-if get_option('build_tests')
+if get_option('build_tests') and get_option('buildtype') != 'release'
   subdir('test')
 endif
 if get_option('build_examples')
