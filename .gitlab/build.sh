@@ -27,7 +27,7 @@ INSTALL_DIR=$1
 UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 # UCX_VERSION is the version of UCX to build override default with env variable.
-UCX_VERSION=${UCX_VERSION:-v1.19.0}
+UCX_VERSION=${UCX_VERSION:-v1.20.x}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR

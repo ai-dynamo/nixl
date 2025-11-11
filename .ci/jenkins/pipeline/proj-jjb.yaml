@@ -272,8 +272,8 @@
           description: "NIXL version to use (tag like 0.7.1, branch name, or commit hash)"
       - string:
           name: "UCX_VERSION"
-          default: "v1.19.0"
-          description: "UCX version to use (tag like v1.19.0, branch name, or commit hash)"
+          default: "v1.20.x"
+          description: "UCX version to use (tag like v1.20.x, branch name, or commit hash)"
       - string:
           name: "BASE_IMAGE"
           default: "nvcr.io/nvidia/cuda-dl-base"
