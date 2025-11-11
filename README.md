@@ -117,7 +117,7 @@ $ ninja install
 #### Release build (default)
 
 ```bash
-$ meson setup <name_of_build_dir> --buildtype=release
+$ meson setup <name_of_build_dir>
 ```
 
 #### Debug build
