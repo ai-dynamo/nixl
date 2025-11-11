@@ -103,7 +103,7 @@ private:
     uint16_t _max_port = MAX_PORT;
 };
 
-struct nixl_test_param_t {
+struct NixlTestParam {
     std::string backend_name;
     bool progress_thread_enabled;
     unsigned num_workers;
@@ -111,7 +111,7 @@ struct nixl_test_param_t {
     std::string engine_config;
 };
 
-using NixlTest = testing::TestWithParam<nixl_test_param_t>;
+using NixlTest = testing::TestWithParam<NixlTestParam>;
 
 } // namespace gtest
 
@@ -125,7 +125,7 @@ using NixlTest = testing::TestWithParam<nixl_test_param_t>;
     INSTANTIATE_TEST_SUITE_P(                             \
         _test_name,                                       \
         _test_case,                                       \
-        testing::ValuesIn(std::vector<nixl_test_param_t>( \
+        testing::ValuesIn(std::vector<NixlTestParam>( \
             {{_backend, _progress_thread_enabled, _num_workers, _num_threads, _engine_config}})));
 
 #endif /* TEST_GTEST_COMMON_H */
