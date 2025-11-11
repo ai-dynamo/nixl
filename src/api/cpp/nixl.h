@@ -327,7 +327,8 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          *
          * @note   This call may block until the associated connection is established.
-         * @note   Requires progress thread to be enabled (enableProgTh=true) when creating the backend.
+         * @note   Requires progress thread to be enabled (enableProgTh=true) when creating the
+         *         backend.
          */
         nixl_status_t
         createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const;
