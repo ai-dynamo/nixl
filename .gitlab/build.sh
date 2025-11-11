@@ -53,6 +53,12 @@ fi
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
+# Skip dependency installation if running in pre-built nixl-base image
+if [ -n "${NIXL_BASE_IMAGE_ENV}" ]; then
+    # Use pre-installed libfabric from base image
+    LIBFABRIC_INSTALL_DIR=/usr/local
+else
+
 # Some docker images are with broken installations:
 $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
@@ -103,17 +109,6 @@ $SUDO apt-get -qq install -y python3-dev \
                              libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
-# Ubuntu 22.04 specific setup
-if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
-    # Upgrade pip for '--break-system-packages' support
-    $SUDO pip3 install --upgrade pip
-
-    # Upgrade meson (distro version 0.61.2 is too old, project requires >= 0.64.0)
-    $SUDO pip3 install --upgrade meson
-    # Ensure pip3's meson takes precedence over apt's version
-    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-fi
-
 # Add DOCA repository and install packages
 ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
 MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
@@ -139,27 +134,6 @@ wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O install_uv.sh
 chmod +x install_uv.sh
 ./install_uv.sh
 export PATH="$HOME/.local/bin:$PATH"
-
-curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
-( \
-  cd openucx-ucx* && \
-  ./autogen.sh && \
-  ./configure \
-          --prefix="${UCX_INSTALL_DIR}" \
-          --enable-shared \
-          --disable-static \
-          --disable-doxygen-doc \
-          --enable-optimizations \
-          --enable-cma \
-          --enable-devel-headers \
-          --with-verbs \
-          --with-dm \
-          ${UCX_CUDA_BUILD_ARGS} \
-          --enable-mt && \
-        make -j && \
-        make -j install-strip && \
-        $SUDO ldconfig \
-)
 
 wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
@@ -214,6 +188,40 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   mkdir -p ${INSTALL_DIR}/bin &&
   cp gtest-parallel/* ${INSTALL_DIR}/bin/
 )
+
+fi # end NIXL_BASE_IMAGE_ENV check
+
+# Build UCX
+curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
+( \
+  cd openucx-ucx* && \
+  ./autogen.sh && \
+  ./configure \
+          --prefix="${UCX_INSTALL_DIR}" \
+          --enable-shared \
+          --disable-static \
+          --disable-doxygen-doc \
+          --enable-optimizations \
+          --enable-cma \
+          --enable-devel-headers \
+          --with-verbs \
+          --with-dm \
+          ${UCX_CUDA_BUILD_ARGS} \
+          --enable-mt && \
+        make -j && \
+        make -j install-strip && \
+        $SUDO ldconfig \
+)
+
+# Ubuntu 22.04 specific setup
+if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
+    # Upgrade pip for '--break-system-packages' support
+    $SUDO pip3 install --upgrade pip
+    # Upgrade meson (distro version 0.61.2 is too old, project requires >= 0.64.0)
+    $SUDO pip3 install --upgrade meson
+    # Ensure pip3's meson takes precedence over apt's version
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+fi
 
 export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
 export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
