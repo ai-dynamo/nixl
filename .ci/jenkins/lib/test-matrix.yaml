@@ -29,9 +29,9 @@ runs_on_agents:
 
 matrix:
   axes:
-    cuda_ver:
-      - cuda12
-      - cuda13
+    image:
+      - nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04
+      - nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
     arch:
       - x86_64
     ucx_version:
@@ -43,7 +43,7 @@ matrix:
     - cuda_ver: cuda13
       image: nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04
 
-taskName: "${name}/${arch}/${cuda_ver}/ucx-${ucx_version}/${axis_index}"
+taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 env:
   CONTAINER_WORKSPACE: /workspace
