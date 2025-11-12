@@ -120,30 +120,27 @@ if cuda_dep.found()
     else
         error('Unsupported CUDA version: ' + cuda_version_major)
     endif
+
+    # DOCA GPUNETIO
+    nvcc_cmd = find_program('nvcc', required: false)
+    if nvcc_cmd.found()
+        if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
+            doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
+        else
+            warning('CUDA version = ' + nvcc.version() + ', GPUNETIO plugin will be disabled')
+            doca_gpunetio_dep = disabler()
+        endif
+    else
+        warning('nvcc not found, GPUNETIO plugin will be disabled')
+        doca_gpunetio_dep = disabler()
+    endif
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
     warning('CUDA not found, cannot autodetect wheel dir; defaulting to nixl_cu12')
     cuda_wheel_dir = 'nixl_cu12'
-endif
-
-# DOCA GPUNETIO
-if cuda_dep.found()
-  nvcc_cmd = find_program('nvcc', required: false)
-  if nvcc_cmd.found()
-    if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
-      doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
-    else
-      warning('CUDA version = ' + nvcc.version() + ', GPUNETIO plugin will be disabled')
-      doca_gpunetio_dep = disabler()
-    endif
-  else
-    warning('nvcc not found, GPUNETIO plugin will be disabled')
+    warning('CUDA not found, GPUNETIO plugin will be disabled')
     doca_gpunetio_dep = disabler()
-  endif
-else
-  warning('CUDA not found, GPUNETIO plugin will be disabled')
-  doca_gpunetio_dep = disabler()
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
