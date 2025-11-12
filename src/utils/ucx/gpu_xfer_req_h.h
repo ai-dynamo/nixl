@@ -19,7 +19,6 @@
 #define NIXL_SRC_UTILS_UCX_GPU_XFER_REQ_H_H
 
 #include <vector>
-#include <memory>
 
 #include "nixl_types.h"
 

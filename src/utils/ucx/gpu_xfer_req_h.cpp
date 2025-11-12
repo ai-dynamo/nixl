@@ -22,6 +22,8 @@
 #include "config.h"
 
 #include <chrono>
+#include <cstdlib>
+#include <string_view>
 #include <thread>
 
 extern "C" {
@@ -33,6 +35,30 @@ extern "C" {
 namespace nixl::ucx {
 
 #ifdef HAVE_UCX_GPU_DEVICE_API
+
+namespace {
+
+[[nodiscard]] std::chrono::milliseconds
+get_gpu_xfer_timeout() noexcept {
+    constexpr int default_timeout_ms = 5000;
+    constexpr std::string_view timeout_env_name = "NIXL_UCX_GPU_XFER_TIMEOUT_MS";
+
+    const char *timeout_env = std::getenv(timeout_env_name.data());
+    if (!timeout_env) {
+        return std::chrono::milliseconds(default_timeout_ms);
+    }
+
+    const int timeout_ms = std::atoi(timeout_env);
+    if (timeout_ms <= 0) {
+        NIXL_WARN << "Invalid " << timeout_env_name << " value: " << timeout_env
+                  << ", using default " << default_timeout_ms << " ms";
+        return std::chrono::milliseconds(default_timeout_ms);
+    }
+
+    return std::chrono::milliseconds(timeout_ms);
+}
+
+}
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
@@ -77,22 +103,11 @@ createGpuXferReq(const nixlUcxEp &ep,
     params.element_size = sizeof(ucp_device_mem_list_elem_t);
     params.num_elements = ucp_elements.size();
 
-    const auto start = std::chrono::steady_clock::now();
-    constexpr int default_timeout_ms = 5000;
-    int timeout_ms = default_timeout_ms;
-    const char *timeout_env = getenv("NIXL_UCX_GPU_XFER_TIMEOUT_MS");
-    if (timeout_env) {
-        timeout_ms = atoi(timeout_env);
-        if (timeout_ms <= 0) {
-            NIXL_WARN << "Invalid NIXL_UCX_GPU_XFER_TIMEOUT_MS value: " << timeout_env
-                      << ", using default " << default_timeout_ms << " ms";
-            timeout_ms = default_timeout_ms;
-        }
-    }
-    const auto timeout = std::chrono::milliseconds(timeout_ms);
+    const auto timeout = get_gpu_xfer_timeout();
 
     ucp_device_mem_list_handle_h ucx_handle;
     ucs_status_t ucs_status;
+    const auto start = std::chrono::steady_clock::now();
     while ((ucs_status = ucp_device_mem_list_create(ep.getEp(), &params, &ucx_handle)) ==
            UCS_ERR_NOT_CONNECTED) {
         if (std::chrono::steady_clock::now() - start > timeout) {
