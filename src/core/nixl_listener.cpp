@@ -493,7 +493,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
     std::unique_ptr<nixlEtcdClient> etcdClient = nullptr;
     // useEtcd is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
     if(useEtcd) {
-        etcdClient = std::make_unique<nixlEtcdClient>(name, config.etcdWatchTimeout, config.etcdHeartbeatInterval);
+        etcdClient = std::make_unique<nixlEtcdClient>(name, config.etcdWatchTimeout, config.heartbeatInterval);
     }
 #endif // HAVE_ETCD
 
