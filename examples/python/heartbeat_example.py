@@ -61,7 +61,9 @@ if __name__ == "__main__":
     target_process = multiprocessing.Process(target=run_target)
     target_process.start()
 
-    logger.info("Subprocess started")
+    logger.info("Subprocess started, pausing...")
+
+    time.sleep(5) 
 
     config = nixl_agent_config(True, True)
 
@@ -75,6 +77,9 @@ if __name__ == "__main__":
     while not ready:
         ready = agent.check_remote_metadata("target")
 
+    logger.info("Ready to kill, pausing...")
+
+    time.sleep(5)
     # SIGKILL the target process to test heartbeat failure
     target_process.kill()
 
