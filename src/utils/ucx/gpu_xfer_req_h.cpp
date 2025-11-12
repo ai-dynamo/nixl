@@ -38,27 +38,27 @@ namespace nixl::ucx {
 
 namespace {
 
-[[nodiscard]] std::chrono::milliseconds
-get_gpu_xfer_timeout() noexcept {
-    constexpr int default_timeout_ms = 5000;
-    constexpr std::string_view timeout_env_name = "NIXL_UCX_GPU_XFER_TIMEOUT_MS";
+    [[nodiscard]] std::chrono::milliseconds
+    get_gpu_xfer_timeout() noexcept {
+        constexpr int default_timeout_ms = 5000;
+        constexpr std::string_view timeout_env_name = "NIXL_UCX_GPU_XFER_TIMEOUT_MS";
 
-    const char *timeout_env = std::getenv(timeout_env_name.data());
-    if (!timeout_env) {
-        return std::chrono::milliseconds(default_timeout_ms);
+        const char *timeout_env = std::getenv(timeout_env_name.data());
+        if (!timeout_env) {
+            return std::chrono::milliseconds(default_timeout_ms);
+        }
+
+        const int timeout_ms = std::atoi(timeout_env);
+        if (timeout_ms <= 0) {
+            NIXL_WARN << "Invalid " << timeout_env_name << " value: " << timeout_env
+                      << ", using default " << default_timeout_ms << " ms";
+            return std::chrono::milliseconds(default_timeout_ms);
+        }
+
+        return std::chrono::milliseconds(timeout_ms);
     }
 
-    const int timeout_ms = std::atoi(timeout_env);
-    if (timeout_ms <= 0) {
-        NIXL_WARN << "Invalid " << timeout_env_name << " value: " << timeout_env
-                  << ", using default " << default_timeout_ms << " ms";
-        return std::chrono::milliseconds(default_timeout_ms);
-    }
-
-    return std::chrono::milliseconds(timeout_ms);
-}
-
-}
+} // namespace
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
