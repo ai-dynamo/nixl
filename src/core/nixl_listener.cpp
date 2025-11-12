@@ -417,7 +417,7 @@ public:
     }
 
     // Setup a watcher for an agent's metadata invalidation if it doesn't already exist
-    void setupAgentWatcher(const std::string &agent_name) {
+    void setupAgentWatcher(const std::string &agent_name, const std::string metadata_label) {
         if (agentWatchers.find(agent_name) != agentWatchers.end()) {
             return;
         }
@@ -447,7 +447,9 @@ public:
             }
         };
 
-        std::string agent_prefix = makeKey(agent_name, "");
+        std::string agent_prefix = makeKey(agent_name, metadata_label);
+	NIXL_DEBUG << "Create watcher for metadata " << agent_prefix;
+
         agentWatchers[agent_name] = std::make_unique<etcd::Watcher>(*etcd, agent_prefix, process_response);
     }
 
@@ -612,7 +614,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     }
                     NIXL_DEBUG << "Successfully loaded metadata for agent: " << remote_agent;
 
-                    etcdClient->setupAgentWatcher(remote_agent);
+                    etcdClient->setupAgentWatcher(remote_agent, metadata_label);
                     break;
                 }
                 case ETCD_INVAL:

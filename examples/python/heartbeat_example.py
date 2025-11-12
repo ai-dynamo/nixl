@@ -35,7 +35,10 @@ def run_target():
     config = nixl_agent_config(True, True, 5555)
 
     # Allocate memory and register with NIXL
-    agent = nixl_agent("target", config, )
+    agent = nixl_agent(
+        "target",
+        config,
+    )
     tensors = [torch.ones(10, dtype=torch.float32) for _ in range(2)]
 
     logger.info("Target running with tensors: %s", tensors)
@@ -63,7 +66,7 @@ if __name__ == "__main__":
 
     logger.info("Subprocess started, pausing...")
 
-    time.sleep(5) 
+    time.sleep(5)
 
     config = nixl_agent_config(True, True)
 
