@@ -19,11 +19,11 @@ import multiprocessing
 import time
 
 import torch
-
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl.logging import get_logger
 
 logger = get_logger(__name__)
+
 
 def run_target():
     """
@@ -31,11 +31,11 @@ def run_target():
     This posts metadata to etcd and then is killed.
     """
     logger.info("Target subprocess started")
-    
-    config = nixl_agent_config(True, True)
+
+    config = nixl_agent_config(True, True, 5555)
 
     # Allocate memory and register with NIXL
-    agent = nixl_agent("target", config)
+    agent = nixl_agent("target", config, )
     tensors = [torch.ones(10, dtype=torch.float32) for _ in range(2)]
 
     logger.info("Target running with tensors: %s", tensors)
@@ -45,7 +45,7 @@ def run_target():
         logger.error("Target: Memory registration failed.")
         return
 
-    agent.send_local_metadata("target")
+    agent.send_local_metadata()
 
     logger.info("Waiting to die")
 
@@ -55,15 +55,14 @@ def run_target():
 
     logger.info("Target subprocess complete successfully (should have died by now).")
 
+
 if __name__ == "__main__":
     # Start the target process
-    target_process = multiprocessing.Process(
-        target=run_target
-    )
+    target_process = multiprocessing.Process(target=run_target)
     target_process.start()
- 
+
     logger.info("Subprocess started")
-    
+
     config = nixl_agent_config(True, True)
 
     agent = nixl_agent("initiator", config)
@@ -78,15 +77,14 @@ if __name__ == "__main__":
 
     # SIGKILL the target process to test heartbeat failure
     target_process.kill()
-    
+
     logger.info("Target process killed, waiting for metadata to be invalidated")
- 
+
     # Wait for metadata to be invalidated
     ready = True
     while ready:
         ready = agent.check_remote_metadata("target")
-    
-    agent.invalidate_local_metadata()
-    
-    logger.info("Test Complete.")
 
+    agent.invalidate_local_metadata()
+
+    logger.info("Test Complete.")
