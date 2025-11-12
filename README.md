@@ -115,16 +115,16 @@ $ ninja install
 
 ### Build Options
 
-#### Release build
-
-```bash
-$ meson setup <name_of_build_dir> --buildtype=release
-```
-
-#### Debug build (default)
+#### Release build (default)
 
 ```bash
 $ meson setup <name_of_build_dir>
+```
+
+#### Debug build
+
+```bash
+$ meson setup <name_of_build_dir> --buildtype=debug
 ```
 
 #### NIXL-specific build options
@@ -202,7 +202,7 @@ For Python examples, see [examples/python/](examples/python/).
 ### Rust Bindings
 #### Build
 - Use `-Drust=true` meson option to build rust bindings.
-- Use `-Ddebug=false` for a release build.
+- Use `--buildtype=debug` for a debug build (default is release).
 - Or build manually:
     ```bash
     $ cargo build --release
