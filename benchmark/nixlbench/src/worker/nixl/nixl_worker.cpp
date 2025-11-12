@@ -113,7 +113,6 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     agent->getAvailPlugins(plugins);
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
@@ -126,8 +125,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     agent->getPluginParams(backend_name, mems, backend_params);
 
-    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
 
         // No need to set device_list if all is specified
@@ -135,14 +133,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         if (devices[0] != "all" && devices.size() >= 1) {
             if (isInitiator()) {
                 backend_params["device_list"] = devices[rank];
-                if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
-                    backend_params["num_ucx_engines"] = xferBenchConfig::num_initiator_dev;
-                }
             } else {
                 backend_params["device_list"] = devices[rank - xferBenchConfig::num_initiator_dev];
-                if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
-                    backend_params["num_ucx_engines"] = xferBenchConfig::num_target_dev;
-                }
             }
         }
 
@@ -181,9 +173,15 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
             backend_params["use_aio"] = "true";
             backend_params["use_uring"] = "false";
+            backend_params["use_posix_aio"] = "false";
         } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
             backend_params["use_aio"] = "false";
             backend_params["use_uring"] = "true";
+            backend_params["use_posix_aio"] = "false";
+        } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_POSIXAIO) {
+            backend_params["use_aio"] = "false";
+            backend_params["use_uring"] = "false";
+            backend_params["use_posix_aio"] = "true";
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
                   << std::endl;
@@ -633,7 +631,17 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
         CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, iov.padded_size),
                                 "Failed to free reserved address");
     } else {
-        CHECK_CUDA_ERROR(cudaFree((void *)iov.addr), "Failed to deallocate CUDA buffer");
+        /*
+         * CUDA streams allow for concurrent execution of kernels and memory operations. However,
+         * memory management functions like cudaFree are implicitly synchronized with all streams to
+         * guarantee safety. This means cudaFree will wait for all kernels (in any stream) that
+         * might use the memory to finish before actually freeing it.
+         * If the application hangs on cudaFree due to kernels running in other streams, switching
+         * to cudaFreeAsync can allow the host to proceed without waiting for the entire device
+         * synchronization.
+         */
+        CHECK_CUDA_ERROR(cudaFreeAsync((void *)iov.addr, 0), "Failed to deallocate CUDA buffer");
+        CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize stream 0");
     }
 }
 #endif /* HAVE_CUDA */

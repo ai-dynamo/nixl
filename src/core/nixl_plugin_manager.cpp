@@ -119,7 +119,7 @@ std::shared_ptr<const nixlPluginHandle> nixlPluginManager::loadPluginFromPath(co
     // Open the plugin file
     void* handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
-        NIXL_ERROR << "Failed to load plugin from " << plugin_path << ": " << dlerror();
+        NIXL_INFO << "Failed to load plugin from " << plugin_path << ": " << dlerror();
         return nullptr;
     }
 
@@ -285,7 +285,7 @@ std::shared_ptr<const nixlPluginHandle> nixlPluginManager::loadPlugin(const std:
     }
 
     // Failed to load the plugin
-    NIXL_ERROR << "Failed to load plugin '" << plugin_name << "' from any directory";
+    NIXL_INFO << "Failed to load plugin '" << plugin_name << "' from any directory";
     return nullptr;
 }
 
@@ -401,10 +401,6 @@ void nixlPluginManager::registerBuiltinPlugins() {
 
 #ifdef STATIC_PLUGIN_UCX
     NIXL_REGISTER_STATIC_PLUGIN(UCX)
-#endif
-
-#ifdef STATIC_PLUGIN_UCX_MO
-    NIXL_REGISTER_STATIC_PLUGIN(UCX_MO)
 #endif
 
 #ifdef STATIC_PLUGIN_GDS
