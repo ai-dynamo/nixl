@@ -1456,7 +1456,7 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
     for (size_t i = start_idx; i < end_idx; ++i) {
         void *laddr = (void *)local[i].addr;
         size_t lsize = local[i].len;
-        uint64_t raddr = (uint64_t)remote[i].addr;
+        uint64_t raddr = static_cast<uint64_t>(remote[i].addr);
         NIXL_ASSERT(lsize == remote[i].len);
 
         auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
