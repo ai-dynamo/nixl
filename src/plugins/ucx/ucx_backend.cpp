@@ -287,6 +287,18 @@ private:
     };
     std::optional<Notif> notif;
 
+    nixl_status_t
+    checkConnection(nixl_status_t status = NIXL_SUCCESS) const {
+        NIXL_ASSERT(!connections_.empty());
+        for (const auto &conn : connections_) {
+            nixl_status_t conn_status = conn->getEp(worker_id)->checkTxState();
+            if (conn_status != NIXL_SUCCESS) {
+                return conn_status;
+            }
+        }
+        return status;
+    }
+
 public:
     nixlUcxBackendH(nixlUcxWorker *worker, size_t worker_id)
         : worker(worker),
@@ -405,18 +417,6 @@ public:
 
     size_t getWorkerId() const {
         return worker_id;
-    }
-
-    nixl_status_t
-    checkConnection(nixl_status_t status = NIXL_SUCCESS) const {
-        NIXL_ASSERT(!connections_.empty());
-        for (auto conn : connections_) {
-            nixl_status_t conn_status = conn->getEp(worker_id)->checkTxState();
-            if (conn_status != NIXL_SUCCESS) {
-                return conn_status;
-            }
-        }
-        return status;
     }
 };
 
@@ -1459,8 +1459,8 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
         uint64_t raddr = (uint64_t)remote[i].addr;
         NIXL_ASSERT(lsize == remote[i].len);
 
-        auto *lmd = (nixlUcxPrivateMetadata *)local[i].metadataP;
-        auto *rmd = (nixlUcxPublicMetadata *)remote[i].metadataP;
+        auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
+        auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         auto &rmd_ep = rmd->conn->getEp(worker_id);
         if (__builtin_expect(rmd_ep.get() != &ep, 0)) {
             break;
@@ -1515,13 +1515,13 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     for (size_t i = start_idx; i < end_idx;) {
         /* Send requests to a single EP */
-        auto *rmd = (nixlUcxPublicMetadata *)remote[i].metadataP;
+        auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         auto &ep = rmd->conn->getEp(workerId);
         auto result = sendXferRangeBatch(*ep, operation, local, remote, workerId, i, end_idx);
 
         /* Append a single pending request for the entire EP batch */
         ret = intHandle->append(result.status, result.req, rmd->conn);
-        if (__builtin_expect(ret != NIXL_SUCCESS, 0)) {
+        if (ret != NIXL_SUCCESS) {
             return ret;
         }
 
@@ -1537,7 +1537,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
     for (auto &conn : intHandle->getConnections()) {
         nixlUcxReq req;
         ret = conn->getEp(workerId)->flushEp(req);
-        if (intHandle->append(ret, req, conn)) {
+        if (intHandle->append(ret, req, conn) != NIXL_SUCCESS) {
             return ret;
         }
     }
@@ -1579,7 +1579,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                                 opt_args->notifMsg,
                                 rmd->conn->getEp(int_handle->getWorkerId()),
                                 &req);
-            if (int_handle->append(ret, req, rmd->conn)) {
+            if (int_handle->append(ret, req, rmd->conn) != NIXL_SUCCESS) {
                 return ret;
             }
 
@@ -1616,8 +1616,8 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
     nixl_status_t status =
         notifSendPriv(notif->agent, notif->payload, conn->getEp(intHandle->getWorkerId()), &req);
     notif.reset();
-    status = intHandle->append(status, req, conn);
-    if (status != NIXL_SUCCESS) {
+
+    if (intHandle->append(status, req, conn) != NIXL_SUCCESS) {
         return status;
     }
 
