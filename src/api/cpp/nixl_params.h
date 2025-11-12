@@ -78,7 +78,8 @@ class nixlAgentConfig {
          * @param lthr_delay_us      Optional delay for listener thread in us
          * @param capture_telemetry  Optional flag to enable telemetry capture
          * @param etcd_watch_timeout Optional timeout for etcd watch operations in microseconds
-         * @param heartbeat_interval Optional  timeout for how often an agent should send a keepalive heartbeat. Only supported in ETCD for now.
+         * @param heartbeat_interval Optional  timeout for how often an agent should send a
+         * keepalive heartbeat. Only supported in ETCD for now.
          */
         nixlAgentConfig(const bool use_prog_thread,
                         const bool use_listen_thread = false,
@@ -90,8 +91,7 @@ class nixlAgentConfig {
                         const bool capture_telemetry = false,
                         const std::chrono::microseconds &etcd_watch_timeout =
                             std::chrono::microseconds(5000000),
-			const std::chrono::seconds &heartbeat_interval =
-			    std::chrono::seconds(2))
+                        const std::chrono::seconds &heartbeat_interval = std::chrono::seconds(2))
             : useProgThread(use_prog_thread),
               useListenThread(use_listen_thread),
               listenPort(port),
