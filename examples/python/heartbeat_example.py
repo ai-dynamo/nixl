@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -19,6 +17,7 @@ import multiprocessing
 import time
 
 import torch
+
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl.logging import get_logger
 

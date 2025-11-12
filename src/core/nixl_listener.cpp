@@ -247,7 +247,7 @@ public:
     }
 
     void startHeartbeatThread(uint64_t lease_id) {
-        while (!heartbeat_thread_stop) { 
+        while (!heartbeat_thread_stop) {
 	    //keep alive for twice the heartbeat interval
 	    etcd::KeepAlive keepalive(*etcd, (heartbeat_interval.count())*2, lease_id);
 	    keepalive.Check();
