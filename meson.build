@@ -122,16 +122,10 @@ if cuda_dep.found()
     endif
 
     # DOCA GPUNETIO
-    nvcc_cmd = find_program('nvcc', required: false)
-    if nvcc_cmd.found()
-        if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
-            doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
-        else
-            warning('CUDA version = ' + nvcc.version() + ', GPUNETIO plugin will be disabled')
-            doca_gpunetio_dep = disabler()
-        endif
+    if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
+        doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
-        warning('nvcc not found, GPUNETIO plugin will be disabled')
+        warning('CUDA version = ' + nvcc.version() + ', GPUNETIO plugin will be disabled')
         doca_gpunetio_dep = disabler()
     endif
 else
