@@ -38,6 +38,11 @@ WHL_PYTHON_VERSIONS="3.12"
 UCX_REF=${UCX_REF:-v1.20.x}
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
+if [ "$CI" = "true" ]; then
+    BUILD_TYPE="debug"
+else
+    BUILD_TYPE="release"
+fi
 
 get_options() {
     while :; do
@@ -80,6 +85,14 @@ get_options() {
             ;;
         --no-cache)
             NO_CACHE=" --no-cache"
+            ;;
+        --build-type)
+            if [ "$2" ]; then
+                BUILD_TYPE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
             ;;
         --tag)
             if [ "$2" ]; then
@@ -156,6 +169,7 @@ show_build_options() {
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
     echo "UCX Ref: ${UCX_REF}"
+    echo "Build Type: ${BUILD_TYPE}"
 }
 
 show_help() {
@@ -165,6 +179,7 @@ show_help() {
     echo "  [--wheel-base base platform for wheel builds]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
+    echo "  [--build-type [debug|release] to select build type (default: release)]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-upstream use ucx master branch]"
@@ -196,6 +211,7 @@ BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
+BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 
 show_build_options
 
