@@ -120,14 +120,6 @@ if cuda_dep.found()
     else
         error('Unsupported CUDA version: ' + cuda_version_major)
     endif
-
-    # DOCA GPUNETIO
-    if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
-        doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
-    else
-        warning('CUDA version = ' + nvcc.version() + ', GPUNETIO plugin will be disabled')
-        doca_gpunetio_dep = disabler()
-    endif
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
