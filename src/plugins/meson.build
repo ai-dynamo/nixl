@@ -20,9 +20,12 @@ endif
 subdir('posix')  # Always try to build POSIX backend, it will handle its own dependencies
 subdir('obj')  # Always try to build Obj backend, it will handle its own dependencies
 
+subdir('telemetry')
+
 if libfabric_dep.found()
     subdir('libfabric')
 endif
+
 
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and cuda_dep.found()
