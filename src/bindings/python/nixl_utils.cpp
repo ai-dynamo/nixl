@@ -18,9 +18,12 @@
 
 namespace py = pybind11;
 
+// NB: for storage IO with O_DIRECT, allocated memory must match device block size
+#define IO_SIZE 4096
+
 //JUST FOR TESTING
 uintptr_t malloc_passthru(int size) {
-    return (uintptr_t) malloc(size);
+    return (uintptr_t)aligned_alloc(IO_SIZE, size);
 }
 
 //JUST FOR TESTING

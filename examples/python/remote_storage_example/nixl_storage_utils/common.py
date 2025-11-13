@@ -21,6 +21,8 @@ Provides core functionality for memory management and storage operations.
 import argparse
 import os
 
+import torch
+
 import nixl._utils as nixl_utils
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl._bindings import DRAM_SEG
@@ -36,14 +38,14 @@ def create_agent_with_plugins(agent_name, port):
 
     plugin_list = new_nixl_agent.get_plugin_list()
 
-    if "GDS" in plugin_list:
-        new_nixl_agent.create_backend("GDS")
+    if "GDS_MT" in plugin_list:
+        new_nixl_agent.create_backend("GDS_MT")
         logger.info("Using GDS storage backend")
     if "POSIX" in plugin_list:
         new_nixl_agent.create_backend("POSIX")
         logger.info("Using POSIX storage backend")
 
-    if "GDS" not in plugin_list and "POSIX" not in plugin_list:
+    if "GDS_MT" not in plugin_list and "POSIX" not in plugin_list:
         logger.error("No storage backends available, exiting")
         exit(-1)
 
@@ -57,20 +59,30 @@ def create_agent_with_plugins(agent_name, port):
     return new_nixl_agent
 
 
-def setup_memory_and_files(agent, batch_size, buf_size, fileprefix):
+def setup_memory_and_files(agent, batch_size, buf_size, fileprefix, mem="DRAM"):
     """Setup memory and file resources."""
     my_mem_list = []
     my_file_list = []
     nixl_mem_reg_list = []
     nixl_file_reg_list = []
 
+    if mem == "VRAM":
+        torch.set_default_device("cuda:0")
+
     for i in range(batch_size):
-        my_mem_list.append(nixl_utils.malloc_passthru(buf_size))
-        my_file_list.append(os.open(f"{fileprefix}_{i}", os.O_RDWR | os.O_CREAT))
-        nixl_mem_reg_list.append((my_mem_list[-1], buf_size, 0, str(i)))
+        if mem == "VRAM":
+            my_mem_list.append(torch.full((buf_size,), 0, dtype=torch.int8))
+            nixl_mem_reg_list.append(my_mem_list[-1])
+        else:
+            my_mem_list.append(nixl_utils.malloc_passthru(buf_size))
+            nixl_mem_reg_list.append((my_mem_list[-1], buf_size, 0, str(i)))
+
+        my_file_list.append(
+            os.open(f"{fileprefix}_{i}", os.O_RDWR | os.O_CREAT | os.O_DIRECT)
+        )
         nixl_file_reg_list.append((0, buf_size, my_file_list[-1], str(i)))
 
-    nixl_mem_reg_descs = agent.register_memory(nixl_mem_reg_list, "DRAM")
+    nixl_mem_reg_descs = agent.register_memory(nixl_mem_reg_list, mem)
     nixl_file_reg_descs = agent.register_memory(nixl_file_reg_list, "FILE")
 
     assert nixl_mem_reg_descs is not None
@@ -89,8 +101,7 @@ def cleanup_resources(agent, mem_reg_descs, file_reg_descs, mem_list, file_list)
         for mem in mem_list:
             nixl_utils.free_passthru(mem)
     else:
-        agent.deregister_memory(file_reg_descs, backends=["GDS"])
-        # TODO: cudaFree
+        agent.deregister_memory(file_reg_descs, backends=["GDS_MT"])
 
     for file in file_list:
         os.close(file)
