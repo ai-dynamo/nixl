@@ -31,34 +31,8 @@
 #define INITIATOR_VALUE 0xbb
 #define VOLATILE(x) (*(volatile typeof (x) *)&(x))
 #define INITIATOR_THRESHOLD_NS 50000 // 50us
-
+#define ALIGN_SIZE(size, align) size = ((size + (align) - 1) / (align)) * (align);
 #define DEVICE_GET_TIME(globaltimer) asm volatile("mov.u64 %0, %globaltimer;" : "=l"(globaltimer))
-
-#if USE_NVTX
-#include <nvtx3/nvToolsExt.h>
-
-const uint32_t colors[] =
-        {0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff, 0xff00ffff, 0xffff0000, 0xffffffff};
-const int num_colors = sizeof (colors) / sizeof (uint32_t);
-
-#define PUSH_RANGE(name, cid)                              \
-    {                                                      \
-        int color_id = cid;                                \
-        color_id = color_id % num_colors;                  \
-        nvtxEventAttributes_t eventAttrib = {0};           \
-        eventAttrib.version = NVTX_VERSION;                \
-        eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;  \
-        eventAttrib.colorType = NVTX_COLOR_ARGB;           \
-        eventAttrib.color = colors[color_id];              \
-        eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII; \
-        eventAttrib.message.ascii = name;                  \
-        nvtxRangePushEx (&eventAttrib);                    \
-    }
-#define POP_RANGE nvtxRangePop();
-#else
-#define PUSH_RANGE(name, cid)
-#define POP_RANGE
-#endif
 
 static void
 checkCudaError (cudaError_t result, const char *message) {
@@ -268,19 +242,23 @@ main (int argc, char *argv[]) {
 
     if (stream_mode.compare ("pool") == 0) params["cuda_streams"] = "2";
 
-    PUSH_RANGE ("createBackend", 0)
     params["network_devices"] = "mlx5_0";
     params["gpu_devices"] = "0";
     ret = agent.createBackend ("GPUNETIO", params, gpunetio);
     // check return
-    POP_RANGE
 
     nixl_opt_args_t extra_params;
     extra_params.backends.push_back (gpunetio);
 
-    checkCudaError (cudaMalloc (&data_address, SIZE * TRANSFER_NUM_BUFFER),
+    static size_t host_page_size = sysconf(_SC_PAGESIZE);
+    size_t aligned_size = SIZE * TRANSFER_NUM_BUFFER;
+    ALIGN_SIZE(aligned_size, host_page_size);
+
+    // Note: cudaMalloc may not report an host system page aligned address.
+    // Note: doca_gpu_mem_alloc is capable to return an aligned GPU memory address.
+    checkCudaError (cudaMalloc (&data_address, aligned_size),
                     "Failed to allocate CUDA buffer 0");
-    checkCudaError (cudaMemset ((void *)data_address, 0, SIZE * TRANSFER_NUM_BUFFER),
+    checkCudaError (cudaMemset ((void *)data_address, 0, aligned_size),
                     "Failed to memset CUDA buffer 0");
 
     if (role != target) {
@@ -354,7 +332,7 @@ main (int argc, char *argv[]) {
         }
 
         std::cout << " Start Data Path Exchanges \n";
-        std::cout << " Waiting for first 'connected' notif from " << initiator << std::endl;
+        std::cout << " Waiting for first 'sent' notif from " << initiator << std::endl;
 
         checkCudaError (cudaStreamCreateWithFlags (&stream, cudaStreamNonBlocking),
                         "Failed to create CUDA stream");
@@ -474,8 +452,6 @@ main (int argc, char *argv[]) {
         std::cout << "Got metadata from " << target << " \n";
         std::cout << "Create transfer request with GPUNETIO backend\n ";
 
-        PUSH_RANGE ("createXferReq", 1)
-
         // Create Xfer request with notification
         if (stream_mode.compare ("attached") == 0)
             checkCudaError (cudaStreamCreateWithFlags (&stream, cudaStreamNonBlocking),
@@ -493,36 +469,29 @@ main (int argc, char *argv[]) {
             std::cerr << "Error creating transfer request\n";
             exit (-1);
         }
-        POP_RANGE
 
         std::cout << "Launch initiator send kernel on stream\n";
 
         /* Synthetic simulation of GPU data processing with stream attached mode before sending */
         if (stream_mode.compare ("attached") == 0) {
             std::cout << "First xfer, prepare data, GPU mode, transfer 1" << std::endl;
-            PUSH_RANGE ("InitData", 2)
             launch_initiator_send_kernel (stream, (uintptr_t)(data_address), INITIATOR_VALUE);
-            POP_RANGE
 
             std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
-            PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
             nixl_exit_on_failure((status < 0), "Failed to post Xfer Req", role);
 
-            POP_RANGE
 
             std::cout << "Waiting for completion to re-use buffers\n";
-            PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                nixl_exit_on_failure(status < 0, "Failed to get Xfer Status", role);
+                nixl_exit_on_failure(!(status == NIXL_SUCCESS && status == NIXL_IN_PROG),
+                                     "Failed to get Xfer Status",
+                                     role);
             }
-            POP_RANGE
             // No need for cudaStreamSyncronize as CUDA kernel and Xfer are on the same stream
             std::cout << "Second xfer, prepare data, GPU mode, transfer 2" << std::endl;
-            PUSH_RANGE ("InitData", 2)
             launch_initiator_send_kernel (stream, (uintptr_t)(data_address), INITIATOR_VALUE + 1);
-            POP_RANGE
 
             // First recv notif: target processed previously sent data
             std::cout << "Waiting from 'processed' ack from" << target << std::endl;
@@ -542,47 +511,35 @@ main (int argc, char *argv[]) {
 
             // Repost same treq with different data in buffers
             std::cout << "Post the request with GPUNETIO backend transfer 2" << std::endl;
-            PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
             nixl_exit_on_failure(status, "Failed to post Xfer Req", role);
-            POP_RANGE
 
             std::cout << "Waiting for completion\n";
-            PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                nixl_exit_on_failure(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
+                nixl_exit_on_failure(!(status == NIXL_SUCCESS && status == NIXL_IN_PROG),
                                      "Failed to get Xfer Status",
                                      role);
             }
-            POP_RANGE
         } else {
             /* Synthetic simulation of CPU data processing with stream pool mode before sending */
             std::cout << "First xfer, prepare data, CPU mode, transfer 1" << std::endl;
-            PUSH_RANGE ("InitData", 2)
             cudaMemset ((void *)data_address, INITIATOR_VALUE, TRANSFER_NUM_BUFFER * SIZE);
-            POP_RANGE
 
             std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
-            PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
             nixl_exit_on_failure(status, "Failed to post Xfer Req", role);
-            POP_RANGE
 
             std::cout << "Waiting for completion\n";
-            PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                nixl_exit_on_failure(!(status == NIXL_SUCCESS || status == NIXL_IN_PROG),
+                nixl_exit_on_failure(!(status == NIXL_SUCCESS && status == NIXL_IN_PROG),
                                      "Failed to get Xfer Status",
                                      role);
             }
-            POP_RANGE
 
             std::cout << "Second xfer, prepare data, CPU mode, transfer 2" << std::endl;
-            PUSH_RANGE ("InitData", 2)
             cudaMemset ((void *)data_address, INITIATOR_VALUE + 1, TRANSFER_NUM_BUFFER * SIZE);
-            POP_RANGE
 
             // First recv notif: target processed previously sent data
             std::cout << "Waiting from 'processed' ack from" << target << std::endl;
@@ -602,18 +559,16 @@ main (int argc, char *argv[]) {
 
             // Repost same treq with different data in buffers
             std::cout << "Post the request with GPUNETIO backend transfer 2" << std::endl;
-            PUSH_RANGE ("postXferReq", 3)
             status = agent.postXferReq (treq);
             nixl_exit_on_failure(status, "Failed to post Xfer Req", role);
-            POP_RANGE
 
             std::cout << "Waiting for completion\n";
-            PUSH_RANGE ("getXferStatus", 4)
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                nixl_exit_on_failure(status, "Failed to get Xfer Status", role);
+                nixl_exit_on_failure(!(status == NIXL_SUCCESS && status == NIXL_IN_PROG),
+                                     "Failed to get Xfer Status",
+                                     role);
             }
-            POP_RANGE
         }
 
         std::cout << "Releasing request " << std::endl;

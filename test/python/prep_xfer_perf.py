@@ -139,7 +139,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    logger.info("Using NIXL Plugins from:\n%s", os.environ["NIXL_PLUGIN_DIR"])
+    logger.info(
+        "Using NIXL Plugins from: %s",
+        os.environ.get("NIXL_PLUGIN_DIR", "default location"),
+    )
 
     # Example using nixl_agent_config
     agent = init_agent()

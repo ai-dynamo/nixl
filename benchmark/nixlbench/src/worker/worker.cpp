@@ -75,6 +75,7 @@ static xferBenchRT *createRT(int *terminate) {
         return new xferBenchNullRT();
     }
 
+#if HAVE_ETCD
     if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
         int total = 2;
         if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
@@ -93,6 +94,7 @@ static xferBenchRT *createRT(int *terminate) {
         }
         return etcd_rt;
     }
+#endif
 
     std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << std::endl;
     exit(EXIT_FAILURE);

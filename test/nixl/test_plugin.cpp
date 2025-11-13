@@ -68,7 +68,6 @@ int main(int argc, char** argv) {
     std::set<std::string> plugins = {"UCX",
                                      "GDS",
                                      "POSIX",
-                                     "UCX_MO",
                                      "MOCK_BACKEND",
                                      "GPUNETIO",
                                      "OBJ",

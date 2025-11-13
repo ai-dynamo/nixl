@@ -19,8 +19,8 @@ from typing import Optional, Union
 import numpy as np
 import torch
 
-import nixl._bindings as nixlBind
-from nixl.logging import get_logger
+from . import _bindings as nixlBind  # type: ignore
+from .logging import get_logger
 
 # Get logger using centralized configuration
 logger = get_logger(__name__)

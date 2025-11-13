@@ -93,9 +93,15 @@ GDS is bundled with CUDA ≥11.4 but requires explicit enabling:
 
 ```bash
 sudo echo "options nvidia NVreg_EnableGpuDirectStorage=1" > /etc/modprobe.d/nvidia-gds.conf
+
+# Configure PeerMappingOverride for GPU-Initiated RDMA support
+sudo echo "options nvidia NVreg_RegistryDwords=\"PeerMappingOverride=1;\"" > /etc/modprobe.d/nvidia.conf
+
 sudo update-initramfs -u
 sudo reboot
 ```
+
+The `PeerMappingOverride=1` option is required for proper GPU peer-to-peer communication in RDMA environments.
 
 ### 6. **Enable Kernel Modules at Boot**
 
@@ -131,7 +137,7 @@ sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 ```
 
-Verify GPU access in containers using `docker run --gpus all nvcr.io/nvidia/pytorch:25.02-py3 nvidia-smi`[^1_3].
+Verify GPU access in containers using `docker run --gpus all nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04 nvidia-smi`[^1_3].
 
 ### 9. **Validation and Troubleshooting**
 

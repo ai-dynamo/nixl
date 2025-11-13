@@ -96,9 +96,15 @@ private:
     std::shared_ptr<nixlLibfabricConnection> conn_; // Connection to remote agent
     std::vector<uint64_t> rail_remote_key_list_; // Remote access keys, one per rail
     std::vector<char *> src_ep_names_; // Source endpoint names, one per rail
+    std::vector<size_t>
+        remote_selected_endpoints_; // Remote rails selected, derived from rail_remote_key_list_.
 
 public:
     nixlLibfabricPublicMetadata() : nixlBackendMD(false) {}
+
+    void
+    derive_remote_selected_endpoints();
+
     friend class nixlLibfabricEngine;
 };
 
@@ -107,8 +113,10 @@ class nixlLibfabricConnection : public nixlBackendConnMD {
 private:
     size_t agent_index_; // Unique agent identifier in agent_names vector
     std::string remoteAgent_; // Remote agent name
-    std::vector<fi_addr_t> rail_remote_addr_list_; // Data rail libfabric addresses
-    std::vector<fi_addr_t> control_rail_remote_addr_list_; // Control rail libfabric addresses
+    std::unordered_map<size_t, std::vector<fi_addr_t>>
+        rail_remote_addr_list_; // Data rail libfabric addresses. key=data rail id.
+    std::unordered_map<size_t, std::vector<fi_addr_t>>
+        control_rail_remote_addr_list_; // Control rail libfabric addresses. key=control rail id.
     std::vector<char *> src_ep_names_; // Data rail endpoint names
     std::vector<char *> control_ep_names_; // Control rail endpoint names
     ConnectionState overall_state_; // Current connection state
@@ -278,7 +286,11 @@ private:
     processConnectionRequest(uint16_t agent_idx,
                              const std::string &serialized_data,
                              nixlLibfabricRail *rail);
-
+    nixl_status_t
+    loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
+                       void *buffer,
+                       std::shared_ptr<nixlLibfabricConnection> conn,
+                       nixlBackendMD *&output);
 
 #ifdef HAVE_CUDA
     // CUDA context management methods

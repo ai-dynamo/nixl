@@ -38,7 +38,7 @@ class nixlLibfabricConnection;
  *
  */
 struct nixlLibfabricReq {
-    fi_context2 ctx; ///< Libfabric context for operation tracking
+    fi_context ctx; ///< Libfabric context for operation tracking
     size_t rail_id; ///< Rail ID that owns this request
     size_t pool_index; ///< Index in the pool for deque compatibility
     uint32_t xfer_id; ///< Pre-assigned globally unique transfer ID
@@ -73,7 +73,7 @@ struct nixlLibfabricReq {
           remote_addr(0),
           local_mr(nullptr),
           remote_key(0) {
-        memset(&ctx, 0, sizeof(fi_context2));
+        memset(&ctx, 0, sizeof(fi_context));
     }
 };
 
@@ -276,7 +276,12 @@ public:
     // Memory registration methods
     /** Register memory buffer with libfabric */
     nixl_status_t
-    registerMemory(void *buffer, size_t length, struct fid_mr **mr_out, uint64_t *key_out) const;
+    registerMemory(void *buffer,
+                   size_t length,
+                   nixl_mem_t mem_type,
+                   int gpu_id,
+                   struct fid_mr **mr_out,
+                   uint64_t *key_out) const;
 
     /** Deregister memory from libfabric */
     nixl_status_t
@@ -392,6 +397,9 @@ private:
     // Separate request pools for optimal performance
     ControlRequestPool control_request_pool_;
     DataRequestPool data_request_pool_;
+
+    // Provider capability flags
+    bool provider_supports_hmem_;
 
 
     nixl_status_t

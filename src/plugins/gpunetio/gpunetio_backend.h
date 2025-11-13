@@ -26,25 +26,50 @@ public:
     int oob_sock_server;
     std::mutex notifLock;
     std::mutex qpLock;
-    mutable std::mutex connectLock;
-    std::vector<std::pair<uint32_t, struct doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
-    struct doca_dev *ddev; /* DOCA device handler associated to queues */
-    nixl_status_t addRdmaQp (const std::string &remote_agent);
-    nixl_status_t connectServerRdmaQp (int oob_sock_client, const std::string &remote_agent);
-    nixl_status_t nixlDocaInitNotif (const std::string &remote_agent, struct doca_dev *dev, struct doca_gpu *gpu);
+    std::mutex connectLock;
+    std::vector<std::pair<uint32_t, doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
+    doca_dev *ddev; /* DOCA device handler associated to queues */
+    doca_verbs_context *verbs_context; /* DOCA Verbs Context */
+    doca_verbs_pd *verbs_pd; /* DOCA Verbs Protection Domain */
+    doca_verbs_ah_attr *verbs_ah_attr; /* DOCA Verbs address handle */
+    struct ibv_pd *pd; /* local protection domain */
+    doca_verbs_gid gid; /* local gid address */
+    doca_verbs_gid remote_gid; /* remote gid address */
+    int lid; /* IB: local ID */
+    int dlid; /* IB: destination ID */
+    int gid_index;
+    struct ibv_port_attr port_attr;
+    std::vector<std::string> oobdev;
 
-    volatile uint8_t pthrStop, pthrActive;
-    nixlDocaEngine (const nixlBackendInitParams *init_params);
+    nixl_status_t
+    addRdmaQp(const std::string &remote_agent);
+    nixl_status_t
+    connectServerRdmaQp(int oob_sock_client, const std::string &remote_agent);
+    nixl_status_t
+    nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev, doca_gpu *gpu);
+
+    volatile uint32_t *pthrStop;
+    nixlDocaEngine(const nixlBackendInitParams *init_params);
     ~nixlDocaEngine();
 
-    bool supportsRemote() const {
+    bool
+    supportsRemote() const {
         return true;
     }
-    bool supportsLocal() const {
+
+    bool
+    supportsLocal() const {
         return false;
     }
-    bool supportsNotif() const {
+
+    bool
+    supportsNotif() const {
         return true;
+    }
+
+    bool
+    supportsProgTh() const {
+        return false;
     }
 
     nixl_mem_list_t
@@ -52,65 +77,71 @@ public:
 
     /* Object management */
     nixl_status_t
-    getPublicData (const nixlBackendMD *meta, std::string &str) const override;
+    getPublicData(const nixlBackendMD *meta, std::string &str) const override;
     nixl_status_t
-    getConnInfo (std::string &str) const override;
+    getConnInfo(std::string &str) const override;
     nixl_status_t
-    loadRemoteConnInfo (const std::string &remote_agent,
-                        const std::string &remote_conn_info) override;
+    loadRemoteConnInfo(const std::string &remote_agent,
+                       const std::string &remote_conn_info) override;
 
     nixl_status_t
-    connect (const std::string &remote_agent) override;
+    connect(const std::string &remote_agent) override;
     nixl_status_t
-    disconnect (const std::string &remote_agent) override;
+    disconnect(const std::string &remote_agent) override;
 
     nixl_status_t
-    registerMem (const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
+    registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
     nixl_status_t
-    deregisterMem (nixlBackendMD *meta) override;
+    deregisterMem(nixlBackendMD *meta) override;
 
     nixl_status_t
-    loadRemoteMD (const nixlBlobDesc &input,
-                  const nixl_mem_t &nixl_mem,
-                  const std::string &remote_agent,
-                  nixlBackendMD *&output) override;
+    loadRemoteMD(const nixlBlobDesc &input,
+                 const nixl_mem_t &nixl_mem,
+                 const std::string &remote_agent,
+                 nixlBackendMD *&output) override;
     nixl_status_t
-    unloadMD (nixlBackendMD *input) override;
+    unloadMD(nixlBackendMD *input) override;
 
     // Data transfer
     nixl_status_t
-    prepXfer (const nixl_xfer_op_t &operation,
-              const nixl_meta_dlist_t &local,
-              const nixl_meta_dlist_t &remote,
-              const std::string &remote_agent,
-              nixlBackendReqH *&handle,
-              const nixl_opt_b_args_t *opt_args = nullptr) const override;
+    prepXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
     nixl_status_t
-    postXfer (const nixl_xfer_op_t &operation,
-              const nixl_meta_dlist_t &local,
-              const nixl_meta_dlist_t &remote,
-              const std::string &remote_agent,
-              nixlBackendReqH *&handle,
-              const nixl_opt_b_args_t *opt_args = nullptr) const override;
+    postXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
     nixl_status_t
-    checkXfer (nixlBackendReqH *handle) const override;
+    checkXfer(nixlBackendReqH *handle) const override;
     nixl_status_t
-    releaseReqH (nixlBackendReqH *handle) const override;
+    releaseReqH(nixlBackendReqH *handle) const override;
 
     nixl_status_t
-    getNotifs (notif_list_t &notif_list);
+    getNotifs(notif_list_t &notif_list);
     nixl_status_t
-    genNotif (const std::string &remote_agent, const std::string &msg) const override;
+    genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
-    void addConnection (struct doca_rdma_connection *connection);
-    uint32_t getConnectionLast();
-    void removeConnection (uint32_t connection_idx);
-    uint32_t getGpuCudaId();
+    void
+    addConnection(struct doca_rdma_connection *connection);
+    uint32_t
+    getConnectionLast();
+    void
+    removeConnection(uint32_t connection_idx);
+    uint32_t
+    getGpuCudaId();
 
-    nixl_status_t sendLocalAgentName (int oob_sock_client);
-    nixl_status_t recvRemoteAgentName (int oob_sock_client, std::string &remote_agent);
+    nixl_status_t
+    sendLocalAgentName(int oob_sock_client);
+    nixl_status_t
+    recvRemoteAgentName(int oob_sock_client, std::string &remote_agent);
 
 private:
     struct doca_log_backend *sdk_log;
@@ -122,6 +153,8 @@ private:
     uint32_t local_port;
     int noSyncIters;
     uint8_t ipv4_addr[4];
+    struct sockaddr oob_saddr;
+    struct sockaddr oob_netmask;
     std::thread pthr;
     uint64_t *last_rsvd_flags;
     uint64_t *last_posted_flags;
@@ -138,14 +171,13 @@ private:
     struct docaXferCompletion *completion_list_cpu;
     uint32_t *wait_exit_gpu;
     uint32_t *wait_exit_cpu;
-    int oob_sock_client;
-    struct docaNotifRecv *notif_fill_gpu;
-    struct docaNotifRecv *notif_fill_cpu;
-    struct docaNotifRecv *notif_progress_gpu;
-    struct docaNotifRecv *notif_progress_cpu;
+    struct docaNotif *notif_fill_gpu;
+    struct docaNotif *notif_fill_cpu;
+    struct docaNotif *notif_progress_gpu;
+    struct docaNotif *notif_progress_cpu;
 
-    struct docaNotifSend *notif_send_gpu;
-    struct docaNotifSend *notif_send_cpu;
+    struct docaNotif *notif_send_gpu;
+    struct docaNotif *notif_send_cpu;
 
     // Map of agent name to saved nixlDocaConnection info
     std::unordered_map<std::string, nixlDocaConnection> remoteConnMap;
@@ -169,17 +201,18 @@ private:
         ~nixlDocaBckndReq() {}
     };
 
-    nixl_status_t progressThreadStart();
-    void progressThreadStop();
+    nixl_status_t
+    progressThreadStart();
+    void
+    progressThreadStop();
 
 
     nixl_status_t
-    connectClientRdmaQp (int oob_sock_client, const std::string &remote_agent);
+    connectClientRdmaQp(int oob_sock_client, const std::string &remote_agent);
     nixl_status_t
-    nixlDocaDestroyNotif (struct doca_gpu *gpu, struct nixlDocaNotif *notif);
+    nixlDocaDestroyNotif(doca_gpu *gpu, struct nixlDocaNotif *notif);
 
     mutable std::mutex notifSendLock;
-
 };
 
 #endif

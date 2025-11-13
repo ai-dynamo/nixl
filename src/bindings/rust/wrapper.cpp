@@ -221,6 +221,7 @@ nixl_capi_get_local_partial_md(nixl_capi_agent_t agent,
         }
         // Copy the data
         memcpy(*data, blob.data(), blob.size());
+        *len = blob.size();
         return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
     }
     catch (...) {
@@ -1197,12 +1198,6 @@ nixl_capi_reg_dlist_desc_count(nixl_capi_reg_dlist_t dlist, size_t* count)
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
   }
-}
-
-nixl_capi_status_t
-nixl_capi_reg_dlist_len(nixl_capi_reg_dlist_t dlist, size_t* len)
-{
-  return nixl_capi_reg_dlist_desc_count(dlist, len);
 }
 
 nixl_capi_status_t

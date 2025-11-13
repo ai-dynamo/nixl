@@ -15,7 +15,7 @@
 
 py = import('python').find_installation('python3', pure: false)
 
-py.install_sources('_api.py', subdir: ('nixl'))
-py.install_sources('__init__.py', subdir: ('nixl'))
-py.install_sources('py.typed', subdir: ('nixl'))
-py.install_sources('logging.py', subdir: ('nixl'))
+py.install_sources('_api.py', subdir: (cuda_wheel_dir))
+py.install_sources('__init__.py', subdir: (cuda_wheel_dir))
+py.install_sources('py.typed', subdir: (cuda_wheel_dir))
+py.install_sources('logging.py', subdir: (cuda_wheel_dir))

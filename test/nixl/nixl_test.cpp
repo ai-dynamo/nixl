@@ -88,7 +88,9 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
 
     std::cout << "Thread " << thread_id << " Wait for initiator and then send xfer descs\n";
     std::string message = serdes.exportStr();
-    while (agent.genNotif(initiator, message, extra_params) != NIXL_SUCCESS);
+    while (agent.genNotif(initiator, message, extra_params) != NIXL_SUCCESS) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
     std::cout << "Thread " << thread_id << " End Control Path metadata exchanges\n";
 
     std::cout << "Thread " << thread_id << " Start Data Path Exchanges\n";

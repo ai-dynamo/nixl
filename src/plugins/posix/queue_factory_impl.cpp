@@ -25,6 +25,10 @@
 #include "uring_queue.h"
 #endif
 
+#ifdef HAVE_LINUXAIO
+#include "linux_aio_queue.h"
+#endif
+
 // Anonymous namespace for internal template implementations for functions that use the optional liburing
 namespace {
     struct uringEnabled {};
@@ -70,7 +74,8 @@ namespace {
 }
 
 // Public functions implementation
-std::unique_ptr<nixlPosixQueue> QueueFactory::createAioQueue(int num_entries, nixl_xfer_op_t operation) {
+std::unique_ptr<nixlPosixQueue>
+QueueFactory::createPosixAioQueue(int num_entries, nixl_xfer_op_t operation) {
     return std::make_unique<aioQueue>(num_entries, operation);
 }
 
@@ -78,6 +83,26 @@ std::unique_ptr<nixlPosixQueue> QueueFactory::createUringQueue(int num_entries, 
     return funcImpl<uringMode>::createUringQueue(num_entries, operation);
 }
 
+std::unique_ptr<nixlPosixQueue>
+QueueFactory::createLinuxAioQueue(int num_entries, nixl_xfer_op_t operation) {
+#ifdef HAVE_LINUXAIO
+    return std::make_unique<linuxAioQueue>(num_entries, operation);
+#else
+    throw nixlPosixBackendReqH::exception(
+        "Attempting to create linux_aio queue when support is not compiled in",
+        NIXL_ERR_NOT_SUPPORTED);
+#endif
+}
+
 bool QueueFactory::isUringAvailable() {
     return funcImpl<uringMode>::isUringAvailable();
+}
+
+bool
+QueueFactory::isLinuxAioAvailable() {
+#ifdef HAVE_LINUXAIO
+    return true;
+#else
+    return false;
+#endif
 }

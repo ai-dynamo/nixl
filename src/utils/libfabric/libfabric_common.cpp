@@ -47,10 +47,10 @@ getAvailableNetworkDevices() {
     hints->caps = FI_MSG | FI_RMA; // Basic messaging and RMA
 
     hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
-    hints->mode = FI_CONTEXT | FI_CONTEXT2;
+    hints->mode = FI_CONTEXT;
     hints->ep_attr->type = FI_EP_RDM;
 
-    int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
+    int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
     if (ret) {
         NIXL_ERROR << "fi_getinfo failed " << fi_strerror(-ret);
         fi_freeinfo(hints);
@@ -65,9 +65,9 @@ getAvailableNetworkDevices() {
             std::string device_name = cur->domain_attr->name;
             std::string provider_name = cur->fabric_attr->prov_name;
 
-            NIXL_TRACE << "Found device - domain: " << device_name
-                       << ", provider: " << provider_name << ", ep_type: " << cur->ep_attr->type
-                       << ", caps: 0x" << std::hex << cur->caps << std::dec;
+            NIXL_TRACE << "Found device - domain: " << device_name << ", provider=" << provider_name
+                       << ", ep_type=" << cur->ep_attr->type << ", caps=" << std::hex << cur->caps
+                       << std::dec;
 
             if (provider_device_map.find(provider_name) == provider_device_map.end()) {
                 provider_device_map[provider_name] = {};
@@ -81,7 +81,7 @@ getAvailableNetworkDevices() {
 
     for (auto device_list : provider_device_map) {
         for (auto device : device_list.second) {
-            NIXL_TRACE << "Provider: " << device_list.first << ", Device: " << device;
+            NIXL_TRACE << "provider=" << device_list.first << ", device=" << device;
         }
     }
 

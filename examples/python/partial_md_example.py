@@ -79,7 +79,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    logger.info("Using NIXL Plugins from: %s", os.environ["NIXL_PLUGIN_DIR"])
+    logger.info(
+        "Using NIXL Plugins from: %s",
+        os.environ.get("NIXL_PLUGIN_DIR", "default location"),
+    )
 
     if args.etcd:
         etcd_endpoints = os.getenv("NIXL_ETCD_ENDPOINTS", "")
