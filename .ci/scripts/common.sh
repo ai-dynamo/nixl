@@ -103,6 +103,7 @@ if [ -z "$NPROC" ]; then
             limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
         elif [ -f /sys/fs/cgroup/memory.max ]; then
             limit=$(cat /sys/fs/cgroup/memory.max)
+            [ "$limit" = "max" ] && limit=$((4 * 1024 * 1024 * 1024))
         else
             limit=$((4 * 1024 * 1024 * 1024))
         fi
