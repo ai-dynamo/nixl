@@ -20,7 +20,7 @@ endif
 subdir('posix')  # Always try to build POSIX backend, it will handle its own dependencies
 subdir('obj')  # Always try to build Obj backend, it will handle its own dependencies
 
-if libfabric_dep.found()
+if libfabric_dep.found() and not get_option('disable_libfabric_backend')
     subdir('libfabric')
 endif
 
