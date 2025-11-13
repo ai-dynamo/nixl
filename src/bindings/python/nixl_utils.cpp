@@ -18,7 +18,7 @@
 
 namespace py = pybind11;
 
-//NB: for storage IO with O_DIRECT, allocated memory must match device block size
+// NB: for storage IO with O_DIRECT, allocated memory must match device block size
 #define IO_SIZE 4096
 
 //JUST FOR TESTING
