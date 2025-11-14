@@ -294,6 +294,21 @@ private:
     ucx_connection_ptr_t
     getConnection(const std::string &remote_agent) const;
 
+    struct batchResult {
+        nixl_status_t status;
+        size_t size;
+        nixlUcxReq req;
+    };
+
+    static batchResult
+    sendXferRangeBatch(nixlUcxEp &ep,
+                       nixl_xfer_op_t operation,
+                       const nixl_meta_dlist_t &local,
+                       const nixl_meta_dlist_t &remote,
+                       size_t worker_id,
+                       size_t start_idx,
+                       size_t end_idx);
+
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
