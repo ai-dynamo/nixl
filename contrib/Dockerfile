@@ -17,7 +17,7 @@ ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="25.06-cuda12.9-devel-ubuntu24.04"
 ARG OS
 
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS nixl-base
 
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
@@ -59,44 +59,73 @@ RUN apt-get update -y && \
     flex \
     libgtest-dev \
     build-essential \
-    python3.12-dev \
     clang \
     hwloc \
     libhwloc-dev \
-    libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
+    libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
+    python3-dev \
+    python3-pip \
+    curl \
+    wget \
+    numactl \
+    git \
+    libiberty-dev \
+    libgoogle-glog-dev \
+    libgmock-dev \
+    libjsoncpp-dev \
+    libpython3-dev \
+    libboost-all-dev \
+    meson \
+    pkg-config \
+    pybind11-dev \
+    net-tools \
+    iproute2 \
+    pciutils \
+    libpci-dev \
+    libibmad-dev \
+    doxygen && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Add DOCA repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
     wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
+    rm -f doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+    # no cleanup, next step needs the repo
 
 # Force reinstall of RDMA packages from DOCA repository
 # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
 # Upgrade is not sufficient if the version is the same since apt skips the installation.
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
-    libnuma-dev librdmacm-dev ibverbs-providers
+    libnuma-dev librdmacm-dev ibverbs-providers && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
-    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j${NPROC:-$(nproc)} && make install && \
+    cd /workspace && rm -rf etcd-cpp-apiv3
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    make -j${NPROC:-$(nproc)} && make install
+    make -j${NPROC:-$(nproc)} && make install && \
+    cd /workspace && rm -rf aws-sdk-cpp aws_sdk_build
 
-RUN git clone https://github.com/nvidia/gusli.git && \
+RUN git clone --depth 1 https://github.com/nvidia/gusli.git && \
      cd gusli && \
      make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
-     cd ..
+     cd .. && \
+     rm -rf gusli
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -116,35 +145,17 @@ RUN wget --tries=3 --waitretry=5 \
     rm rustup-init* && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-RUN rm -rf /usr/lib/ucx
-RUN rm -rf /opt/hpcx/ucx
-
-RUN cd /usr/local/src && \
-     git clone https://github.com/openucx/ucx.git && \
-     cd ucx && 			     \
-     git checkout $UCX_REF &&        \
-     ./autogen.sh && ./configure     \
-         --prefix=$UCX_PREFIX        \
-         --enable-shared             \
-         --disable-static            \
-         --disable-doxygen-doc       \
-         --enable-optimizations      \
-         --enable-cma                \
-         --enable-devel-headers      \
-         --with-cuda=/usr/local/cuda \
-         --with-verbs                \
-         --with-dm                   \
-         --with-gdrcopy=/usr/local   \
-         --with-efa                  \
-         --enable-mt &&              \
-     make -j${NPROC:-$(nproc)} &&                \
-     make -j${NPROC:-$(nproc)} install-strip &&  \
-     ldconfig
+# Clean up old UCX installations to avoid conflicts
+RUN rm -rf /usr/lib/ucx /opt/hpcx/ucx /usr/local/ucx && \
+    ARCH=$(uname -m) && \
+    rm -f /usr/lib/${ARCH}-linux-gnu/libucs* /usr/lib/${ARCH}-linux-gnu/libucp* \
+          /usr/lib/${ARCH}-linux-gnu/libuct* /usr/lib/${ARCH}-linux-gnu/libucm* 2>/dev/null || true
 
 RUN cd /tmp && \
      git clone --depth 1 https://github.com/google/gtest-parallel.git && \
      mkdir -p /usr/local/bin && \
-     cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/
+     cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/ && \
+     rm -rf gtest-parallel
 ENV PATH=/usr/local/bin:$PATH
 
 # Build libfabric from source
@@ -166,7 +177,22 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
                 --enable-gdrcopy-dlopen && \
     make -j${NPROC:-$(nproc)} && \
     make install && \
-    ldconfig
+    ldconfig && \
+    cd /tmp && rm -rf libfabric-*
+
+# Stage 2: Build NIXL (default stage)
+FROM nixl-base
+
+# Re-declare ARGs needed in this stage
+ARG ARCH="x86_64"
+ARG NIXL_PREFIX="/usr/local/nixl"
+ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_REF="v1.19.0"
+ARG UCX_PREFIX="/usr"
+ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG LIBFABRIC_INSTALL_PATH="/usr/local"
+ARG NPROC
 
 # By default, uv downloads python packages to $HOME/.cache/uv and hard links them
 # from the virtual environment. This means that the files reside in /root/.cache/uv,
@@ -191,13 +217,34 @@ RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click t
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     uv pip install torch torchvision torchaudio
 
+# Build UCX in Stage 2 for build-container.sh (CI uses build.sh to build UCX)
+RUN cd /usr/local/src && \
+     git clone https://github.com/openucx/ucx.git && \
+     cd ucx && \
+     git checkout $UCX_REF && \
+     ./autogen.sh && ./configure \
+         --prefix=$UCX_PREFIX \
+         --enable-shared \
+         --disable-static \
+         --disable-doxygen-doc \
+         --enable-optimizations \
+         --enable-cma \
+         --enable-devel-headers \
+         --with-cuda=/usr/local/cuda \
+         --with-verbs \
+         --with-dm \
+         --with-gdrcopy=/usr/local \
+         --with-efa \
+         --enable-mt && \
+     make -j${NPROC:-$(nproc)} && \
+     make -j${NPROC:-$(nproc)} install-strip && \
+     ldconfig && \
+     cd /usr/local/src && rm -rf ucx
+
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$LD_LIBRARY_PATH
-
-# Install pybind11 via apt
-RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 
 ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
