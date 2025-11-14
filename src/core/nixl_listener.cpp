@@ -23,6 +23,7 @@
 #include "common/nixl_log.h"
 #if HAVE_ETCD
 #include <etcd/SyncClient.hpp>
+#include <etcd/KeepAlive.hpp>
 #include <etcd/Watcher.hpp>
 #include <future>
 #endif // HAVE_ETCD
@@ -193,6 +194,10 @@ private:
                         std::hash<std::string>, strEqual> agentWatchers;
     std::chrono::microseconds watchTimeout_;
 
+    std::thread heartbeat_thread;
+    std::atomic<bool> heartbeat_thread_stop = false;
+    std::chrono::seconds heartbeat_interval;
+
     // Helper function to create etcd key
     std::string makeKey(const std::string& agent_name,
                         const std::string& metadata_type) {
@@ -203,8 +208,10 @@ private:
 
 public:
     nixlEtcdClient(const std::string &my_agent_name,
-                   const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000))
-        : watchTimeout_(timeout) {
+                   const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000),
+                   const std::chrono::seconds &heartbeat = std::chrono::seconds(2))
+        : watchTimeout_(timeout),
+          heartbeat_interval(heartbeat) {
         const char* etcd_endpoints = std::getenv("NIXL_ETCD_ENDPOINTS");
         if (!etcd_endpoints || strlen(etcd_endpoints) == 0) {
             throw std::runtime_error("No etcd endpoints provided");
@@ -224,11 +231,40 @@ public:
 
         NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
 
+        etcd::Response response = etcd->leasegrant((heartbeat.count()) * 2);
+        uint64_t lease_id = response.value().lease();
+
+        if (response.is_ok()) {
+
+            NIXL_DEBUG << "Successfully leased " << lease_id;
+        } else {
+            throw std::runtime_error("Failed to get least for agent " + my_agent_name +
+                                     " in etcd: " + response.error_message());
+        }
+
+        heartbeat_thread = std::thread(&nixlEtcdClient::startHeartbeatThread, this, lease_id);
         std::string agent_prefix = makeKey(my_agent_name, "");
-        etcd::Response response = etcd->put(agent_prefix, "");
+        response = etcd->put(agent_prefix, "", lease_id);
         if (!response.is_ok()) {
             throw std::runtime_error("Failed to store agent " + my_agent_name +
                                      " prefix key in etcd: " + response.error_message());
+        }
+    }
+
+    ~nixlEtcdClient() {
+        heartbeat_thread_stop = true;
+        if (heartbeat_thread.joinable()) {
+            heartbeat_thread.join();
+        }
+    }
+
+    void
+    startHeartbeatThread(uint64_t lease_id) {
+        while (!heartbeat_thread_stop) {
+            // keep alive for twice the heartbeat interval
+            etcd::KeepAlive keepalive(*etcd, (heartbeat_interval.count()) * 2, lease_id);
+            keepalive.Check();
+            std::this_thread::sleep_for(heartbeat_interval);
         }
     }
 
@@ -249,18 +285,18 @@ public:
                 NIXL_DEBUG << "Successfully stored " << metadata_type
                            << " in etcd with key: " << metadata_key << " (rev "
                            << response.value().modified_index() << ")";
-                return NIXL_SUCCESS;
             } else {
                 NIXL_ERROR << "Failed to store " << metadata_type << " in etcd: " << response.error_message();
                 return NIXL_ERR_BACKEND;
             }
+
+            return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
             NIXL_ERROR << "Error sending " << metadata_type << " to etcd: " << e.what();
             return NIXL_ERR_BACKEND;
         }
     }
-
     // Remove all agent's metadata from etcd
     nixl_status_t removeMetadataFromEtcd(const std::string& agent_name) {
         if (!etcd) {
@@ -383,7 +419,8 @@ public:
     }
 
     // Setup a watcher for an agent's metadata invalidation if it doesn't already exist
-    void setupAgentWatcher(const std::string &agent_name) {
+    void
+    setupAgentWatcher(const std::string &agent_name) {
         if (agentWatchers.find(agent_name) != agentWatchers.end()) {
             return;
         }
@@ -414,6 +451,8 @@ public:
         };
 
         std::string agent_prefix = makeKey(agent_name, "");
+        NIXL_DEBUG << "Create watcher for metadata " << agent_prefix;
+
         agentWatchers[agent_name] = std::make_unique<etcd::Watcher>(*etcd, agent_prefix, process_response);
     }
 
@@ -455,7 +494,8 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
     std::unique_ptr<nixlEtcdClient> etcdClient = nullptr;
     // useEtcd is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
     if(useEtcd) {
-        etcdClient = std::make_unique<nixlEtcdClient>(name, config.etcdWatchTimeout);
+        etcdClient = std::make_unique<nixlEtcdClient>(
+            name, config.etcdWatchTimeout, config.heartbeatInterval);
     }
 #endif // HAVE_ETCD
 
