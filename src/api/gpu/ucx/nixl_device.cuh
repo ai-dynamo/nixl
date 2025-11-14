@@ -109,7 +109,6 @@ nixlGpuPostSingleWriteXferReq(nixlGpuXferReqH req_hndl,
  * @brief Post a signal transfer request to the GPU.
  *
  * @param req_hndl           [in]  Request handle.
- * @param signal_desc_index  [in]  Index of the signal descriptor to be sent.
  * @param signal_inc         [in]  Increment value for the signal.
  * @param signal_offset      [in]  Offset of the signal to be sent.
  * @param channel_id         [in]  Channel ID to use for the transfer.
@@ -123,13 +122,13 @@ nixlGpuPostSingleWriteXferReq(nixlGpuXferReqH req_hndl,
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ nixl_status_t
 nixlGpuPostSignalXferReq(nixlGpuXferReqH req_hndl,
-                         unsigned signal_desc_index,
                          uint64_t signal_inc,
                          size_t signal_offset,
                          unsigned channel_id = 0,
                          bool is_no_delay = true,
                          nixlGpuXferStatusH *xfer_status = nullptr) {
     const nixlGpuXferReqParams params{req_hndl, is_no_delay, xfer_status};
+    const unsigned signal_desc_index = params.mem_list->mem_list_length - 1;
 
     ucs_status_t status = ucp_device_counter_inc<static_cast<ucs_device_level_t>(level)>(
         params.mem_list, signal_desc_index, signal_inc, signal_offset, channel_id, params.flags, params.ucp_request);
@@ -147,7 +146,6 @@ nixlGpuPostSignalXferReq(nixlGpuXferReqH req_hndl,
  * @param sizes              [in]  Sizes of the blocks to send.
  * @param local_offsets      [in]  Local offsets of the blocks to send.
  * @param remote_offsets     [in]  Remote offsets of the blocks to send to.
- * @param signal_desc_index  [in]  Index of the signal descriptor to be sent.
  * @param signal_inc         [in]  Increment value for the signal. The signal will only be posted if signal_inc != 0.
  * @param signal_offset      [in]  Offset of the signal to be sent.
  * @param channel_id         [in]  Channel ID to use for the transfer.
@@ -166,13 +164,13 @@ nixlGpuPostPartialWriteXferReq(nixlGpuXferReqH req_hndl,
                                const size_t *sizes,
                                const size_t *local_offsets,
                                const size_t *remote_offsets,
-                               unsigned signal_desc_index,
                                uint64_t signal_inc,
                                size_t signal_offset,
                                unsigned channel_id = 0,
                                bool is_no_delay = true,
                                nixlGpuXferStatusH *xfer_status = nullptr) {
     const nixlGpuXferReqParams params{req_hndl, is_no_delay, xfer_status};
+    const unsigned signal_desc_index = params.mem_list->mem_list_length - 1;
 
     ucs_status_t status =
         ucp_device_put_multi_partial<static_cast<ucs_device_level_t>(level)>(params.mem_list,
