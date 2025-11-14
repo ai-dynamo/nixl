@@ -188,7 +188,8 @@ RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && 			     \
      git checkout $UCX_REF &&	     \
-     ./autogen.sh && ./configure     \
+     ./autogen.sh && \
+     ./contrib/configure-release     \
          --enable-shared             \
          --disable-static            \
          --disable-doxygen-doc       \
