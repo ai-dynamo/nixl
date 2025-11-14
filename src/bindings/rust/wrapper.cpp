@@ -731,6 +731,37 @@ nixl_capi_opt_args_set_port(nixl_capi_opt_args_t args, uint16_t port) {
 }
 
 nixl_capi_status_t
+nixl_capi_create_params(nixl_capi_params_t *params) {
+    if (!params) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        auto param_list = new nixl_capi_params_s;
+        *params = param_list;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_params_add(nixl_capi_params_t params, const char *key, const char *value) {
+    if (!params || !key || !value) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        params->params[key] = value;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
 nixl_capi_params_is_empty(nixl_capi_params_t params, bool* is_empty)
 {
   if (!params || !is_empty) {

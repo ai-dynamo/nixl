@@ -67,7 +67,8 @@ use bindings::{
     nixl_capi_query_resp_list_get_params, nixl_capi_prep_xfer_dlist, nixl_capi_release_xfer_dlist_handle,
     nixl_capi_make_xfer_req, nixl_capi_get_local_partial_md,
     nixl_capi_send_local_partial_md, nixl_capi_query_xfer_backend, nixl_capi_opt_args_set_ip_addr,
-    nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry
+    nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry,
+    nixl_capi_create_params, nixl_capi_params_add
 };
 
 // Re-export status codes
