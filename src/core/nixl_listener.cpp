@@ -195,7 +195,6 @@ private:
     std::chrono::microseconds watchTimeout_;
 
     std::thread heartbeat_thread;
-    std::atomic<bool> heartbeat_thread_start = false;
     std::atomic<bool> heartbeat_thread_stop = false;
     std::chrono::seconds heartbeat_interval;
 
@@ -232,8 +231,20 @@ public:
 
         NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
 
+        etcd::Response response = etcd->leasegrant((heartbeat.count()) * 2);
+        uint64_t lease_id = response.value().lease();
+
+        if (response.is_ok()) {
+
+            NIXL_DEBUG << "Successfully leased " << lease_id;
+        } else {
+            throw std::runtime_error("Failed to get least for agent " + my_agent_name +
+                                     " in etcd: " + response.error_message());
+        }
+
+        heartbeat_thread = std::thread(&nixlEtcdClient::startHeartbeatThread, this, lease_id);
         std::string agent_prefix = makeKey(my_agent_name, "");
-        etcd::Response response = etcd->put(agent_prefix, "");
+        response = etcd->put(agent_prefix, "", lease_id);
         if (!response.is_ok()) {
             throw std::runtime_error("Failed to store agent " + my_agent_name +
                                      " prefix key in etcd: " + response.error_message());
@@ -268,18 +279,7 @@ public:
 
         try {
             std::string metadata_key = makeKey(agent_name, metadata_type);
-            etcd::Response response = etcd->leasegrant((heartbeat_interval.count()) * 2);
-            uint64_t lease_id = response.value().lease();
-
-            if (response.is_ok()) {
-
-                NIXL_DEBUG << "Successfully leased " << lease_id;
-            } else {
-                NIXL_ERROR << "Failed to get lease";
-                return NIXL_ERR_BACKEND;
-            }
-
-            response = etcd->put(metadata_key, metadata, lease_id);
+            etcd::Response response = etcd->put(metadata_key, metadata);
 
             if (response.is_ok()) {
                 NIXL_DEBUG << "Successfully stored " << metadata_type
@@ -290,11 +290,6 @@ public:
                 return NIXL_ERR_BACKEND;
             }
 
-            if (!heartbeat_thread_start) {
-                heartbeat_thread_start = true;
-                heartbeat_thread =
-                    std::thread(&nixlEtcdClient::startHeartbeatThread, this, lease_id);
-            }
             return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
@@ -425,7 +420,7 @@ public:
 
     // Setup a watcher for an agent's metadata invalidation if it doesn't already exist
     void
-    setupAgentWatcher(const std::string &agent_name, const std::string metadata_label) {
+    setupAgentWatcher(const std::string &agent_name) {
         if (agentWatchers.find(agent_name) != agentWatchers.end()) {
             return;
         }
@@ -455,7 +450,7 @@ public:
             }
         };
 
-        std::string agent_prefix = makeKey(agent_name, metadata_label);
+        std::string agent_prefix = makeKey(agent_name, "");
         NIXL_DEBUG << "Create watcher for metadata " << agent_prefix;
 
         agentWatchers[agent_name] = std::make_unique<etcd::Watcher>(*etcd, agent_prefix, process_response);
@@ -633,7 +628,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                     }
                     NIXL_DEBUG << "Successfully loaded metadata for agent: " << remote_agent;
 
-                    etcdClient->setupAgentWatcher(remote_agent, metadata_label);
+                    etcdClient->setupAgentWatcher(remote_agent);
                     break;
                 }
                 case ETCD_INVAL:
