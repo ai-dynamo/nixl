@@ -108,3 +108,21 @@ The system automatically selects the best available storage backend:
 1. Initiator sends memory descriptors to target
 2. Target performs storage-to-memory or memory-to-storage operations
 3. Data is transferred between initiator and target memory
+
+Remote reads are implemented as a read from storage followed by a network write.
+
+Remote writes are implemented as a read from network following by a storage write.
+
+### Pipelining
+
+To improve performance of the remote storage server, we can pipeline operations to network and storage. This pipelining allows multiple threads to handle each request. However, in order to maintain correctness, the order of network and storage must happen in order for each individual remote storage operation. To do this, we implemented a simple pipelining scheme. This pipeline for remote writes is implemented as a simple read into NIXL descriptors from the network, followed by a write to storage (also through NIXL, but a different plugin). A remote read is similar, just reading into NIXL descriptors from storage and then writing to network.
+
+![Remote Operation Pipelines](storage_pipelines.png)
+
+### Performance Tips
+
+For high-speed storage and network hardware, you may need to tweak performance with a couple of environment variables.
+
+First, for optimal GDS performance, ensure you are using the GDS_MT backend with default concurrency. Additionally, you can use the cufile options described in the [GDS README](https://github.com/ai-dynamo/nixl/blob/main/src/plugins/cuda_gds/README.md). Also a reminder to check that your GDS setup is running true GPU-direct IO and not in compatibility mode.
+
+On the network side, remote reads from VRAM to DRAM can be limited by UCX rail selection. This can be tweaked by setting UCX_MAX_RMA_RAILS=1. However, with larger batch or message sizes, this might limit bandwidth and a higher number of rails might be needed.
