@@ -313,7 +313,7 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
 
 template <class T>
 void nixlDescList<T>::print() const {
-    std::cout << "DescList of mem type " << type << std::endl;
+    NIXL_INFO << "DescList of mem type " << type;
     for (auto & elm : descs) {
         elm.print("");
     }
