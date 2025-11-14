@@ -450,18 +450,13 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     unsigned major_version, minor_version, release_number;
     ucp_get_version(&major_version, &minor_version, &release_number);
 
-    config.modify ("ADDRESS_VERSION", "v2");
-    config.modify ("RNDV_THRESH", "inf");
+    config.modify("ADDRESS_VERSION", "v2");
+    config.modify("RNDV_THRESH", "inf");
+    config.modify("MAX_RMA_RAILS", "2");
 
     unsigned ucp_version = UCP_VERSION(major_version, minor_version);
     if (ucp_version >= UCP_VERSION(1, 19)) {
-        config.modify ("MAX_COMPONENT_MDS", "32");
-    }
-
-    if (ucp_version >= UCP_VERSION(1, 20)) {
-        config.modify ("MAX_RMA_RAILS", "4");
-    } else {
-        config.modify ("MAX_RMA_RAILS", "2");
+        config.modify("MAX_COMPONENT_MDS", "32");
     }
 
     const auto status = ucp_init (&ucp_params, config.getUcpConfig(), &ctx);
