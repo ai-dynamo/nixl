@@ -144,7 +144,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
   ./autogen.sh && \
-  ./configure \
+  ./contrib/configure-release \
           --prefix="${UCX_INSTALL_DIR}" \
           --enable-shared \
           --disable-static \

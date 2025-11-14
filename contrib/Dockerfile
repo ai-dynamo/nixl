@@ -123,7 +123,8 @@ RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && 			     \
      git checkout $UCX_REF &&        \
-     ./autogen.sh && ./configure     \
+     ./autogen.sh && \
+     ./contrib/configure-release     \
          --prefix=$UCX_PREFIX        \
          --enable-shared             \
          --disable-static            \

@@ -55,7 +55,7 @@ $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
 $ git checkout v1.20.x
 $ ./autogen.sh
-$ ./configure                          \
+$ ./contrib/configure-release          \
     --enable-shared                    \
     --disable-static                   \
     --disable-doxygen-doc              \
