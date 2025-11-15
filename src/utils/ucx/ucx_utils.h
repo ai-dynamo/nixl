@@ -202,7 +202,8 @@ public:
                    size_t req_size,
                    bool prog_thread,
                    unsigned long num_workers,
-                   nixl_thread_sync_t sync_mode);
+                   nixl_thread_sync_t sync_mode,
+                   const std::string &engine_conf);
     ~nixlUcxContext();
 
     /* Memory management */
