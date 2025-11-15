@@ -452,6 +452,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
 
     config.modify ("ADDRESS_VERSION", "v2");
     config.modify ("RNDV_THRESH", "inf");
+    config.modify("IB_PCI_RELAXED_ORDERING", "try");
 
     unsigned ucp_version = UCP_VERSION(major_version, minor_version);
     if (ucp_version >= UCP_VERSION(1, 19)) {
