@@ -214,7 +214,7 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   cd Mooncake && \
   $SUDO bash dependencies.sh && \
   mkdir build && cd build && \
-  cmake .. -DBUILD_SHARED_LIBS=ON && \
+  cmake .. -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_FLAGS="-Wno-error" && \
   make -j"$NPROC" && \
   $SUDO make install && \
   $SUDO ldconfig
