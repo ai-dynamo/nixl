@@ -65,7 +65,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 - **Operating System**: Ubuntu 22.04/24.04 LTS (recommended) or RHEL-based
 - **Docker**: Version 20.10+ (for container builds)
 - **Git**: For source code management
-- **CUDA Toolkit**: 13.0+ (for GPU features)
+- **CUDA Toolkit**: 12.8+ (for GPU features)
 - **Python**: 3.12+ (for benchmark utilities)
 
 ## Quick Start
@@ -172,7 +172,7 @@ cd nixl/benchmark/nixlbench/contrib
 | `--ucx <path>` | Path to custom UCX source (optional) | Uses base image UCX |
 | `--build-type <type>` | Build type: `debug` or `release` | `release` |
 | `--base-image <image>` | Base Docker image | `nvcr.io/nvidia/cuda-dl-base` |
-| `--base-image-tag <tag>` | Base image tag | `25.10-cuda13.0-devel-ubuntu24.04` |
+| `--base-image-tag <tag>` | Base image tag | `25.06-cuda12.9-devel-ubuntu24.04` |
 | `--arch <arch>` | Target architecture: `x86_64` or `aarch64` | Auto-detected |
 | `--python-versions <versions>` | Python versions (comma-separated) | `3.12` |
 | `--tag <tag>` | Custom Docker image tag | Auto-generated |
@@ -187,7 +187,7 @@ For development environments or when Docker is not available.
 **Required:**
 - **NIXL**: Core communication library
 - **UCX**: Unified Communication X library
-- **CUDA**: NVIDIA CUDA Toolkit (≥13.0)
+- **CUDA**: NVIDIA CUDA Toolkit (≥12.8)
 - **CMake**: Build system (≥3.20)
 - **Meson**: Build system for NIXL/NIXLBench
 - **Ninja**: Build backend
@@ -234,9 +234,9 @@ sudo apt-get reinstall -y --no-install-recommends \
 
 #### CUDA Toolkit Installation
 ```bash
-# Download and install CUDA 13.0
-wget https://developer.download.nvidia.com/compute/cuda/13.0.2/local_installers/cuda_13.0.2_580.95.05_linux.run
-sudo sh cuda_13.0.2_580.95.05_linux.run
+# Download and install CUDA 12.8
+wget https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_550.54.15_linux.run
+sudo sh cuda_12.8.0_550.54.15_linux.run
 
 # Set environment variables
 export PATH=/usr/local/cuda/bin:$PATH
