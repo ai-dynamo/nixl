@@ -170,12 +170,10 @@ struct nixlDocaRdmaQp {
     std::unique_ptr<nixl::doca::verbs::qp> qp_data;
     uint32_t qpn_data;
     uint32_t rqpn_data;
-    uint32_t remote_gid_data;
 
     std::unique_ptr<nixl::doca::verbs::qp> qp_notif;
     uint32_t qpn_notif;
     uint32_t rqpn_notif;
-    uint32_t remote_gid_notif;
 };
 
 struct nixlDocaEngine;
