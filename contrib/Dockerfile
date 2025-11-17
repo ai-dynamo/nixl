@@ -124,7 +124,7 @@ RUN cd /usr/local/src && \
      cd ucx && 			     \
      git checkout $UCX_REF &&        \
      ./autogen.sh && \
-     ./contrib/configure-release     \
+     ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
          --enable-shared             \
          --disable-static            \
@@ -136,8 +136,7 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --with-gdrcopy=/usr/local   \
-         --with-efa                  \
-         --enable-mt &&              \
+         --with-efa  &&              \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig

@@ -189,7 +189,7 @@ RUN cd /usr/local/src && \
      cd ucx && 			     \
      git checkout $UCX_REF &&	     \
      ./autogen.sh && \
-     ./contrib/configure-release     \
+     ./contrib/configure-release-mt  \
          --enable-shared             \
          --disable-static            \
          --disable-doxygen-doc       \
@@ -200,8 +200,7 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --with-gdrcopy=/usr/local   \
-         --with-efa                  \
-         --enable-mt &&              \
+         --with-efa  &&              \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
