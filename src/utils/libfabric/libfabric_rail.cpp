@@ -431,7 +431,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     hints->domain_attr->threading = FI_THREAD_SAFE;
     try {
         // Get fabric info for this specific device - first try with FI_HMEM
-        int ret = fi_getinfo(FI_VERSION(1, 21), NULL, NULL, 0, hints, &info);
+        int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
 
         // If no provider found with FI_HMEM, retry without it
         if (ret || !info) {
@@ -442,7 +442,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             hints->caps = FI_MSG | FI_RMA;
             hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
 
-            ret = fi_getinfo(FI_VERSION(1, 21), NULL, NULL, 0, hints, &info);
+            ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
             if (ret) {
                 NIXL_ERROR << "fi_getinfo failed for rail " << rail_id << ": " << fi_strerror(-ret);
                 throw std::runtime_error("fi_getinfo failed for rail " + std::to_string(rail_id));
