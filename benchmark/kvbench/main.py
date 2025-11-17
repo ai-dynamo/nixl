@@ -275,7 +275,7 @@ def kvcache_command(model, model_config, **kwargs):
 
     def format_bytes(size):
         power = 0 if size <= 0 else floor(log(size, 1024))
-        return f"{round(size / 1024 ** power, 2)} {['B', 'KB', 'MB', 'GB', 'TB'][int(power)]}"
+        return f"{round(size / 1024**power, 2)} {['B', 'KB', 'MB', 'GB', 'TB'][int(power)]}"
 
     labels = [
         "Model",
@@ -325,8 +325,13 @@ def kvcache_command(model, model_config, **kwargs):
     help="Path to save JSON output",
     default=None,
 )
+@click.option(
+    "--storage-path",
+    type=click.Path(),
+    help="Base directory for storage endpoints of all traffic patterns; each TP uses a subdir tp_<id>",
+)
 def sequential_ct_perftest(
-    config_file, verify_buffers, print_recv_buffers, json_output_path
+    config_file, verify_buffers, print_recv_buffers, json_output_path, storage_path
 ):
     """Run sequential custom traffic performance test using patterns defined in YAML config"""
     from test.sequential_custom_traffic_perftest import SequentialCTPerftest
@@ -354,13 +359,14 @@ def sequential_ct_perftest(
             shards=tp_config.get("shards", 1),
             mem_type=tp_config.get("mem_type", "cuda").lower(),
             xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
+            sleep_before_launch_sec=tp_config.get("sleep_before_launch_sec", None),
             sleep_after_launch_sec=tp_config.get("sleep_after_launch_sec", 0),
         )
         patterns.append(pattern)
 
     output_path = json_output_path
 
-    perftest = SequentialCTPerftest(patterns)
+    perftest = SequentialCTPerftest(patterns, base_storage_path=storage_path)
     perftest.run(
         verify_buffers=verify_buffers,
         print_recv_buffers=print_recv_buffers,
