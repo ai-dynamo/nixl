@@ -700,7 +700,8 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
     }
 
     /* Connect local rdma to the remote rdma */
-    NIXL_INFO << "Connect QP data " << rdma_qp->qpn_data << " to remote QP data " << rdma_qp->rqpn_data;
+    NIXL_ERROR << "Connect QP data " << rdma_qp->qpn_data << " to remote QP data "
+               << rdma_qp->rqpn_data;
     result = connect_verbs_qp(this, rdma_qp->qp_data->get_qp(), rdma_qp->rqpn_data);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
@@ -709,7 +710,8 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
     }
 
     /* Connect local rdma to the remote rdma */
-    NIXL_INFO << "Connect QP notif " << rdma_qp->qpn_notif << " to remote QP notif " << rdma_qp->rqpn_notif;
+    NIXL_ERROR << "Connect QP notif " << rdma_qp->qpn_notif << " to remote QP notif "
+               << rdma_qp->rqpn_notif;
     result = connect_verbs_qp(this, rdma_qp->qp_notif->get_qp(), rdma_qp->rqpn_notif);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
@@ -868,7 +870,8 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
     }
 
     /* Connect local rdma to the remote rdma */
-    NIXL_ERROR << "Connect QP data " << rdma_qp->qpn_data << " to remote QP data " << rdma_qp->rqpn_data;
+    NIXL_ERROR << "Connect QP data " << rdma_qp->qpn_data << " to remote QP data "
+               << rdma_qp->rqpn_data;
     result = connect_verbs_qp(this, rdma_qp->qp_data->get_qp(), rdma_qp->rqpn_data);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
@@ -877,7 +880,8 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
     }
 
     /* Connect local rdma to the remote rdma */
-    NIXL_ERROR << "Connect QP notif " << rdma_qp->qpn_notif << " to remote QP notif " << rdma_qp->rqpn_notif;
+    NIXL_ERROR << "Connect QP notif " << rdma_qp->qpn_notif << " to remote QP notif "
+               << rdma_qp->rqpn_notif;
     result = connect_verbs_qp(this, rdma_qp->qp_notif->get_qp(), rdma_qp->rqpn_notif);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
