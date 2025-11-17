@@ -196,7 +196,7 @@ create_verbs_ah_attr(doca_verbs_context *verbs_context,
                      enum doca_verbs_addr_type addr_type,
                      doca_verbs_ah_attr **verbs_ah_attr);
 doca_error_t
-connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t remote_gid);
+connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn);
 void *
 threadProgressFunc(void *arg);
 int
