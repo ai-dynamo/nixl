@@ -74,11 +74,6 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
             return mem;
         }
 
-        [[nodiscard]] const nixlUcxMem &
-        getMem() const noexcept {
-            return mem;
-        }
-
     friend class nixlUcxEngine;
 };
 
@@ -311,9 +306,6 @@ private:
 
     // Context to use when current context is missing
     nixlUcxCudaDevicePrimaryCtxPtr m_cudaPrimaryCtx;
-
-    /* Progress thread */
-    bool progressThreadEnabled_;
 
     /* Notifications */
     notif_list_t notifMainList;
