@@ -69,6 +69,14 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
             return rkeyStr;
         }
 
+        [[nodiscard]] nixlUcxMem& getMem() noexcept {
+            return mem;
+        }
+
+        [[nodiscard]] const nixlUcxMem& getMem() const noexcept {
+            return mem;
+        }
+
     friend class nixlUcxEngine;
 };
 
@@ -190,12 +198,6 @@ public:
     checkXfer(nixlBackendReqH *handle) const override;
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
-
-    nixl_status_t
-    createGpuXferReq(const nixlBackendReqH &req_hndl,
-                     const nixl_meta_dlist_t &local_descs,
-                     const nixl_meta_dlist_t &remote_descs,
-                     nixlGpuXferReqH &gpu_req_hndl) const override;
 
     void
     releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const override;
@@ -331,6 +333,12 @@ public:
 
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;
+
+    nixl_status_t
+    createGpuXferReq(const nixlBackendReqH &req_hndl,
+                     const nixl_meta_dlist_t &local_descs,
+                     const nixl_meta_dlist_t &remote_descs,
+                     nixlGpuXferReqH &gpu_req_hndl) const override;
 
 protected:
     int
