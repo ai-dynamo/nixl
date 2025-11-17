@@ -69,7 +69,7 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
             return rkeyStr;
         }
 
-        [[nodiscard]] nixlUcxMem &
+        [[nodiscard]] const nixlUcxMem &
         getMem() const noexcept {
             return mem;
         }
