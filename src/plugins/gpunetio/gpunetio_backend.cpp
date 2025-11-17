@@ -700,7 +700,7 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
     }
 
     /* Connect local rdma to the remote rdma */
-    NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- data";
+    NIXL_ERROR << "Connect QP data " << rdma_qp->qpn_data << " to remote QP data " << rdma_qp->rqpn_data;
     result = connect_verbs_qp(
         this, rdma_qp->qp_data->get_qp(), rdma_qp->rqpn_data, rdma_qp->remote_gid_data);
     if (result != DOCA_SUCCESS) {
@@ -710,9 +710,9 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
     }
 
     /* Connect local rdma to the remote rdma */
-    NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- notif";
+    NIXL_ERROR << "Connect QP notif " << rdma_qp->qpn_notif << " to remote QP notif " << rdma_qp->rqpn_notif;
     result = connect_verbs_qp(
-        this, rdma_qp->qp_notif->get_qp(), rdma_qp->rqpn_notif, rdma_qp->remote_gid_data);
+        this, rdma_qp->qp_notif->get_qp(), rdma_qp->rqpn_notif, rdma_qp->remote_gid_notif);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
         connectLock.unlock();
@@ -882,7 +882,7 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- notif";
     result = connect_verbs_qp(
-        this, rdma_qp->qp_notif->get_qp(), rdma_qp->rqpn_notif, rdma_qp->remote_gid_data);
+        this, rdma_qp->qp_notif->get_qp(), rdma_qp->rqpn_notif, rdma_qp->remote_gid_notif);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
         connectLock.unlock();
