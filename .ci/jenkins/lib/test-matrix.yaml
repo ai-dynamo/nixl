@@ -89,6 +89,8 @@ steps:
         --gpus all \
         --device=/dev/infiniband \
         --device=/dev/gdrdrv \
+        -e EXECUTOR_NUMBER \
+        -e NPROC \
         "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
