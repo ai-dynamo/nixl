@@ -161,6 +161,7 @@ class nixlBackendEngine {
         createGpuXferReq(const nixlBackendReqH &req_hndl,
                          const nixl_meta_dlist_t &local_descs,
                          const nixl_meta_dlist_t &remote_descs,
+                         const nixlMetaDesc &signal_desc,
                          nixlGpuXferReqH &gpu_req_hndl) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
