@@ -406,7 +406,6 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
 }
 
 nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
-                               size_t req_size,
                                bool prog_thread,
                                unsigned long num_workers,
                                nixl_thread_sync_t sync_mode) {
@@ -428,11 +427,6 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     if (prog_thread)
         ucp_params.features |= UCP_FEATURE_WAKEUP;
     ucp_params.mt_workers_shared = num_workers > 1 ? 1 : 0;
-
-    if (req_size) {
-        ucp_params.request_size = req_size;
-        ucp_params.field_mask |= UCP_PARAM_FIELD_REQUEST_SIZE;
-    }
 
     nixl::ucx::config config;
 
