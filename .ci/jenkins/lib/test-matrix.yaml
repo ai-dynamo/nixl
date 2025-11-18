@@ -89,6 +89,8 @@ steps:
         --gpus all \
         --device=/dev/infiniband \
         --device=/dev/gdrdrv \
+        -e EXECUTOR_NUMBER \
+        -e NPROC \
         "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -98,7 +100,7 @@ steps:
     parallel: false
     run: |
       set -ex
-      docker exec -e NPROC -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c "UCX_VERSION=${ucx_version} .gitlab/build.sh ${INSTALL_DIR}"
+      docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c "UCX_VERSION=${ucx_version} .gitlab/build.sh ${INSTALL_DIR}"
 
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -107,7 +109,7 @@ steps:
   - name: Test CPP
     parallel: false
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -e NPROC -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_cpp.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -115,7 +117,7 @@ steps:
   - name: Test Python
     parallel: false
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -e NPROC -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_python.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -123,7 +125,7 @@ steps:
   - name: Test Nixlbench
     parallel: false
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -e NPROC -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_nixlbench.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_nixlbench.sh ${INSTALL_DIR}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
@@ -131,7 +133,7 @@ steps:
   - name: Test Rust
     parallel: false
     run: |
-      timeout ${TEST_TIMEOUT}m docker exec -e NPROC -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_rust.sh ${INSTALL_DIR}"
+      timeout ${TEST_TIMEOUT}m docker exec -w ${CONTAINER_WORKSPACE} "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}" /bin/bash -c ".gitlab/test_rust.sh ${INSTALL_DIR}"
     always: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
       docker image rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
