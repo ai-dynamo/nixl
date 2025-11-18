@@ -450,21 +450,16 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     unsigned major_version, minor_version, release_number;
     ucp_get_version(&major_version, &minor_version, &release_number);
 
-    config.modify ("ADDRESS_VERSION", "v2");
-    config.modify ("RNDV_THRESH", "inf");
+    config.modify("ADDRESS_VERSION", "v2");
+    config.modify("RNDV_THRESH", "inf");
+    config.modify("MAX_RMA_RAILS", "2");
 
     unsigned ucp_version = UCP_VERSION(major_version, minor_version);
     if (ucp_version >= UCP_VERSION(1, 19)) {
-        config.modify ("MAX_COMPONENT_MDS", "32");
+        config.modify("MAX_COMPONENT_MDS", "32");
     } else {
         NIXL_WARN << "UCX version is less than 1.19, CUDA support is limited, "
                   << "including the lack of support for multi-GPU within a single process.";
-    }
-
-    if (ucp_version >= UCP_VERSION(1, 20)) {
-        config.modify ("MAX_RMA_RAILS", "4");
-    } else {
-        config.modify ("MAX_RMA_RAILS", "2");
     }
 
     const auto status = ucp_init (&ucp_params, config.getUcpConfig(), &ctx);
