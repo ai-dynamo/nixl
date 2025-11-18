@@ -35,7 +35,7 @@ if [ -z ${latest_tag} ]; then
 fi
 
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
-BASE_IMAGE_TAG=25.06-cuda12.9-devel-ubuntu24.04
+BASE_IMAGE_TAG=25.10-cuda13.0-devel-ubuntu24.04
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
