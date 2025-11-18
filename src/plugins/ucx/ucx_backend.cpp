@@ -1661,7 +1661,8 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
     }
 
     try {
-        gpu_req_hndl = nixl::ucx::createGpuXferReq(*ep, *getWorker(workerId), local_mems, remote_rkeys, remote_addrs);
+        gpu_req_hndl = nixl::ucx::createGpuXferReq(
+            *ep, *getWorker(workerId), local_mems, remote_rkeys, remote_addrs);
         NIXL_TRACE << "Created device memory list: ep=" << ep->getEp() << " handle=" << gpu_req_hndl
                    << " worker_id=" << workerId << " num_elements=" << local_mems.size();
         return NIXL_SUCCESS;

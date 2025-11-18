@@ -118,8 +118,9 @@ createGpuXferReq(const nixlUcxEp &ep,
             timeout_warned = true;
         }
 
-        worker.progress();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (worker.progress() == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
 
     if (ucs_status != UCS_OK) {
