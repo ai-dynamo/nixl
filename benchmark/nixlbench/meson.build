@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '0.6.1',
+project('nixlbench', 'CPP', version: '0.8.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -183,10 +183,6 @@ if nvshmem_available
         '-lcudart',
         '-lcudadevrt',
     ]
-endif
-
-if not etcd_available
-    error('No runtime available or not found')
 endif
 
 if nvshmem_available

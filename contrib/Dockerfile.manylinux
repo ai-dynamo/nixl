@@ -20,8 +20,9 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG ARCH="x86_64"
-ARG UCX_REF="v1.19.0"
-ARG LIBFABRIC_VERSION="v2.3.0"
+ARG UCX_REF="v1.20.x"
+ARG LIBFABRIC_VERSION="v1.21.0"
+ARG BUILD_TYPE="release"
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
@@ -248,7 +249,7 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
+    meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" && \
     cd build && \
@@ -265,7 +266,7 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
-ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
+ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12,3.13"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
@@ -280,7 +281,10 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --output-dir dist ; \
     done
 
-# Copy the meta package wheel to the output directory
-RUN cp build/src/bindings/python/nixl-meta/nixl*.whl dist/
+# Copy the meta package wheel to the dist directory, which will be used to push to PyPI.
+# Only do this for the CUDA 12 builds, since by default nixl depends on nixl-cu12.
+RUN if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "12" ]; then \
+      cp build/src/bindings/python/nixl-meta/nixl*.whl dist/; \
+    fi
 
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl
+RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl build/src/bindings/python/nixl-meta/nixl*.whl

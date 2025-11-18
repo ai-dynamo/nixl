@@ -13,26 +13,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "nixl"
-version = "@VERSION@"
-description = "NIXL Python API meta package for CUDA variants"
-readme = "README.md"
-license = {file = 'LICENSE'}
-requires-python = ">=3.9"
-authors = [
-  {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
-]
-
-dependencies = ["@WHEEL_DEP@>=@VERSION@"]
-
-[project.optional-dependencies]
-cu12 = ["nixl-cu12>=@VERSION@"]
-cu13 = ["nixl-cu13>=@VERSION@"]
-
-[tool.setuptools]
-packages = ["nixl"]
+fs = import('fs')
+fs.copyfile('__init__.py')

@@ -20,15 +20,21 @@ import argparse
 import tomlkit
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--set-name", type=str, help="Set the project name")
+parser.add_argument("--wheel-name", type=str, help="Set the project name")
 parser.add_argument("file", type=str, help="The toml file to modify")
 args = parser.parse_args()
 
 with open(args.file) as f:
     doc = tomlkit.parse(f.read())
 
-if args.set_name:
-    doc["project"]["name"] = args.set_name
+if args.wheel_name:
+    # Set the wheel name
+    # Example:
+    # ```toml
+    # [project]
+    # name = "<wheel_name>"
+    # ```
+    doc["project"]["name"] = args.wheel_name
 
 with open(args.file, "w") as f:
     f.write(tomlkit.dumps(doc))
