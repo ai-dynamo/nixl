@@ -44,6 +44,7 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 # Set UCX GDA max system latency to allow GDA on SYS topology
 # TODO: Remove this once CI setups have better GPU-NIC locality
 export UCX_IB_GDA_MAX_SYS_LATENCY=1us
+export UCX_LOG_LEVEL=trace
 
 echo "==== Show system info ===="
 env
