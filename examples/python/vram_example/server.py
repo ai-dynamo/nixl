@@ -26,12 +26,13 @@ from utils import calc_memory_blocks, get_logger, parse_args
 logger = get_logger(__name__)
 
 
-def _handle_request(agent, xfer_desc_str, msgs):
+def _handle_request(agent, xfer_desc_str):
     # Send desc list to initiator when metadata is ready.
     ready = False
     while not ready:
         ready = agent.check_remote_metadata("client")
 
+    msgs = []
     # Handshake from client.
     logger.debug("Waiting for handshake")
     if not msgs:
@@ -39,38 +40,42 @@ def _handle_request(agent, xfer_desc_str, msgs):
         while len(notifs) == 0:
             notifs = agent.get_new_notifs()
         msgs.extend(notifs["client"])
-    assert msgs.pop(0) == b"SYN"
-    logger.info("Request received")
-
-    agent.send_notif("client", xfer_desc_str)
-
-    logger.debug("Waiting for transfer")
-
-    # Waiting for transfer.
-    # For now the notification is just UUID, could be any python bytes.
-    # Also can have more than UUID, and check_remote_xfer_done returns
-    # the full python bytes, here it would be just UUID.
-    while not agent.check_remote_xfer_done("client", b"UUID"):
-        continue
-
-    if not msgs:
-        # Check if we have to keep this connection.
-        client_notifs = agent.update_notifs(["UCX"])["client"]
-        while len(client_notifs) == 0:
-            notifs = agent.get_new_notifs()
-            client_notifs = notifs.get("client", []).copy()
-        msgs.extend(client_notifs)
-        agent.notifs["client"].clear()
 
     msg = msgs.pop(0).decode()
-    logger.debug("msgs: %s", msgs)
-    seq, msg = msg.split(":")
-    logger.debug(seq)
-    logger.info("Finalize request")
-    if msg != "KEEPALIVE":
-        logger.debug("Got trans message %s, %s, %s", notifs["client"], msg, seq)
-        logger.debug("Remove remote agent and fall back to initiation")
-        agent.remove_remote_agent("client")
+    assert msg.startswith("SYN")
+    seqs = msg.split(":")[-1]
+    logger.info("Request received")
+    agent.send_notif("client", xfer_desc_str)
+    logger.debug("Waiting for transfer")
+
+    def _step():
+        if not msgs:
+            # Check if we have to keep this connection.
+            client_notifs = agent.update_notifs(["UCX"]).get("client", [])
+            while len(client_notifs) == 0:
+                notifs = agent.get_new_notifs()
+                client_notifs = notifs.get("client", []).copy()
+            msgs.extend(client_notifs)
+        msg = msgs.pop(0).decode()
+        logger.debug("Got trans message %s", msg)
+        return msg
+
+    completed_seqs = set()
+
+    while True:
+        msg = _step()
+        completed_seqs.add(int(msg))
+        logger.debug(msg)
+
+        if completed_seqs == set(range(int(seqs))):
+            logger.debug(
+                "All sequences are completed: %s",
+                completed_seqs,
+            )
+            break
+
+    logger.debug("Remove remote agent and fall back to initiation")
+    agent.remove_remote_agent("client")
 
 
 def main():
@@ -123,11 +128,10 @@ def main():
 
     try:
         # Daemonize server process for testing until killed by hand.
-        msgs = []
         while True:
-            logger.debug("Waiting for initialization with msg: %s", msgs)
+            logger.debug("Waiting for initialization")
             logger.debug(tensors)
-            _handle_request(agent, xfer_desc_str, msgs)
+            _handle_request(agent, xfer_desc_str)
     finally:
         agent.deregister_memory(reg_descs)
         logger.info("Test Complete.")
