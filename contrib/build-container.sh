@@ -29,7 +29,7 @@ fi
 VERSION=v$latest_tag.dev.$commit_id
 
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
-BASE_IMAGE_TAG=25.06-cuda12.9-devel-ubuntu24.04
+BASE_IMAGE_TAG=25.10-cuda13.0-devel-ubuntu24.04
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
@@ -148,7 +148,8 @@ get_options() {
     done
 
     if [[ $OS == "ubuntu22" ]]; then
-        BASE_IMAGE_TAG=24.10-cuda12.6-devel-ubuntu22.04
+        BASE_IMAGE=nvidia/cuda
+        BASE_IMAGE_TAG=13.0.1-devel-ubuntu22.04
         WHL_BASE=${WHL_BASE:-manylinux_2_34}
     fi
 
