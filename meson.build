@@ -125,8 +125,6 @@ else
     doca_gpunetio_dep = disabler()
     warning('CUDA not found, cannot autodetect wheel dir; defaulting to nixl_cu12')
     cuda_wheel_dir = 'nixl_cu12'
-    warning('CUDA not found, GPUNETIO plugin will be disabled')
-    doca_gpunetio_dep = disabler()
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
