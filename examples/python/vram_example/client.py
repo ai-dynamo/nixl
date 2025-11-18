@@ -31,28 +31,13 @@ def transfer(
     agent,
     size_in_bytes,
     local_prep_handle,
+    remote_prep_handle,
     addrs,
     trans_blocks,
     layers,
     num_blocks,
+    seq,
 ):
-    # Handshake to server.
-    agent.send_notif("server", "SYN")
-
-    notifs = agent.get_new_notifs()
-
-    while len(notifs) == 0:
-        notifs = agent.get_new_notifs()
-
-    target_descs = agent.deserialize_descs(notifs["server"][0])
-    logger.debug("target_descs: %s", target_descs)
-    logger.debug("target descCount: %d", target_descs.descCount())
-    logger.debug("target isEmpty: %s", target_descs.isEmpty())
-    remote_prep_handle = agent.prep_xfer_dlist("server", target_descs, "VRAM")
-
-    assert local_prep_handle != 0
-    assert remote_prep_handle != 0
-
     start = time.monotonic()
 
     # Calculate transfer data block indices. Simply this prepares first
@@ -69,7 +54,7 @@ def transfer(
         indices,
         remote_prep_handle,
         indices,
-        b"UUID",
+        str(seq).encode(),
         ["UCX"],
     )
 
@@ -180,23 +165,37 @@ def main():
 
     assert local_prep_handle != 0
 
-    trans_strategy = ["KEEPALIVE" for x in range(count)]
-    trans_strategy[-1] = "COMPLETE"
+    # Handshake to server.
+    agent.send_notif("server", f"SYN:{count}".encode())
 
-    for i, msg in enumerate(trans_strategy):
-        logger.debug("trans with %s", msg)
-        logger.debug(i)
+    notifs = agent.get_new_notifs()
+
+    while len(notifs) == 0:
+        notifs = agent.get_new_notifs()
+
+    target_descs = agent.deserialize_descs(notifs["server"][0])
+    logger.debug("target_descs: %s", target_descs)
+    logger.debug("target descCount: %d", target_descs.descCount())
+    logger.debug("target isEmpty: %s", target_descs.isEmpty())
+    remote_prep_handle = agent.prep_xfer_dlist("server", target_descs, "VRAM")
+
+    assert local_prep_handle != 0
+    assert remote_prep_handle != 0
+
+    for seq in range(count):
+        logger.debug("trans with sequence: %s", seq)
         transfer(
             agent,
             size_in_bytes,
             local_prep_handle,
+            remote_prep_handle,
             xfer_addrs,
             trans_blocks,
             args.layers,
             num_blocks,
+            seq,
         )
-        msg = f"{i}:{msg}"
-        agent.send_notif("server", msg.encode())
+        # agent.send_notif("server", str(seq).encode())
 
     # Verify data after read.
     # for i, tensor in enumerate(tensors):
