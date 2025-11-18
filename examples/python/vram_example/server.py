@@ -86,29 +86,24 @@ def main():
     agent = nixl_agent("server", config)
 
     # Allocate memory and register with NIXL.
-    tensors = [
-        torch.ones(tensor_size, dtype=torch.bfloat16, device=device)
-        for x in range(args.layers)
-    ]
+    tensors = torch.ones(tensor_size * args.layers, dtype=torch.bfloat16, device=device)
+
     logger.debug("Tensor buffer for transfer... %s", tensors)
-    size_in_bytes = tensors[0].nelement() * tensors[0].element_size() * len(tensors)
+    size_in_bytes = tensors.nelement() * tensors.element_size()
     logger.info("Server Tensor Buffer in MB: %d", size_in_bytes / 1024 / 1024)
 
-    block_len = shape_len * tensors[0].element_size()  # Bytes of tensor.
+    block_len = shape_len * tensors.element_size()  # Bytes of tensor.
     logger.debug("block_len: %d", block_len)
     logger.debug("num_blocks: %d", num_blocks)
 
-    reg_addrs = []
-    t = tensors[0]
     logger.debug(
-        "first ptr: %d, second ptr %d", t[0].data_ptr(), t[shape_len].data_ptr()
+        "first ptr: %d, second ptr %d",
+        tensors[0].data_ptr(),
+        tensors[shape_len].data_ptr(),
     )
-    logger.debug("distance: %d", t[shape_len].data_ptr() - t[0].data_ptr())
-    logger.debug("nelement: %d", t.nelement())
-    for t in tensors:
-        reg_addrs.append((t[0].data_ptr(), tensor_size * t.element_size(), 0, ""))
-
-    reg_descs = agent.get_reg_descs(reg_addrs, "VRAM")
+    logger.debug("distance: %d", tensors[shape_len].data_ptr() - tensors[0].data_ptr())
+    logger.debug("nelement: %d", tensors.nelement())
+    reg_descs = agent.get_reg_descs(tensors, "VRAM")
     success = agent.register_memory(reg_descs)
 
     if not success:  # Same as reg_descs if successful.
@@ -116,12 +111,11 @@ def main():
         sys.exit()
 
     xfer_addrs = []
-    for t in tensors:
-        base_addr = t.data_ptr()
-        for block_id in range(num_blocks):
-            offset = block_id * block_len
-            addr = base_addr + offset
-            xfer_addrs.append((addr, block_len, 0))
+    base_addr = tensors[0].data_ptr()
+    for block_id in range(num_blocks * args.layers):
+        offset = block_id * block_len
+        addr = base_addr + offset
+        xfer_addrs.append((addr, block_len, 0))
 
     xfer_descs = agent.get_xfer_descs(xfer_addrs, "VRAM")
     xfer_desc_str = agent.get_serialized_descs(xfer_descs)

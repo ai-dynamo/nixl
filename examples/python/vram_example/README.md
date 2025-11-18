@@ -13,8 +13,9 @@ As described above, this example follows vLLM's KV cache memory management. The 
 
 The memory layout is designed as follows:
 
-- Let **N** be the number of layers. The process creates **N** tensors.
-- Each tensor maintains contiguous memory alignment but is logically divided into blocks of `block_size` tokens.
+- The process creates single contiguous.
+- Let **N** be the number of layers. The process emurates the single tensor as **N** tensors.
+- Each layer tensor block maintains memory alignment but is logically divided into blocks of `block_size` tokens.
 - The memory size of each block is calculated using the following formula:
 
 `KV * Heads * Dimensions * Tokens per block * Precision`

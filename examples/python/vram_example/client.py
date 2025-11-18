@@ -119,22 +119,18 @@ def main():
     agent = nixl_agent("client", config)
 
     # Allocate memory and register with NIXL
-    tensors = [
-        torch.zeros(tensor_size, dtype=torch.bfloat16, device=device)
-        for x in range(args.layers)
-    ]
+    tensors = torch.zeros(
+        tensor_size * args.layers, dtype=torch.bfloat16, device=device
+    )
 
-    size_in_bytes = tensors[0].nelement() * tensors[0].element_size() * len(tensors)
+    # size_in_bytes = tensors[0].nelement() * tensors[0].element_size() * len(tensors)
+    size_in_bytes = tensors.nelement() * tensors.element_size()
     logger.info("Client Tensors in MB: %d", size_in_bytes / 1024 / 1024)
 
-    block_len = shape_len * tensors[0].element_size()  # bytes of tensor
+    block_len = shape_len * tensors.element_size()  # bytes of tensor
     logger.debug("block_len: %d", block_len)
 
-    reg_addrs = []
-    for t in tensors:
-        reg_addrs.append((t[0].data_ptr(), tensor_size * t.element_size(), 0, ""))
-
-    reg_descs = agent.get_reg_descs(reg_addrs, "VRAM")
+    reg_descs = agent.get_reg_descs(tensors, "VRAM")
 
     success = agent.register_memory(reg_descs)
     if not success:  # Same as reg_descs if successful
@@ -143,18 +139,17 @@ def main():
 
     # Create data block chunk to emulate vllm 0.10.0 data transfer
     xfer_addrs = []
-    for t in tensors:
-        base_addr = t.data_ptr()
-        for block_id in range(num_blocks):
-            offset = block_id * block_len
-            addr = base_addr + offset
-            xfer_addrs.append((addr, block_len, 0))
+    base_addr = tensors[0].data_ptr()
+    for block_id in range(num_blocks * args.layers):
+        offset = block_id * block_len
+        addr = base_addr + offset
+        xfer_addrs.append((addr, block_len, 0))
 
     logger.info(
-        "addrs info: layers: %d, elements: %d, shape: %d, block_len: %d"
+        "addrs info: layers: %d, elements: %d, shape: %d, block_len: %d, "
         "addrs_len: %d",
-        len(tensors),
-        tensors[0].nelement(),
+        args.layers,
+        tensor_size,
         shape_len,
         block_len,
         len(xfer_addrs),
@@ -204,10 +199,12 @@ def main():
         agent.send_notif("server", msg.encode())
 
     # Verify data after read.
-    for i, tensor in enumerate(tensors):
+    # for i, tensor in enumerate(tensors):
+    for i in range(args.layers):
+        layer_base = i * tensor_size
         check_blocks = trans_blocks * shape_len
         if not torch.allclose(
-            tensor[:check_blocks],
+            tensors[layer_base : layer_base + check_blocks],
             torch.ones(check_blocks, dtype=torch.bfloat16, device=device),
         ):
             logger.error("Data verification failed for tensor %d.", i)
