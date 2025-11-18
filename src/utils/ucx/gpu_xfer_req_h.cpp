@@ -62,6 +62,7 @@ namespace {
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
+                 nixlUcxWorker &worker,
                  const std::vector<nixlUcxMem> &local_mems,
                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
                  const std::vector<uint64_t> &remote_addrs) {
@@ -108,12 +109,16 @@ createGpuXferReq(const nixlUcxEp &ep,
     ucp_device_mem_list_handle_h ucx_handle;
     ucs_status_t ucs_status;
     const auto start = std::chrono::steady_clock::now();
+    bool timeout_warned = false;
     while ((ucs_status = ucp_device_mem_list_create(ep.getEp(), &params, &ucx_handle)) ==
            UCS_ERR_NOT_CONNECTED) {
-        if (std::chrono::steady_clock::now() - start > timeout) {
-            throw std::runtime_error(
-                "Timeout waiting for endpoint wireup completion has been exceeded");
+        if (!timeout_warned && std::chrono::steady_clock::now() - start > timeout) {
+            NIXL_WARN << "Timeout on creating device memory list has been exceeded (timeout="
+                      << timeout.count() << " ms)";
+            timeout_warned = true;
         }
+
+        worker.progress();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
@@ -123,7 +128,7 @@ createGpuXferReq(const nixlUcxEp &ep,
     }
 
     NIXL_DEBUG << "Created device memory list: ep=" << ep.getEp() << " handle=" << ucx_handle
-               << " num_elements=" << local_mems.size();
+               << " num_elements=" << local_mems.size() << " worker=" << &worker;
     return reinterpret_cast<nixlGpuXferReqH>(ucx_handle);
 }
 
@@ -137,6 +142,7 @@ releaseGpuXferReq(nixlGpuXferReqH gpu_req) noexcept {
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
+                 nixlUcxWorker &worker,
                  const std::vector<nixlUcxMem> &local_mems,
                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
                  const std::vector<uint64_t> &remote_addrs) {

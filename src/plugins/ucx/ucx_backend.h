@@ -69,11 +69,6 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
             return rkeyStr;
         }
 
-        [[nodiscard]] const nixlUcxMem &
-        getMem() const noexcept {
-            return mem;
-        }
-
     friend class nixlUcxEngine;
 };
 
@@ -196,6 +191,12 @@ public:
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
+    nixl_status_t
+    createGpuXferReq(const nixlBackendReqH &req_hndl,
+                     const nixl_meta_dlist_t &local_descs,
+                     const nixl_meta_dlist_t &remote_descs,
+                     nixlGpuXferReqH &gpu_req_hndl) const override;
+
     void
     releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const override;
 
@@ -307,6 +308,9 @@ private:
     // Context to use when current context is missing
     nixlUcxCudaDevicePrimaryCtxPtr m_cudaPrimaryCtx;
 
+    /* Progress thread */
+    bool progressThreadEnabled_;
+
     /* Notifications */
     notif_list_t notifMainList;
 
@@ -327,12 +331,6 @@ public:
 
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;
-
-    nixl_status_t
-    createGpuXferReq(const nixlBackendReqH &req_hndl,
-                     const nixl_meta_dlist_t &local_descs,
-                     const nixl_meta_dlist_t &remote_descs,
-                     nixlGpuXferReqH &gpu_req_hndl) const override;
 
 protected:
     int
