@@ -209,6 +209,18 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 )
 
 ( \
+  cd /tmp && \
+  git clone --depth 1 https://github.com/kvcache-ai/Mooncake.git && \
+  cd Mooncake && \
+  $SUDO bash dependencies.sh && \
+  mkdir build && cd build && \
+  cmake .. -DBUILD_SHARED_LIBS=ON && \
+  make -j2 && \
+  $SUDO make install && \
+  $SUDO ldconfig
+)
+
+( \
   cd /tmp &&
   git clone --depth 1 https://github.com/google/gtest-parallel.git &&
   mkdir -p ${INSTALL_DIR}/bin &&
