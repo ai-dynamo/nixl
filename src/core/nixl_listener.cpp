@@ -360,7 +360,7 @@ public:
 
             // Get current index to watch from
             etcd::Response response = etcd->get(metadata_key);
-            int64_t watch_index = response.index();
+            int64_t watch_index = response.index() + 1;
             std::promise<nixl_status_t> ret_prom;
             auto future = ret_prom.get_future();
             std::atomic<bool> promise_set{false};
