@@ -30,12 +30,13 @@ runs_on_agents:
 matrix:
   axes:
     image:
+      - nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04
       - nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
     arch:
       - x86_64
     ucx_version:
       - master
-      - v1.19.0
+      - v1.20.x
 
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
@@ -89,6 +90,8 @@ steps:
         --gpus all \
         --device=/dev/infiniband \
         --device=/dev/gdrdrv \
+        -e EXECUTOR_NUMBER \
+        -e NPROC \
         "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"

@@ -14,7 +14,7 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.06-cuda12.9-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
 ARG OS
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
@@ -23,7 +23,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
-ARG UCX_REF="v1.19.0"
+ARG UCX_REF="v1.20.x"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
 ARG NIXL_PREFIX="/usr/local/nixl"
@@ -32,6 +32,7 @@ ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
+ARG BUILD_TYPE="release"
 
 # Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
@@ -201,7 +202,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
     mkdir build && \
-    meson setup -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH build/ --prefix=$NIXL_PREFIX && \
+    meson setup -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install
