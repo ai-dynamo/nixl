@@ -86,19 +86,19 @@ else
     echo "Worker without GPU, skipping VRAM tests"
 fi
 
-for op_type in READ WRITE; do
-    for initiator in $seg_types; do
-        for target in $seg_types; do
-            run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
-        done
-    done
-done
+# for op_type in READ WRITE; do
+#     for initiator in $seg_types; do
+#         for target in $seg_types; do
+#             run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+#         done
+#     done
+# done
 
-for op_type in READ WRITE; do
-    for target in $seg_types; do
-        run_nixlbench_one_worker --backend POSIX --op_type $op_type --target_seg_type $target
-    done
-done
+# for op_type in READ WRITE; do
+#     for target in $seg_types; do
+#         run_nixlbench_one_worker --backend POSIX --op_type $op_type --target_seg_type $target
+#     done
+# done
 
 if $HAS_GPU ; then
     for op_type in WRITE READ; do

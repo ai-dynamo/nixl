@@ -141,7 +141,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
             throw std::invalid_argument("Failed to create doca verbs ah attributes");
 
         lid = port_attr.lid;
-        printf("lid %d\n", lid);
+        NIXL_ERROR << "lid " << lid;
     } else {
         result = create_verbs_ah_attr(
             verbs_context, gid_index, DOCA_VERBS_ADDR_TYPE_IPv4, &verbs_ah_attr);
