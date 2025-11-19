@@ -193,6 +193,7 @@ connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn) {
 
     // IB
     if (eng->port_attr.link_layer == IBV_LINK_LAYER_INFINIBAND) {
+        printf("doca_verbs_ah_attr_set_dlid %d\n", eng->dlid);
         status = doca_verbs_ah_attr_set_dlid(eng->verbs_ah_attr, eng->dlid);
         if (status != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to set dlid";
