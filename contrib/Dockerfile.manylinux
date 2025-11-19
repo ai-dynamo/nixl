@@ -188,7 +188,8 @@ RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && 			     \
      git checkout $UCX_REF &&	     \
-     ./autogen.sh && ./configure     \
+     ./autogen.sh && \
+     ./contrib/configure-release-mt  \
          --enable-shared             \
          --disable-static            \
          --disable-doxygen-doc       \
@@ -199,8 +200,7 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --with-gdrcopy=/usr/local   \
-         --with-efa                  \
-         --enable-mt &&              \
+         --with-efa  &&              \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
