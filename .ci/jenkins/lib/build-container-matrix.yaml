@@ -88,6 +88,7 @@ steps:
         --base-image-tag "${BASE_IMAGE_TAG}" \
         --tag "${LOCAL_TAG_BASE}${arch}" \
         --arch "${arch}" \
+        --build-type debug \
         --no-cache
 
   - name: Add Version Info
@@ -174,7 +175,7 @@ steps:
         echo "benchmark/nixlbench/contrib/build.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache --nixl \$WORKSPACE --ucx \$WORKSPACE/ucx-src"
       else
         echo "export UCX_REF=${UCX_VERSION}"
-        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache"
+        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache"
       fi
 
 pipeline_stop:
