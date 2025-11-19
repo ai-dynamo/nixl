@@ -38,6 +38,7 @@ runs_on_dockers:
   - { name: "ubuntu24.04-cuda13-dl-base", url: "nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04" }
   - { name: "ubuntu22.04-cuda-dl-base", url: "nvidia/cuda:13.0.1-devel-ubuntu22.04" }
   - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", category: 'tool', privileged: true }
+  - { name: "nvidia-ubi8-cuda12.9.1", url: "nvidia/cuda:12.9.1-devel-ubi8"}
 
 matrix:
   axes:
