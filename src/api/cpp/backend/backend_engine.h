@@ -129,7 +129,7 @@ class nixlBackendEngine {
         virtual nixl_status_t connect(const std::string &remote_agent) = 0;
         virtual nixl_status_t disconnect(const std::string &remote_agent) = 0;
 
-        // Remove loaded local or remtoe metadata for target
+        // Remove loaded local or remote metadata for target
         virtual nixl_status_t unloadMD (nixlBackendMD* input) = 0;
 
         // Preparing a request, which populates the async handle as desired
@@ -177,7 +177,9 @@ class nixlBackendEngine {
 
         // Initialize a signal for GPU transfer using memory handle from descriptor
         virtual nixl_status_t
-        prepGpuSignal(const nixlBackendMD &meta, void *signal) const {
+        prepGpuSignal(const nixlBackendMD &meta,
+                      void *signal,
+                      const nixl_opt_b_args_t *opt_args = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 
@@ -201,7 +203,7 @@ class nixlBackendEngine {
             return NIXL_ERR_BACKEND;
         }
 
-        // Load remtoe metadata, if supported.
+        // Load remote metadata, if supported.
         virtual nixl_status_t loadRemoteMD (const nixlBlobDesc &input,
                                             const nixl_mem_t &nixl_mem,
                                             const std::string &remote_agent,
