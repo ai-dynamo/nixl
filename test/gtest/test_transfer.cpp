@@ -96,7 +96,7 @@ private:
     const size_t size;
 };
 
-class TestTransfer : public NixlTest {
+class TestTransfer : public nixl_test_t {
 protected:
     nixlAgentConfig
     getConfig(int listen_port, bool capture_telemetry) {
@@ -125,7 +125,7 @@ protected:
             params["split_batch_size"] = "32";
         }
 
-        params["engine_config"] = GetParam().engine_config;
+        params["engine_config"] = GetParam().engineConfig;
         return params;
     }
 
@@ -164,22 +164,22 @@ protected:
 
     std::string getBackendName() const
     {
-        return GetParam().backend_name;
+        return GetParam().backendName;
     }
 
     bool
     isProgressThreadEnabled() const {
-        return GetParam().progress_thread_enabled;
+        return GetParam().progressThreadEnabled;
     }
 
     size_t
     getNumWorkers() const {
-        return GetParam().num_workers;
+        return GetParam().numWorkers;
     }
 
     size_t
     getNumThreads() const {
-        return GetParam().num_threads;
+        return GetParam().numThreads;
     }
 
     nixl_opt_args_t
