@@ -14,7 +14,7 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.06-cuda12.9-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
 ARG OS
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
@@ -123,7 +123,8 @@ RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && 			     \
      git checkout $UCX_REF &&        \
-     ./autogen.sh && ./configure     \
+     ./autogen.sh && \
+     ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
          --enable-shared             \
          --disable-static            \
@@ -135,8 +136,7 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --with-gdrcopy=/usr/local   \
-         --with-efa                  \
-         --enable-mt &&              \
+         --with-efa  &&              \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
