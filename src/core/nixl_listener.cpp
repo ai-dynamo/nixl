@@ -197,6 +197,7 @@ private:
     std::thread heartbeat_thread;
     std::atomic<bool> heartbeat_thread_stop = false;
     std::chrono::seconds heartbeat_interval;
+    uint64_t lease_id;
 
     // Helper function to create etcd key
     std::string makeKey(const std::string& agent_name,
@@ -232,7 +233,7 @@ public:
         NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
 
         etcd::Response response = etcd->leasegrant((heartbeat.count()) * 2);
-        uint64_t lease_id = response.value().lease();
+        lease_id = response.value().lease();
 
         if (response.is_ok()) {
 
@@ -279,12 +280,12 @@ public:
 
         try {
             std::string metadata_key = makeKey(agent_name, metadata_type);
-            etcd::Response response = etcd->put(metadata_key, metadata);
+            etcd::Response response = etcd->put(metadata_key, metadata, lease_id);
 
             if (response.is_ok()) {
                 NIXL_DEBUG << "Successfully stored " << metadata_type
                            << " in etcd with key: " << metadata_key << " (rev "
-                           << response.value().modified_index() << ")";
+                           << response.value().modified_index() << ") with lease " << lease_id;
             } else {
                 NIXL_ERROR << "Failed to store " << metadata_type << " in etcd: " << response.error_message();
                 return NIXL_ERR_BACKEND;
