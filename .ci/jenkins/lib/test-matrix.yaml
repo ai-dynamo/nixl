@@ -92,6 +92,7 @@ steps:
         --device=/dev/gdrdrv \
         -e EXECUTOR_NUMBER \
         -e NPROC \
+        -e CUDA_DEVICE_ORDER=PCI_BUS_ID \
         "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
     onfail: |
       docker rm -f "${JOB_BASE_NAME}-${BUILD_ID}-${axis_index}"
