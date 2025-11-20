@@ -29,22 +29,10 @@ impl<T: BackendSyncable> SyncManager<T> {
         }
     }
 
-    /// Mutates the frontend data (marks as dirty)
-    pub fn modify<F, R>(&mut self, f: F) -> R
-    where
-        F: FnOnce(&mut T) -> R,
-    {
+    /// Provides mutable access to the frontend data
+    pub fn data_mut(&mut self) -> &mut T {
         self.dirty.set(true);
-        f(&mut self.data)
-    }
-
-    /// Provides access to both data and backend after ensuring synchronization
-    pub fn with_backend<F, R>(&self, f: F) -> Result<R, T::Error>
-    where
-        F: FnOnce(&T, &T::Backend) -> R,
-    {
-        self.ensure_synced()?;
-        Ok(f(&self.data, &self.backend))
+        &mut self.data
     }
 
     /// Provides read-only access to the frontend data (no sync)
