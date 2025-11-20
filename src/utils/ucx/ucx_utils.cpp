@@ -451,6 +451,9 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     unsigned ucp_version = UCP_VERSION(major_version, minor_version);
     if (ucp_version >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");
+    } else {
+        NIXL_WARN << "UCX version is less than 1.19, CUDA support is limited, "
+                  << "including the lack of support for multi-GPU within a single process.";
     }
 
     const auto status = ucp_init (&ucp_params, config.getUcpConfig(), &ctx);
