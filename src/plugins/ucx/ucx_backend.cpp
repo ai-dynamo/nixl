@@ -1101,8 +1101,9 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
         err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
     }
 
-    const auto has_config = (custom_params->find("engine_config") != custom_params->end());
-    const auto engine_config = has_config ? (*custom_params)["engine_config"] : "";
+    const auto engine_config_it = custom_params->find("engine_config");
+    const auto engine_config = (engine_config_it != custom_params->end()) ?
+                                       (*custom_params)["engine_config"] : "";
 
     uc = std::make_unique<nixlUcxContext>(
         devs, init_params.enableProgTh, num_workers, init_params.syncMode, engine_config);
