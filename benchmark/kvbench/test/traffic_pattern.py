@@ -52,18 +52,31 @@ class TrafficPattern:
         cls._id_counter += 1
         return current_id
 
-    def senders_ranks(self):
-        """Return the ranks that send messages"""
+    def senders_ranks(self, world_size: Optional[int] = None):
+        """Return the ranks (process indices) that send messages.
+
+        If world_size is provided, only indices < world_size are returned
+        (storage endpoints are ignored).
+        """
         senders_ranks = []
         for i in range(self.matrix.shape[0]):
             for j in range(self.matrix.shape[1]):
                 if self.matrix[i, j] > 0:
                     senders_ranks.append(i)
                     break
-        return list(set(senders_ranks))
+        ranks = list(set(senders_ranks))
+        if world_size is not None:
+            ranks = [r for r in ranks if r < world_size]
+        return ranks
 
-    def receivers_ranks(self, from_ranks: Optional[list[int]] = None):
-        """Return the ranks that receive messages"""
+    def receivers_ranks(
+        self, from_ranks: Optional[list[int]] = None, world_size: Optional[int] = None
+    ):
+        """Return the ranks (process indices) that receive messages.
+
+        If world_size is provided, only indices < world_size are returned
+        (storage endpoints are ignored).
+        """
         if from_ranks is None:
             from_ranks = list(range(self.matrix.shape[0]))
         receivers_ranks = []
@@ -72,7 +85,10 @@ class TrafficPattern:
                 if self.matrix[i, j] > 0:
                     receivers_ranks.append(j)
                     break
-        return list(set(receivers_ranks))
+        ranks = list(set(receivers_ranks))
+        if world_size is not None:
+            ranks = [r for r in ranks if r < world_size]
+        return ranks
 
     def ranks(self):
         """Return all ranks that are involved in the traffic pattern"""
@@ -82,15 +98,34 @@ class TrafficPattern:
         return self.matrix[src, dst]
 
     def total_src_size(self, rank):
-        """Return the sum of the sizes received by <rank>"""
+        """Return the total size sent by <rank> across all destinations."""
         total_src_size = 0
-        for other_rank in range(self.matrix.shape[0]):
-            total_src_size += self.matrix[rank][other_rank]
+        # iterate over columns (destinations)
+        for dst in range(self.matrix.shape[1]):
+            total_src_size += self.matrix[rank][dst]
         return total_src_size
 
+    def total_src_size_to_ranks(self, rank: int, world_size: int) -> int:
+        """Return the total size sent by <rank> to rank destinations only.
+
+        Only columns < world_size are considered (storage columns are ignored).
+        """
+        total_size = 0
+        for dst in range(world_size):
+            total_size += int(self.matrix[rank][dst])
+        return total_size
+
     def total_dst_size(self, rank):
-        """Return the sum of the sizes received by <rank>"""
+        """Return the total size received by <rank> across all sources."""
         total_dst_size = 0
-        for other_rank in range(self.matrix.shape[0]):
-            total_dst_size += self.matrix[other_rank][rank]
+        # iterate over rows (sources)
+        for src in range(self.matrix.shape[0]):
+            total_dst_size += self.matrix[src][rank]
         return total_dst_size
+
+    def total_dst_size_from_ranks(self, rank: int, world_size: int) -> int:
+        """Return total size received by <rank> from rank sources only."""
+        total_size = 0
+        for src in range(world_size):
+            total_size += int(self.matrix[src][rank])
+        return total_size
