@@ -25,6 +25,7 @@
 #include <stack>
 #include <optional>
 #include <mutex>
+#include "gtest/gtest.h"
 
 namespace gtest {
 constexpr const char *
@@ -102,6 +103,29 @@ private:
     uint16_t _max_port = MAX_PORT;
 };
 
+struct nixlTestParam {
+    std::string backendName;
+    bool progressThreadEnabled;
+    unsigned numWorkers;
+    unsigned numThreads;
+    std::string engineConfig;
+};
+
+using nixl_test_t = testing::TestWithParam<nixlTestParam>;
+
 } // namespace gtest
+
+#define NIXL_INSTANTIATE_TEST(_test_name,               \
+                              _test_case,               \
+                              _backend,                 \
+                              _progress_thread_enabled, \
+                              _num_workers,             \
+                              _num_threads,             \
+                              _engine_config)           \
+    INSTANTIATE_TEST_SUITE_P(                           \
+        _test_name,                                     \
+        _test_case,                                     \
+        testing::ValuesIn(std::vector<nixlTestParam>(   \
+            {{_backend, _progress_thread_enabled, _num_workers, _num_threads, _engine_config}})));
 
 #endif /* TEST_GTEST_COMMON_H */
