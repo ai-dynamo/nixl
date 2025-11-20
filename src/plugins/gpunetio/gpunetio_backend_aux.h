@@ -170,12 +170,10 @@ struct nixlDocaRdmaQp {
     std::unique_ptr<nixl::doca::verbs::qp> qp_data;
     uint32_t qpn_data;
     uint32_t rqpn_data;
-    uint32_t remote_gid_data;
 
     std::unique_ptr<nixl::doca::verbs::qp> qp_notif;
     uint32_t qpn_notif;
     uint32_t rqpn_notif;
-    uint32_t remote_gid_notif;
 };
 
 struct nixlDocaEngine;
@@ -198,7 +196,7 @@ create_verbs_ah_attr(doca_verbs_context *verbs_context,
                      enum doca_verbs_addr_type addr_type,
                      doca_verbs_ah_attr **verbs_ah_attr);
 doca_error_t
-connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t remote_gid);
+connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn);
 void *
 threadProgressFunc(void *arg);
 int
