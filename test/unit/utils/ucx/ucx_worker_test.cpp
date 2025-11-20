@@ -20,8 +20,8 @@
 #include <cstring>
 #include <iostream>
 
-#include "ucx/ucx_utils.h"
-#include "ucx/rkey.h"
+#include "ucx_utils.h"
+#include "rkey.h"
 //TODO: meson conditional build for CUDA
 //#define USE_VRAM
 

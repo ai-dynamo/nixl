@@ -20,7 +20,7 @@
 #include <cstring>
 #include <iostream>
 
-#include "ucx/ucx_utils.h"
+#include "ucx_utils.h"
 
 using namespace std;
 

@@ -19,7 +19,7 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
-#include "ucx/gpu_xfer_req_h.h"
+#include "gpu_xfer_req_h.h"
 
 #include <optional>
 #include <limits>
