@@ -71,7 +71,7 @@ fi
 set > set.out
 env > env.out
 
-sleep 3600
+sleep 7000
 
 ./bin/ucx_backend_test
 mkdir -p /tmp/telemetry_test
