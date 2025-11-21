@@ -254,6 +254,132 @@ namespace agent {
         EXPECT_NE(std::find(mem2.begin(), mem2.end(), FILE_SEG), mem2.end());
     }
 
+    TEST_F(singleAgentSessionFixture, PrepDlistWithMultipleBackendsSameMemoTypeTest) {
+        // Create two mock backends that both support DRAM_SEG
+        testing::NiceMock<mocks::GMockBackendEngine> gmock_engine1;
+        nixl_mem_list_t mem_types1 = {DRAM_SEG};
+        ON_CALL(gmock_engine1, getSupportedMems()).WillByDefault(testing::Return(mem_types1));
+
+        nixl_b_params_t params1;
+        gmock_engine1.SetToParams(params1);
+        nixlBackendH *backend1;
+        EXPECT_EQ(agent_->createBackend(GetMockBackendName(), params1, backend1), NIXL_SUCCESS);
+        EXPECT_NE(backend1, nullptr);
+
+        testing::NiceMock<mocks::GMockBackendEngine> gmock_engine2;
+        nixl_mem_list_t mem_types2 = {DRAM_SEG};
+        ON_CALL(gmock_engine2, getSupportedMems()).WillByDefault(testing::Return(mem_types2));
+
+        nixl_b_params_t params2;
+        gmock_engine2.SetToParams(params2);
+        nixlBackendH *backend2;
+        EXPECT_EQ(agent_->createBackend(GetMockBackendName2(), params2, backend2), NIXL_SUCCESS);
+        EXPECT_NE(backend2, nullptr);
+
+        // Allocate two separate buffers with explicit addresses
+        constexpr size_t buf_size = 256;
+        std::unique_ptr<char[]> buf1 = std::make_unique<char[]>(buf_size);
+        std::unique_ptr<char[]> buf2 = std::make_unique<char[]>(buf_size);
+
+        // Explicitly set addresses for the two DRAM blobs
+        uintptr_t addr1 = reinterpret_cast<uintptr_t>(buf1.get());
+        uintptr_t addr2 = reinterpret_cast<uintptr_t>(buf2.get());
+
+        // Create descriptors with explicit addresses
+        nixlBlobDesc dram_desc1(addr1, buf_size, 0);
+        nixlBlobDesc dram_desc2(addr2, buf_size, 0);
+
+        // Verify they have different addresses
+        EXPECT_NE(addr1, addr2);
+        EXPECT_NE(dram_desc1.addr, dram_desc2.addr);
+
+        // Register first DRAM blob with backend1
+        nixl_reg_dlist_t dram_list1(DRAM_SEG);
+        dram_list1.addDesc(dram_desc1);
+        nixl_opt_args_t reg_params1;
+        reg_params1.backends.push_back(backend1);
+        EXPECT_EQ(agent_->registerMem(dram_list1, &reg_params1), NIXL_SUCCESS);
+
+        // Register second DRAM blob with backend2
+        nixl_reg_dlist_t dram_list2(DRAM_SEG);
+        dram_list2.addDesc(dram_desc2);
+        nixl_opt_args_t reg_params2;
+        reg_params2.backends.push_back(backend2);
+        EXPECT_EQ(agent_->registerMem(dram_list2, &reg_params2), NIXL_SUCCESS);
+
+        // Create a single transfer descriptor list containing both DRAM ranges
+        nixl_xfer_dlist_t combined_dram_list(DRAM_SEG);
+        combined_dram_list.addDesc(nixlBasicDesc(dram_desc1));
+        combined_dram_list.addDesc(nixlBasicDesc(dram_desc2));
+
+        // Call prepXferDlist once with both ranges
+        // This should result in a nixlDlistH with multiple backend keys internally
+        nixlDlistH *combined_dlist_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(NIXL_INIT_AGENT, combined_dram_list, combined_dlist_hndl),
+                  NIXL_SUCCESS);
+        EXPECT_NE(combined_dlist_hndl, nullptr);
+
+        // Prepare a remote descriptor list for loopback transfer
+        nixlDlistH *combined_remote_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(local_agent_name, combined_dram_list, combined_remote_hndl),
+                  NIXL_SUCCESS);
+        EXPECT_NE(combined_remote_hndl, nullptr);
+
+        // Verify we can use this descriptor list by creating transfer requests
+        // Transfer from blob1 to blob2 should work since both are registered
+        std::vector<int> src_indices = {0};
+        std::vector<int> dst_indices = {1};
+
+        // This transfer should fail because blob1 (backend1) and blob2 (backend2)
+        // are on different backends - NIXL cannot find a common backend
+        nixlXferReqH *xfer_req = nullptr;
+        EXPECT_NE(agent_->makeXferReq(NIXL_WRITE,
+                                      combined_dlist_hndl,
+                                      src_indices,
+                                      combined_remote_hndl,
+                                      dst_indices,
+                                      xfer_req,
+                                      nullptr),
+                  NIXL_SUCCESS)
+            << "Transfer from backend1-registered memory to backend2-registered memory should fail";
+
+        // Verify we can transfer within same backend (blob1 to blob1 on backend1)
+        nixlXferReqH *xfer_req2 = nullptr;
+        nixl_opt_args_t xfer_params1;
+        EXPECT_EQ(agent_->makeXferReq(NIXL_WRITE,
+                                      combined_dlist_hndl,
+                                      src_indices,
+                                      combined_remote_hndl,
+                                      src_indices,
+                                      xfer_req2,
+                                      &xfer_params1),
+                  NIXL_SUCCESS)
+            << "Transfer within backend1 should succeed";
+        EXPECT_NE(xfer_req2, nullptr);
+        EXPECT_EQ(agent_->releaseXferReq(xfer_req2), NIXL_SUCCESS);
+
+        // Verify we can create transfer within same backend (blob2 to blob2 on backend2)
+        nixlXferReqH *xfer_req3 = nullptr;
+        nixl_opt_args_t xfer_params2;
+        EXPECT_EQ(agent_->makeXferReq(NIXL_WRITE,
+                                      combined_dlist_hndl,
+                                      dst_indices,
+                                      combined_remote_hndl,
+                                      dst_indices,
+                                      xfer_req3,
+                                      &xfer_params2),
+                  NIXL_SUCCESS)
+            << "Transfer within backend2 should succeed";
+        EXPECT_NE(xfer_req3, nullptr);
+        EXPECT_EQ(agent_->releaseXferReq(xfer_req3), NIXL_SUCCESS);
+
+        // Cleanup
+        EXPECT_EQ(agent_->releasedDlistH(combined_dlist_hndl), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(combined_remote_hndl), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->deregisterMem(dram_list1), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->deregisterMem(dram_list2), NIXL_SUCCESS);
+    }
+
     TEST_F(singleAgentSessionFixture, MultipleBackendsMemoryAndTransferTest) {
         // Create first mock backend that supports DRAM_SEG and VRAM_SEG
         testing::NiceMock<mocks::GMockBackendEngine> gmock_engine1;
