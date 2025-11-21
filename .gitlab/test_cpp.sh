@@ -68,7 +68,10 @@ if $TEST_LIBFABRIC ; then
 fi
 ./bin/nixl_etcd_example
 
-tmux
+set > set.out
+env > env.out
+
+sleep 3600
 
 ./bin/ucx_backend_test
 mkdir -p /tmp/telemetry_test
