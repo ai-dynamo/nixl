@@ -250,6 +250,16 @@ nixl_capi_opt_args_set_port(nixl_capi_opt_args_t args, uint16_t port) {
 }
 
 nixl_capi_status_t
+nixl_capi_create_params(nixl_capi_params_t *params) {
+    return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
+nixl_capi_params_add(nixl_capi_params_t params, const char *key, const char *value) {
+    return nixl_capi_stub_abort();
+}
+
+nixl_capi_status_t
 nixl_capi_params_is_empty(nixl_capi_params_t params, bool* is_empty)
 {
   return nixl_capi_stub_abort();
