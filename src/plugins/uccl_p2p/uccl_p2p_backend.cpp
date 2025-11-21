@@ -285,7 +285,7 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
     out = priv;
     mem_reg_info_[mem.addr] = priv;
     NIXL_DEBUG << "Registering memory: " << mem.addr << "Device: " << mem.devId
-               << " ref_cnt: " << priv->ref_cnt << " mr_id: " << priv->mr_id;   
+               << " ref_cnt: " << priv->ref_cnt << " mr_id: " << priv->mr_id;
 
     return NIXL_SUCCESS;
 }
