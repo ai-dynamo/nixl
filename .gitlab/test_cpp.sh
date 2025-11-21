@@ -53,6 +53,7 @@ etcd_port=$(get_next_tcp_port)
 etcd_peer_port=$(get_next_tcp_port)
 export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
 export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
+export NIXL_ETCD_NAMESPACE="/nixl/cpp_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
@@ -82,6 +83,10 @@ kill -s INT $telePID
 ./bin/nixl_gusli_test -n 4 -s 16
 ./bin/ucx_backend_multi
 ./bin/serdes_test
+# TODO: Enable Mooncake test once data corruption issue is resolved
+# if $HAS_GPU ; then
+#     ./bin/mooncake_backend_test
+# fi
 
 # shellcheck disable=SC2154
 gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"

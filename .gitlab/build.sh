@@ -144,7 +144,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
   ./autogen.sh && \
-  ./configure \
+  ./contrib/configure-release-mt \
           --prefix="${UCX_INSTALL_DIR}" \
           --enable-shared \
           --disable-static \
@@ -154,8 +154,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
-          ${UCX_CUDA_BUILD_ARGS} \
-          --enable-mt && \
+          ${UCX_CUDA_BUILD_ARGS} && \
         make -j && \
         make -j install-strip && \
         $SUDO ldconfig \
@@ -205,6 +204,18 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   git clone https://github.com/nvidia/gusli.git && \
   cd gusli && \
   $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+  $SUDO ldconfig
+)
+
+( \
+  cd /tmp && \
+  git clone --depth 1 https://github.com/kvcache-ai/Mooncake.git && \
+  cd Mooncake && \
+  $SUDO bash dependencies.sh && \
+  mkdir build && cd build && \
+  cmake .. -DBUILD_SHARED_LIBS=ON && \
+  make -j2 && \
+  $SUDO make install && \
   $SUDO ldconfig
 )
 
