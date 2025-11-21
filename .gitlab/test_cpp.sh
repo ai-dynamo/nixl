@@ -116,7 +116,8 @@ kill -s INT $telePID
 # fi
 
 # shellcheck disable=SC2154
-gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+# TODO: enable PrepGpuSignal and ucxDeviceApi tests once the problem in UCX is fixed
+gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port" --gtest_filter=-*PrepGpuSignal*:*ucxDeviceApi*
 ./bin/test_plugin
 
 # Run NIXL client-server test
