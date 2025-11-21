@@ -254,6 +254,239 @@ namespace agent {
         EXPECT_NE(std::find(mem2.begin(), mem2.end(), FILE_SEG), mem2.end());
     }
 
+    TEST_F(singleAgentSessionFixture, MultipleBackendsMemoryAndTransferTest) {
+        // Create first mock backend that supports DRAM_SEG and VRAM_SEG
+        testing::NiceMock<mocks::GMockBackendEngine> gmock_engine1;
+        nixl_mem_list_t mem_types1 = {DRAM_SEG, VRAM_SEG};
+        ON_CALL(gmock_engine1, getSupportedMems()).WillByDefault(testing::Return(mem_types1));
+
+        nixl_b_params_t params1;
+        gmock_engine1.SetToParams(params1);
+        nixlBackendH *backend1;
+        EXPECT_EQ(agent_->createBackend(GetMockBackendName(), params1, backend1), NIXL_SUCCESS);
+        EXPECT_NE(backend1, nullptr);
+
+        // Create second mock backend that supports DRAM_SEG and FILE_SEG
+        testing::NiceMock<mocks::GMockBackendEngine> gmock_engine2;
+        nixl_mem_list_t mem_types2 = {DRAM_SEG, FILE_SEG};
+        ON_CALL(gmock_engine2, getSupportedMems()).WillByDefault(testing::Return(mem_types2));
+
+        nixl_b_params_t params2;
+        gmock_engine2.SetToParams(params2);
+        nixlBackendH *backend2;
+        EXPECT_EQ(agent_->createBackend(GetMockBackendName2(), params2, backend2), NIXL_SUCCESS);
+        EXPECT_NE(backend2, nullptr);
+
+        // Create memory blobs for each type
+        blob dram_blob, vram_blob, file_blob;
+
+        // Register DRAM memory without specifying backend - both backends support DRAM
+        nixl_reg_dlist_t dram_list(DRAM_SEG);
+        dram_list.addDesc(dram_blob.getDesc());
+        EXPECT_EQ(agent_->registerMem(dram_list), NIXL_SUCCESS);
+
+        // Register VRAM memory without specifying backend - only backend1 supports VRAM
+        nixl_reg_dlist_t vram_list(VRAM_SEG);
+        vram_list.addDesc(vram_blob.getDesc());
+        EXPECT_EQ(agent_->registerMem(vram_list), NIXL_SUCCESS);
+
+        // Register FILE memory without specifying backend - only backend2 supports FILE
+        nixl_reg_dlist_t file_list(FILE_SEG);
+        file_list.addDesc(file_blob.getDesc());
+        EXPECT_EQ(agent_->registerMem(file_list), NIXL_SUCCESS);
+
+        // Verify memory was registered with correct backends by preparing transfer descriptors
+        // and attempting to create transfer requests for each combination
+
+        // Prepare LOCAL transfer descriptor lists for each memory type
+        nixl_xfer_dlist_t dram_xfer_list(DRAM_SEG);
+        dram_xfer_list.addDesc(nixlBasicDesc(dram_blob.getDesc()));
+        nixlDlistH *dram_local_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(NIXL_INIT_AGENT, dram_xfer_list, dram_local_hndl),
+                  NIXL_SUCCESS);
+        EXPECT_NE(dram_local_hndl, nullptr);
+
+        nixl_xfer_dlist_t vram_xfer_list(VRAM_SEG);
+        vram_xfer_list.addDesc(nixlBasicDesc(vram_blob.getDesc()));
+        nixlDlistH *vram_local_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(NIXL_INIT_AGENT, vram_xfer_list, vram_local_hndl),
+                  NIXL_SUCCESS);
+        EXPECT_NE(vram_local_hndl, nullptr);
+
+        nixl_xfer_dlist_t file_xfer_list(FILE_SEG);
+        file_xfer_list.addDesc(nixlBasicDesc(file_blob.getDesc()));
+        nixlDlistH *file_local_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(NIXL_INIT_AGENT, file_xfer_list, file_local_hndl),
+                  NIXL_SUCCESS);
+        EXPECT_NE(file_local_hndl, nullptr);
+
+        // Prepare REMOTE transfer descriptor lists for loopback transfers (using agent's own name)
+        nixlDlistH *dram_remote_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(local_agent_name, dram_xfer_list, dram_remote_hndl),
+                  NIXL_SUCCESS);
+        EXPECT_NE(dram_remote_hndl, nullptr);
+
+        nixlDlistH *vram_remote_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(local_agent_name, vram_xfer_list, vram_remote_hndl),
+                  NIXL_SUCCESS);
+        EXPECT_NE(vram_remote_hndl, nullptr);
+
+        nixlDlistH *file_remote_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(local_agent_name, file_xfer_list, file_remote_hndl),
+                  NIXL_SUCCESS);
+        EXPECT_NE(file_remote_hndl, nullptr);
+
+        // Verify DRAM was registered with backend1 by creating a loopback transfer request
+        std::vector<int> indices = {0};
+        nixlXferReqH *xfer_req1 = nullptr;
+        nixl_opt_args_t extra_params1;
+        extra_params1.backends.push_back(backend1);
+        EXPECT_EQ(agent_->makeXferReq(NIXL_WRITE,
+                                      dram_local_hndl,
+                                      indices,
+                                      dram_remote_hndl,
+                                      indices,
+                                      xfer_req1,
+                                      &extra_params1),
+                  NIXL_SUCCESS)
+            << "DRAM should be registered with backend1";
+        EXPECT_NE(xfer_req1, nullptr);
+        EXPECT_EQ(agent_->releaseXferReq(xfer_req1), NIXL_SUCCESS);
+
+        // Verify DRAM was registered with backend2 by creating a loopback transfer request
+        nixlXferReqH *xfer_req2 = nullptr;
+        nixl_opt_args_t extra_params2;
+        extra_params2.backends.push_back(backend2);
+        EXPECT_EQ(agent_->makeXferReq(NIXL_WRITE,
+                                      dram_local_hndl,
+                                      indices,
+                                      dram_remote_hndl,
+                                      indices,
+                                      xfer_req2,
+                                      &extra_params2),
+                  NIXL_SUCCESS)
+            << "DRAM should be registered with backend2";
+        EXPECT_NE(xfer_req2, nullptr);
+        EXPECT_EQ(agent_->releaseXferReq(xfer_req2), NIXL_SUCCESS);
+
+        // Verify VRAM was registered with backend1 only
+        nixlXferReqH *xfer_req3 = nullptr;
+        EXPECT_EQ(agent_->makeXferReq(NIXL_WRITE,
+                                      vram_local_hndl,
+                                      indices,
+                                      vram_remote_hndl,
+                                      indices,
+                                      xfer_req3,
+                                      &extra_params1),
+                  NIXL_SUCCESS)
+            << "VRAM should be registered with backend1";
+        EXPECT_NE(xfer_req3, nullptr);
+        EXPECT_EQ(agent_->releaseXferReq(xfer_req3), NIXL_SUCCESS);
+
+        // Verify VRAM was NOT registered with backend2
+        nixlXferReqH *xfer_req4 = nullptr;
+        EXPECT_NE(agent_->makeXferReq(NIXL_WRITE,
+                                      vram_local_hndl,
+                                      indices,
+                                      vram_remote_hndl,
+                                      indices,
+                                      xfer_req4,
+                                      &extra_params2),
+                  NIXL_SUCCESS)
+            << "VRAM should NOT be registered with backend2";
+
+        // Verify FILE was registered with backend2 only
+        nixlXferReqH *xfer_req5 = nullptr;
+        EXPECT_EQ(agent_->makeXferReq(NIXL_WRITE,
+                                      file_local_hndl,
+                                      indices,
+                                      file_remote_hndl,
+                                      indices,
+                                      xfer_req5,
+                                      &extra_params2),
+                  NIXL_SUCCESS)
+            << "FILE should be registered with backend2";
+        EXPECT_NE(xfer_req5, nullptr);
+        EXPECT_EQ(agent_->releaseXferReq(xfer_req5), NIXL_SUCCESS);
+
+        // Verify FILE was NOT registered with backend1
+        nixlXferReqH *xfer_req6 = nullptr;
+        EXPECT_NE(agent_->makeXferReq(NIXL_WRITE,
+                                      file_local_hndl,
+                                      indices,
+                                      file_remote_hndl,
+                                      indices,
+                                      xfer_req6,
+                                      &extra_params1),
+                  NIXL_SUCCESS)
+            << "FILE should NOT be registered with backend1";
+
+        // Test cross-memory-type transfers
+
+        // 1) FILE to VRAM should fail (no common backend: FILE on backend2, VRAM on backend1)
+        nixlXferReqH *xfer_req7 = nullptr;
+        EXPECT_NE(agent_->makeXferReq(NIXL_WRITE,
+                                      file_local_hndl,
+                                      indices,
+                                      vram_remote_hndl,
+                                      indices,
+                                      xfer_req7,
+                                      nullptr),
+                  NIXL_SUCCESS)
+            << "FILE to VRAM should fail - no common backend";
+
+        // 2) DRAM to VRAM without backend specified should succeed (both on backend1)
+        nixlXferReqH *xfer_req8 = nullptr;
+        EXPECT_EQ(agent_->makeXferReq(NIXL_WRITE,
+                                      dram_local_hndl,
+                                      indices,
+                                      vram_remote_hndl,
+                                      indices,
+                                      xfer_req8,
+                                      nullptr),
+                  NIXL_SUCCESS)
+            << "DRAM to VRAM should succeed - both on backend1";
+        EXPECT_NE(xfer_req8, nullptr);
+
+        // Verify the transfer uses backend1
+        nixlBackendH *backend_used = nullptr;
+        EXPECT_EQ(agent_->queryXferBackend(xfer_req8, backend_used), NIXL_SUCCESS);
+        EXPECT_EQ(backend_used, backend1) << "DRAM to VRAM should use backend1";
+        EXPECT_EQ(agent_->releaseXferReq(xfer_req8), NIXL_SUCCESS);
+
+        // 3) FILE to DRAM without backend specified should succeed (both on backend2)
+        nixlXferReqH *xfer_req9 = nullptr;
+        EXPECT_EQ(agent_->makeXferReq(NIXL_WRITE,
+                                      file_local_hndl,
+                                      indices,
+                                      dram_remote_hndl,
+                                      indices,
+                                      xfer_req9,
+                                      nullptr),
+                  NIXL_SUCCESS)
+            << "FILE to DRAM should succeed - both on backend2";
+        EXPECT_NE(xfer_req9, nullptr);
+
+        // Verify the transfer uses backend2
+        backend_used = nullptr;
+        EXPECT_EQ(agent_->queryXferBackend(xfer_req9, backend_used), NIXL_SUCCESS);
+        EXPECT_EQ(backend_used, backend2) << "FILE to DRAM should use backend2";
+        EXPECT_EQ(agent_->releaseXferReq(xfer_req9), NIXL_SUCCESS);
+
+        // Release all descriptor list handles
+        EXPECT_EQ(agent_->releasedDlistH(dram_local_hndl), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(dram_remote_hndl), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(vram_local_hndl), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(vram_remote_hndl), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(file_local_hndl), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(file_remote_hndl), NIXL_SUCCESS);
+
+        // Deregister all memory
+        EXPECT_EQ(agent_->deregisterMem(dram_list), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->deregisterMem(vram_list), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->deregisterMem(file_list), NIXL_SUCCESS);
+    }
+
     TEST_P(singleAgentWithMemParamFixture, RegisterMemoryTest) {
         nixl_b_params_t params;
         nixlBackendH *backend;
