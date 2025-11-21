@@ -32,6 +32,11 @@ GetMockBackendName() {
     return "MOCK_BACKEND";
 }
 
+constexpr const char *
+GetMockBackendName2() {
+    return "MOCK_BACKEND_2";
+}
+
 class Logger {
 public:
     Logger(const std::string &title = "INFO");

@@ -28,5 +28,19 @@ run_command('sh', '-c',
                 check: true
             )
 
+# Copy the mock backend library to create a second instance
+mock_backend_2_path = meson.current_build_dir() / 'libplugin_MOCK_BACKEND_2.so'
+mock_backend_2 = custom_target('MOCK_BACKEND_2',
+               input: mock_backend_plugin,
+               output: 'libplugin_MOCK_BACKEND_2.so',
+               command: ['cp', '@INPUT@', '@OUTPUT@'],
+               build_by_default: true,
+               install: true,
+               install_dir: plugin_install_dir)
+run_command('sh', '-c',
+            'echo "MOCK_BACKEND_2=' + mock_backend_2_path + '" >> ' + plugin_build_dir + '/pluginlist',
+                check: true
+            )
+
 source_root = meson.project_source_root()
 mocks_dep = declare_dependency(variables : {'path' : meson.current_source_dir().split(source_root + '/')[1]})

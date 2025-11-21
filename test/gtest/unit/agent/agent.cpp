@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include <random>
+#include <algorithm>
 
 #include "common.h"
 #include "nixl.h"
@@ -208,6 +209,49 @@ namespace agent {
         std::string metadata;
         EXPECT_EQ(agent_->getLocalMD(metadata), NIXL_SUCCESS);
         EXPECT_FALSE(metadata.empty());
+    }
+
+    TEST_F(singleAgentSessionFixture, CreateMultipleBackendsTest) {
+        // Create first mock backend that supports DRAM_SEG and VRAM_SEG
+        testing::NiceMock<mocks::GMockBackendEngine> gmock_engine1;
+        nixl_mem_list_t mem_types1 = {DRAM_SEG, VRAM_SEG};
+        ON_CALL(gmock_engine1, getSupportedMems()).WillByDefault(testing::Return(mem_types1));
+
+        nixl_b_params_t params1;
+        gmock_engine1.SetToParams(params1);
+        nixlBackendH *backend1;
+        EXPECT_EQ(agent_->createBackend(GetMockBackendName(), params1, backend1), NIXL_SUCCESS);
+        EXPECT_NE(backend1, nullptr);
+
+        // Create second mock backend that supports DRAM_SEG and FILE_SEG
+        testing::NiceMock<mocks::GMockBackendEngine> gmock_engine2;
+        nixl_mem_list_t mem_types2 = {DRAM_SEG, FILE_SEG};
+        ON_CALL(gmock_engine2, getSupportedMems()).WillByDefault(testing::Return(mem_types2));
+
+        nixl_b_params_t params2;
+        gmock_engine2.SetToParams(params2);
+        nixlBackendH *backend2;
+        EXPECT_EQ(agent_->createBackend(GetMockBackendName2(), params2, backend2), NIXL_SUCCESS);
+        EXPECT_NE(backend2, nullptr);
+
+        // Verify they are different backend instances
+        EXPECT_NE(backend1, backend2);
+
+        // Verify we can get parameters for both backends and check supported memory types
+        nixl_mem_list_t mem1, mem2;
+        nixl_b_params_t params_out1, params_out2;
+        EXPECT_EQ(agent_->getBackendParams(backend1, mem1, params_out1), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->getBackendParams(backend2, mem2, params_out2), NIXL_SUCCESS);
+
+        // Verify backend1 supports DRAM_SEG and VRAM_SEG
+        EXPECT_EQ(mem1.size(), 2u);
+        EXPECT_NE(std::find(mem1.begin(), mem1.end(), DRAM_SEG), mem1.end());
+        EXPECT_NE(std::find(mem1.begin(), mem1.end(), VRAM_SEG), mem1.end());
+
+        // Verify backend2 supports DRAM_SEG and FILE_SEG
+        EXPECT_EQ(mem2.size(), 2u);
+        EXPECT_NE(std::find(mem2.begin(), mem2.end(), DRAM_SEG), mem2.end());
+        EXPECT_NE(std::find(mem2.begin(), mem2.end(), FILE_SEG), mem2.end());
     }
 
     TEST_P(singleAgentWithMemParamFixture, RegisterMemoryTest) {
