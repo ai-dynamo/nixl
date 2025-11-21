@@ -100,6 +100,10 @@ private:
 
     /* Connection */
     nixl_status_t disconnect_nb();
+
+    static void
+    sendAmCallback(void *request, ucs_status_t status, void *user_data);
+
 public:
     void err_cb(ucp_ep_h ucp_ep, ucs_status_t status);
 
@@ -121,11 +125,18 @@ public:
     nixlUcxEp(const nixlUcxEp&) = delete;
     nixlUcxEp& operator=(const nixlUcxEp&) = delete;
 
+    using am_deleter_t = std::function<void(void *request, void *buffer)>;
+
     /* Active message handling */
-    nixl_status_t sendAm(unsigned msg_id,
-                         void* hdr, size_t hdr_len,
-                         void* buffer, size_t len,
-                         uint32_t flags, nixlUcxReq &req);
+    nixl_status_t
+    sendAm(unsigned msg_id,
+           void *hdr,
+           size_t hdr_len,
+           void *buffer,
+           size_t len,
+           uint32_t flags,
+           nixlUcxReq *req = nullptr,
+           am_deleter_t deleter = nullptr);
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -185,13 +196,10 @@ private:
     /* Local UCX stuff */
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
-public:
 
-    using req_cb_t = void(void *request);
+public:
     nixlUcxContext(std::vector<std::string> devices,
                    size_t req_size,
-                   req_cb_t init_cb,
-                   req_cb_t fini_cb,
                    bool prog_thread,
                    unsigned long num_workers,
                    nixl_thread_sync_t sync_mode);
