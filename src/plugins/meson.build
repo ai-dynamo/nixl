@@ -42,9 +42,9 @@ if libtransfer_engine.found() and not get_option('disable_mooncake_backend')
     subdir('mooncake')
 endif
 
-libuccl_engine = cc.find_library('uccl_engine', required: false)
-if libuccl_engine.found() and not get_option('disable_uccl_backend')
-    subdir('uccl')
+libuccl_p2p = cc.find_library('uccl_p2p', required: false)
+if libuccl_p2p.found() and not get_option('disable_uccl_p2p_backend')
+    subdir('uccl_p2p')
 endif
 
 hf3fs_lib_path = '/usr/lib/'
