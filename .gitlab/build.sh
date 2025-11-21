@@ -144,7 +144,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
   ./autogen.sh && \
-  ./configure \
+  ./contrib/configure-release-mt \
           --prefix="${UCX_INSTALL_DIR}" \
           --enable-shared \
           --disable-static \
@@ -154,8 +154,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
-          ${UCX_CUDA_BUILD_ARGS} \
-          --enable-mt && \
+          ${UCX_CUDA_BUILD_ARGS} && \
         make -j && \
         make -j install-strip && \
         $SUDO ldconfig \
