@@ -11,7 +11,7 @@ for f in $(git ls-files); do
 
   # Skip ignored folders anywhere in path
   case "$f" in
-    .github/*|.ci/*)
+    .github/*|.ci/*|benchmark/nixlbench/src/utils/external/*)
       continue
       ;;
   esac
