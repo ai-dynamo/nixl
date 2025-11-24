@@ -72,3 +72,17 @@ typedef uint8_t __nv_fp8_storage_t;
 #endif
 
 #include <infiniband/mlx5dv.h>
+
+namespace nixl_ep {
+
+#ifndef TOPK_IDX_BITS
+#define TOPK_IDX_BITS 64
+#endif
+
+#define INT_BITS_T2(bits) int##bits##_t
+#define INT_BITS_T(bits) INT_BITS_T2(bits)
+typedef INT_BITS_T(TOPK_IDX_BITS) topk_idx_t;
+#undef INT_BITS_T
+#undef INT_BITS_T2
+
+} // namespace nixl_ep

@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <cuda_runtime.h>
 #include <memory>
 #include <pybind11/functional.h>
@@ -133,7 +134,9 @@ void Buffer::init(int num_ranks, int64_t num_rdma_bytes)
     this->num_rdma_bytes = num_rdma_bytes;
 
     // Common checks
+    EP_STATIC_ASSERT(NUM_BUFFER_ALIGNMENT_BYTES % sizeof(int4) == 0, "Invalid alignment");
     EP_HOST_ASSERT(num_rdma_bytes % NUM_BUFFER_ALIGNMENT_BYTES == 0);
+    EP_HOST_ASSERT(num_rdma_bytes / sizeof(int4) < std::numeric_limits<int>::max());
     EP_HOST_ASSERT(0 <= rank and rank < num_ranks);
 
     // Get ranks
@@ -142,6 +145,9 @@ void Buffer::init(int num_ranks, int64_t num_rdma_bytes)
     cudaDeviceProp device_prop = {};
     CUDA_CHECK(cudaGetDeviceProperties(&device_prop, device_id));
     num_device_sms = device_prop.multiProcessorCount;
+    int denom_sms = std::max(1, num_device_sms / 2);
+    auto per_channel_bytes = ceil_div<int64_t>(num_rdma_bytes, denom_sms);
+    EP_HOST_ASSERT(per_channel_bytes < std::numeric_limits<int>::max());
 
     // Create 32 MiB workspace
     CUDA_CHECK(cudaMalloc(&workspace, NUM_WORKSPACE_BYTES));
@@ -417,7 +423,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
     EP_HOST_ASSERT(x.size(1) % sizeof(int4) == 0 and x.size(1) % 128 == 0);
     EP_HOST_ASSERT(topk_idx.dim() == 2 and topk_idx.is_contiguous());
     EP_HOST_ASSERT(x.size(0) == topk_idx.size(0) and x.size(0) <= num_max_dispatch_tokens_per_rank);
-    EP_HOST_ASSERT(topk_idx.scalar_type() == torch::kInt64);
+    EP_HOST_ASSERT(topk_idx.scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
     EP_HOST_ASSERT(num_experts % num_ranks == 0);
 
     // Diagnosis tensors
@@ -489,7 +495,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
                                dispatch_wait_recv_cost_stats.has_value() ? dispatch_wait_recv_cost_stats->data_ptr<int64_t>() : nullptr,
                                buffer.dispatch_rdma_recv_data_buffer, buffer.dispatch_rdma_recv_count_buffer,
                                buffer.dispatch_rdma_send_buffer,
-                               x.data_ptr(), topk_idx.data_ptr<int64_t>(),
+                              x.data_ptr(), topk_idx.data_ptr<topk_idx_t>(),
                                next_clean_meta.first, next_clean_meta.second,
                                num_tokens, hidden, num_max_dispatch_tokens_per_rank,
                                num_topk, num_experts, rank, num_ranks,
@@ -532,7 +538,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
     EP_HOST_ASSERT(x.size(2) % sizeof(int4) == 0 and x.size(2) % 128 == 0);
     EP_HOST_ASSERT(topk_idx.dim() == 2 and topk_idx.is_contiguous());
     EP_HOST_ASSERT(topk_idx.size(0) == topk_weights.size(0) and topk_idx.size(1) == topk_weights.size(1));
-    EP_HOST_ASSERT(topk_idx.scalar_type() == torch::kInt64);
+    EP_HOST_ASSERT(topk_idx.scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
     EP_HOST_ASSERT(topk_weights.dim() == 2 and topk_weights.is_contiguous());
     EP_HOST_ASSERT(topk_weights.size(0) <= num_max_dispatch_tokens_per_rank);
     EP_HOST_ASSERT(topk_weights.scalar_type() == torch::kFloat32);
@@ -584,7 +590,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
         ep_kernels::combine(combined_x.data_ptr(),
                               buffer.combine_rdma_recv_data_buffer, buffer.combine_rdma_recv_flag_buffer,
                               buffer.combine_rdma_send_buffer,
-                              x.data_ptr(), topk_idx.data_ptr<int64_t>(), topk_weights.data_ptr<float>(),
+                              x.data_ptr(), topk_idx.data_ptr<topk_idx_t>(), topk_weights.data_ptr<float>(),
                               src_info.data_ptr<int>(), layout_range.data_ptr<int64_t>(),
                               mask_buffer_ptr,
                               combine_wait_recv_cost_stats.has_value() ? combine_wait_recv_cost_stats->data_ptr<int64_t>() : nullptr,
@@ -1051,5 +1057,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("query_mask_buffer", &nixl_ep::Buffer::query_mask_buffer)
         .def("clean_mask_buffer", &nixl_ep::Buffer::clean_mask_buffer)
         .def("get_next_combine_buffer", &nixl_ep::Buffer::get_next_combine_buffer);
+    m.attr("topk_idx_t") = pybind11::cast(c10::CppTypeToScalarType<nixl_ep::topk_idx_t>::value);
     m.def("is_sm90_compiled", nixl_ep::is_sm90_compiled);
 }
