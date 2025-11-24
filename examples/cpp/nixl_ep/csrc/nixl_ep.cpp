@@ -371,14 +371,14 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list) {
 void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
     EP_HOST_ASSERT(remote_ranks_list.size() <= remote_ranks.size());
-    
+
     CUDA_CHECK(cudaDeviceSynchronize());
-    
+
     // Update mask buffer to mark ranks as inactive
     for (int removed_rank : remote_ranks_list) {
         update_mask_buffer(removed_rank, true);  // mask=true
     }
-    
+
     _nixl_ep_cleanup(remote_ranks_list);
 
     _nixl_agents_peer_info_cleanup(remote_ranks_list);
@@ -392,10 +392,10 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
             remote_ranks.end()
         );
     }
-    
+
     int max_rank = rank;  // Include self
     if (!remote_ranks.empty()) {
-        max_rank = std::max(max_rank, 
+        max_rank = std::max(max_rank,
                            *std::max_element(remote_ranks.begin(), remote_ranks.end()));
     }
     num_ranks = max_rank + 1;  // Sparse indexing maintained
@@ -909,7 +909,7 @@ void Buffer::_nixl_agents_disconnect(const std::vector<int>& ranks) {
             nixl_status_t status = nixl_agent_info->agent->invalidateRemoteMD(nixl_agent_info->remote_agent_names[remote_rank]);
             // NIXL watchers might invalidate peer metadata, so we ignore NIXL_ERR_NOT_FOUND errors
             if (status != NIXL_SUCCESS && status != NIXL_ERR_NOT_FOUND) {
-                printf("WARNING: rank %d Failed to invalidate remote rank %d metadata for agent %s, status: %d\n", 
+                printf("WARNING: rank %d Failed to invalidate remote rank %d metadata for agent %s, status: %d\n",
                     rank, remote_rank, std::to_string(remote_rank).c_str(), status); fflush(stdout);
             }
         }
@@ -932,14 +932,14 @@ void Buffer::_nixl_ep_cleanup(const std::vector<int>& ranks) {
 }
 
 void Buffer::_nixl_ep_counters_cleanup(const std::vector<int>& ranks) {
-    int num_local_experts = env_num_channels; 
-    
+    int num_local_experts = env_num_channels;
+
     for (int expert_idx = 0; expert_idx < num_local_experts; expert_idx++) {
         for (int remote_rank : ranks) {
             EP_HOST_ASSERT(remote_rank != rank);
-            
+
             int local_counter_idx = expert_idx * max_num_ranks + remote_rank;
-            
+
             // Clean up remote counter requests (double buffering)
             if (nixl_ctx->cpu_remote_counter_reqs_0[local_counter_idx] != nullptr) {
 
@@ -950,7 +950,7 @@ void Buffer::_nixl_ep_counters_cleanup(const std::vector<int>& ranks) {
                 nixl_ctx->cpu_remote_counter_reqs_0[local_counter_idx] = nullptr;
                 nixl_ctx->gpu_remote_counter_reqs_0[local_counter_idx] = nullptr;
             }
-            
+
             if (nixl_ctx->cpu_remote_counter_reqs_1[local_counter_idx] != nullptr) {
 #ifndef EP_REMOVE_ONCE
                 nixl_agent_info->agent->releaseGpuXferReq(nixl_ctx->gpu_remote_counter_reqs_1[local_counter_idx]);
@@ -976,11 +976,11 @@ void Buffer::_nixl_ep_batches_cleanup(const std::vector<int>& ranks) {
     for (int channel = 0; channel < env_num_channels; ++channel) {
         for (int remote_rank : ranks) {
             if (remote_rank == rank) continue;
-            
+
             // Clean up cpu_batch_reqs and gpu_batch_reqs
-            if (remote_rank < nixl_ctx->cpu_batch_reqs[channel].size() && 
+            if (remote_rank < nixl_ctx->cpu_batch_reqs[channel].size() &&
                 nixl_ctx->cpu_batch_reqs[channel][remote_rank] != nullptr) {
-                
+
                 // Release GPU transfer request first
                 if (nixl_ctx->gpu_batch_reqs[channel][remote_rank] != nullptr) {
 #ifndef EP_REMOVE_ONCE
@@ -988,12 +988,12 @@ void Buffer::_nixl_ep_batches_cleanup(const std::vector<int>& ranks) {
 #endif
                     nixl_ctx->gpu_batch_reqs[channel][remote_rank] = nullptr;
                 }
-                
+
                 // Release CPU transfer request
 #ifndef EP_REMOVE_ONCE
                 nixl_status_t status = nixl_agent_info->agent->releaseXferReq(nixl_ctx->cpu_batch_reqs[channel][remote_rank]);
                 if (status != NIXL_SUCCESS) {
-                    printf("[WARNING] %s: Failed to release CPU batch xfer req for rank %d on channel %d, status: %d\n", 
+                    printf("[WARNING] %s: Failed to release CPU batch xfer req for rank %d on channel %d, status: %d\n",
                            __func__, remote_rank, channel, status);
                 }
 #endif
@@ -1007,12 +1007,12 @@ void Buffer::_nixl_ep_p2p_ptrs_cleanup(const std::vector<int>& ranks) {
     for (int remote_rank : ranks) {
         EP_HOST_ASSERT(remote_rank < num_ranks);
         // Close P2P memory mappings if they exist
-        if (nixl_ctx->rdma_p2p_ptrs[remote_rank] != nullptr && 
+        if (nixl_ctx->rdma_p2p_ptrs[remote_rank] != nullptr &&
             nixl_ctx->rdma_p2p_ptrs[remote_rank] != rdma_buffer_ptr) {
             CUDA_CHECK(cudaIpcCloseMemHandle(nixl_ctx->rdma_p2p_ptrs[remote_rank]));
             nixl_ctx->rdma_p2p_ptrs[remote_rank] = nullptr;
         }
-        
+
         if (nixl_ctx->counters_p2p_ptrs[remote_rank] != nullptr &&
             nixl_ctx->counters_p2p_ptrs[remote_rank] != counters_buffer_ptr) {
             CUDA_CHECK(cudaIpcCloseMemHandle(nixl_ctx->counters_p2p_ptrs[remote_rank]));

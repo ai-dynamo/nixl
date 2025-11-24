@@ -154,7 +154,7 @@ private:
     void _nixl_ep_batches_prepare(const std::vector<int>& ranks);
     void _nixl_ep_p2p_ptrs_prepare(const std::vector<int>& ranks);
     void _nixl_ep_gpu_ctx_update();
-    
+
     /* NIXL EP cleanup funcs */
     void _nixl_ep_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_counters_cleanup(const std::vector<int>& ranks_to_remove);

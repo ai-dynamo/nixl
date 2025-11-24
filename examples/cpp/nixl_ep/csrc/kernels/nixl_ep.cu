@@ -237,7 +237,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
             if (p2p_counter == nullptr) {
                 nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(dst_expert_local_idx, dst_rank);
                 /* WARNING: original counter value is negative, I chose different encoding since our counters are uint64_ts */
-                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, num_tokens_sent + 1, 0) == NIXL_IN_PROG); 
+                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, num_tokens_sent + 1, 0) == NIXL_IN_PROG);
             } else {
                 /* WARNING: original counter value is negative, I chose different encoding since our counters are uint64_ts */
                 st_release_sys_global(p2p_counter, static_cast<uint64_t>(num_tokens_sent + 1));
@@ -294,7 +294,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                 while ((current_value = ld_acquire_sys_global(local_counter)) == 0 && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES) {
                     poll_count++;
                     if (poll_count % 10000000 == 0) {
-                        printf("[NIXL_EP-LL-DISPATCH] RANK %2d | POLL_HANG: expert[%d] from rank[%d] still waiting after %d polls, counter_val=%lu\n", 
+                        printf("[NIXL_EP-LL-DISPATCH] RANK %2d | POLL_HANG: expert[%d] from rank[%d] still waiting after %d polls, counter_val=%lu\n",
                                rank, local_expert_idx, src_rank, poll_count, current_value);
                     }
                 }
@@ -308,7 +308,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                     trap();
                 atomicExch(mask_buffer_ptr + src_rank, 1);
             }
-            
+
             recv_token_begin_idx = atomicAdd(packed_recv_count + local_expert_idx, num_recv_tokens);
             shared_num_recv_tokens[warp_group_id] = num_recv_tokens;
             shared_recv_token_begin_idx[warp_group_id] = recv_token_begin_idx;
@@ -522,7 +522,7 @@ __forceinline__ __device__ void logfmt_check_amaxmin(uint8_t* meta_buffer, float
         const auto& bf162_amaxmin = reinterpret_cast<__nv_bfloat162*>(&amaxmin2);
         float log_amax[2], log_amin[2];
         #pragma unroll
-        for (int i = 0; i < 2; ++ i) { 
+        for (int i = 0; i < 2; ++ i) {
             auto amax = static_cast<float>(bf162_amaxmin[i].x);
             auto amin = static_cast<float>(bf162_amaxmin[i].y);
             log_amax[i] = log2f_approx(amax);
@@ -782,7 +782,7 @@ combine(void* combined_x,
                 uint64_t *p2p_counter = nixl_ctx.counter_p2p_ptr_get(local_expert_idx, dst_rank);
                 if (p2p_counter == nullptr) {
                     nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(local_expert_idx, dst_rank);
-                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, 1, 0) == NIXL_IN_PROG); 
+                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, 1, 0) == NIXL_IN_PROG);
                 } else {
                     st_release_sys_global(p2p_counter, 1);
                 }
@@ -822,7 +822,7 @@ combine(void* combined_x,
                 while ((current_value = ld_acquire_sys_global(local_counter)) == 0 && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES) {
                     poll_count++;
                     if (poll_count % 10000000 == 0) {
-                        printf("[NIXL_EP-LL-COMBINE] RANK %2d | POLL_HANG: expert[%d] from rank[%d] still waiting after %d polls, counter_val=%lu\n", 
+                        printf("[NIXL_EP-LL-COMBINE] RANK %2d | POLL_HANG: expert[%d] from rank[%d] still waiting after %d polls, counter_val=%lu\n",
                                 rank, local_expert_idx, src_rank, poll_count, current_value);
                     }
                 }
@@ -1106,7 +1106,7 @@ void clean_mask_buffer(int* mask_buffer_ptr, int num_ranks, cudaStream_t stream)
 }
 
 template <int kNumThreads>
-__forceinline__ __global__ void barrier(int thread_id, int rank, int num_ranks, 
+__forceinline__ __global__ void barrier(int thread_id, int rank, int num_ranks,
                                         int* mask_buffer_ptr, int* sync_buffer_ptr, ep_kernels::gpu_nixl_ctx nixl_ctx) {
     EP_DEVICE_ASSERT(kNumThreads >= num_ranks);
     if (thread_id == 0) atomicAdd(sync_buffer_ptr + rank, -1);
@@ -1118,7 +1118,7 @@ __forceinline__ __global__ void barrier(int thread_id, int rank, int num_ranks,
         const auto dst_ptr = reinterpret_cast<uint64_t>(sync_buffer_ptr + rank);
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
             if (rank != dst_rank) {
-                nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(0, dst_rank); 
+                nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(0, dst_rank);
                 nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(barrier_req, 0, rank*sizeof(int), dst_rank*sizeof(int), sizeof(int), 0);
             } else {
                 st_release_sys_global(reinterpret_cast<int*>(dst_ptr), cnt);
