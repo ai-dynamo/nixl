@@ -1103,7 +1103,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     const auto engine_config_it = custom_params->find("engine_config");
     const auto engine_config =
-        (engine_config_it != custom_params->end()) ? (*custom_params)["engine_config"] : "";
+        (engine_config_it != custom_params->end()) ? engine_config_it->second : "";
 
     uc = std::make_unique<nixlUcxContext>(
         devs, init_params.enableProgTh, num_workers, init_params.syncMode, engine_config);

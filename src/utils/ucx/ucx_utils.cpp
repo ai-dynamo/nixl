@@ -455,11 +455,10 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     }
 
     std::string elem;
-    std::string_view elem_view;
     std::stringstream stream(engine_config);
 
     while (std::getline(stream, elem, ',')) {
-        elem_view = elem;
+        std::string_view elem_view = elem;
         size_t pos = elem_view.find('=');
 
         if (pos != std::string::npos) {
