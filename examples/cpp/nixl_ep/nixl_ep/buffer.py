@@ -16,15 +16,21 @@
 # limitations under the License.
 
 import os
+from typing import TYPE_CHECKING, Callable, List, Literal, Optional, Tuple, Union
+
 import torch
 import torch.distributed as dist
-from typing import Callable, List, Tuple, Optional, Union, Literal
 
 # noinspection PyUnresolvedReferences
 from . import nixl_ep_cpp
+
 # noinspection PyUnresolvedReferences
 from .nixl_ep_cpp import EventHandle
 from .utils import EventOverlap
+
+if TYPE_CHECKING:
+    import mpi4py  # noqa: F401
+
 
 class Buffer:
     """
@@ -41,7 +47,7 @@ class Buffer:
 
     def __init__(self, nvlink_backend: Literal['nixl', 'ipc', 'none'] = 'nixl',
                  explicitly_destroy: bool = False, rank: int = 0, enable_shrink: bool = False,
-                 group: dist.ProcessGroup = None, comm: Optional["mpi4py.MPI.Comm"] = None) -> None:
+                 group: Optional[dist.ProcessGroup] = None, comm: Optional["mpi4py.MPI.Comm"] = None) -> None:
         """
         Initialize the nixl communication buffer.
 
@@ -55,7 +61,7 @@ class Buffer:
             comm: the mpi4py.MPI.Comm communicator to use in case the group parameter is absent (optional).
         """
         self.rank = rank
-        self.group_size = 0 # Will be updated by `update_memory_buffers`
+        self.group_size = 0  # Will be updated by `update_memory_buffers`
         self.explicitly_destroy = explicitly_destroy
         self.group = group
         self.comm = comm
@@ -71,9 +77,7 @@ class Buffer:
     def destroy(self):
         """
         Destroy the cpp runtime and release resources.
-        
         """
-
         assert self.explicitly_destroy, '`explicitly_destroy` flag must be set'
 
         self.runtime.destroy()
@@ -120,13 +124,13 @@ class Buffer:
             size: the RDMA buffer size recommended.
         """
         return nixl_ep_cpp.get_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)
-    
+
     def get_comm_stream(self) -> torch.Stream:
         """
         Get the communication stream.
 
         Returns:
-            stream: the communication stream. 
+            stream: the communication stream.
         """
         ts: torch.Stream = self.runtime.get_comm_stream()
         return torch.cuda.Stream(stream_id=ts.stream_id, device_index=ts.device_index, device_type=ts.device_type)
@@ -172,11 +176,11 @@ class Buffer:
 
     # noinspection PyTypeChecker
     def dispatch(self, x: torch.Tensor, topk_idx: torch.Tensor,
-                             num_max_dispatch_tokens_per_rank: int, num_experts: int,
-                             cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
-                             dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
-                             use_fp8: bool = True, round_scale: bool = False, use_ue8m0: bool = False,
-                             async_finish: bool = False, return_recv_hook: bool = False) -> \
+                 num_max_dispatch_tokens_per_rank: int, num_experts: int,
+                 cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
+                 dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
+                 use_fp8: bool = True, round_scale: bool = False, use_ue8m0: bool = False,
+                 async_finish: bool = False, return_recv_hook: bool = False) -> \
             Tuple[Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable]:
         """
         A low-latency implementation for dispatching with NIXL device API.
@@ -225,12 +229,13 @@ class Buffer:
             hook: the receiving hook function (valid only if `return_recv_hook` is set).
         """
         packed_recv_x, packed_recv_x_scales, packed_recv_count, packed_recv_src_info, packed_recv_layout_range, event, hook = \
-            self.runtime.dispatch(x, topk_idx,
-                                              cumulative_local_expert_recv_stats,
-                                              dispatch_wait_recv_cost_stats,
-                                              num_max_dispatch_tokens_per_rank, num_experts,
-                                              use_fp8, round_scale, use_ue8m0,
-                                              async_finish, return_recv_hook)
+            self.runtime.dispatch(
+                x, topk_idx,
+                cumulative_local_expert_recv_stats,
+                dispatch_wait_recv_cost_stats,
+                num_max_dispatch_tokens_per_rank, num_experts,
+                use_fp8, round_scale, use_ue8m0,
+                async_finish, return_recv_hook)
         handle = (packed_recv_src_info, packed_recv_layout_range, num_max_dispatch_tokens_per_rank, x.size(1), num_experts)
         tensors_to_record = (x, topk_idx,
                              packed_recv_x, packed_recv_x_scales, packed_recv_count,
@@ -241,9 +246,9 @@ class Buffer:
 
     # noinspection PyTypeChecker
     def combine(self, x: torch.Tensor, topk_idx: torch.Tensor, topk_weights: torch.Tensor,
-                            handle: tuple, use_logfmt: bool = False, zero_copy: bool = False, async_finish: bool = False,
-                            return_recv_hook: bool = False, out: Optional[torch.Tensor] = None,
-                            combine_wait_recv_cost_stats: Optional[torch.Tensor] = None) -> \
+                handle: tuple, use_logfmt: bool = False, zero_copy: bool = False, async_finish: bool = False,
+                return_recv_hook: bool = False, out: Optional[torch.Tensor] = None,
+                combine_wait_recv_cost_stats: Optional[torch.Tensor] = None) -> \
             Tuple[torch.Tensor, EventOverlap, Callable]:
         """
         A low-latency implementation for combining tokens (reduce **with weights**) with NIXL device API.
@@ -278,11 +283,12 @@ class Buffer:
             hook: the receiving hook function (valid only if `return_recv_hook` is set).
         """
         src_info, layout_range, num_max_dispatch_tokens_per_rank, hidden, num_experts = handle
-        combined_x, event, hook = self.runtime.combine(x, topk_idx, topk_weights, src_info, layout_range,
-                                                                   combine_wait_recv_cost_stats,
-                                                                   num_max_dispatch_tokens_per_rank, num_experts,
-                                                                   use_logfmt, zero_copy, async_finish, return_recv_hook,
-                                                                   out)
+        combined_x, event, hook = self.runtime.combine(
+            x, topk_idx, topk_weights, src_info, layout_range,
+            combine_wait_recv_cost_stats,
+            num_max_dispatch_tokens_per_rank, num_experts,
+            use_logfmt, zero_copy, async_finish, return_recv_hook,
+            out)
         tensors_to_record = (x, topk_idx, topk_weights, src_info, layout_range, combined_x)
         return combined_x, EventOverlap(event, tensors_to_record if async_finish else None), hook
 
@@ -290,10 +296,9 @@ class Buffer:
         """
         Mask (unmask) a rank during communication (dispatch, combine, and clean)
 
-        Arguments: 
+        Arguments:
             rank: the rank to mask (unmask).
             mask: if True, will mask the rank (do not recvfrom/sendto the rank), otherwise will unmask the rank.
-
         """
         self.runtime.update_mask_buffer(rank_to_mask, mask)
 
@@ -301,9 +306,8 @@ class Buffer:
         """
         Query the mask status of all ranks
 
-        Arguments: 
+        Arguments:
             mask_status: `[num_ranks]` with `torch.int`, the mask status of each rank. `1` means mask and `0` means unmasked.
-
         """
         self.runtime.query_mask_buffer(mask_status)
 
@@ -314,7 +318,7 @@ class Buffer:
         """
         self.runtime.clean_mask_buffer()
 
-    def get_next_combine_buffer(self, handle: object):
+    def get_next_combine_buffer(self, handle: Tuple[torch.Tensor, torch.Tensor, int, int, int]):
         """
         Get the raw registered RDMA buffer tensor for next combine, so that the next combine kernel can skip the copying.
 

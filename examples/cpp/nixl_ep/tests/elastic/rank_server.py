@@ -13,27 +13,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from socketserver import ThreadingTCPServer, StreamRequestHandler
-from threading import Thread, Lock
-from collections import defaultdict
-import socket, os
-import torch
+import os
+import socket
 import time
+from collections import defaultdict
+from socketserver import StreamRequestHandler, ThreadingTCPServer
+from threading import Lock
+
+import torch
+
 
 # --- Request handler ---
 class RankServerHandler(StreamRequestHandler):
-    _counts = defaultdict(list)  # List of used local ranks per host
-    _global = 0
-    _lock = Lock()
-    _rank_to_host = {}  # Maps global rank to (host, local_rank)
-    _user_context = {}
-    _all_global_ranks = set()
-    _removed_global_ranks = set()
+    _counts: defaultdict[str, list[int]] = defaultdict(list)  # List of used local ranks per host
+    _global: int = 0
+    _lock: Lock = Lock()
+    _rank_to_host: dict[int, tuple[str, int]] = {}  # Maps global rank to (host, local_rank)
+    _user_context: dict[str, str | None] = {}
+    _all_global_ranks: set[int] = set()
+    _removed_global_ranks: set[int] = set()
 
     def handle(self):
         with self._lock:
             line = self.rfile.readline().strip().decode()
-            
+
             if line.startswith("RELEASE_RANK"):
                 # Handle rank release - remove from used ranks list
                 if len(self._all_global_ranks) > 0:
@@ -61,7 +64,7 @@ class RankServerHandler(StreamRequestHandler):
                 local = 0
                 while local in used_ranks:
                     local += 1
-                
+
                 # Add this local rank to the used list
                 self._counts[host].append(local)
                 if len(self._removed_global_ranks) == 0:
@@ -77,26 +80,32 @@ class RankServerHandler(StreamRequestHandler):
                     self._user_context[str(global_rank)] = None
                 self.wfile.write(f"{local} {global_rank} {self._user_context[str(global_rank)]}\n".encode()) if self._user_context[str(global_rank)] is not None else self.wfile.write(f"{local} {global_rank}\n".encode())
 
+
 # --- TCPServer subclass to reuse port immediately ---
 class ReusableTCPServer(ThreadingTCPServer):
     allow_reuse_address = True
 
+
 # --- Lazy-start server ---
-def start_server(port=9999):
+def start_server(port: int = 9999) -> None:
     try:
         server = ReusableTCPServer(("0.0.0.0", port), RankServerHandler)
         server.serve_forever()
     except OSError:
         pass  # another process already started the server
-def start_server_process(port=9999):
+
+
+def start_server_process(port: int = 9999):
     server_process = torch.multiprocessing.Process(target=start_server, args=(port,), daemon=False)
     server_process.start()
     time.sleep(1)
     return server_process
+
+
 # --- Client API ---
 class RankClient:
-    
-    def __init__(self, server="127.0.0.1", port=9999):
+
+    def __init__(self, server: str = "127.0.0.1", port: int = 9999):
         self.self_global_rank = None
         self.server = server
         self.port = port
@@ -117,7 +126,7 @@ class RankClient:
         self.self_global_rank = global_rank
         return local_rank, global_rank, user_context
 
-    def release_rank(self, user_context = None):
+    def release_rank(self, user_context: str | None = None) -> bool:
         """Release a rank (decrement the global counter by 1)"""
         s = socket.create_connection((self.server, self.port))
         s.sendall(f"RELEASE_RANK {self.self_global_rank if self.self_global_rank is not None else -1} {user_context}\n".encode())
@@ -125,7 +134,8 @@ class RankClient:
         s.close()
         self.self_global_rank = None
         return response == "OK"
-    
+
+
 # --- Example usage ---
 if __name__ == "__main__":
     start_server()
