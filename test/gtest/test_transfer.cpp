@@ -38,6 +38,20 @@
 
 constexpr auto min_chrono_time = std::chrono::steady_clock::time_point::min();
 
+namespace {
+inline bool
+hasCudaGpu() {
+#ifdef HAVE_CUDA
+    int count = 0;
+    auto err = cudaGetDeviceCount(&count);
+    return (err == cudaSuccess && count > 0);
+#else
+    return false;
+#endif
+}
+
+} // namespace
+
 namespace gtest {
 
 class MemBuffer : std::shared_ptr<void> {
@@ -697,6 +711,9 @@ TEST_P(TestTransfer, PrepGpuSignal) {
 #ifndef HAVE_UCX_GPU_DEVICE_API
     GTEST_SKIP() << "UCX GPU device API not available, skipping test";
 #else
+    if (!hasCudaGpu()) {
+        GTEST_SKIP() << "No CUDA-capable GPU is available, skipping test.";
+    }
     size_t gpu_signal_size = 0;
     nixl_opt_args_t extra_params = {.backends = {backend_handles[0]}};
     nixl_status_t size_status = getAgent(0).getGpuSignalSize(gpu_signal_size, &extra_params);
