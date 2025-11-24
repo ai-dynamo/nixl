@@ -17,15 +17,15 @@
 
 import inspect
 import json
-import tempfile
-from pathlib import Path
-
-import numpy as np
 import os
 import sys
+import tempfile
+from pathlib import Path
+from typing import Callable, Optional, Union
+
+import numpy as np
 import torch
 import torch.distributed as dist
-from typing import Optional, Union, Callable
 
 
 def init_dist(local_rank: int, num_local_ranks: int):
@@ -44,11 +44,11 @@ def init_dist(local_rank: int, num_local_ranks: int):
     }
     if 'device_id' in sig.parameters:
         # noinspection PyTypeChecker
-        params['device_id'] = torch.device(f'cuda:0') # TODO: restore to local_rank once ucx fixes lane-selection
+        params['device_id'] = torch.device('cuda:0')  # TODO: restore to local_rank once ucx fixes lane-selection
     dist.init_process_group(**params)
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device('cuda')
-    torch.cuda.set_device(0) # TODO: restore to local_rank once ucx fixes lane-selection
+    torch.cuda.set_device(0)  # TODO: restore to local_rank once ucx fixes lane-selection
 
     return dist.get_rank(), dist.get_world_size(), dist.new_group(list(range(num_local_ranks * num_nodes)))
 
@@ -234,8 +234,7 @@ def bench_kineto(fn, kernel_names: Union[str, tuple], num_tests: int = 30, suppr
             durations = [event['dur'] / 1e6 for event in events]
             assert len(durations) % num_kernels_per_period == 0
             num_kernel_patterns = len(durations) // num_kernels_per_period
-            kernel_durations[i] = [sum(durations[j::num_kernels_per_period]) / num_kernel_patterns
-                               for j in range(num_kernels_per_period)]
+            kernel_durations[i] = [sum(durations[j::num_kernels_per_period]) / num_kernel_patterns for j in range(num_kernels_per_period)]  # type: ignore[call-overload]
 
     # Return execution durations
     return kernel_durations if is_tuple else kernel_durations[0]

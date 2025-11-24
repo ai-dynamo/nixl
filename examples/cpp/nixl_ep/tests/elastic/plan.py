@@ -15,8 +15,9 @@
 
 import json
 
+
 class Plan:
-    def __init__(self, plan_path, rank, start_phase = 0):
+    def __init__(self, plan_path: str, rank: int, start_phase: int = 0):
         """Initialize plan for a specific rank."""
         with open(plan_path, "r") as f:
             self.phases = json.load(f)
@@ -25,13 +26,13 @@ class Plan:
         self.current_phase = self._find_starting_phase(start_phase)
         self.starting_phase = self.current_phase  # Store the starting phase
 
-    def _find_starting_phase(self, start_search_from_phase):
+    def _find_starting_phase(self, start_search_from_phase: int) -> int:
         """Find the first phase where this rank appears after the start_search_from_phase"""
-        
+
         for i in range(start_search_from_phase, len(self.phases)):
             if self.rank in self.phases[i]:
                 return i
-        
+
         return -1
 
     def get_new_ranks(self):
@@ -51,19 +52,19 @@ class Plan:
         if self.current_phase == self.starting_phase:
             # First phase: no ranks to remove
             return []
-        
+
         # Use absolute values for comparison
         prev_ranks_abs = set(abs(r) for r in self.phases[self.current_phase - 1])
         curr_ranks_abs = set(abs(r) for r in self.phases[self.current_phase])
-        
+
         # Find negative ranks in current and previous phase
         curr_negative_abs = set(abs(r) for r in self.phases[self.current_phase] if r < 0)
         prev_negative_abs = set(abs(r) for r in self.phases[self.current_phase - 1] if r < 0)
-        
-        # Ranks cleanly removed: in prev (absolute) but not in curr (absolute), 
+
+        # Ranks cleanly removed: in prev (absolute) but not in curr (absolute),
         # excluding those being killed now and those that were killed before
         cleanly_removed = list(prev_ranks_abs - curr_ranks_abs - curr_negative_abs - prev_negative_abs)
-        
+
         return cleanly_removed
 
     def get_killed_ranks(self):

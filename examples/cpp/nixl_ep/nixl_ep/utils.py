@@ -15,11 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import subprocess
-import torch
-import torch.distributed as dist
 from typing import Any, Optional, Tuple
+
+import torch
 
 # noinspection PyUnresolvedReferences
 from .nixl_ep_cpp import EventHandle
@@ -35,7 +33,7 @@ class EventOverlap:
     """
 
     def __init__(self, event: Optional[EventHandle] = None,
-                 extra_tensors: Optional[Tuple[torch.Tensor]] = None) -> None:
+                 extra_tensors: Optional[Tuple[torch.Tensor, ...]] = None) -> None:
         """
         Initialize the class.
 

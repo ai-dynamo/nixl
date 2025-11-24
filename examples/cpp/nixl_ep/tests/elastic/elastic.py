@@ -15,38 +15,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 import argparse
 import os
 import random
-import torch
+import signal
+import sys
 import threading
 import time
-import signal
 from functools import partial
+from typing import cast
 
-import rank_server
 import nixl_ep
+import rank_server
+import torch
 from plan import Plan
 
 # Add tests directory to path to import test utils
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils import bench, bench_kineto, calc_diff, hash_tensor, per_token_cast_back
+
+from utils import (  # noqa: E402
+    bench,
+    bench_kineto,
+    calc_diff,
+    hash_tensor,
+    per_token_cast_back,
+)
 
 
-def handle_sigterm(signum, frame, buffer : nixl_ep.Buffer, plan : Plan, rank_client : rank_server.RankClient):
+def handle_sigterm(signum, frame, buffer: nixl_ep.Buffer, plan: Plan, rank_client: rank_server.RankClient):
     print(f"SIGTERM ({signum}) received for process {os.getpid()}! releasing rank and exiting...", flush=True)
     if plan is not None:
         rank_client.release_rank(user_context=plan.get_phase())
     else:
         rank_client.release_rank()
     if buffer is not None and buffer.runtime is not None:
-        buffer.destroy() #to invalidate local MD
+        buffer.destroy()  # to invalidate local MD
         del buffer
-    sys.exit(1) 
+    sys.exit(1)
+
 
 def self_kill():
     os.kill(os.getpid(), signal.SIGTERM)
+
 
 def test_main(num_tokens: int, hidden: int, num_experts: int, num_topk: int,
               rank: int, num_ranks: int, max_num_ranks: int, buffer: nixl_ep.Buffer,
@@ -61,7 +71,7 @@ def test_main(num_tokens: int, hidden: int, num_experts: int, num_topk: int,
     # NOTES: the integers greater than 256 exceed the BF16 precision limit
     rank_offset = 128
     assert num_ranks - rank_offset < 257, 'Too many ranks (exceeding test precision limit)'
-    
+
     # Track masked ranks (like shrink_test in elastic.py)
     mask_status = torch.zeros((max_num_ranks, ), dtype=torch.int32, device='cuda')
 
@@ -116,19 +126,20 @@ def test_main(num_tokens: int, hidden: int, num_experts: int, num_topk: int,
                                 print(f"[rank {rank}] Killing rank during dispatch/combine", flush=True)
                                 timer = threading.Timer(0.0001, self_kill)
                                 timer.start()
-                            
+
                             cumulative_local_expert_recv_stats = torch.zeros((num_local_experts, ), dtype=torch.int, device='cuda')
                             packed_recv_x, packed_recv_count, handle, event, hook = \
-                                buffer.dispatch(current_x, topk_idx, num_tokens, num_experts,
-                                                            use_fp8=dispatch_use_fp8, round_scale=round_scale, use_ue8m0=use_ue8m0,
-                                                            cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
-                                                            async_finish=not return_recv_hook, return_recv_hook=return_recv_hook)
+                                buffer.dispatch(
+                                    current_x, topk_idx, num_tokens, num_experts,
+                                    use_fp8=dispatch_use_fp8, round_scale=round_scale, use_ue8m0=use_ue8m0,
+                                    cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
+                                    async_finish=not return_recv_hook, return_recv_hook=return_recv_hook)
                             hook() if return_recv_hook else event.current_stream_wait()
                         # Query mask buffer to get current failure status
                         buffer.query_mask_buffer(mask_status)
                         packed_recv_x = (packed_recv_x[0], packed_recv_x[1].contiguous()) if dispatch_use_fp8 else packed_recv_x
                         simulated_gemm_x = per_token_cast_back(packed_recv_x[0].view(-1, hidden), packed_recv_x[1].view(-1, hidden // 128)).view(packed_recv_x[0].shape) \
-                            if dispatch_use_fp8 else packed_recv_x.clone()
+                            if dispatch_use_fp8 else cast(torch.Tensor, packed_recv_x).clone()
 
                         for i in range(num_local_experts if do_check else 0):
                             expert_id = rank * num_local_experts + i
@@ -140,7 +151,7 @@ def test_main(num_tokens: int, hidden: int, num_experts: int, num_topk: int,
                             num_valid_tokens = recv_count.item()
                             assert cumulative_local_expert_recv_stats[i].item() == num_valid_tokens, f'{cumulative_local_expert_recv_stats[i].item()} != {num_valid_tokens}'
                             assert num_valid_tokens == (recv_layout_range & int_mask).sum().item(), f'{num_valid_tokens} != {recv_layout_range & int_mask}.sum().item()'
-                            assert num_valid_tokens == (all_topk_idx == expert_id).sum(dim=[1, 2])[mask_status==0].sum().item(), f'{num_valid_tokens} != {(all_topk_idx == expert_id).sum(dim=[1, 2])[mask_status==0].sum().item()}'
+                            assert num_valid_tokens == (all_topk_idx == expert_id).sum(dim=[1, 2])[mask_status == 0].sum().item(), f'{num_valid_tokens} != {(all_topk_idx == expert_id).sum(dim=[1, 2])[mask_status == 0].sum().item()}'
 
                             if num_valid_tokens == 0:
                                 continue
@@ -165,24 +176,25 @@ def test_main(num_tokens: int, hidden: int, num_experts: int, num_topk: int,
                                 hash_value ^= hash_tensor(packed_recv_x[0][i, :num_valid_tokens])
                                 hash_value ^= hash_tensor(packed_recv_x[1][i, :num_valid_tokens])
                             else:
-                                hash_value ^= hash_tensor(packed_recv_x[i, :num_valid_tokens])
+                                hash_value ^= hash_tensor(cast(torch.Tensor, packed_recv_x)[i, :num_valid_tokens])
 
                         # Check combine correctness
                         for zero_copy in (False, ) if use_logfmt else (False, True):
                             if zero_copy:
                                 buffer.get_next_combine_buffer(handle)[:, :, :] = simulated_gemm_x
                             out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
-                            combined_x, event, hook = buffer.combine(simulated_gemm_x, topk_idx, topk_weights, handle,
-                                                                                use_logfmt=use_logfmt,
-                                                                                async_finish=not return_recv_hook, zero_copy=zero_copy,
-                                                                                return_recv_hook=return_recv_hook, out=out)
+                            combined_x, event, hook = buffer.combine(
+                                simulated_gemm_x, topk_idx, topk_weights, handle,
+                                use_logfmt=use_logfmt,
+                                async_finish=not return_recv_hook, zero_copy=zero_copy,
+                                return_recv_hook=return_recv_hook, out=out)
                             hook() if return_recv_hook else event.current_stream_wait()
                             # Query mask buffer again after combine
                             buffer.query_mask_buffer(mask_status)
                             if do_check:
                                 # Adjust topk_idx for validation: mark selections from masked ranks as -1
                                 owner_by_expert = (torch.arange(num_experts, device='cuda') // num_local_experts)
-                                fail_owner_mask = (mask_status!=0).index_select(0, owner_by_expert)
+                                fail_owner_mask = (mask_status != 0).index_select(0, owner_by_expert)
                                 valid_topk_idx = topk_idx >= 0
                                 failed_topk_idx = torch.zeros_like(topk_idx, device='cuda', dtype=torch.bool)
                                 failed_topk_idx[valid_topk_idx] = fail_owner_mask.index_select(0, topk_idx[valid_topk_idx])
@@ -201,14 +213,14 @@ def test_main(num_tokens: int, hidden: int, num_experts: int, num_topk: int,
 
     # noinspection PyShadowingNames
     def test_func(return_recv_hook: bool):
-        recv_x, recv_count, handle, event, hook = \
-            buffer.dispatch(current_x, topk_idx, num_tokens, num_experts,
-                                        cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
-                                        use_fp8=True, async_finish=False, return_recv_hook=return_recv_hook)
-        large_gemm_with_hook(hook) if return_recv_hook else None
+        recv_x, recv_count, handle, event, hook = buffer.dispatch(
+            current_x, topk_idx, num_tokens, num_experts,
+            cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
+            use_fp8=True, async_finish=False, return_recv_hook=return_recv_hook)
+        return_recv_hook and large_gemm_with_hook(hook)
         combined_x, event, hook = buffer.combine(simulated_gemm_x, topk_idx, topk_weights, handle,
-                                                             use_logfmt=use_logfmt, return_recv_hook=return_recv_hook)
-        large_gemm_with_hook(hook) if return_recv_hook else None
+                                                 use_logfmt=use_logfmt, return_recv_hook=return_recv_hook)
+        return_recv_hook and large_gemm_with_hook(hook)
 
     def test_barrier():
         buffer.barrier()
@@ -247,12 +259,12 @@ def test_main(num_tokens: int, hidden: int, num_experts: int, num_topk: int,
 
 def worker(torch_rank: int, args: argparse.Namespace):
     rank_client = rank_server.RankClient(args.rank_server if args.rank_server else "127.0.0.1")
-    local_rank, global_rank,last_active_phase = rank_client.get_rank()
+    local_rank, global_rank, last_active_phase = rank_client.get_rank()
     plan = Plan(args.plan, global_rank, start_phase=last_active_phase if last_active_phase is not None else 0)
     if plan.current_phase == -1:
         print(f"Process {torch_rank} -> no plan phases were found for rank {global_rank} after phase {last_active_phase}, exiting", flush=True)
         return
-    
+
     max_num_ranks = plan.get_max_rank() + 1
     print(f"Process {torch_rank} -> global_rank={global_rank}, local_rank={local_rank}", flush=True)
 
@@ -301,27 +313,27 @@ def worker(torch_rank: int, args: argparse.Namespace):
 
         # Check if this rank should be killed
         kill_rank = global_rank in ranks_to_kill
-        
+
         if len(cleanly_removed) > 0:
             print(f"global_rank={global_rank}, local_rank={local_rank} -> removing connections to {cleanly_removed}", flush=True)
             buffer.disconnect_ranks(cleanly_removed)
             remote_ranks.difference_update(cleanly_removed)
-            time.sleep(5) # required to avoid race between MD invalidation and readdition of same ranks, if this is part of the test
+            time.sleep(5)  # required to avoid race between MD invalidation and readdition of same ranks, if this is part of the test
 
         # Use sparse num_ranks = max(active_ranks) + 1 for proper indexing
         active_ranks_list = plan.get_active_ranks()
         current_num_ranks = max(active_ranks_list) + 1  # Sparse indexing
         current_num_experts = args.num_experts_per_rank * current_num_ranks
-        
+
         test_main(args.num_tokens, args.hidden_dim, current_num_experts, args.num_topk,
-                global_rank, current_num_ranks, max_num_ranks, buffer, kineto=args.kineto, fault_tolerance_test=kill_rank)
+                  global_rank, current_num_ranks, max_num_ranks, buffer, kineto=args.kineto, fault_tolerance_test=kill_rank)
         # Query mask buffer to detect any unexpected rank failures and clean them up
         buffer.query_mask_buffer(mask_status)
         newly_failed_ranks = set()
         for r in range(current_num_ranks):
             if mask_status[r].item() != 0 and r in remote_ranks:
                 newly_failed_ranks.add(r)
-        
+
         if len(newly_failed_ranks) > 0:
             print(f"global_rank={global_rank}, local_rank={local_rank} -> detected unexpected rank failures: {newly_failed_ranks}, cleaning up...", flush=True)
             remote_ranks.difference_update(newly_failed_ranks)
@@ -357,13 +369,13 @@ def main():
     assert args.nvlink_backend != 'nixl', "NIXL does not support NVLink on multiple workers yet"
     rank_server_process = None
     if not args.rank_server:
-        print(f"Starting rank server locally", flush=True)
+        print("Starting rank server locally", flush=True)
         rank_server_process = torch.multiprocessing.Process(target=rank_server.start_server, daemon=True)
         rank_server_process.start()
         time.sleep(0.5)
     if args.num_processes == 1:
         worker(0, args)
-        return;
+        return
 
     ctx = torch.multiprocessing.spawn(
         worker,
@@ -376,8 +388,9 @@ def main():
     for p in ctx.processes:
         try:
             p.join()
-        except:
+        except Exception:
             pass
+
 
 if __name__ == "__main__":
     main()
