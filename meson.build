@@ -193,6 +193,17 @@ endif
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
 if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
+    ucx_version_result = cpp.run('''
+        #include <ucp/api/ucp.h>
+        int main() {
+            unsigned major, minor, release;
+            ucp_get_version(&major, &minor, &release);
+            unsigned version = UCP_VERSION(major, minor);
+            return (version >= UCP_VERSION(1, 21)) ? 0 : 1;
+        }
+    ''', dependencies: ucx_dep, name: 'UCX version >= 1.21')
+    ucx_version_ok = ucx_version_result.returncode() == 0
+
     cuda = meson.get_compiler('cuda')
     # TODO: Expose doca_gpunetio_dep through UCX
     have_gpu_side = cuda.compiles('''
@@ -205,13 +216,14 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
             int main() { return 0; }
         ''', dependencies: ucx_dep)
 
-    if have_gpu_side and have_host_side
+    if have_gpu_side and have_host_side and ucx_version_ok
         ucx_gpu_device_api_available = true
         add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
     endif
 
     summary({
     'UCX GPU Device API' : ucx_gpu_device_api_available,
+    'UCX version >= 1.21': ucx_version_ok,
     'GPU-side compile'   : have_gpu_side,
     'Host-side compile'  : have_host_side,
     'nvcc available'     : nvcc_prog.found(),
