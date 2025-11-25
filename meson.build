@@ -216,7 +216,7 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
             int main() { return 0; }
         ''', dependencies: ucx_dep)
 
-    if have_gpu_side and have_host_side and ucx_version_ok
+    if have_gpu_side and have_host_side and ucx_version_ok and doca_gpunetio_dep.found()
         ucx_gpu_device_api_available = true
         add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
     endif
