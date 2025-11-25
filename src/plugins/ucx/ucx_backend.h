@@ -323,6 +323,8 @@ private:
     // Context to use when current context is missing
     nixlUcxCudaDevicePrimaryCtxPtr m_cudaPrimaryCtx;
 
+    const bool progressThreadEnabled_;
+
     /* Notifications */
     notif_list_t notifMainList;
 

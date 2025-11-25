@@ -41,12 +41,39 @@ export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 
+# Set UCX GDA max system latency to allow GDA on SYS topology
+# TODO: Remove this once CI setups have better GPU-NIC locality
+# export UCX_IB_GDA_MAX_SYS_LATENCY=1us
+
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
+
+echo "==== NVIDIA Peermem check ===="
+if ! lsmod | grep -q nvidia_peermem; then
+    echo "nvidia_peermem module not loaded"
+fi
+
+if [ -f /sys/kernel/mm/memory_peers/nv_mem/version ]; then
+    cat /sys/kernel/mm/memory_peers/nv_mem/version
+else
+    echo "/sys/kernel/mm/memory_peers/nv_mem/version not found "
+fi
+
+if [ -f /sys/module/nvidia_peermem/version ]; then
+    cat /sys/module/nvidia_peermem/version
+else
+    echo "/sys/module/nvidia_peermem/version not found"
+fi
+
+if [ -f /sys/module/nv_peer_mem/version ]; then
+    cat /sys/module/nv_peer_mem/version
+else
+    echo "/sys/module/nv_peer_mem/version not found"
+fi
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
@@ -89,7 +116,8 @@ kill -s INT $telePID
 # fi
 
 # shellcheck disable=SC2154
-gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+# TODO: enable PrepGpuSignal and ucxDeviceApi tests once the problem in UCX is fixed
+gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port" --gtest_filter=-*PrepGpuSignal*:*ucxDeviceApi*
 ./bin/test_plugin
 
 # Run NIXL client-server test
