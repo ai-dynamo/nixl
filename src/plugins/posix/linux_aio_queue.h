@@ -32,8 +32,7 @@ private:
     int num_entries; // Total number of entries expected
     std::vector<struct iocb *> ios_to_submit; // Array of I/Os to submit
     int num_ios_to_submit; // Total number of entries to submit
-    std::vector<bool> completed; // Track completed I/Os
-    int num_completed; // Number of completed operations
+    int num_ios_to_complete; // Total number of entries to complete
     nixl_xfer_op_t operation; // Whether this is a read operation
 
     // Delete copy and move operations

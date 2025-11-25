@@ -28,8 +28,7 @@ linuxAioQueue::linuxAioQueue(int num_entries, nixl_xfer_op_t operation)
       ios(num_entries),
       num_entries(num_entries),
       num_ios_to_submit(0),
-      completed(num_entries),
-      num_completed(0),
+      num_ios_to_complete(0),
       operation(operation) {
     if (num_entries <= 0) {
         throw std::runtime_error("Invalid number of entries for AIO queue");
@@ -58,6 +57,11 @@ linuxAioQueue::submit(const nixl_meta_dlist_t &, const nixl_meta_dlist_t &) {
         return NIXL_IN_PROG;
     }
 
+    if (num_ios_to_complete) {
+        NIXL_ERROR << "previously submitted IO is not yet complete";
+        return NIXL_ERR_NOT_ALLOWED;
+    }
+
     int ret = io_submit(io_ctx, num_ios_to_submit, ios_to_submit.data());
     if (ret != num_ios_to_submit) {
         if (ret < 0) {
@@ -69,14 +73,13 @@ linuxAioQueue::submit(const nixl_meta_dlist_t &, const nixl_meta_dlist_t &) {
         return NIXL_ERR_BACKEND;
     }
 
-    num_completed = 0;
-    num_ios_to_submit = 0;
+    num_ios_to_complete = ret;
     return NIXL_IN_PROG;
 }
 
 nixl_status_t
 linuxAioQueue::checkCompleted() {
-    if (num_completed == num_entries) {
+    if (!num_ios_to_complete) {
         return NIXL_SUCCESS;
     }
 
@@ -91,20 +94,15 @@ linuxAioQueue::checkCompleted() {
     }
 
     for (int i = 0; i < rc; i++) {
-        struct iocb *io = events[i].obj;
-        size_t idx = (size_t)io->data;
-
-        ios_to_submit[idx] = nullptr; // Mark as completed
-
         if (events[i].res < 0) {
             NIXL_ERROR << "AIO operation failed: " << events[i].res;
             return NIXL_ERR_BACKEND;
         }
     }
 
-    num_completed += rc;
+    num_ios_to_complete -= rc;
 
-    return (num_completed == num_entries) ? NIXL_SUCCESS : NIXL_IN_PROG;
+    return num_ios_to_complete ? NIXL_IN_PROG : NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -136,7 +134,6 @@ linuxAioQueue::prepIO(int fd, void *buf, size_t len, off_t offset) {
     }
 
     ios_to_submit[idx] = io;
-    io->data = (void *)(uintptr_t)idx;
     num_ios_to_submit++;
 
     return NIXL_SUCCESS;
