@@ -57,6 +57,8 @@ steps:
   - name: Prepare
     run: |
       # Setup podman and dependencies
+      rm -f /etc/containers/storage.conf
+      podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
       yum install -y git gettext
 
