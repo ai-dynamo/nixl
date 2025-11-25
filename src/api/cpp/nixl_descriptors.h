@@ -57,7 +57,7 @@ public:
      *
      * @param str   Serialized Descriptor
      */
-    explicit nixlBasicDesc(const nixl_blob_t &str); // deserializer
+    explicit nixlBasicDesc(const nixl_blob_t &str);
     /**
      * @brief Copy constructor for nixlBasicDesc
      *
