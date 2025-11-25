@@ -15,25 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef QUEUE_FACTORY_IMPL_H
-#define QUEUE_FACTORY_IMPL_H
+#include "io_queue.h"
 
-#include "posix_queue.h"
-
-namespace QueueFactory {
-std::unique_ptr<nixlPosixQueue>
-createPosixAioQueue(int num_entries, nixl_xfer_op_t operation);
-
-std::unique_ptr<nixlPosixQueue>
-createUringQueue(int num_entries, nixl_xfer_op_t operation);
-
-std::unique_ptr<nixlPosixQueue>
-createLinuxAioQueue(int num_entries, nixl_xfer_op_t operation);
-
-bool
-isLinuxAioAvailable();
-bool
-isUringAvailable();
-}; // namespace QueueFactory
-
-#endif // QUEUE_FACTORY_IMPL_H
+std::map<std::string, nixlPosixIOQueue::nixlPosixIOQueueCreateFn> nixlPosixIOQueue::apis = {};
+const uint32_t nixlPosixIOQueue::MIN_IOS = 64;
+const uint32_t nixlPosixIOQueue::MAX_IOS = 1024 * 64;
