@@ -86,6 +86,4 @@ steps:
     run: |
       # symlink podman to docker - scripts works with docker commands
       ln -sfT $(type -p podman) /usr/bin/docker
-      # install git for building container image
-      yum install -y git
       contrib/build-container.sh --build-type debug --no-cache
