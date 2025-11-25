@@ -96,9 +96,7 @@ private:
     const size_t size;
 };
 
-class TestTransfer :
-    // Tuple fields are: backend_name, enable_progress_thread, num_workers, num_threads
-    public testing::TestWithParam<std::tuple<std::string, bool, size_t, size_t>> {
+class TestTransfer : public nixl_test_t {
 protected:
     nixlAgentConfig
     getConfig(int listen_port, bool capture_telemetry) {
@@ -127,6 +125,7 @@ protected:
             params["split_batch_size"] = "32";
         }
 
+        params["engine_config"] = GetParam().engineConfig;
         return params;
     }
 
@@ -165,22 +164,22 @@ protected:
 
     std::string getBackendName() const
     {
-        return std::get<0>(GetParam());
+        return GetParam().backendName;
     }
 
     bool
     isProgressThreadEnabled() const {
-        return std::get<1>(GetParam());
+        return GetParam().progressThreadEnabled;
     }
 
     size_t
     getNumWorkers() const {
-        return std::get<2>(GetParam());
+        return GetParam().numWorkers;
     }
 
     size_t
     getNumThreads() const {
-        return std::get<3>(GetParam());
+        return GetParam().numThreads;
     }
 
     nixl_opt_args_t
@@ -718,14 +717,9 @@ TEST_P(TestTransfer, PrepGpuSignal) {
 #endif
 }
 
-INSTANTIATE_TEST_SUITE_P(ucx, TestTransfer, testing::Values(std::make_tuple("UCX", true, 2, 0)));
-INSTANTIATE_TEST_SUITE_P(ucx_no_pt,
-                         TestTransfer,
-                         testing::Values(std::make_tuple("UCX", false, 2, 0)));
-INSTANTIATE_TEST_SUITE_P(ucx_threadpool,
-                         TestTransfer,
-                         testing::Values(std::make_tuple("UCX", true, 6, 4)));
-INSTANTIATE_TEST_SUITE_P(ucx_threadpool_no_pt,
-                         TestTransfer,
-                         testing::Values(std::make_tuple("UCX", false, 6, 4)));
+NIXL_INSTANTIATE_TEST(ucx, TestTransfer, "UCX", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransfer, "UCX", false, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
+
 } // namespace gtest

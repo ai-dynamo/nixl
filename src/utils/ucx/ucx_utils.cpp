@@ -408,7 +408,8 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
 nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                bool prog_thread,
                                unsigned long num_workers,
-                               nixl_thread_sync_t sync_mode) {
+                               nixl_thread_sync_t sync_mode,
+                               const std::string &engine_config) {
     ucp_params_t ucp_params;
     unsigned major_version, minor_version, release_number;
     ucp_get_version(&major_version, &minor_version, &release_number);
@@ -452,6 +453,18 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
 
     if (ucp_version >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");
+    }
+
+    std::string elem;
+    std::stringstream stream(engine_config);
+
+    while (std::getline(stream, elem, ',')) {
+        std::string_view elem_view = elem;
+        size_t pos = elem_view.find('=');
+
+        if (pos != std::string::npos) {
+            config.modify(elem_view.substr(0, pos), elem_view.substr(pos + 1));
+        }
     }
 
     const auto status = ucp_init (&ucp_params, config.getUcpConfig(), &ctx);
