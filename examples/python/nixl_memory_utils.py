@@ -25,6 +25,33 @@ import ctypes
 import numpy as np
 
 
+def write_uint8(addr, value):
+    """
+    Write uint8 (1 byte) to local memory using ctypes.
+
+    Args:
+        addr: Memory address (integer)
+        value: 8-bit unsigned integer value to write (0-255)
+    """
+    byte_value = ctypes.c_uint8(value)
+    ctypes.memmove(addr, ctypes.addressof(byte_value), 1)
+
+
+def read_uint8(addr):
+    """
+    Read uint8 (1 byte) from local memory using ctypes.
+
+    Args:
+        addr: Memory address (integer)
+
+    Returns:
+        8-bit unsigned integer value (0-255)
+    """
+    byte_value = ctypes.c_uint8()
+    ctypes.memmove(ctypes.addressof(byte_value), addr, 1)
+    return byte_value.value
+
+
 def write_uint64(addr, value):
     """
     Write uint64 to local memory using NumPy.
