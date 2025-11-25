@@ -24,12 +24,14 @@
 
 class nixlUcxEp;
 class nixlUcxMem;
+class nixlUcxWorker;
 
 namespace nixl::ucx {
 class rkey;
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
+                 nixlUcxWorker &worker,
                  const std::vector<nixlUcxMem> &local_mems,
                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
                  const std::vector<uint64_t> &remote_addrs);
