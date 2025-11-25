@@ -50,6 +50,9 @@ getAvailableNetworkDevices() {
     hints->mode = FI_CONTEXT;
     hints->ep_attr->type = FI_EP_RDM;
 
+    // Add CXI-compatible memory registration mode
+    hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_ENDPOINT | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+
     int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
     if (ret) {
         NIXL_ERROR << "fi_getinfo failed " << fi_strerror(-ret);
@@ -85,7 +88,9 @@ getAvailableNetworkDevices() {
         }
     }
 
-    if (provider_device_map.find("efa") != provider_device_map.end()) {
+    if (provider_device_map.find("cxi") != provider_device_map.end()) {
+        return {"cxi", provider_device_map["cxi"]};
+    } else if (provider_device_map.find("efa") != provider_device_map.end()) {
         return {"efa", provider_device_map["efa"]};
     } else if (provider_device_map.find("sockets") != provider_device_map.end()) {
         return {"sockets", {provider_device_map["sockets"][0]}};

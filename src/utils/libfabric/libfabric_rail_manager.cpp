@@ -179,7 +179,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
         // For TCP providers, use offset 0 instead of virtual address
         // TCP providers don't support FI_MR_VIRT_ADDR and expect offset-based addressing
-        if (data_rails_[rail_id]->provider_name == "tcp" ||
+        if (data_rails_[rail_id]->provider_name == "cxi" ||
+            data_rails_[rail_id]->provider_name == "tcp" ||
             data_rails_[rail_id]->provider_name == "sockets") {
             req->remote_addr = 0; // Use offset 0 for TCP providers
             NIXL_DEBUG << "TCP provider detected: using offset 0 instead of virtual address "
@@ -258,7 +259,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
             // For TCP providers, use offset instead of virtual address
             // TCP providers don't support FI_MR_VIRT_ADDR and expect offset-based addressing
-            if (data_rails_[rail_id]->provider_name == "tcp" ||
+            if (data_rails_[rail_id]->provider_name == "cxi" ||
+                data_rails_[rail_id]->provider_name == "tcp" ||
                 data_rails_[rail_id]->provider_name == "sockets") {
                 req->remote_addr = chunk_offset; // Use chunk offset for TCP providers
                 NIXL_DEBUG << "TCP provider detected: using chunk offset " << chunk_offset
