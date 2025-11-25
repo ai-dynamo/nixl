@@ -160,11 +160,11 @@ if ucx_path != ''
   # Check if path is absolute
   if ucx_inc_path.startswith('/')
     ucx_dep = declare_dependency(
-      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+      link_args : ['-L' + ucx_lib_path, '-Wl,-rpath,' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
       compile_args : ['-I' + ucx_inc_path])
   else
     ucx_dep = declare_dependency(
-      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+      link_args : ['-L' + ucx_lib_path, '-Wl,-rpath,' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
       include_directories : include_directories(ucx_inc_path))
   endif
 else
