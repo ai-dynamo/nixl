@@ -41,6 +41,10 @@ export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 
+# Set UCX GDA max system latency to allow GDA on SYS topology
+# TODO: Remove this once CI setups have better GPU-NIC locality
+# export UCX_IB_GDA_MAX_SYS_LATENCY=1us
+
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
@@ -48,11 +52,35 @@ ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
 
+echo "==== NVIDIA Peermem check ===="
+if ! lsmod | grep -q nvidia_peermem; then
+    echo "nvidia_peermem module not loaded"
+fi
+
+if [ -f /sys/kernel/mm/memory_peers/nv_mem/version ]; then
+    cat /sys/kernel/mm/memory_peers/nv_mem/version
+else
+    echo "/sys/kernel/mm/memory_peers/nv_mem/version not found "
+fi
+
+if [ -f /sys/module/nvidia_peermem/version ]; then
+    cat /sys/module/nvidia_peermem/version
+else
+    echo "/sys/module/nvidia_peermem/version not found"
+fi
+
+if [ -f /sys/module/nv_peer_mem/version ]; then
+    cat /sys/module/nv_peer_mem/version
+else
+    echo "/sys/module/nv_peer_mem/version not found"
+fi
+
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
 etcd_peer_port=$(get_next_tcp_port)
 export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
 export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
+export NIXL_ETCD_NAMESPACE="/nixl/cpp_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
@@ -82,9 +110,14 @@ kill -s INT $telePID
 ./bin/nixl_gusli_test -n 4 -s 16
 ./bin/ucx_backend_multi
 ./bin/serdes_test
+# TODO: Enable Mooncake test once data corruption issue is resolved
+# if $HAS_GPU ; then
+#     ./bin/mooncake_backend_test
+# fi
 
 # shellcheck disable=SC2154
-gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+# TODO: enable PrepGpuSignal and ucxDeviceApi tests once the problem in UCX is fixed
+gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port" --gtest_filter=-*PrepGpuSignal*:*ucxDeviceApi*
 ./bin/test_plugin
 
 # Run NIXL client-server test

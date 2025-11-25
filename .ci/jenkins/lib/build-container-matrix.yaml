@@ -16,7 +16,7 @@ kubernetes:
   requests: "{memory: 8Gi, cpu: 4000m}"
 
 runs_on_dockers:
-  - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", privileged: true }
+  - { name: "podman-v5.6.2", url: "quay.io/podman/stable:v5.6.2", privileged: true }
 
 # Build matrix
 matrix:
@@ -57,8 +57,6 @@ steps:
   - name: Prepare
     run: |
       # Setup podman and dependencies
-      rm -f /etc/containers/storage.conf
-      podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
       yum install -y git gettext
 
@@ -88,6 +86,7 @@ steps:
         --base-image-tag "${BASE_IMAGE_TAG}" \
         --tag "${LOCAL_TAG_BASE}${arch}" \
         --arch "${arch}" \
+        --build-type debug \
         --no-cache
 
   - name: Add Version Info
@@ -174,7 +173,7 @@ steps:
         echo "benchmark/nixlbench/contrib/build.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache --nixl \$WORKSPACE --ucx \$WORKSPACE/ucx-src"
       else
         echo "export UCX_REF=${UCX_VERSION}"
-        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache"
+        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache"
       fi
 
 pipeline_stop:

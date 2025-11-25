@@ -129,7 +129,7 @@ class nixlBackendEngine {
         virtual nixl_status_t connect(const std::string &remote_agent) = 0;
         virtual nixl_status_t disconnect(const std::string &remote_agent) = 0;
 
-        // Remove loaded local or remtoe metadata for target
+        // Remove loaded local or remote metadata for target
         virtual nixl_status_t unloadMD (nixlBackendMD* input) = 0;
 
         // Preparing a request, which populates the async handle as desired
@@ -203,7 +203,7 @@ class nixlBackendEngine {
             return NIXL_ERR_BACKEND;
         }
 
-        // Load remtoe metadata, if supported.
+        // Load remote metadata, if supported.
         virtual nixl_status_t loadRemoteMD (const nixlBlobDesc &input,
                                             const nixl_mem_t &nixl_mem,
                                             const std::string &remote_agent,

@@ -681,8 +681,8 @@ nixlLibfabricTopology::groupNicsWithGpus(const std::vector<NicInfo> &discovered_
             });
 
             // Split NICs among GPUs
-            int nics_per_group = nics.size() / num_groups;
-            int extra_nics = nics.size() % num_groups;
+            const int nics_per_group = nics.size() / num_groups;
+            const int extra_nics = nics.size() % num_groups;
 
             size_t nic_idx = 0;
             for (int group_idx = 0; group_idx < num_groups && group_idx < (int)gpus.size();
@@ -691,11 +691,20 @@ nixlLibfabricTopology::groupNicsWithGpus(const std::vector<NicInfo> &discovered_
                 group.has_gpu = true;
                 group.closest_gpu = gpus[group_idx];
                 group.common_ancestor = ancestor;
-                // Assign NICs to this group
-                int group_size = nics_per_group + (group_idx < extra_nics ? 1 : 0);
-                for (int i = 0; i < group_size && nic_idx < nics.size(); ++i, ++nic_idx) {
-                    group.nics.push_back(nics[nic_idx]);
+
+                if (nics.size() < (size_t)num_groups) {
+                    // Give all NICs to this GPU
+                    NIXL_DEBUG << "Fewer NICs (" << nics.size() << ") than GPUs (" << num_groups
+                               << ") at ancestor - sharing all NICs with each GPU";
+                    group.nics = nics;
+                } else {
+                    // Assign NICs to this group via partitioning
+                    int group_size = nics_per_group + (group_idx < extra_nics ? 1 : 0);
+                    for (int i = 0; i < group_size && nic_idx < nics.size(); ++i, ++nic_idx) {
+                        group.nics.push_back(nics[nic_idx]);
+                    }
                 }
+
                 if (!group.nics.empty()) {
                     nic_groups.push_back(group);
                 }

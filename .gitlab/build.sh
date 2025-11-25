@@ -144,7 +144,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
   ./autogen.sh && \
-  ./configure \
+  ./contrib/configure-release-mt \
           --prefix="${UCX_INSTALL_DIR}" \
           --enable-shared \
           --disable-static \
@@ -154,8 +154,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
-          ${UCX_CUDA_BUILD_ARGS} \
-          --enable-mt && \
+          ${UCX_CUDA_BUILD_ARGS} && \
         make -j && \
         make -j install-strip && \
         $SUDO ldconfig \
@@ -209,6 +208,18 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
 )
 
 ( \
+  cd /tmp && \
+  git clone --depth 1 https://github.com/kvcache-ai/Mooncake.git && \
+  cd Mooncake && \
+  $SUDO bash dependencies.sh && \
+  mkdir build && cd build && \
+  cmake .. -DBUILD_SHARED_LIBS=ON && \
+  make -j2 && \
+  $SUDO make install && \
+  $SUDO ldconfig
+)
+
+( \
   cd /tmp &&
   git clone --depth 1 https://github.com/google/gtest-parallel.git &&
   mkdir -p ${INSTALL_DIR}/bin &&
@@ -227,7 +238,7 @@ export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 export UCX_TLS=^cuda_ipc
 
 # shellcheck disable=SC2086
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
 ninja -j"$NPROC" -C nixl_build && ninja -j"$NPROC" -C nixl_build install
 mkdir -p dist && cp nixl_build/src/bindings/python/nixl-meta/nixl-*.whl dist/
 
