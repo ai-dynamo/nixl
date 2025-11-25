@@ -380,9 +380,6 @@ public:
 };
 
 TEST_P(SingleWriteTest, BasicSingleWriteTest) {
-    if (!hasCudaGpu()) {
-        GTEST_SKIP() << "No CUDA-capable GPU is available, skipping test.";
-    }
     std::vector<MemBuffer> src_buffers, dst_buffers;
     constexpr size_t size = 4 * 1024;
     constexpr size_t count = 1;
@@ -481,9 +478,6 @@ TEST_P(SingleWriteTest, BasicSingleWriteTest) {
 }
 
 TEST_P(SingleWriteTest, VariableSizeTest) {
-    if (!hasCudaGpu()) {
-        GTEST_SKIP() << "No CUDA-capable GPU is available, skipping test.";
-    }
     std::vector<size_t> test_sizes = {64, 256, 1024, 4096, 16384};
 
     for (size_t test_size : test_sizes) {
@@ -579,9 +573,6 @@ TEST_P(SingleWriteTest, VariableSizeTest) {
 }
 
 TEST_P(SingleWriteTest, MultipleWorkersTest) {
-    if (!hasCudaGpu()) {
-        GTEST_SKIP() << "No CUDA-capable GPU is available, skipping test.";
-    }
     constexpr size_t size = 4 * 1024;
     constexpr size_t num_iters = 100;
     constexpr unsigned index = 0;
