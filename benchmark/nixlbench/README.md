@@ -300,8 +300,8 @@ make -j$(nproc) && sudo make install
 **DOCA (Optional):**
 ```bash
 # Add Mellanox repository and install DOCA
-wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-ubuntu2404_amd64.deb
-sudo dpkg -i doca-host_3.1.0-091000-25.07-ubuntu2404_amd64.deb
+wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-ubuntu2404_amd64.deb -O doca-host.deb
+sudo dpkg -i doca-host.deb
 sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 ```
 

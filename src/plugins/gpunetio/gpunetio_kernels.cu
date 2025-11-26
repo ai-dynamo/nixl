@@ -107,7 +107,7 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
     tot_wqe = xferReqRing[pos].num;
 
     if (threadIdx.x == 0) {
-        if (qp->need_dump == true)
+        if (qp->need_mcst == true)
             base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe + 1);
         else
             base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
@@ -131,7 +131,7 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
     __syncthreads();
 
     if ((idx - blockDim.x) == (tot_wqe - 1)) {
-        if (qp->need_dump == true) {
+        if (qp->need_mcst == true) {
             wqe_idx++;
             wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
 
