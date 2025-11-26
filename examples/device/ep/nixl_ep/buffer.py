@@ -455,6 +455,7 @@ class Buffer:
         self.group_size = num_ranks
         self.num_rdma_bytes = num_rdma_bytes
         os.environ["NIXL_EP_NUM_CHANNELS"] = str(num_experts_per_rank)
+        os.environ["UCX_RC_GDA_NUM_CHANNELS"] = str(num_experts_per_rank)
         self.runtime.update_memory_buffers(num_ranks, num_rdma_bytes)
 
     def connect_ranks(self, remote_ranks: List[int]) -> None:

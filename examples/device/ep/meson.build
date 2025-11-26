@@ -60,10 +60,6 @@ if ucx_dep.found()
     ucx_build_deps = [ucx_dep]
 endif
 
-doca_build_deps = []
-if doca_gpunetio_dep.found()
-    doca_build_deps = [doca_gpunetio_dep]
-endif
 
 nixl_ep_sources = [
     'csrc/nixl_ep.cpp',
@@ -77,6 +73,15 @@ nixl_ep_inc_dirs = [
     include_directories('csrc/kernels'),
     torch_inc_dirs,
 ]
+
+doca_build_deps = []
+if doca_gpunetio_dep.found()
+    doca_build_deps = [doca_gpunetio_dep]
+    doca_inc_dirs = doca_gpunetio_dep.get_pkgconfig_variable('includedir').split(':')
+    foreach inc : doca_inc_dirs
+        nixl_ep_inc_dirs += include_directories(inc)
+    endforeach
+endif
 
 nixl_ep_cpp_args = [
     '-DHAVE_CUDA',
