@@ -160,11 +160,11 @@ if ucx_path != ''
   # Check if path is absolute
   if ucx_inc_path.startswith('/')
     ucx_dep = declare_dependency(
-      link_args : ['-L' + ucx_lib_path, '-Wl,-rpath,' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
       compile_args : ['-I' + ucx_inc_path])
   else
     ucx_dep = declare_dependency(
-      link_args : ['-L' + ucx_lib_path, '-Wl,-rpath,' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
       include_directories : include_directories(ucx_inc_path))
   endif
 else
@@ -193,16 +193,14 @@ endif
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
 if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
-    ucx_version_result = cpp.run('''
-        #include <ucp/api/ucp.h>
-        int main() {
-            unsigned major, minor, release;
-            ucp_get_version(&major, &minor, &release);
-            unsigned version = UCP_VERSION(major, minor);
-            return (version >= UCP_VERSION(1, 21)) ? 0 : 1;
-        }
-    ''', dependencies: ucx_dep, name: 'UCX version >= 1.21')
-    ucx_version_ok = ucx_version_result.returncode() == 0
+    ucx_version_ok = cpp.compiles('''
+            #include <ucp/api/ucp_version.h>
+            #include <ucs/sys/compiler_def.h>
+            int main() {
+                UCS_STATIC_ASSERT(UCP_API_MAJOR > 1 || (UCP_API_MAJOR == 1 && UCP_API_MINOR >= 21));
+                return 0;
+            }
+        ''', dependencies: ucx_dep, name: 'UCX version >= 1.21')
 
     cuda = meson.get_compiler('cuda')
     # TODO: Expose doca_gpunetio_dep through UCX
