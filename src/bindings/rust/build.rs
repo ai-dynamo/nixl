@@ -110,7 +110,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     let nixl_include_path = format!("{}/include", nixl_root_path);
     let nixl_include_paths = [
         &nixl_include_path,
-        //"../../api/cpp",
+        "../../api/cpp",
         "../../infra",
         "../../core",
         "/usr/include",
@@ -127,10 +127,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     println!("cargo:rustc-link-search=native={}", nixl_root_path);
     println!("cargo:rustc-link-search=native={}/lib", nixl_root_path);
     println!("cargo:rustc-link-search=native={}/lib64", nixl_root_path);
-    println!(
-        "cargo:rustc-link-search=native={}/lib/x86_64-linux-gnu",
-        nixl_root_path
-    );
+    println!("cargo:rustc-link-search=native={}/lib/x86_64-linux-gnu", nixl_root_path);
 
     // Try to use pkg-config if available
     if let Some(libs) = get_nixl_libs() {
@@ -144,7 +141,9 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
         println!("cargo:warning=pkg-config not available, using manual library paths");
     }
 
-    cc_builder.file("wrapper.cpp").includes(nixl_include_paths);
+    cc_builder
+        .file("wrapper.cpp")
+        .includes(nixl_include_paths);
 
     println!("cargo:rustc-link-search={}", nixl_lib_path);
 
@@ -158,7 +157,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     cc_builder.try_compile("nixl_wrapper")?;
 
     // Get the output path for bindings
-    let out_path = PathBuf::from(env::var("OUT_DIR")?);
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     // Generate bindings with minimal configuration
     let mut builder = bindgen::Builder::default()
