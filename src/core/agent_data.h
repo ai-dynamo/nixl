@@ -59,6 +59,8 @@ using nixl_comm_req_t = std::tuple<nixl_comm_t, std::string, int, nixl_blob_t>;
 
 using nixl_socket_peer_t = std::pair<std::string, int>;
 
+using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
+
 class nixlAgentData {
     private:
         std::string     name;
@@ -92,7 +94,7 @@ class nixlAgentData {
 
         // State/methods for listener thread
         nixlMDStreamListener *listener;
-        std::map<nixl_socket_peer_t, int> remoteSockets;
+        nixl_socket_map_t remoteSockets;
         std::thread commThread;
         std::vector<nixl_comm_req_t> commQueue;
         std::mutex commLock;
