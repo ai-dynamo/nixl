@@ -333,6 +333,10 @@ void Buffer::_nixl_ep_barrier_buffer_clear() {
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, max_num_ranks * sizeof(int)));
 }
 
+void Buffer::_nixl_ep_barrier_buffer_clear(int rank) {
+    CUDA_CHECK(cudaMemset(sync_buffer_ptr + rank, 0, sizeof(int)));
+}
+
 void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
     EP_HOST_ASSERT(!remote_mds.has_value() || remote_mds->size() == remote_ranks_list.size());
@@ -352,7 +356,10 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
         if (remote_mds.has_value())
             new_ranks_mds.push_back((*remote_mds)[i]);
 
-        CUDA_CHECK(cudaMemset(mask_buffer_ptr + remote_rank, 0, sizeof(int))); // Reset mask buffer for new ranks
+        if (enable_shrink) {
+            CUDA_CHECK(cudaMemset(mask_buffer_ptr + remote_rank, 0, sizeof(int))); // Reset mask buffer for new ranks
+            _nixl_ep_barrier_buffer_clear(remote_rank);
+        }
     }
 
     if (new_ranks.empty())
@@ -379,10 +386,11 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Update mask buffer to mark ranks as inactive
-    for (int removed_rank : remote_ranks_list) {
-        update_mask_buffer(removed_rank, true);  // mask=true
+    if (enable_shrink) {
+        for (int removed_rank : remote_ranks_list) {
+            update_mask_buffer(removed_rank, true);  // mask=true
+        }
     }
-
     _nixl_ep_cleanup(remote_ranks_list);
 
     _nixl_agents_peer_info_cleanup(remote_ranks_list);
@@ -683,29 +691,26 @@ void Buffer::_nixl_ep_gpu_ctx_update() {
 
     /* Copy remote counter reqs to device */
     if (nixl_ctx->gpu[0].remote_counter_reqs == nullptr) {
-        CUDA_CHECK(cudaMalloc(&nixl_ctx->gpu[0].remote_counter_reqs, num_local_experts * max_num_ranks * sizeof(nixlGpuXferReqH)));
-        CUDA_CHECK(cudaMalloc(&nixl_ctx->gpu[1].remote_counter_reqs, num_local_experts * max_num_ranks * sizeof(nixlGpuXferReqH)));
+        CUDA_CHECK(cudaMalloc(&nixl_ctx->gpu[0].remote_counter_reqs, max_num_ranks * sizeof(nixlGpuXferReqH)));
+        CUDA_CHECK(cudaMalloc(&nixl_ctx->gpu[1].remote_counter_reqs, max_num_ranks * sizeof(nixlGpuXferReqH)));
     }
 
     // Always copy the updated arrays to GPU (since new ranks may have been added)
-    CUDA_CHECK(cudaMemcpy(nixl_ctx->gpu[0].remote_counter_reqs, nixl_ctx->gpu_remote_counter_reqs_0.data(), num_local_experts * max_num_ranks * sizeof(nixlGpuXferReqH), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(nixl_ctx->gpu[1].remote_counter_reqs, nixl_ctx->gpu_remote_counter_reqs_1.data(), num_local_experts * max_num_ranks * sizeof(nixlGpuXferReqH), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(nixl_ctx->gpu[0].remote_counter_reqs, nixl_ctx->gpu_remote_counter_reqs_0.data(), max_num_ranks * sizeof(nixlGpuXferReqH), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(nixl_ctx->gpu[1].remote_counter_reqs, nixl_ctx->gpu_remote_counter_reqs_1.data(), max_num_ranks * sizeof(nixlGpuXferReqH), cudaMemcpyHostToDevice));
 
     /* Copy batch reqs to device */
     if (nixl_ctx->gpu[0].batch_reqs == nullptr)
-        CUDA_CHECK(cudaMalloc(&nixl_ctx->gpu[0].batch_reqs, num_local_experts * max_num_ranks * sizeof(nixlGpuXferReqH)));
+        CUDA_CHECK(cudaMalloc(&nixl_ctx->gpu[0].batch_reqs, max_num_ranks * sizeof(nixlGpuXferReqH)));
 
     // Always copy the updated batch arrays to GPU (since new ranks may have been added)
-    for (int dest_expert_idx = 0; dest_expert_idx < num_local_experts; dest_expert_idx++)
-        CUDA_CHECK(cudaMemcpy(nixl_ctx->gpu[0].batch_reqs + dest_expert_idx * max_num_ranks, nixl_ctx->gpu_batch_reqs[dest_expert_idx].data(), max_num_ranks * sizeof(nixlGpuXferReqH), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(nixl_ctx->gpu[0].batch_reqs, nixl_ctx->gpu_batch_reqs.data(), max_num_ranks * sizeof(nixlGpuXferReqH), cudaMemcpyHostToDevice));
     nixl_ctx->gpu[1].batch_reqs = nixl_ctx->gpu[0].batch_reqs; // Both contexts share the same batch handles, no need to duplicate them
 
     if (nixl_ctx->gpu[0].remote_barrier_reqs == nullptr)
-        CUDA_CHECK(cudaMalloc(&nixl_ctx->gpu[0].remote_barrier_reqs, num_local_experts * max_num_ranks * sizeof(nixlGpuXferReqH*)));
+        CUDA_CHECK(cudaMalloc(&nixl_ctx->gpu[0].remote_barrier_reqs, max_num_ranks * sizeof(nixlGpuXferReqH*)));
 
-    for (int dest_expert_idx = 0; dest_expert_idx < num_local_experts; dest_expert_idx++) {
-        CUDA_CHECK(cudaMemcpy(nixl_ctx->gpu[0].remote_barrier_reqs + dest_expert_idx * max_num_ranks, nixl_ctx->gpu_barrier_reqs[dest_expert_idx].data(), max_num_ranks * sizeof(nixlGpuXferReqH), cudaMemcpyHostToDevice));
-    }
+    CUDA_CHECK(cudaMemcpy(nixl_ctx->gpu[0].remote_barrier_reqs, nixl_ctx->gpu_barrier_reqs.data(), max_num_ranks * sizeof(nixlGpuXferReqH*), cudaMemcpyHostToDevice));
     nixl_ctx->gpu[1].remote_barrier_reqs = nixl_ctx->gpu[0].remote_barrier_reqs; // Both contexts share the same batch handles, no need to duplicate them
 
     /* Initialize counters P2P pointers */
@@ -739,6 +744,8 @@ void Buffer::_nixl_ep_gpu_ctx_update() {
     nixl_ctx->gpu[1].local_barrier_buffer = sync_buffer_ptr;
     nixl_ctx->gpu[0].num_ranks = max_num_ranks;
     nixl_ctx->gpu[1].num_ranks = max_num_ranks;
+    nixl_ctx->gpu[0].num_channels = env_num_channels;
+    nixl_ctx->gpu[1].num_channels = env_num_channels;
     nixl_ctx->gpu[0].rank = rank;
     nixl_ctx->gpu[1].rank = rank;
 }
@@ -747,14 +754,14 @@ void Buffer::_nixl_ep_context_init() {
     int num_local_experts = env_num_channels;
 
     nixl_ctx = std::make_unique<nixl_ep_ctx>();
-    nixl_ctx->cpu_remote_counter_reqs_0.resize(num_local_experts * max_num_ranks);
-    nixl_ctx->cpu_remote_counter_reqs_1.resize(num_local_experts * max_num_ranks);
-    nixl_ctx->gpu_remote_counter_reqs_0.resize(num_local_experts * max_num_ranks);
-    nixl_ctx->gpu_remote_counter_reqs_1.resize(num_local_experts * max_num_ranks);
-    nixl_ctx->gpu_batch_reqs.resize(num_local_experts, std::vector<nixlGpuXferReqH>(max_num_ranks));
-    nixl_ctx->cpu_batch_reqs.resize(num_local_experts, std::vector<nixlXferReqH*>(max_num_ranks));
-    nixl_ctx->cpu_barrier_reqs.resize(num_local_experts, std::vector<nixlXferReqH*>(max_num_ranks));
-    nixl_ctx->gpu_barrier_reqs.resize(num_local_experts, std::vector<nixlGpuXferReqH>(max_num_ranks));
+    nixl_ctx->cpu_remote_counter_reqs_0.resize(max_num_ranks);
+    nixl_ctx->cpu_remote_counter_reqs_1.resize(max_num_ranks);
+    nixl_ctx->gpu_remote_counter_reqs_0.resize(max_num_ranks);
+    nixl_ctx->gpu_remote_counter_reqs_1.resize(max_num_ranks);
+    nixl_ctx->gpu_batch_reqs.resize(max_num_ranks);
+    nixl_ctx->cpu_batch_reqs.resize(max_num_ranks);
+    nixl_ctx->cpu_barrier_reqs.resize(max_num_ranks);
+    nixl_ctx->gpu_barrier_reqs.resize(max_num_ranks);
     nixl_ctx->rdma_p2p_ptrs.resize(max_num_ranks);
     nixl_ctx->counters_p2p_ptrs.resize(max_num_ranks);
 }
@@ -832,28 +839,26 @@ void Buffer::_nixl_agent_init() {
 void Buffer::_nixl_ep_batches_prepare(const std::vector<int>& ranks) {
     nixl_status_t status;
 
-    for (int i = 0; i < env_num_channels; ++i) {
-        for (int j : ranks) {
-            if (j == rank) continue; // Skip self
-            if (nixl_ctx->gpu_batch_reqs[i][j]) continue; // Skip if already exported
-            nixl_xfer_dlist_t src_vram(VRAM_SEG);
-            src_vram.addDesc(nixlBlobDesc((uintptr_t)(rdma_buffer_ptr), num_rdma_bytes, get_local_device_id(), ""));
-            nixl_xfer_dlist_t dst_vram(VRAM_SEG);
-            dst_vram.addDesc(nixlBlobDesc((uintptr_t)(nixl_peer_info[j].rdma_buffer_ptr), num_rdma_bytes, nixl_peer_info[j].device_id, ""));
-            nixl_opt_args_t extra_params = {};
-            extra_params.backends.push_back(nixl_agent_info->backend);
-            extra_params.customParam = "worker_id=" + std::to_string(i);
-            status = nixl_agent_info->agent->createXferReq(NIXL_WRITE, src_vram, dst_vram, nixl_agent_info->remote_agent_names[j], nixl_ctx->cpu_batch_reqs[i][j], &extra_params);
-            EP_HOST_ASSERT(status == NIXL_SUCCESS);
-            EP_HOST_ASSERT(nixl_agent_info->agent->createGpuXferReq(*nixl_ctx->cpu_batch_reqs[i][j], nixl_ctx->gpu_batch_reqs[i][j]) == NIXL_SUCCESS);
+    for (int j : ranks) {
+        if (j == rank) continue; // Skip self
+        if (nixl_ctx->gpu_batch_reqs[j]) continue; // Skip if already exported
+        nixl_xfer_dlist_t src_vram(VRAM_SEG);
+        src_vram.addDesc(nixlBlobDesc((uintptr_t)(rdma_buffer_ptr), num_rdma_bytes, get_local_device_id(), ""));
+        nixl_xfer_dlist_t dst_vram(VRAM_SEG);
+        dst_vram.addDesc(nixlBlobDesc((uintptr_t)(nixl_peer_info[j].rdma_buffer_ptr), num_rdma_bytes, nixl_peer_info[j].device_id, ""));
+        nixl_opt_args_t extra_params = {};
+        extra_params.backends.push_back(nixl_agent_info->backend);
+        // extra_params.customParam = "worker_id=" + std::to_string(i);
+        status = nixl_agent_info->agent->createXferReq(NIXL_WRITE, src_vram, dst_vram, nixl_agent_info->remote_agent_names[j], nixl_ctx->cpu_batch_reqs[j], &extra_params);
+        EP_HOST_ASSERT(status == NIXL_SUCCESS);
+        EP_HOST_ASSERT(nixl_agent_info->agent->createGpuXferReq(*nixl_ctx->cpu_batch_reqs[j], nixl_ctx->gpu_batch_reqs[j]) == NIXL_SUCCESS);
 
-            nixl_xfer_dlist_t src_vram_ll(VRAM_SEG);
-            src_vram_ll.addDesc(nixlBlobDesc((uintptr_t)(sync_buffer_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
-            nixl_xfer_dlist_t dst_vram_ll(VRAM_SEG);
-            dst_vram_ll.addDesc(nixlBlobDesc((uintptr_t)(nixl_peer_info[j].sync_buffer_ptr), max_num_ranks * sizeof(int), nixl_peer_info[j].device_id, ""));
-            EP_HOST_ASSERT(nixl_agent_info->agent->createXferReq(NIXL_WRITE, src_vram_ll, dst_vram_ll, nixl_agent_info->remote_agent_names[j], nixl_ctx->cpu_barrier_reqs[i][j], &extra_params) == NIXL_SUCCESS);
-            EP_HOST_ASSERT(nixl_agent_info->agent->createGpuXferReq(*nixl_ctx->cpu_barrier_reqs[i][j], nixl_ctx->gpu_barrier_reqs[i][j]) == NIXL_SUCCESS);
-        }
+        nixl_xfer_dlist_t src_vram_ll(VRAM_SEG);
+        src_vram_ll.addDesc(nixlBlobDesc((uintptr_t)(sync_buffer_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
+        nixl_xfer_dlist_t dst_vram_ll(VRAM_SEG);
+        dst_vram_ll.addDesc(nixlBlobDesc((uintptr_t)(nixl_peer_info[j].sync_buffer_ptr), max_num_ranks * sizeof(int), nixl_peer_info[j].device_id, ""));
+        EP_HOST_ASSERT(nixl_agent_info->agent->createXferReq(NIXL_WRITE, src_vram_ll, dst_vram_ll, nixl_agent_info->remote_agent_names[j], nixl_ctx->cpu_barrier_reqs[j], &extra_params) == NIXL_SUCCESS);
+        EP_HOST_ASSERT(nixl_agent_info->agent->createGpuXferReq(*nixl_ctx->cpu_barrier_reqs[j], nixl_ctx->gpu_barrier_reqs[j]) == NIXL_SUCCESS);
     }
 }
 
@@ -876,37 +881,33 @@ void Buffer::_nixl_ep_p2p_ptrs_prepare(const std::vector<int>& ranks) {
 
 void Buffer::_nixl_ep_counters_prepare(const std::vector<int>& ranks) {
     int num_local_experts = env_num_channels;
+    for (int remote_rank : ranks) {
+        if (remote_rank == rank)
+            continue;
 
-    for (int expert_idx = 0; expert_idx < num_local_experts; expert_idx++) {
-        for (int remote_rank : ranks) {
-            if (remote_rank == rank)
-                continue;
+        int local_counter_idx = remote_rank; // remote_counter_reqs is indexed by [local_expert_idx, dst_rank]
 
-            int remote_counter_idx = expert_idx * max_num_ranks + rank; // remote rank's counters array is indexed by [local_expert_idx, src_rank]
-            int local_counter_idx = expert_idx * max_num_ranks + remote_rank; // remote_counter_reqs is indexed by [local_expert_idx, dst_rank]
-
-            if (nixl_peer_info[remote_rank].counters_buffer_ptr == nullptr) {
-                printf("[ERROR] _nixl_ep_counters_prepare: nixl_peer_info[%d].counters_buffer_ptr is NULL!\n", remote_rank);
-                exit(1);
-            }
-
-            // Fetch the first counter (double buffering)
-            uint64_t *remote_counter_addr = nixl_peer_info[remote_rank].counters_buffer_ptr + remote_counter_idx;
-            nixl_opt_args_t eparams = {};
-            eparams.backends.push_back(nixl_agent_info->backend);
-            eparams.customParam = "worker_id=" + std::to_string(expert_idx);
-            nixl_xfer_dlist_t dst_dlist(VRAM_SEG);
-            dst_dlist.addDesc(nixlBlobDesc((uintptr_t)remote_counter_addr, sizeof(uint64_t), nixl_peer_info[remote_rank].device_id, ""));
-            EP_HOST_ASSERT(nixl_agent_info->agent->createXferReq(NIXL_WRITE, dummy_src_dlist, dst_dlist, nixl_agent_info->remote_agent_names[remote_rank], nixl_ctx->cpu_remote_counter_reqs_0[local_counter_idx], &eparams) == NIXL_SUCCESS);
-            EP_HOST_ASSERT(nixl_agent_info->agent->createGpuXferReq(*nixl_ctx->cpu_remote_counter_reqs_0[local_counter_idx], nixl_ctx->gpu_remote_counter_reqs_0[local_counter_idx]) == NIXL_SUCCESS);
-
-            // Fetch the second counter (double buffering)
-            remote_counter_addr += max_num_ranks * num_local_experts;
-            nixl_xfer_dlist_t dst_dlist_2(VRAM_SEG);
-            dst_dlist_2.addDesc(nixlBlobDesc((uintptr_t)remote_counter_addr, sizeof(uint64_t), nixl_peer_info[remote_rank].device_id, ""));
-            EP_HOST_ASSERT(nixl_agent_info->agent->createXferReq(NIXL_WRITE, dummy_src_dlist, dst_dlist_2, nixl_agent_info->remote_agent_names[remote_rank], nixl_ctx->cpu_remote_counter_reqs_1[local_counter_idx], &eparams) == NIXL_SUCCESS);
-            EP_HOST_ASSERT(nixl_agent_info->agent->createGpuXferReq(*nixl_ctx->cpu_remote_counter_reqs_1[local_counter_idx], nixl_ctx->gpu_remote_counter_reqs_1[local_counter_idx]) == NIXL_SUCCESS);
+        if (nixl_peer_info[remote_rank].counters_buffer_ptr == nullptr) {
+            printf("[ERROR] _nixl_ep_counters_prepare: nixl_peer_info[%d].counters_buffer_ptr is NULL!\n", remote_rank);
+            exit(1);
         }
+
+        // Fetch the first counter (double buffering)
+        uint64_t *remote_counter_addr = nixl_peer_info[remote_rank].counters_buffer_ptr;
+        nixl_opt_args_t eparams = {};
+        eparams.backends.push_back(nixl_agent_info->backend);
+        // eparams.customParam = "worker_id=" + std::to_string(expert_idx);
+        nixl_xfer_dlist_t dst_dlist(VRAM_SEG);
+        dst_dlist.addDesc(nixlBlobDesc((uintptr_t)remote_counter_addr, sizeof(uint64_t), nixl_peer_info[remote_rank].device_id, ""));
+        EP_HOST_ASSERT(nixl_agent_info->agent->createXferReq(NIXL_WRITE, dummy_src_dlist, dst_dlist, nixl_agent_info->remote_agent_names[remote_rank], nixl_ctx->cpu_remote_counter_reqs_0[local_counter_idx], &eparams) == NIXL_SUCCESS);
+        EP_HOST_ASSERT(nixl_agent_info->agent->createGpuXferReq(*nixl_ctx->cpu_remote_counter_reqs_0[local_counter_idx], nixl_ctx->gpu_remote_counter_reqs_0[local_counter_idx]) == NIXL_SUCCESS);
+
+        // Fetch the second counter (double buffering)
+        remote_counter_addr += max_num_ranks * num_local_experts;
+        nixl_xfer_dlist_t dst_dlist_2(VRAM_SEG);
+        dst_dlist_2.addDesc(nixlBlobDesc((uintptr_t)remote_counter_addr, sizeof(uint64_t), nixl_peer_info[remote_rank].device_id, ""));
+        EP_HOST_ASSERT(nixl_agent_info->agent->createXferReq(NIXL_WRITE, dummy_src_dlist, dst_dlist_2, nixl_agent_info->remote_agent_names[remote_rank], nixl_ctx->cpu_remote_counter_reqs_1[local_counter_idx], &eparams) == NIXL_SUCCESS);
+        EP_HOST_ASSERT(nixl_agent_info->agent->createGpuXferReq(*nixl_ctx->cpu_remote_counter_reqs_1[local_counter_idx], nixl_ctx->gpu_remote_counter_reqs_1[local_counter_idx]) == NIXL_SUCCESS);
     }
 }
 
@@ -942,73 +943,65 @@ void Buffer::_nixl_ep_cleanup(const std::vector<int>& ranks) {
 }
 
 void Buffer::_nixl_ep_counters_cleanup(const std::vector<int>& ranks) {
-    int num_local_experts = env_num_channels;
+    for (int remote_rank : ranks) {
+        EP_HOST_ASSERT(remote_rank != rank); 
 
-    for (int expert_idx = 0; expert_idx < num_local_experts; expert_idx++) {
-        for (int remote_rank : ranks) {
-            EP_HOST_ASSERT(remote_rank != rank);
-
-            int local_counter_idx = expert_idx * max_num_ranks + remote_rank;
-
-            // Clean up remote counter requests (double buffering)
-            if (nixl_ctx->cpu_remote_counter_reqs_0[local_counter_idx] != nullptr) {
+        // Clean up remote counter requests (double buffering)
+        if (nixl_ctx->cpu_remote_counter_reqs_0[remote_rank] != nullptr) {
 
 #ifndef EP_REMOVE_ONCE
-                nixl_agent_info->agent->releaseGpuXferReq(nixl_ctx->gpu_remote_counter_reqs_0[local_counter_idx]);
-                nixl_agent_info->agent->releaseXferReq(nixl_ctx->cpu_remote_counter_reqs_0[local_counter_idx]);
+            nixl_agent_info->agent->releaseGpuXferReq(nixl_ctx->gpu_remote_counter_reqs_0[remote_rank]);
+            nixl_agent_info->agent->releaseXferReq(nixl_ctx->cpu_remote_counter_reqs_0[remote_rank]);
 #endif
-                nixl_ctx->cpu_remote_counter_reqs_0[local_counter_idx] = nullptr;
-                nixl_ctx->gpu_remote_counter_reqs_0[local_counter_idx] = nullptr;
-            }
-
-            if (nixl_ctx->cpu_remote_counter_reqs_1[local_counter_idx] != nullptr) {
+            nixl_ctx->cpu_remote_counter_reqs_0[remote_rank] = nullptr;
+            nixl_ctx->gpu_remote_counter_reqs_0[remote_rank] = nullptr;
+        }
+        
+        if (nixl_ctx->cpu_remote_counter_reqs_1[remote_rank] != nullptr) {
 #ifndef EP_REMOVE_ONCE
-                nixl_agent_info->agent->releaseGpuXferReq(nixl_ctx->gpu_remote_counter_reqs_1[local_counter_idx]);
-                nixl_agent_info->agent->releaseXferReq(nixl_ctx->cpu_remote_counter_reqs_1[local_counter_idx]);
+            nixl_agent_info->agent->releaseGpuXferReq(nixl_ctx->gpu_remote_counter_reqs_1[remote_rank]);
+            nixl_agent_info->agent->releaseXferReq(nixl_ctx->cpu_remote_counter_reqs_1[remote_rank]);
 #endif
-                nixl_ctx->cpu_remote_counter_reqs_1[local_counter_idx] = nullptr;
-                nixl_ctx->gpu_remote_counter_reqs_1[local_counter_idx] = nullptr;
-            }
+            nixl_ctx->cpu_remote_counter_reqs_1[remote_rank] = nullptr;
+            nixl_ctx->gpu_remote_counter_reqs_1[remote_rank] = nullptr;
+        }
 
-            if (nixl_ctx->cpu_barrier_reqs[expert_idx][remote_rank] != nullptr) {
+        if (nixl_ctx->cpu_barrier_reqs[remote_rank] != nullptr) {
 #ifndef EP_REMOVE_ONCE
-                nixl_agent_info->agent->releaseGpuXferReq(nixl_ctx->gpu_barrier_reqs[expert_idx][remote_rank]);
-                nixl_agent_info->agent->releaseXferReq(nixl_ctx->cpu_barrier_reqs[expert_idx][remote_rank]);
+            nixl_agent_info->agent->releaseGpuXferReq(nixl_ctx->gpu_barrier_reqs[remote_rank]);
+            nixl_agent_info->agent->releaseXferReq(nixl_ctx->cpu_barrier_reqs[remote_rank]);
 #endif
-                nixl_ctx->cpu_barrier_reqs[expert_idx][remote_rank] = nullptr;
-                nixl_ctx->gpu_barrier_reqs[expert_idx][remote_rank] = nullptr;
-            }
+            nixl_ctx->cpu_barrier_reqs[remote_rank] = nullptr;
+            nixl_ctx->gpu_barrier_reqs[remote_rank] = nullptr;
         }
     }
 }
 
 void Buffer::_nixl_ep_batches_cleanup(const std::vector<int>& ranks) {
-    for (int channel = 0; channel < env_num_channels; ++channel) {
-        for (int remote_rank : ranks) {
-            if (remote_rank == rank) continue;
-
-            // Clean up cpu_batch_reqs and gpu_batch_reqs
-            if (remote_rank < nixl_ctx->cpu_batch_reqs[channel].size() &&
-                nixl_ctx->cpu_batch_reqs[channel][remote_rank] != nullptr) {
-
-                // Release GPU transfer request first
-                if (nixl_ctx->gpu_batch_reqs[channel][remote_rank] != nullptr) {
+    for (int remote_rank : ranks) {
+        if (remote_rank == rank) continue;
+        
+        // Clean up cpu_batch_reqs and gpu_batch_reqs
+        if (remote_rank < nixl_ctx->cpu_batch_reqs.size() && 
+            nixl_ctx->cpu_batch_reqs[remote_rank] != nullptr) {
+            
+            // Release GPU transfer request first
+            if (nixl_ctx->gpu_batch_reqs[remote_rank] != nullptr) {
 #ifndef EP_REMOVE_ONCE
-                  nixl_agent_info->agent->releaseGpuXferReq(nixl_ctx->gpu_batch_reqs[channel][remote_rank]);
+                nixl_agent_info->agent->releaseGpuXferReq(nixl_ctx->gpu_batch_reqs[remote_rank]);
 #endif
-                    nixl_ctx->gpu_batch_reqs[channel][remote_rank] = nullptr;
-                }
-
-                // Release CPU transfer request
-#ifndef EP_REMOVE_ONCE
-                nixl_status_t status = nixl_agent_info->agent->releaseXferReq(nixl_ctx->cpu_batch_reqs[channel][remote_rank]);
-                if (status != NIXL_SUCCESS) {
-                    printf("[WARNING] %s: Failed to release CPU batch xfer req for rank %d on channel %d, status: %d\n",
-                           __func__, remote_rank, channel, status);
-                }
-#endif
-                nixl_ctx->cpu_batch_reqs[channel][remote_rank] = nullptr;
+                nixl_ctx->gpu_batch_reqs[remote_rank] = nullptr;
             }
+            
+            // Release CPU transfer request
+#ifndef EP_REMOVE_ONCE
+            nixl_status_t status = nixl_agent_info->agent->releaseXferReq(nixl_ctx->cpu_batch_reqs[remote_rank]);
+            if (status != NIXL_SUCCESS) {
+                printf("[WARNING] %s: Failed to release CPU batch xfer req for rank %d, status: %d\n", 
+                        __func__, remote_rank, status);
+            }
+#endif
+            nixl_ctx->cpu_batch_reqs[remote_rank] = nullptr;
         }
     }
 }
