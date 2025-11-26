@@ -765,7 +765,8 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
 
     // Initialize vectors to accommodate all possible rails (for indexing consistency)
     priv->rail_mr_list_.resize(rail_manager.getNumDataRails(), nullptr);
-    priv->rail_key_list_.resize(rail_manager.getNumDataRails(), 0);
+    priv->rail_key_list_.clear();
+    priv->rail_key_list_.resize(rail_manager.getNumDataRails(), FI_KEY_NOTAVAIL);
 
 #ifdef HAVE_CUDA
     // Set CUDA context before libfabric operations for VRAM
@@ -896,10 +897,10 @@ nixlLibfabricPublicMetadata::derive_remote_selected_endpoints() {
     remote_selected_endpoints_.clear();
 
     for (size_t i = 0; i < rail_remote_key_list_.size(); ++i) {
-        if (rail_remote_key_list_[i] != 0) {
+        if (rail_remote_key_list_[i] != FI_KEY_NOTAVAIL) {
             remote_selected_endpoints_.push_back(i);
         } else {
-            NIXL_DEBUG << "Skipping remote endpoint " << i << " with key 0";
+            NIXL_DEBUG << "Skipping remote endpoint " << i << " with FI_KEY_NOTAVAIL";
         }
     }
 }
