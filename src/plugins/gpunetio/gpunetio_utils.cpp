@@ -181,7 +181,7 @@ destroy_verbs_ah:
 }
 
 doca_error_t
-connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t remote_gid) {
+connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn) {
     doca_error_t status = DOCA_SUCCESS, tmp_status = DOCA_SUCCESS;
     doca_verbs_qp_attr *verbs_qp_attr = NULL;
 
@@ -193,11 +193,14 @@ connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t
 
     // IB
     if (eng->port_attr.link_layer == IBV_LINK_LAYER_INFINIBAND) {
+        NIXL_ERROR << "doca_verbs_ah_attr_set_dlid " << eng->dlid;
         status = doca_verbs_ah_attr_set_dlid(eng->verbs_ah_attr, eng->dlid);
         if (status != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to set dlid";
             return status;
         }
+    } else {
+        NIXL_ERROR << "doca_verbs_ah_attr_set_dlid NOT set " << eng->dlid << " link " << eng->port_attr.link_layer;
     }
 
     status = doca_verbs_qp_attr_create(&verbs_qp_attr);
@@ -362,6 +365,9 @@ threadProgressFunc(void *arg) {
     std::string remote_agent;
 
     nixlDocaEngine *eng = (nixlDocaEngine *)arg;
+    //ok only in case of single GPU device
+    cudaSetDevice(eng->cuda_id);
+    cudaFree(0);
     while (ACCESS_ONCE(*eng->pthrStop) == 0) {
         /* Accept an incoming connection: */
         client_size = sizeof(client_addr);
