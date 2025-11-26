@@ -81,7 +81,7 @@
                 if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
                   currentBuild.result = build.result
                   error("Job ${{buildJob}} failed")
-                ]
+                }}
             }}, wheel: {{
                 def buildJob = 'nixl-ci-build-wheel'
                 def build = build job: buildJob, parameters: [

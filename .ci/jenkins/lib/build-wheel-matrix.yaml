@@ -1,6 +1,6 @@
-# Build Matrix Configuration for NixL CI Pipeline
+# Build Matrix Configuration for NIXL CI Pipeline
 #
-# This file defines the build matrix configuration for the NixL CI pipeline in Jenkins.
+# This file defines the build matrix configuration for the NIXL CI pipeline in Jenkins.
 # It specifies the build environment, resources, and test matrix for continuous integration.
 #
 # =============================================================================
@@ -12,7 +12,7 @@
 # combination, rather than having wheels baked into the Docker image.
 #
 # CI Usage: --target wheel-base (build environment only)
-# User Usage: Full image (includes NixL build and wheel generation)
+# User Usage: Full image (includes NIXL build and wheel generation)
 #
 # =============================================================================
 # Key Components:
@@ -118,7 +118,7 @@ matrix:
   axes:
     manylinux:
       - "2_28"
-    # Python versions supported by NixL
+    # Python versions supported by NIXL
     # Each version gets its own wheel with appropriate ABI tags
     python_version:
       - "3.10"
@@ -165,9 +165,9 @@ steps:
       uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click setuptools tabulate auditwheel tomlkit
 
   # =============================================================================
-  # Step 2: NixL Native Library Build
+  # Step 2: NIXL Native Library Build
   # =============================================================================
-  # Compile NixL C++ libraries using meson build system
+  # Compile NIXL C++ libraries using meson build system
   # This step builds the native components that will be bundled into Python wheels
   - name: Build Nixl
     parallel: false
