@@ -16,17 +16,9 @@
  */
 
 #include "utils.cuh"
+#include "common.h"
 
 #include <gtest/gtest.h>
-
-namespace {
-inline bool hasCudaGpu() {
-    int count = 0;
-    auto err = cudaGetDeviceCount(&count);
-    return (err == cudaSuccess && count > 0);
-}
-
-} // namespace
 
 namespace gtest::nixl::gpu::single_write {
 

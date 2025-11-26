@@ -38,20 +38,6 @@
 
 constexpr auto min_chrono_time = std::chrono::steady_clock::time_point::min();
 
-namespace {
-inline bool
-hasCudaGpu() {
-#ifdef HAVE_CUDA
-    int count = 0;
-    auto err = cudaGetDeviceCount(&count);
-    return (err == cudaSuccess && count > 0);
-#else
-    return false;
-#endif
-}
-
-} // namespace
-
 namespace gtest {
 
 class MemBuffer : std::shared_ptr<void> {
