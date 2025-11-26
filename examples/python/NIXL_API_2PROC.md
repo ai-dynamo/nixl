@@ -2,7 +2,7 @@
 
 ## Overview
 
-A **basic two-process communication pattern** using NIXL demonstrating fundamental data transfer operations. This example shows both `initialize_xfer` and `make_prepped_xfer` transfer modes in a simple target-initiator pattern.
+A **basic two-process communication pattern** using NIXL demonstrating fundamental data transfer operations.
 
 **Key Features:**
 - Two transfer modes (initialize vs. prepared)
@@ -53,13 +53,13 @@ python3 nixl_api_2proc.py
 
 ### Processes
 
-**Target Process (lines 37-80):**
+**Target Process:**
 - Allocates and registers 2 buffers (256 bytes each)
 - Publishes metadata and descriptors to TCP server
 - Waits for transfers to complete (polling `check_remote_xfer_done`)
 - Passive role - data is written to/read from its buffers
 
-**Initiator Process (lines 83-183):**
+**Initiator Process:**
 - Allocates and registers 2 buffers (256 bytes each)
 - Retrieves target's metadata and descriptors
 - Performs Transfer 1: READ (using `initialize_xfer`)
@@ -68,26 +68,26 @@ python3 nixl_api_2proc.py
 
 ### Transfer Modes
 
-**Transfer 1 - Initialize Mode (lines 111-136):**
+**Transfer 1 - Initialize Mode:**
 ```python
-xfer_handle_1 = nixl_agent2.initialize_xfer(
-    "READ", agent2_xfer_descs, agent1_xfer_descs, remote_name, b"UUID1"
+xfer_handle_1 = initiator_agent.initialize_xfer(
+    "READ", initiator_xfer_descs, target_xfer_descs, remote_name, b"UUID1"
 )
-state = nixl_agent2.transfer(xfer_handle_1)
+state = initiator_agent.transfer(xfer_handle_1)
 # Poll for completion
-while nixl_agent2.check_xfer_state(xfer_handle_1) != "DONE":
+while initiator_agent.check_xfer_state(xfer_handle_1) != "DONE":
     time.sleep(0.001)
 ```
 
-**Transfer 2 - Prepared Mode (lines 138-172):**
+**Transfer 2 - Prepared Mode:**
 ```python
-local_prep_handle = nixl_agent2.prep_xfer_dlist(
-    "NIXL_INIT_AGENT", [(addr3, buf_size, 0), (addr4, buf_size, 0)], "DRAM"
+local_prep_handle = initiator_agent.prep_xfer_dlist(
+    "NIXL_INIT_AGENT", [(initiator_addr, buf_size, 0), (initiator_addr2, buf_size, 0)], "DRAM"
 )
-remote_prep_handle = nixl_agent2.prep_xfer_dlist(
-    remote_name, agent1_xfer_descs, "DRAM"
+remote_prep_handle = initiator_agent.prep_xfer_dlist(
+    remote_name, target_xfer_descs, "DRAM"
 )
-xfer_handle_2 = nixl_agent2.make_prepped_xfer(
+xfer_handle_2 = initiator_agent.make_prepped_xfer(
     "WRITE", local_prep_handle, [0, 1], remote_prep_handle, [1, 0], b"UUID2"
 )
 ```
@@ -96,47 +96,47 @@ xfer_handle_2 = nixl_agent2.make_prepped_xfer(
 
 ## Code Structure
 
-### Phase 1: Setup (lines 37-57, 83-101)
+### Phase 1: Setup
 
 **Target:**
 ```python
 # Create agent with UCX backend
 agent_config = nixl_agent_config(backends=["UCX"])
-nixl_agent1 = nixl_agent("target", agent_config)
+target_agent = nixl_agent("target", agent_config)
 
 # Allocate memory (2 buffers, 256 bytes each)
-addr1 = nixl_utils.malloc_passthru(buf_size * 2)
-addr2 = addr1 + buf_size
+target_addr = nixl_utils.malloc_passthru(buf_size * 2)
+target_addr2 = target_addr + buf_size
 
 # Create descriptors (4-tuple for registration, 3-tuple for transfer)
-agent1_reg_descs = nixl_agent1.get_reg_descs(agent1_strings, "DRAM")
-agent1_xfer_descs = nixl_agent1.get_xfer_descs(agent1_addrs, "DRAM")
+target_reg_descs = target_agent.get_reg_descs(target_strings, "DRAM")
+target_xfer_descs = target_agent.get_xfer_descs(target_addrs, "DRAM")
 
 # Register with NIXL
-nixl_agent1.register_memory(agent1_reg_descs)
+target_agent.register_memory(target_reg_descs)
 ```
 
 **Initiator:**
 ```python
 # Create agent (uses default config)
-nixl_agent2 = nixl_agent("initiator", None)
+initiator_agent = nixl_agent("initiator", None)
 # Similar allocation and registration...
 ```
 
-### Phase 2: Metadata Exchange (lines 59-62, 103-109)
+### Phase 2: Metadata Exchange
 
 ```python
 # Target: Publish
-publish_agent_metadata(nixl_agent1, "target_meta")
-publish_descriptors(nixl_agent1, agent1_xfer_descs, "target_descs")
+publish_agent_metadata(target_agent, "target_meta")
+publish_descriptors(target_agent, target_xfer_descs, "target_descs")
 
 # Initiator: Retrieve
-remote_name = retrieve_agent_metadata(nixl_agent2, "target_meta",
+remote_name = retrieve_agent_metadata(initiator_agent, "target_meta",
                                      timeout=10.0, role_name="initiator")
-agent1_xfer_descs = retrieve_descriptors(nixl_agent2, "target_descs")
+target_xfer_descs = retrieve_descriptors(initiator_agent, "target_descs")
 ```
 
-### Phase 3: Transfers (lines 111-172)
+### Phase 3: Transfers
 
 **Transfer 1 - Simple approach:**
 - Use `initialize_xfer()` for one-time transfers
@@ -148,17 +148,17 @@ agent1_xfer_descs = retrieve_descriptors(nixl_agent2, "target_descs")
 - Pre-creates reusable transfer handles
 - Better for repeated transfers
 
-### Phase 4: Synchronization (lines 64-75)
+### Phase 4: Synchronization
 
 **Target waits for completion:**
 ```python
-while not nixl_agent1.check_remote_xfer_done("initiator", b"UUID1"):
+while not target_agent.check_remote_xfer_done("initiator", b"UUID1"):
     time.sleep(0.001)
 ```
 
 **Initiator polls transfer state:**
 ```python
-while nixl_agent2.check_xfer_state(xfer_handle_1) != "DONE":
+while initiator_agent.check_xfer_state(xfer_handle_1) != "DONE":
     time.sleep(0.001)
 ```
 
@@ -209,15 +209,15 @@ while nixl_agent2.check_xfer_state(xfer_handle_1) != "DONE":
 | **Reusability** | One-time use | Reusable handles |
 | **Performance** | Good for occasional | Better for repeated |
 | **Use Case** | Simple transfers | High-frequency transfers |
-| **Example** | Transfer 1 (line 113) | Transfer 2 (line 150) |
+| **Example** | Transfer 1 in code | Transfer 2 in code |
 
 ---
 
 ## References
 
-- **Advanced Example**: `nixl_sender_receiver.py` - Queue-based flow control
+- **General Guide**: `NIXL_PYTHON_GUIDE.md` - Transfer modes, polling, notifications
+- **Advanced Example**: `nixl_sender_receiver.py` - Streaming with backpressure
 - **Utility Functions**: `nixl_metadata_utils.py`, `nixl_memory_utils.py`
-- **NIXL Examples**: `nixl_api_example.py`
 
 ---
 

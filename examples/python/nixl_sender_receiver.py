@@ -47,7 +47,10 @@ logger = get_logger(__name__)
 NUM_BUFFERS = 64  # Queue size
 BUFFER_SIZE = 16 * 1024 * 1024  # 16MB - larger = more efficient RDMA
 NUM_TRANSFERS = 1000  # Many transfers to amortize overhead
-HEAD_UPDATE_INTERVAL = max(1, NUM_BUFFERS // 2)  # Not used in streaming mode
+
+# Backpressure configuration
+PROGRESS_UPDATE_INTERVAL = max(1, NUM_BUFFERS // 4)  # Receiver sends progress every N messages
+BACKPRESSURE_THRESHOLD = NUM_BUFFERS - 4  # Sender checks backpressure when this far ahead
 
 
 # Define offsets within the memory allocation (using uint8 for head/tail to save space)
@@ -68,17 +71,17 @@ def receiver_process():
 
     # Create NIXL agent
     config = nixl_agent_config(backends=["UCX"])
-    agent = nixl_agent("receiver", config)
+    receiver_agent = nixl_agent("receiver", config)
 
     # Allocate and register shared memory for buffers only
     memory_addr = nixl_utils.malloc_passthru(TOTAL_MEMORY_SIZE)
     memory_reg_desc = [(memory_addr, TOTAL_MEMORY_SIZE, 0, "shared_memory")]
-    memory_reg_descs = agent.get_reg_descs(memory_reg_desc, "DRAM")
-    agent.register_memory(memory_reg_descs)
+    memory_reg_descs = receiver_agent.get_reg_descs(memory_reg_desc, "DRAM")
+    receiver_agent.register_memory(memory_reg_descs)
 
     # Create buffer descriptors (sender will RDMA write to these)
     buffers_xfer_desc = [(memory_addr + BUFFER_BASE_OFFSET + i * BUFFER_ENTRY_SIZE, BUFFER_SIZE, 0) for i in range(NUM_BUFFERS)]
-    buffers_xfer_descs = agent.get_xfer_descs(buffers_xfer_desc, "DRAM")
+    buffers_xfer_descs = receiver_agent.get_xfer_descs(buffers_xfer_desc, "DRAM")
 
     logger.info(f"[receiver] Allocated shared memory at 0x{memory_addr:x}, size {TOTAL_MEMORY_SIZE} bytes")
 
@@ -88,25 +91,28 @@ def receiver_process():
         write_uint64(buffer_base_addr + i * BUFFER_ENTRY_SIZE, 0xFFFFFFFFFFFFFFFF)
 
     # Exchange metadata and descriptors
-    publish_agent_metadata(agent, "receiver_metadata")
-    publish_descriptors(agent, buffers_xfer_descs, "receiver_buffers_desc")
+    publish_agent_metadata(receiver_agent, "receiver_metadata")
+    publish_descriptors(receiver_agent, buffers_xfer_descs, "receiver_buffers_desc")
     
     # Retrieve sender's metadata
-    sender_name = retrieve_agent_metadata(agent, "sender_metadata", role_name="receiver")
+    sender_name = retrieve_agent_metadata(receiver_agent, "sender_metadata", role_name="receiver")
     if not sender_name:
         return
 
     logger.info(f"[receiver] Connected to {sender_name}")
     logger.info("[receiver] Initialized, starting main loop")
 
-    # Main loop - poll buffer headers for sequence numbers (no head/tail RDMA!)
+    # Main loop - poll buffer headers for sequence numbers with backpressure notifications
     transfers_received = 0
+    progress_updates_sent = 0
+    sequence_mismatches = 0
 
     # Performance tracking
     start_time = time.time()
     first_transfer_time = None
     time_poll = 0
     time_verify = 0
+    time_notify = 0
 
     while transfers_received < NUM_TRANSFERS:
         buffer_idx = transfers_received % NUM_BUFFERS
@@ -125,16 +131,24 @@ def receiver_process():
         if first_transfer_time is None:
             first_transfer_time = time.time()
 
-        # Verify sequence (already checked in poll, but for safety)
+        # Verify sequence - mismatch means buffer overrun!
         t0 = time.perf_counter()
         if seq != transfers_received:
             logger.error(f"[receiver] Mismatch! Expected {transfers_received}, got {seq}")
+            sequence_mismatches += 1
         time_verify += time.perf_counter() - t0
 
         # Reset buffer header for next round (if wrapping)
         write_uint64(buffer_offset, 0xFFFFFFFFFFFFFFFF)
 
         transfers_received += 1
+
+        # Send progress notification to sender (batched for efficiency)
+        if transfers_received % PROGRESS_UPDATE_INTERVAL == 0:
+            t0 = time.perf_counter()
+            receiver_agent.send_notif(sender_name, f"P:{transfers_received}".encode())
+            progress_updates_sent += 1
+            time_notify += time.perf_counter() - t0
 
         if transfers_received % 100 == 0:
             logger.info(f"[receiver] Processed {transfers_received}/{NUM_TRANSFERS}")
@@ -153,19 +167,25 @@ def receiver_process():
 
     logger.info(f"[receiver] Completed {transfers_received} transfers in {actual_transfer_time:.3f}s")
     logger.info(f"[receiver] Bandwidth: {bandwidth_mbps:.2f} MB/s")
+    logger.info(f"[receiver] Progress updates sent: {progress_updates_sent}")
+    if sequence_mismatches == 0:
+        logger.info(f"[receiver] ✓ No buffer overrun (0 mismatches)")
+    else:
+        logger.error(f"[receiver] ⚠️  BUFFER OVERRUN: {sequence_mismatches} mismatches!")
     
     # Timing breakdown
     logger.info(f"[receiver] Timing breakdown:")
     logger.info(f"  Poll for data:  {time_poll*1000:.2f} ms ({time_poll/actual_transfer_time*100:.1f}%)")
     logger.info(f"  Verify:         {time_verify*1000:.2f} ms ({time_verify/actual_transfer_time*100:.1f}%)")
-    total_measured = time_poll + time_verify
+    logger.info(f"  Send notifs:    {time_notify*1000:.2f} ms ({time_notify/actual_transfer_time*100:.1f}%)")
+    total_measured = time_poll + time_verify + time_notify
     logger.info(f"  Other/overhead: {(actual_transfer_time-total_measured)*1000:.2f} ms ({(actual_transfer_time-total_measured)/actual_transfer_time*100:.1f}%)")
 
     # Wait a bit for sender to finish its final checks before cleanup
     time.sleep(0.5)
 
     # Cleanup
-    agent.deregister_memory(memory_reg_descs)
+    receiver_agent.deregister_memory(memory_reg_descs)
     nixl_utils.free_passthru(memory_addr)
 
 
@@ -175,7 +195,7 @@ def sender_process():
 
     # Create NIXL agent
     config = nixl_agent_config(backends=["UCX"])
-    agent = nixl_agent("sender", config)
+    sender_agent = nixl_agent("sender", config)
 
     # Allocate buffers only (no head/tail pointers needed)
     buffers_size = NUM_BUFFERS * BUFFER_SIZE
@@ -183,26 +203,26 @@ def sender_process():
 
     # Register buffers
     buffers_reg_desc = [(buffers_addr, buffers_size, 0, "buffers")]
-    buffers_reg_descs = agent.get_reg_descs(buffers_reg_desc, "DRAM")
-    agent.register_memory(buffers_reg_descs)
+    buffers_reg_descs = sender_agent.get_reg_descs(buffers_reg_desc, "DRAM")
+    sender_agent.register_memory(buffers_reg_descs)
 
     logger.info(f"[sender] Allocated buffers at 0x{buffers_addr:x}, size {buffers_size} bytes")
 
     # Exchange metadata
-    publish_agent_metadata(agent, "sender_metadata")
+    publish_agent_metadata(sender_agent, "sender_metadata")
 
     # Retrieve receiver's buffer descriptors
-    remote_name = retrieve_agent_metadata(agent, "receiver_metadata", role_name="sender")
-    if not remote_name:
+    receiver_name = retrieve_agent_metadata(sender_agent, "receiver_metadata", role_name="sender")
+    if not receiver_name:
         return
 
-    receiver_buffers_descs = retrieve_descriptors(agent, "receiver_buffers_desc")
-    logger.info(f"[sender] Connected to {remote_name}")
+    receiver_buffers_descs = retrieve_descriptors(sender_agent, "receiver_buffers_desc")
+    logger.info(f"[sender] Connected to {receiver_name}")
 
     # Create transfer handles for each buffer slot
     local_buffer_list = [(buffers_addr + i * BUFFER_SIZE, BUFFER_SIZE, 0) for i in range(NUM_BUFFERS)]
-    local_buffers_prep = agent.prep_xfer_dlist("NIXL_INIT_AGENT", local_buffer_list, "DRAM")
-    remote_buffers_prep = agent.prep_xfer_dlist(remote_name, receiver_buffers_descs, "DRAM")
+    local_buffers_prep = sender_agent.prep_xfer_dlist("NIXL_INIT_AGENT", local_buffer_list, "DRAM")
+    remote_buffers_prep = sender_agent.prep_xfer_dlist(receiver_name, receiver_buffers_descs, "DRAM")
 
     if not local_buffers_prep or not remote_buffers_prep:
         logger.error("[sender] Failed to create prep lists")
@@ -211,14 +231,18 @@ def sender_process():
     # Pre-create transfer handles for each buffer slot
     buffer_xfer_handles = []
     for i in range(NUM_BUFFERS):
-        handle = agent.make_prepped_xfer("WRITE", local_buffers_prep, [i], remote_buffers_prep, [i], f"BUF_{i}".encode())
+        handle = sender_agent.make_prepped_xfer("WRITE", local_buffers_prep, [i], remote_buffers_prep, [i], f"BUF_{i}".encode())
         buffer_xfer_handles.append(handle)
     
     logger.info(f"[sender] Ready to transfer {NUM_BUFFERS} buffer slots ({BUFFER_SIZE / (1024 * 1024):.1f} MB each)")
     logger.info("[sender] Initialized, starting main loop")
 
-    # Main loop - just send with sequence numbers, no flow control
+    # Main loop - send with sequence numbers and backpressure support
     transfers_sent = 0
+    receiver_progress = 0  # Last known receiver progress
+    backpressure_checks = 0
+    backpressure_waits = 0
+    max_ahead = 0  # Track maximum distance sender got ahead of receiver
 
     # Performance tracking
     start_time = time.time()
@@ -228,15 +252,38 @@ def sender_process():
     time_write_header = 0
     time_transfer_buffer = 0
     time_wait_buffer = 0
+    time_backpressure = 0
 
     while transfers_sent < NUM_TRANSFERS:
         buffer_idx = transfers_sent % NUM_BUFFERS
         buffer_xfer_handle = buffer_xfer_handles[buffer_idx]
         
+        # Backpressure check: if we're too far ahead of receiver, wait for progress
+        t0 = time.perf_counter()
+        ahead_count = transfers_sent - receiver_progress
+        if ahead_count > max_ahead:
+            max_ahead = ahead_count
+        if ahead_count >= BACKPRESSURE_THRESHOLD:
+            backpressure_checks += 1
+            # Poll for progress notifications from receiver
+            while ahead_count >= BACKPRESSURE_THRESHOLD:
+                notifs = sender_agent.get_new_notifs()
+                if receiver_name in notifs:
+                    for msg in notifs[receiver_name]:
+                        if msg.startswith(b"P:"):
+                            progress = int(msg[2:])
+                            if progress > receiver_progress:
+                                receiver_progress = progress
+                ahead_count = transfers_sent - receiver_progress
+                if ahead_count >= BACKPRESSURE_THRESHOLD:
+                    backpressure_waits += 1
+                    time.sleep(0.0001)  # 100us sleep to avoid busy spinning
+        time_backpressure += time.perf_counter() - t0
+        
         # Wait if this buffer's previous transfer is still in progress
         t0 = time.perf_counter()
         try:
-            while agent.check_xfer_state(buffer_xfer_handle) == "PROC":
+            while sender_agent.check_xfer_state(buffer_xfer_handle) == "PROC":
                 pass  # Spin wait for completion
         except Exception:
             pass  # Handle never used yet - ready to transfer
@@ -254,7 +301,7 @@ def sender_process():
 
         # Transfer buffer (fire-and-forget)
         t0 = time.perf_counter()
-        state = agent.transfer(buffer_xfer_handle)
+        state = sender_agent.transfer(buffer_xfer_handle)
         time_transfer_buffer += time.perf_counter() - t0
 
         if state == "ERR":
@@ -263,8 +310,18 @@ def sender_process():
 
         transfers_sent += 1
 
+        # Opportunistically check for progress updates (non-blocking)
+        if transfers_sent % PROGRESS_UPDATE_INTERVAL == 0:
+            notifs = sender_agent.get_new_notifs()
+            if receiver_name in notifs:
+                for msg in notifs[receiver_name]:
+                    if msg.startswith(b"P:"):
+                        progress = int(msg[2:])
+                        if progress > receiver_progress:
+                            receiver_progress = progress
+
         if transfers_sent % 100 == 0:
-            logger.info(f"[sender] Sent {transfers_sent}/{NUM_TRANSFERS}")
+            logger.info(f"[sender] Sent {transfers_sent}/{NUM_TRANSFERS} (receiver at {receiver_progress})")
 
     # Record send completion time (before waiting for in-flight)
     send_end_time = time.time()
@@ -272,7 +329,7 @@ def sender_process():
     # Wait for all in-flight transfers to complete (for clean shutdown)
     for i in range(NUM_BUFFERS):
         try:
-            while agent.check_xfer_state(buffer_xfer_handles[i]) == "PROC":
+            while sender_agent.check_xfer_state(buffer_xfer_handles[i]) == "PROC":
                 pass
         except Exception:
             pass
@@ -296,21 +353,23 @@ def sender_process():
     logger.info(f"[sender] Completed {transfers_sent} transfers in {actual_transfer_time:.3f}s")
     logger.info(f"[sender] Bandwidth: {bandwidth_mbps:.2f} MB/s")
     logger.info(f"[sender] Send-only time: {send_time:.3f}s ({send_bandwidth:.2f} MB/s)")
+    logger.info(f"[sender] Backpressure: {backpressure_checks} checks, {backpressure_waits * 0.1:.1f}ms wait, max ahead: {max_ahead}/{NUM_BUFFERS}")
     
     # Timing breakdown
     logger.info(f"[sender] Timing breakdown:")
     logger.info(f"  Write header:     {time_write_header*1000:.2f} ms ({time_write_header/actual_transfer_time*100:.1f}%)")
     logger.info(f"  Transfer buffer:  {time_transfer_buffer*1000:.2f} ms ({time_transfer_buffer/actual_transfer_time*100:.1f}%)")
     logger.info(f"  Wait for buffer:  {time_wait_buffer*1000:.2f} ms ({time_wait_buffer/actual_transfer_time*100:.1f}%)")
-    total_measured = time_write_header + time_transfer_buffer + time_wait_buffer
+    logger.info(f"  Backpressure:     {time_backpressure*1000:.2f} ms ({time_backpressure/actual_transfer_time*100:.1f}%)")
+    total_measured = time_write_header + time_transfer_buffer + time_wait_buffer + time_backpressure
     logger.info(f"  Other/overhead:   {(actual_transfer_time-total_measured)*1000:.2f} ms ({(actual_transfer_time-total_measured)/actual_transfer_time*100:.1f}%)")
 
     # Cleanup
     for handle in buffer_xfer_handles:
-        agent.release_xfer_handle(handle)
-    agent.release_dlist_handle(local_buffers_prep)
-    agent.release_dlist_handle(remote_buffers_prep)
-    agent.deregister_memory(buffers_reg_descs)
+        sender_agent.release_xfer_handle(handle)
+    sender_agent.release_dlist_handle(local_buffers_prep)
+    sender_agent.release_dlist_handle(remote_buffers_prep)
+    sender_agent.deregister_memory(buffers_reg_descs)
     nixl_utils.free_passthru(buffers_addr)
 
 

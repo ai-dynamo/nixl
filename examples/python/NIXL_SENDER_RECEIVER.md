@@ -2,13 +2,13 @@
 
 ## Overview
 
-A **queue-based producer-consumer pattern** using NIXL with head/tail pointer flow control. Demonstrates circular buffer management with RDMA WRITE operations for high-throughput streaming.
+A **high-throughput streaming pattern** using NIXL with notification-based backpressure. Demonstrates circular buffer management with RDMA WRITE operations and flow control to prevent buffer overruns.
 
 **Key Features:**
-- Queue-based flow control (head/tail pointers)
-- RDMA WRITE for data and control
+- Notification-based backpressure (sender waits if too far ahead)
+- Sequence number verification (detects buffer overruns)
 - Circular buffer management
-- Bandwidth measurement
+- Bandwidth measurement with detailed timing breakdown
 - Reusable utility functions
 
 ---
@@ -20,9 +20,11 @@ A **queue-based producer-consumer pattern** using NIXL with head/tail pointer fl
 Edit constants at the top of `nixl_sender_receiver.py`:
 
 ```python
-NUM_BUFFERS = 2                    # Queue size (2 optimal for point-to-point)
+NUM_BUFFERS = 64                   # Number of buffer slots
 BUFFER_SIZE = 16 * 1024 * 1024     # 16MB per buffer
-NUM_TRANSFERS = 100                # Number of transfers to perform
+NUM_TRANSFERS = 700                # Number of transfers to perform
+BACKPRESSURE_THRESHOLD = 60        # NUM_BUFFERS - 4 (leave margin)
+PROGRESS_UPDATE_INTERVAL = 16      # Send progress every N transfers
 ```
 
 ### Usage
@@ -34,16 +36,18 @@ python3 nixl_sender_receiver.py
 
 **Expected Output:**
 ```
-[main] Starting sender-receiver: queue_size=2, num_transfers=100, buffer_size=16777216
+[main] Starting sender-receiver test...
 [receiver] Starting
 [sender] Starting
 ...
-[sender] Completed 100 transfers in 1.467s
-[sender] Bandwidth: 1091.01 MB/s
-[receiver] Completed 100 transfers in 1.447s
-[receiver] Bandwidth: 1105.43 MB/s
+[receiver] Bandwidth: <varies> MB/s
+[receiver] ✓ No buffer overrun (0 mismatches)
+[sender] Bandwidth: <varies> MB/s
+[sender] Backpressure: <N> checks, <N>ms wait, max ahead: 60/64
 [main] ✓ Success!
 ```
+
+> **Note:** Bandwidth values vary by platform. Expect ~1-2 GB/s on shared memory, ~10-25 GB/s on RDMA hardware.
 
 ---
 
@@ -53,85 +57,109 @@ python3 nixl_sender_receiver.py
 
 **Receiver:**
 ```
-[Tail(8B)][Buffer0][Buffer1]...  ← Sender WRITES data here
-[Head(8B)]                       ← Receiver WRITES to sender
+[Buffer0: Seq(8B) + Data][Buffer1: Seq(8B) + Data]...  ← Sender WRITES here
 ```
 
 **Sender:**
 ```
-[Tail(8B)]                       ← Local update only
-[Buffer0][Buffer1]...            ← Local data preparation
-[Head(8B)]                       ← Receiver WRITES here
+[Buffer0: Seq(8B) + Data][Buffer1: Seq(8B) + Data]...  ← Local preparation
 ```
 
-### Flow Control
+**Buffer Entry Format:**
+```
+[Sequence Number (8 bytes)][Data (BUFFER_SIZE bytes)]
+```
 
-**Queue States:**
-- Empty: `Tail == Head`
-- Full: `(Tail + 1) % NUM_BUFFERS == Head`
-- Buffer index: `Tail % NUM_BUFFERS` (sender), `Head % NUM_BUFFERS` (receiver)
+### Flow Control (Notification-Based Backpressure)
 
-**Sender:** Check queue not full → prepare data → RDMA WRITE data → update tail → RDMA WRITE tail
+**Sequence Numbers:**
+- Each transfer has a sequence number (0, 1, 2, ...)
+- Written to buffer header before RDMA WRITE
+- Receiver verifies expected sequence to detect overruns
 
-**Receiver:** Check queue not empty → process data → update head → RDMA WRITE head
+**Backpressure:**
+- Receiver sends progress notifications every N transfers
+- Sender tracks how far ahead it is from receiver
+- If `(sent - receiver_progress) >= THRESHOLD`, sender waits
+
+**Sender:** Check not too far ahead → prepare data with sequence → RDMA WRITE buffer
+
+**Receiver:** Poll for expected sequence → verify → send progress notification periodically
 
 ---
 
 ## Code Structure
 
-### Phase 1: Setup (lines 50-88, 208-241)
+### Phase 1: Setup
 ```python
 # Create NIXL agent
-agent = nixl_agent("receiver", nixl_agent_config(backends=["UCX"]))
+receiver_agent = nixl_agent("receiver", nixl_agent_config(backends=["UCX"]))
 
 # Allocate and register memory
-tail_and_buffers_addr = nixl_utils.malloc_passthru(8 + NUM_BUFFERS * BUFFER_SIZE)
-head_addr = nixl_utils.malloc_passthru(8)
-agent.register_memory(reg_descs)
+memory_addr = nixl_utils.malloc_passthru(TOTAL_MEMORY_SIZE)
+memory_reg_descs = receiver_agent.get_reg_descs(memory_reg_desc, "DRAM")
+receiver_agent.register_memory(memory_reg_descs)
 ```
 
-### Phase 2: Metadata Exchange (lines 90-102, 243-255)
+### Phase 2: Metadata Exchange
 ```python
 # Publish own metadata and descriptors
-publish_agent_metadata(agent, "receiver_meta")
-publish_descriptors(agent, tail_descs, "receiver_tail_desc")
-publish_descriptors(agent, head_descs, "receiver_head_desc")
+publish_agent_metadata(receiver_agent, "receiver_metadata")
+publish_descriptors(receiver_agent, buffers_xfer_descs, "receiver_buffers_desc")
 
 # Retrieve remote agent
-remote_name = retrieve_agent_metadata(agent, "sender_meta",
-                                     timeout=10.0, role_name="receiver")
-sender_descs = retrieve_descriptors(agent, "sender_tail_desc")
+sender_name = retrieve_agent_metadata(receiver_agent, "sender_metadata",
+                                     role_name="receiver")
 ```
 
-### Phase 3: Transfer Preparation (lines 106-115, 259-290)
+### Phase 3: Transfer Preparation
 ```python
-# Prepare reusable transfer handles
-local_prep = agent.prep_xfer_dlist("NIXL_INIT_AGENT", local_list, "DRAM")
-remote_prep = agent.prep_xfer_dlist(remote_name, remote_descs, "DRAM")
-xfer_handle = agent.make_prepped_xfer("WRITE", local_prep, [0],
-                                      remote_prep, [0], b"UUID")
+# Prepare reusable transfer handles (sender side)
+local_buffers_prep = sender_agent.prep_xfer_dlist("NIXL_INIT_AGENT", local_buffer_list, "DRAM")
+remote_buffers_prep = sender_agent.prep_xfer_dlist(receiver_name, receiver_buffers_descs, "DRAM")
+
+# Pre-create transfer handles for each buffer slot
+for i in range(NUM_BUFFERS):
+    handle = sender_agent.make_prepped_xfer("WRITE", local_buffers_prep, [i],
+                                            remote_buffers_prep, [i], f"BUF_{i}".encode())
 ```
 
-### Phase 4: Main Loop (lines 134-177, 317-371)
+### Phase 4: Main Loop
+
+**Receiver:**
 ```python
-# Receiver: consume queue
 while transfers_received < NUM_TRANSFERS:
-    remote_tail = read_uint64(local_tail_addr)
-    if remote_tail != local_head:  # Not empty
-        process_buffer(local_head % NUM_BUFFERS)
-        local_head = (local_head + 1) % NUM_BUFFERS
-        write_uint64(head_addr, local_head)
-        agent.transfer(head_xfer_handle)  # RDMA WRITE head
+    buffer_idx = transfers_received % NUM_BUFFERS
+    
+    # Poll until expected sequence number appears
+    while read_uint64(buffer_addr) != transfers_received:
+        pass
+    
+    # Verify and process
+    transfers_received += 1
+    
+    # Send progress notification periodically
+    if transfers_received % PROGRESS_INTERVAL == 0:
+        receiver_agent.send_notif(sender_name, f"P:{transfers_received}".encode())
+```
 
-# Sender: fill queue
+**Sender:**
+```python
 while transfers_sent < NUM_TRANSFERS:
-    remote_head = read_uint64(head_addr)
-    if (local_tail + 1) % NUM_BUFFERS != remote_head:  # Not full
-        prepare_buffer(local_tail % NUM_BUFFERS)
-        agent.transfer(buffer_xfer_handles[local_tail % NUM_BUFFERS])
-        local_tail = (local_tail + 1) % NUM_BUFFERS
-        write_uint64(tail_addr, local_tail)
-        agent.transfer(tail_xfer_handle)  # RDMA WRITE tail
+    # Check backpressure
+    if (transfers_sent - receiver_progress) >= THRESHOLD:
+        # Wait for receiver to catch up via notifications
+        while (transfers_sent - receiver_progress) >= THRESHOLD:
+            notifs = sender_agent.get_new_notifs()
+            # Update receiver_progress from notifications...
+    
+    # Prepare buffer with sequence number
+    buffer_idx = transfers_sent % NUM_BUFFERS
+    write_uint64(buffer_addr, transfers_sent)
+    
+    # RDMA WRITE buffer to receiver
+    sender_agent.transfer(buffer_handles[buffer_idx])
+    transfers_sent += 1
 ```
 
 ---
@@ -169,9 +197,9 @@ while transfers_sent < NUM_TRANSFERS:
 
 ## References
 
+- **General Guide**: `NIXL_PYTHON_GUIDE.md` - Transfer modes, polling, notifications, backpressure
 - **Simple Example**: `nixl_api_2proc.py` - Basic two-process transfers
 - **Utility Functions**: `nixl_metadata_utils.py`, `nixl_memory_utils.py`
-- **NIXL Examples**: `nixl_api_example.py`
 
 ---
 
@@ -230,87 +258,77 @@ while transfers_sent < NUM_TRANSFERS:
 │                      MEMORY LAYOUT                                          │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-Receiver's Memory:
-┌────────────┬──────────────┬──────────────┐
-│ Tail (8B)  │  Buffer 0    │  Buffer 1    │  ← Sender WRITES here
-└────────────┴──────────────┴──────────────┘
-     ▲
-     └─ Sender updates this via RDMA WRITE
+Buffer Entry Format (each buffer slot):
+┌──────────────────┬─────────────────────────────────────────────────┐
+│ Sequence (8B)    │  Data Payload (BUFFER_SIZE bytes)               │
+└──────────────────┴─────────────────────────────────────────────────┘
 
-┌────────────┐
-│ Head (8B)  │  ← Receiver updates locally, WRITES to sender
-└────────────┘
+Receiver's Memory (64 buffer slots):
+┌─────────────┬─────────────┬─────────────┬─────────────┐
+│  Buffer 0   │  Buffer 1   │    ...      │  Buffer 63  │  ← Sender WRITES here
+│  Seq + Data │  Seq + Data │             │  Seq + Data │
+└─────────────┴─────────────┴─────────────┴─────────────┘
 
-Sender's Memory:
-┌────────────┐
-│ Tail (8B)  │  ← Sender updates locally
-└────────────┘
+Sender's Memory (64 buffer slots):
+┌─────────────┬─────────────┬─────────────┬─────────────┐
+│  Buffer 0   │  Buffer 1   │    ...      │  Buffer 63  │  ← Sender prepares locally
+│  Seq + Data │  Seq + Data │             │  Seq + Data │
+└─────────────┴─────────────┴─────────────┴─────────────┘
 
-┌────────────┬──────────────┬──────────────┐
-│ Buffers    │  Buffer 0    │  Buffer 1    │  ← Sender fills locally
-└────────────┴──────────────┴──────────────┘
-
-┌────────────┐
-│ Head (8B)  │  ← Receiver WRITES here
-└────────────┘
+Flow Control via Notifications (not memory):
+  Receiver ───── "P:128" ─────► Sender  (progress update)
+  Receiver ───── "P:256" ─────► Sender
 ```
 
 ### Main Transfer Loop
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                   MAIN TRANSFER LOOP (Queue-Based Flow Control)             │
+│              MAIN TRANSFER LOOP (Notification-Based Backpressure)           │
 └─────────────────────────────────────────────────────────────────────────────┘
 
    Receiver                                                         Sender
    (Consumer)                                                    (Producer)
       │                                                               │
-      │   Initialize: Head = 0, Tail = 0 (queue empty)                │
-      │                                                               │
-      │◄───────────RDMA WRITE: Head = 0 (initial sync)────────────────┤
-      │                                                               │
-      │                                                               │
-      │                                            Check: Tail+1 != Head?
-      │                                            (Queue not full)   │
+      │   Initialize: receiver_progress = 0                           │
       │                                                               │
       │                                            Prepare Buffer 0   │
-      │                                            (Header: ID=0)     │
+      │                                            (Seq: 0)           │
       │                                                               │
-      │◄───────────RDMA WRITE: Data → receiver.buffer[0]──────────────┤
+      │◄───────────RDMA WRITE: Data[0] → receiver.buffer[0]───────────┤
       │                                                               │
-      │◄───────────RDMA WRITE: Tail = 1 ──────────────────────────────┤
-      │                                                               │
- Read local Tail                                                      │
- (Tail=1 != Head=0)                                                   │
- Queue not empty!                                                     │
-      │                                                               │
+ Poll buffer[0]                                                       │
+ (Seq == 0? Yes!)                                            Prepare Buffer 1
+      │                                                     (Seq: 1)  │
  Process buffer 0                                                     │
- Verify ID = 0                                                        │
+      │◄───────────RDMA WRITE: Data[1] → receiver.buffer[1]───────────┤
       │                                                               │
- Update: Head = 1                                                     │
-      │                                                               │
-      │────────────RDMA WRITE: Head = 1 ─────────────────────────────►│
-      │                                                               │
-      │                                            Read remote Head   │
-      │                                            (Head updated!)    │
-      │                                                               │
-      │                                            Check: Tail+1 != Head?
-      │                                            (Queue not full)   │
-      │                                                               │
-      │                                            Prepare Buffer 1   │
-      │                                                               │
-      │◄──────────RDMA WRITE: Data → receiver.buffer[1]───────────────┤
-      │◄──────────RDMA WRITE: Tail = 0 (wrapped)──────────────────────┤
-      │                                                               │
- Read local Tail                                                      │
- (Tail=0 != Head=1)                                                   │
+ Poll buffer[1]                                              ... continues ...
+ (Seq == 1? Yes!)                                                     │
       │                                                               │
  Process buffer 1                                                     │
- Update: Head = 0                                                     │
       │                                                               │
-      │─────────RDMA WRITE: Head = 0 ────────────────────────────────►│
+      │  ... after 16 transfers ...                                   │
       │                                                               │
-      │  ... Continue circular queue operation ...                    │
+      │─────────Notification: "P:16" ────────────────────────────────►│
+      │                                                               │
+      │                                            receiver_progress=16
+      │                                                               │
+      │  ... after 32 transfers ...                                   │
+      │                                                               │
+      │─────────Notification: "P:32" ────────────────────────────────►│
+      │                                                               │
+      │                                            receiver_progress=32
+      │                                                               │
+      │  ... sender gets 60 buffers ahead (threshold) ...             │
+      │                                                               │
+      │                                            BACKPRESSURE!      │
+      │                                            (sent - progress ≥ 60)
+      │                                            Wait for notif... │
+      │                                                               │
+      │─────────Notification: "P:48" ────────────────────────────────►│
+      │                                                               │
+      │                                            Resume sending     │
       │                                                               │
 ```
 

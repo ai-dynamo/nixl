@@ -42,42 +42,42 @@ def target_process():
 
     # Create agent
     agent_config = nixl_agent_config(backends=["UCX"])
-    nixl_agent1 = nixl_agent("target", agent_config)
+    target_agent = nixl_agent("target", agent_config)
 
     # Allocate and register memory
-    addr1 = nixl_utils.malloc_passthru(buf_size * 2)
-    addr2 = addr1 + buf_size
+    target_addr = nixl_utils.malloc_passthru(buf_size * 2)
+    target_addr2 = target_addr + buf_size
 
-    agent1_addrs = [(addr1, buf_size, 0), (addr2, buf_size, 0)]
-    agent1_strings = [(addr1, buf_size, 0, "a"), (addr2, buf_size, 0, "b")]
+    target_addrs = [(target_addr, buf_size, 0), (target_addr2, buf_size, 0)]
+    target_strings = [(target_addr, buf_size, 0, "a"), (target_addr2, buf_size, 0, "b")]
 
-    agent1_reg_descs = nixl_agent1.get_reg_descs(agent1_strings, "DRAM")
-    agent1_xfer_descs = nixl_agent1.get_xfer_descs(agent1_addrs, "DRAM")
+    target_reg_descs = target_agent.get_reg_descs(target_strings, "DRAM")
+    target_xfer_descs = target_agent.get_xfer_descs(target_addrs, "DRAM")
 
-    assert nixl_agent1.register_memory(agent1_reg_descs) is not None
+    assert target_agent.register_memory(target_reg_descs) is not None
     logger.info("[target] Memory registered")
 
     # Publish metadata and descriptors
-    publish_agent_metadata(nixl_agent1, "target_meta")
-    publish_descriptors(nixl_agent1, agent1_xfer_descs, "target_descs")
+    publish_agent_metadata(target_agent, "target_meta")
+    publish_descriptors(target_agent, target_xfer_descs, "target_descs")
     logger.info("[target] Published metadata and xfer descriptors to TCP server")
 
     # Wait for initiator to complete transfers
     logger.info("[target] Waiting for transfers...")
 
     # Check for transfer 1 completion
-    while not nixl_agent1.check_remote_xfer_done("initiator", b"UUID1"):
+    while not target_agent.check_remote_xfer_done("initiator", b"UUID1"):
         time.sleep(0.001)
     logger.info("[target] Transfer 1 done")
 
     # Check for transfer 2 completion
-    while not nixl_agent1.check_remote_xfer_done("initiator", b"UUID2"):
+    while not target_agent.check_remote_xfer_done("initiator", b"UUID2"):
         time.sleep(0.001)
     logger.info("[target] Transfer 2 done")
 
     # Cleanup
-    nixl_agent1.deregister_memory(agent1_reg_descs)
-    nixl_utils.free_passthru(addr1)
+    target_agent.deregister_memory(target_reg_descs)
+    nixl_utils.free_passthru(target_addr)
     logger.info("[target] Target process complete")
 
 
@@ -87,38 +87,38 @@ def initiator_process():
     logger.info("[initiator] Starting initiator process")
 
     # Create agent
-    nixl_agent2 = nixl_agent("initiator", None)
-    addr3 = nixl_utils.malloc_passthru(buf_size * 2)
-    addr4 = addr3 + buf_size
+    initiator_agent = nixl_agent("initiator", None)
+    initiator_addr = nixl_utils.malloc_passthru(buf_size * 2)
+    initiator_addr2 = initiator_addr + buf_size
 
-    agent2_addrs = [(addr3, buf_size, 0), (addr4, buf_size, 0)]
-    agent2_strings = [(addr3, buf_size, 0, "a"), (addr4, buf_size, 0, "b")]
+    initiator_addrs = [(initiator_addr, buf_size, 0), (initiator_addr2, buf_size, 0)]
+    initiator_strings = [(initiator_addr, buf_size, 0, "a"), (initiator_addr2, buf_size, 0, "b")]
 
-    agent2_reg_descs = nixl_agent2.get_reg_descs(agent2_strings, "DRAM")
-    agent2_xfer_descs = nixl_agent2.get_xfer_descs(agent2_addrs, "DRAM")
+    initiator_reg_descs = initiator_agent.get_reg_descs(initiator_strings, "DRAM")
+    initiator_xfer_descs = initiator_agent.get_xfer_descs(initiator_addrs, "DRAM")
 
-    agent2_descs = nixl_agent2.register_memory(agent2_reg_descs)
-    assert agent2_descs is not None
+    initiator_descs = initiator_agent.register_memory(initiator_reg_descs)
+    assert initiator_descs is not None
     logger.info("[initiator] Memory registered")
 
     # Retrieve target's metadata and descriptors
-    remote_name = retrieve_agent_metadata(nixl_agent2, "target_meta", role_name="initiator")
+    remote_name = retrieve_agent_metadata(initiator_agent, "target_meta", role_name="initiator")
     if not remote_name:
         return
 
-    agent1_xfer_descs = retrieve_descriptors(nixl_agent2, "target_descs")
+    target_xfer_descs = retrieve_descriptors(initiator_agent, "target_descs")
     logger.info("[initiator] Successfully retrieved target descriptors")
 
     # Transfer 1: initialize transfer mode
     logger.info("[initiator] Starting transfer 1 (READ)...")
-    xfer_handle_1 = nixl_agent2.initialize_xfer(
-        "READ", agent2_xfer_descs, agent1_xfer_descs, remote_name, b"UUID1"
+    xfer_handle_1 = initiator_agent.initialize_xfer(
+        "READ", initiator_xfer_descs, target_xfer_descs, remote_name, b"UUID1"
     )
     if not xfer_handle_1:
         logger.error("[initiator] Creating transfer failed")
         return
 
-    state = nixl_agent2.transfer(xfer_handle_1)
+    state = initiator_agent.transfer(xfer_handle_1)
     logger.info("[initiator] Initial transfer state: %s", state)
     if state == "ERR":
         logger.error("[initiator] Transfer failed immediately")
@@ -127,7 +127,7 @@ def initiator_process():
     # Wait for transfer 1 to complete
     init_done = False
     while not init_done:
-        state = nixl_agent2.check_xfer_state(xfer_handle_1)
+        state = initiator_agent.check_xfer_state(xfer_handle_1)
         if state == "ERR":
             logger.error("[initiator] Transfer got to Error state")
             return
@@ -138,24 +138,24 @@ def initiator_process():
 
     # Transfer 2: prep transfer mode
     logger.info("[initiator] Starting transfer 2 (WRITE)...")
-    local_prep_handle = nixl_agent2.prep_xfer_dlist(
-        "NIXL_INIT_AGENT", [(addr3, buf_size, 0), (addr4, buf_size, 0)], "DRAM"
+    local_prep_handle = initiator_agent.prep_xfer_dlist(
+        "NIXL_INIT_AGENT", [(initiator_addr, buf_size, 0), (initiator_addr2, buf_size, 0)], "DRAM"
     )
-    remote_prep_handle = nixl_agent2.prep_xfer_dlist(
-        remote_name, agent1_xfer_descs, "DRAM"
+    remote_prep_handle = initiator_agent.prep_xfer_dlist(
+        remote_name, target_xfer_descs, "DRAM"
     )
 
     assert local_prep_handle != 0
     assert remote_prep_handle != 0
 
-    xfer_handle_2 = nixl_agent2.make_prepped_xfer(
+    xfer_handle_2 = initiator_agent.make_prepped_xfer(
         "WRITE", local_prep_handle, [0, 1], remote_prep_handle, [1, 0], b"UUID2"
     )
     if not xfer_handle_2:
         logger.error("[initiator] Make prepped transfer failed")
         return
 
-    state = nixl_agent2.transfer(xfer_handle_2)
+    state = initiator_agent.transfer(xfer_handle_2)
     if state == "ERR":
         logger.error("[initiator] Transfer 2 failed immediately")
         return
@@ -163,7 +163,7 @@ def initiator_process():
     # Wait for transfer 2 to complete
     init_done = False
     while not init_done:
-        state = nixl_agent2.check_xfer_state(xfer_handle_2)
+        state = initiator_agent.check_xfer_state(xfer_handle_2)
         if state == "ERR":
             logger.error("[initiator] Transfer 2 got to Error state")
             return
@@ -173,13 +173,13 @@ def initiator_process():
         time.sleep(0.001)
 
     # Cleanup
-    nixl_agent2.release_xfer_handle(xfer_handle_1)
-    nixl_agent2.release_xfer_handle(xfer_handle_2)
-    nixl_agent2.release_dlist_handle(local_prep_handle)
-    nixl_agent2.release_dlist_handle(remote_prep_handle)
-    nixl_agent2.remove_remote_agent("target")
-    nixl_agent2.deregister_memory(agent2_reg_descs)
-    nixl_utils.free_passthru(addr3)
+    initiator_agent.release_xfer_handle(xfer_handle_1)
+    initiator_agent.release_xfer_handle(xfer_handle_2)
+    initiator_agent.release_dlist_handle(local_prep_handle)
+    initiator_agent.release_dlist_handle(remote_prep_handle)
+    initiator_agent.remove_remote_agent("target")
+    initiator_agent.deregister_memory(initiator_reg_descs)
+    nixl_utils.free_passthru(initiator_addr)
 
     logger.info("[initiator] Initiator process complete")
 
