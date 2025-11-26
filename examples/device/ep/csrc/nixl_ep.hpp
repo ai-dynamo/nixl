@@ -87,10 +87,10 @@ struct nixl_ep_ctx {
     std::vector<nixlXferReqH *> cpu_remote_counter_reqs_1; // [dest_expert_id,remote_rank], cpu ptrs to nixlXferReqH
     std::vector<nixlGpuXferReqH> gpu_remote_counter_reqs_0; // [dest_expert_id,remote_rank], gpu ptrs to nixlGpuXferReqH
     std::vector<nixlGpuXferReqH> gpu_remote_counter_reqs_1; // [dest_expert_id,remote_rank], gpu ptrs to nixlGpuXferReqH
-    std::vector<std::vector<nixlXferReqH*>> cpu_batch_reqs; // [num_local_experts][num_peers]
-    std::vector<std::vector<nixlGpuXferReqH>> gpu_batch_reqs; // [num_local_experts][num_peers]
-    std::vector<std::vector<nixlXferReqH*>> cpu_barrier_reqs;
-    std::vector<std::vector<nixlGpuXferReqH>> gpu_barrier_reqs;
+    std::vector<nixlXferReqH*> cpu_batch_reqs; // [num_peers]
+    std::vector<nixlGpuXferReqH> gpu_batch_reqs; // [num_peers]
+    std::vector<nixlXferReqH*> cpu_barrier_reqs; // [num_peers]
+    std::vector<nixlGpuXferReqH> gpu_barrier_reqs; // [num_peers]
 
     std::vector<void *> rdma_p2p_ptrs; // [num_ranks]
     std::vector<uint64_t *> counters_p2p_ptrs; // [num_ranks]
@@ -161,7 +161,7 @@ private:
     void _nixl_ep_counters_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_batches_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_p2p_ptrs_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_barrier_buffer_clear();
+    void _nixl_ep_barrier_buffer_clear(int rank);
 
 public:
     Buffer(int rank, bool explicitly_destroy, bool enable_shrink);
