@@ -11,7 +11,7 @@ timeout_minutes: 240
 # Infrastructure
 kubernetes:
   cloud: il-ipp-blossom-prod
-  namespace: swx-media
+  namespace: nbu-swx-nixl
   limits: "{memory: 16Gi, cpu: 8000m}"
   requests: "{memory: 8Gi, cpu: 4000m}"
 
