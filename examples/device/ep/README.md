@@ -74,17 +74,13 @@ export PKG_CONFIG_PATH=<path to UCX install>/lib/pkgconfig:$PKG_CONFIG_PATH
 export PKG_CONFIG_PATH=<path to DOCA install>/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
 ```
 
-Then, configure PYTHONPATH to use NIXL EP:
-```bash
-export PYTHONPATH=<path to NIXL build directory>/examples/cpp/nixl_ep
-```
 Then, configure the NIXL plugin directory so it can find UCX plugin, and set the LD_LIBRARY_PATH so UCX can find rdma-core:
 ```bash
 export NIXL_PLUGIN_DIR=<path to NIXL install directory>/lib/x86_64-linux-gnu/plugins
 export LD_LIBRARY_PATH=<path to rdma-core install>/lib:$LD_LIBRARY_PATH
 ```
 
-Finally, build and install:
+Build and install:
 
 ```bash
 meson setup build \
@@ -95,6 +91,12 @@ meson setup build \
 
 cd build
 ninja install
+```
+
+
+Finally, configure PYTHONPATH to use NIXL EP:
+```bash
+export PYTHONPATH=<path to NIXL build directory>/examples/device/ep
 ```
 
 Refer to [tests/elastic/README.md](tests/elastic/README.md) for detailed instructions on how to run the elastic test suite.

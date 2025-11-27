@@ -167,7 +167,7 @@ All code must adhere to the style guide in `docs/CodeStyle.md` and be formatted 
 
 ## Contributing Process
 
-Contributions to the code under `./examples/cpp/nixl_ep` (which is derived
+Contributions to the code under `./examples/device/ep` (which is derived
 from DeepEP and licensed under the MIT License) must be licensed under Apache
 2.0.
 
