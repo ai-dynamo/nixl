@@ -23,12 +23,12 @@ from ._api import (
 )
 
 __all__ = [
+    # Constants
+    "DEFAULT_COMM_PORT",
     # Main classes
     "nixl_agent",
     "nixl_agent_config",
+    "nixl_backend_handle",
     "nixl_prepped_dlist_handle",
     "nixl_xfer_handle",
-    "nixl_backend_handle",
-    # Constants
-    "DEFAULT_COMM_PORT",
 ]
