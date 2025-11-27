@@ -574,9 +574,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
     // Fill up with data
     void *buf;
-    AllocationType type = AllocationType::POSIX_MEMALIGN;
-
-    if (!allocateXferMemory(buffer_size, &buf, type) || !buf) {
+    if (!allocateXferMemory(buffer_size, &addr)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
         return std::nullopt;
     }
