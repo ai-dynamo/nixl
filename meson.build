@@ -201,9 +201,14 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
         ''', dependencies : [ucx_dep, doca_gpunetio_dep], args: nvcc_flags)
 
     have_host_side = cpp.compiles('''
+            #include <ucp/api/ucp_version.h>
             #include <ucp/api/device/ucp_host.h>
-            int main() { return 0; }
-        ''', dependencies: ucx_dep)
+            #include <ucs/sys/compiler_def.h>
+            int main() {
+                UCS_STATIC_ASSERT(UCP_VERSION(UCP_API_MAJOR, UCP_API_MINOR) >= UCP_VERSION(1, 21));
+                return 0;
+            }
+        ''', dependencies: ucx_dep, name: 'UCX Device API (host-side, version >= 1.21)')
 
     if have_gpu_side and have_host_side
         ucx_gpu_device_api_available = true
