@@ -315,7 +315,7 @@ enum class AllocationType { POSIX_MEMALIGN, CALLOC, MALLOC };
 static bool
 allocateXferMemory(size_t buffer_size,
                    void **addr,
-                   std::optional<AllocationType> allocation_type = std::nullopt,
+                   AllocationType type = AllocationType::POSIX_MEMALIGN,
                    std::optional<size_t> num = 1) {
 
     if (!addr) {
@@ -326,7 +326,6 @@ allocateXferMemory(size_t buffer_size,
         std::cerr << "Invalid buffer size" << std::endl;
         return false;
     }
-    AllocationType type = allocation_type.value_or(AllocationType::POSIX_MEMALIGN);
 
     if (type == AllocationType::POSIX_MEMALIGN) {
         if (xferBenchConfig::page_size == 0) {
@@ -572,7 +571,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
     // Fill up with data
     void *buf;
-    if (!allocateXferMemory(buffer_size, &addr)) {
+    if (!allocateXferMemory(buffer_size, &buf)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
         return std::nullopt;
     }
