@@ -326,7 +326,7 @@ allocateXferMemory(size_t buffer_size,
         std::cerr << "Invalid buffer size" << std::endl;
         return false;
     }
-    AllocationType type = allocation_type.value_or(AllocationType::MALLOC);
+    AllocationType type = allocation_type.value_or(AllocationType::POSIX_MEMALIGN);
 
     if (type == AllocationType::POSIX_MEMALIGN) {
         if (xferBenchConfig::page_size == 0) {
@@ -365,10 +365,7 @@ std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     void *addr;
 
-    AllocationType type = AllocationType::CALLOC;
-    if (xferBenchConfig::storage_enable_direct) {
-        type = AllocationType::POSIX_MEMALIGN;
-    }
+    AllocationType type = AllocationType::POSIX_MEMALIGN;
 
     if (!allocateXferMemory(buffer_size, &addr, type)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
@@ -577,11 +574,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
     // Fill up with data
     void *buf;
-    AllocationType type = AllocationType::MALLOC;
-
-    if (xferBenchConfig::storage_enable_direct) {
-        type = AllocationType::POSIX_MEMALIGN;
-    }
+    AllocationType type = AllocationType::POSIX_MEMALIGN;
 
     if (!allocateXferMemory(buffer_size, &buf, type) || !buf) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
