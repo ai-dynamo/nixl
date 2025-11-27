@@ -196,6 +196,10 @@ nixl_capi_status_t
 nixl_capi_opt_args_set_port(nixl_capi_opt_args_t args, uint16_t port);
 
 // Parameter access functions
+nixl_capi_status_t
+nixl_capi_create_params(nixl_capi_params_t *params);
+nixl_capi_status_t
+nixl_capi_params_add(nixl_capi_params_t params, const char *key, const char *value);
 nixl_capi_status_t nixl_capi_params_is_empty(nixl_capi_params_t params, bool* is_empty);
 nixl_capi_status_t nixl_capi_params_create_iterator(nixl_capi_params_t params, nixl_capi_param_iter_t* iter);
 nixl_capi_status_t nixl_capi_params_iterator_next(

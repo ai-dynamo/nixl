@@ -255,6 +255,64 @@ fn test_params_iteration() {
     }
 }
 
+#[test]
+fn test_params_try_from_iter() {
+    use std::collections::HashMap;
+
+    let map = HashMap::from([
+        ("key1", "value1"),
+        ("key2", "value2"),
+        ("key3", "value3"),
+    ]);
+
+    let params = Params::try_from_iter(map.iter().map(|(k, v)| (*k, *v)))
+        .expect("Failed to create params from iterator");
+
+    assert!(!params.is_empty().unwrap(), "Params should not be empty");
+
+    let mut found_keys = HashMap::new();
+    for param in params.iter().unwrap() {
+        let param = param.unwrap();
+        found_keys.insert(param.key.to_string(), param.value.to_string());
+    }
+
+    assert_eq!(found_keys.len(), 3, "Should have 3 key-value pairs");
+    assert_eq!(found_keys.get("key1"), Some(&"value1".to_string()));
+    assert_eq!(found_keys.get("key2"), Some(&"value2".to_string()));
+    assert_eq!(found_keys.get("key3"), Some(&"value3".to_string()));
+}
+
+#[test]
+fn test_params_try_clone() {
+    let agent = Agent::new("test_agent").expect("Failed to create agent");
+    let (_mems, original_params) = agent
+        .get_plugin_params("UCX")
+        .expect("Failed to get plugin params");
+
+    let copied_params = original_params.try_clone()
+        .expect("Failed to copy params");
+
+    assert_eq!(
+        original_params.is_empty().unwrap(),
+        copied_params.is_empty().unwrap(),
+        "Copied params should have same empty state"
+    );
+
+    let mut original_map = std::collections::HashMap::new();
+    for param in original_params.iter().unwrap() {
+        let param = param.unwrap();
+        original_map.insert(param.key.to_string(), param.value.to_string());
+    }
+
+    let mut copied_map = std::collections::HashMap::new();
+    for param in copied_params.iter().unwrap() {
+        let param = param.unwrap();
+        copied_map.insert(param.key.to_string(), param.value.to_string());
+    }
+
+    assert_eq!(original_map, copied_map, "Copied params should match original");
+}
+
 // #[test]
 // fn test_get_backend_params() {
 //     let agent = Agent::new("test_agent").unwrap();
