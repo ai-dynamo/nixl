@@ -615,7 +615,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         std::string serialized = ser_des.exportStr();
 
         if (serialized.size() > sizeof(notify_msg_t::msg)) {
-            NIXL_ERROR << "Notification message too large: " << serialized.size() 
+            NIXL_ERROR << "Notification message too large: " << serialized.size()
                        << " bytes, max: " << sizeof(notify_msg_t::msg) << " bytes";
         } else {
             notify_msg_t notify_msg = {};
@@ -663,7 +663,7 @@ nixlUcclEngine::getNotifs(notif_list_t &notif_list) {
             NIXL_ERROR << "Failed to deserialize notification message";
             continue;
         }
-        std::string remote_name(notify_msgs[i].name)
+        std::string remote_name(notify_msgs[i].name);
         std::string msg = ser_des.getStr("msg");
 
         notif_list.push_back(std::make_pair(remote_name, msg));
@@ -691,7 +691,7 @@ nixlUcclEngine::genNotif(const std::string &remote_agent, const std::string &msg
     std::string serialized = ser_des.exportStr();
 
     if (serialized.size() > sizeof(notify_msg_t::msg)) {
-        NIXL_ERROR << "Notification message too large: " << serialized.size() 
+        NIXL_ERROR << "Notification message too large: " << serialized.size()
                    << " bytes, max: " << sizeof(notify_msg_t::msg) << " bytes";
         return NIXL_ERR_INVALID_PARAM;
     }
