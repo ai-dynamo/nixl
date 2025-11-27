@@ -326,8 +326,8 @@ allocateXferMemory(size_t buffer_size, void **addr) {
 
     int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
     if (rc != 0 || !*addr) {
-        std::cerr << "Failed to allocate " << buffer_size
-                    << " bytes of page-aligned DRAM memory" << std::endl;
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of page-aligned DRAM memory"
+                  << std::endl;
         return false;
     }
     memset(*addr, 0, buffer_size);
