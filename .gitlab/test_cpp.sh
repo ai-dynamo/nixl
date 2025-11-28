@@ -41,10 +41,6 @@ export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 
-# Set UCX GDA max system latency to allow GDA on SYS topology
-# TODO: Remove this once CI setups have better GPU-NIC locality
-# export UCX_IB_GDA_MAX_SYS_LATENCY=1us
-
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
@@ -116,8 +112,7 @@ kill -s INT $telePID
 # fi
 
 # shellcheck disable=SC2154
-# TODO: enable PrepGpuSignal and ucxDeviceApi tests once the problem in UCX is fixed
-gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port" --gtest_filter=-*PrepGpuSignal*:*ucxDeviceApi*
+gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
 # Run NIXL client-server test
