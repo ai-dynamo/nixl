@@ -57,7 +57,7 @@ public:
      *
      * @param str   Serialized Descriptor
      */
-    nixlBasicDesc(const nixl_blob_t &str); // deserializer
+    explicit nixlBasicDesc(const nixl_blob_t &str);
     /**
      * @brief Copy constructor for nixlBasicDesc
      *
@@ -165,7 +165,7 @@ public:
      *
      * @param str   Serialized blob from another nixlBlobDesc
      */
-    nixlBlobDesc(const nixl_blob_t &str);
+    explicit nixlBlobDesc(const nixl_blob_t &str);
     /**
      * @brief Operator overloading (==) to compare nixlBlobDesc objects
      *
