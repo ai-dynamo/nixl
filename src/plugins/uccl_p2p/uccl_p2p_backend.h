@@ -20,6 +20,7 @@
 #include <vector>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <thread>
 #include <atomic>
@@ -156,8 +157,7 @@ public:
     virtual ~nixlUcclReqH() {}
 
     uccl_conn_t *conn;
-    std::vector<uint64_t> transfer_ids;
-    std::vector<uint64_t> completed_transfer_ids;
+    std::unordered_set<uint64_t> pending_transfer_ids;
     nixl_blob_t notif_msg;
 };
 

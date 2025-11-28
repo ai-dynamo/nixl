@@ -589,7 +589,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
             handle = new nixlUcclReqH(conn);
         }
         uccl_handle = static_cast<nixlUcclReqH *>(handle);
-        uccl_handle->transfer_ids.push_back(transfer_id);
+        uccl_handle->pending_transfer_ids.insert(transfer_id);
 
         NIXL_DEBUG << "Successfully posted " << (operation == NIXL_READ ? "READ" : "WRITE")
                    << " operation: " << lsize << " bytes with transfer_id: " << transfer_id;
@@ -620,22 +620,17 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         return NIXL_ERR_BACKEND;
     }
 
-    bool all_done = true;
-    for (uint64_t transfer_id : uccl_handle->transfer_ids) {
-        if (std::find(uccl_handle->completed_transfer_ids.begin(),
-                      uccl_handle->completed_transfer_ids.end(),
-                      transfer_id) != uccl_handle->completed_transfer_ids.end()) {
-            continue;
-        }
-
+    auto it = uccl_handle->pending_transfer_ids.begin();
+    while (it != uccl_handle->pending_transfer_ids.end()) {
+        uint64_t transfer_id = *it;
         int is_done = uccl_engine_xfer_status(conn, transfer_id);
         if (is_done) {
-            uccl_handle->completed_transfer_ids.push_back(transfer_id);
+            it = uccl_handle->pending_transfer_ids.erase(it);
         } else {
-            all_done = false;
-            break;
+            ++it;
         }
     }
+    bool all_done = uccl_handle->pending_transfer_ids.empty();
     if (all_done && !uccl_handle->notif_msg.empty()) {
         nixlSerDes ser_des;
         ser_des.addStr("msg", uccl_handle->notif_msg);
