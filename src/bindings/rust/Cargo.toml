@@ -33,6 +33,7 @@ stub-api = []
 thiserror = { version = "2" }
 tracing = { version = "0.1" }
 serde = { version = "1", features = ["derive"] }
+bincode = "1"
 libc = "0.2"
 
 [build-dependencies]
