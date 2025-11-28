@@ -125,7 +125,8 @@ private:
     void
     startListener();
 
-    mutable std::mutex mutex_;
+    mutable std::mutex mem_mutex_; // mem_reg_info_ mutex
+    mutable std::mutex conn_mutex_; // connected_agents_ mutex
     uccl_engine_t *engine_;
     std::string local_agent_name_;
     std::unordered_map<uint64_t, nixlUcclBackendMD *> mem_reg_info_;

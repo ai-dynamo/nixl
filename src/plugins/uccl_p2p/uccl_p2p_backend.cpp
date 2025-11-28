@@ -19,6 +19,7 @@
 #include <iostream>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <sys/socket.h>
@@ -27,7 +28,10 @@
 
 // Parse connection string in format: ip_addr:port?gpu_index
 bool
-parseConnectionString(const std::string &conn_str, char *&ip_addr, int &port, int &gpu_index) {
+parseConnectionString(const std::string &conn_str,
+                      std::unique_ptr<char[]> &ip_addr,
+                      int &port,
+                      int &gpu_index) {
     // Exit with error if neither : or ? is found in conn_str
     size_t colon_pos = conn_str.find(':');
     if (colon_pos == std::string::npos) {
@@ -41,8 +45,8 @@ parseConnectionString(const std::string &conn_str, char *&ip_addr, int &port, in
     }
 
     std::string ip_str = conn_str.substr(0, colon_pos);
-    ip_addr = new char[ip_str.length() + 1];
-    strcpy(ip_addr, ip_str.c_str());
+    ip_addr = std::make_unique<char[]>(ip_str.length() + 1);
+    strcpy(ip_addr.get(), ip_str.c_str());
 
     std::string port_str = conn_str.substr(colon_pos + 1, question_pos - colon_pos - 1);
     try {
@@ -50,7 +54,6 @@ parseConnectionString(const std::string &conn_str, char *&ip_addr, int &port, in
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Invalid port number: " << port_str;
-        delete[] ip_addr;
         return false;
     }
 
@@ -60,7 +63,6 @@ parseConnectionString(const std::string &conn_str, char *&ip_addr, int &port, in
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Invalid GPU index: " << gpu_str;
-        delete[] ip_addr;
         return false;
     }
 
@@ -88,6 +90,7 @@ getNixlParam(const nixl_b_params_t *custom_params, const std::string &key, int d
 
 nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params) {
+
     local_agent_name_ = init_params->localAgent;
     nixl_b_params_t *custom_params = init_params->customParams;
 
@@ -101,7 +104,7 @@ nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
 
 nixlUcclEngine::~nixlUcclEngine() {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::mutex> lock(mem_mutex_);
         for (auto &[addr, priv] : mem_reg_info_) {
             if (priv && priv->mr_id != 0) {
                 uccl_mr_t *mr = reinterpret_cast<uccl_mr_t *>(priv->mr_id);
@@ -113,27 +116,30 @@ nixlUcclEngine::~nixlUcclEngine() {
         }
         mem_reg_info_.clear();
     }
-    std::set<std::string> destroyed_agents;
-    for (auto &[agent_name, conn_id] : connected_agents_) {
-        if (destroyed_agents.find(agent_name) == destroyed_agents.end()) {
-            uccl_conn_t *conn = reinterpret_cast<uccl_conn_t *>(conn_id);
-            if (conn) {
-                uccl_engine_conn_destroy(conn);
-                destroyed_agents.insert(agent_name);
+    {
+        std::lock_guard<std::mutex> lock(conn_mutex_);
+        std::set<std::string> destroyed_agents;
+        for (auto &[agent_name, conn_id] : connected_agents_) {
+            if (destroyed_agents.find(agent_name) == destroyed_agents.end()) {
+                uccl_conn_t *conn = reinterpret_cast<uccl_conn_t *>(conn_id);
+                if (conn) {
+                    uccl_engine_conn_destroy(conn);
+                    destroyed_agents.insert(agent_name);
+                }
             }
         }
+        connected_agents_.clear();
     }
 
-    connected_agents_.clear();
+    if (listener_thread_.joinable()) {
+        listener_thread_.detach();
+    }
+
     if (engine_) {
         // Add a small delay to allow UCCL internal cleanup to complete
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         uccl_engine_destroy(engine_);
         engine_ = nullptr;
-    }
-
-    if (listener_thread_.joinable()) {
-        listener_thread_.detach();
     }
 }
 
@@ -152,7 +158,10 @@ nixlUcclEngine::startListener() {
         // Start the listener thread to send/get notifications from the remote agent
         uccl_engine_start_listener(conn);
         NIXL_DEBUG << "Connected to remote agent: " << ip_buf;
-        connected_agents_[ip_buf] = reinterpret_cast<uint64_t>(conn);
+        {
+            std::lock_guard<std::mutex> lock(conn_mutex_);
+            connected_agents_[ip_buf] = reinterpret_cast<uint64_t>(conn);
+        }
     }
 }
 
@@ -198,9 +207,9 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
     // Parse remote_conn_info and establish connection using UCCL engine
     NIXL_DEBUG << "UCCL engine remote_agent: " << remote_agent
                << " loadRemoteConnInfo: " << remote_conn_info;
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(conn_mutex_);
 
-    char *ip_addr = nullptr;
+    std::unique_ptr<char[]> ip_addr;
     int port = 0;
     int gpu_index = 0;
 
@@ -210,11 +219,11 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
     uccl_conn_t *conn = nullptr;
 
-    NIXL_DEBUG << "Connecting to " << ip_addr << ":" << port << "?gpu=" << gpu_index << std::endl;
-    conn = uccl_engine_connect(engine_, ip_addr, gpu_index, port);
+    NIXL_DEBUG << "Connecting to " << ip_addr.get() << ":" << port << "?gpu=" << gpu_index
+               << std::endl;
+    conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port);
     if (!conn) {
         NIXL_ERROR << "Failed to connect to remote agent " << remote_agent;
-        delete[] ip_addr;
         return NIXL_ERR_BACKEND;
     }
 
@@ -223,8 +232,6 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
     uccl_engine_start_listener(conn);
 
     connected_agents_[remote_agent] = reinterpret_cast<uint64_t>(conn);
-
-    delete[] ip_addr;
 
     return NIXL_SUCCESS;
 }
@@ -237,6 +244,7 @@ nixlUcclEngine::connect(const std::string &remote_agent) {
 
 nixl_status_t
 nixlUcclEngine::disconnect(const std::string &remote_agent) {
+    std::lock_guard<std::mutex> lock(conn_mutex_);
     auto conn_iter = connected_agents_.find(remote_agent);
     if (conn_iter == connected_agents_.end()) {
         NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
@@ -261,7 +269,7 @@ nixl_status_t
 nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
                             const nixl_mem_t &nixl_mem,
                             nixlBackendMD *&out) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mem_mutex_);
 
     if (mem_reg_info_.count(mem.addr)) {
         auto priv = mem_reg_info_[mem.addr];
@@ -293,7 +301,7 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
 
 nixl_status_t
 nixlUcclEngine::deregisterMem(nixlBackendMD *meta) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mem_mutex_);
     auto priv = static_cast<nixlUcclBackendMD *>(meta);
     priv->ref_cnt--;
     if (priv->ref_cnt > 0) return NIXL_SUCCESS;
@@ -365,16 +373,21 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
     nixlUcclBackendMD *rmd;
     handle = nullptr;
     NIXL_DEBUG << "UCCL PrepXfer: " << operation << " remote_agent: " << remote_agent;
-    // Get the connection for this remote agent
-    auto conn_iter = connected_agents_.find(remote_agent);
-    if (conn_iter == connected_agents_.end()) {
-        NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
-        return NIXL_ERR_BACKEND;
-    }
-    uccl_conn_t *conn = reinterpret_cast<uccl_conn_t *>(conn_iter->second);
-    if (!conn) {
-        NIXL_ERROR << "Invalid connection for remote agent: " << remote_agent;
-        return NIXL_ERR_BACKEND;
+
+    uccl_conn_t *conn = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(conn_mutex_);
+        // Get the connection for this remote agent
+        auto conn_iter = connected_agents_.find(remote_agent);
+        if (conn_iter == connected_agents_.end()) {
+            NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
+            return NIXL_ERR_BACKEND;
+        }
+        conn = reinterpret_cast<uccl_conn_t *>(conn_iter->second);
+        if (!conn) {
+            NIXL_ERROR << "Invalid connection for remote agent: " << remote_agent;
+            return NIXL_ERR_BACKEND;
+        }
     }
 
     size_t lcnt = local.descCount();
@@ -385,6 +398,14 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    const char *uccl_rcmode = std::getenv("UCCL_RCMODE");
+    if (operation == NIXL_READ) {
+        if (!uccl_rcmode || std::strcmp(uccl_rcmode, "1") != 0) {
+            NIXL_ERROR
+                << "UCCL_RCMODE environment variable must be set to 1 for NIXL_READ operations";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
     // Collect all tx_data into vectors for batch sending
     std::vector<md_t> md_vector;
     std::vector<nixlUcclBackendMD *> local_priv_vector;
@@ -398,6 +419,7 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
                    << rmd->mr_id;
 
         // Validate the local address is registered
+        std::lock_guard<std::mutex> lock(mem_mutex_);
         auto local_mem_iter = mem_reg_info_.find((uint64_t)lmd->addr);
         if (local_mem_iter == mem_reg_info_.end()) {
             NIXL_ERROR << "Local memory not registered for address: " << lmd->addr;
@@ -484,17 +506,21 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
 
     NIXL_DEBUG << "UCCL PostXfer: " << operation << " remote_agent: " << remote_agent;
 
-    // Get the connection for this remote agent
-    auto conn_iter = connected_agents_.find(remote_agent);
-    if (conn_iter == connected_agents_.end()) {
-        NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
-        return NIXL_ERR_BACKEND;
-    }
+    uccl_conn_t *conn = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(conn_mutex_);
+        // Get the connection for this remote agent
+        auto conn_iter = connected_agents_.find(remote_agent);
+        if (conn_iter == connected_agents_.end()) {
+            NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
+            return NIXL_ERR_BACKEND;
+        }
 
-    uccl_conn_t *conn = reinterpret_cast<uccl_conn_t *>(conn_iter->second);
-    if (!conn) {
-        NIXL_ERROR << "Invalid connection for remote agent: " << remote_agent;
-        return NIXL_ERR_BACKEND;
+        conn = reinterpret_cast<uccl_conn_t *>(conn_iter->second);
+        if (!conn) {
+            NIXL_ERROR << "Invalid connection for remote agent: " << remote_agent;
+            return NIXL_ERR_BACKEND;
+        }
     }
 
     size_t lcnt = local.descCount();
@@ -522,6 +548,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         }
 
         // Validate the local address is registered
+        std::lock_guard<std::mutex> lock(mem_mutex_);
         auto local_mem_iter = mem_reg_info_.find((uint64_t)lmd->addr);
         if (local_mem_iter == mem_reg_info_.end()) {
             NIXL_ERROR << "Local memory not registered for address: " << lmd->addr;
@@ -674,6 +701,7 @@ nixlUcclEngine::getNotifs(notif_list_t &notif_list) {
 
 nixl_status_t
 nixlUcclEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
+    std::lock_guard<std::mutex> lock(conn_mutex_);
     auto conn_iter = connected_agents_.find(remote_agent);
     if (conn_iter == connected_agents_.end()) {
         NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
