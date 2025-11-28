@@ -87,6 +87,15 @@ else
     echo "Worker without GPU, skipping VRAM tests"
 fi
 
+if $HAS_GPU ; then
+    for op_type in WRITE READ; do
+        for initiator in $seg_types; do
+            for target in $seg_types; do
+                run_nixlbench_two_workers --backend GPUNETIO --device_list=mlx5_0 --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+            done
+        done    done
+fi
+
 for op_type in READ WRITE; do
     for initiator in $seg_types; do
         for target in $seg_types; do
