@@ -862,7 +862,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         iov_lists.push_back(iov_list);
 
         /* Workaround for a GUSLI registration bug which resets memory to 0 */
-        if (seg_type == DRAM_SEG) {
+        if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend && seg_type == DRAM_SEG) {
             for (auto &iov : iov_list) {
                 if (isInitiator()) {
                     memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
