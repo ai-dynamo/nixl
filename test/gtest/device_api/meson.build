@@ -13,13 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Device API test utilities and sources
-device_api_inc_dirs = include_directories('.')
-
-device_api_sources = [
-    'single_write_test.cu',
-    'utils.cu'
-]
-
-# Export for parent meson.build
-device_api_test_sources = files(device_api_sources)
+# Device API test sources (common + tests)
+device_api_test_sources = files(
+    'common/device_kernels.cu',
+    'common/device_test_base.cu',
+    'tests/single_write_test.cu',
+    'tests/partial_write_test.cu',
+    'tests/full_write_test.cu',
+    'tests/signal_post_test.cu',
+    'tests/signal_local_test.cu',
+)
