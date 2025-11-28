@@ -48,6 +48,29 @@ ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
 
+echo "==== NVIDIA Peermem check ===="
+if ! lsmod | grep -q nvidia_peermem; then
+    echo "nvidia_peermem module not loaded"
+fi
+
+if [ -f /sys/kernel/mm/memory_peers/nv_mem/version ]; then
+    cat /sys/kernel/mm/memory_peers/nv_mem/version
+else
+    echo "/sys/kernel/mm/memory_peers/nv_mem/version not found "
+fi
+
+if [ -f /sys/module/nvidia_peermem/version ]; then
+    cat /sys/module/nvidia_peermem/version
+else
+    echo "/sys/module/nvidia_peermem/version not found"
+fi
+
+if [ -f /sys/module/nv_peer_mem/version ]; then
+    cat /sys/module/nv_peer_mem/version
+else
+    echo "/sys/module/nv_peer_mem/version not found"
+fi
+
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
 etcd_peer_port=$(get_next_tcp_port)
