@@ -34,6 +34,18 @@ createGpuXferReq(const nixlUcxEp &ep,
                  nixlUcxWorker &worker,
                  const std::vector<nixlUcxMem> &local_mems,
                  const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
+                 const std::vector<uint64_t> &remote_addrs,
+                 const std::vector<size_t> &remote_lengths,
+                 uint64_t signal_addr,
+                 size_t signal_len,
+                 const nixl::ucx::rkey *signal_rkey);
+
+// Deprecated: This API will be removed in NIXL version 0.9.0
+nixlGpuXferReqH
+createGpuXferReq(const nixlUcxEp &ep,
+                 nixlUcxWorker &worker,
+                 const std::vector<nixlUcxMem> &local_mems,
+                 const std::vector<const nixl::ucx::rkey *> &remote_rkeys,
                  const std::vector<uint64_t> &remote_addrs);
 
 void
