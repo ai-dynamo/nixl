@@ -263,7 +263,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         exit(EXIT_FAILURE);
     }
 
-    agent->createBackend(backend_name, backend_params, backend_engine);
+    CHECK_NIXL_ERROR(agent->createBackend(backend_name, backend_params, backend_engine),
+                     "createBackend failed!");
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
@@ -861,7 +862,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         iov_lists.push_back(iov_list);
 
         /* Workaround for a GUSLI registration bug which resets memory to 0 */
-        if (seg_type == DRAM_SEG) {
+        if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend && seg_type == DRAM_SEG) {
             for (auto &iov : iov_list) {
                 if (isInitiator()) {
                     memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);

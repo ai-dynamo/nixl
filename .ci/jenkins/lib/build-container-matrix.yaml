@@ -16,7 +16,7 @@ kubernetes:
   requests: "{memory: 8Gi, cpu: 4000m}"
 
 runs_on_dockers:
-  - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", privileged: true }
+  - { name: "podman-v5.6.2", url: "quay.io/podman/stable:v5.6.2", privileged: true }
 
 # Build matrix
 matrix:
@@ -60,7 +60,7 @@ steps:
       rm -f /etc/containers/storage.conf
       podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
-      yum install -y git gettext
+      yum install -y gettext
 
   - name: Build NIXLBench
     enable: ${ENABLE_NIXLBENCH_BUILD}

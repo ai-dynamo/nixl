@@ -25,8 +25,25 @@
 #include <stack>
 #include <optional>
 #include <mutex>
+#include "gtest/gtest.h"
+
+#ifdef HAVE_CUDA
+#include <cuda_runtime.h>
+#endif
 
 namespace gtest {
+
+inline bool
+hasCudaGpu() {
+#ifdef HAVE_CUDA
+    int count = 0;
+    auto err = cudaGetDeviceCount(&count);
+    return (err == cudaSuccess && count > 0);
+#else
+    return false;
+#endif
+}
+
 constexpr const char *
 GetMockBackendName() {
     return "MOCK_BACKEND";
@@ -102,6 +119,29 @@ private:
     uint16_t _max_port = MAX_PORT;
 };
 
+struct nixlTestParam {
+    std::string backendName;
+    bool progressThreadEnabled;
+    unsigned numWorkers;
+    unsigned numThreads;
+    std::string engineConfig;
+};
+
+using nixl_test_t = testing::TestWithParam<nixlTestParam>;
+
 } // namespace gtest
+
+#define NIXL_INSTANTIATE_TEST(_test_name,               \
+                              _test_case,               \
+                              _backend,                 \
+                              _progress_thread_enabled, \
+                              _num_workers,             \
+                              _num_threads,             \
+                              _engine_config)           \
+    INSTANTIATE_TEST_SUITE_P(                           \
+        _test_name,                                     \
+        _test_case,                                     \
+        testing::ValuesIn(std::vector<nixlTestParam>(   \
+            {{_backend, _progress_thread_enabled, _num_workers, _num_threads, _engine_config}})));
 
 #endif /* TEST_GTEST_COMMON_H */
