@@ -16,6 +16,9 @@
  */
 
 #include "utils.cuh"
+#include "common.h"
+
+#include <gtest/gtest.h>
 
 namespace gtest::nixl::gpu::single_write {
 
@@ -157,6 +160,9 @@ protected:
 
     void
     SetUp() override {
+        if (!hasCudaGpu()) {
+            GTEST_SKIP() << "No CUDA-capable GPU is available, skipping test.";
+        }
         if (cudaSetDevice(0) != cudaSuccess) {
             FAIL() << "Failed to set CUDA device 0";
         }
