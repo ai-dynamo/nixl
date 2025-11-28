@@ -309,15 +309,8 @@ iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list, nixl_xfer_dlis
     }
 }
 
-
-enum class AllocationType { POSIX_MEMALIGN, CALLOC, MALLOC };
-
 static bool
-allocateXferMemory(size_t buffer_size,
-                   void **addr,
-                   std::optional<AllocationType> allocation_type = std::nullopt,
-                   std::optional<size_t> num = 1) {
-
+allocateXferMemory(size_t buffer_size, void **addr) {
     if (!addr) {
         std::cerr << "Invalid address" << std::endl;
         return false;
@@ -326,38 +319,18 @@ allocateXferMemory(size_t buffer_size,
         std::cerr << "Invalid buffer size" << std::endl;
         return false;
     }
-    AllocationType type = allocation_type.value_or(AllocationType::MALLOC);
-
-    if (type == AllocationType::POSIX_MEMALIGN) {
-        if (xferBenchConfig::page_size == 0) {
-            std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
-            return false;
-        }
-        int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
-        if (rc != 0 || !*addr) {
-            std::cerr << "Failed to allocate " << buffer_size
-                      << " bytes of page-aligned DRAM memory" << std::endl;
-            return false;
-        }
-        memset(*addr, 0, buffer_size);
-    } else if (type == AllocationType::CALLOC) {
-        *addr = calloc(num.value_or(1), buffer_size);
-        if (!*addr) {
-            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory"
-                      << std::endl;
-            return false;
-        }
-    } else if (type == AllocationType::MALLOC) {
-        *addr = malloc(buffer_size);
-        if (!*addr) {
-            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory"
-                      << std::endl;
-            return false;
-        }
-    } else {
-        std::cerr << "Invalid allocation type" << std::endl;
+    if (xferBenchConfig::page_size == 0) {
+        std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
         return false;
     }
+
+    int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
+    if (rc != 0 || !*addr) {
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of page-aligned DRAM memory"
+                  << std::endl;
+        return false;
+    }
+    memset(*addr, 0, buffer_size);
     return true;
 }
 
@@ -365,12 +338,7 @@ std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     void *addr;
 
-    AllocationType type = AllocationType::CALLOC;
-    if (xferBenchConfig::storage_enable_direct) {
-        type = AllocationType::POSIX_MEMALIGN;
-    }
-
-    if (!allocateXferMemory(buffer_size, &addr, type)) {
+    if (!allocateXferMemory(buffer_size, &addr)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
         return std::nullopt;
     }
@@ -577,13 +545,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
     // Fill up with data
     void *buf;
-    AllocationType type = AllocationType::MALLOC;
-
-    if (xferBenchConfig::storage_enable_direct) {
-        type = AllocationType::POSIX_MEMALIGN;
-    }
-
-    if (!allocateXferMemory(buffer_size, &buf, type) || !buf) {
+    if (!allocateXferMemory(buffer_size, &buf)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
         return std::nullopt;
     }
