@@ -55,7 +55,8 @@
           githubHelper = GithubHelper.getInstance("${{GIT_PASSWORD}}", VARIABLE_FROM_POST)
         }}
         // Update GitHub commit status
-        githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher started", GitHubCommitState.PENDING)
+        def blueOceanUrl = "${{JENKINS_URL}}blue/organizations/jenkins/nixl-ci-dispatcher/detail/nixl-ci-dispatcher/${{BUILD_NUMBER}}/pipeline/"
+        githubHelper.updateCommitStatus(blueOceanUrl, "CI Dispatcher started", GitHubCommitState.PENDING)
         currentBuild.description = githubHelper.getBuildDescription()
         try {{
             // Trigger the actual build and test jobs in parallel
@@ -65,7 +66,6 @@
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ], propagate: false
-                currentBuild.description += "<br>Job: <a href='${{JENKINS_URL}}blue/organizations/jenkins/NIXL%2F${{buildJob}}/detail/${{buildJob}}/${{build.number}}/pipeline/'>${{buildJob}}</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
                 if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
                   currentBuild.result = build.result
                   error("Job ${{buildJob}} failed")
@@ -76,7 +76,6 @@
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ], propagate: false
-                currentBuild.description += "<br>Job: <a href='${{JENKINS_URL}}blue/organizations/jenkins/NIXL%2F${{buildJob}}/detail/${{buildJob}}/${{build.number}}/pipeline/'>${{buildJob}}</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
                 if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
                   currentBuild.result = build.result
                   error("Job ${{buildJob}} failed")
@@ -84,12 +83,12 @@
             }},
             failFast: false  // Continue even if some parallel jobs fail
 
-            githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher successeded", GitHubCommitState.SUCCESS)
+            githubHelper.updateCommitStatus(blueOceanUrl, "CI Dispatcher successeded", GitHubCommitState.SUCCESS)
         }} catch(Exception ex) {{
             // Handle build failures
             currentBuild.result = 'FAILURE'
             println ex
-            githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher failed", GitHubCommitState.FAILURE)
+            githubHelper.updateCommitStatus(blueOceanUrl, "CI Dispatcher failed", GitHubCommitState.FAILURE)
             error("failed")
         }}
 
@@ -324,7 +323,7 @@
     jjb_branch: 'main'            # Default branch
     jjb_gh_url: 'https://github.com/ai-dynamo/nixl'  # GitHub web URL
     jobs:
-        # - "{jjb_proj}-dispatcher"  # Create dispatcher job
+        - "{jjb_proj}-dispatcher"  # Create dispatcher job
         - "{jjb_proj}-build"       # Create build job
         - "{jjb_proj}-build-container"  # Create container builder job
         - "{jjb_proj}-test"        # Create test job
