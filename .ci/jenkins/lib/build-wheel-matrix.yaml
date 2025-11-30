@@ -57,7 +57,7 @@ registry_path: /nixl
 registry_auth: nixl_harbor_credentials
 
 credentials:
-  - credentialsId: 'svcnbu-swx-hpcx-artifactory-token'
+  - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
 
@@ -67,7 +67,7 @@ credentials:
 # High-performance build environment with substantial resources for complex builds
 kubernetes:
   cloud: il-ipp-blossom-prod
-  namespace: swx-media
+  namespace: nbu-swx-nixl
   # 16GB memory and 16 CPU cores for parallel compilation and large builds
   limits: '{memory: 16Gi, cpu: 16000m}'
   requests: '{memory: 16Gi, cpu: 16000m}'
@@ -244,7 +244,7 @@ steps:
   # Upload wheels to Artifactory (optional - enable when ready to publish)
   - name: Publish Wheels
     parallel: false
-    credentialsId: 'svcnbu-swx-hpcx-artifactory-token'
+    credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
       # Activate virtual environment
       export PATH=$VIRTUAL_ENV/bin:$PATH
