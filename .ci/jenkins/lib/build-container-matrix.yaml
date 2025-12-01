@@ -11,7 +11,7 @@ timeout_minutes: 240
 # Infrastructure
 kubernetes:
   cloud: il-ipp-blossom-prod
-  namespace: swx-media
+  namespace: nbu-swx-nixl
   limits: "{memory: 16Gi, cpu: 8000m}"
   requests: "{memory: 8Gi, cpu: 4000m}"
 
@@ -93,6 +93,7 @@ steps:
 
   - name: Add Version Info
     run: |
+      git config --global --add safe.directory '*'
       # Extract standardized 8-char commit hash for UCX version info:
       if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
