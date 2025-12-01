@@ -56,39 +56,31 @@
         }}
         // Update GitHub commit status
         def blueOceanUrl = "${{JENKINS_URL}}blue/organizations/jenkins/nixl-ci-dispatcher/detail/nixl-ci-dispatcher/${{BUILD_NUMBER}}/pipeline/"
-        githubHelper.updateCommitStatus(blueOceanUrl, "CI Dispatcher started", GitHubCommitState.PENDING)
+        githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI Started", GitHubCommitState.PENDING)
         currentBuild.description = githubHelper.getBuildDescription()
         try {{
             // Trigger the actual build and test jobs in parallel
             parallel build: {{
                 def buildJob = 'nixl-ci-build'
-                def build = build job: buildJob, parameters: [
+                build job: buildJob, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], propagate: false
-                if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
-                  currentBuild.result = build.result
-                  error("Job ${{buildJob}} failed")
-                }}
+                ]
             }}, test: {{
                 def buildJob = 'nixl-ci-test'
-                def build = build job: buildJob, parameters: [
+                build job: buildJob, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], propagate: false
-                if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
-                  currentBuild.result = build.result
-                  error("Job ${{buildJob}} failed")
-                }}
+                ]
             }},
             failFast: false  // Continue even if some parallel jobs fail
 
-            githubHelper.updateCommitStatus(blueOceanUrl, "CI Dispatcher successeded", GitHubCommitState.SUCCESS)
+            githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI Succeeded", GitHubCommitState.SUCCESS)
         }} catch(Exception ex) {{
             // Handle build failures
             currentBuild.result = 'FAILURE'
             println ex
-            githubHelper.updateCommitStatus(blueOceanUrl, "CI Dispatcher failed", GitHubCommitState.FAILURE)
+            githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI Failed", GitHubCommitState.FAILURE)
             error("failed")
         }}
 
