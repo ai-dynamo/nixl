@@ -93,6 +93,7 @@ steps:
 
   - name: Add Version Info
     run: |
+      git config --global --add safe.directory '*'
       # Extract standardized 8-char commit hash for UCX version info:
       if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
