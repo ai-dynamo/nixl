@@ -9,7 +9,7 @@ Currently, the UCCL P2P backend supports internode communication over RDMA. Intr
 
 ## Installation Guide
 
-1. Install UCCL's P2P engine manually. You can refer to the [installation guide here](https://github.com/uccl-project/uccl).
+1. Install UCCL's P2P engine manually. You can refer to the [installation guide here](https://github.com/uccl-project/uccl/p2p).
 
     ```cpp
     git clone https://github.com/uccl-project/uccl.git
