@@ -557,12 +557,11 @@ The workers automatically coordinate ranks through ETCD as they connect. Note, t
 ```bash
 # Basic UCX benchmark
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
-sleep 2
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
+sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
 
 # UCX with specific devices
 $ host1 > ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
-$ host2 > ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
+$ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
 ```
 
 **GPUNETIO Backend:**
@@ -798,7 +797,7 @@ export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging
 export UCX_PROTO_INFO=y # See transport used by UCX
 ```
 
-#### Etcd Cleanup
+#### ETCD Cleanup
 ```bash
 # If a nixlbench instance failed you need to cleanup the etcd instance before starting nixlbench again
 ETCDCTL_API=3 etcdctl del "xferbench" --prefix=true
