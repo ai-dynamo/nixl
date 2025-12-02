@@ -233,7 +233,6 @@ public:
         NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
 
         etcd::Response response = etcd->leasegrant((heartbeat.count()) * 2);
-        lease_id = response.value().lease();
 
         if (response.is_ok()) {
 
@@ -242,6 +241,7 @@ public:
             throw std::runtime_error("Failed to get least for agent " + my_agent_name +
                                      " in etcd: " + response.error_message());
         }
+        lease_id = response.value().lease();
 
         heartbeat_thread = std::thread(&nixlEtcdClient::startHeartbeatThread, this, lease_id);
         std::string agent_prefix = makeKey(my_agent_name, "");
