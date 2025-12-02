@@ -13,9 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use os_info;
 use std::env;
 use std::path::PathBuf;
+use os_info;
 
 fn get_lib_path(nixl_root_path: &str, arch: &str) -> String {
     let os_info = os_info::get();
@@ -77,25 +77,9 @@ fn get_nixl_libs() -> Option<Vec<pkg_config::Library>> {
         pkg_config::probe_library("etcd-cpp-api"),
         pkg_config::probe_library("ucx"),
     ) {
-        (
-            Ok(nixl),
-            Ok(nixl_build),
-            Ok(nixl_common),
-            Ok(stream),
-            Ok(serdes),
-            Ok(ucx_utils),
-            Ok(etcd),
-            Ok(ucx),
-        ) => Some(vec![
-            nixl,
-            nixl_build,
-            nixl_common,
-            stream,
-            serdes,
-            ucx_utils,
-            etcd,
-            ucx,
-        ]),
+        (Ok(nixl), Ok(nixl_build), Ok(nixl_common), Ok(stream), Ok(serdes), Ok(ucx_utils), Ok(etcd), Ok(ucx)) => {
+            Some(vec![nixl, nixl_build, nixl_common, stream, serdes, ucx_utils, etcd, ucx])
+        }
         _ => None,
     }
 }
