@@ -47,7 +47,23 @@ export NIXL_NO_STUBS_FALLBACK=1
 
 cargo test -- --test-threads=1
 
+# test that stubs and real wrapper defined APIs / symbols match
+g++ -c ./src/bindings/rust/wrapper.cpp -o wrapper.o -I ./src/api/cpp/
+g++ -c ./src/bindings/rust/stubs.cpp -o stubs.o
+
+diff <(nm -C --defined-only wrapper.o | awk '$2 ~ /^T$/ {print $3}' | sort) \
+     <(nm -C --defined-only stubs.o    | awk '$2 ~ /^T$/ {print $3}' | grep -v nixl_capi_stub_abort | sort)
+
+if [ $? -ne 0 ]; then
+    echo "Stubs API and wrapper API differ"
+    exit 1
+else
+    echo "Stubs API and wrapper API match"
+fi
+
+
 # test stubs build
 cargo build --features stub-api
 
 cargo package
+
