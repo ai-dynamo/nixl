@@ -528,6 +528,7 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 
 1. Ensure ETCD server is running (e.g., `docker run -p 2379:2379 quay.io/coreos/etcd`
 2. Launch multiple nixlbench instances pointing to the same ETCD server
+3. Multiple instances should be launched within the default timeout of 60s.
 
 **For single-instance storage benchmarks:**
 ```bash
@@ -538,12 +539,7 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile
 ```
 
-Note: etcd can be installed directly on host as well:
-```bash
-apt install etcd-server
-```
-
-Example:
+**For multi-instance storage benchmarks where ETCD is required:**
 ```bash
 # On host 1
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
@@ -551,8 +547,7 @@ Example:
 # On host 2
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 ```
-
-The workers automatically coordinate ranks through ETCD as they connect.
+The workers automatically coordinate ranks through ETCD as they connect. Note, the second nixlbench should be started within 60s, otherwise the first instance will stop with an error in the barrier.
 
 ### Backend-Specific Examples
 
@@ -562,9 +557,11 @@ The workers automatically coordinate ranks through ETCD as they connect.
 ```bash
 # Basic UCX benchmark
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
+sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
 
 # UCX with specific devices
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
+$ host1 > ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
+$ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
 ```
 
 **GPUNETIO Backend:**
@@ -706,20 +703,6 @@ Transfer times are higher than local storage, so consider reducing iterations:
 - Test read operations: `--op_type READ`
 - Validate data consistency: `--check_consistency`
 
-### Multi-Node Coordination
-
-Launch multiple nixlbench instances pointing to the same ETCD server:
-
-```bash
-# On host 1
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
-
-# On host 2
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
-```
-
-The workers automatically coordinate ranks through ETCD as they connect.
-
 ## Troubleshooting
 
 ### Common Build Issues
@@ -812,6 +795,12 @@ ucx_info -d  # List UCX devices
 export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging
 
 export UCX_PROTO_INFO=y # See transport used by UCX
+```
+
+#### ETCD Cleanup
+```bash
+# If a nixlbench instance failed you need to cleanup the etcd instance before starting nixlbench again
+ETCDCTL_API=3 etcdctl del "xferbench" --prefix=true
 ```
 
 ### Performance Tuning
