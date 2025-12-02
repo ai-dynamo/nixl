@@ -77,6 +77,18 @@ if __name__ == "__main__":
         action="store_true",
         help="Use ETCD for metadata exchange. Must set NIXL_ETCD_ENDPOINTS environment variable.",
     )
+    parser.add_argument(
+        "--init-port",
+        type=int,
+        default=7777,
+        help="Port for initiator used in socket exchange (disabled when using ETCD)",
+    )
+    parser.add_argument(
+        "--target-port",
+        type=int,
+        default=5555,
+        help="Port for target used in socket exchange (disabled when using ETCD)",
+    )
     args = parser.parse_args()
 
     logger.info(
@@ -101,8 +113,8 @@ if __name__ == "__main__":
 
     # Needed for socket exchange
     ip_addr = "127.0.0.1"
-    target_port = 5555
-    init_port = 7777
+    target_port = args.target_port
+    init_port = args.init_port
     # Example using nixl_agent_config
     agent_config1 = nixl_agent_config(True, True, target_port)
 

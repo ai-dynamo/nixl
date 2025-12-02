@@ -112,19 +112,19 @@ nixlBlobDesc::nixlBlobDesc(const nixlBasicDesc &desc,
 }
 
 nixlBlobDesc::nixlBlobDesc(const nixl_blob_t &blob) {
-    size_t meta_size = blob.size() - sizeof(nixlBasicDesc);
-    if (meta_size > 0) {
+    if (blob.size() > sizeof(nixlBasicDesc)) {
+        const size_t meta_size = blob.size() - sizeof(nixlBasicDesc);
         metaInfo.resize(meta_size);
         blob.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
         blob.copy(reinterpret_cast<char*>(&metaInfo[0]),
                  meta_size, sizeof(nixlBasicDesc));
-    } else if (meta_size == 0) {
+    } else if (blob.size() == sizeof(nixlBasicDesc)) {
         blob.copy(reinterpret_cast<char*>(this), sizeof(nixlBasicDesc));
     } else { // Error
         addr  = 0;
         len   = 0;
         devId = 0;
-        metaInfo.resize(0);
+        metaInfo.clear();
     }
 }
 
