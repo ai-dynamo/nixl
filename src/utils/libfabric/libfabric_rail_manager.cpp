@@ -407,7 +407,8 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
 
     // Resize output vectors to match all rails
     mr_list_out.resize(data_rails_.size(), nullptr);
-    key_list_out.resize(data_rails_.size(), 0);
+    key_list_out.clear();
+    key_list_out.resize(data_rails_.size(), FI_KEY_NOTAVAIL);
     selected_rails_out = selected_rails; // Return which rails were selected
 
     // Register memory on each selected rail

@@ -11,12 +11,12 @@ timeout_minutes: 240
 # Infrastructure
 kubernetes:
   cloud: il-ipp-blossom-prod
-  namespace: swx-media
+  namespace: nbu-swx-nixl
   limits: "{memory: 16Gi, cpu: 8000m}"
   requests: "{memory: 8Gi, cpu: 4000m}"
 
 runs_on_dockers:
-  - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", privileged: true }
+  - { name: "podman-v5.6.2", url: "quay.io/podman/stable:v5.6.2", privileged: true }
 
 # Build matrix
 matrix:
@@ -60,7 +60,7 @@ steps:
       rm -f /etc/containers/storage.conf
       podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
-      yum install -y git gettext
+      yum install -y gettext
 
   - name: Build NIXLBench
     enable: ${ENABLE_NIXLBENCH_BUILD}
@@ -93,6 +93,7 @@ steps:
 
   - name: Add Version Info
     run: |
+      git config --global --add safe.directory '*'
       # Extract standardized 8-char commit hash for UCX version info:
       if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
