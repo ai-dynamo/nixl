@@ -371,7 +371,9 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
     int result = 0;
     nixlUcclBackendMD *lmd;
     nixlUcclBackendMD *rmd;
+    bool rcmode = false;
     handle = nullptr;
+
     NIXL_DEBUG << "UCCL PrepXfer: " << operation << " remote_agent: " << remote_agent;
 
     uccl_conn_t *conn = nullptr;
@@ -399,8 +401,10 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
     }
 
     const char *uccl_rcmode = std::getenv("UCCL_RCMODE");
+    rcmode = (uccl_rcmode && std::strcmp(uccl_rcmode, "1") == 0);
+
     if (operation == NIXL_READ) {
-        if (!uccl_rcmode || std::strcmp(uccl_rcmode, "1") != 0) {
+        if (!rcmode) {
             NIXL_ERROR
                 << "UCCL_RCMODE environment variable must be set to 1 for NIXL_READ operations";
             return NIXL_ERR_INVALID_PARAM;
@@ -438,14 +442,9 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         tx_data.data_ptr = (uint64_t)rmd->addr;
         tx_data.data_size = rsize;
 
-        switch (operation) {
-        case NIXL_READ:
-            md.op = UCCL_READ;
-            break;
-        case NIXL_WRITE:
-            md.op = UCCL_WRITE;
-            break;
-        }
+        // RC mode is supported for both READ/WRITE operations
+        // UC mode is supported only for WRITE operations
+        md.op = rcmode ? UCCL_RW_RC : UCCL_WRITE;
         md.data.tx_data = tx_data;
 
         // Add to vectors for batch processing
@@ -460,8 +459,8 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    // Get FIFO items one by one for READ operations
-    if (operation == NIXL_READ) {
+    // Get FIFO items one by one for RCMODE operations
+    if (rcmode) {
         for (size_t i = 0; i < local_priv_vector.size(); i++) {
             char fifo_item[FIFO_ITEM_SIZE];
             int retry_count = 0;
@@ -503,6 +502,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     nixlUcclReqH *uccl_handle;
     nixlUcclBackendMD *lmd;
     nixlUcclBackendMD *rmd;
+    bool rcmode = false;
 
     NIXL_DEBUG << "UCCL PostXfer: " << operation << " remote_agent: " << remote_agent;
 
@@ -529,6 +529,17 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     if (lcnt != rcnt) {
         NIXL_ERROR << "Local and remote descriptor counts don't match: " << lcnt << " != " << rcnt;
         return NIXL_ERR_INVALID_PARAM;
+    }
+
+    const char *uccl_rcmode = std::getenv("UCCL_RCMODE");
+    rcmode = (uccl_rcmode && std::strcmp(uccl_rcmode, "1") == 0);
+
+    if (operation == NIXL_READ) {
+        if (!rcmode) {
+            NIXL_ERROR
+                << "UCCL_RCMODE environment variable must be set to 1 for NIXL_READ operations";
+            return NIXL_ERR_INVALID_PARAM;
+        }
     }
 
     // Process each descriptor pair
@@ -572,9 +583,13 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
             break;
         }
         case NIXL_WRITE:
-            result = uccl_engine_write(conn, local_mr, lmd->addr, lsize, &transfer_id);
+            if (rcmode) {
+                result = uccl_engine_write_rc(
+                    conn, local_mr, lmd->addr, lsize, local_priv->fifo_item_data, &transfer_id);
+            } else {
+                result = uccl_engine_write(conn, local_mr, lmd->addr, lsize, &transfer_id);
+            }
             break;
-
         default:
             NIXL_ERROR << "Unsupported operation type: " << operation;
             return NIXL_ERR_INVALID_PARAM;
