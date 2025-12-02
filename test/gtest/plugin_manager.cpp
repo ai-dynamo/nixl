@@ -43,14 +43,14 @@ class LoadSinglePluginTestFixture
     : public testing::TestWithParam<PluginDesc> {
 protected:
   nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
-  std::shared_ptr<const nixlPluginHandle> plugin_handle_;
+  std::shared_ptr<const nixlBackendPluginHandle> plugin_handle_;
 
   void SetUp() override {
 #if !TEST_ALL_PLUGINS
     if (GetParam().type == PluginDesc::PluginType::Real)
       GTEST_SKIP();
 #endif
-    plugin_handle_ = plugin_manager_.loadPlugin(GetParam().name);
+    plugin_handle_ = plugin_manager_.loadBackendPlugin(GetParam().name);
   }
 
   void TearDown() override {
@@ -58,7 +58,7 @@ protected:
     if (GetParam().type == PluginDesc::PluginType::Real)
       return;
 #endif
-    plugin_manager_.unloadPlugin(GetParam().name);
+    plugin_manager_.unloadBackendPlugin(GetParam().name);
   }
 
   /* Returns true if the plugin was successfully loaded, otherwise false. */
@@ -69,7 +69,7 @@ class LoadMultiplePluginsTestFixture
     : public testing::TestWithParam<std::vector<PluginDesc>> {
 protected:
   nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
-  std::vector<std::shared_ptr<const nixlPluginHandle>> plugin_handles_;
+  std::vector<std::shared_ptr<const nixlBackendPluginHandle>> plugin_handles_;
 
   void SetUp() override {
     for (const auto &plugin : GetParam()) {
@@ -77,7 +77,7 @@ protected:
       if (plugin.type == PluginDesc::PluginType::Real)
         continue;
 #endif
-      plugin_handles_.push_back(plugin_manager_.loadPlugin(plugin.name));
+      plugin_handles_.push_back(plugin_manager_.loadBackendPlugin(plugin.name));
     }
   }
 
@@ -87,7 +87,7 @@ protected:
       if (plugin.type == PluginDesc::PluginType::Real)
         continue;
 #endif
-      plugin_manager_.unloadPlugin(plugin.name);
+      plugin_manager_.unloadBackendPlugin(plugin.name);
     }
   }
 
@@ -95,9 +95,10 @@ protected:
    * Returns true if all the plugins were successfully loaded, otherwise false.
    */
   bool AreAllLoaded() {
-    return all_of(
-        plugin_handles_.begin(), plugin_handles_.end(),
-        [](std::shared_ptr<const nixlPluginHandle> ptr) { return ptr != nullptr; });
+      return all_of(
+          plugin_handles_.begin(),
+          plugin_handles_.end(),
+          [](std::shared_ptr<const nixlBackendPluginHandle> ptr) { return ptr != nullptr; });
   }
 };
 
@@ -114,7 +115,7 @@ protected:
 
   void TearDown() override {
     for (const auto &plugin : loaded_plugins_)
-      plugin_manager_.unloadPlugin(plugin);
+        plugin_manager_.unloadBackendPlugin(plugin);
   }
 
   /*
@@ -128,14 +129,14 @@ protected:
     if (loaded_plugins_.find(name) != loaded_plugins_.end())
       return false;
     loaded_plugins_.insert(name);
-    return plugin_manager_.loadPlugin(name) != nullptr;
+    return plugin_manager_.loadBackendPlugin(name) != nullptr;
   }
 
   /* Unload a plugin from plugin manager if it was loaded during this test. */
   void UnloadPlugin(std::string name) {
     if (loaded_plugins_.find(name) == loaded_plugins_.end())
       return;
-    plugin_manager_.unloadPlugin(name);
+    plugin_manager_.unloadBackendPlugin(name);
     loaded_plugins_.erase(name);
   }
 

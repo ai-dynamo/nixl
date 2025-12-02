@@ -45,7 +45,7 @@ int verify_plugin(std::string name, nixlPluginManager& plugin_manager)
     std::cout << "\nLoading " << name << " plugin..." << std::endl;
 
     // Load the plugin
-    auto plugin_ = plugin_manager.loadPlugin(name);
+    auto plugin_ = plugin_manager.loadBackendPlugin(name);
     if (!plugin_) {
         std::cerr << "Failed to load " << name << " plugin" << std::endl;
         return -1;
@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
 
     // First make sure tested plugins are not already loaded
     for (const auto& plugin : plugins) {
-        plugin_manager.unloadPlugin(plugin);
+        plugin_manager.unloadBackendPlugin(plugin);
     }
 
     for (const auto& plugin : plugins) {
@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
     }
 
     for (const auto& plugin : plugins) {
-        plugin_manager.unloadPlugin(plugin);
+        plugin_manager.unloadBackendPlugin(plugin);
     }
 
     // List all loaded plugins and make sure static plugins are present
