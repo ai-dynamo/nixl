@@ -32,6 +32,7 @@ using lock_guard = const std::lock_guard<std::mutex>;
 
 constexpr const char *backendPluginPrefix = "libplugin_";
 constexpr const char *telemetryPluginPrefix = "libtelemetry_exporter_";
+constexpr const std::string_view kPluginSuffix = ".so";
 
 // pluginHandle implementation
 nixlBackendPluginHandle::nixlBackendPluginHandle(void *handle, nixlBackendPlugin *plugin)
@@ -447,13 +448,13 @@ endsWith(const std::string &str, const std::string &suffix) {
 
 static std::string
 extractPluginName(const std::string &filename, const std::string &prefix) {
-    return filename.substr(prefix.size(), filename.size() - prefix.size() - 3);
+    return filename.substr(prefix.size(), filename.size() - prefix.size() - kPluginSuffix.size());
 }
 } // namespace
 
 void
 nixlPluginManager::discoverBackendPlugin(const std::string &filename) {
-    if (startsWith(filename, backendPluginPrefix) && endsWith(filename, ".so")) {
+    if (startsWith(filename, backendPluginPrefix) && endsWith(filename, kPluginSuffix.data())) {
         std::string plugin_name = extractPluginName(filename, backendPluginPrefix);
         auto plugin = loadBackendPlugin(plugin_name);
         if (plugin) {
@@ -464,7 +465,7 @@ nixlPluginManager::discoverBackendPlugin(const std::string &filename) {
 
 void
 nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
-    if (startsWith(filename, telemetryPluginPrefix) && endsWith(filename, ".so")) {
+    if (startsWith(filename, telemetryPluginPrefix) && endsWith(filename, kPluginSuffix.data())) {
         std::string plugin_name = extractPluginName(filename, telemetryPluginPrefix);
 
         auto plugin = loadTelemetryPlugin(plugin_name);
