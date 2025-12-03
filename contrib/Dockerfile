@@ -68,7 +68,7 @@ RUN apt-get update -y && \
 # Add DOCA repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -123,7 +123,8 @@ RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && 			     \
      git checkout $UCX_REF &&        \
-     ./autogen.sh && ./configure     \
+     ./autogen.sh && \
+     ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
          --enable-shared             \
          --disable-static            \
@@ -135,8 +136,7 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --with-gdrcopy=/usr/local   \
-         --with-efa                  \
-         --enable-mt &&              \
+         --with-efa  &&              \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
