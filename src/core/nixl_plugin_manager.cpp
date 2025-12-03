@@ -494,7 +494,7 @@ nixlPluginManager::discoverPluginsFromDir(const std::string_view &dirpath) {
 
 void
 nixlPluginManager::unloadBackendPlugin(const nixl_backend_t &plugin_name) {
-    // Do no unload static plugins
+    // Do not unload static plugins
     for (const auto &splugin : getBackendStaticPlugins()) {
         if (splugin.name == plugin_name) {
             return;
@@ -508,7 +508,7 @@ nixlPluginManager::unloadBackendPlugin(const nixl_backend_t &plugin_name) {
 
 void
 nixlPluginManager::unloadTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name) {
-    // Do no unload static plugins
+    // Do not unload static plugins
     for (const auto &splugin : getTelemetryStaticPlugins()) {
         if (splugin.name == plugin_name) {
             return;
