@@ -34,7 +34,10 @@
 
 // Libfabric configuration constants
 #define NIXL_LIBFABRIC_DEFAULT_CONTROL_RAILS 1
-#define NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_MS 1000
+
+// Sockets provider requires short timeout to maintain software progress during fi_cq_sread().
+// Long timeouts block in poll(), preventing message processing. EFA uses hardware completions.
+#define NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_MS 10
 #define NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD (128 * 1024) // 128KB
 #define LF_EP_NAME_MAX_LEN 56
 
