@@ -32,7 +32,6 @@
 #include "telemetry_event.h"
 
 constexpr char TELEMETRY_ENABLED_VAR[] = "NIXL_TELEMETRY_ENABLE";
-constexpr char TELEMETRY_DIR_VAR[] = "NIXL_TELEMETRY_DIR";
 static const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
@@ -105,40 +104,15 @@ nixlXferReqH::updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry_pub,
                << duration.count() << "us.";
 }
 
-/*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
-nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg)
-    : name(name),
-      config(cfg),
-      lock(cfg.syncMode) {
-#if HAVE_ETCD
-    if (getenv("NIXL_ETCD_ENDPOINTS")) {
-        useEtcd = true;
-        NIXL_DEBUG << "NIXL ETCD is enabled";
-    } else {
-        useEtcd = false;
-        NIXL_DEBUG << "NIXL ETCD is disabled";
-    }
-#else
-    NIXL_DEBUG << "NIXL ETCD is excluded";
-#endif // HAVE_ETCD
-    if (name.empty())
-        throw std::invalid_argument("Agent needs a name");
-
-    memorySection = new nixlLocalSection();
+void
+nixlAgentData::initializeTelemetry(const std::string &name, const nixlAgentConfig &cfg) {
     const char *telemetry_env_val = std::getenv(TELEMETRY_ENABLED_VAR);
-    const char *telemetry_env_dir = std::getenv(TELEMETRY_DIR_VAR);
 
     if (telemetry_env_val != nullptr) {
         if (!strcasecmp(telemetry_env_val, "y") || !strcasecmp(telemetry_env_val, "1") ||
             !strcasecmp(telemetry_env_val, "yes") || !strcasecmp(telemetry_env_val, "on")) {
             telemetryEnabled = true;
-            if (telemetry_env_dir != nullptr) {
-                std::string telemetry_file = std::string(telemetry_env_dir) + "/" + name;
-                telemetry_ = std::make_unique<nixlTelemetry>(telemetry_file, backendEngines);
-                NIXL_DEBUG << "NIXL telemetry is enabled with output file: " << telemetry_file;
-            } else {
-                NIXL_DEBUG << "NIXL telemetry is enabled without an output file";
-            }
+            telemetry_ = std::make_unique<nixlTelemetry>(name, backendEngines);
         } else if (cfg.captureTelemetry) {
             telemetryEnabled = true;
             NIXL_WARN << "NIXL telemetry is enabled through config, "
@@ -157,6 +131,28 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
     }
 }
 
+/*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
+nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg)
+    : name(name),
+      config(cfg),
+      lock(cfg.syncMode) {
+#if HAVE_ETCD
+    if (getenv("NIXL_ETCD_ENDPOINTS")) {
+        useEtcd = true;
+        NIXL_DEBUG << "NIXL ETCD is enabled";
+    } else {
+        useEtcd = false;
+        NIXL_DEBUG << "NIXL ETCD is disabled";
+    }
+#else
+    NIXL_DEBUG << "NIXL ETCD is excluded";
+#endif // HAVE_ETCD
+    if (name.empty()) throw std::invalid_argument("Agent needs a name");
+
+    memorySection = new nixlLocalSection();
+    initializeTelemetry(name, cfg);
+}
+
 nixlAgentData::~nixlAgentData() {
     delete memorySection;
 
@@ -168,7 +164,7 @@ nixlAgentData::~nixlAgentData() {
 
     for (auto & elm: backendEngines) {
         auto& plugin_manager = nixlPluginManager::getInstance();
-        auto plugin_handle = plugin_manager.getPlugin(elm.second->getType());
+        auto plugin_handle = plugin_manager.getPlugin<nixlPluginHandle>(elm.second->getType());
 
         if (plugin_handle) {
             // If we have a plugin handle, use it to destroy the engine
@@ -246,7 +242,7 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
 
     // First try to get options from a loaded plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
-    auto plugin_handle = plugin_manager.getPlugin(type);
+    auto plugin_handle = plugin_manager.getPlugin<nixlPluginHandle>(type);
 
     if (plugin_handle) {
       // If the plugin is already loaded, get options directly
@@ -256,7 +252,7 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
     }
 
     // If plugin isn't loaded yet, try to load it temporarily
-    plugin_handle = plugin_manager.loadPlugin(type);
+    plugin_handle = plugin_manager.loadPlugin<nixlPluginHandle>(type);
     if (plugin_handle) {
         params = plugin_handle->getBackendOptions();
         mems   = plugin_handle->getBackendMems();
@@ -332,7 +328,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
-    auto plugin_handle = plugin_manager.loadPlugin(type);
+    auto plugin_handle = plugin_manager.loadPlugin<nixlPluginHandle>(type);
 
     if (plugin_handle) {
         // Plugin found, use it to create the backend

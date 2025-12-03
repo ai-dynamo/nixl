@@ -50,7 +50,7 @@ protected:
     if (GetParam().type == PluginDesc::PluginType::Real)
       GTEST_SKIP();
 #endif
-    plugin_handle_ = plugin_manager_.loadPlugin(GetParam().name);
+    plugin_handle_ = plugin_manager_.loadPlugin<nixlPluginHandle>(GetParam().name);
   }
 
   void TearDown() override {
@@ -77,7 +77,7 @@ protected:
       if (plugin.type == PluginDesc::PluginType::Real)
         continue;
 #endif
-      plugin_handles_.push_back(plugin_manager_.loadPlugin(plugin.name));
+      plugin_handles_.push_back(plugin_manager_.loadPlugin<nixlPluginHandle>(plugin.name));
     }
   }
 
