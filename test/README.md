@@ -47,4 +47,4 @@ To make the NIXL interface more python style, a wrapper class was added on top o
 
 For this wrapper class two tests are included:
 - test/nixl_wrapper_test.py - Basic single node test for tuple style descriptors.
-- test/blocking_send_recv_example.py - Basic dual node test for tensor style descriptors, as well as how a blocking send/recv operation can be performed.
+- examples/python/basic_two_peers.py - Basic dual node example for tensor style descriptors, demonstrating a blocking send/recv between two peers.
