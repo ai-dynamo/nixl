@@ -81,31 +81,17 @@ runs_on_dockers:
   - {
       # Use the multi-stage Dockerfile with base stage only
       file: 'contrib/Dockerfile.manylinux',
-      # url: 'nbu-harbor.gtm.nvidia.com/nixl/x86_64/manylinux_cuda12.8:20250701',
       name: 'manylinux_cuda12.8',
       uri: '$arch/$name',
       tag: '20250701',
-      # Key build arguments:
-      # --target base: Use only the base stage (no wheel generation)
-      # --no-cache: Ensure fresh builds for each matrix combination
-      # NPROC=10: Parallel compilation with 10 processes
-      # ARCH=$arch: Architecture-specific build (x86_64 or aarch64)
-      # BASE_IMAGE: UCX-enabled CUDA base image for each architecture
       build_args: '--target wheel-base --build-arg NPROC=$NPROC --build-arg ARCH=$arch --build-arg BASE_IMAGE=${registry_host}${registry_path}/$arch/cuda --build-arg BASE_IMAGE_TAG=12.8-devel-manylinux--25.03'
     }
   - {
       # Use the multi-stage Dockerfile with base stage only
       file: 'contrib/Dockerfile.manylinux',
-      # url: 'nbu-harbor.gtm.nvidia.com/nixl/x86_64/manylinux_cuda13.0:20250701',
       name: 'manylinux_cuda13.0',
       uri: '$arch/$name',
       tag: '20250701',
-      # Key build arguments:
-      # --target base: Use only the base stage (no wheel generation)
-      # --no-cache: Ensure fresh builds for each matrix combination
-      # NPROC=10: Parallel compilation with 10 processes
-      # ARCH=$arch: Architecture-specific build (x86_64 or aarch64)
-      # BASE_IMAGE: UCX-enabled CUDA base image for each architecture
       build_args: '--target wheel-base --build-arg NPROC=$NPROC --build-arg ARCH=$arch --build-arg BASE_IMAGE=${registry_host}${registry_path}/$arch/cuda --build-arg BASE_IMAGE_TAG=13.0-devel-manylinux--25.09'
     }
 
@@ -169,7 +155,7 @@ steps:
   # =============================================================================
   # Compile NIXL C++ libraries using meson build system
   # This step builds the native components that will be bundled into Python wheels
-  - name: Build Nixl
+  - name: Build NIXL
     parallel: false
     run: |
       # Activate the virtual environment

@@ -74,7 +74,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} as wheel-base
 # ... (dependency installation and build setup)
 
 # Stage 2: Default stage that builds and generates wheels
-FROM base
+FROM wheel-base
 # ... (NIXL build and wheel generation)
 ```
 
@@ -505,41 +505,8 @@ build-backend = "mesonpy"
 
 **Important:** The `ninja` package must be included for isolated build environments (used by `uv build`).
 
-## 11. Maintenance
 
-### Updating Dependencies
-- Modify `contrib/Dockerfile.manylinux` for system package updates
-- Update Python versions in matrix configuration
-- Add new packages to `pyproject.toml` `[build-system] requires` if needed
-- Test new dependencies in isolated environment
-
-### Adding New Python Versions
-1. Add version to matrix axes in YAML: `python_version: ["3.9", "3.10", "3.11", "3.12", "3.13"]`
-2. Ensure manylinux base image supports the Python version
-3. Test wheel build for new version
-4. Update documentation
-
-### Adding New Architectures
-1. Update matrix axes in YAML configuration: `arch: [x86_64, aarch64]`
-2. Ensure base Docker images support new architecture
-3. Test build process on target architecture
-4. Update wheel platform tags if needed
-5. Verify UCX and CUDA libraries are available for new arch
-
-### Performance Optimization
-- **Memory**: Adjust Kubernetes memory limits based on build needs (currently 16Gi)
-- **CPU**: Modify NPROC environment variable (currently 16 for 16 cores)
-- **Ninja parallelism**: Balance between build speed and memory usage (`ninja -j${NPROC}`)
-- **Docker layer caching**: Ensure frequently changed files are in later layers
-- Monitor resource usage and adjust limits accordingly
-
-### Managing Build Versions
-- Build IDs are automatically incremented by Jenkins
-- To manually version: `export CI_BUILD_NUMBER=123` before running build-wheel.sh
-- For releases, consider using semantic versioning without build IDs
-- Artifactory retains all versions; implement cleanup policies as needed
-
-## 12. Related Files
+## 11. Related Files
 
 - `.ci/jenkins/lib/build-wheel-matrix.yaml` - Main CI configuration
 - `contrib/Dockerfile.manylinux` - Docker build environment
@@ -549,7 +516,7 @@ build-backend = "mesonpy"
 - `pyproject.toml` - Python package configuration (must include `ninja` in build requirements)
 - `meson.build` - Native build configuration
 
-## 13. References
+## 12. References
 
 - [ManyLinux Documentation](https://github.com/pypa/manylinux)
 - [Auditwheel Documentation](https://github.com/pypa/auditwheel)
