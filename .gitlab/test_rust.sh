@@ -51,10 +51,14 @@ cargo test -- --test-threads=1
 g++ -c ./src/bindings/rust/wrapper.cpp -o wrapper.o -I ./src/api/cpp/
 g++ -c ./src/bindings/rust/stubs.cpp -o stubs.o
 
-diff <(nm -C --defined-only wrapper.o | awk '$2 ~ /^T$/ {print $3}' | sort) \
-     <(nm -C --defined-only stubs.o    | awk '$2 ~ /^T$/ {print $3}' | grep -v nixl_capi_stub_abort | sort)
+nm -C --defined-only wrapper.o | awk '$2 ~ /^T$/ {print $3}' | sort > wrapper_symbols.txt
+nm -C --defined-only stubs.o | awk '$2 ~ /^T$/ {print $3}' | grep -v nixl_capi_stub_abort | sort > stubs_symbols.txt
+diff wrapper_symbols.txt stubs_symbols.txt
+diff_status=$?
+rm wrapper_symbols.txt stubs_symbols.txt
 
-if [ $? -ne 0 ]; then
+
+if [ "$diff_status" -ne 0 ]; then
     echo "Stubs API and wrapper API differ"
     exit 1
 else
