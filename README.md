@@ -55,7 +55,7 @@ $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
 $ git checkout v1.20.x
 $ ./autogen.sh
-$ ./configure                          \
+$ ./contrib/configure-release-mt       \
     --enable-shared                    \
     --disable-static                   \
     --disable-doxygen-doc              \
@@ -65,8 +65,7 @@ $ ./configure                          \
     --with-cuda=<cuda install>         \
     --with-verbs                       \
     --with-dm                          \
-    --with-gdrcopy=<gdrcopy install>   \
-    --enable-mt
+    --with-gdrcopy=<gdrcopy install>
 $ make -j
 $ make -j install-strip
 $ ldconfig
