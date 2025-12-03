@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
 
     // Print list of static plugins available
     std::cout << "Available static plugins:" << std::endl;
-    for (const auto& plugin : plugin_manager.getStaticPlugins()) {
+    for (const auto &plugin : plugin_manager.getBackendStaticPlugins()) {
         std::cout << " - " << plugin.name << std::endl;
         staticPlugs.insert(plugin.name);
     }
@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
 
     // List all loaded plugins
     std::cout << "\nLoaded plugins:" << std::endl;
-    for (const auto& name : plugin_manager.getLoadedPluginNames()) {
+    for (const auto &name : plugin_manager.getLoadedBackendPluginNames()) {
         std::cout << " - " << name << std::endl;
     }
 
@@ -120,12 +120,12 @@ int main(int argc, char** argv) {
 
     // List all loaded plugins and make sure static plugins are present
     std::cout << "Loaded plugins after unload:" << std::endl;
-    for (const auto& name : plugin_manager.getLoadedPluginNames()) {
+    for (const auto &name : plugin_manager.getLoadedBackendPluginNames()) {
         std::cout << " - " << name << std::endl;
     }
 
     // Plugins loaded should only be the static plugins + Mooncake which doesn't unload
-    auto loaded_plugins = plugin_manager.getLoadedPluginNames();
+    auto loaded_plugins = plugin_manager.getLoadedBackendPluginNames();
     loaded_plugins.erase(std::remove(loaded_plugins.begin(), loaded_plugins.end(), "Mooncake"),
                          loaded_plugins.end());
     if (loaded_plugins.size() != staticPlugs.size()) {

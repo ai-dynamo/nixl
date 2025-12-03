@@ -69,13 +69,15 @@ private:
     nixlBackendPlugin *plugin_;
 };
 
-// Creator Function for static plugins
-typedef nixlBackendPlugin* (*nixlStaticPluginCreatorFunc)();
-
 // Structure to hold static plugin info
-struct nixlStaticPluginInfo {
+struct nixlBackendStaticPluginInfo {
     const char* name;
-    nixlStaticPluginCreatorFunc createFunc;
+    nixlBackendStaticPluginCreatorFunc createFunc;
+};
+
+struct nixlTelemetryStaticPluginInfo {
+    const char *name;
+    nixlTelemetryStaticPluginCreatorFunc createFunc;
 };
 
 class nixlTelemtryPluginHandle : public nixlPluginHandle {
@@ -107,7 +109,7 @@ public:
     nixlPluginManager& operator=(const nixlPluginManager&) = delete;
 
     void
-    loadPluginsFromList(const std::string_view &filename);
+    loadPluginsFromList(const std::string &filename);
 
     // Load a specific backend plugin
     std::shared_ptr<const nixlBackendPluginHandle>
@@ -120,10 +122,6 @@ public:
     // Unload a telemetry plugin
     void
     unloadTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name);
-
-    // Search a directory for plugins
-    void
-    discoverPluginsFromDir(const std::string_view &dirpath);
 
     // Unload backend plugin
     void
@@ -139,15 +137,22 @@ public:
 
     // Get all loaded backend plugin names
     std::vector<nixl_backend_t>
-    getLoadedPluginNames();
+    getLoadedBackendPluginNames();
+
+    // Get all loaded telemetry plugin names
+    std::vector<nixl_telemetry_plugin_t>
+    getLoadedTelemetryPluginNames();
 
     // Add a plugin directory
     void
     addPluginDirectory(const std::string &directory);
 
     // Static Plugin Helpers
-    const std::vector<nixlStaticPluginInfo> &
-    getStaticPlugins();
+    const std::vector<nixlBackendStaticPluginInfo> &
+    getBackendStaticPlugins();
+
+    const std::vector<nixlTelemetryStaticPluginInfo> &
+    getTelemetryStaticPlugins();
 
 private:
     std::map<nixl_backend_t, std::shared_ptr<const nixlBackendPluginHandle>>
@@ -155,13 +160,29 @@ private:
     std::map<nixl_telemetry_plugin_t, std::shared_ptr<const nixlTelemtryPluginHandle>>
         loaded_telemetry_plugins_;
     std::vector<std::string> plugin_dirs_;
-    std::vector<nixlStaticPluginInfo> static_plugins_;
+    std::vector<nixlBackendStaticPluginInfo> backend_static_plugins_;
+    std::vector<nixlTelemetryStaticPluginInfo> telemetry_static_plugins_;
     std::mutex lock;
 
     void
     registerBuiltinPlugins();
     void
-    registerStaticPlugin(const std::string_view &name, nixlStaticPluginCreatorFunc creator);
+    registerBackendStaticPlugin(const std::string_view &name,
+                                nixlBackendStaticPluginCreatorFunc creator);
+    void
+    registerTelemetryStaticPlugin(const std::string_view &name,
+                                  nixlTelemetryStaticPluginCreatorFunc creator);
+
+    // Search a directory for plugins
+    void
+    discoverPluginsFromDir(const std::string_view &dirpath);
+
+    // Discover helper functions
+    void
+    discoverBackendPlugin(const std::string &filename);
+
+    void
+    discoverTelemetryPlugin(const std::string &filename);
 
     std::shared_ptr<const nixlPluginHandle>
     loadPluginFromPath(const std::string &plugin_path, nixlPluginLoaderFunc loader);

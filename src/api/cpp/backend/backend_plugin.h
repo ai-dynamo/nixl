@@ -107,7 +107,7 @@ private:
 
 
 // Creator Function type for static plugins
-typedef nixlBackendPlugin* (*nixlStaticPluginCreatorFunc)();
+typedef nixlBackendPlugin *(*nixlBackendStaticPluginCreatorFunc)();
 
 // Plugin must implement these functions for dynamic loading
 // Note: extern "C" is required for dynamic loading to avoid C++ name mangling

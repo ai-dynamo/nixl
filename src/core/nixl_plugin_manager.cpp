@@ -99,7 +99,7 @@ backendLoader(void *handle, const std::string_view &plugin_path) {
         return nullptr;
     }
 
-    // // Call the initialization function
+    // Call the initialization function
     nixlBackendPlugin *plugin = init();
     if (!plugin) {
         NIXL_ERROR << "Plugin initialization failed for " << plugin_path.data();
@@ -107,7 +107,7 @@ backendLoader(void *handle, const std::string_view &plugin_path) {
         return nullptr;
     }
 
-    // // Check API version
+    // Check API version
     if (plugin->api_version != NIXL_PLUGIN_API_VERSION) {
         NIXL_ERROR << "Plugin API version mismatch for " << plugin_path.data() << ": expected "
                    << NIXL_PLUGIN_API_VERSION << ", got " << plugin->api_version;
@@ -177,7 +177,7 @@ telemetryLoader(void *handle, const std::string_view &plugin_path) {
         return nullptr;
     }
 
-    // // Call the initialization function
+    // Call the initialization function
     nixlTelemetryPlugin *plugin = init();
     if (!plugin) {
         NIXL_ERROR << "Plugin initialization failed for " << plugin_path.data();
@@ -185,7 +185,7 @@ telemetryLoader(void *handle, const std::string_view &plugin_path) {
         return nullptr;
     }
 
-    // // Check API version
+    // Check API version
     if (plugin->api_version != nixlTelemetryPluginApiVersionV1) {
         NIXL_ERROR << "Plugin API version mismatch for " << plugin_path.data() << ": expected "
                    << static_cast<int>(nixlTelemetryPluginApiVersionV1) << ", got "
@@ -199,12 +199,12 @@ telemetryLoader(void *handle, const std::string_view &plugin_path) {
 } // namespace
 
 std::map<nixl_backend_t, std::string>
-loadPluginList(const std::string_view &filename) {
+loadPluginList(const std::string &filename) {
     std::map<nixl_backend_t, std::string> plugins;
-    std::ifstream file(filename.data());
+    std::ifstream file(filename);
 
     if (!file.is_open()) {
-        NIXL_ERROR << "Failed to open plugin list file: " << filename.data();
+        NIXL_ERROR << "Failed to open plugin list file: " << filename;
         return plugins;
     }
 
@@ -249,7 +249,7 @@ nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPlugin
 }
 
 void
-nixlPluginManager::loadPluginsFromList(const std::string_view &filename) {
+nixlPluginManager::loadPluginsFromList(const std::string &filename) {
     auto plugins = loadPluginList(filename);
 
     lock_guard lg(lock);
@@ -379,6 +379,11 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
             continue;
         }
 
+        if (!std::filesystem::exists(plugin_path)) {
+            NIXL_WARN << "Plugin file does not exist: " << plugin_path;
+            continue;
+        }
+
         auto plugin_handle = loadPluginFromPath(plugin_path, backendLoader);
         if (plugin_handle) {
             auto backend_plugin =
@@ -410,6 +415,11 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
             continue;
         }
 
+        if (!std::filesystem::exists(plugin_path)) {
+            NIXL_WARN << "Plugin file does not exist: " << plugin_path;
+            continue;
+        }
+
         auto plugin_handle = loadPluginFromPath(plugin_path, telemetryLoader);
         if (plugin_handle) {
             auto telemetry_plugin =
@@ -421,6 +431,38 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
 
     NIXL_INFO << "Failed to load plugin '" << plugin_name << "' from any directory";
     return nullptr;
+}
+
+void
+nixlPluginManager::discoverBackendPlugin(const std::string &filename) {
+    auto prefix_len = strlen(backendPluginPrefix);
+    if (filename.size() < prefix_len + 1) return;
+
+    if (filename.substr(0, prefix_len) == backendPluginPrefix &&
+        filename.substr(filename.size() - 3) == ".so") {
+        std::string plugin_name = filename.substr(10, filename.size() - 13);
+
+        auto plugin = loadBackendPlugin(plugin_name);
+        if (plugin) {
+            NIXL_INFO << "Discovered and loaded backend plugin: " << plugin_name;
+        }
+    }
+}
+
+void
+nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
+    auto prefix_len = strlen(telemetryPluginPrefix);
+    if (filename.size() < prefix_len + 1) return;
+
+    if (filename.substr(0, prefix_len) == telemetryPluginPrefix &&
+        filename.substr(filename.size() - 3) == ".so") {
+        std::string plugin_name = filename.substr(10, filename.size() - 13);
+
+        auto plugin = loadTelemetryPlugin(plugin_name);
+        if (plugin) {
+            NIXL_INFO << "Discovered and loaded telemetry plugin: " << plugin_name;
+        }
+    }
 }
 
 void
@@ -436,28 +478,15 @@ nixlPluginManager::discoverPluginsFromDir(const std::string_view &dirpath) {
 
     for (const auto& entry : dir_iter) {
         std::string filename = entry.path().filename().string();
-
-        if(filename.size() < 11) continue;
-        // Check if this is a plugin file
-        if (filename.substr(0, 10) == "libplugin_" &&
-            filename.substr(filename.size() - 3) == ".so") {
-
-            // Extract plugin name
-            std::string plugin_name = filename.substr(10, filename.size() - 13);
-
-            // Try to load the plugin
-            auto plugin = loadBackendPlugin(plugin_name);
-            if (plugin) {
-                NIXL_INFO << "Discovered and loaded plugin: " << plugin_name;
-            }
-        }
+        discoverBackendPlugin(filename);
+        discoverTelemetryPlugin(filename);
     }
 }
 
 void
 nixlPluginManager::unloadBackendPlugin(const nixl_backend_t &plugin_name) {
     // Do no unload static plugins
-    for (const auto& splugin : getStaticPlugins()) {
+    for (const auto &splugin : getBackendStaticPlugins()) {
         if (splugin.name == plugin_name) {
             return;
         }
@@ -470,7 +499,15 @@ nixlPluginManager::unloadBackendPlugin(const nixl_backend_t &plugin_name) {
 
 void
 nixlPluginManager::unloadTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name) {
+    // Do no unload static plugins
+    for (const auto &splugin : getTelemetryStaticPlugins()) {
+        if (splugin.name == plugin_name) {
+            return;
+        }
+    }
+
     lock_guard lg(lock);
+
     loaded_telemetry_plugins_.erase(plugin_name);
 }
 
@@ -513,7 +550,8 @@ nixlBackendPluginHandle::getBackendMems() const {
     return mems; // Return empty mems if not implemented
 }
 
-std::vector<nixl_backend_t> nixlPluginManager::getLoadedPluginNames() {
+std::vector<nixl_backend_t>
+nixlPluginManager::getLoadedBackendPluginNames() {
     lock_guard lg(lock);
 
     std::vector<nixl_backend_t> names;
@@ -523,15 +561,26 @@ std::vector<nixl_backend_t> nixlPluginManager::getLoadedPluginNames() {
     return names;
 }
 
-void
-nixlPluginManager::registerStaticPlugin(const std::string_view &name,
-                                        nixlStaticPluginCreatorFunc creator) {
+std::vector<nixl_telemetry_plugin_t>
+nixlPluginManager::getLoadedTelemetryPluginNames() {
     lock_guard lg(lock);
 
-    nixlStaticPluginInfo info;
+    std::vector<nixl_telemetry_plugin_t> names;
+    for (const auto &pair : loaded_telemetry_plugins_) {
+        names.push_back(pair.first);
+    }
+    return names;
+}
+
+void
+nixlPluginManager::registerBackendStaticPlugin(const std::string_view &name,
+                                               nixlBackendStaticPluginCreatorFunc creator) {
+    lock_guard lg(lock);
+
+    nixlBackendStaticPluginInfo info;
     info.name = name.data();
     info.createFunc = creator;
-    static_plugins_.push_back(info);
+    backend_static_plugins_.push_back(info);
 
     //Static Plugins are considered pre-loaded
     nixlBackendPlugin* plugin = info.createFunc();
@@ -543,50 +592,76 @@ nixlPluginManager::registerStaticPlugin(const std::string_view &name,
     }
 }
 
-const std::vector<nixlStaticPluginInfo>& nixlPluginManager::getStaticPlugins() {
-    return static_plugins_;
+void
+nixlPluginManager::registerTelemetryStaticPlugin(const std::string_view &name,
+                                                 nixlTelemetryStaticPluginCreatorFunc creator) {
+    lock_guard lg(lock);
+
+    nixlTelemetryStaticPluginInfo info;
+    info.name = name.data();
+    info.createFunc = creator;
+    telemetry_static_plugins_.push_back(info);
+
+    // Static Plugins are considered pre-loaded
+    nixlTelemetryPlugin *plugin = info.createFunc();
+    NIXL_INFO << "Loading static plugin: " << name;
+    if (plugin) {
+        // Register the loaded plugin
+        auto plugin_handle = std::make_shared<const nixlTelemtryPluginHandle>(nullptr, plugin);
+        loaded_telemetry_plugins_[name.data()] = plugin_handle;
+    }
 }
 
-#define NIXL_REGISTER_STATIC_PLUGIN(name)                   \
-    extern nixlBackendPlugin *createStatic##name##Plugin(); \
-    registerStaticPlugin(#name, createStatic##name##Plugin);
+const std::vector<nixlBackendStaticPluginInfo> &
+nixlPluginManager::getBackendStaticPlugins() {
+    return backend_static_plugins_;
+}
+
+const std::vector<nixlTelemetryStaticPluginInfo> &
+nixlPluginManager::getTelemetryStaticPlugins() {
+    return telemetry_static_plugins_;
+}
+
+#define NIXL_REGISTER_STATIC_PLUGIN(plugin_type, name)              \
+    extern nixl##plugin_type##Plugin *createStatic##name##Plugin(); \
+    register##plugin_type##StaticPlugin(#name, createStatic##name##Plugin);
 
 void nixlPluginManager::registerBuiltinPlugins() {
 #ifdef STATIC_PLUGIN_LIBFABRIC
-    NIXL_REGISTER_STATIC_PLUGIN(LIBFABRIC)
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, LIBFABRIC)
 #endif
 
 #ifdef STATIC_PLUGIN_UCX
-    NIXL_REGISTER_STATIC_PLUGIN(UCX)
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, UCX)
 #endif
 
 #ifdef STATIC_PLUGIN_GDS
 #ifndef DISABLE_GDS_BACKEND
-    NIXL_REGISTER_STATIC_PLUGIN(GDS)
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, GDS)
 #endif
 #endif
 
 #ifdef STATIC_PLUGIN_GDS_MT
-    NIXL_REGISTER_STATIC_PLUGIN(GDS_MT)
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, GDS_MT)
 #endif
 
 #ifdef STATIC_PLUGIN_POSIX
-    NIXL_REGISTER_STATIC_PLUGIN(POSIX)
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, POSIX)
 #endif
 
 #ifdef STATIC_PLUGIN_GPUNETIO
-    NIXL_REGISTER_STATIC_PLUGIN(GPUNETIO)
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, GPUNETIO)
 #endif
 
 #ifdef STATIC_PLUGIN_OBJ
-    NIXL_REGISTER_STATIC_PLUGIN(OBJ)
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, OBJ)
 #endif
 
 #ifdef STATIC_PLUGIN_MOONCAKE
-    NIXL_REGISTER_STATIC_PLUGIN(MOONCAKE)
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, MOONCAKE)
 #endif
 
 #ifdef STATIC_PLUGIN_HF3FS
-    NIXL_REGISTER_STATIC_PLUGIN(HF3FS)
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, HF3FS)
 #endif
 }

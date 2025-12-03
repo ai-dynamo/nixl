@@ -109,8 +109,8 @@ protected:
   std::set<std::string> loaded_plugins_;
 
   void SetUp() override {
-    for (const auto &plugin : plugin_manager_.getLoadedPluginNames())
-      prev_plugins_.insert(plugin);
+      for (const auto &plugin : plugin_manager_.getLoadedBackendPluginNames())
+          prev_plugins_.insert(plugin);
   }
 
   void TearDown() override {
@@ -144,15 +144,16 @@ protected:
    * Returns true if the only non static plugins are similar to the loaded ones,
    * otherwise false.
    */
-  bool HasOnlyLoadedPlugins() {
-    const auto &pm_loaded = plugin_manager_.getLoadedPluginNames();
-    for (const auto &pm_loaded_plugin : pm_loaded) {
-      if ((prev_plugins_.find(pm_loaded_plugin) == prev_plugins_.end()) &&
-          (loaded_plugins_.find(pm_loaded_plugin) == loaded_plugins_.end()))
-        return false;
-    }
+  bool
+  HasOnlyLoadedPlugins() {
+      const auto &pm_loaded = plugin_manager_.getLoadedBackendPluginNames();
+      for (const auto &pm_loaded_plugin : pm_loaded) {
+          if ((prev_plugins_.find(pm_loaded_plugin) == prev_plugins_.end()) &&
+              (loaded_plugins_.find(pm_loaded_plugin) == loaded_plugins_.end()))
+              return false;
+      }
 
-    return true;
+      return true;
   }
 };
 

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef _NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_PLUGIN_H
-#define _NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_PLUGIN_H
+#ifndef NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_PLUGIN_H
+#define NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_PLUGIN_H
 
 #include "telemetry/telemetry_exporter.h"
 #include "common/nixl_log.h"
@@ -47,19 +47,19 @@ public:
           name_(name),
           version_(ver) {}
 
-    std::string_view
+    std::string
     getName() const noexcept {
         return name_;
     }
 
-    std::string_view
+    std::string
     getVersion() const noexcept {
         return version_;
     }
 
 private:
-    std::string_view name_;
-    std::string_view version_;
+    std::string name_;
+    std::string version_;
 };
 
 // Macro to define exported C functions for the plugin
@@ -90,6 +90,9 @@ private:
     }
 };
 
+// Creator Function type for static plugins
+typedef nixlTelemetryPlugin *(*nixlTelemetryStaticPluginCreatorFunc)();
+
 // Plugin must implement these functions for dynamic loading
 // Note: extern "C" is required for dynamic loading to avoid C++ name mangling
 extern "C" {
@@ -104,4 +107,4 @@ void
 nixl_telemetry_plugin_fini();
 }
 
-#endif // _NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_PLUGIN_H
+#endif // NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_PLUGIN_H
