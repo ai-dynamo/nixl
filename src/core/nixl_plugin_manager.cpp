@@ -119,11 +119,11 @@ backendLoader(void *handle, const std::string_view &plugin_path) {
 }
 } // namespace
 
-nixlTelemtryPluginHandle::nixlTelemtryPluginHandle(void *handle, nixlTelemetryPlugin *plugin)
+nixlTelemetryPluginHandle::nixlTelemetryPluginHandle(void *handle, nixlTelemetryPlugin *plugin)
     : nixlPluginHandle(handle),
       plugin_(plugin) {}
 
-nixlTelemtryPluginHandle::~nixlTelemtryPluginHandle() {
+nixlTelemetryPluginHandle::~nixlTelemetryPluginHandle() {
     if (handle_) {
         // Call the plugin's cleanup function
         typedef void (*fini_func_t)();
@@ -140,7 +140,8 @@ nixlTelemtryPluginHandle::~nixlTelemtryPluginHandle() {
 }
 
 std::unique_ptr<nixlTelemetryExporter>
-nixlTelemtryPluginHandle::createExporter(const nixlTelemetryExporterInitParams &init_params) const {
+nixlTelemetryPluginHandle::createExporter(
+    const nixlTelemetryExporterInitParams &init_params) const {
     if (plugin_ && plugin_->create_exporter) {
         return plugin_->create_exporter(init_params);
     }
@@ -148,7 +149,7 @@ nixlTelemtryPluginHandle::createExporter(const nixlTelemetryExporterInitParams &
 }
 
 const char *
-nixlTelemtryPluginHandle::getName() const {
+nixlTelemetryPluginHandle::getName() const {
     if (plugin_) {
         return plugin_->getName().data();
     }
@@ -156,7 +157,7 @@ nixlTelemtryPluginHandle::getName() const {
 }
 
 const char *
-nixlTelemtryPluginHandle::getVersion() const {
+nixlTelemetryPluginHandle::getVersion() const {
     if (plugin_) {
         return plugin_->getVersion().data();
     }
@@ -194,7 +195,7 @@ telemetryLoader(void *handle, const std::string_view &plugin_path) {
         return nullptr;
     }
 
-    return std::make_shared<const nixlTelemtryPluginHandle>(handle, plugin);
+    return std::make_shared<const nixlTelemetryPluginHandle>(handle, plugin);
 }
 } // namespace
 
@@ -398,7 +399,7 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
     return nullptr;
 }
 
-std::shared_ptr<const nixlTelemtryPluginHandle>
+std::shared_ptr<const nixlTelemetryPluginHandle>
 nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
     lock_guard lg(lock);
 
@@ -423,7 +424,7 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
         auto plugin_handle = loadPluginFromPath(plugin_path, telemetryLoader);
         if (plugin_handle) {
             auto telemetry_plugin =
-                std::dynamic_pointer_cast<const nixlTelemtryPluginHandle>(plugin_handle);
+                std::dynamic_pointer_cast<const nixlTelemetryPluginHandle>(plugin_handle);
             loaded_telemetry_plugins_[plugin_name] = telemetry_plugin;
             return telemetry_plugin;
         }
@@ -433,15 +434,27 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
     return nullptr;
 }
 
+namespace {
+static bool
+startsWith(const std::string &str, const std::string &prefix) {
+    return str.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), str.begin());
+}
+
+static bool
+endsWith(const std::string &str, const std::string &suffix) {
+    return str.size() >= suffix.size() && std::equal(suffix.rbegin(), suffix.rend(), str.rbegin());
+}
+
+static std::string
+extractPluginName(const std::string &filename, const std::string &prefix) {
+    return filename.substr(prefix.size(), filename.size() - prefix.size() - 3);
+}
+} // namespace
+
 void
 nixlPluginManager::discoverBackendPlugin(const std::string &filename) {
-    auto prefix_len = strlen(backendPluginPrefix);
-    if (filename.size() < prefix_len + 1) return;
-
-    if (filename.substr(0, prefix_len) == backendPluginPrefix &&
-        filename.substr(filename.size() - 3) == ".so") {
-        std::string plugin_name = filename.substr(10, filename.size() - 13);
-
+    if (startsWith(filename, backendPluginPrefix) && endsWith(filename, ".so")) {
+        std::string plugin_name = extractPluginName(filename, backendPluginPrefix);
         auto plugin = loadBackendPlugin(plugin_name);
         if (plugin) {
             NIXL_INFO << "Discovered and loaded backend plugin: " << plugin_name;
@@ -451,12 +464,8 @@ nixlPluginManager::discoverBackendPlugin(const std::string &filename) {
 
 void
 nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
-    auto prefix_len = strlen(telemetryPluginPrefix);
-    if (filename.size() < prefix_len + 1) return;
-
-    if (filename.substr(0, prefix_len) == telemetryPluginPrefix &&
-        filename.substr(filename.size() - 3) == ".so") {
-        std::string plugin_name = filename.substr(10, filename.size() - 13);
+    if (startsWith(filename, telemetryPluginPrefix) && endsWith(filename, ".so")) {
+        std::string plugin_name = extractPluginName(filename, telemetryPluginPrefix);
 
         auto plugin = loadTelemetryPlugin(plugin_name);
         if (plugin) {
@@ -522,7 +531,7 @@ nixlPluginManager::getBackendPlugin(const nixl_backend_t &plugin_name) {
     return nullptr;
 }
 
-std::shared_ptr<const nixlTelemtryPluginHandle>
+std::shared_ptr<const nixlTelemetryPluginHandle>
 nixlPluginManager::getTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name) {
     lock_guard lg(lock);
     auto it = loaded_telemetry_plugins_.find(plugin_name);
@@ -607,7 +616,7 @@ nixlPluginManager::registerTelemetryStaticPlugin(const std::string_view &name,
     NIXL_INFO << "Loading static plugin: " << name;
     if (plugin) {
         // Register the loaded plugin
-        auto plugin_handle = std::make_shared<const nixlTelemtryPluginHandle>(nullptr, plugin);
+        auto plugin_handle = std::make_shared<const nixlTelemetryPluginHandle>(nullptr, plugin);
         loaded_telemetry_plugins_[name.data()] = plugin_handle;
     }
 }

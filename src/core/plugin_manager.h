@@ -80,10 +80,10 @@ struct nixlTelemetryStaticPluginInfo {
     nixlTelemetryStaticPluginCreatorFunc createFunc;
 };
 
-class nixlTelemtryPluginHandle : public nixlPluginHandle {
+class nixlTelemetryPluginHandle : public nixlPluginHandle {
 public:
-    nixlTelemtryPluginHandle(void *handle, nixlTelemetryPlugin *plugin);
-    ~nixlTelemtryPluginHandle();
+    nixlTelemetryPluginHandle(void *handle, nixlTelemetryPlugin *plugin);
+    ~nixlTelemetryPluginHandle();
 
     std::unique_ptr<nixlTelemetryExporter>
     createExporter(const nixlTelemetryExporterInitParams &init_params) const;
@@ -116,7 +116,7 @@ public:
     loadBackendPlugin(const nixl_backend_t &plugin_name);
 
     // Load a specific telemetry plugin
-    std::shared_ptr<const nixlTelemtryPluginHandle>
+    std::shared_ptr<const nixlTelemetryPluginHandle>
     loadTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name);
 
     // Unload a telemetry plugin
@@ -132,7 +132,7 @@ public:
     getBackendPlugin(const nixl_backend_t &plugin_name);
 
     // Get a telemetry plugin handle
-    std::shared_ptr<const nixlTelemtryPluginHandle>
+    std::shared_ptr<const nixlTelemetryPluginHandle>
     getTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name);
 
     // Get all loaded backend plugin names
@@ -157,7 +157,7 @@ public:
 private:
     std::map<nixl_backend_t, std::shared_ptr<const nixlBackendPluginHandle>>
         loaded_backend_plugins_;
-    std::map<nixl_telemetry_plugin_t, std::shared_ptr<const nixlTelemtryPluginHandle>>
+    std::map<nixl_telemetry_plugin_t, std::shared_ptr<const nixlTelemetryPluginHandle>>
         loaded_telemetry_plugins_;
     std::vector<std::string> plugin_dirs_;
     std::vector<nixlBackendStaticPluginInfo> backend_static_plugins_;

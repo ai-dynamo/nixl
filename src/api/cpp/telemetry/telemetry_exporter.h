@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_EXPORTER_H
-#define _NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_EXPORTER_H
+#ifndef NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_EXPORTER_H
+#define NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_EXPORTER_H
 
 #include "nixl_types.h"
 #include "telemetry_event.h"
@@ -69,4 +69,4 @@ private:
     const size_t maxEventsBuffered_;
 };
 
-#endif // _TELEMETRY_EXPORTER_H
+#endif // NIXL_SRC_API_CPP_TELEMETRY_TELEMETRY_EXPORTER_H
