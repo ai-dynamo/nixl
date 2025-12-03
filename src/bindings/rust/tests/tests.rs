@@ -21,7 +21,7 @@
 
 use nixl_sys::*;
 use std::env;
-
+use std::collections::HashMap;
 // Helper function to create an agent with error handling
 fn create_test_agent(name: &str) -> Result<Agent, NixlError> {
     Agent::new(name)
@@ -237,9 +237,9 @@ fn test_params_iteration() {
 
     println!("Parameters:");
     if !params.is_empty().unwrap() {
-        for param in params.iter().unwrap() {
-            let param = param.unwrap();
-            println!("  {} = {}", param.key, param.value);
+        for result in params.iter().unwrap() {
+            let (key, value) = result.unwrap();
+            println!("  {} = {}", key, value);
         }
     } else {
         println!("  (empty)");
@@ -253,6 +253,58 @@ fn test_params_iteration() {
     } else {
         println!("  (empty)");
     }
+}
+
+#[test]
+fn test_params_from_iter() {
+    use std::collections::HashMap;
+
+    let map = HashMap::from([
+        ("key1", "value1"),
+        ("key2", "value2"),
+        ("key3", "value3"),
+    ]);
+
+    let params = Params::from(&map).expect("Failed to create params from iterator");
+
+    assert!(!params.is_empty().unwrap(), "Params should not be empty");
+
+    let mut found_keys = HashMap::new();
+    for result in params.iter().unwrap() {
+        let (key, value) = result.unwrap();
+        found_keys.insert(key.to_string(), value.to_string());
+    }
+
+    assert_eq!(found_keys.len(), 3, "Should have 3 key-value pairs");
+    assert_eq!(found_keys.get("key1"), Some(&"value1".to_string()));
+    assert_eq!(found_keys.get("key2"), Some(&"value2".to_string()));
+    assert_eq!(found_keys.get("key3"), Some(&"value3".to_string()));
+}
+
+#[test]
+fn test_params_clone() {
+    let agent = Agent::new("test_agent").expect("Failed to create agent");
+    let (_mems, original_params) = agent
+        .get_plugin_params("UCX")
+        .expect("Failed to get plugin params");
+
+    let copied_params = original_params.clone()
+        .expect("Failed to copy params");
+
+    assert_eq!(
+        original_params.is_empty().unwrap(),
+        copied_params.is_empty().unwrap(),
+        "Copied params should have same empty state"
+    );
+
+    let mut original_map = std::collections::HashMap::new();
+    for result in original_params.iter().unwrap() {
+        let (key, value) = result.unwrap();
+        original_map.insert(key.to_string(), value.to_string());
+    }
+
+    let copied_map = HashMap::from(copied_params.iter().unwrap());
+    assert_eq!(original_map, copied_map, "Copied params should match original");
 }
 
 // #[test]
@@ -299,8 +351,8 @@ fn test_get_backend_params() -> Result<(), NixlError> {
 
     // Print parameters using iterator
     let param_iter = backend_params.iter()?;
-    for param in param_iter.flatten() {
-        println!("Backend param: {} = {}", param.key, param.value);
+    for (key, value) in param_iter.flatten() {
+        println!("Backend param: {} = {}", key, value);
     }
 
     // Print memory types
@@ -1110,13 +1162,13 @@ fn test_query_mem_with_files() {
         if response.has_value().unwrap() {
             if let Some(params) = response.get_params().unwrap() {
                 println!("Parameters for response {}:", i);
-                for param in params.iter().unwrap() {
-                    let param = param.unwrap();
-                    println!("  {} = {}", param.key, param.value);
+                for result in params.iter().unwrap() {
+                    let (key, value) = result.unwrap();
+                    println!("  {} = {}", key, value);
                     // POSIX backend returns mtime and mode parameters
-                    if param.key == "mtime" || param.key == "mode" {
+                    if key == "mtime" || key == "mode" {
                         assert!(
-                            !param.value.is_empty(),
+                            !value.is_empty(),
                             "Parameter value should not be empty"
                         );
                     }

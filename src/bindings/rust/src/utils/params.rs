@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use super::*;
+use std::collections::HashMap;
 
 /// A safe wrapper around NIXL parameters
 pub struct Params {
@@ -33,8 +34,21 @@ pub struct ParamIterator<'a> {
     _phantom: std::marker::PhantomData<&'a ()>,
 }
 
+/// An infallible iterator over parameter key-value pairs (filters out errors)
+pub struct ParamIntoIter<'a> {
+    inner: ParamIterator<'a>,
+}
+
+impl<'a> Iterator for ParamIntoIter<'a> {
+    type Item = (&'a str, &'a str);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.find_map(Result::ok)
+    }
+}
+
 impl<'a> Iterator for ParamIterator<'a> {
-    type Item = Result<ParamPair<'a>, NixlError>;
+    type Item = Result<(&'a str, &'a str), NixlError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut key_ptr = ptr::null();
@@ -52,13 +66,13 @@ impl<'a> Iterator for ParamIterator<'a> {
         };
 
         match status {
-            0 if !has_next => None,
+            0 if key_ptr.is_null() => None,
             0 => {
-                // SAFETY: If status is 0, both pointers are valid null-terminated strings
+                // SAFETY: If status is 0 and key_ptr is not null, both pointers are valid null-terminated strings
                 let result = unsafe {
                     let key = CStr::from_ptr(key_ptr).to_str().unwrap();
                     let value = CStr::from_ptr(value_ptr).to_str().unwrap();
-                    Ok(ParamPair { key, value })
+                    Ok((key, value))
                 };
                 Some(result)
             }
@@ -77,9 +91,99 @@ impl Drop for ParamIterator<'_> {
     }
 }
 
+impl From<ParamIterator<'_>> for HashMap<String, String> {
+    fn from(iter: ParamIterator<'_>) -> Self {
+        iter.filter_map(Result::ok)
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+}
+
+impl<'a> IntoIterator for &'a Params {
+    type Item = (&'a str, &'a str);
+    type IntoIter = ParamIntoIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        ParamIntoIter {
+            inner: self.iter().expect("Failed to create param iterator"),
+        }
+    }
+}
+
 impl Params {
     pub(crate) fn new(inner: NonNull<bindings::nixl_capi_params_s>) -> Self {
         Self { inner }
+    }
+
+    /// Creates a new empty Params object
+    pub(crate) fn create() -> Result<Self, NixlError> {
+        let mut params = ptr::null_mut();
+
+        let status = unsafe { nixl_capi_create_params(&mut params) };
+
+        match status {
+            0 => {
+                let inner = unsafe { NonNull::new_unchecked(params) };
+                Ok(Self { inner })
+            }
+            -1 => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Creates a new Params object from an iteratable
+    ///
+    /// # Example
+    /// ```ignore
+    /// use std::collections::HashMap;
+    ///
+    /// let map = HashMap::from([
+    ///     ("access_key", "*********"),
+    ///     ("secret_key", "*********"),
+    ///     ("bucket", "my-bucket"),
+    /// ]);
+    ///
+    /// let params = Params::from(map.iter().map(|(k, v)| (*k, *v)))?;
+    /// ```
+    pub fn from<I, K, V>(iter: I) -> Result<Self, NixlError>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let mut params = Self::create()?;
+        for (key, value) in iter {
+            params.set(key.as_ref(), value.as_ref())?;
+        }
+        Ok(params)
+    }
+
+    /// Creates a new Params object by copying from another Params
+    ///
+    /// # Example
+    /// ```ignore
+    /// let original_params = agent.get_plugin_params("OBJ")?.1;
+    /// let mut modified_params = original_params.clone()?;
+    /// modified_params.set("bucket", "my-custom-bucket")?;
+    /// ```
+    pub fn clone(&self) -> Result<Self, NixlError> {
+        Params::from(self)
+    }
+
+    /// Sets a key-value pair in the parameters (overwrites if exists)
+    pub fn set(&mut self, key: &str, value: &str) -> Result<(), NixlError> {
+        let c_key = CString::new(key)?;
+        let c_value = CString::new(value)?;
+
+        let status = unsafe {
+            nixl_capi_params_add(self.inner.as_ptr(), c_key.as_ptr(), c_value.as_ptr())
+        };
+
+        match status {
+            0 => Ok(()),
+            -1 => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
     }
 
     /// Returns true if the parameters are empty
