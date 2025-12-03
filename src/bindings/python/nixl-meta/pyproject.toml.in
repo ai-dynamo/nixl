@@ -26,7 +26,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [
-  {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
+  {name = "NIXL Developers", email = "nixl-developers@nvidia.com"}
 ]
 
 dependencies = ["@WHEEL_DEP@>=@VERSION@"]
