@@ -1,0 +1,255 @@
+# Build Matrix Configuration for NIXL CI Pipeline
+#
+# This file defines the build matrix configuration for the NIXL CI pipeline in Jenkins.
+# It specifies the build environment, resources, and test matrix for continuous integration.
+#
+# =============================================================================
+# Multi-Stage Docker Build Integration
+# =============================================================================
+# This CI pipeline uses the multi-stage Dockerfile.manylinux with --target wheel-base
+# to get a clean build environment without pre-built wheels. This allows the CI
+# to build wheels for specific Python versions and architectures in each matrix
+# combination, rather than having wheels baked into the Docker image.
+#
+# CI Usage: --target wheel-base (build environment only)
+# User Usage: Full image (includes NIXL build and wheel generation)
+#
+# =============================================================================
+# Key Components:
+# =============================================================================
+# - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
+# - Docker Images: Specifies the container images used for different build stages
+#   - Uses contrib/Dockerfile.manylinux with --target wheel-base
+#   - Base image: harbor.mellanox.com/nixl/$arch/cuda:12.8-devel-manylinux--25.03
+# - Matrix Axes: Defines build variations (Python versions and architectures)
+# - Build Steps: Sequential steps for building, testing, and wheel generation
+#
+# =============================================================================
+# When Modified:
+# =============================================================================
+# - Adding/removing Docker images: Affects available build environments
+# - Modifying matrix axes: Changes build variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts build performance and resource allocation
+# - Adding/removing steps: Changes the build pipeline sequence
+# - Changing build_args: Affects Docker build behavior and target stage
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+---
+# =============================================================================
+# Job Configuration
+# =============================================================================
+job: nixl-ci-build-wheel
+
+# Fail job if one of the steps fails or continue
+# Set to false to allow matrix builds to continue even if some combinations fail
+failFast: false
+
+# Build timeout - 4 hours for complex multi-architecture builds
+timeout_minutes: 240
+
+# =============================================================================
+# Container Registry Configuration
+# =============================================================================
+# Harbor registry for storing build artifacts and base images
+registry_host: nbu-harbor.gtm.nvidia.com
+registry_path: /nixl
+registry_auth: nixl_harbor_credentials
+
+credentials:
+  - credentialsId: 'svc-nixl-new-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USER'
+    passwordVariable: 'ARTIFACTORY_TOKEN'
+
+# =============================================================================
+# Kubernetes Resource Configuration
+# =============================================================================
+# High-performance build environment with substantial resources for complex builds
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  # 16GB memory and 16 CPU cores for parallel compilation and large builds
+  limits: '{memory: 16Gi, cpu: 16000m}'
+  requests: '{memory: 16Gi, cpu: 16000m}'
+
+# =============================================================================
+# Docker Build Configuration
+# =============================================================================
+# Multi-stage Docker build using only the 'wheel-base' stage for CI
+# This provides a clean build environment without pre-built wheels
+runs_on_dockers:
+  - {
+      # Use the multi-stage Dockerfile with base stage only
+      file: 'contrib/Dockerfile.manylinux',
+      name: 'manylinux_cuda12.8',
+      uri: '$arch/$name',
+      tag: '20250701',
+      build_args: '--target wheel-base --build-arg NPROC=$NPROC --build-arg ARCH=$arch --build-arg BASE_IMAGE=${registry_host}${registry_path}/$arch/cuda --build-arg BASE_IMAGE_TAG=12.8-devel-manylinux--25.03'
+    }
+  - {
+      # Use the multi-stage Dockerfile with base stage only
+      file: 'contrib/Dockerfile.manylinux',
+      name: 'manylinux_cuda13.0',
+      uri: '$arch/$name',
+      tag: '20250701',
+      build_args: '--target wheel-base --build-arg NPROC=$NPROC --build-arg ARCH=$arch --build-arg BASE_IMAGE=${registry_host}${registry_path}/$arch/cuda --build-arg BASE_IMAGE_TAG=13.0-devel-manylinux--25.09'
+    }
+
+# =============================================================================
+# Build Matrix Configuration
+# =============================================================================
+# Defines the combinations of manylinux version and Python versions and architectures to build
+# Each combination runs in parallel, creating 10 total build jobs
+matrix:
+  axes:
+    manylinux:
+      - "2_28"
+    # Python versions supported by NIXL
+    # Each version gets its own wheel with appropriate ABI tags
+    python_version:
+      - "3.10"
+      - "3.11"
+      - "3.12"
+      - "3.13"
+    # Target architectures for wheel distribution
+    # x86_64: Intel/AMD 64-bit processors
+    # aarch64: ARM 64-bit processors (Apple Silicon, ARM servers)
+    arch:
+      - x86_64
+      - aarch64
+
+# =============================================================================
+# Environment and Build Steps
+# =============================================================================
+# Global environment variables for the build process
+env:
+  NPROC: 16
+  NIXL_INSTALL_DIR: /usr/local/nixl
+  NIXL_PLUGIN_DIR: $NIXL_INSTALL_DIR/lib64/plugins
+  NIXL_BUILD_DIR: nixl_build
+  UCX_INSTALL_DIR: /usr/local/src
+  UCX_PLUGIN_DIR: /usr/lib64/ucx
+  VIRTUAL_ENV: $WORKSPACE/.venv
+  DIST_DIR: $WORKSPACE/dist
+  ARTIFACTORY_PYPI_URL: https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
+
+steps:
+  # =============================================================================
+  # Step 1: Environment Preparation
+  # =============================================================================
+  # Set up Python virtual environment and install build tools
+  # This step runs sequentially (not in parallel) to avoid conflicts
+  - name: Prepare
+    parallel: false
+    run: |
+      set -x
+      # Create Python virtual environment for the specific Python version
+      uv venv $VIRTUAL_ENV --python $python_version
+      export PATH=$VIRTUAL_ENV/bin:$PATH
+
+      # Install python dependencies
+      uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click setuptools tabulate auditwheel tomlkit
+
+  # =============================================================================
+  # Step 2: NIXL Native Library Build
+  # =============================================================================
+  # Compile NIXL C++ libraries using meson build system
+  # This step builds the native components that will be bundled into Python wheels
+  - name: Build NIXL
+    parallel: false
+    run: |
+      # Activate the virtual environment
+      export PATH=$VIRTUAL_ENV/bin:$PATH
+
+      # Create build directory for meson
+      mkdir $NIXL_BUILD_DIR
+      # Configure build with CUDA support and release optimization
+      meson setup $NIXL_BUILD_DIR/ --prefix=$NIXL_INSTALL_DIR --buildtype=release \
+        -Dcudapath_lib="/usr/local/cuda/lib64" -Dcudapath_inc="/usr/local/cuda/include"
+      # Compile native libraries
+      ninja -C $NIXL_BUILD_DIR -j${NPROC}
+      # Install libraries to system paths
+      ninja -C $NIXL_BUILD_DIR install
+
+  # =============================================================================
+  # Step 3: Python Wheel Generation
+  # =============================================================================
+  # Create distributable Python wheels that bundle native libraries
+  # This step uses the build-wheel.sh script to package everything into wheels
+  - name: Build Wheel
+    parallel: false
+    run: |
+      set -x
+      # Ensure VIRTUAL_ENV is set and activate it
+      export PATH=$VIRTUAL_ENV/bin:/usr/bin:$PATH
+
+      # Set library paths for wheel building process
+      export LD_LIBRARY_PATH=$NIXL_PLUGIN_DIR:$NIXL_INSTALL_DIR/lib64:$LD_LIBRARY_PATH
+
+      export CI_BUILD_NUMBER=$BUILD_NUMBER
+
+      # Build wheel for specific Python version and architecture
+      # The wheel will include all native libraries and plugins
+      mkdir -p $DIST_DIR
+      ./contrib/build-wheel.sh \
+          --python-version $python_version \
+          --platform "manylinux_${manylinux}_${arch}" \
+          --ucx-plugins-dir $UCX_PLUGIN_DIR \
+          --nixl-plugins-dir $NIXL_PLUGIN_DIR \
+          --output-dir $DIST_DIR
+
+  # =============================================================================
+  # Step 4: Wheel Installation Test
+  # =============================================================================
+  # Verify that the generated wheel can be installed and imported correctly
+  # This ensures the wheel is properly packaged and compatible
+  - name: Test Wheel Install
+    parallel: false
+    run: |
+      set -x
+      # Ensure VIRTUAL_ENV is set and activate it
+      export PATH=$VIRTUAL_ENV/bin:/usr/bin:$PATH
+
+      # Copy the meta package wheel to the dist directory, which will be used to push to PyPI.
+      # Only do this for the CUDA 12 builds, since by default nixl depends on nixl-cu12.
+      if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "12" ]; then
+        cp $NIXL_BUILD_DIR/src/bindings/python/nixl-meta/nixl*.whl $DIST_DIR/
+      fi
+      ls $DIST_DIR/
+
+      # Install the wheel for the specific Python version
+      # Note: torch is not needed for building - it's a runtime dependency
+      # that will be installed automatically when users install the wheel
+      export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)"
+
+      uv pip install $DIST_DIR/nixl*.whl
+
+  # =============================================================================
+  # Step 5: Publish to Artifactory PyPI Repository
+  # =============================================================================
+  # Upload wheels to Artifactory (optional - enable when ready to publish)
+  - name: Publish Wheels
+    parallel: false
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    run: |
+      # Activate virtual environment
+      export PATH=$VIRTUAL_ENV/bin:$PATH
+
+      # Install twine if not already installed
+      uv pip install twine
+
+      # Upload to Artifactory PyPI repository
+      # Credentials should be set via Jenkins credentials or environment variables
+      # Note: Artifactory manages the internal structure, don't add paths to the URL
+      twine upload \
+        --repository-url ${ARTIFACTORY_PYPI_URL} \
+        --username ${ARTIFACTORY_USER} \
+        --password ${ARTIFACTORY_TOKEN} \
+        --verbose \
+        $DIST_DIR/nixl*cp${python_version//./}*.whl
+
+# =============================================================================
+# Task Naming Convention
+# =============================================================================
+# Unique identifier for each matrix combination
+taskName: '${name}_${manylinux}/${arch}/python_${python_version}'
