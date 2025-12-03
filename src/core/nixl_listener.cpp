@@ -409,7 +409,7 @@ public:
                 invalidated_agents.push_back(agent_name);
             } else {
                 NIXL_ERROR << "Watcher for " << event.kv().key() << " received unexpected event from etcd: "
-                           << event.event_type();
+                           << static_cast<int>(event.event_type());
             }
         };
 
