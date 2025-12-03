@@ -36,6 +36,7 @@ WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 UCX_REF=${UCX_REF:-v1.20.x}
+BUILD_NIXL_EP="false"
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 if [ "$CI" = "true" ]; then
@@ -122,6 +123,9 @@ get_options() {
             # Master branch (v1.20) also containing EFA SRD support
             UCX_REF=9d2b88a1f67faf9876f267658bd077b379b8bb76
             ;;
+        --build-nixl-ep)
+            BUILD_NIXL_EP=true
+            ;;
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
@@ -169,7 +173,13 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
-    echo "UCX Ref: ${UCX_REF}"
+    if [ "$BUILD_NIXL_EP" = "true" ]; then
+        echo "UCX Ref: master (latest) - BUILD_NIXL_EP enabled"
+        echo "NIXL EP: Enabled"
+    else
+        echo "UCX Ref: ${UCX_REF}"
+        echo "NIXL EP: Disabled"
+    fi
     echo "Build Type: ${BUILD_TYPE}"
 }
 
@@ -184,6 +194,7 @@ show_help() {
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-upstream use ucx master branch]"
+    echo "  [--build-nixl-ep build NIXL with NIXL EP support (uses latest UCX master)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     exit 0
@@ -210,6 +221,7 @@ BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
+BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
