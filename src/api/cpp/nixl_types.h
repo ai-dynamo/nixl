@@ -98,6 +98,11 @@ namespace nixlEnumStrings {
 using nixl_backend_t = std::string;
 
 /**
+ * @brief A typedef for a std::string to identify nixl telemetry plugins
+ */
+using nixl_telemetry_plugin_t = std::string;
+
+/**
  * @brief A typedef for a std::string as nixl blob
  *        std::string supports \0 natively, so it can be looked as a void* of data,
  *        with specified length. Giving it a new name to be clear in the API and

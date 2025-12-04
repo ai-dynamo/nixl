@@ -168,7 +168,7 @@ nixlAgentData::~nixlAgentData() {
 
     for (auto & elm: backendEngines) {
         auto& plugin_manager = nixlPluginManager::getInstance();
-        auto plugin_handle = plugin_manager.getPlugin(elm.second->getType());
+        auto plugin_handle = plugin_manager.getBackendPlugin(elm.second->getType());
 
         if (plugin_handle) {
             // If we have a plugin handle, use it to destroy the engine
@@ -233,7 +233,7 @@ nixlAgent::~nixlAgent() {
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
     auto& plugin_manager = nixlPluginManager::getInstance();
-    plugins = plugin_manager.getLoadedPluginNames();
+    plugins = plugin_manager.getLoadedBackendPluginNames();
     return NIXL_SUCCESS;
 }
 
@@ -246,7 +246,7 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
 
     // First try to get options from a loaded plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
-    auto plugin_handle = plugin_manager.getPlugin(type);
+    auto plugin_handle = plugin_manager.getBackendPlugin(type);
 
     if (plugin_handle) {
       // If the plugin is already loaded, get options directly
@@ -256,7 +256,7 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
     }
 
     // If plugin isn't loaded yet, try to load it temporarily
-    plugin_handle = plugin_manager.loadPlugin(type);
+    plugin_handle = plugin_manager.loadBackendPlugin(type);
     if (plugin_handle) {
         params = plugin_handle->getBackendOptions();
         mems   = plugin_handle->getBackendMems();
@@ -265,7 +265,7 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
 
         // We don't keep the plugin loaded if we didn't have it before
         if (data->backendEngines.count(type) == 0) {
-            plugin_manager.unloadPlugin(type);
+            plugin_manager.unloadBackendPlugin(type);
         }
         return NIXL_SUCCESS;
     }
@@ -332,7 +332,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
-    auto plugin_handle = plugin_manager.loadPlugin(type);
+    auto plugin_handle = plugin_manager.loadBackendPlugin(type);
 
     if (plugin_handle) {
         // Plugin found, use it to create the backend
