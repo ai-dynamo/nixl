@@ -1,14 +1,17 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ *
+ * This file incorporates material from the DeepSeek project, licensed under the MIT License.
+ * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
+ *
+ * SPDX-License-Identifier: MIT AND Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
