@@ -584,7 +584,7 @@ nixlPluginManager::getLoadedTelemetryPluginNames() {
 
 void
 nixlPluginManager::registerBackendStaticPlugin(const std::string_view &name,
-                                               nixlBackendStaticPluginCreatorFunc creator) {
+                                               nixlStaticPluginCreatorFunc creator) {
     lock_guard lg(lock);
 
     nixlBackendStaticPluginInfo info;
