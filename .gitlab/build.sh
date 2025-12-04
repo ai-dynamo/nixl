@@ -32,6 +32,8 @@ UCX_VERSION=${UCX_VERSION:-v1.20.x}
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
+# UCCL_COMMIT_SHA is the commit SHA of UCCL.
+UCCL_COMMIT_SHA="1465751bf2f2c8cec7616c4a36a3a18504877870"
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -214,6 +216,16 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   $SUDO bash dependencies.sh && \
   mkdir build && cd build && \
   cmake .. -DBUILD_SHARED_LIBS=ON && \
+  make -j2 && \
+  $SUDO make install && \
+  $SUDO ldconfig
+)
+
+( \
+  cd /tmp && \
+  git clone https://github.com/uccl-project/uccl.git && \
+  cd uccl && git checkout -q "${UCCL_COMMIT_SHA}" && \
+  cd p2p && \
   make -j2 && \
   $SUDO make install && \
   $SUDO ldconfig
