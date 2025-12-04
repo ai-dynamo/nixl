@@ -105,8 +105,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
                 return x == MEM_VAL;
             });
         });
-        if (!rc)
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (!rc) std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     if (!rc)
         std::cerr << "Thread " << thread_id << " UCX Transfer failed, buffers are different\n";
