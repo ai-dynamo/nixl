@@ -167,8 +167,7 @@ private:
     void
     registerBuiltinPlugins();
     void
-    registerBackendStaticPlugin(const std::string_view &name,
-                                nixlStaticPluginCreatorFunc creator);
+    registerBackendStaticPlugin(const std::string_view &name, nixlStaticPluginCreatorFunc creator);
     void
     registerTelemetryStaticPlugin(const std::string_view &name,
                                   nixlTelemetryStaticPluginCreatorFunc creator);
