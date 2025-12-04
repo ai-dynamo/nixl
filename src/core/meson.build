@@ -55,6 +55,7 @@ endif
 
 nixl_lib = library('nixl',
                    'nixl_agent.cpp',
+                   'base_plugin_manager.cpp',
                    'nixl_plugin_manager.cpp',
                    'nixl_listener.cpp',
                    'telemetry.cpp',
