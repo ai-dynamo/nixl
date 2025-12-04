@@ -777,7 +777,7 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) co
         // Local read completions (fi_readdata) - use context
         return processLocalTransferCompletion(comp, "read");
 
-    } else if (flags & FI_REMOTE_WRITE) {
+    } else if (flags & FI_REMOTE_WRITE || flags & FI_REMOTE_CQ_DATA) {
         // Remote write completions (from fi_writedata) - use immediate data
         return processRemoteWriteCompletion(comp);
 
