@@ -448,6 +448,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     config.modify("ADDRESS_VERSION", "v2");
     config.modify("RNDV_THRESH", "inf");
     config.modify("MAX_RMA_RAILS", "2");
+    config.modify("IB_PCI_RELAXED_ORDERING", "try");
 
     if (ucp_version >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");
