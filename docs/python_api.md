@@ -39,5 +39,5 @@ See the [Python examples](../examples/python/) directory for complete working ex
 - [query_mem_example.py](../examples/python/query_mem_example.py) - QueryMem API demonstration
 - [nixl_gds_example.py](../examples/python/nixl_gds_example.py) - GDS backend usage
 - [nixl_api_example.py](../examples/python/nixl_api_example.py) - General API usage
-- [blocking_send_recv_example.py](../examples/python/blocking_send_recv_example.py) - Basic transfer operations
+- [basic_two_peers.py](../examples/python/basic_two_peers.py) - Basic transfer operations
 - [partial_md_example.py](../examples/python/partial_md_example.py) - Partial metadata handling
