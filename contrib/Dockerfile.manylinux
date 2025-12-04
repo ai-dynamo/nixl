@@ -18,7 +18,7 @@ ARG BASE_IMAGE
 ARG BASE_IMAGE_TAG
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
-ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG DEFAULT_PYTHON_VERSION="3.14"
 ARG ARCH="x86_64"
 ARG UCX_REF="v1.20.x"
 ARG LIBFABRIC_VERSION="v1.21.0"
@@ -244,6 +244,8 @@ RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click s
 # Install PyTorch
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     uv pip install torch torchvision torchaudio
+# Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
+RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
@@ -267,10 +269,11 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
-ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12,3.13"
+ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+    export UV_INDEX_STRATEGY=unsafe-best-match && \
     mkdir -p dist && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         export PATH=$VIRTUAL_ENV/bin:$PATH && \

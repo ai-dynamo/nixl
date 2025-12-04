@@ -14,7 +14,7 @@
 # limitations under the License.
 
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -22,10 +22,11 @@ name = "nixl"
 version = "@VERSION@"
 description = "NIXL Python API meta package for CUDA variants"
 readme = "README.md"
-license = {file = 'LICENSE'}
-requires-python = ">=3.9"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
 authors = [
-  {name = 'NIXL Developers', email = 'nixl-developers@nvidia.com'}
+  {name = "NIXL Developers", email = "nixl-developers@nvidia.com"}
 ]
 
 dependencies = ["@WHEEL_DEP@>=@VERSION@"]
