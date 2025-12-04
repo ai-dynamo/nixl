@@ -21,8 +21,8 @@ utils_sources = [
 
 utils_deps = [
   cuda_dep,
-  gflags_dep,
-  openmp_dep
+  openmp_dep,
+  boost_po_dep
 ]
 
 utils_lib = static_library('utils',

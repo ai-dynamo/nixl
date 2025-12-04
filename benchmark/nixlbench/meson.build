@@ -57,6 +57,9 @@ if not nixl_lib.found() or not nixl_build.found() or not nixl_serdes.found()
     error('NIXL Libraries not found. Exiting.')
 endif
 
+# boost::program_options
+boost_po_dep = dependency('boost', modules: ['program_options'], required: true)
+
 # CUDA
 cuda_available = false
 if cuda_lib_path == ''
@@ -102,9 +105,6 @@ if cuda_available
         cuda_fabric_available = true
     endif
 endif
-
-# GFlags
-gflags_dep = dependency('gflags', required: true)
 
 # OpenMP
 openmp_dep = dependency('openmp', required: true)
@@ -166,7 +166,7 @@ configure_file(
     install_dir: get_option('includedir') / 'nixlbench'
 )
 
-deps = [gflags_dep, nixl_lib, nixl_build, nixl_serdes, openmp_dep]
+deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, boost_po_dep]
 args = []
 if etcd_available
     deps += [etcd_dep]
@@ -208,7 +208,7 @@ if nvshmem_available
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/utils']
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/runtime']
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/worker']
-    nvcc_args += ['-lnixl', '-lnixl_build', '-lserdes', '-lgflags', '-lcuda', '-lcudart', '-lnvshmem']
+    nvcc_args += ['-lnixl', '-lnixl_build', '-lserdes', '-lcuda', '-lcudart', '-lnvshmem']
     nvcc_args += args
     nvcc_cmd_files = [
                  meson.current_build_dir() + '/src/utils/libutils.a.p/utils.cpp.o',
