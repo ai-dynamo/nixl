@@ -57,6 +57,9 @@ if not nixl_lib.found() or not nixl_build.found() or not nixl_serdes.found()
     error('NIXL Libraries not found. Exiting.')
 endif
 
+# boost::program_options
+boost_po_dep = dependency('boost', modules: ['program_options'], required: true)
+
 # CUDA
 cuda_available = false
 if cuda_lib_path == ''
@@ -166,7 +169,7 @@ configure_file(
     install_dir: get_option('includedir') / 'nixlbench'
 )
 
-deps = [gflags_dep, nixl_lib, nixl_build, nixl_serdes, openmp_dep]
+deps = [gflags_dep, nixl_lib, nixl_build, nixl_serdes, openmp_dep, boost_po_dep]
 args = []
 if etcd_available
     deps += [etcd_dep]
