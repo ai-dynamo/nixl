@@ -17,17 +17,17 @@ cpp = meson.get_compiler('cpp')
 compile_flags = []
 
 
-if 'UCCL_P2P' in static_plugins
-    uccl_p2p_backend_lib = static_library('UCCL_P2P',
-               'uccl_p2p_backend.cpp', 'uccl_p2p_backend.h', 'uccl_p2p_plugin.cpp',
+if 'UCCL' in static_plugins
+    uccl_backend_lib = static_library('UCCL',
+               'uccl_backend.cpp', 'uccl_backend.h', 'uccl_plugin.cpp',
                dependencies: [nixl_infra, serdes_interface, cuda_dep, libuccl_p2p, nixl_common_dep],
                include_directories: nixl_inc_dirs,
                install: false,
                cpp_args : compile_flags,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
-    uccl_p2p_backend_lib = shared_library('UCCL_P2P',
-               'uccl_p2p_backend.cpp', 'uccl_p2p_backend.h', 'uccl_p2p_plugin.cpp',
+    uccl_backend_lib = shared_library('UCCL',
+               'uccl_backend.cpp', 'uccl_backend.h', 'uccl_plugin.cpp',
                dependencies: [nixl_infra, serdes_interface, cuda_dep, libuccl_p2p, nixl_common_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
@@ -37,10 +37,10 @@ else
 
     if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
-                    'echo "UCCL_P2P=' + uccl_p2p_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+                    'echo "UCCL=' + uccl_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
                     check: true
                 )
     endif
 endif
 
-uccl_backend_interface = declare_dependency(link_with: uccl_p2p_backend_lib)
+uccl_backend_interface = declare_dependency(link_with: uccl_backend_lib)

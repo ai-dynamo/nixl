@@ -15,11 +15,11 @@
 
 cpp = meson.get_compiler('cpp')
 
-uccl_p2p_lib = cpp.find_library('uccl_p2p', dirs: ['/usr/local/lib'], required: false)
+uccl_lib = cpp.find_library('uccl_p2p', dirs: ['/usr/local/lib'], required: false)
 uccl_rdma_lib = cpp.find_library('rdma_plugin', dirs: ['/usr/local/lib'], required: false)
 
-if not uccl_p2p_lib.found() or not uccl_rdma_lib.found()
-    message('UCCL P2P libraries not found, skipping uccl_p2p_gtest build')
+if not uccl_lib.found() or not uccl_rdma_lib.found()
+    message('UCCL P2P libraries not found, skipping uccl_gtest build')
     subdir_done()
 endif
 
@@ -27,7 +27,7 @@ python_dep = dependency('python3', required: false)
 pybind11_dep = dependency('pybind11', required: false)
 
 if not python_dep.found() or not pybind11_dep.found()
-    message('Python dependencies not found, skipping uccl_p2p_gtest build')
+    message('Python dependencies not found, skipping uccl_gtest build')
     subdir_done()
 endif
 
@@ -42,8 +42,8 @@ else
     cpp_flags += '-UHAVE_CUDA'
 endif
 
-uccl_p2p_test_exe = executable('uccl_p2p_gtest',
-    sources : ['uccl_p2p_test.cpp', '../../main.cpp', '../../common.cpp'],
+uccl_test_exe = executable('uccl_gtest',
+    sources : ['uccl_test.cpp', '../../main.cpp', '../../common.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs, '.'],
     cpp_args : cpp_flags,
     dependencies : [
@@ -54,7 +54,7 @@ uccl_p2p_test_exe = executable('uccl_p2p_gtest',
         python_dep,
         pybind11_dep,
         uccl_rdma_lib,
-        uccl_p2p_lib,
+        uccl_lib,
         gtest_dep,
         gmock_dep,
         absl_strings_dep,
@@ -64,4 +64,4 @@ uccl_p2p_test_exe = executable('uccl_p2p_gtest',
     install : true
 )
 
-test('uccl_p2p_gtest', uccl_p2p_test_exe)
+test('uccl_gtest', uccl_test_exe)

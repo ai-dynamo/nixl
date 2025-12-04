@@ -16,11 +16,11 @@
  */
 
 #include "backend/backend_plugin.h"
-#include "uccl_p2p_backend.h"
+#include "uccl_backend.h"
 
 namespace {
 nixl_b_params_t
-get_uccl_p2p_options() {
+get_uccl_options() {
     nixl_b_params_t params;
     params["in_python"] = "";
     params["num_cpus"] = "";
@@ -29,19 +29,19 @@ get_uccl_p2p_options() {
 } // namespace
 
 // Plugin type alias for convenience
-using uccl_p2p_plugin_t = nixlBackendPluginCreator<nixlUcclEngine>;
+using uccl_plugin_t = nixlBackendPluginCreator<nixlUcclEngine>;
 
 #ifdef STATIC_PLUGIN_UCCL
 nixlBackendPlugin *
 createStaticUCCLPlugin() {
-    return uccl_p2p_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "UCCL_P2P", "0.1.0", get_uccl_p2p_options(), {DRAM_SEG, VRAM_SEG});
+    return uccl_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "UCCL", "0.1.0", get_uccl_options(), {DRAM_SEG, VRAM_SEG});
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return uccl_p2p_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "UCCL_P2P", "0.1.0", get_uccl_p2p_options(), {DRAM_SEG, VRAM_SEG});
+    return uccl_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "UCCL", "0.1.0", get_uccl_options(), {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

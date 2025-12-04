@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "uccl_p2p_backend.h"
+#include "uccl_backend.h"
 #include "serdes/serdes.h"
 #include <iostream>
 #include <cstdlib>

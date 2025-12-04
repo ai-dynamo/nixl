@@ -25,7 +25,7 @@
 
 namespace gtest {
 namespace nixl {
-    constexpr const char *uccl_backend_name = "UCCL_P2P";
+    constexpr const char *uccl_backend_name = "UCCL";
 
     static nixlBackendH *
     createUcclBackend(nixlAgent &agent) {
@@ -33,7 +33,7 @@ namespace nixl {
         nixl_status_t status = agent.getAvailPlugins(plugins);
         EXPECT_EQ(status, NIXL_SUCCESS);
         auto it = std::find(plugins.begin(), plugins.end(), uccl_backend_name);
-        EXPECT_NE(it, plugins.end()) << "UCCL_P2P plugin not found";
+        EXPECT_NE(it, plugins.end()) << "UCCL plugin not found";
 
         nixl_b_params_t params;
         nixl_mem_list_t mems;
@@ -158,7 +158,7 @@ private:
 void
 TestUcclBackend::Agent::init(const std::string &name) {
     m_priv = std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
-    // Create UCCL P2P backend for testing
+    // Create UCCL backend for testing
     m_backend = nixl::createUcclBackend(*m_priv);
     m_mem.init(m_backend);
     m_mem.fillData();
@@ -248,8 +248,8 @@ TestUcclBackend::Agent::dataCmp(const TestUcclBackend::Agent &other) const {
 }
 
 TestUcclBackend::TestUcclBackend() {
-    m_backend_name = "UCCL_P2P";
-    m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/uccl_p2p");
+    m_backend_name = "UCCL";
+    m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/uccl");
 }
 
 template<TestUcclBackend::TestType test_type, enum nixl_xfer_op_t op>

@@ -19,7 +19,6 @@ option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD He
 option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD Libraries')
 option('disable_gds_backend', type : 'boolean', value : false, description : 'disable gds backend')
 option('disable_mooncake_backend', type : 'boolean', value : false, description : 'disable mooncake backend')
-option('disable_uccl_p2p_backend', type : 'boolean', value : false, description : 'disable UCCL P2P backend')
 option('install_headers', type : 'boolean', value : true, description : 'install headers')
 option('gds_path', type: 'string', value: '/usr/local/cuda/', description: 'Path to GDS CuFile install')
 option('cudapath_inc', type: 'string', value: '', description: 'Include path for CUDA')
