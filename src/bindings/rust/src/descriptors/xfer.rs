@@ -16,9 +16,10 @@
 use super::*;
 use super::sync_manager::{BackendSyncable, SyncManager};
 use std::ops::{Index, IndexMut};
+use serde::{Serialize, Deserialize};
 
 /// Public transfer descriptor used for indexing and comparisons
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct XferDescriptor {
     pub addr: usize,
     pub len: usize,
@@ -26,8 +27,9 @@ pub struct XferDescriptor {
 }
 
 /// Internal data structure for transfer descriptors
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct XferDescData {
+    mem_type: MemType,
     descriptors: Vec<XferDescriptor>,
 }
 
@@ -80,6 +82,7 @@ impl<'a> XferDescList<'a> {
                 // SAFETY: If status is NIXL_CAPI_SUCCESS, dlist is non-null
                 let backend = unsafe { NonNull::new_unchecked(dlist) };
                 let data = XferDescData {
+                    mem_type,
                     descriptors: Vec::new(),
                 };
                 let sync_mgr = SyncManager::new(data, backend);
@@ -91,7 +94,7 @@ impl<'a> XferDescList<'a> {
                 })
             }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
+            _ => Err(NixlError::FailedToCreateXferDlistHandle),
         }
     }
 
@@ -205,6 +208,28 @@ impl<'a> XferDescList<'a> {
 
     pub(crate) fn handle(&self) -> *mut bindings::nixl_capi_xfer_dlist_s {
         self.sync_mgr.backend().map(|b| b.as_ptr()).unwrap_or(ptr::null_mut())
+    }
+
+    /// Serializes the descriptor list to a byte vector using bincode
+    pub fn serialize(&self) -> Result<Vec<u8>, NixlError> {
+        // Serialize the XferDescData directly (contains mem_type + descriptors)
+        bincode::serialize(self.sync_mgr.data()).map_err(|_| NixlError::BackendError)
+    }
+
+    /// Deserializes a descriptor list from a byte slice using bincode
+    pub fn deserialize(bytes: &[u8]) -> Result<Self, NixlError> {
+        let data: XferDescData = bincode::deserialize(bytes)
+            .map_err(|_| NixlError::FailedToCreateXferDlistHandle)?;
+
+        let mut list = XferDescList::new(data.mem_type)?;
+        for desc in data.descriptors {
+            list.add_desc(desc.addr, desc.len, desc.dev_id);
+        }
+
+        // Force synchronization to validate backend can handle the data
+        list.sync_mgr.backend()?;
+
+        Ok(list)
     }
 }
 
