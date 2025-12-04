@@ -312,6 +312,7 @@ public:
     void
     reserve(size_t size) {
         requests_.reserve(size);
+        connections_.clear();
     }
 
     nixl_status_t
