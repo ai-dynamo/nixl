@@ -72,7 +72,7 @@ private:
 // Structure to hold static plugin info
 struct nixlBackendStaticPluginInfo {
     const char* name;
-    nixlBackendStaticPluginCreatorFunc createFunc;
+    nixlStaticPluginCreatorFunc createFunc;
 };
 
 struct nixlTelemetryStaticPluginInfo {
@@ -168,7 +168,7 @@ private:
     registerBuiltinPlugins();
     void
     registerBackendStaticPlugin(const std::string_view &name,
-                                nixlBackendStaticPluginCreatorFunc creator);
+                                nixlStaticPluginCreatorFunc creator);
     void
     registerTelemetryStaticPlugin(const std::string_view &name,
                                   nixlTelemetryStaticPluginCreatorFunc creator);
