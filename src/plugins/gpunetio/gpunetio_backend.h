@@ -38,6 +38,7 @@ public:
     int lid; /* IB: local ID */
     int dlid; /* IB: destination ID */
     int gid_index;
+    int cuda_id;
     struct ibv_port_attr port_attr;
     std::vector<std::string> oobdev;
 
