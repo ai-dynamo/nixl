@@ -226,7 +226,7 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   git clone https://github.com/uccl-project/uccl.git && \
   cd uccl && git checkout -q "${UCCL_COMMIT_SHA}" && \
   cd p2p && \
-  make install-deps && \
+  pip3 install pybind11 --break-system-packages && \
   make -j2 && \
   $SUDO make install && \
   $SUDO ldconfig
