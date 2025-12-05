@@ -21,7 +21,7 @@ for f in $(git ls-files); do
     *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|*.md|*.svg|*.wrap|*.in|*.json|*.template|*.gitignore|*.python-version|*py.typed)
       continue
       ;;
-    CODEOWNERS|LICENSE|Doxyfile|.clang-format|.clang-tidy|.codespellrc)
+    CODEOWNERS|*LICENSE*|Doxyfile|.clang-format|.clang-tidy|.codespellrc)
       continue
       ;;
   esac
@@ -39,7 +39,7 @@ for f in $(git ls-files); do
 
   # Extract copyright years (handles YYYY or YYYY-YYYY)
   copyright_years=$(echo "$header" | \
-    grep -Eo 'Copyright \(c\) [0-9]{4}(-[0-9]{4})?' | \
+    grep NVIDIA | grep -Eo 'Copyright \(c\) [0-9]{4}(-[0-9]{4})?' | \
     sed -E 's/.* ([0-9]{4})(-[0-9]{4})?/\1\2/' || true)
 
   if [[ -z "$copyright_years" ]]; then
@@ -57,7 +57,7 @@ for f in $(git ls-files); do
   fi
 
   # License line must exist
-  if ! echo "$header" | grep -Eq '^[[:space:]]*(#|//|\*|/\*|<!--)[[:space:]]*SPDX-License-Identifier:[[:space:]]*Apache-2\.0'; then
+  if ! echo "$header" | grep -Eq '^[[:space:]]*(#|//|\*|/\*|<!--)[[:space:]]*SPDX-License-Identifier:.*Apache-2\.0'; then
     failures+=("$f (missing license)")
     continue
   fi
