@@ -29,6 +29,7 @@
 
 using put_object_callback_t = std::function<void(bool success)>;
 using get_object_callback_t = std::function<void(bool success)>;
+using upload_part_callback_t = std::function<void(bool success, const std::string &etag)>;
 
 /**
  * Abstract interface for S3 client operations.
@@ -82,6 +83,23 @@ public:
      */
     virtual bool
     checkObjectExists(std::string_view key) = 0;
+
+    /**
+     * Asynchronously upload a part for multipart upload to S3.
+     * @param key The object key
+     * @param upload_id The multipart upload ID from CreateMultipartUpload
+     * @param part_number The part number (1-10000)
+     * @param data_ptr Pointer to the data to upload
+     * @param data_len Length of the data in bytes
+     * @param callback Callback function with success status and ETag
+     */
+    virtual void
+    uploadPartAsync(std::string_view key,
+                    std::string_view upload_id,
+                    int part_number,
+                    uintptr_t data_ptr,
+                    size_t data_len,
+                    upload_part_callback_t callback) = 0;
 };
 
 /**
@@ -116,6 +134,14 @@ public:
 
     bool
     checkObjectExists(std::string_view key) override;
+
+    void
+    uploadPartAsync(std::string_view key,
+                    std::string_view upload_id,
+                    int part_number,
+                    uintptr_t data_ptr,
+                    size_t data_len,
+                    upload_part_callback_t callback) override;
 
 private:
     std::unique_ptr<Aws::SDKOptions, std::function<void(Aws::SDKOptions *)>> awsOptions_;
