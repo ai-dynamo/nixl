@@ -535,7 +535,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
 
 #ifdef FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV
         // Disable unsolicited write recv for EFA RDM to reduce CQ overflow likelihood
-        bool use_unsolicited_write_recv = false; // Set to false to disable the feature
+        const bool use_unsolicited_write_recv = false; // Set to false to disable the feature
         ret = fi_setopt(&endpoint->fid,
                         FI_OPT_ENDPOINT,
                         FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV,
