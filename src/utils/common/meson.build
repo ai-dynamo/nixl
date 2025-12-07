@@ -35,6 +35,7 @@ nixl_common_lib = shared_library('nixl_common',
     'uuid_v4.cpp',
     dependencies: nixl_common_deps,
     include_directories: nixl_common_inc,
+    cpp_args: ['-DNIXL_VERSION="' + meson.project_version() + '"'],
     install: true,
 )
 
