@@ -401,7 +401,7 @@ public:
         }
 
         requests_.resize(incomplete_reqs);
-        if(requests_.empty()) {
+        if (requests_.empty()) {
             connections_.clear();
         }
         return out_ret;
