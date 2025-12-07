@@ -47,7 +47,7 @@ DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 DEFINE_string(
     backend,
     XFERBENCH_BACKEND_UCX,
-    "Name of NIXL backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
+    "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]. Note: Storage backends always use DRAM locally.");
@@ -102,9 +102,10 @@ DEFINE_string(etcd_endpoints,
               "ETCD server endpoints for communication (optional for storage backends)");
 
 // POSIX options - only used when backend is POSIX
-DEFINE_string (posix_api_type,
-               XFERBENCH_POSIX_API_AIO,
-               "API type for POSIX operations [AIO, URING] (only used with POSIX backend)");
+DEFINE_string(
+    posix_api_type,
+    XFERBENCH_POSIX_API_AIO,
+    "API type for POSIX operations [AIO, URING, POSIXAIO] (only used with POSIX backend)");
 
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
 DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
@@ -239,9 +240,10 @@ xferBenchConfig::loadFromFlags() {
 
             // Validate POSIX API type
             if (posix_api_type != XFERBENCH_POSIX_API_AIO &&
-                posix_api_type != XFERBENCH_POSIX_API_URING) {
+                posix_api_type != XFERBENCH_POSIX_API_URING &&
+                posix_api_type != XFERBENCH_POSIX_API_POSIXAIO) {
                 std::cerr << "Invalid POSIX API type: " << posix_api_type
-                          << ". Must be one of [AIO, URING]" << std::endl;
+                          << ". Must be one of [AIO, URING, POSIXAIO]" << std::endl;
                 return -1;
             }
         }
@@ -429,8 +431,7 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,UCX_MO,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])",
-                    backend);
+        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])", backend);
         printOption ("Enable pt (--enable_pt=[0,1])", std::to_string (enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption ("Device list (--device_list=dev1,dev2,...)", device_list);
@@ -450,7 +451,7 @@ xferBenchConfig::printConfig() {
 
         // Print POSIX options if backend is POSIX
         if (backend == XFERBENCH_BACKEND_POSIX) {
-            printOption ("POSIX API type (--posix_api_type=[AIO,URING])", posix_api_type);
+            printOption("POSIX API type (--posix_api_type=[AIO,URING,POSIXAIO])", posix_api_type);
         }
 
         // Print OBJ options if backend is OBJ
@@ -658,6 +659,7 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                                           xferBenchConfig::num_initiator_dev);
         gusli_devmap_init = true;
     }
+    bool pass_check_consistency = true;
     for (const auto &iov_list: iov_lists) {
         for(const auto &iov: iov_list) {
             void *addr = NULL;
@@ -792,6 +794,7 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             rc = allBytesAre(addr, len, check_val);
             if (true != rc) {
                 std::cerr << "Consistency check failed for iov " << i << ":" << j << std::endl;
+                pass_check_consistency = false;
             }
             // Free the addr only if is allocated here
             if (is_allocated) {
@@ -800,6 +803,10 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
             j++;
         }
         i++;
+    }
+    if (!pass_check_consistency) {
+        std::cerr << "Consistency check failed" << std::endl;
+        exit(EXIT_FAILURE);
     }
 }
 

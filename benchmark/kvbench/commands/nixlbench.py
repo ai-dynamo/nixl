@@ -205,7 +205,7 @@ class NIXLBench:
             raise ValueError(f"Invalid source for POSIX/HF3FS: {source}")
 
     def _configure_ucx(self, backend: str, source: str, destination: str):
-        """Configure UCX, UCX_MO, GPUNETIO, and Mooncake plugins (same logic for all)"""
+        """Configure UCX, GPUNETIO, and Mooncake plugins (same logic for all)"""
         arg_to_seg_type = {
             "memory": "DRAM",
             "gpu": "VRAM",
@@ -241,7 +241,7 @@ class NIXLBench:
             self._configure_gds(source, destination)
         elif backend_lower in ["posix", "hf3fs"]:
             self._configure_posix(source, destination)
-        elif backend_lower in ["ucx", "ucx_mo", "gpunetio", "mooncake"]:
+        elif backend_lower in ["ucx", "gpunetio", "mooncake"]:
             self._configure_ucx(backend_lower, source, destination)
         elif backend_lower == "obj":
             self._configure_obj(source, destination)

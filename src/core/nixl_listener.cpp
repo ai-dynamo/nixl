@@ -106,18 +106,22 @@ sendCommMessage(int fd, const std::string& msg) {
     };
 
     for (size_t i = 0, offset = 0, sent = 0; i < iov_size;) {
-        auto bytes = send(fd, static_cast<char *>(iov[i].iov_base) + offset, iov[i].iov_len - offset, 0);
+        auto bytes = send(fd,
+                          static_cast<char *>(iov[i].iov_base) + offset,
+                          iov[i].iov_len - offset,
+                          MSG_NOSIGNAL);
         if (bytes < 0) {
             if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             }
 
             throw std::runtime_error(
-                    absl::StrFormat("sendCommMessage(fd=%d) %zu/%zu bytes failed, errno=%d",
-                                    fd,
-                                    sent,
-                                    size + sizeof(size),
-                                    errno));
+                absl::StrFormat("sendCommMessage(fd=%d, msg=%s) %zu/%zu bytes failed, errno=%d",
+                                fd,
+                                msg.c_str(),
+                                sent,
+                                size + sizeof(size),
+                                errno));
         }
 
         offset += bytes;
@@ -404,8 +408,9 @@ public:
                 std::lock_guard<std::mutex> lock(invalidated_agents_mutex);
                 invalidated_agents.push_back(agent_name);
             } else {
-                NIXL_ERROR << "Watcher for " << event.kv().key() << " received unexpected event from etcd: "
-                           << event.event_type();
+                NIXL_ERROR << "Watcher for " << event.kv().key()
+                           << " received unexpected event from etcd: "
+                           << static_cast<int>(event.event_type());
             }
         };
 
@@ -435,8 +440,18 @@ public:
 
 } // unnamed namespace
 
-void nixlAgentData::commWorker(nixlAgent* myAgent){
+void
+nixlAgentData::commWorker(nixlAgent &myAgent) noexcept {
+    try {
+        commWorkerInternal(&myAgent);
+    }
+    catch (...) {
+        commThreadException_ = std::current_exception();
+    }
+}
 
+void
+nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
 #if HAVE_ETCD
     std::unique_ptr<nixlEtcdClient> etcdClient = nullptr;
     // useEtcd is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
@@ -494,8 +509,7 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             nixl_socket_peer_t req_sock = std::make_pair(req_ip, req_port);
 
             // use remote IP for socket lookup
-            const auto client = remoteSockets.find(req_sock);
-            int client_fd;
+            auto client = remoteSockets.find(req_sock);
 
             // not connected
             if (req_command < SOCK_MAX) {
@@ -507,23 +521,40 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                         continue;
                     }
                     remoteSockets[req_sock] = new_client;
-                    client_fd = new_client;
-                } else {
-                    client_fd = client->second;
+                    client = remoteSockets.find(req_sock);
                 }
             }
 
+            bool needs_disconnect = false;
             switch(req_command) {
             case SOCK_SEND: {
-                sendCommMessage(client_fd, "NIXLCOMM:LOAD" + my_MD);
+                try {
+                    sendCommMessage(client->second, "NIXLCOMM:LOAD" + my_MD);
+                }
+                catch (const std::runtime_error &e) {
+                    NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
+                    needs_disconnect = true;
+                }
                 break;
             }
             case SOCK_FETCH: {
-                sendCommMessage(client_fd, "NIXLCOMM:SEND");
+                try {
+                    sendCommMessage(client->second, "NIXLCOMM:SEND");
+                }
+                catch (const std::runtime_error &e) {
+                    NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
+                    needs_disconnect = true;
+                }
                 break;
             }
             case SOCK_INVAL: {
-                sendCommMessage(client_fd, "NIXLCOMM:INVL" + name);
+                try {
+                    sendCommMessage(client->second, "NIXLCOMM:INVL" + name);
+                }
+                catch (const std::runtime_error &e) {
+                    NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
+                    needs_disconnect = true;
+                }
                 break;
             }
 #if HAVE_ETCD
@@ -596,6 +627,10 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     break;
                 }
             }
+            if (needs_disconnect) {
+                close(client->second);
+                client = remoteSockets.erase(client);
+            }
         }
 
         // third, do remote commands
@@ -604,9 +639,21 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
             std::string commands;
             std::vector<std::string> command_list;
             nixl_status_t ret;
+            bool disconnected = false;
 
-            if (!recvCommMessage(socket_iter->second, commands)) {
-                socket_iter++;
+            try {
+                const bool received = recvCommMessage(socket_iter->second, commands);
+                if (!received) {
+                    // No message received, but without error condition.
+                    // Skip to the next peer
+                    socket_iter++;
+                    continue;
+                }
+            }
+            catch (const std::runtime_error &e) {
+                NIXL_ERROR << "Failed to receive message from peer, disconnecting: " << e.what();
+                close(socket_iter->second);
+                socket_iter = remoteSockets.erase(socket_iter);
                 continue;
             }
 
@@ -634,7 +681,14 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                     nixl_blob_t my_MD;
                     myAgent->getLocalMD(my_MD);
 
-                    sendCommMessage(socket_iter->second, std::string("NIXLCOMM:LOAD" + my_MD));
+                    try {
+                        sendCommMessage(socket_iter->second, std::string("NIXLCOMM:LOAD" + my_MD));
+                    }
+                    catch (const std::runtime_error &e) {
+                        NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
+                        disconnected = true;
+                        break;
+                    }
                 } else if(header == "INVL") {
                     std::string remote_agent = command.substr(4);
                     myAgent->invalidateRemoteMD(remote_agent);
@@ -645,7 +699,12 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
                 }
             }
 
-            socket_iter++;
+            if (disconnected) {
+                close(socket_iter->second);
+                socket_iter = remoteSockets.erase(socket_iter);
+            } else {
+                socket_iter++;
+            }
         }
 
 #if HAVE_ETCD
@@ -662,6 +721,10 @@ void nixlAgentData::commWorker(nixlAgent* myAgent){
 }
 
 void nixlAgentData::enqueueCommWork(nixl_comm_req_t request){
+    if (agentShutdown) {
+        NIXL_WARN << "Agent shutting down, unable to accept new requests";
+        return;
+    }
     std::lock_guard<std::mutex> lock(commLock);
     commQueue.push_back(std::move(request));
 }
