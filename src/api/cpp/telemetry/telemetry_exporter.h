@@ -23,14 +23,12 @@
 #include <string>
 
 inline constexpr char telemetryExporterVar[] = "NIXL_TELEMETRY_EXPORTER";
-inline constexpr char telemetryExporterOutputPathVar[] = "NIXL_TELEMETRY_EXPORTER_OUTPUT_PATH";
 
 /**
  * @struct nixlTelemetryExporterInitParams
  * @brief Initialization parameters for telemetry exporters
  */
 struct nixlTelemetryExporterInitParams {
-    std::string outputPath; // Output path (file path, URL, etc.)
     std::string agentName;
     size_t maxEventsBuffered;
 };
