@@ -51,7 +51,7 @@
         @Library('blossom-github-lib@master')  // Use custom GitHub library
         import ipp.blossom.*
         // Authenticate with GitHub using stored credentials
-        withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
+        withCredentials([usernamePassword(credentialsId: 'svc-nixl-github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
           githubHelper = GithubHelper.getInstance("${{GIT_PASSWORD}}", VARIABLE_FROM_POST)
         }}
         // Update GitHub commit status
@@ -130,7 +130,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
-                credentials-id: 'swx-jenkins_ssh_key'
+                credentials-id: 'svc-nixl-ssh_key'
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -192,7 +192,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
-                credentials-id: 'swx-jenkins_ssh_key'
+                credentials-id: 'svc-nixl-ssh_key'
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -291,7 +291,7 @@
       scm:
         - git:
             url: "{jjb_git}"
-            credentials-id: "swx-jenkins_ssh_key"
+            credentials-id: "svc-nixl-ssh_key"
             branches: ['$NIXL_VERSION']
             shallow-clone: false
             do-not-fetch-tags: false
