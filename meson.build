@@ -178,7 +178,9 @@ else
 endif
 
 libfabric_path = get_option('libfabric_path')
-if libfabric_path != ''
+if get_option('disable_libfabric_backend')
+  libfabric_dep = disabler()
+elif libfabric_path != ''
   libfabric_lib_path = libfabric_path + '/lib'
   libfabric_inc_path = libfabric_path + '/include'
   # Check if path is absolute
