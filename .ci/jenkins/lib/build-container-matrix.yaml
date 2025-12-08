@@ -27,7 +27,7 @@ matrix:
 
 # Configuration
 env:
-  REGISTRY_HOSTESS: "urm.nvidia.com"
+  REGISTRY_HOSTESS: "artifactory.nvidia.com"
   REGISTRY_REPO: "sw-nbu-swx-nixl-docker-local/verification"
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
@@ -35,7 +35,7 @@ env:
 taskName: "${BUILD_TARGET}/${arch}/${axis_index}"
 
 credentials:
-  - credentialsId: 'svc-nixl-artifactory-token'
+  - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USERNAME'
     passwordVariable: 'ARTIFACTORY_PASSWORD'
 
@@ -129,7 +129,7 @@ steps:
       docker rm -f tempcontainer || true
 
   - name: Push
-    credentialsId: 'svc-nixl-artifactory-token'
+    credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
       source version-info
       ARTIFACTORY_REGISTRY="${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}"
