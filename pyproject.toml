@@ -14,12 +14,12 @@
 # limitations under the License.
 
 [build-system]
-requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest"]
+requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest", "build", "setuptools"]
 build-backend = "mesonpy"
 
 [project]
-name = 'nixl'
-version = '0.6.1'
+name = 'nixl-cu12'
+version = '0.8.0'
 description = 'NIXL Python API'
 readme = 'README.md'
 license = {file = 'LICENSE'}

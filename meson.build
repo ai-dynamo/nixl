@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.6.1',
-    default_options: ['buildtype=debug',
+project('nixl', 'CPP', version: '0.8.0',
+    default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
                 'prefix=/opt/nvidia/nvda_nixl'],
@@ -43,11 +43,14 @@ dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
-# Check for libaio (for POSIX plugin and test)
+# Check for POSIX AIO support for the POSIX plugin and test (it is part of GLIBC)
+posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
+
+# Check for libaio (for LINUX AIO plugin and test)
 aio_dep = cpp.find_library('aio', required: false)
-posix_aio = false
+linux_aio = false
 if aio_dep.found()
-    posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
+    linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [aio_dep])
 endif
 
 # Forced to ignore this error due to:
@@ -115,34 +118,27 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
-    if nvcc.version().version_compare('>=12.8')
+    if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
         doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
-        warning('CUDA version is less than 12.8, GPUNETIO plugin will be disabled')
+        warning('GPUNETIO plugin not supported in CUDA version: ' + nvcc.version())
         doca_gpunetio_dep = disabler()
+    endif
+
+    # Set the Python CUDA-specific wheel directory
+    cuda_version_major = nvcc.version().split('.')[0]
+    if cuda_version_major == '12'
+        cuda_wheel_dir = 'nixl_cu12'
+    elif cuda_version_major == '13'
+        cuda_wheel_dir = 'nixl_cu13'
+    else
+        error('Unsupported CUDA version: ' + cuda_version_major)
     endif
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
-endif
-
-# DOCA GPUNETIO
-if cuda_dep.found()
-  nvcc_cmd = find_program('nvcc', required: false)
-  if nvcc_cmd.found()
-    if nvcc_cmd.version().version_compare('>=12.8')
-      doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
-    else
-      warning('CUDA version = ' + nvcc_cmd.version() + ', GPUNETIO plugin will be disabled')
-      doca_gpunetio_dep = disabler()
-    endif
-  else
-    warning('nvcc not found, GPUNETIO plugin will be disabled')
-    doca_gpunetio_dep = disabler()
-  endif
-else
-  warning('CUDA not found, GPUNETIO plugin will be disabled')
-  doca_gpunetio_dep = disabler()
+    warning('CUDA not found, cannot autodetect wheel dir; defaulting to nixl_cu12')
+    cuda_wheel_dir = 'nixl_cu12'
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
@@ -212,15 +208,21 @@ nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
 if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     cuda = meson.get_compiler('cuda')
+    # TODO: Expose doca_gpunetio_dep through UCX
     have_gpu_side = cuda.compiles('''
             #include <ucp/api/device/ucp_device_impl.h>
             int main() { return 0; }
-        ''', dependencies : ucx_dep, args: nvcc_flags)
+        ''', dependencies : [ucx_dep, doca_gpunetio_dep], args: nvcc_flags)
 
     have_host_side = cpp.compiles('''
+            #include <ucp/api/ucp_version.h>
             #include <ucp/api/device/ucp_host.h>
-            int main() { return 0; }
-        ''', dependencies: ucx_dep)
+            #include <ucs/sys/compiler_def.h>
+            int main() {
+                UCS_STATIC_ASSERT(UCP_VERSION(UCP_API_MAJOR, UCP_API_MINOR) >= UCP_VERSION(1, 21));
+                return 0;
+            }
+        ''', dependencies: ucx_dep, name: 'UCX Device API (host-side, version >= 1.21)')
 
     if have_gpu_side and have_host_side
         ucx_gpu_device_api_available = true
@@ -232,6 +234,7 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     'GPU-side compile'   : have_gpu_side,
     'Host-side compile'  : have_host_side,
     'nvcc available'     : nvcc_prog.found(),
+    'DOCA GPUNETIO found': doca_gpunetio_dep.found(),
   }, section: 'UCX GPU Device API', bool_yn: true)
 endif
 

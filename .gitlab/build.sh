@@ -27,9 +27,9 @@ INSTALL_DIR=$1
 UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 # UCX_VERSION is the version of UCX to build override default with env variable.
-UCX_VERSION=${UCX_VERSION:-v1.19.0}
+UCX_VERSION=${UCX_VERSION:-v1.20.x}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
-LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
+LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 
@@ -57,7 +57,9 @@ ARCH=$(uname -m)
 $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
 $SUDO apt-get -qq update
-$SUDO apt-get -qq install -y curl \
+$SUDO apt-get -qq install -y python3-dev \
+                             python3-pip \
+                             curl \
                              wget \
                              libnuma-dev \
                              numactl \
@@ -101,10 +103,21 @@ $SUDO apt-get -qq install -y curl \
                              libhwloc-dev \
                              libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
+# Ubuntu 22.04 specific setup
+if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
+    # Upgrade pip for '--break-system-packages' support
+    $SUDO pip3 install --upgrade pip
+
+    # Upgrade meson (distro version 0.61.2 is too old, project requires >= 0.64.0)
+    $SUDO pip3 install --upgrade meson
+    # Ensure pip3's meson takes precedence over apt's version
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+fi
+
 # Add DOCA repository and install packages
 ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
 MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb
+wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb
 $SUDO dpkg -i doca-host.deb
 $SUDO apt-get update
 $SUDO apt-get upgrade -y
@@ -122,11 +135,16 @@ chmod +x rustup-init
 ./rustup-init -y --default-toolchain 1.86.0
 export PATH="$HOME/.cargo/bin:$PATH"
 
+wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O install_uv.sh
+chmod +x install_uv.sh
+./install_uv.sh
+export PATH="$HOME/.local/bin:$PATH"
+
 curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
   ./autogen.sh && \
-  ./configure \
+  ./contrib/configure-release-mt \
           --prefix="${UCX_INSTALL_DIR}" \
           --enable-shared \
           --disable-static \
@@ -136,8 +154,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
-          ${UCX_CUDA_BUILD_ARGS} \
-          --enable-mt && \
+          ${UCX_CUDA_BUILD_ARGS} && \
         make -j && \
         make -j install-strip && \
         $SUDO ldconfig \
@@ -167,7 +184,7 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   cd etcd-cpp-apiv3 && \
   mkdir build && cd build && \
   cmake .. && \
-  make -j"${NPROC:-$(nproc)}" && \
+  make -j"$NPROC" && \
   $SUDO make install && \
   $SUDO ldconfig \
 )
@@ -178,7 +195,7 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   mkdir aws_sdk_build && \
   cd aws_sdk_build && \
   cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-  make -j"${NPROC:-$(nproc)}" && \
+  make -j"$NPROC" && \
   $SUDO make install
 )
 
@@ -187,6 +204,18 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   git clone https://github.com/nvidia/gusli.git && \
   cd gusli && \
   $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+  $SUDO ldconfig
+)
+
+( \
+  cd /tmp && \
+  git clone --depth 1 https://github.com/kvcache-ai/Mooncake.git && \
+  cd Mooncake && \
+  $SUDO bash dependencies.sh && \
+  mkdir build && cd build && \
+  cmake .. -DBUILD_SHARED_LIBS=ON && \
+  make -j2 && \
+  $SUDO make install && \
   $SUDO ldconfig
 )
 
@@ -209,12 +238,13 @@ export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 export UCX_TLS=^cuda_ipc
 
 # shellcheck disable=SC2086
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
-ninja -C nixl_build && ninja -C nixl_build install
+meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
+ninja -j"$NPROC" -C nixl_build && ninja -j"$NPROC" -C nixl_build install
+mkdir -p dist && cp nixl_build/src/bindings/python/nixl-meta/nixl-*.whl dist/
 
 # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
 # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
 
 cd benchmark/nixlbench
 meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
-ninja -C nixlbench_build && ninja -C nixlbench_build install
+ninja -j"$NPROC" -C nixlbench_build && ninja -j"$NPROC" -C nixlbench_build install

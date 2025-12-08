@@ -18,6 +18,7 @@ NIXL Peer-to-Peer Storage Example
 Demonstrates peer-to-peer storage transfers using NIXL with initiator and target modes.
 """
 
+import concurrent.futures
 import time
 
 import nixl_storage_utils as nsu
@@ -27,14 +28,20 @@ from nixl.logging import get_logger
 logger = get_logger(__name__)
 
 
-def execute_transfer(my_agent, local_descs, remote_descs, remote_name, operation):
-    handle = my_agent.initialize_xfer(operation, local_descs, remote_descs, remote_name)
+def execute_transfer(
+    my_agent, local_descs, remote_descs, remote_name, operation, use_backends=[]
+):
+    handle = my_agent.initialize_xfer(
+        operation, local_descs, remote_descs, remote_name, backends=use_backends
+    )
     my_agent.transfer(handle)
     nsu.wait_for_transfer(my_agent, handle)
     my_agent.release_xfer_handle(handle)
 
 
-def remote_storage_transfer(my_agent, my_mem_descs, operation, remote_agent_name):
+def remote_storage_transfer(
+    my_agent, my_mem_descs, operation, remote_agent_name, iterations
+):
     """Initiate remote memory transfer."""
     if operation != "READ" and operation != "WRITE":
         logger.error("Invalid operation, exiting")
@@ -45,13 +52,23 @@ def remote_storage_transfer(my_agent, my_mem_descs, operation, remote_agent_name
     else:
         operation = b"READ"
 
+    iterations_str = bytes(f"{iterations:04d}", "utf-8")
     # Send the descriptors that you want to read into or write from
-    logger.info(f"Sending {operation} request to {remote_agent_name}")
+    logger.info(
+        "Sending %s request to %s", operation.decode("utf-8"), remote_agent_name
+    )
     test_descs_str = my_agent.get_serialized_descs(my_mem_descs)
-    my_agent.send_notif(remote_agent_name, operation + test_descs_str)
+
+    start_time = time.time()
+
+    my_agent.send_notif(remote_agent_name, operation + iterations_str + test_descs_str)
 
     while not my_agent.check_remote_xfer_done(remote_agent_name, b"COMPLETE"):
         continue
+
+    elapsed = time.time() - start_time
+
+    logger.info("Time for %d iterations: %f seconds", iterations, elapsed)
 
 
 def connect_to_agents(my_agent, agents_file):
@@ -66,12 +83,12 @@ def connect_to_agents(my_agent, agents_file):
                 my_agent.fetch_remote_metadata(parts[0], parts[1], int(parts[2]))
 
                 while my_agent.check_remote_metadata(parts[0]) is False:
-                    logger.info(f"Waiting for remote metadata for {parts[0]}...")
+                    logger.info("Waiting for remote metadata for %s...", parts[0])
                     time.sleep(0.2)
 
-                logger.info(f"Remote metadata for {parts[0]} fetched")
+                logger.info("Remote metadata for %s fetched", parts[0])
             else:
-                logger.error(f"Invalid line in {agents_file}: {line}")
+                logger.error("Invalid line in %s: %s", agents_file, line)
                 exit(-1)
 
     logger.info("All remote metadata fetched")
@@ -79,12 +96,140 @@ def connect_to_agents(my_agent, agents_file):
     return target_agents
 
 
+def pipeline_reads(
+    my_agent, req_agent, my_mem_descs, my_file_descs, sent_descs, iterations
+):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        n = 0
+        s = 0
+        futures = []
+
+        while n < iterations or s < iterations:
+            if s == 0:
+                futures.append(
+                    executor.submit(
+                        execute_transfer,
+                        my_agent,
+                        my_mem_descs,
+                        my_file_descs,
+                        my_agent.name,
+                        "READ",
+                    )
+                )
+                s += 1
+                continue
+
+            if s == iterations:
+                futures.append(
+                    executor.submit(
+                        execute_transfer,
+                        my_agent,
+                        my_mem_descs,
+                        sent_descs,
+                        req_agent,
+                        "WRITE",
+                    )
+                )
+                n += 1
+                continue
+
+            # Do two storage and network in parallel
+            futures.append(
+                executor.submit(
+                    execute_transfer,
+                    my_agent,
+                    my_mem_descs,
+                    my_file_descs,
+                    my_agent.name,
+                    "READ",
+                )
+            )
+            futures.append(
+                executor.submit(
+                    execute_transfer,
+                    my_agent,
+                    my_mem_descs,
+                    sent_descs,
+                    req_agent,
+                    "WRITE",
+                )
+            )
+            s += 1
+            n += 1
+
+        _, not_done = concurrent.futures.wait(
+            futures, return_when=concurrent.futures.ALL_COMPLETED
+        )
+        assert not not_done
+
+
+def pipeline_writes(
+    my_agent, req_agent, my_mem_descs, my_file_descs, sent_descs, iterations
+):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        n = 0
+        s = 1
+        futures = []
+
+        futures.append(
+            executor.submit(
+                execute_transfer,
+                my_agent,
+                my_mem_descs,
+                sent_descs,
+                req_agent,
+                "READ",
+            )
+        )
+        while n < iterations or s < iterations:
+            if s == iterations:
+                futures.append(
+                    executor.submit(
+                        execute_transfer,
+                        my_agent,
+                        my_mem_descs,
+                        my_file_descs,
+                        my_agent.name,
+                        "WRITE",
+                    )
+                )
+                n += 1
+                continue
+
+            # Do two storage and network in parallel
+            futures.append(
+                executor.submit(
+                    execute_transfer,
+                    my_agent,
+                    my_mem_descs,
+                    sent_descs,
+                    req_agent,
+                    "READ",
+                )
+            )
+            futures.append(
+                executor.submit(
+                    execute_transfer,
+                    my_agent,
+                    my_mem_descs,
+                    my_file_descs,
+                    my_agent.name,
+                    "WRITE",
+                )
+            )
+            s += 1
+            n += 1
+
+        _, not_done = concurrent.futures.wait(
+            futures, return_when=concurrent.futures.ALL_COMPLETED
+        )
+        assert not not_done
+
+
 def handle_remote_transfer_request(my_agent, my_mem_descs, my_file_descs):
     """Handle remote memory and storage transfers as target."""
     # Wait for initiator to send list of memory descriptors
     notifs = my_agent.get_new_notifs()
-
-    logger.info("Waiting for a remote transfer request...")
 
     while len(notifs) == 0:
         notifs = my_agent.get_new_notifs()
@@ -101,57 +246,65 @@ def handle_remote_transfer_request(my_agent, my_mem_descs, my_file_descs):
             logger.error("Invalid operation, exiting")
             exit(-1)
 
-        sent_descs = my_agent.deserialize_descs(recv_msg[4:])
+        iterations = int(recv_msg[4:8])
 
-        logger.info("Checking to ensure metadata is loaded...")
-        while my_agent.check_remote_metadata(req_agent, sent_descs) is False:
-            continue
+        logger.info("Performing %s with %d iterations", operation, iterations)
+
+        sent_descs = my_agent.deserialize_descs(recv_msg[8:])
 
         if operation == "READ":
-            logger.info("Starting READ operation")
-
-            # Read from file first
-            execute_transfer(
-                my_agent, my_mem_descs, my_file_descs, my_agent.name, "READ"
+            pipeline_reads(
+                my_agent, req_agent, my_mem_descs, my_file_descs, sent_descs, iterations
             )
-            # Send to client
-            execute_transfer(my_agent, my_mem_descs, sent_descs, req_agent, "WRITE")
-
         elif operation == "WRITE":
-            logger.info("Starting WRITE operation")
-
-            # Read from client first
-            execute_transfer(my_agent, my_mem_descs, sent_descs, req_agent, "READ")
-            # Write to storage
-            execute_transfer(
-                my_agent, my_mem_descs, my_file_descs, my_agent.name, "WRITE"
+            pipeline_writes(
+                my_agent, req_agent, my_mem_descs, my_file_descs, sent_descs, iterations
             )
 
         # Send completion notification to initiator
         my_agent.send_notif(req_agent, b"COMPLETE")
 
-    logger.info("One transfer test complete.")
 
-
-def run_client(my_agent, nixl_mem_reg_descs, nixl_file_reg_descs, agents_file):
+def run_client(
+    my_agent, nixl_mem_reg_descs, nixl_file_reg_descs, agents_file, iterations
+):
     logger.info("Client initialized, ready for local transfer test...")
 
     # For sample purposes, write to and then read from local storage
     logger.info("Starting local transfer test...")
-    execute_transfer(
-        my_agent,
-        nixl_mem_reg_descs.trim(),
-        nixl_file_reg_descs.trim(),
-        my_agent.name,
-        "WRITE",
-    )
-    execute_transfer(
-        my_agent,
-        nixl_mem_reg_descs.trim(),
-        nixl_file_reg_descs.trim(),
-        my_agent.name,
-        "READ",
-    )
+
+    start_time = time.time()
+
+    for i in range(1, iterations):
+        execute_transfer(
+            my_agent,
+            nixl_mem_reg_descs.trim(),
+            nixl_file_reg_descs.trim(),
+            my_agent.name,
+            "WRITE",
+            ["GDS_MT"],
+        )
+
+    elapsed = time.time() - start_time
+
+    logger.info("Time for %d WRITE iterations: %f seconds", iterations, elapsed)
+
+    start_time = time.time()
+
+    for i in range(1, iterations):
+        execute_transfer(
+            my_agent,
+            nixl_mem_reg_descs.trim(),
+            nixl_file_reg_descs.trim(),
+            my_agent.name,
+            "READ",
+            ["GDS_MT"],
+        )
+
+    elapsed = time.time() - start_time
+
+    logger.info("Time for %d READ iterations: %f seconds", iterations, elapsed)
+
     logger.info("Local transfer test complete")
 
     logger.info("Starting remote transfer test...")
@@ -161,10 +314,10 @@ def run_client(my_agent, nixl_mem_reg_descs, nixl_file_reg_descs, agents_file):
     # For sample purposes, write to and then read from each target agent
     for target_agent in target_agents:
         remote_storage_transfer(
-            my_agent, nixl_mem_reg_descs.trim(), "WRITE", target_agent
+            my_agent, nixl_mem_reg_descs.trim(), "WRITE", target_agent, iterations
         )
         remote_storage_transfer(
-            my_agent, nixl_mem_reg_descs.trim(), "READ", target_agent
+            my_agent, nixl_mem_reg_descs.trim(), "READ", target_agent, iterations
         )
 
     logger.info("Remote transfer test complete")
@@ -199,7 +352,18 @@ if __name__ == "__main__":
         type=str,
         help="File containing list of target agents (only needed for client)",
     )
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=100,
+        help="Number of iterations for each transfer",
+    )
     args = parser.parse_args()
+
+    mem = "DRAM"
+
+    if args.role == "client":
+        mem = "VRAM"
 
     my_agent = nsu.create_agent_with_plugins(args.name, args.port)
 
@@ -209,7 +373,7 @@ if __name__ == "__main__":
         nixl_mem_reg_descs,
         nixl_file_reg_descs,
     ) = nsu.setup_memory_and_files(
-        my_agent, args.batch_size, args.buf_size, args.fileprefix
+        my_agent, args.batch_size, args.buf_size, args.fileprefix, mem
     )
 
     if args.role == "client":
@@ -217,7 +381,11 @@ if __name__ == "__main__":
             parser.error("--agents_file is required when role is client")
         try:
             run_client(
-                my_agent, nixl_mem_reg_descs, nixl_file_reg_descs, args.agents_file
+                my_agent,
+                nixl_mem_reg_descs,
+                nixl_file_reg_descs,
+                args.agents_file,
+                args.iterations,
             )
         finally:
             nsu.cleanup_resources(

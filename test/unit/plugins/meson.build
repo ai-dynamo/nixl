@@ -17,10 +17,6 @@ if ucx_dep.found() and should_build_plugin.get('UCX')
     subdir('ucx')
 endif
 
-if ucx_dep.found() and should_build_plugin.get('UCX_MO')
-    subdir('ucx_mo')
-endif
-
 if should_build_plugin.get('POSIX')
     subdir('posix')
 endif

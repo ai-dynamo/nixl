@@ -236,11 +236,25 @@ nixl_status_t nixlUcxEp::disconnect_nb()
  * Active message handling
  * =========================================== */
 
-nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
-                                void* hdr, size_t hdr_len,
-                                void* buffer, size_t len,
-                                uint32_t flags, nixlUcxReq &req)
-{
+using nixl_ucx_am_cb_ctx_t = std::pair<void *, nixlUcxEp::am_deleter_t>;
+using nixl_ucx_am_cb_ctx_ptr_t = std::unique_ptr<nixl_ucx_am_cb_ctx_t>;
+
+void
+nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
+    auto ctx = static_cast<nixl_ucx_am_cb_ctx_t *>(user_data);
+    ctx->second(request, ctx->first);
+    delete ctx;
+}
+
+nixl_status_t
+nixlUcxEp::sendAm(unsigned msg_id,
+                  void *hdr,
+                  size_t hdr_len,
+                  void *buffer,
+                  size_t len,
+                  uint32_t flags,
+                  nixlUcxReq *req,
+                  am_deleter_t deleter) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
@@ -251,10 +265,23 @@ nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
     param.flags         = flags;
 
+    nixl_ucx_am_cb_ctx_ptr_t ctx;
+    if (deleter) {
+        ctx = std::make_unique<nixl_ucx_am_cb_ctx_t>(buffer, deleter);
+        param.op_attr_mask |= UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA;
+        param.cb.send = sendAmCallback;
+        param.user_data = ctx.get();
+    }
+
     ucs_status_ptr_t request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
     if (UCS_PTR_IS_PTR(request)) {
-        req = (void*)request;
+        ctx.release();
+        if (req != nullptr) {
+            *req = static_cast<nixlUcxReq>(request);
+        }
         return NIXL_IN_PROG;
+    } else if (deleter) {
+        deleter(nullptr, buffer);
     }
 
     return ucx_status_to_nixl(UCS_PTR_STATUS(request));
@@ -379,14 +406,14 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
 }
 
 nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
-                               size_t req_size,
-                               nixlUcxContext::req_cb_t init_cb,
-                               nixlUcxContext::req_cb_t fini_cb,
                                bool prog_thread,
                                unsigned long num_workers,
-                               nixl_thread_sync_t sync_mode)
-{
+                               nixl_thread_sync_t sync_mode,
+                               const std::string &engine_config) {
     ucp_params_t ucp_params;
+    unsigned major_version, minor_version, release_number;
+    ucp_get_version(&major_version, &minor_version, &release_number);
+    unsigned ucp_version = UCP_VERSION(major_version, minor_version);
 
     // With strict synchronization model nixlAgent serializes access to backends, with more
     // permissive models backends need to account for concurrent access and ensure their internal
@@ -405,21 +432,6 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         ucp_params.features |= UCP_FEATURE_WAKEUP;
     ucp_params.mt_workers_shared = num_workers > 1 ? 1 : 0;
 
-    if (req_size) {
-        ucp_params.request_size = req_size;
-        ucp_params.field_mask |= UCP_PARAM_FIELD_REQUEST_SIZE;
-    }
-
-    if (init_cb) {
-        ucp_params.request_init = init_cb;
-        ucp_params.field_mask |= UCP_PARAM_FIELD_REQUEST_INIT;
-    }
-
-    if (fini_cb) {
-        ucp_params.request_cleanup = fini_cb;
-        ucp_params.field_mask |= UCP_PARAM_FIELD_REQUEST_CLEANUP;
-    }
-
     nixl::ucx::config config;
 
     /* If requested, restrict the set of network devices */
@@ -433,21 +445,24 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         config.modifyAlways ("NET_DEVICES", devs_str.c_str());
     }
 
-    unsigned major_version, minor_version, release_number;
-    ucp_get_version(&major_version, &minor_version, &release_number);
+    config.modify("ADDRESS_VERSION", "v2");
+    config.modify("RNDV_THRESH", "inf");
+    config.modify("MAX_RMA_RAILS", "2");
 
-    config.modify ("ADDRESS_VERSION", "v2");
-    config.modify ("RNDV_THRESH", "inf");
-
-    unsigned ucp_version = UCP_VERSION(major_version, minor_version);
     if (ucp_version >= UCP_VERSION(1, 19)) {
-        config.modify ("MAX_COMPONENT_MDS", "32");
+        config.modify("MAX_COMPONENT_MDS", "32");
     }
 
-    if (ucp_version >= UCP_VERSION(1, 20)) {
-        config.modify ("MAX_RMA_RAILS", "4");
-    } else {
-        config.modify ("MAX_RMA_RAILS", "2");
+    std::string elem;
+    std::stringstream stream(engine_config);
+
+    while (std::getline(stream, elem, ',')) {
+        std::string_view elem_view = elem;
+        size_t pos = elem_view.find('=');
+
+        if (pos != std::string::npos) {
+            config.modify(elem_view.substr(0, pos), elem_view.substr(pos + 1));
+        }
     }
 
     const auto status = ucp_init (&ucp_params, config.getUcpConfig(), &ctx);
@@ -672,7 +687,7 @@ nixl_status_t nixlUcxWorker::test(nixlUcxReq req)
 
 void nixlUcxWorker::reqRelease(nixlUcxReq req)
 {
-    ucp_request_free((void*)req);
+    ucp_request_free(req);
 }
 
 void nixlUcxWorker::reqCancel(nixlUcxReq req)

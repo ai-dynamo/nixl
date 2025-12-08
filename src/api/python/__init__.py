@@ -13,19 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+from ._api import (
+    DEFAULT_COMM_PORT,
+    nixl_agent,
+    nixl_agent_config,
+    nixl_backend_handle,
+    nixl_prepped_dlist_handle,
+    nixl_xfer_handle,
+)
 
-import nixl
-
-__all__ = ["nixl"]
-
-if "NIXL_PLUGIN_DIR" not in os.environ:
-    # name for local installation
-    plugin_dir = nixl.__file__[:-16] + ".nixl.mesonpy.libs/plugins/"
-
-    # name for pypi installation
-    if not os.path.isdir(plugin_dir):
-        plugin_dir = nixl.__file__[:-16] + ".nixl_pybind.mesonpy.libs/plugins/"
-
-    if os.path.isdir(plugin_dir):
-        os.environ["NIXL_PLUGIN_DIR"] = plugin_dir
+__all__ = [
+    # Constants
+    "DEFAULT_COMM_PORT",
+    # Main classes
+    "nixl_agent",
+    "nixl_agent_config",
+    "nixl_backend_handle",
+    "nixl_prepped_dlist_handle",
+    "nixl_xfer_handle",
+]

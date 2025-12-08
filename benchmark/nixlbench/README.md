@@ -32,7 +32,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 
 ## Features
 
-- **Multiple Communication Backends**: UCX, UCX_MO, GPUNETIO, Mooncake, Libfabric for network communication
+- **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
 - **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), GUSLI for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
@@ -172,7 +172,7 @@ cd nixl/benchmark/nixlbench/contrib
 | `--ucx <path>` | Path to custom UCX source (optional) | Uses base image UCX |
 | `--build-type <type>` | Build type: `debug` or `release` | `release` |
 | `--base-image <image>` | Base Docker image | `nvcr.io/nvidia/cuda-dl-base` |
-| `--base-image-tag <tag>` | Base image tag | `25.03-cuda12.8-devel-ubuntu24.04` |
+| `--base-image-tag <tag>` | Base image tag | `25.06-cuda12.9-devel-ubuntu24.04` |
 | `--arch <arch>` | Target architecture: `x86_64` or `aarch64` | Auto-detected |
 | `--python-versions <versions>` | Python versions (comma-separated) | `3.12` |
 | `--tag <tag>` | Custom Docker image tag | Auto-generated |
@@ -279,8 +279,8 @@ sudo ldconfig
 
 **LibFabric:**
 ```bash
-wget https://github.com/ofiwg/libfabric/releases/download/v2.3.0/libfabric-2.3.0.tar.bz2
-tar xjf libfabric-2.3.0.tar.bz2 && cd libfabric-2.3.0
+wget https://github.com/ofiwg/libfabric/releases/download/v1.21.0/libfabric-1.21.0.tar.bz2
+tar xjf libfabric-1.21.0.tar.bz2 && cd libfabric-1.21.0
 ./configure --prefix=/usr/local --with-cuda=/usr/local/cuda --enable-cuda-dlopen --enable-efa
 make -j$(nproc) && sudo make install
 ```
@@ -300,8 +300,8 @@ make -j$(nproc) && sudo make install
 **DOCA (Optional):**
 ```bash
 # Add Mellanox repository and install DOCA
-wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-ubuntu2404_amd64.deb
-sudo dpkg -i doca-host_3.1.0-091000-25.07-ubuntu2404_amd64.deb
+wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-ubuntu2404_amd64.deb -O doca-host.deb
+sudo dpkg -i doca-host.deb
 sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 ```
 
@@ -420,7 +420,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 ```
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, UCX_MO, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
@@ -481,7 +481,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 
 **POSIX Backend:**
 ```
---posix_api_type TYPE      # API type for POSIX operations [AIO, URING] (default: AIO)
+--posix_api_type TYPE      # API type for POSIX operations [AIO, URING, POSIXAIO] (default: AIO)
 ```
 
 **GPUNETIO Backend:**
@@ -520,7 +520,7 @@ Note: storage_enable_direct is automatically enabled for GUSLI backend
 NIXL Benchmark uses an ETCD key-value store for coordination between benchmark workers. This is useful in containerized or cloud-native environments.
 
 **ETCD Requirements:**
-- **Required**: Network backends (UCX, UCX_MO, GPUNETIO, Mooncake, Libfabric) and multi-node setups
+- **Required**: Network backends (UCX, GPUNETIO, Mooncake, Libfabric) and multi-node setups
 - **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances
 - **Required**: Storage backends when `--etcd_endpoints` is explicitly specified
 
@@ -528,6 +528,7 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 
 1. Ensure ETCD server is running (e.g., `docker run -p 2379:2379 quay.io/coreos/etcd`
 2. Launch multiple nixlbench instances pointing to the same ETCD server
+3. Multiple instances should be launched within the default timeout of 60s.
 
 **For single-instance storage benchmarks:**
 ```bash
@@ -538,12 +539,7 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile
 ```
 
-Note: etcd can be installed directly on host as well:
-```bash
-apt install etcd-server
-```
-
-Example:
+**For multi-instance storage benchmarks where ETCD is required:**
 ```bash
 # On host 1
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
@@ -551,8 +547,7 @@ Example:
 # On host 2
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 ```
-
-The workers automatically coordinate ranks through ETCD as they connect.
+The workers automatically coordinate ranks through ETCD as they connect. Note, the second nixlbench should be started within 60s, otherwise the first instance will stop with an error in the barrier.
 
 ### Backend-Specific Examples
 
@@ -562,12 +557,11 @@ The workers automatically coordinate ranks through ETCD as they connect.
 ```bash
 # Basic UCX benchmark
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
+sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
 
 # UCX with specific devices
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
-
-# UCX Memory-Only variant
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX_MO
+$ host1 > ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
+$ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
 ```
 
 **GPUNETIO Backend:**
@@ -709,20 +703,6 @@ Transfer times are higher than local storage, so consider reducing iterations:
 - Test read operations: `--op_type READ`
 - Validate data consistency: `--check_consistency`
 
-### Multi-Node Coordination
-
-Launch multiple nixlbench instances pointing to the same ETCD server:
-
-```bash
-# On host 1
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
-
-# On host 2
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
-```
-
-The workers automatically coordinate ranks through ETCD as they connect.
-
 ## Troubleshooting
 
 ### Common Build Issues
@@ -815,6 +795,12 @@ ucx_info -d  # List UCX devices
 export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging
 
 export UCX_PROTO_INFO=y # See transport used by UCX
+```
+
+#### ETCD Cleanup
+```bash
+# If a nixlbench instance failed you need to cleanup the etcd instance before starting nixlbench again
+ETCDCTL_API=3 etcdctl del "xferbench" --prefix=true
 ```
 
 ### Performance Tuning

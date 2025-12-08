@@ -59,6 +59,8 @@ using nixl_comm_req_t = std::tuple<nixl_comm_t, std::string, int, nixl_blob_t>;
 
 using nixl_socket_peer_t = std::pair<std::string, int>;
 
+using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
+
 class nixlAgentData {
     private:
         std::string     name;
@@ -91,15 +93,21 @@ class nixlAgentData {
                            std::hash<std::string>, strEqual>     remoteSections;
 
         // State/methods for listener thread
-        nixlMDStreamListener               *listener;
-        std::map<nixl_socket_peer_t, int>  remoteSockets;
-        std::thread                        commThread;
-        std::vector<nixl_comm_req_t>       commQueue;
-        std::mutex                         commLock;
-        bool                               commThreadStop;
-        bool                               useEtcd;
+        nixlMDStreamListener *listener;
+        nixl_socket_map_t remoteSockets;
+        std::thread commThread;
+        std::vector<nixl_comm_req_t> commQueue;
+        std::mutex commLock;
+        std::atomic<bool> commThreadStop;
+        std::atomic<bool> agentShutdown;
+        bool useEtcd;
         std::unique_ptr<nixlTelemetry> telemetry_;
-        void commWorker(nixlAgent* myAgent);
+        std::exception_ptr commThreadException_;
+
+        void
+        commWorker(nixlAgent &myAgent) noexcept;
+        void
+        commWorkerInternal(nixlAgent *myAgent);
         void enqueueCommWork(nixl_comm_req_t request);
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
         nixl_status_t

@@ -40,16 +40,30 @@ export NIXL_PREFIX=${INSTALL_DIR}
 # Raise exceptions for logging errors
 export NIXL_DEBUG_LOGGING=yes
 
-pip3 install --break-system-packages .
+# Set the correct wheel name based on the CUDA version
+cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
+case "$cuda_major" in
+    12|13) echo "CUDA $cuda_major detected" ;;
+    *) echo "Error: Unsupported CUDA version $cuda_major"; exit 1 ;;
+esac
+pip3 install --break-system-packages tomlkit
+./contrib/tomlutil.py --wheel-name "nixl-cu${cuda_major}" pyproject.toml
+# Control ninja parallelism during pip build to prevent OOM (NPROC from common.sh)
+pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
+pip3 install --break-system-packages dist/nixl-*none-any.whl
 pip3 install --break-system-packages pytest
 pip3 install --break-system-packages pytest-timeout
 pip3 install --break-system-packages zmq
+
+# Add user pip packages to PATH
+export PATH="$HOME/.local/bin:$PATH"
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
 etcd_peer_port=$(get_next_tcp_port)
 export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
 export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
+export NIXL_ETCD_NAMESPACE="/nixl/python_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
@@ -75,18 +89,18 @@ python3 test/python/prep_xfer_perf.py array
 echo "==== Running python examples ===="
 cd examples/python
 python3 nixl_api_example.py
-python3 partial_md_example.py
+python3 partial_md_example.py --init-port "$(get_next_tcp_port)" --target-port "$(get_next_tcp_port)"
 python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
 # Running telemetry for the last test
-blocking_send_recv_port=$(get_next_tcp_port)
+basic_two_peers_port=$(get_next_tcp_port)
 mkdir -p /tmp/telemetry_test
 
-python3 blocking_send_recv_example.py --mode="target" --ip=127.0.0.1 --port="$blocking_send_recv_port"&
+python3 basic_two_peers.py --mode="target" --ip=127.0.0.1 --port="$basic_two_peers_port"&
 sleep 5
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
-python3 blocking_send_recv_example.py --mode="initiator" --ip=127.0.0.1 --port="$blocking_send_recv_port"
+python3 basic_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$basic_two_peers_port"
 
 python3 telemetry_reader.py --telemetry_path /tmp/telemetry_test/initiator &
 telePID=$!
