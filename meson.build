@@ -91,7 +91,10 @@ if cuda_dep.found()
 
     # Please extend with your arch if not present in the list
     nvcc_flags = []
-    nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
+    # nixl ep cannot be built with sm_80
+    if not get_option('build_nixl_ep')
+        nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
+    endif
     nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
     add_project_arguments(nvcc_flags, language: 'cuda')
 
@@ -100,7 +103,10 @@ if cuda_dep.found()
     add_project_arguments('-rdc=true', language: 'cuda')
 
     nvcc_flags_link = []
-    nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
+    # nixl ep cannot be built with sm_80
+    if not get_option('build_nixl_ep')
+        nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
+    endif
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
