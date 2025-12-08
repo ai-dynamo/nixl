@@ -34,6 +34,7 @@ namespace fs = std::filesystem;
 
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
+constexpr std::string_view defaultTelemetryPlugin = "BUFFER";
 
 nixlTelemetry::nixlTelemetry(const std::string &agent_name, backend_map_t &backend_map)
     : pool_(1),
@@ -41,7 +42,7 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name, backend_map_t &backe
       agentName_(agent_name),
       backendMap_(backend_map) {
     if (agent_name.empty()) {
-        throw std::invalid_argument("Agent name cannot be empty");
+        throw std::invalid_argument("Expected non-empty agent name in nixl telemetry create");
     }
     initializeTelemetry();
 }
@@ -78,11 +79,14 @@ nixlTelemetry::initializeTelemetry() {
         std::getenv(telemetryExporterVar) ? std::string(std::getenv(telemetryExporterVar)) : "";
 
     auto &plugin_manager = nixlPluginManager::getInstance();
-    auto plugin_handle = plugin_manager.loadTelemetryPlugin(exporter_name.data());
+    std::shared_ptr<const nixlTelemetryPluginHandle> plugin_handle =
+        plugin_manager.loadTelemetryPlugin(exporter_name.data());
+
     if (plugin_handle == nullptr) {
         NIXL_WARN << "Failed to load telemetry plugin: " << exporter_name
                   << ", using default plugin: " << defaultTelemetryPlugin;
-        plugin_handle = plugin_manager.loadTelemetryPlugin(defaultTelemetryPlugin.data());
+        exporter_name = defaultTelemetryPlugin.data();
+        plugin_handle = plugin_manager.loadTelemetryPlugin(exporter_name.data());
         if (plugin_handle == nullptr) {
             throw std::runtime_error("Failed to load default telemetry plugin");
         }
@@ -90,6 +94,8 @@ nixlTelemetry::initializeTelemetry() {
 
     const nixlTelemetryExporterInitParams init_params{agentName_, buffer_size};
     exporter_ = plugin_handle->createExporter(init_params);
+
+    NIXL_DEBUG << "NIXL telemetry is enabled with " << exporter_name << "exporter";
 
     auto run_interval = std::getenv(TELEMETRY_RUN_INTERVAL_VAR) ?
         std::chrono::milliseconds(std::stoul(std::getenv(TELEMETRY_RUN_INTERVAL_VAR))) :

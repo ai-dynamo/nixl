@@ -29,8 +29,6 @@ enum class nixl_telemetry_plugin_api_version : unsigned int { V1 = 1 };
 inline constexpr nixl_telemetry_plugin_api_version nixlTelemetryPluginApiVersionV1 =
     nixl_telemetry_plugin_api_version::V1;
 
-constexpr std::string_view defaultTelemetryPlugin = "BUFFER";
-
 // Type alias for exporter creation function
 using exporter_creator_fn_t =
     std::unique_ptr<nixlTelemetryExporter> (*)(const nixlTelemetryExporterInitParams &init_params);

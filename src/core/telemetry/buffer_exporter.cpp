@@ -23,16 +23,16 @@ nixlTelemetryBufferExporter::nixlTelemetryBufferExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params) {
     auto telemetry_dir = std::getenv(telemetryDirVar);
-    if (telemetry_dir != nullptr) {
-        auto full_file_path = std::string(telemetry_dir) + "/" + init_params.agentName.data();
-        buffer_ = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-            full_file_path, true, TELEMETRY_VERSION, getMaxEventsBuffered());
-
-        NIXL_INFO << "Telemetry enabled, using buffer path: " << full_file_path
-                  << " with size: " << getMaxEventsBuffered();
-    } else {
+    if (!telemetry_dir) {
         throw std::invalid_argument(std::string(telemetryDirVar) + " is not set");
     }
+
+    auto full_file_path = std::string(telemetry_dir) + "/" + init_params.agentName.data();
+    buffer_ = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+        full_file_path, true, TELEMETRY_VERSION, getMaxEventsBuffered());
+
+    NIXL_INFO << "Telemetry enabled, using buffer path: " << full_file_path
+              << " with size: " << getMaxEventsBuffered();
 }
 
 nixl_status_t
