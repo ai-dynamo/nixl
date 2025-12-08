@@ -48,7 +48,7 @@ TestSingleWriteKernel(nixlGpuXferReqH req_hdnl,
 
     for (size_t i = 0; i < num_iters; ++i) {
         status = nixlGpuPostSingleWriteXferReq<level>(
-            req_hdnl, index, src_offset, remote_offset, size, is_no_delay, xfer_status_ptr);
+            req_hdnl, index, src_offset, remote_offset, size, 0, is_no_delay, xfer_status_ptr);
         if (status != NIXL_IN_PROG) {
             printf("Thread %d: nixlGpuPostSingleWriteXferReq failed iteration %lu: status=%d (0x%x)\n",
                    threadIdx.x,
