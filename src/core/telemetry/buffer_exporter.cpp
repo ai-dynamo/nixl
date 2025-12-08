@@ -17,34 +17,21 @@
 #include "buffer_exporter.h"
 #include "common/nixl_log.h"
 
-#include <fstream>
-#include <iostream>
-#include <sstream>
-#include <iomanip>
-#include <thread>
-#include <chrono>
-
 constexpr const char telemetryDirVar[] = "NIXL_TELEMETRY_DIR";
 
 nixlTelemetryBufferExporter::nixlTelemetryBufferExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params) {
-    try {
-        auto telemetry_dir = std::getenv(telemetryDirVar);
-        if (telemetry_dir != nullptr) {
-            auto full_file_path = std::string(telemetry_dir) + "/" + init_params.agentName.data();
-            buffer_ = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-                full_file_path, true, TELEMETRY_VERSION, getMaxEventsBuffered());
+    auto telemetry_dir = std::getenv(telemetryDirVar);
+    if (telemetry_dir != nullptr) {
+        auto full_file_path = std::string(telemetry_dir) + "/" + init_params.agentName.data();
+        buffer_ = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
+            full_file_path, true, TELEMETRY_VERSION, getMaxEventsBuffered());
 
-            NIXL_INFO << "Telemetry enabled, using buffer path: " << full_file_path
-                      << " with size: " << getMaxEventsBuffered();
-        } else {
-            throw std::invalid_argument("TELEMETRY_DIR_VAR is not set");
-        }
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to create telemetry buffer exporter: " << e.what();
-        throw e;
+        NIXL_INFO << "Telemetry enabled, using buffer path: " << full_file_path
+                  << " with size: " << getMaxEventsBuffered();
+    } else {
+        throw std::invalid_argument(std::string(telemetryDirVar) + " is not set");
     }
 }
 

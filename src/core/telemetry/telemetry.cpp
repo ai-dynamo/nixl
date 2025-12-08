@@ -35,8 +35,6 @@ namespace fs = std::filesystem;
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 
-// constexpr std::string_view defaultTelemetryExporter = "buffer";
-
 nixlTelemetry::nixlTelemetry(const std::string &agent_name, backend_map_t &backend_map)
     : pool_(1),
       writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false),
@@ -90,17 +88,8 @@ nixlTelemetry::initializeTelemetry() {
         }
     }
 
-    struct nixlTelemetryExporterInitParams init_params = {
-        .agentName = agentName_,
-        .maxEventsBuffered = buffer_size,
-    };
-
-    try {
-        exporter_ = plugin_handle->createExporter(init_params);
-    }
-    catch (const std::exception &e) {
-        throw e;
-    }
+    const nixlTelemetryExporterInitParams init_params{agentName_, buffer_size};
+    exporter_ = plugin_handle->createExporter(init_params);
 
     auto run_interval = std::getenv(TELEMETRY_RUN_INTERVAL_VAR) ?
         std::chrono::milliseconds(std::stoul(std::getenv(TELEMETRY_RUN_INTERVAL_VAR))) :

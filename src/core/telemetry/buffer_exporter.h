@@ -22,10 +22,6 @@
 #include "telemetry_event.h"
 #include "nixl_types.h"
 
-#include <string>
-#include <fstream>
-#include <memory>
-
 /**
  * @class nixlTelemetryBufferExporter
  * @brief Shared memory buffer based telemetry exporter implementation
