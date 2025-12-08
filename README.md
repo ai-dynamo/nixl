@@ -144,6 +144,7 @@ Common build options:
 - `disable_gds_backend`: Disable GDS backend (default: false)
 - `cudapath_inc`, `cudapath_lib`: Custom CUDA paths
 - `static_plugins`: Comma-separated list of plugins to build statically
+- `plugins`: Comma-separated list of plugins to build. Default builds all available. Prefix with `^` to exclude.
 
 ### Building Documentation
 

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if not should_build_plugin.get('OBJ')
+if not enabled_plugins.get('OBJ')
     message('OBJ plugin not enabled, skipping plugins_gtest build')
     subdir_done()
 endif
