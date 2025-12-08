@@ -224,16 +224,20 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   $SUDO ldconfig
 )
 
-( \
-  cd /tmp && \
-  git clone https://github.com/uccl-project/uccl.git && \
-  cd uccl && git checkout -q "${UCCL_COMMIT_SHA}" && \
-  cd p2p && \
-  pip3 install pybind11 --break-system-packages && \
-  make -j2 && \
-  $SUDO make install && \
-  $SUDO ldconfig
-)
+if ls /dev/nvidia* >/dev/null 2>&1; then
+  ( \
+    cd /tmp && \
+    git clone https://github.com/uccl-project/uccl.git && \
+    cd uccl && git checkout -q "${UCCL_COMMIT_SHA}" && \
+    cd p2p && \
+    pip3 install pybind11 --break-system-packages && \
+    make -j2 && \
+    $SUDO make install && \
+    $SUDO ldconfig
+  )
+else
+    echo "No NVIDIA GPU(s) detected. Skipping UCCL installation."
+fi
 
 ( \
   cd /tmp &&
