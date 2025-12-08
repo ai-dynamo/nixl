@@ -170,7 +170,7 @@ namespace agent {
 
     TEST_F(singleAgentSessionFixture, CreateNonExistingPluginBackendTest) {
         nixlPluginManager &plugin_manager = nixlPluginManager::getInstance();
-        EXPECT_EQ(plugin_manager.loadPlugin(nonexisting_plugin), nullptr);
+        EXPECT_EQ(plugin_manager.loadBackendPlugin(nonexisting_plugin), nullptr);
 
         nixl_b_params_t params;
         nixlBackendH *backend;
