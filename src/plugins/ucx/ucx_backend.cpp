@@ -312,7 +312,7 @@ public:
     void
     reserve(size_t size) {
         requests_.reserve(size);
-        // NIXL_ASSERT(connections_.empty());
+        NIXL_ASSERT(connections_.empty());
     }
 
     nixl_status_t
