@@ -87,6 +87,9 @@ $SUDO apt-get -qq install -y python3-dev \
                              libcpprest-dev \
                              libaio-dev \
                              liburing-dev \
+                             libelf-dev \
+                             libgflags-dev \
+                             patchelf \
                              meson \
                              ninja-build \
                              pkg-config \
