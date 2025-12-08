@@ -14,3 +14,4 @@
 # limitations under the License.
 
 subdir('cpp')
+subdir('device')

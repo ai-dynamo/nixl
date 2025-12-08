@@ -1,3 +1,12 @@
+   NOTICE: The code under ./examples/device/ep is derived from DeepEP
+   (originally developed by DeepSeek) and has been modified for use in this
+   project. The original code was obtained from:
+   https://github.com/deepseek-ai/DeepEP (commit f0d34aabcb7bdcb3a05d022e7d11b3bf4ccf8ee8)
+   This code is licensed under the MIT License. The full text of the MIT
+   License can be found in ./examples/device/ep/LICENSE-DeepEP.
+   The rest of this codebase is licensed under the Apache License 2.0 as
+   described below.
+
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/

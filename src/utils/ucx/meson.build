@@ -27,4 +27,6 @@ ucx_utils_lib = library('ucx_utils',
            ucx_utils_sources,
            dependencies: ucx_utils_dep,
            include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
-           install: true)
+           install: true,
+           build_rpath: get_option('ucx_path') != '' ? get_option('ucx_path') + '/lib' : '',
+           install_rpath: get_option('ucx_path') != '' ? get_option('ucx_path') + '/lib' : '')

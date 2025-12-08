@@ -32,6 +32,7 @@ repos:
     hooks:
       - id: black
         types_or: [python, cython]
+        exclude: ^examples/device/ep/
 
   - repo: https://github.com/PyCQA/flake8
     rev: 7.1.2
