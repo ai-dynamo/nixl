@@ -76,7 +76,11 @@ void InitializeNixlLogging()
     absl::InitializeLog();
 
 #ifdef NIXL_VERSION
-    NIXL_INFO << "NIXL version: " << NIXL_VERSION;
+    NIXL_INFO << "NIXL version: " << NIXL_VERSION
+#ifdef NIXL_GIT_HASH
+              << " (git: " << NIXL_GIT_HASH << ")"
+#endif
+              ;
 #endif
 
     if (invalid_env_var) {
