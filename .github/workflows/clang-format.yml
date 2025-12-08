@@ -18,7 +18,7 @@ jobs:
         FILE_PATTERN='\.(cpp|h|cc|c|cxx|hpp|cu|cuh)$'
 
         echo "### Modified C/C++ files:"
-        FILES=$(git diff --name-only HEAD^1 HEAD | grep -E "$FILE_PATTERN") || true
+        FILES=$(git diff --name-only HEAD^1 HEAD -- . ':(exclude)examples/device/ep' | grep -E "$FILE_PATTERN") || true
         [ -z "$FILES" ] && echo "(none)" || echo "$FILES"
 
         echo "### clang format errors:"
