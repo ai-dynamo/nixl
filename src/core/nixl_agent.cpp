@@ -617,7 +617,7 @@ nixlAgent::prepXferDlist(const std::string &agent_name,
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    nixlDlistH *handle = new nixlDlistH;
+    nixlDlistH *handle = new (backend_set->size()) nixlDlistH(backend_set->size());
     if (init_side) {
         handle->isLocal = true;
         handle->remoteAgent = "";
