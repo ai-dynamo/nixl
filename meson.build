@@ -23,6 +23,7 @@ project('nixl', 'CPP', version: '0.8.0',
 
 enable_plugins_opt = get_option('enable_plugins')
 disable_plugins_opt = get_option('disable_plugins')
+is_explicit_enable = enable_plugins_opt != ''
 
 if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
