@@ -861,8 +861,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
         iov_lists.push_back(iov_list);
 
-        /* Workaround for a GUSLI registration bug which resets memory to 0 */
-        if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend && seg_type == DRAM_SEG) {
+        /*
+         * Workaround for a GUSLI registration bug which resets memory to 0, this initialization
+         * is only needed when validating data. It was moved from the initBasicDescDram function to
+         * here to avoid memsetting the memory again.
+         */
+        if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
             for (auto &iov : iov_list) {
                 if (isInitiator()) {
                     memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
