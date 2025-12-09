@@ -87,7 +87,6 @@ nixlTelemetry::initializeTelemetry() {
         plugin_manager.loadTelemetryPlugin(exporter_name);
 
     if (plugin_handle == nullptr) {
-        NIXL_ERROR << "Failed to load telemetry plugin: " << exporter_name;
         throw std::runtime_error("Failed to load telemetry plugin: " + std::string(exporter_name));
     }
 
