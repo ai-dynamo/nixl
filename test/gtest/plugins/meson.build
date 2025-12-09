@@ -13,6 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if enabled_plugins.get('UCCL')
+    subdir('uccl')
+endif
+
 if not enabled_plugins.get('OBJ')
     message('OBJ plugin not enabled, skipping plugins_gtest build')
     subdir_done()

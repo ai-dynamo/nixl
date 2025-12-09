@@ -28,7 +28,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL']
 
 enabled_plugins = {}
 
