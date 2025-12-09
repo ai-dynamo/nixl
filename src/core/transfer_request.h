@@ -18,11 +18,12 @@
 #define __TRANSFER_REQUEST_H_
 
 #include <string>
-#include <vector>
+#include <array>
 #include <utility>
 #include <memory>
 #include <algorithm>
 #include <stdexcept>
+#include <cstddef>
 
 #include "nixl_types.h"
 #include "backend_engine.h"
@@ -70,7 +71,10 @@ public:
 
 class nixlDlistH {
 private:
-    std::vector<std::pair<nixlBackendEngine *, std::shared_ptr<nixl_meta_dlist_t>>> descs;
+    static constexpr size_t MAX_BACKENDS = 16;
+    std::array<std::pair<nixlBackendEngine *, std::shared_ptr<nixl_meta_dlist_t>>, MAX_BACKENDS>
+        descs;
+    size_t size_;
 
     std::string remoteAgent;
     bool isLocal;
@@ -78,18 +82,20 @@ private:
     // Helper method to find an entry by backend
     inline auto
     find(nixlBackendEngine *backend) {
-        return std::find_if(
-            descs.begin(), descs.end(), [backend](const auto &p) { return p.first == backend; });
+        return std::find_if(descs.begin(), descs.begin() + size_, [backend](const auto &p) {
+            return p.first == backend;
+        });
     }
 
     inline auto
     find(nixlBackendEngine *backend) const {
-        return std::find_if(
-            descs.begin(), descs.end(), [backend](const auto &p) { return p.first == backend; });
+        return std::find_if(descs.begin(), descs.begin() + size_, [backend](const auto &p) {
+            return p.first == backend;
+        });
     }
 
 public:
-    inline nixlDlistH() {}
+    inline nixlDlistH() : size_(0) {}
 
     inline ~nixlDlistH() {
         // shared_ptr handles cleanup automatically
@@ -98,35 +104,43 @@ public:
     // Accessor methods to encapsulate internal data structure
     inline size_t
     count(nixlBackendEngine *backend) const {
-        return find(backend) != descs.end() ? 1 : 0;
+        return find(backend) != (descs.begin() + size_) ? 1 : 0;
     }
 
     inline std::shared_ptr<nixl_meta_dlist_t>
     at(nixlBackendEngine *backend) {
         auto it = find(backend);
-        if (it == descs.end()) throw std::out_of_range("Backend not found in descs");
+        if (it == descs.begin() + size_) throw std::out_of_range("Backend not found in descs");
         return it->second;
     }
 
     inline std::shared_ptr<nixl_meta_dlist_t>
     at(nixlBackendEngine *backend) const {
         auto it = find(backend);
-        if (it == descs.end()) throw std::out_of_range("Backend not found in descs");
+        if (it == descs.begin() + size_) throw std::out_of_range("Backend not found in descs");
         return it->second;
     }
 
     inline std::shared_ptr<nixl_meta_dlist_t>
     operator[](nixlBackendEngine *backend) {
         auto it = find(backend);
-        if (it != descs.end()) return it->second;
-        descs.emplace_back(backend, nullptr);
-        return descs.back().second;
+        if (it != descs.begin() + size_) return it->second;
+        if (size_ >= MAX_BACKENDS)
+            throw std::out_of_range("nixlDlistH: Maximum number of backends exceeded");
+        descs[size_] = std::make_pair(backend, nullptr);
+        return descs[size_++].second;
     }
 
     inline void
     erase(nixlBackendEngine *backend) {
         auto it = find(backend);
-        if (it != descs.end()) descs.erase(it);
+        if (it != descs.begin() + size_) {
+            // Shift elements left to fill the gap
+            for (auto next = it + 1; next != descs.begin() + size_; ++next, ++it) {
+                *it = *next;
+            }
+            --size_;
+        }
     }
 
     // Iterators for range-based for loops
@@ -137,7 +151,7 @@ public:
 
     inline auto
     end() {
-        return descs.end();
+        return descs.begin() + size_;
     }
 
     inline auto
@@ -147,7 +161,7 @@ public:
 
     inline auto
     end() const {
-        return descs.end();
+        return descs.begin() + size_;
     }
 
     friend class nixlAgent;
