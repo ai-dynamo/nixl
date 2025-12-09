@@ -13,7 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('uccl')
+if enabled_plugins.get('UCCL')
+    subdir('uccl')
+endif
+
+if not enabled_plugins.get('OBJ')
+    message('OBJ plugin not enabled, skipping plugins_gtest build')
+    subdir_done()
+endif
 
 aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
 if not aws_s3.found()

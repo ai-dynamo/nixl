@@ -13,50 +13,109 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if ucx_dep.found()
-    subdir('ucx')
+if enabled_plugins.get('UCX')
+    if not ucx_dep.found() and is_explicit_enable
+        error('UCX plugin requested but UCX dependency not found')
+    elif ucx_dep.found()
+        subdir('ucx')
+    endif
 endif
 
-subdir('posix')  # Always try to build POSIX backend, it will handle its own dependencies
-subdir('obj')  # Always try to build Obj backend, it will handle its own dependencies
+if enabled_plugins.get('POSIX')
+    subdir('posix')
+endif
 
-if libfabric_dep.found()
-    subdir('libfabric')
+if enabled_plugins.get('OBJ')
+    subdir('obj')
+endif
+
+if enabled_plugins.get('LIBFABRIC')
+    if not libfabric_dep.found() and is_explicit_enable
+        error('LIBFABRIC plugin requested but libfabric dependency not found')
+    elif libfabric_dep.found()
+        subdir('libfabric')
+    endif
 endif
 
 disable_gds_backend = get_option('disable_gds_backend')
-if not disable_gds_backend and cuda_dep.found()
-      subdir('cuda_gds')
+if enabled_plugins.get('GDS')
+    if (disable_gds_backend or not cuda_dep.found()) and is_explicit_enable
+        if disable_gds_backend
+            error('GDS plugin requested but GDS backend is disabled')
+        else
+            error('GDS plugin requested but CUDA dependency not found')
+        endif
+    elif not disable_gds_backend and cuda_dep.found()
+        subdir('cuda_gds')
+    endif
 endif
 
-if taskflow_proj.found() and cuda_dep.found() and not disable_gds_backend
-      subdir('gds_mt')
+if enabled_plugins.get('GDS_MT')
+    if (disable_gds_backend or not cuda_dep.found() or not taskflow_proj.found()) and is_explicit_enable
+        if disable_gds_backend
+            error('GDS_MT plugin requested but GDS backend is disabled')
+        elif not cuda_dep.found()
+            error('GDS_MT plugin requested but CUDA dependency not found')
+        else
+            error('GDS_MT plugin requested but Taskflow dependency not found')
+        endif
+    elif not disable_gds_backend and cuda_dep.found() and taskflow_proj.found()
+        subdir('gds_mt')
+    endif
 endif
 
 cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
-if libtransfer_engine.found() and not get_option('disable_mooncake_backend')
-    subdir('mooncake')
+if enabled_plugins.get('MOONCAKE')
+    if (get_option('disable_mooncake_backend') or not libtransfer_engine.found()) and is_explicit_enable
+        if get_option('disable_mooncake_backend')
+            error('MOONCAKE plugin requested but Mooncake backend is disabled')
+        else
+            error('MOONCAKE plugin requested but transfer_engine library not found')
+        endif
+    elif not get_option('disable_mooncake_backend') and libtransfer_engine.found()
+        subdir('mooncake')
+    endif
 endif
 
 libuccl_p2p = cc.find_library('uccl_p2p', required: false)
-if libuccl_p2p.found()
-    subdir('uccl')
+if enabled_plugins.get('UCCL')
+    if not libuccl_p2p.found() and is_explicit_enable
+        error('UCCL plugin requested but uccl_p2p library not found')
+    elif libuccl_p2p.found()
+        subdir('uccl')
+    endif
 endif
 
 hf3fs_lib_path = '/usr/lib/'
 hf3fs_lib_file = 'hf3fs_api_shared'
 hf3fs_lib_found = cc.find_library(hf3fs_lib_file, dirs: [hf3fs_lib_path], required: false)
-if hf3fs_lib_found.found()
-    subdir('hf3fs')
+if enabled_plugins.get('HF3FS')
+    if not hf3fs_lib_found.found() and is_explicit_enable
+        error('HF3FS plugin requested but hf3fs_api_shared library not found')
+    elif hf3fs_lib_found.found()
+        subdir('hf3fs')
+    endif
 endif
 
 gusli_lib_file = 'gusli_clnt'
 gusli_lib_found = cc.find_library(gusli_lib_file, required: false)
-if gusli_lib_found.found()
-    subdir('gusli')
+if enabled_plugins.get('GUSLI')
+    if not gusli_lib_found.found() and is_explicit_enable
+        error('GUSLI plugin requested but gusli_clnt library not found')
+    elif gusli_lib_found.found()
+        subdir('gusli')
+    endif
 endif
 
-if cuda_dep.found() and doca_gpunetio_dep.found()
-    subdir('gpunetio')
+if enabled_plugins.get('GPUNETIO')
+    if (not cuda_dep.found() or not doca_gpunetio_dep.found()) and is_explicit_enable
+        if not cuda_dep.found()
+            error('GPUNETIO plugin requested but CUDA dependency not found')
+        else
+            error('GPUNETIO plugin requested but doca-gpunetio dependency not found')
+        endif
+    elif cuda_dep.found() and doca_gpunetio_dep.found()
+        subdir('gpunetio')
+    endif
 endif
