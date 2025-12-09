@@ -88,19 +88,23 @@ python3 test/python/prep_xfer_perf.py array
 
 echo "==== Running python examples ===="
 cd examples/python
-python3 nixl_api_example.py
 python3 partial_md_example.py --init-port "$(get_next_tcp_port)" --target-port "$(get_next_tcp_port)"
 python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
-# Running telemetry for the last test
 basic_two_peers_port=$(get_next_tcp_port)
-mkdir -p /tmp/telemetry_test
-
 python3 basic_two_peers.py --mode="target" --ip=127.0.0.1 --port="$basic_two_peers_port"&
 sleep 5
-NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
 python3 basic_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$basic_two_peers_port"
+
+# Running telemetry for the last test
+expanded_two_peers_port=$(get_next_tcp_port)
+mkdir -p /tmp/telemetry_test
+
+python3 expanded_two_peers.py --mode="target" --ip=127.0.0.1 --port="$expanded_two_peers_port"&
+sleep 5
+NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
+python3 expanded_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$expanded_two_peers_port"
 
 python3 telemetry_reader.py --telemetry_path /tmp/telemetry_test/initiator &
 telePID=$!
