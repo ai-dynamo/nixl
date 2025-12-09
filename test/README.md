@@ -36,15 +36,3 @@ cd build
 ./gtest --gtest_filter="TelemetryTest*"  # Run only telemetry tests
 ./gtest --gtest_filter="QueryMemTest*"   # Run only query memory tests
 ```
-
-# NIXL_wrapper python class
-
-To make the NIXL interface more python style, a wrapper class was added on top of python bindings.
-- This class can accept list of descriptors in form of list of tuples of (base_addr, len, devID) alongside a memory type (e.g., "DRAM" or "VRAM").
-- It also supports directly a list of Tensors and can extract the required information. DLPack might be supported in future too.
-- The initialization is also modified to use a python nixl_config, which can be filled externally with desired backends and corresponding parameters if any.
-- Few wrapper functions were added which clarify how dynamicity can be done among NIXL agents. Also instead of passing NIXL binding types, strings are passed.
-
-For this wrapper class two tests are included:
-- test/nixl_wrapper_test.py - Basic single node test for tuple style descriptors.
-- test/blocking_send_recv_example.py - Basic dual node test for tensor style descriptors, as well as how a blocking send/recv operation can be performed.

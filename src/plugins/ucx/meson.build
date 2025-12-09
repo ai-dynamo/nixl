@@ -38,7 +38,8 @@ else
                cpp_args : compile_flags + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir,
-               install_rpath: '$ORIGIN/..')
+               build_rpath: get_option('ucx_path') != '' ? get_option('ucx_path') + '/lib' : '',
+               install_rpath: get_option('ucx_path') != '' ? '$ORIGIN/..:' + get_option('ucx_path') + '/lib' : '$ORIGIN/..')
 
     if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
