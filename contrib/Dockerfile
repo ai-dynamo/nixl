@@ -24,8 +24,11 @@ ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REF="v1.20.x"
+ARG BUILD_NIXL_EP="false"
+ARG RDMA_CORE_PREFIX="/usr"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG DOCA_PREFIX="/opt/mellanox/doca"
 ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
@@ -122,8 +125,17 @@ RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
-     cd ucx && 			     \
-     git checkout $UCX_REF &&        \
+     cd ucx &&                       \
+     if [ "$BUILD_NIXL_EP" = "true" ]; then \
+         echo "=== BUILD_NIXL_EP=true: Using latest UCX master branch (ignoring UCX_REF=$UCX_REF) ===" && \
+         UCX_COMMIT=$(git rev-parse --short HEAD) && \
+         echo "Using UCX commit: $UCX_COMMIT" && \
+         EXPERIMENTAL_API_PARAM="--enable-experimental-api"; \
+     else                            \
+         echo "=== Using UCX_REF=$UCX_REF ===" && \
+         git checkout $UCX_REF &&    \
+         EXPERIMENTAL_API_PARAM="";   \
+     fi &&                           \
      ./autogen.sh && \
      ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
@@ -133,6 +145,7 @@ RUN cd /usr/local/src && \
          --enable-optimizations      \
          --enable-cma                \
          --enable-devel-headers      \
+         $EXPERIMENTAL_API_PARAM      \
          --with-cuda=/usr/local/cuda \
          --with-verbs                \
          --with-dm                   \
@@ -197,15 +210,24 @@ RUN uv pip install --upgrade 'setuptools>=80.9.0'
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$RDMA_CORE_PREFIX/lib:$LD_LIBRARY_PATH
 
 # Install pybind11 via apt
 RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 
+# Set PKG_CONFIG_PATH for NIXL EP dependencies (rdma-core, UCX, DOCA)
+ENV PKG_CONFIG_PATH=$RDMA_CORE_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$UCX_PREFIX/lib/pkgconfig:$DOCA_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
+
 ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
     mkdir build && \
-    meson setup -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
+    if [ "$BUILD_NIXL_EP" = "true" ]; then \
+        echo "=== BUILD_NIXL_EP=true: Building NIXL with NIXL EP support ===" && \
+        NIXL_EP_FLAG="-Dbuild_nixl_ep=true"; \
+    else \
+        NIXL_EP_FLAG=""; \
+    fi && \
+    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install
@@ -213,6 +235,10 @@ RUN rm -rf build && \
 RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
+
+# Set environment variables for NIXL EP
+ENV NIXL_PLUGIN_DIR=$NIXL_PLUGIN_DIR
+ENV PYTHONPATH=/workspace/nixl/build/examples/device/ep
 
 RUN cd src/bindings/rust && cargo build --release --locked
 
