@@ -16,9 +16,10 @@
 use super::*;
 use super::sync_manager::{BackendSyncable, SyncManager};
 use std::ops::{Index, IndexMut};
+use serde::{Serialize, Deserialize};
 
 /// Public registration descriptor used for indexing and comparisons
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegDescriptor {
     pub addr: usize,
     pub len: usize,
@@ -27,8 +28,9 @@ pub struct RegDescriptor {
 }
 
 /// Internal data structure for registration descriptors
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RegDescData {
+    mem_type: MemType,
     descriptors: Vec<RegDescriptor>,
 }
 
@@ -92,6 +94,7 @@ impl<'a> RegDescList<'a> {
                 let backend = NonNull::new(dlist).ok_or(NixlError::RegDescListCreationFailed)?;
 
                 let data = RegDescData {
+                    mem_type,
                     descriptors: Vec::new(),
                 };
                 let sync_mgr = SyncManager::new(data, backend);
@@ -229,6 +232,28 @@ impl<'a> RegDescList<'a> {
 
     pub(crate) fn handle(&self) -> *mut bindings::nixl_capi_reg_dlist_s {
         self.sync_mgr.backend().map(|b| b.as_ptr()).unwrap_or(ptr::null_mut())
+    }
+
+    /// Serializes the descriptor list to a byte vector using bincode
+    pub fn serialize(&self) -> Result<Vec<u8>, NixlError> {
+        // Serialize the RegDescData directly (contains mem_type + descriptors)
+        bincode::serialize(self.sync_mgr.data()).map_err(|_| NixlError::BackendError)
+    }
+
+    /// Deserializes a descriptor list from a byte slice using bincode
+    pub fn deserialize(bytes: &[u8]) -> Result<Self, NixlError> {
+        let data: RegDescData = bincode::deserialize(bytes)
+            .map_err(|_| NixlError::RegDescListCreationFailed)?;
+
+        let mut list = RegDescList::new(data.mem_type)?;
+        for desc in data.descriptors {
+            list.add_desc_with_meta(desc.addr, desc.len, desc.dev_id, &desc.metadata);
+        }
+
+        // Force synchronization to validate backend can handle the data
+        list.sync_mgr.backend()?;
+
+        Ok(list)
     }
 }
 
