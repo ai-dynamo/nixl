@@ -39,7 +39,7 @@ if enable_plugins_opt != ''
         if p_stripped not in all_plugins
             error('Requested plugin "' + p_stripped + '" is not available. Available plugins are: ' + ', '.join(all_plugins))
         endif
-        enabled_plugins_list += p_stripped
+        enabled_plugins_list += [p_stripped]
     endforeach
 
     foreach plugin : all_plugins
@@ -54,7 +54,7 @@ elif disable_plugins_opt != ''
         if p_stripped not in all_plugins
             error('Cannot exclude unknown plugin "' + p_stripped + '". Available plugins are: ' + ', '.join(all_plugins))
         endif
-        disabled_plugins_list += p_stripped
+        disabled_plugins_list += [p_stripped]
     endforeach
 
     foreach plugin : all_plugins
