@@ -21,67 +21,53 @@ project('nixl', 'CPP', version: '0.8.0',
     meson_version: '>= 0.64.0'
 )
 
-plugins_opt = get_option('plugins')
-enabled_plugins_list = []
-if plugins_opt != ''
-    foreach p : plugins_opt.split(',')
-        enabled_plugins_list += p.strip()
-    endforeach
+enable_plugins_opt = get_option('enable_plugins')
+disable_plugins_opt = get_option('disable_plugins')
+
+if enable_plugins_opt != '' and disable_plugins_opt != ''
+    error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
 all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO']
 
 enabled_plugins = {}
 
-is_exclusion_mode = false
-if enabled_plugins_list.length() > 0
-    foreach p : enabled_plugins_list
-        if p.startswith('^')
-            is_exclusion_mode = true
-            break
+if enable_plugins_opt != ''
+    enabled_plugins_list = []
+    foreach p : enable_plugins_opt.split(',')
+        p_stripped = p.strip()
+        if p_stripped not in all_plugins
+            error('Requested plugin "' + p_stripped + '" is not available. Available plugins are: ' + ', '.join(all_plugins))
         endif
+        enabled_plugins_list += p_stripped
     endforeach
-endif
 
-if is_exclusion_mode
+    foreach plugin : all_plugins
+        enabled_plugins += {plugin: plugin in enabled_plugins_list}
+    endforeach
+
+    message('Building only selected plugins: ' + enable_plugins_opt)
+elif disable_plugins_opt != ''
+    disabled_plugins_list = []
+    foreach p : disable_plugins_opt.split(',')
+        p_stripped = p.strip()
+        if p_stripped not in all_plugins
+            error('Cannot exclude unknown plugin "' + p_stripped + '". Available plugins are: ' + ', '.join(all_plugins))
+        endif
+        disabled_plugins_list += p_stripped
+    endforeach
+
+    foreach plugin : all_plugins
+        enabled_plugins += {plugin: plugin not in disabled_plugins_list}
+    endforeach
+
+    message('Building all plugins except: ' + disable_plugins_opt)
+else
     foreach plugin : all_plugins
         enabled_plugins += {plugin: true}
     endforeach
 
-    foreach p : enabled_plugins_list
-        if p.startswith('^')
-            plugin_name = p.substring(1)
-            if plugin_name in all_plugins
-                enabled_plugins += {plugin_name: false}
-            else
-                warning('Unknown plugin excluded: ' + plugin_name)
-            endif
-        else
-            if p not in all_plugins
-                 warning('Unknown plugin requested: ' + p)
-            endif
-        endif
-    endforeach
-else
-    foreach plugin : all_plugins
-        enabled_plugins += {plugin: enabled_plugins_list.length() == 0 or plugin in enabled_plugins_list}
-    endforeach
-
-    if enabled_plugins_list.length() > 0
-        foreach p : enabled_plugins_list
-            if p not in all_plugins
-                error('Requested plugin "' + p + '" is not available. Available plugins are: ' + ', '.join(all_plugins))
-            endif
-        endforeach
-    endif
-endif
-
-if enabled_plugins_list.length() == 0
     message('Building all available plugins')
-elif is_exclusion_mode
-    message('Building all plugins except: ' + plugins_opt)
-else
-    message('Building only selected plugins: ' + plugins_opt)
 endif
 
 # set up some global vars for compiler, platform, configuration, etc.
