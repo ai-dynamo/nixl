@@ -224,7 +224,7 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   $SUDO ldconfig
 )
 
-if ls /dev/nvidia* >/dev/null 2>&1; then
+if $HAS_GPU; then
   ( \
     cd /tmp && \
     git clone https://github.com/uccl-project/uccl.git && \
