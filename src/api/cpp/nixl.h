@@ -168,9 +168,10 @@ class nixlAgent {
          *           - For remote descriptors: it is set to the remote name, indicating
          *             that this is remote side preparation to be used for remote_side handle.
          *           - For loopback descriptors, it is set to local agent's name, indicating that
-         *             this is for a loopback (local) transfer to be uued for remote_side handle
+         *             this is for a loopback (local) transfer to be used for remote_side handle
          *         If a list of backends hints is provided (via extra_params), the preparation
-         *         is limited to the specified backends.
+         *         is limited to the specified backends. The preparation succeeds if there exists
+         *         at least one backend that can handle all elements in the descriptor list.
          *
          * @param  agent_name       Agent name as a string for preparing xfer handle
          * @param  descs            The descriptor list to be prepared for transfer requests

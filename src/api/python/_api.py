@@ -444,7 +444,7 @@ class nixl_agent:
     """
     @brief  Prepare a transfer descriptor list for data transfer.
             Later, elements from this list can be used to create a transfer request by index.
-            It should be done on the initiator agent, and for both sides of an transfer.
+            It should be done on the initiator agent, and for both sides of a transfer.
             Considering loopback, there are 3 modes for agent_name:
               - For local descriptors, it is set to NIXL_INIT_AGENT,
                 indicating that this is a local preparation to be used as local_side handle.
@@ -452,6 +452,8 @@ class nixl_agent:
                 that this is remote side preparation to be used for remote_side handle.
               - For loopback descriptors, it is set to local agent's name, indicating that
                 this is for a loopback (local) transfer to be used for remote_side handle
+            Preparation succeeds if there exists at least one backend that can handle all
+            elements in the descriptor list.
 
     @param agent_name Name of the agent. It can be "NIXL_INIT_AGENT", local agent name, or remote agent name
     @param xfer_list List of transfer descriptors, can be list of memory region tuples, tensors,
