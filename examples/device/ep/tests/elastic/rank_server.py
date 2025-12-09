@@ -25,10 +25,14 @@ import torch
 
 # --- Request handler ---
 class RankServerHandler(StreamRequestHandler):
-    _counts: defaultdict[str, list[int]] = defaultdict(list)  # List of used local ranks per host
+    _counts: defaultdict[str, list[int]] = defaultdict(
+        list
+    )  # List of used local ranks per host
     _global: int = 0
     _lock: Lock = Lock()
-    _rank_to_host: dict[int, tuple[str, int]] = {}  # Maps global rank to (host, local_rank)
+    _rank_to_host: dict[int, tuple[str, int]] = (
+        {}
+    )  # Maps global rank to (host, local_rank)
     _user_context: dict[str, str | None] = {}
     _all_global_ranks: set[int] = set()
     _removed_global_ranks: set[int] = set()
@@ -78,7 +82,13 @@ class RankServerHandler(StreamRequestHandler):
                 self._rank_to_host[global_rank] = (host, local)
                 if str(global_rank) not in self._user_context:
                     self._user_context[str(global_rank)] = None
-                self.wfile.write(f"{local} {global_rank} {self._user_context[str(global_rank)]}\n".encode()) if self._user_context[str(global_rank)] is not None else self.wfile.write(f"{local} {global_rank}\n".encode())
+                (
+                    self.wfile.write(
+                        f"{local} {global_rank} {self._user_context[str(global_rank)]}\n".encode()
+                    )
+                    if self._user_context[str(global_rank)] is not None
+                    else self.wfile.write(f"{local} {global_rank}\n".encode())
+                )
 
 
 # --- TCPServer subclass to reuse port immediately ---
@@ -96,7 +106,9 @@ def start_server(port: int = 9999) -> None:
 
 
 def start_server_process(port: int = 9999):
-    server_process = torch.multiprocessing.Process(target=start_server, args=(port,), daemon=False)
+    server_process = torch.multiprocessing.Process(
+        target=start_server, args=(port,), daemon=False
+    )
     server_process.start()
     time.sleep(1)
     return server_process
@@ -112,7 +124,10 @@ class RankClient:
 
     def get_rank(self):
         if self.self_global_rank is not None:
-            print(f"WARNING: rank already assigned - returning existing rank {self.self_global_rank}", flush=True)
+            print(
+                f"WARNING: rank already assigned - returning existing rank {self.self_global_rank}",
+                flush=True,
+            )
             return self.self_global_rank
         s = socket.create_connection((self.server, self.port))
         s.sendall(f"{os.uname().nodename}\n".encode())
@@ -129,7 +144,9 @@ class RankClient:
     def release_rank(self, user_context: str | None = None) -> bool:
         """Release a rank (decrement the global counter by 1)"""
         s = socket.create_connection((self.server, self.port))
-        s.sendall(f"RELEASE_RANK {self.self_global_rank if self.self_global_rank is not None else -1} {user_context}\n".encode())
+        s.sendall(
+            f"RELEASE_RANK {self.self_global_rank if self.self_global_rank is not None else -1} {user_context}\n".encode()
+        )
         response = s.recv(1024).decode().strip()
         s.close()
         self.self_global_rank = None
