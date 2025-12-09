@@ -93,6 +93,10 @@ nixlTelemetry::initializeTelemetry() {
 
     const nixlTelemetryExporterInitParams init_params{agentName_, buffer_size};
     exporter_ = plugin_handle->createExporter(init_params);
+    if (!exporter_) {
+        NIXL_ERROR << "Failed to create telemetry exporter: " << exporter_name;
+        return;
+    }
 
     NIXL_DEBUG << "NIXL telemetry is enabled with " << exporter_name << "exporter";
 
