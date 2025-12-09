@@ -22,6 +22,8 @@
 #include "telemetry_event.h"
 #include "nixl_types.h"
 
+#include <filesystem>
+
 /**
  * @class nixlTelemetryBufferExporter
  * @brief Shared memory buffer based telemetry exporter implementation
@@ -41,7 +43,8 @@ public:
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
-    std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
+    std::filesystem::path filePath_;
+    sharedRingBuffer<nixlTelemetryEvent> buffer_;
 };
 
 #endif // _TELEMETRY_BUFFER_EXPORTER_H
