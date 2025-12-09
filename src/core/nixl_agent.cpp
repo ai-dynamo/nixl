@@ -627,16 +627,15 @@ nixlAgent::prepXferDlist(const std::string &agent_name,
     }
 
     for (auto &backend : *backend_set) {
-        handle->descs[backend] = std::make_shared<nixl_meta_dlist_t>(descs.getType());
+        (*handle)[backend] = std::make_shared<nixl_meta_dlist_t>(descs.getType());
         if (init_side)
-            ret = data->memorySection->populate(descs, backend, *(handle->descs[backend]));
+            ret = data->memorySection->populate(descs, backend, *((*handle)[backend]));
         else
-            ret = data->remoteSections[agent_name]->populate(
-                descs, backend, *(handle->descs[backend]));
+            ret = data->remoteSections[agent_name]->populate(descs, backend, *((*handle)[backend]));
         if (ret == NIXL_SUCCESS) {
             count++;
         } else {
-            handle->descs.erase(backend);
+            handle->erase(backend);
         }
     }
 
@@ -695,15 +694,14 @@ nixlAgent::makeXferReq(const nixl_xfer_op_t &operation,
 
     if (extra_params && extra_params->backends.size() > 0) {
         for (auto &elm : extra_params->backends) {
-            if ((local_side->descs.count(elm->engine) > 0) &&
-                (remote_side->descs.count(elm->engine) > 0)) {
+            if ((local_side->count(elm->engine) > 0) && (remote_side->count(elm->engine) > 0)) {
                 backend = elm->engine;
                 break;
             }
         }
     } else {
-        for (auto &loc_bknd : local_side->descs) {
-            for (auto &rem_bknd : remote_side->descs) {
+        for (auto &loc_bknd : *local_side) {
+            for (auto &rem_bknd : *remote_side) {
                 if (loc_bknd.first == rem_bknd.first) {
                     backend = loc_bknd.first;
                     break;
@@ -719,8 +717,8 @@ nixlAgent::makeXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    auto local_descs = local_side->descs.at(backend);
-    auto remote_descs = remote_side->descs.at(backend);
+    auto local_descs = local_side->at(backend);
+    auto remote_descs = remote_side->at(backend);
     size_t total_bytes = 0;
 
     if ((desc_count == 0) || (remote_indices.size() == 0) ||
@@ -765,8 +763,8 @@ nixlAgent::makeXferReq(const nixl_xfer_op_t &operation,
     if (extra_params && extra_params->skipDescMerge) {
         // Optimization: Share the descriptor list pointers directly, avoiding allocation and
         // copying
-        handle->initiatorDescs = local_side->descs.at(backend);
-        handle->targetDescs = remote_side->descs.at(backend);
+        handle->initiatorDescs = local_side->at(backend);
+        handle->targetDescs = remote_side->at(backend);
     } else {
         // Allocate new descriptor lists for merging
         handle->initiatorDescs =

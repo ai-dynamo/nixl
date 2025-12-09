@@ -79,6 +79,53 @@ public:
         // shared_ptr handles cleanup automatically
     }
 
+    // Accessor methods to encapsulate internal data structure
+    inline size_t
+    count(nixlBackendEngine *backend) const {
+        return descs.count(backend);
+    }
+
+    inline std::shared_ptr<nixl_meta_dlist_t>
+    at(nixlBackendEngine *backend) {
+        return descs.at(backend);
+    }
+
+    inline std::shared_ptr<nixl_meta_dlist_t>
+    at(nixlBackendEngine *backend) const {
+        return descs.at(backend);
+    }
+
+    inline std::shared_ptr<nixl_meta_dlist_t> &
+    operator[](nixlBackendEngine *backend) {
+        return descs[backend];
+    }
+
+    inline void
+    erase(nixlBackendEngine *backend) {
+        descs.erase(backend);
+    }
+
+    // Iterators for range-based for loops
+    inline auto
+    begin() {
+        return descs.begin();
+    }
+
+    inline auto
+    end() {
+        return descs.end();
+    }
+
+    inline auto
+    begin() const {
+        return descs.begin();
+    }
+
+    inline auto
+    end() const {
+        return descs.end();
+    }
+
     friend class nixlAgent;
 };
 
