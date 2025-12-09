@@ -51,7 +51,6 @@ class NixlBuffer:
         fill_value=0,
         dtype: torch.dtype = torch.int8,
     ):
-        self.size = size
         self.nixl_agent = nixl_agent
         if mem_type in ("cuda", "vram"):
             device = torch.device("cuda")
@@ -62,7 +61,9 @@ class NixlBuffer:
 
         if shards > 1:
             raise ValueError("Sharding is not supported yet")
-
+        # 4K align the buffer size
+        size = ((size + 4095) // 4096) * 4096
+        self.size = size
         logger.debug(
             "[Rank %d] Initializing NixlBuffer with size %d, device %s, shards %d, fill_value %d",
             dist_rt.get_rank(),
@@ -145,16 +146,36 @@ class CTPerftest:
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
 
     def _barrier_tp(self, tp: TrafficPattern, senders_only=True):
-        """Barrier for a traffic pattern"""
+        """Barrier for a traffic pattern (ranks only)."""
         if senders_only:
-            dist_rt.barrier(tp.senders_ranks())
+            dist_rt.barrier(tp.senders_ranks(world_size=self.world_size))
         else:
-            dist_rt.barrier(tp.ranks())
+            ranks = list(
+                set(
+                    tp.senders_ranks(world_size=self.world_size)
+                    + tp.receivers_ranks(world_size=self.world_size)
+                )
+            )
+            dist_rt.barrier(ranks)
 
     def _share_md(self) -> None:
         """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
+        # Skip remote metadata when running single-rank or when no remote-capable backend is available
+        if self.world_size == 1:
+            logger.debug(
+                "[Rank %d] Single-rank run, skipping metadata exchange", self.my_rank
+            )
+            return
         logger.debug("[Rank %d] Sharing MD", self.my_rank)
-        md = self.nixl_agent.get_agent_metadata()
+        try:
+            md = self.nixl_agent.get_agent_metadata()
+        except Exception as e:
+            logger.warning(
+                "[Rank %d] Skipping metadata exchange due to agent error: %s",
+                self.my_rank,
+                e,
+            )
+            return
         mds = dist_rt.allgather_obj(md)
         for other_rank, metadata in enumerate(mds):
             if other_rank == self.my_rank:
@@ -259,13 +280,14 @@ class CTPerftest:
             self._run_tp(handles)
             self._wait(handles)
 
-    def _run_tp(self, handles: list[NixlHandle], blocking=False) -> list[NixlHandle]:
+    def _run_tp(self, handles: list, blocking=False) -> list:
         pending = []
-        for handle in handles:
-            status = self.nixl_agent.transfer(handle.handle)
+        for h in handles:
+            handle = getattr(h, "handle", h)
+            status = self.nixl_agent.transfer(handle)
             assert status != "ERR", "Transfer failed"
             if status != "DONE":
-                pending.append(handle)
+                pending.append(h)
 
         if not blocking:
             return pending
@@ -273,15 +295,16 @@ class CTPerftest:
             self._wait(pending)
             return []
 
-    def _wait(self, handles: list[NixlHandle]):
+    def _wait(self, handles: list):
         # Wait for transfers to complete
         while True:
             pending = []
-            for handle in handles:
-                state = self.nixl_agent.check_xfer_state(handle.handle)
+            for h in handles:
+                handle = getattr(h, "handle", h)
+                state = self.nixl_agent.check_xfer_state(handle)
                 assert state != "ERR", "Transfer got to Error state."
                 if state != "DONE":
-                    pending.append(handle)
+                    pending.append(h)
 
             if not pending:
                 break
