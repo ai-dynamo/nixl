@@ -67,7 +67,8 @@ export NIXL_ETCD_NAMESPACE="/nixl/python_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-sleep 5
+
+wait_for_etcd
 
 echo "==== Running python tests ===="
 pytest -s test/python
