@@ -108,8 +108,8 @@ Note that getNotif does not know which agent it should look for to receive the n
 
 A key underlying abstraction for NIXL library is a descriptor list, that is made of a memory space (host/GPU/block/File/Obj-Store) and a list of descriptors. There are 2 types of descriptors used for the SB API.
 
-*For transfers: (addr, len, devID, metadata), where metadata is a pointer to an nixlBackendMD object relevant to the registered memory that this descriptor falls within.
-*For registration, (addr, len, devID, str) where str is an optional byte-array for extra information. The table below shows the meaning of devID for different memory spaces, as well as optional meaning for File and Object-Store.
+* For transfers: (addr, len, devID, metadata), where metadata is a pointer to an nixlBackendMD object relevant to the registered memory that this descriptor falls within.
+* For registration, (addr, len, devID, str) where str is an optional byte-array for extra information. The table below shows the meaning of devID for different memory spaces, as well as optional meaning for File and Object-Store.
 
 | mem type | addr   | len  | devID         | str (byte-array)           |
 | -------- | ------ | ---- | ------------- | -------------------------- |
@@ -117,7 +117,7 @@ A key underlying abstraction for NIXL library is a descriptor list, that is made
 | VRAM     |        |      | GPU ID        |        -                   |
 | BLK      |        |      | Vol ID        |        -                   |
 | FILE     | offset | Or 0 | fd            | Path + (access mode)       |
-| DRAM     | offset | Or 0 | key           | Extended key (+ bucket ID) |
+| OBJ      | offset | Or 0 | key           | Extended key (+ bucket ID) |
 
 ## Plugin Manager API
 
@@ -165,7 +165,7 @@ In this step, if the plugin supports talking to remote agents, the required conn
 
 When a connection is requested to an remote agent, which is possible if the remote agent’s metadata is already loaded, the local Agent would look for common backend plugins between itself and the remote agent, and for each of them initiate a connect by using the **connect** API in SB API of such backends.
 
-### Register (Degister) memory with NIXL:
+### Register (Deregister) memory with NIXL:
 
 The agent will receive a list of allocated memories and desired backend from the user, and then will give only one element at a time to the specified backend. Note that backends usually require to register the memories they will access during transfers, and based on that registration keep some metadata for that memory region. For instance, in case of UCX, per each contiguous region of memory, it will produce some local metadata for that region. Agent will give only a single contiguous region of memory to the **register** call in SB API, and in return gets a key (a pointer) to the metadata that backend created for this memory region. Later on, during transfer, the agent will give the same key back to the backend, so backends do not need to do any bookkeeping of such metadata.
 
