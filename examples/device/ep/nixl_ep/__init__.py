@@ -21,4 +21,4 @@
 from .buffer import Buffer
 from .utils import EventOverlap
 
-__all__ = ['Buffer', 'EventOverlap']
+__all__ = ["Buffer", "EventOverlap"]
