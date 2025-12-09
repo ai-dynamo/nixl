@@ -18,7 +18,7 @@ name = "NIXLKVBench"
 version = "0.2.0"
 description = "Benchmarking utility for testing KVCache transfers in large language models (LLMs) using the NIXL runtime."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "click==8.1.7",
     "pytest==7.4.4",
