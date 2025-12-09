@@ -196,7 +196,6 @@ nixlGpuPostPartialWriteXferReq(nixlGpuXferReqH req_hndl,
  *
  * @param req_hndl           [in]  Request handle.
  * @param signal_inc         [in]  Increment value for the signal. The signal will only be posted if signal_inc != 0.
- * @param signal_offset      [in]  Offset of the signal to be sent.
  * @param channel_id         [in]  Channel ID to use for the transfer.
  * @param is_no_delay        [in]  Whether to use no-delay mode.
  * @param xfer_status        [out] Status of the transfer. If not null, use @ref
@@ -209,7 +208,6 @@ template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ nixl_status_t
 nixlGpuPostWriteXferReq(nixlGpuXferReqH req_hndl,
                         uint64_t signal_inc,
-                        size_t signal_offset,
                         unsigned channel_id = 0,
                         bool is_no_delay = true,
                         nixlGpuXferStatusH *xfer_status = nullptr) {
@@ -218,7 +216,6 @@ nixlGpuPostWriteXferReq(nixlGpuXferReqH req_hndl,
     ucs_status_t status =
         ucp_device_put_multi<static_cast<ucs_device_level_t>(level)>(params.mem_list,
                                                                      signal_inc,
-                                                                     signal_offset,
                                                                      channel_id,
                                                                      params.flags,
                                                                      params.ucp_request);
