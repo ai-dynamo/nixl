@@ -35,8 +35,11 @@ class EventOverlap:
         extra_tensors: an easier way to simulate PyTorch tensor `record_stream`, may be useful with CUDA graph.
     """
 
-    def __init__(self, event: Optional[EventHandle] = None,
-                 extra_tensors: Optional[Tuple[torch.Tensor, ...]] = None) -> None:
+    def __init__(
+        self,
+        event: Optional[EventHandle] = None,
+        extra_tensors: Optional[Tuple[torch.Tensor, ...]] = None,
+    ) -> None:
         """
         Initialize the class.
 

@@ -48,9 +48,15 @@ class Buffer:
 
     num_sms: int = 20
 
-    def __init__(self, nvlink_backend: Literal['nixl', 'ipc', 'none'] = 'nixl',
-                 explicitly_destroy: bool = False, rank: int = 0, enable_shrink: bool = False,
-                 group: Optional[dist.ProcessGroup] = None, comm: Optional["mpi4py.MPI.Comm"] = None) -> None:
+    def __init__(
+        self,
+        nvlink_backend: Literal["nixl", "ipc", "none"] = "nixl",
+        explicitly_destroy: bool = False,
+        rank: int = 0,
+        enable_shrink: bool = False,
+        group: Optional[dist.ProcessGroup] = None,
+        comm: Optional["mpi4py.MPI.Comm"] = None,
+    ) -> None:
         """
         Initialize the nixl communication buffer.
 
@@ -71,8 +77,10 @@ class Buffer:
         assert not (group and comm)
 
         # Configure NVLINK backend
-        os.environ['NIXL_EP_NVLINK_BACKEND_IPC'] = '1' if nvlink_backend == 'ipc' else '0'
-        if nvlink_backend != 'nixl':
+        os.environ["NIXL_EP_NVLINK_BACKEND_IPC"] = (
+            "1" if nvlink_backend == "ipc" else "0"
+        )
+        if nvlink_backend != "nixl":
             os.environ["UCX_TLS"] = "^cuda_ipc"
 
         self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy, enable_shrink)
@@ -81,7 +89,7 @@ class Buffer:
         """
         Destroy the cpp runtime and release resources.
         """
-        assert self.explicitly_destroy, '`explicitly_destroy` flag must be set'
+        assert self.explicitly_destroy, "`explicitly_destroy` flag must be set"
 
         self.runtime.destroy()
         self.runtime = None
@@ -99,7 +107,7 @@ class Buffer:
             new_num_sms: the new number to be set.
         """
 
-        assert new_num_sms % 2 == 0, 'The SM count must be even'
+        assert new_num_sms % 2 == 0, "The SM count must be even"
         Buffer.num_sms = new_num_sms
 
     @staticmethod
@@ -113,7 +121,12 @@ class Buffer:
         return EventOverlap(EventHandle())
 
     @staticmethod
-    def get_rdma_size_hint(num_max_dispatch_tokens_per_rank: int, hidden: int, num_ranks: int, num_experts: int) -> int:
+    def get_rdma_size_hint(
+        num_max_dispatch_tokens_per_rank: int,
+        hidden: int,
+        num_ranks: int,
+        num_experts: int,
+    ) -> int:
         """
         Get a minimum size requirement for the RDMA buffer. The size calculation will be done with BF16.
 
@@ -126,7 +139,9 @@ class Buffer:
         Returns:
             size: the RDMA buffer size recommended.
         """
-        return nixl_ep_cpp.get_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)
+        return nixl_ep_cpp.get_rdma_size_hint(
+            num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts
+        )
 
     def get_comm_stream(self) -> torch.Stream:
         """
@@ -136,10 +151,15 @@ class Buffer:
             stream: the communication stream.
         """
         ts: torch.Stream = self.runtime.get_comm_stream()
-        return torch.cuda.Stream(stream_id=ts.stream_id, device_index=ts.device_index, device_type=ts.device_type)
+        return torch.cuda.Stream(
+            stream_id=ts.stream_id,
+            device_index=ts.device_index,
+            device_type=ts.device_type,
+        )
 
-    def get_local_buffer_tensor(self, dtype: torch.dtype, size: Optional[torch.Size] = None,
-                                offset: int = 0) -> torch.Tensor:
+    def get_local_buffer_tensor(
+        self, dtype: torch.dtype, size: Optional[torch.Size] = None, offset: int = 0
+    ) -> torch.Tensor:
         """
         Get the raw buffer (slice supported) as a PyTorch tensor.
 
@@ -153,7 +173,7 @@ class Buffer:
             return tensor
 
         assert tensor.numel() >= size.numel()
-        return tensor[:size.numel()].view(size)
+        return tensor[: size.numel()].view(size)
 
     @staticmethod
     def _unpack_bias(bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]):
@@ -165,7 +185,9 @@ class Buffer:
             bias_0, bias_1 = bias
         return bias_0, bias_1
 
-    def clean_buffer(self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int) -> None:
+    def clean_buffer(
+        self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int
+    ) -> None:
         """
         As the kernels require part of the buffer to be zero-initialized, so it is vital to clean the buffer
             if the buffer is dirty at some time.
@@ -178,13 +200,22 @@ class Buffer:
         self.runtime.clean_buffer(num_max_dispatch_tokens_per_rank, hidden, num_experts)
 
     # noinspection PyTypeChecker
-    def dispatch(self, x: torch.Tensor, topk_idx: torch.Tensor,
-                 num_max_dispatch_tokens_per_rank: int, num_experts: int,
-                 cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
-                 dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
-                 use_fp8: bool = True, round_scale: bool = False, use_ue8m0: bool = False,
-                 async_finish: bool = False, return_recv_hook: bool = False) -> \
-            Tuple[Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable]:
+    def dispatch(
+        self,
+        x: torch.Tensor,
+        topk_idx: torch.Tensor,
+        num_max_dispatch_tokens_per_rank: int,
+        num_experts: int,
+        cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
+        dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
+        use_fp8: bool = True,
+        round_scale: bool = False,
+        use_ue8m0: bool = False,
+        async_finish: bool = False,
+        return_recv_hook: bool = False,
+    ) -> Tuple[
+        Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable
+    ]:
         """
         A low-latency implementation for dispatching with NIXL device API.
         This kernel requires all the ranks (no matter intranode or internode) should be visible via RDMA
@@ -231,28 +262,66 @@ class Buffer:
             event: the event after executing the kernel (valid only if `async_finish` is set).
             hook: the receiving hook function (valid only if `return_recv_hook` is set).
         """
-        packed_recv_x, packed_recv_x_scales, packed_recv_count, packed_recv_src_info, packed_recv_layout_range, event, hook = \
-            self.runtime.dispatch(
-                x, topk_idx,
-                cumulative_local_expert_recv_stats,
-                dispatch_wait_recv_cost_stats,
-                num_max_dispatch_tokens_per_rank, num_experts,
-                use_fp8, round_scale, use_ue8m0,
-                async_finish, return_recv_hook)
-        handle = (packed_recv_src_info, packed_recv_layout_range, num_max_dispatch_tokens_per_rank, x.size(1), num_experts)
-        tensors_to_record = (x, topk_idx,
-                             packed_recv_x, packed_recv_x_scales, packed_recv_count,
-                             packed_recv_src_info, packed_recv_layout_range,
-                             cumulative_local_expert_recv_stats)
-        return (packed_recv_x, packed_recv_x_scales) if use_fp8 else packed_recv_x, packed_recv_count, handle, \
-            EventOverlap(event, tensors_to_record if async_finish else None), hook
+        (
+            packed_recv_x,
+            packed_recv_x_scales,
+            packed_recv_count,
+            packed_recv_src_info,
+            packed_recv_layout_range,
+            event,
+            hook,
+        ) = self.runtime.dispatch(
+            x,
+            topk_idx,
+            cumulative_local_expert_recv_stats,
+            dispatch_wait_recv_cost_stats,
+            num_max_dispatch_tokens_per_rank,
+            num_experts,
+            use_fp8,
+            round_scale,
+            use_ue8m0,
+            async_finish,
+            return_recv_hook,
+        )
+        handle = (
+            packed_recv_src_info,
+            packed_recv_layout_range,
+            num_max_dispatch_tokens_per_rank,
+            x.size(1),
+            num_experts,
+        )
+        tensors_to_record = (
+            x,
+            topk_idx,
+            packed_recv_x,
+            packed_recv_x_scales,
+            packed_recv_count,
+            packed_recv_src_info,
+            packed_recv_layout_range,
+            cumulative_local_expert_recv_stats,
+        )
+        return (
+            (packed_recv_x, packed_recv_x_scales) if use_fp8 else packed_recv_x,
+            packed_recv_count,
+            handle,
+            EventOverlap(event, tensors_to_record if async_finish else None),
+            hook,
+        )
 
     # noinspection PyTypeChecker
-    def combine(self, x: torch.Tensor, topk_idx: torch.Tensor, topk_weights: torch.Tensor,
-                handle: tuple, use_logfmt: bool = False, zero_copy: bool = False, async_finish: bool = False,
-                return_recv_hook: bool = False, out: Optional[torch.Tensor] = None,
-                combine_wait_recv_cost_stats: Optional[torch.Tensor] = None) -> \
-            Tuple[torch.Tensor, EventOverlap, Callable]:
+    def combine(
+        self,
+        x: torch.Tensor,
+        topk_idx: torch.Tensor,
+        topk_weights: torch.Tensor,
+        handle: tuple,
+        use_logfmt: bool = False,
+        zero_copy: bool = False,
+        async_finish: bool = False,
+        return_recv_hook: bool = False,
+        out: Optional[torch.Tensor] = None,
+        combine_wait_recv_cost_stats: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, EventOverlap, Callable]:
         """
         A low-latency implementation for combining tokens (reduce **with weights**) with NIXL device API.
         This kernel requires all the ranks (no matter intranode or internode) should be visible via RDMA
@@ -285,15 +354,41 @@ class Buffer:
             event: the event after executing the kernel (valid only if `async_finish` is set).
             hook: the receiving hook function (valid only if `return_recv_hook` is set).
         """
-        src_info, layout_range, num_max_dispatch_tokens_per_rank, hidden, num_experts = handle
+        (
+            src_info,
+            layout_range,
+            num_max_dispatch_tokens_per_rank,
+            hidden,
+            num_experts,
+        ) = handle
         combined_x, event, hook = self.runtime.combine(
-            x, topk_idx, topk_weights, src_info, layout_range,
+            x,
+            topk_idx,
+            topk_weights,
+            src_info,
+            layout_range,
             combine_wait_recv_cost_stats,
-            num_max_dispatch_tokens_per_rank, num_experts,
-            use_logfmt, zero_copy, async_finish, return_recv_hook,
-            out)
-        tensors_to_record = (x, topk_idx, topk_weights, src_info, layout_range, combined_x)
-        return combined_x, EventOverlap(event, tensors_to_record if async_finish else None), hook
+            num_max_dispatch_tokens_per_rank,
+            num_experts,
+            use_logfmt,
+            zero_copy,
+            async_finish,
+            return_recv_hook,
+            out,
+        )
+        tensors_to_record = (
+            x,
+            topk_idx,
+            topk_weights,
+            src_info,
+            layout_range,
+            combined_x,
+        )
+        return (
+            combined_x,
+            EventOverlap(event, tensors_to_record if async_finish else None),
+            hook,
+        )
 
     def update_mask_buffer(self, rank_to_mask: int, mask: bool = False):
         """
@@ -321,7 +416,9 @@ class Buffer:
         """
         self.runtime.clean_mask_buffer()
 
-    def get_next_combine_buffer(self, handle: Tuple[torch.Tensor, torch.Tensor, int, int, int]):
+    def get_next_combine_buffer(
+        self, handle: Tuple[torch.Tensor, torch.Tensor, int, int, int]
+    ):
         """
         Get the raw registered RDMA buffer tensor for next combine, so that the next combine kernel can skip the copying.
 
@@ -333,10 +430,20 @@ class Buffer:
                 `[num_local_experts, num_ranks * num_max_dispatch_tokens_per_rank, hidden]`, you should fill this buffer
                 by yourself.
         """
-        src_info, layout_range, num_max_dispatch_tokens_per_rank, hidden, num_experts = handle
-        return self.runtime.get_next_combine_buffer(num_max_dispatch_tokens_per_rank, hidden, num_experts)
+        (
+            src_info,
+            layout_range,
+            num_max_dispatch_tokens_per_rank,
+            hidden,
+            num_experts,
+        ) = handle
+        return self.runtime.get_next_combine_buffer(
+            num_max_dispatch_tokens_per_rank, hidden, num_experts
+        )
 
-    def update_memory_buffers(self, num_ranks: int, num_experts_per_rank: int, num_rdma_bytes: int):
+    def update_memory_buffers(
+        self, num_ranks: int, num_experts_per_rank: int, num_rdma_bytes: int
+    ):
         """
         Allocate remote memory for the communication buffer.
 
@@ -347,7 +454,7 @@ class Buffer:
         """
         self.group_size = num_ranks
         self.num_rdma_bytes = num_rdma_bytes
-        os.environ['NIXL_EP_NUM_CHANNELS'] = str(num_experts_per_rank)
+        os.environ["NIXL_EP_NUM_CHANNELS"] = str(num_experts_per_rank)
         self.runtime.update_memory_buffers(num_ranks, num_rdma_bytes)
 
     def connect_ranks(self, remote_ranks: List[int]) -> None:

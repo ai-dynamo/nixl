@@ -39,7 +39,9 @@ class Plan:
         """Get ranks to connect to at current phase (only the new ones)."""
         if self.current_phase == self.starting_phase:
             # First phase for this rank: connect to all other ranks in the phase (only positive)
-            return [r for r in self.phases[self.current_phase] if r >= 0 and r != self.rank]
+            return [
+                r for r in self.phases[self.current_phase] if r >= 0 and r != self.rank
+            ]
         else:
             # Later phases: only connect to newly added ranks
             prev_ranks = set(self.phases[self.current_phase - 1])
@@ -58,12 +60,18 @@ class Plan:
         curr_ranks_abs = set(abs(r) for r in self.phases[self.current_phase])
 
         # Find negative ranks in current and previous phase
-        curr_negative_abs = set(abs(r) for r in self.phases[self.current_phase] if r < 0)
-        prev_negative_abs = set(abs(r) for r in self.phases[self.current_phase - 1] if r < 0)
+        curr_negative_abs = set(
+            abs(r) for r in self.phases[self.current_phase] if r < 0
+        )
+        prev_negative_abs = set(
+            abs(r) for r in self.phases[self.current_phase - 1] if r < 0
+        )
 
         # Ranks cleanly removed: in prev (absolute) but not in curr (absolute),
         # excluding those being killed now and those that were killed before
-        cleanly_removed = list(prev_ranks_abs - curr_ranks_abs - curr_negative_abs - prev_negative_abs)
+        cleanly_removed = list(
+            prev_ranks_abs - curr_ranks_abs - curr_negative_abs - prev_negative_abs
+        )
 
         return cleanly_removed
 
