@@ -59,15 +59,22 @@ sleep 5
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
 
+DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 --check_consistency"
+
 run_nixlbench() {
     args="$@"
-    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} --filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
+    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS $args
+}
+
+run_nixlbench_noetcd() {
+    args="$@"
+    ./bin/nixlbench $DEFAULT_NB_PARAMS $args
 }
 
 run_nixlbench_one_worker() {
     benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
     args="$@"
-    run_nixlbench --benchmark_group $benchmark_group $args
+    run_nixlbench_noetcd $args
 }
 
 run_nixlbench_two_workers() {
@@ -96,9 +103,7 @@ for op_type in READ WRITE; do
 done
 
 for op_type in READ WRITE; do
-    for target in $seg_types; do
-        run_nixlbench_one_worker --backend POSIX --op_type $op_type --target_seg_type $target
-    done
+    run_nixlbench_one_worker --backend POSIX --op_type $op_type
 done
 
 if $HAS_GPU ; then
