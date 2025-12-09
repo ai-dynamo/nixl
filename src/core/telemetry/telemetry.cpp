@@ -34,7 +34,7 @@ namespace fs = std::filesystem;
 
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
-constexpr std::string_view defaultTelemetryPlugin = "BUFFER";
+constexpr const char *defaultTelemetryPlugin = "BUFFER";
 
 nixlTelemetry::nixlTelemetry(const std::string &agent_name, backend_map_t &backend_map)
     : pool_(1),
@@ -75,21 +75,20 @@ nixlTelemetry::initializeTelemetry() {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
     }
 
-    auto exporter_name =
-        std::getenv(telemetryExporterVar) ? std::string(std::getenv(telemetryExporterVar)) : "";
+    const char *exporter_name = std::getenv(telemetryExporterVar);
 
+    if (!exporter_name) {
+        NIXL_INFO << "No telemetry exporter was specified, using default: "
+                  << defaultTelemetryPlugin;
+        exporter_name = defaultTelemetryPlugin;
+    }
     auto &plugin_manager = nixlPluginManager::getInstance();
     std::shared_ptr<const nixlTelemetryPluginHandle> plugin_handle =
-        plugin_manager.loadTelemetryPlugin(exporter_name.data());
+        plugin_manager.loadTelemetryPlugin(exporter_name);
 
     if (plugin_handle == nullptr) {
-        NIXL_WARN << "Failed to load telemetry plugin: " << exporter_name
-                  << ", using default plugin: " << defaultTelemetryPlugin;
-        exporter_name = defaultTelemetryPlugin.data();
-        plugin_handle = plugin_manager.loadTelemetryPlugin(exporter_name.data());
-        if (plugin_handle == nullptr) {
-            throw std::runtime_error("Failed to load default telemetry plugin");
-        }
+        NIXL_ERROR << "Failed to load telemetry plugin: " << exporter_name;
+        throw std::runtime_error("Failed to load telemetry plugin: " + std::string(exporter_name));
     }
 
     const nixlTelemetryExporterInitParams init_params{agentName_, buffer_size};
