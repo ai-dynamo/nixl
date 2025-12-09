@@ -18,8 +18,11 @@
 #define __TRANSFER_REQUEST_H_
 
 #include <string>
-#include <unordered_map>
+#include <vector>
+#include <utility>
 #include <memory>
+#include <algorithm>
+#include <stdexcept>
 
 #include "nixl_types.h"
 #include "backend_engine.h"
@@ -67,10 +70,23 @@ public:
 
 class nixlDlistH {
 private:
-    std::unordered_map<nixlBackendEngine *, std::shared_ptr<nixl_meta_dlist_t>> descs;
+    std::vector<std::pair<nixlBackendEngine *, std::shared_ptr<nixl_meta_dlist_t>>> descs;
 
     std::string remoteAgent;
     bool isLocal;
+
+    // Helper method to find an entry by backend
+    inline auto
+    find(nixlBackendEngine *backend) {
+        return std::find_if(
+            descs.begin(), descs.end(), [backend](const auto &p) { return p.first == backend; });
+    }
+
+    inline auto
+    find(nixlBackendEngine *backend) const {
+        return std::find_if(
+            descs.begin(), descs.end(), [backend](const auto &p) { return p.first == backend; });
+    }
 
 public:
     inline nixlDlistH() {}
@@ -82,27 +98,35 @@ public:
     // Accessor methods to encapsulate internal data structure
     inline size_t
     count(nixlBackendEngine *backend) const {
-        return descs.count(backend);
+        return find(backend) != descs.end() ? 1 : 0;
     }
 
     inline std::shared_ptr<nixl_meta_dlist_t>
     at(nixlBackendEngine *backend) {
-        return descs.at(backend);
+        auto it = find(backend);
+        if (it == descs.end()) throw std::out_of_range("Backend not found in descs");
+        return it->second;
     }
 
     inline std::shared_ptr<nixl_meta_dlist_t>
     at(nixlBackendEngine *backend) const {
-        return descs.at(backend);
+        auto it = find(backend);
+        if (it == descs.end()) throw std::out_of_range("Backend not found in descs");
+        return it->second;
     }
 
-    inline std::shared_ptr<nixl_meta_dlist_t> &
+    inline std::shared_ptr<nixl_meta_dlist_t>
     operator[](nixlBackendEngine *backend) {
-        return descs[backend];
+        auto it = find(backend);
+        if (it != descs.end()) return it->second;
+        descs.emplace_back(backend, nullptr);
+        return descs.back().second;
     }
 
     inline void
     erase(nixlBackendEngine *backend) {
-        descs.erase(backend);
+        auto it = find(backend);
+        if (it != descs.end()) descs.erase(it);
     }
 
     // Iterators for range-based for loops
