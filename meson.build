@@ -21,6 +21,56 @@ project('nixl', 'CPP', version: '0.8.0',
     meson_version: '>= 0.64.0'
 )
 
+enable_plugins_opt = get_option('enable_plugins')
+disable_plugins_opt = get_option('disable_plugins')
+is_explicit_enable = enable_plugins_opt != ''
+
+if enable_plugins_opt != '' and disable_plugins_opt != ''
+    error('Cannot specify both enable_plugins and disable_plugins options')
+endif
+
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL']
+
+enabled_plugins = {}
+
+if enable_plugins_opt != ''
+    enabled_plugins_list = []
+    foreach p : enable_plugins_opt.split(',')
+        p_stripped = p.strip()
+        if p_stripped not in all_plugins
+            error('Requested plugin "' + p_stripped + '" is not available. Available plugins are: ' + ', '.join(all_plugins))
+        endif
+        enabled_plugins_list += [p_stripped]
+    endforeach
+
+    foreach plugin : all_plugins
+        enabled_plugins += {plugin: plugin in enabled_plugins_list}
+    endforeach
+
+    message('Building only selected plugins: ' + enable_plugins_opt)
+elif disable_plugins_opt != ''
+    disabled_plugins_list = []
+    foreach p : disable_plugins_opt.split(',')
+        p_stripped = p.strip()
+        if p_stripped not in all_plugins
+            error('Cannot exclude unknown plugin "' + p_stripped + '". Available plugins are: ' + ', '.join(all_plugins))
+        endif
+        disabled_plugins_list += [p_stripped]
+    endforeach
+
+    foreach plugin : all_plugins
+        enabled_plugins += {plugin: plugin not in disabled_plugins_list}
+    endforeach
+
+    message('Building all plugins except: ' + disable_plugins_opt)
+else
+    foreach plugin : all_plugins
+        enabled_plugins += {plugin: true}
+    endforeach
+
+    message('Building all available plugins')
+endif
+
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
 fs = import('fs')
