@@ -31,12 +31,11 @@ matrix:
   axes:
     image:
       - nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04
-      # - nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
     arch:
       - x86_64
     ucx_version:
       - master
-      # - v1.20.x
+      - v1.20.x
 
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
