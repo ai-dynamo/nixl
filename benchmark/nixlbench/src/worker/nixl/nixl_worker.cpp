@@ -1151,13 +1151,43 @@ execTransferIterations(nixlAgent *agent,
     nixlXferReqH *req = nullptr;
     nixlTime::us_t total_prepare_duration = 0;
 
+    // Prepare descriptor lists once outside the loop
+    nixlDlistH *local_dlist_hndl = nullptr;
+    nixlDlistH *remote_dlist_hndl = nullptr;
+
+    nixl_status_t prep_rc =
+        agent->prepXferDlist(NIXL_INIT_AGENT, local_desc, local_dlist_hndl, &params);
+    if (NIXL_SUCCESS != prep_rc) {
+        std::cerr << "prepXferDlist (local) failed: " << nixlEnumStrings::statusStr(prep_rc)
+                  << std::endl;
+        return -1;
+    }
+
+    prep_rc = agent->prepXferDlist(target, remote_desc, remote_dlist_hndl, &params);
+    if (NIXL_SUCCESS != prep_rc) {
+        std::cerr << "prepXferDlist (remote) failed: " << nixlEnumStrings::statusStr(prep_rc)
+                  << std::endl;
+        agent->releasedDlistH(local_dlist_hndl);
+        return -1;
+    }
+
+    // Create indices for all descriptors
+    std::vector<int> local_indices, remote_indices;
+    for (int i = 0; i < local_desc.descCount(); ++i) {
+        local_indices.push_back(i);
+    }
+    for (int i = 0; i < remote_desc.descCount(); ++i) {
+        remote_indices.push_back(i);
+    }
+
     // Create/execute/release per iteration
     for (int i = 0; i < num_iter; ++i) {
-        nixl_status_t create_rc =
-            agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
-        if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
-            std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc)
-                      << std::endl;
+        nixl_status_t make_rc = agent->makeXferReq(
+            op, local_dlist_hndl, local_indices, remote_dlist_hndl, remote_indices, req, &params);
+        if (__builtin_expect(make_rc != NIXL_SUCCESS, 0)) {
+            std::cerr << "makeXferReq failed: " << nixlEnumStrings::statusStr(make_rc) << std::endl;
+            agent->releasedDlistH(local_dlist_hndl);
+            agent->releasedDlistH(remote_dlist_hndl);
             return -1;
         }
         total_prepare_duration += timer.lap();
@@ -1168,15 +1198,24 @@ execTransferIterations(nixlAgent *agent,
             std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
                       << std::endl;
             agent->releaseXferReq(req);
+            agent->releasedDlistH(local_dlist_hndl);
+            agent->releasedDlistH(remote_dlist_hndl);
             return -1;
         }
         thread_stats.transfer_duration.add(timer.lap());
 
         if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) {
             std::cout << "NIXL releaseXferReq failed" << std::endl;
+            agent->releasedDlistH(local_dlist_hndl);
+            agent->releasedDlistH(remote_dlist_hndl);
             return -1;
         }
     }
+
+    // Release descriptor list handles
+    agent->releasedDlistH(local_dlist_hndl);
+    agent->releasedDlistH(remote_dlist_hndl);
+
     // Average prepare duration across iterations
     thread_stats.prepare_duration.add(total_prepare_duration / num_iter);
 
