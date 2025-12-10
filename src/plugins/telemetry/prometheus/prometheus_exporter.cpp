@@ -71,7 +71,7 @@ std::string
 getHostname() {
     char hostname[HOST_NAME_MAX + 1];
     if (gethostname(hostname, sizeof(hostname)) == 0) {
-        hostname[HOST_NAME_MAX] = '\0';  // Ensure null-termination
+        hostname[HOST_NAME_MAX] = '\0'; // Ensure null-termination
         return std::string(hostname);
     }
     return "unknown";
@@ -131,7 +131,8 @@ nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
                                                  const std::string &help,
                                                  const std::string &category) {
     auto &counter = prometheus::BuildCounter().Name(name).Help(help).Register(*registry_);
-    counters_[name] = &counter.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
+    counters_[name] = &counter.Add(
+        {{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
 }
 
 void
@@ -139,7 +140,8 @@ nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
                                                const std::string &help,
                                                const std::string &category) {
     auto &gauge = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
-    gauges_[name] = &gauge.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
+    gauges_[name] =
+        &gauge.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
 }
 
 void
