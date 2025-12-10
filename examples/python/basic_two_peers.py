@@ -2,18 +2,6 @@
 
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 import argparse
 
@@ -56,39 +44,48 @@ if __name__ == "__main__":
 
     # Allocate memory and register with NIXL
     agent = nixl_agent(args.mode, config)
+
+    # Use a single 2D tensor with 10 tensors of size 16
     if args.mode == "target":
-        tensors = [torch.ones(10, dtype=torch.float32) for _ in range(2)]
+        tensor = torch.ones((10, 16), dtype=torch.float32)
     else:
-        tensors = [torch.zeros(10, dtype=torch.float32) for _ in range(2)]
+        tensor = torch.zeros((10, 16), dtype=torch.float32)
 
-    logger.info("Running test with %s tensors in mode %s", tensors, args.mode)
+    logger.info(
+        "Running test with tensor shape %s in mode %s", tuple(tensor.shape), args.mode
+    )
 
-    reg_descs = agent.register_memory(tensors)
-    if not reg_descs:  # Same as reg_descs if successful
+    # Register the single 2D tensor
+    reg_descs = agent.register_memory(tensor)
+    if not reg_descs:
         logger.error("Memory registration failed.")
-        exit()
+        exit(1)
 
     # Target code
     if args.mode == "target":
         ready = False
 
-        target_descs = reg_descs.trim()
+        # Build transfer descriptors by unraveling first dim into list of row tensors
+        target_rows = [tensor[i, :] for i in range(tensor.shape[0])]
+        target_descs = agent.get_xfer_descs(target_rows)
+        if not target_descs:
+            logger.error("Failed to build target transfer descriptors.")
+            exit(1)
         target_desc_str = agent.get_serialized_descs(target_descs)
 
         # Send desc list to initiator when metadata is ready
         while not ready:
             ready = agent.check_remote_metadata("initiator")
-
         agent.send_notif("initiator", target_desc_str)
 
         logger.info("Waiting for transfer")
 
         # Waiting for transfer
-        # For now the notification is just UUID, could be any python bytes.
-        # Also can have more than UUID, and check_remote_xfer_done returns
-        # the full python bytes, here it would be just UUID.
-        while not agent.check_remote_xfer_done("initiator", b"UUID"):
-            continue
+        while True:
+            notifs = agent.get_new_notifs()
+            if "initiator" in notifs and b"Done_reading" in notifs["initiator"]:
+                break
+
     # Initiator code
     else:
         logger.info("Initiator sending to %s", args.ip)
@@ -96,12 +93,16 @@ if __name__ == "__main__":
         agent.send_local_metadata(args.ip, args.port)
 
         notifs = agent.get_new_notifs()
-
         while len(notifs) == 0:
             notifs = agent.get_new_notifs()
-
         target_descs = agent.deserialize_descs(notifs["target"][0])
-        initiator_descs = reg_descs.trim()
+
+        # Build local transfer descriptors by unraveling first dim into list of row tensors
+        initiator_rows = [tensor[i, :] for i in range(tensor.shape[0])]
+        initiator_descs = agent.get_xfer_descs(initiator_rows)
+        if not initiator_descs:
+            logger.error("Initiator's local descriptors creation failed.")
+            exit(1)
 
         # Ensure remote metadata has arrived from fetch
         ready = False
@@ -111,32 +112,29 @@ if __name__ == "__main__":
         logger.info("Ready for transfer")
 
         xfer_handle = agent.initialize_xfer(
-            "READ", initiator_descs, target_descs, "target", "UUID"
+            "READ", initiator_descs, target_descs, "target", "Done_reading"
         )
-
-        if not xfer_handle:
-            logger.error("Creating transfer failed.")
-            exit()
 
         state = agent.transfer(xfer_handle)
         if state == "ERR":
             logger.error("Posting transfer failed.")
-            exit()
+            exit(1)
+
         while True:
             state = agent.check_xfer_state(xfer_handle)
             if state == "ERR":
                 logger.error("Transfer got to Error state.")
-                exit()
+                exit(1)
             elif state == "DONE":
                 break
 
         # Verify data after read
-        for i, tensor in enumerate(tensors):
-            if not torch.allclose(tensor, torch.ones(10)):
-                logger.error("Data verification failed for tensor %d.", i)
-                exit()
+        if not torch.allclose(tensor, torch.ones((10, 16))):
+            logger.error("Data verification failed.")
+            exit()
         logger.info("%s Data verification passed", args.mode)
 
+    # Tear down
     if args.mode != "target":
         agent.remove_remote_agent("target")
         agent.release_xfer_handle(xfer_handle)
