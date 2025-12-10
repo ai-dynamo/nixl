@@ -17,13 +17,14 @@ limitations under the License.
 
 # NIXL Prometheus Telemetry exporter plug-in
 
-This telemetry exporter plug-in exports NIXL telemetry events in Prometheus format, by_exposing an HTTP endpoint that can be scraped by Prometheus servers.
+This telemetry exporter plug-in exports NIXL telemetry events in Prometheus format, by exposing an HTTP endpoint that can be scraped by Prometheus servers.
+More detailed information on NIXL telemetry [docs/telemetry.md](../../../../docs/telemetry.md).
 
 ## Dependencies
 
-The Prometheus exporter requires the prometheus-cpp library, which is included as a subproject:
+The Prometheus exporter requires the prometheus-cpp library, which is included as a subproject.
 
-libcurl is not handled by prometheus-cpp libaray. need to install the libcurl package:
+libcurl is not downloaded automatically. To build, you need to install the libcurl package:
 
 ```bash
 # Ubuntu/Debian
@@ -39,7 +40,6 @@ To enable the Prometheus plug-in, set the following environment variables:
 ```bash
 export NIXL_TELEMETRY_ENABLE="y" # Enable NIXL telemetry
 export NIXL_TELEMETRY_EXPORTER="prometheus" # Sets which plug-in to select in format libtelemetry_exporter_${NIXL_TELEMETRY_EXPORTER}.so
-export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files" # Sets where to find plug-in libs (NOTE: the same var is used for backend plug-ins search)
 ```
 
 ### Optional Configuration
@@ -51,27 +51,43 @@ You can configure the exposed prometheus port:
 export NIXL_TELEMETRY_PROMETHEUS_PORT="<port_num>"
 ```
 
-Default addres is public, but you configure to expose prometheus endpoint only locally:
+Default addres is public, but you configure to expose prometheus endpoint only on localhost:
 
 ```bash
 export NIXL_TELEMETRY_PROMETHEUS_LOCAL="y"
 # May also use "yes" or "1"
 ```
 
-### Transfer Metrics (Counters)
-- `agent_tx_bytes` - Total bytes transmitted
-- `agent_rx_bytes` - Total bytes received
-- `agent_tx_requests_num` - Number of transmit requests
-- `agent_rx_requests_num` - Number of receive requests
+You can alter where to look for plug-in .so files
+NOTE: the same var is used for backend plug-ins search
 
-### Performance Metrics (Gauges)
-- `agent_xfer_time` - Transfer time in microseconds
-- `agent_xfer_post_time` - Post time in microseconds
+```bash
+export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
+```
 
-### Memory Metrics (Gauges)
-- `agent_memory_registered` - Amount of memory registered
-- `agent_memory_deregistered` - Amount of memory deregistered
+### Metrics & Events
 
-### Backend Metrics (Dynamic Counters)
-- Backend-specific events are dynamically created as counters with category label
+| Event Name | Category | Counter | Gauge | Histogram |
+|------------|----------|---------|-------|-----------|
+| `agent_memory_registered` | `NIXL_TELEMETRY_MEMORY` | Next version | Yes | No |
+| `agent_memory_deregistered` | `NIXL_TELEMETRY_MEMORY` | Next version | Yes | No |
+| `agent_tx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | Next version | No |
+| `agent_rx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | Next version | No |
+| `agent_tx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | Next version | No |
+| `agent_rx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | Next version | No |
+| `agent_xfer_time` | `NIXL_TELEMETRY_PERFORMANCE` | Yes | No | Next Version |
+| `agent_xfer_post_time` | `NIXL_TELEMETRY_PERFORMANCE` | Yes | No | Next Version |
+| Backend-specific events | `NIXL_TELEMETRY_BACKEND` | - | Yes | Next version | No |
+| Error status strings | `NIXL_TELEMETRY_ERROR` | No | No | No |
 
+**Counter, Gauge, Histogram** - as implemented by the Prometheus exporter
+- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values.
+- **Gauge**: Shows the value per the last event (transaction). E.g agent_memory_registered represents the memory amount registered by the last operation (and not the total memory registered during instance lifetime). The value is updated per each event (request) and can grow or decrease.
+- **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
+
+### Metric labels
+
+Each telemetry metrics is provided with the following labels:
+- Telemetry Category
+- Hostname where the agent runs
+- Agent name (as custom provided during initialization, can be deprecated in the next versions)

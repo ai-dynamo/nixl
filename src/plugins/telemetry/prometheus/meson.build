@@ -49,7 +49,7 @@ if prometheus_found
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         dependencies: [nixl_infra, absl_log_dep, prometheus_core_dep, prometheus_pull_dep],
         install: true,
-        install_dir: get_option('libdir') / 'nixl' / 'telemetry_exporters',
+        install_dir: plugin_install_dir,
         name_prefix: '',
     )
     message('Building Prometheus telemetry exporter plugin')

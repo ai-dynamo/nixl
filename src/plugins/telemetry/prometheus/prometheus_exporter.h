@@ -54,6 +54,8 @@ private:
     // Prometheus components
     const bool local_ = false;
     const uint16_t port_;
+    const std::string agent_name_;
+    const std::string hostname_;
     std::shared_ptr<prometheus::Registry> registry_;
     std::unique_ptr<prometheus::Exposer> exposer_;
     std::string bind_address_;

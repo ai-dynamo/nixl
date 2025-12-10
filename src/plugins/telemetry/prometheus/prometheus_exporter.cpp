@@ -37,7 +37,7 @@ const std::string prometheusExporterBackendCategory = "NIXL_TELEMETRY_BACKEND";
 const std::string prometheusExporterLocalAddress = "127.0.0.1";
 const std::string prometheusExporterPublicAddress = "0.0.0.0";
 
-static uint16_t
+uint16_t
 getPort() {
     auto port_str = std::getenv(prometheusPortVar);
     if (!port_str) {
@@ -47,33 +47,35 @@ getPort() {
     try {
         int port = std::stoi(port_str);
         if (port < 1 || port > 65535) {
-            NIXL_WARN << "Invalid port number " << port
-                      << ", must be between 1-65535. Using default: "
-                      << prometheusExporterDefaultPort;
-            port = prometheusExporterDefaultPort;
+            throw std::out_of_range("Port must be between 1-65535");
         }
         return port;
     }
     catch (const std::exception &e) {
-        NIXL_WARN << "Invalid port " << port_str
-                  << "', expected numeric port. Using default: " << prometheusExporterDefaultPort;
+        NIXL_WARN << "Invalid port '" << port_str
+                  << "', expected numeric port between 1-65535. Using default: "
+                  << prometheusExporterDefaultPort;
         return prometheusExporterDefaultPort;
     }
 }
 
-static bool
+bool
 getLocal() {
     auto local_str = std::getenv(prometheusLocalVar);
-    if (local_str &&
+    return local_str &&
         (!strcasecmp(local_str, "y") || !strcasecmp(local_str, "1") ||
-         !strcasecmp(local_str, "yes"))) {
-        return true;
-    }
-    return false;
+         !strcasecmp(local_str, "yes"));
 }
 
-// static std::string
-
+std::string
+getHostname() {
+    char hostname[HOST_NAME_MAX + 1];
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        hostname[HOST_NAME_MAX] = '\0';  // Ensure null-termination
+        return std::string(hostname);
+    }
+    return "unknown";
+}
 } // namespace
 
 nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
@@ -81,23 +83,20 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     : nixlTelemetryExporter(init_params),
       local_(getLocal()),
       port_(getPort()),
+      agent_name_(init_params.agentName),
+      hostname_(getHostname()),
       registry_(std::make_shared<prometheus::Registry>()) {
-    try {
-        if (local_) {
-            bind_address_ = prometheusExporterLocalAddress + ":" + std::to_string(port_);
-        } else {
-            bind_address_ = prometheusExporterPublicAddress + ":" + std::to_string(port_);
-        }
-
-        exposer_ = std::make_unique<prometheus::Exposer>(bind_address_);
-        exposer_->RegisterCollectable(registry_);
-
-        initializeMetrics();
-        NIXL_INFO << "Prometheus exporter initialized on " << bind_address_;
+    if (local_) {
+        bind_address_ = prometheusExporterLocalAddress + ":" + std::to_string(port_);
+    } else {
+        bind_address_ = prometheusExporterPublicAddress + ":" + std::to_string(port_);
     }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to initialize Prometheus exporter: " << e.what();
-    }
+
+    exposer_ = std::make_unique<prometheus::Exposer>(bind_address_);
+    exposer_->RegisterCollectable(registry_);
+
+    initializeMetrics();
+    NIXL_INFO << "Prometheus exporter initialized on " << bind_address_;
 }
 
 // To make access cheaper we are creating static metrics with the labels already set
@@ -132,7 +131,7 @@ nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
                                                  const std::string &help,
                                                  const std::string &category) {
     auto &counter = prometheus::BuildCounter().Name(name).Help(help).Register(*registry_);
-    counters_[name] = &counter.Add({{"category", category}});
+    counters_[name] = &counter.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
 }
 
 void
@@ -140,7 +139,7 @@ nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
                                                const std::string &help,
                                                const std::string &category) {
     auto &gauge = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
-    gauges_[name] = &gauge.Add({{"category", category}});
+    gauges_[name] = &gauge.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
 }
 
 void
