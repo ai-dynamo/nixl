@@ -52,11 +52,12 @@ public:
 
 private:
     // Prometheus components
+    const bool local_ = false;
+    const uint16_t port_;
     std::shared_ptr<prometheus::Registry> registry_;
     std::unique_ptr<prometheus::Exposer> exposer_;
     std::string bind_address_;
-    uint16_t port_;
-    bool local_;
+
 
     // Maps to track created metrics by event name
     std::unordered_map<std::string, prometheus::Counter *> counters_;
@@ -70,19 +71,17 @@ private:
 
     template<typename Family>
     void
-    registerCounter(const std::string &name,
-                    Family &family,
-                    const std::map<std::string, std::string> &labels = {}) {
-        counters_[name] = &family.Add(labels);
-    }
-
-    template<typename Family>
-    void
     registerGauge(const std::string &name,
                   Family &family,
                   const std::map<std::string, std::string> &labels = {}) {
         gauges_[name] = &family.Add(labels);
     }
+
+    void
+    registerCounter(const std::string &name, const std::string &help, const std::string &category);
+
+    void
+    registerGauge(const std::string &name, const std::string &help, const std::string &category);
 };
 
 #endif // _TELEMETRY_PROMETHEUS_EXPORTER_H

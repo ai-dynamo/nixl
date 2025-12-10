@@ -24,51 +24,65 @@
 #include <thread>
 #include <chrono>
 
-inline const uint16_t prometheusExporterDefaultPort = 9090;
-inline const std::string prometheusExporterTransferCategory = "NIXL_TELEMETRY_TRANSFER";
-inline const std::string prometheusExporterPerformanceCategory = "NIXL_TELEMETRY_PERFORMANCE";
-inline const std::string prometheusExporterMemoryCategory = "NIXL_TELEMETRY_MEMORY";
-inline const std::string prometheusExporterBackendCategory = "NIXL_TELEMETRY_BACKEND";
-inline const std::string prometheusExporterLocalAddress = "127.0.0.1";
-inline const std::string prometheusExporterPublicAddress = "0.0.0.0";
+namespace {
+const uint16_t prometheusExporterDefaultPort = 9090;
 
-inline constexpr char prometheusPortVar[] = "NIXL_TELEMETRY_PROMETHEUS_PORT";
-inline constexpr char prometheusLocalVar[] = "NIXL_TELEMETRY_PROMETHEUS_LOCAL";
+const char prometheusPortVar[] = "NIXL_TELEMETRY_PROMETHEUS_PORT";
+const char prometheusLocalVar[] = "NIXL_TELEMETRY_PROMETHEUS_LOCAL";
 
-nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
-    const nixlTelemetryExporterInitParams &init_params)
-    : nixlTelemetryExporter(init_params),
-      registry_(std::make_shared<prometheus::Registry>()) {
+const std::string prometheusExporterTransferCategory = "NIXL_TELEMETRY_TRANSFER";
+const std::string prometheusExporterPerformanceCategory = "NIXL_TELEMETRY_PERFORMANCE";
+const std::string prometheusExporterMemoryCategory = "NIXL_TELEMETRY_MEMORY";
+const std::string prometheusExporterBackendCategory = "NIXL_TELEMETRY_BACKEND";
+const std::string prometheusExporterLocalAddress = "127.0.0.1";
+const std::string prometheusExporterPublicAddress = "0.0.0.0";
+
+static uint16_t
+getPort() {
     auto port_str = std::getenv(prometheusPortVar);
     if (!port_str) {
-        port_ = prometheusExporterDefaultPort;
-    } else {
-        try {
-            const int port = std::stoi(port_str);
-            if (port < 1 || port > 65535) {
-                NIXL_WARN << "Invalid port number " << port
-                          << ", must be between 1-65535. Using default: "
-                          << prometheusExporterDefaultPort;
-            } else {
-                port_ = port;
-            }
-        }
-        catch (const std::exception &e) {
-            NIXL_WARN << "Invalid port " << port_str << "', expected numeric port. Using default: "
-                      << prometheusExporterDefaultPort;
-            port_ = prometheusExporterDefaultPort;
-        }
+        return prometheusExporterDefaultPort;
     }
 
+    try {
+        int port = std::stoi(port_str);
+        if (port < 1 || port > 65535) {
+            NIXL_WARN << "Invalid port number " << port
+                        << ", must be between 1-65535. Using default: "
+                        << prometheusExporterDefaultPort;
+            port = prometheusExporterDefaultPort;
+        }
+        return port;
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "Invalid port " << port_str << "', expected numeric port. Using default: "
+                    << prometheusExporterDefaultPort;
+        return prometheusExporterDefaultPort;
+    }
+}
+
+static bool
+getLocal() {
     auto local_str = std::getenv(prometheusLocalVar);
     if (local_str &&
         (!strcasecmp(local_str, "y") || !strcasecmp(local_str, "1") ||
          !strcasecmp(local_str, "yes"))) {
-        local_ = true;
-    } else {
-        local_ = false;
+        return true;
     }
+    return false;
+}
 
+// static std::string
+
+} // namespace
+
+
+nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
+    const nixlTelemetryExporterInitParams &init_params)
+    : nixlTelemetryExporter(init_params),
+      local_(getLocal()),
+      port_(getPort()),
+      registry_(std::make_shared<prometheus::Registry>()) {
     try {
         if (local_) {
             bind_address_ = prometheusExporterLocalAddress + ":" + std::to_string(port_);
@@ -91,68 +105,27 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
 // Events are defined in the telemetry.cpp file
 void
 nixlTelemetryPrometheusExporter::initializeMetrics() {
-    auto &tx_bytes_counter = prometheus::BuildCounter()
-                                 .Name("agent_tx_bytes")
-                                 .Help("Number of bytes sent by the agent")
-                                 .Register(*registry_);
+    registerCounter("agent_tx_bytes", "Number of bytes sent by the agent", prometheusExporterTransferCategory);
+    registerCounter("agent_rx_bytes", "Number of bytes received by the agent", prometheusExporterTransferCategory);
+    registerCounter("agent_tx_requests_num", "Number of requests sent by the agent", prometheusExporterTransferCategory);
+    registerCounter("agent_rx_requests_num", "Number of requests received by the agent", prometheusExporterTransferCategory);
 
-    auto &rx_bytes_counter = prometheus::BuildCounter()
-                                 .Name("agent_rx_bytes")
-                                 .Help("Number of bytes received by the agent")
-                                 .Register(*registry_);
+    registerGauge("agent_xfer_time", "Start to Complete (per request)", prometheusExporterPerformanceCategory);
+    registerGauge("agent_xfer_post_time", "Start to posting to Back-End (per request)", prometheusExporterPerformanceCategory);
+    registerGauge("agent_memory_registered", "Memory registered", prometheusExporterMemoryCategory);
+    registerGauge("agent_memory_deregistered", "Memory deregistered", prometheusExporterMemoryCategory);
+}
 
-    auto &tx_requests_counter = prometheus::BuildCounter()
-                                    .Name("agent_tx_requests_num")
-                                    .Help("Number of requests sent by the agent")
-                                    .Register(*registry_);
+void
+nixlTelemetryPrometheusExporter::registerCounter(const std::string &name, const std::string &help, const std::string &category) {
+    auto &counter = prometheus::BuildCounter().Name(name).Help(help).Register(*registry_);
+    counters_[name] = &counter.Add({{"category", category}});
+}
 
-    auto &rx_requests_counter = prometheus::BuildCounter()
-                                    .Name("agent_rx_requests_num")
-                                    .Help("Number of requests received by the agent")
-                                    .Register(*registry_);
-
-    registerCounter(
-        "agent_tx_bytes", tx_bytes_counter, {{"category", prometheusExporterTransferCategory}});
-    registerCounter(
-        "agent_rx_bytes", rx_bytes_counter, {{"category", prometheusExporterTransferCategory}});
-    registerCounter("agent_tx_requests_num",
-                    tx_requests_counter,
-                    {{"category", prometheusExporterTransferCategory}});
-    registerCounter("agent_rx_requests_num",
-                    rx_requests_counter,
-                    {{"category", prometheusExporterTransferCategory}});
-
-    auto &xfer_time_gauge = prometheus::BuildGauge()
-                                .Name("agent_xfer_time")
-                                .Help("Start to Complete (per request)")
-                                .Register(*registry_);
-
-    auto &xfer_post_time_gauge = prometheus::BuildGauge()
-                                     .Name("agent_xfer_post_time")
-                                     .Help("Start to posting to Back-End (per request)")
-                                     .Register(*registry_);
-
-    auto &memory_registered_gauge = prometheus::BuildGauge()
-                                        .Name("agent_memory_registered")
-                                        .Help("Memory registered")
-                                        .Register(*registry_);
-
-    auto &memory_deregistered_gauge = prometheus::BuildGauge()
-                                          .Name("agent_memory_deregistered")
-                                          .Help("Memory deregistered")
-                                          .Register(*registry_);
-
-    registerGauge(
-        "agent_xfer_time", xfer_time_gauge, {{"category", prometheusExporterPerformanceCategory}});
-    registerGauge("agent_xfer_post_time",
-                  xfer_post_time_gauge,
-                  {{"category", prometheusExporterPerformanceCategory}});
-    registerGauge("agent_memory_registered",
-                  memory_registered_gauge,
-                  {{"category", prometheusExporterMemoryCategory}});
-    registerGauge("agent_memory_deregistered",
-                  memory_deregistered_gauge,
-                  {{"category", prometheusExporterMemoryCategory}});
+void
+nixlTelemetryPrometheusExporter::registerGauge(const std::string &name, const std::string &help, const std::string &category) {
+    auto &gauge = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
+    gauges_[name] = &gauge.Add({{"category", category}});
 }
 
 void
@@ -164,9 +137,7 @@ nixlTelemetryPrometheusExporter::createOrUpdateBackendEvent(const std::string &e
         return;
     }
 
-    auto &backend_counter =
-        prometheus::BuildCounter().Name(event_name).Help("Backend event").Register(*registry_);
-    counters_[event_name] = &backend_counter.Add({{"category", prometheusExporterBackendCategory}});
+    registerCounter(event_name, "Backend event", prometheusExporterBackendCategory);
     counters_[event_name]->Increment(value);
 }
 
@@ -177,7 +148,7 @@ nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
 
         switch (event.category_) {
         case nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER: {
-            auto it = counters_.find(event_name);
+            const auto it = counters_.find(event_name);
             if (it != counters_.end()) {
                 it->second->Increment(event.value_);
             }
