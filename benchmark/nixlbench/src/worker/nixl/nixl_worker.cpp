@@ -116,6 +116,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL) ||
         xferBenchConfig::isStorageBackend()) {
         backend_name = xferBenchConfig::backend;
     } else {
@@ -258,6 +259,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             std::cout << "    Device " << dev.device_id << " [" << dev.device_type
                       << "]: " << dev.device_path << " (" << dev.security_flags << ")" << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
+        std::cout << "UCCL backend" << std::endl;
+        backend_params["in_python"] = "0";
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);

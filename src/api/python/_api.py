@@ -232,6 +232,8 @@ class nixl_agent:
                         init["num_threads"] = str(nixl_conf.num_threads)
                     elif bknd == "GDS_MT":
                         init["thread_count"] = str(nixl_conf.num_threads)
+                    elif bknd == "UCCL":
+                        init["num_cpus"] = str(nixl_conf.num_threads)
                 self.create_backend(bknd, init)
 
         self.nixl_mems = {
