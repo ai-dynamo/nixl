@@ -48,15 +48,15 @@ getPort() {
         int port = std::stoi(port_str);
         if (port < 1 || port > 65535) {
             NIXL_WARN << "Invalid port number " << port
-                        << ", must be between 1-65535. Using default: "
-                        << prometheusExporterDefaultPort;
+                      << ", must be between 1-65535. Using default: "
+                      << prometheusExporterDefaultPort;
             port = prometheusExporterDefaultPort;
         }
         return port;
     }
     catch (const std::exception &e) {
-        NIXL_WARN << "Invalid port " << port_str << "', expected numeric port. Using default: "
-                    << prometheusExporterDefaultPort;
+        NIXL_WARN << "Invalid port " << port_str
+                  << "', expected numeric port. Using default: " << prometheusExporterDefaultPort;
         return prometheusExporterDefaultPort;
     }
 }
@@ -75,7 +75,6 @@ getLocal() {
 // static std::string
 
 } // namespace
-
 
 nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     const nixlTelemetryExporterInitParams &init_params)
@@ -105,25 +104,41 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
 // Events are defined in the telemetry.cpp file
 void
 nixlTelemetryPrometheusExporter::initializeMetrics() {
-    registerCounter("agent_tx_bytes", "Number of bytes sent by the agent", prometheusExporterTransferCategory);
-    registerCounter("agent_rx_bytes", "Number of bytes received by the agent", prometheusExporterTransferCategory);
-    registerCounter("agent_tx_requests_num", "Number of requests sent by the agent", prometheusExporterTransferCategory);
-    registerCounter("agent_rx_requests_num", "Number of requests received by the agent", prometheusExporterTransferCategory);
+    registerCounter(
+        "agent_tx_bytes", "Number of bytes sent by the agent", prometheusExporterTransferCategory);
+    registerCounter("agent_rx_bytes",
+                    "Number of bytes received by the agent",
+                    prometheusExporterTransferCategory);
+    registerCounter("agent_tx_requests_num",
+                    "Number of requests sent by the agent",
+                    prometheusExporterTransferCategory);
+    registerCounter("agent_rx_requests_num",
+                    "Number of requests received by the agent",
+                    prometheusExporterTransferCategory);
 
-    registerGauge("agent_xfer_time", "Start to Complete (per request)", prometheusExporterPerformanceCategory);
-    registerGauge("agent_xfer_post_time", "Start to posting to Back-End (per request)", prometheusExporterPerformanceCategory);
+    registerGauge("agent_xfer_time",
+                  "Start to Complete (per request)",
+                  prometheusExporterPerformanceCategory);
+    registerGauge("agent_xfer_post_time",
+                  "Start to posting to Back-End (per request)",
+                  prometheusExporterPerformanceCategory);
     registerGauge("agent_memory_registered", "Memory registered", prometheusExporterMemoryCategory);
-    registerGauge("agent_memory_deregistered", "Memory deregistered", prometheusExporterMemoryCategory);
+    registerGauge(
+        "agent_memory_deregistered", "Memory deregistered", prometheusExporterMemoryCategory);
 }
 
 void
-nixlTelemetryPrometheusExporter::registerCounter(const std::string &name, const std::string &help, const std::string &category) {
+nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
+                                                 const std::string &help,
+                                                 const std::string &category) {
     auto &counter = prometheus::BuildCounter().Name(name).Help(help).Register(*registry_);
     counters_[name] = &counter.Add({{"category", category}});
 }
 
 void
-nixlTelemetryPrometheusExporter::registerGauge(const std::string &name, const std::string &help, const std::string &category) {
+nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
+                                               const std::string &help,
+                                               const std::string &category) {
     auto &gauge = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
     gauges_[name] = &gauge.Add({{"category", category}});
 }

@@ -39,7 +39,7 @@ To enable the Prometheus plug-in, set the following environment variables:
 ```bash
 export NIXL_TELEMETRY_ENABLE="y" # Enable NIXL telemetry
 export NIXL_TELEMETRY_EXPORTER="prometheus" # Sets which plug-in to select in format libtelemetry_exporter_${NIXL_TELEMETRY_EXPORTER}.so
-export NIXL_TELEMETRY_EXPORTER_PLUGIN_DIR="path/to/dir/with/.so/files" # Sets where to find plug-in libs
+export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files" # Sets where to find plug-in libs (NOTE: the same var is used for backend plug-ins search)
 ```
 
 ### Optional Configuration
