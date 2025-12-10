@@ -80,7 +80,7 @@ void InitializeNixlLogging()
 #ifdef NIXL_GIT_HASH
               << " (git: " << NIXL_GIT_HASH << ")"
 #endif
-              ;
+	;
 #endif
 
     if (invalid_env_var) {
