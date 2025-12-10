@@ -43,7 +43,7 @@ export NIXL_DEBUG_LOGGING=yes
 if [ -n "$VIRTUAL_ENV" ] && grep -q '^uv =' "$VIRTUAL_ENV/pyvenv.cfg" 2>/dev/null; then
     pip3="uv pip"
 else
-    pip3="python -m pip"
+    pip3="python3 -m pip"
 fi
 
 # Install build dependencies
