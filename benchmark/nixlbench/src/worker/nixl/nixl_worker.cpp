@@ -1137,8 +1137,7 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
     iovListToNixlXferDlist(remote_iov, remote_desc);
 }
 
-// Execute transfers with configurable request lifecycle behavior
-// recreate_per_iteration: true for GUSLI (bug workaround), false for standard backends
+// Execute transfers with per-iteration request lifecycle
 static int
 execTransferIterations(nixlAgent *agent,
                        const nixl_xfer_op_t op,
@@ -1148,74 +1147,38 @@ execTransferIterations(nixlAgent *agent,
                        nixl_opt_args_t &params,
                        const int num_iter,
                        xferBenchTimer &timer,
-                       xferBenchStats &thread_stats,
-                       const bool recreate_per_iteration) {
+                       xferBenchStats &thread_stats) {
     nixlXferReqH *req = nullptr;
     nixlTime::us_t total_prepare_duration = 0;
 
-    // Create request once if not recreating per iteration
-    if (!recreate_per_iteration) {
+    // Create/execute/release per iteration
+    for (int i = 0; i < num_iter; ++i) {
         nixl_status_t create_rc =
             agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
-        if (NIXL_SUCCESS != create_rc) {
+        if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
             std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc)
                       << std::endl;
             return -1;
         }
-        thread_stats.prepare_duration.add(timer.lap());
-    }
+        total_prepare_duration += timer.lap();
 
-    // Execute transfer iterations
-    // Branch prediction hint: most backends don't recreate per iteration
-    if (__builtin_expect(recreate_per_iteration, 0)) {
-        // GUSLI path: Create/execute/release per iteration
-        for (int i = 0; i < num_iter; ++i) {
-            nixl_status_t create_rc =
-                agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
-            if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
-                std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc)
-                          << std::endl;
-                return -1;
-            }
-            total_prepare_duration += timer.lap();
+        nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
 
-            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
-
-            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
-                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
-                          << std::endl;
-                agent->releaseXferReq(req);
-                return -1;
-            }
-            thread_stats.transfer_duration.add(timer.lap());
-
-            if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) {
-                std::cout << "NIXL releaseXferReq failed" << std::endl;
-                return -1;
-            }
+        if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+            std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
+                      << std::endl;
+            agent->releaseXferReq(req);
+            return -1;
         }
-        // Average prepare duration across iterations
-        thread_stats.prepare_duration.add(total_prepare_duration / num_iter);
-    } else {
-        // Standard path: Single request for all iterations
-        for (int i = 0; i < num_iter; ++i) {
-            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
+        thread_stats.transfer_duration.add(timer.lap());
 
-            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
-                std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
-                          << std::endl;
-                agent->releaseXferReq(req);
-                return -1;
-            }
-            thread_stats.transfer_duration.add(timer.lap());
-        }
-
-        // Release request once after all iterations
         if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) {
             std::cout << "NIXL releaseXferReq failed" << std::endl;
             return -1;
         }
     }
+    // Average prepare duration across iterations
+    thread_stats.prepare_duration.add(total_prepare_duration / num_iter);
 
     return 0;
 }
@@ -1255,18 +1218,8 @@ execTransfer(nixlAgent *agent,
         }
 
         // Execute transfers
-        // GUSLI requires per-iteration request creation due to library bug
-        const bool recreate_per_iteration = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
-        const int result = execTransferIterations(agent,
-                                                  op,
-                                                  local_desc,
-                                                  remote_desc,
-                                                  target,
-                                                  params,
-                                                  num_iter,
-                                                  timer,
-                                                  thread_stats,
-                                                  recreate_per_iteration);
+        const int result = execTransferIterations(
+            agent, op, local_desc, remote_desc, target, params, num_iter, timer, thread_stats);
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;
