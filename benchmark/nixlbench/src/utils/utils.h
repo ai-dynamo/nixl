@@ -28,6 +28,7 @@
 #include <optional>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
+#include "utils/external/cxxopts.hpp"
 
 #if HAVE_CUDA
 #include <cuda.h>
@@ -182,7 +183,7 @@ public:
     static std::string gusli_device_security;
 
     static int
-    loadFromFlags();
+    parseConfig(int argc, char *argv[]);
     static void
     printConfig();
     static void
@@ -193,6 +194,10 @@ public:
     parseDeviceList();
     static bool
     isStorageBackend();
+
+protected:
+    static int
+    loadParams(cxxopts::ParseResult &results);
 };
 
 // Shared GUSLI device config used by utils and nixl_worker
