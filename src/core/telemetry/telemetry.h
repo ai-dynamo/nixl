@@ -18,6 +18,7 @@
 #define _TELEMETRY_H
 
 #include "common/cyclic_buffer.h"
+#include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
 #include "mem_section.h"
 #include "nixl_types.h"
@@ -49,7 +50,7 @@ struct periodicTask {
 
 class nixlTelemetry {
 public:
-    nixlTelemetry(const std::string &file_path, backend_map_t &backend_map);
+    nixlTelemetry(const std::string &agent_name, backend_map_t &backend_map);
 
     ~nixlTelemetry();
 
@@ -81,12 +82,13 @@ private:
     updateData(const std::string &event_name, nixl_telemetry_category_t category, uint64_t value);
     bool
     writeEventHelper();
+    std::unique_ptr<nixlTelemetryExporter> exporter_;
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
     std::mutex mutex_;
     asio::thread_pool pool_;
     periodicTask writeTask_;
-    std::string file_;
+    std::string agentName_;
     backend_map_t &backendMap_;
 };
 
