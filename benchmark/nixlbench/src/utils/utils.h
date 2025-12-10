@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include <variant>
 #include <vector>
 #include <optional>
+#include <cxxopts.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
 
@@ -182,7 +183,7 @@ public:
     static std::string gusli_device_security;
 
     static int
-    loadFromFlags();
+    parseConfig(int argc, char *argv[]);
     static void
     printConfig();
     static void
@@ -193,6 +194,10 @@ public:
     parseDeviceList();
     static bool
     isStorageBackend();
+
+protected:
+    static int
+    loadParams(cxxopts::ParseResult &results);
 };
 
 // Shared GUSLI device config used by utils and nixl_worker
