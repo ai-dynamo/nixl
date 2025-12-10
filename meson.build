@@ -79,15 +79,25 @@ dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
-# Check for POSIX AIO support for the POSIX plugin and test (it is part of GLIBC)
-posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
-
 # Check for libaio (for LINUX AIO plugin and test)
-aio_dep = cpp.find_library('aio', required: false)
-linux_aio = false
-if aio_dep.found()
-    linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [aio_dep])
+has_linux_aio = false
+linux_aio_dep = cpp.find_library('aio', required: false)
+if linux_aio_dep.found()
+    has_linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [linux_aio_dep])
 endif
+
+# Check for liburing
+has_io_uring = false
+io_uring_dep = dependency('liburing', required: false)
+if io_uring_dep.found()
+    has_io_uring = cpp.has_function('io_uring_queue_init_params', prefix: '#include <liburing.h>',  dependencies: [io_uring_dep])
+endif
+
+# Check for POSIX aio
+has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', dependencies: [rt_dep])
+
+# Check whether the POSIX plugin is enabled
+has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
 # Forced to ignore this error due to:
 # https://github.com/abseil/abseil-cpp/issues/1779

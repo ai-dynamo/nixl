@@ -19,7 +19,10 @@
 #include "queue_factory_impl.h"
 #include "posix_queue.h"
 #include "posix_backend.h"
+
+#ifdef HAVE_LIBAIO
 #include "aio_queue.h"
+#endif
 
 #ifdef HAVE_LIBURING
 #include "uring_queue.h"
@@ -29,58 +32,30 @@
 #include "linux_aio_queue.h"
 #endif
 
-// Anonymous namespace for internal template implementations for functions that use the optional liburing
-namespace {
-    struct uringEnabled {};
-    struct uringDisabled {};
-
-#ifdef HAVE_LIBURING
-    using uringMode = uringEnabled;
-#else
-    using uringMode = uringDisabled;
-#endif
-
-    template <typename Mode, typename Enable = void>
-    struct funcImpl;
-
-    template <typename Mode>
-    struct funcImpl<Mode, std::enable_if_t<std::is_same<Mode, uringEnabled>::value>> {
-        static std::unique_ptr<nixlPosixQueue> createUringQueue(int num_entries, nixl_xfer_op_t operation) {
-            // Initialize io_uring parameters with basic configuration
-            // Start with basic parameters, no special flags
-            // We can add optimizations like SQPOLL later
-            struct io_uring_params params = {};
-            return std::make_unique<class UringQueue>(num_entries, params, operation);
-        }
-
-        static bool isUringAvailable() {
-            return true;
-        }
-    };
-
-    template <typename Mode>
-    struct funcImpl<Mode, std::enable_if_t<std::is_same<Mode, uringDisabled>::value>> {
-        static std::unique_ptr<nixlPosixQueue> createUringQueue(int num_entries, nixl_xfer_op_t operation) {
-            (void)num_entries;
-            (void)operation;
-            throw nixlPosixBackendReqH::exception("Attempting to create io_uring queue when support is not compiled in",
-                                                  NIXL_ERR_NOT_SUPPORTED);
-        }
-
-        static bool isUringAvailable() {
-            return false;
-        }
-    };
-}
-
 // Public functions implementation
 std::unique_ptr<nixlPosixQueue>
 QueueFactory::createPosixAioQueue(int num_entries, nixl_xfer_op_t operation) {
+#ifdef HAVE_LIBAIO
     return std::make_unique<aioQueue>(num_entries, operation);
+#else
+    throw nixlPosixBackendReqH::exception(
+        "Attempting to create POSIX AIO queue when support is not compiled in",
+        NIXL_ERR_NOT_SUPPORTED);
+#endif
 }
 
 std::unique_ptr<nixlPosixQueue> QueueFactory::createUringQueue(int num_entries, nixl_xfer_op_t operation) {
-    return funcImpl<uringMode>::createUringQueue(num_entries, operation);
+#ifdef HAVE_LIBURING
+    // Initialize io_uring parameters with basic configuration
+    // Start with basic parameters, no special flags
+    // We can add optimizations like SQPOLL later
+    struct io_uring_params params = {};
+    return std::make_unique<class UringQueue>(num_entries, params, operation);
+#else
+    throw nixlPosixBackendReqH::exception(
+        "Attempting to create io_uring queue when support is not compiled in",
+        NIXL_ERR_NOT_SUPPORTED);
+#endif
 }
 
 std::unique_ptr<nixlPosixQueue>
@@ -94,8 +69,21 @@ QueueFactory::createLinuxAioQueue(int num_entries, nixl_xfer_op_t operation) {
 #endif
 }
 
+bool
+QueueFactory::isPosixAioAvailable() {
+#ifdef HAVE_LIBAIO
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool QueueFactory::isUringAvailable() {
-    return funcImpl<uringMode>::isUringAvailable();
+#ifdef HAVE_LIBURING
+    return true;
+#else
+    return false;
+#endif
 }
 
 bool
