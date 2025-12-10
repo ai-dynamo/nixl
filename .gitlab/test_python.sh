@@ -46,8 +46,10 @@ else
     pip3="python3 -m pip"
 fi
 
-# Install build dependencies
-$pip3 install --break-system-packages --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
+# Install full build dependencies in venv
+if [ -n "$VIRTUAL_ENV" ] ; then
+    $pip3 install --break-system-packages meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
+fi
 # Set the correct wheel name based on the CUDA version
 cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
 case "$cuda_major" in
