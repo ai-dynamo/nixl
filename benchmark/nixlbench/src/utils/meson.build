@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+cxxopts_dep = dependency('cxxopts', required: true)
+
 utils_sources = [
   'utils.cpp',
   'utils.h',
@@ -21,8 +23,8 @@ utils_sources = [
 
 utils_deps = [
   cuda_dep,
-  gflags_dep,
-  openmp_dep
+  openmp_dep,
+  cxxopts_dep
 ]
 
 utils_lib = static_library('utils',

@@ -20,7 +20,6 @@ worker_sources = [
 
 worker_deps = [
   cuda_dep,
-  gflags_dep,
   openmp_dep,
   etcd_dep
 ]
