@@ -51,7 +51,7 @@
         @Library('blossom-github-lib@master')  // Use custom GitHub library
         import ipp.blossom.*
         // Authenticate with GitHub using stored credentials
-        withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
+        withCredentials([usernamePassword(credentialsId: 'svc-nixl-github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
           githubHelper = GithubHelper.getInstance("${{GIT_PASSWORD}}", VARIABLE_FROM_POST)
         }}
         // Update GitHub commit status
@@ -62,16 +62,28 @@
             // Trigger the actual build and test jobs in parallel
             parallel build: {{
                 def buildJob = 'nixl-ci-build'
-                build job: buildJob, parameters: [
+                def run = build job: buildJob, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ]
+                ], propagate: false
+                def jobUrl = "${{JENKINS_URL}}blue/organizations/jenkins/${{buildJob}}/detail/${{buildJob}}/${{run.number}}/pipeline"
+                if (run.resultIsBetterOrEqualTo('SUCCESS')) {{
+                    echo "${{buildJob}} SUCCESS: ${{jobUrl}}"
+                }} else {{
+                    error("${{buildJob}} FAILED: ${{jobUrl}}")
+                }}
             }}, test: {{
                 def buildJob = 'nixl-ci-test'
-                build job: buildJob, parameters: [
+                def run = build job: buildJob, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ]
+                ], propagate: false
+                def jobUrl = "${{JENKINS_URL}}blue/organizations/jenkins/${{buildJob}}/detail/${{buildJob}}/${{run.number}}/pipeline"
+                if (run.resultIsBetterOrEqualTo('SUCCESS')) {{
+                    echo "${{buildJob}} SUCCESS: ${{jobUrl}}"
+                }} else {{
+                    error("${{buildJob}} FAILED: ${{jobUrl}}")
+                }}
             }},
             failFast: false  // Continue even if some parallel jobs fail
 
@@ -130,7 +142,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
-                credentials-id: 'swx-jenkins_ssh_key'
+                credentials-id: 'svc-nixl-ssh_key'
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -192,7 +204,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
-                credentials-id: 'swx-jenkins_ssh_key'
+                credentials-id: 'svc-nixl-ssh_key'
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -291,7 +303,7 @@
       scm:
         - git:
             url: "{jjb_git}"
-            credentials-id: "swx-jenkins_ssh_key"
+            credentials-id: "svc-nixl-ssh_key"
             branches: ['$NIXL_VERSION']
             shallow-clone: false
             do-not-fetch-tags: false
