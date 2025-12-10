@@ -119,3 +119,5 @@ if enabled_plugins.get('GPUNETIO')
         subdir('gpunetio')
     endif
 endif
+
+subdir('telemetry')

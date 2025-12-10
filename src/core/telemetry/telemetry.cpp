@@ -88,6 +88,7 @@ nixlTelemetry::initializeTelemetry() {
             return;
         }
     }
+
     auto &plugin_manager = nixlPluginManager::getInstance();
     std::shared_ptr<const nixlTelemetryPluginHandle> plugin_handle =
         plugin_manager.loadTelemetryPlugin(exporter_name);
