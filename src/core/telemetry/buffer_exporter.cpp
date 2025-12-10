@@ -17,16 +17,11 @@
 #include "buffer_exporter.h"
 #include "common/nixl_log.h"
 
-constexpr const char telemetryDirVar[] = "NIXL_TELEMETRY_DIR";
-
 namespace {
 static std::filesystem::path
 getFilePath(const nixlTelemetryExporterInitParams &init_params) {
+    // if we reach here, we ensured env var is set
     auto telemetry_dir = std::getenv(telemetryDirVar);
-    if (!telemetry_dir) {
-        throw std::invalid_argument(std::string(telemetryDirVar) + " is not set");
-    }
-
     return std::filesystem::path(telemetry_dir) / init_params.agentName.data();
 }
 } // namespace

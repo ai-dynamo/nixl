@@ -24,6 +24,8 @@
 
 #include <filesystem>
 
+constexpr const char telemetryDirVar[] = "NIXL_TELEMETRY_DIR";
+
 /**
  * @class nixlTelemetryBufferExporter
  * @brief Shared memory buffer based telemetry exporter implementation

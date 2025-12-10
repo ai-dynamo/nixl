@@ -28,6 +28,7 @@
 #include "telemetry_event.h"
 #include "util.h"
 #include "plugin_manager.h"
+#include "buffer_exporter.h"
 
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
@@ -81,6 +82,11 @@ nixlTelemetry::initializeTelemetry() {
         NIXL_INFO << "No telemetry exporter was specified, using default: "
                   << defaultTelemetryPlugin;
         exporter_name = defaultTelemetryPlugin;
+        if (!std::getenv(telemetryDirVar)) {
+            NIXL_DEBUG << telemetryDirVar
+                       << " is not set, NIXL telemetry is enabled without any exporter";
+            return;
+        }
     }
     auto &plugin_manager = nixlPluginManager::getInstance();
     std::shared_ptr<const nixlTelemetryPluginHandle> plugin_handle =
