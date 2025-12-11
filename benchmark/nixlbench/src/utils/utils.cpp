@@ -675,7 +675,11 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
 #if HAVE_CUDA
-                        addr = calloc(1, len);
+                        if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
+                            std::cerr << "Failed to allocate aligned buffer of size: " << len
+                                      << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
                         is_allocated = true;
                         CHECK_CUDA_ERROR(cudaMemcpy(addr, (void *)iov.addr, len,
                                                     cudaMemcpyDeviceToHost), "cudaMemcpy failed");
@@ -688,17 +692,10 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                         addr = (void *)iov.addr;
                     }
                 } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
-                    // Allocate buffer (handle alignment for direct I/O if requested)
-                    if (xferBenchConfig::storage_enable_direct) {
-                        void *aligned = nullptr;
-                        if (posix_memalign(&aligned, xferBenchConfig::page_size, len) != 0) {
-                            std::cerr << "Failed to allocate aligned buffer of size: " << len
-                                      << std::endl;
-                            exit(EXIT_FAILURE);
-                        }
-                        addr = aligned;
-                    } else {
-                        addr = calloc(1, len);
+                    if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
+                        std::cerr << "Failed to allocate aligned buffer of size: " << len
+                                  << std::endl;
+                        exit(EXIT_FAILURE);
                     }
                     is_allocated = true;
                     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
