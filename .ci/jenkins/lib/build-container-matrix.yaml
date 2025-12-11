@@ -51,6 +51,7 @@ pipeline_start:
     echo "ENABLE_NIXL_BUILD: ${env.ENABLE_NIXL_BUILD}"
     echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
     echo "BUILD_TARGET: ${params.BUILD_TARGET}"
+    echo "BUILD_NIXL_EP: ${params.BUILD_NIXL_EP}"
 
 # Build pipeline
 steps:
@@ -83,13 +84,19 @@ steps:
     run: |
       export UCX_REF="${UCX_VERSION}"
 
+      NIXL_EP_FLAG=""
+      if [[ "${BUILD_NIXL_EP}" == "true" ]]; then
+          NIXL_EP_FLAG="--build-nixl-ep"
+      fi
+
       "contrib/build-container.sh" \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_IMAGE_TAG}" \
         --tag "${LOCAL_TAG_BASE}${arch}" \
         --arch "${arch}" \
         --build-type debug \
-        --no-cache
+        --no-cache \
+        ${NIXL_EP_FLAG}
 
   - name: Add Version Info
     run: |
@@ -175,8 +182,12 @@ steps:
         echo "git clone https://github.com/openucx/ucx.git ucx-src && (cd ucx-src && git checkout ${UCX_VERSION})"
         echo "benchmark/nixlbench/contrib/build.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache --nixl \$WORKSPACE --ucx \$WORKSPACE/ucx-src"
       else
+        NIXL_EP_FLAG=""
+        if [[ "${BUILD_NIXL_EP}" == "true" ]]; then
+            NIXL_EP_FLAG="--build-nixl-ep"
+        fi
         echo "export UCX_REF=${UCX_VERSION}"
-        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache"
+        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache ${NIXL_EP_FLAG}"
       fi
 
 pipeline_stop:
@@ -206,6 +217,7 @@ pipeline_stop:
                 <p>Base Image: <b>${params.BASE_IMAGE}:${params.BASE_IMAGE_TAG}</b></p>
                 <p>Architectures: <b>x86_64, aarch64</b></p>
                 ${params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
+                ${params.BUILD_NIXL_EP ? "<p>Build NIXL EP: <b>Yes</b></p>" : ''}
             """
         )
     }
