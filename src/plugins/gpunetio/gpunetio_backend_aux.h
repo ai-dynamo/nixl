@@ -87,6 +87,7 @@ struct docaXferReqGpu {
     uint32_t rkey[DOCA_XFER_REQ_SIZE];
     uint16_t num;
     uint8_t in_use;
+        uint8_t keys_are_swapped;
     uint32_t conn_idx;
     uint32_t has_notif_msg_idx;
     uint32_t msg_sz;
@@ -119,6 +120,8 @@ struct docaXferCompletion {
 struct docaNotif {
     doca_gpu_dev_verbs_qp *qp_gpu;
     uint32_t msg_lkey;
+        uint8_t keys_are_swapped;
+    uint8_t _pad_keys[3];
     uintptr_t msg_buf;
     size_t msg_size;
     uint32_t msg_num;
