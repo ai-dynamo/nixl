@@ -19,7 +19,7 @@ repos:
       - id: mypy
         args: [--ignore-missing-imports]
         additional_dependencies: [types-PyYAML, types-tabulate]
-        files: \.py$
+        files: ^(src|test|benchmark|examples)/.*\.py$
 
   - repo: https://github.com/timothycrosley/isort
     rev: 5.12.0

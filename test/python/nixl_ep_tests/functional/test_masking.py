@@ -15,7 +15,6 @@ These tests verify:
 
 import os
 import sys
-import time
 
 import pytest
 import torch
@@ -24,7 +23,7 @@ import torch
 TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TESTS_DIR)
 
-from utils.mp_runner import (
+from utils.mp_runner import (  # noqa: E402
     all_passed,
     create_buffer,
     print_results,
@@ -46,7 +45,7 @@ def _test_update_mask_buffer_set_fn(rank: int, world_size: int, local_rank: int 
     - update_mask_buffer(rank, True) marks rank as masked
     - query_mask_buffer returns non-zero for masked rank
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     buffer = create_buffer(rank, world_size)
 
@@ -93,11 +92,11 @@ def _test_update_mask_buffer_set_fn(rank: int, world_size: int, local_rank: int 
                 "was_masked": target_masked,
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -128,7 +127,7 @@ def _test_update_mask_buffer_unset_fn(rank: int, world_size: int, local_rank: in
     - update_mask_buffer(rank, False) removes mask
     - query_mask_buffer returns 0 for unmasked rank
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     buffer = create_buffer(rank, world_size)
 
@@ -178,11 +177,11 @@ def _test_update_mask_buffer_unset_fn(rank: int, world_size: int, local_rank: in
                 "mask_value": mask_status[target_rank].item(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -212,7 +211,7 @@ def _test_clean_mask_buffer_fn(rank: int, world_size: int, local_rank: int = 0):
     Validates:
     - clean_mask_buffer() sets all masks to 0 (unmasked)
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     buffer = create_buffer(rank, world_size)
 
@@ -268,11 +267,11 @@ def _test_clean_mask_buffer_fn(rank: int, world_size: int, local_rank: int = 0):
                 "mask_after": mask_after.cpu().tolist(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -310,7 +309,7 @@ def _test_query_mask_after_operations_fn(
     - After connect, all ranks show as unmasked (0)
     - The mask buffer correctly tracks all connected ranks
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     buffer = create_buffer(rank, world_size)
 
@@ -361,11 +360,11 @@ def _test_query_mask_after_operations_fn(
                 "all_unmasked": all_unmasked,
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 

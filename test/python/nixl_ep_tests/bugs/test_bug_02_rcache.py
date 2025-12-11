@@ -99,14 +99,17 @@ Expected AFTER fix:  All 10 runs succeed
 import argparse
 import os
 import sys
-import time
 
 import pytest
 
 # Add parent directories to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.mp_runner import create_buffer, run_multiprocess_test, sync_all_ranks
+from utils.mp_runner import (  # noqa: E402
+    create_buffer,
+    run_multiprocess_test,
+    sync_all_ranks,
+)
 
 
 @pytest.mark.skip(reason="Not run directly")
@@ -123,7 +126,7 @@ def _test_rcache_16_experts_fn(
     """
     import torch
 
-    import nixl_ep
+    import nixl_ep  # noqa: F401 - imported for side effects
 
     # Note: setup_worker_environment already sets CUDA_VISIBLE_DEVICES to local_rank
     # so only device 0 is visible. Don't call set_device(local_rank) - that would fail!

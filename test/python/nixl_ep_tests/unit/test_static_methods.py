@@ -8,7 +8,6 @@ Test IDs: U-STAT-01 through U-STAT-05
 """
 
 import pytest
-import torch
 
 
 class TestStaticMethods:

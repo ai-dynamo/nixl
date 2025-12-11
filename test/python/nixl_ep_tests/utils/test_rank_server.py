@@ -16,7 +16,7 @@ import time
 from collections import defaultdict
 from socketserver import StreamRequestHandler, ThreadingTCPServer
 from threading import Lock
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # ============================================================================
 # Server Implementation
@@ -27,13 +27,17 @@ class RankServerHandler(StreamRequestHandler):
     """Handles GET_RANK, RELEASE_RANK, BARRIER, CLEAR_BARRIERS, RESET commands."""
 
     # Shared state
-    _lock = Lock()
-    _counts = defaultdict(list)  # host -> [local_ranks]
-    _rank_to_host = {}  # global_rank -> (host, local_rank)
-    _all_global_ranks = set()
-    _removed_global_ranks = set()
-    _barriers = {}  # barrier_id -> {expected: int, arrived: set()}
-    _completed_barriers = set()  # barrier_ids that completed (so all ranks get DONE)
+    _lock: Lock = Lock()
+    _counts: Dict[str, List[int]] = defaultdict(list)  # host -> [local_ranks]
+    _rank_to_host: Dict[int, Tuple[str, int]] = {}  # global_rank -> (host, local_rank)
+    _all_global_ranks: Set[int] = set()
+    _removed_global_ranks: Set[int] = set()
+    _barriers: Dict[str, Dict[str, Any]] = (
+        {}
+    )  # barrier_id -> {expected: int, arrived: set()}
+    _completed_barriers: Set[str] = (
+        set()
+    )  # barrier_ids that completed (so all ranks get DONE)
 
     @classmethod
     def reset_state(cls):
@@ -67,7 +71,7 @@ class RankServerHandler(StreamRequestHandler):
         except Exception as e:
             try:
                 self.wfile.write(f"ERROR: {str(e)}\n".encode())
-            except:
+            except Exception:
                 pass  # Client may have disconnected
 
     def _handle_barrier(self, line: str):
@@ -190,8 +194,8 @@ class RankServer:
     def __init__(self, host: str = "0.0.0.0", port: int = 9998):
         self.host = host
         self.port = port
-        self.server = None
-        self.process = None
+        self.server: Optional[ReusableTCPServer] = None
+        self.process: Optional[mp.Process] = None
 
     def start(self, background: bool = True):
         """Start the server."""
@@ -260,7 +264,7 @@ class RankClient:
         Returns:
             (local_rank, global_rank)
         """
-        if self.global_rank is not None:
+        if self.global_rank is not None and self.local_rank is not None:
             return self.local_rank, self.global_rank
 
         hostname = os.uname().nodename

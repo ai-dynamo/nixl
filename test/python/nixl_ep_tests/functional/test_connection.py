@@ -16,8 +16,7 @@ import torch
 TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TESTS_DIR)
 
-from utils.mp_runner import (
-    TestResult,
+from utils.mp_runner import (  # noqa: E402
     all_passed,
     create_buffer,
     print_results,
@@ -41,7 +40,7 @@ DEFAULT_NUM_RDMA_BYTES = 64 * 1024 * 1024  # 64MB
 @pytest.mark.skip(reason="Not run directly")
 def _test_connect_ranks_fn(rank: int, world_size: int, local_rank: int = 0):
     """F-CONN-01: Connect to other ranks and verify via query_mask_buffer."""
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     buffer = create_buffer(rank, world_size)
 
@@ -79,11 +78,11 @@ def _test_connect_ranks_fn(rank: int, world_size: int, local_rank: int = 0):
                 "mask_status": mask_status.cpu().tolist(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -106,7 +105,7 @@ def test_connect_ranks(request):
 @pytest.mark.skip(reason="Not run directly")
 def _test_disconnect_before_destroy_fn(rank: int, world_size: int, local_rank: int = 0):
     """F-CONN-WARN: Test explicit disconnect before destroy (shows benign warnings)."""
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     buffer = create_buffer(rank, world_size)
 
@@ -154,11 +153,11 @@ def _test_disconnect_before_destroy_fn(rank: int, world_size: int, local_rank: i
                 "note": "Check console for invalidateRemoteMD warnings (expected)",
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -199,7 +198,7 @@ def _test_disconnect_ranks_fn(rank: int, world_size: int, local_rank: int = 0):
     - query_mask_buffer shows disconnected rank as masked
     - Clean exit without warnings
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     # All ranks agree: the last rank (world_size - 1) will be removed
     rank_to_remove = world_size - 1
@@ -281,11 +280,11 @@ def _test_disconnect_ranks_fn(rank: int, world_size: int, local_rank: int = 0):
                     "mask_status": mask_status.cpu().tolist(),
                 },
             }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -318,7 +317,7 @@ def _test_connect_self_rank_filtered_fn(
     - Including self in connect_ranks is a no-op or handled gracefully
     - No crash or error
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     buffer = create_buffer(rank, world_size)
 
@@ -340,11 +339,11 @@ def _test_connect_self_rank_filtered_fn(
         buffer.destroy()
 
         return {"passed": True, "metrics": {"handled_self_rank": True}}
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -375,7 +374,7 @@ def _test_connect_idempotent_fn(rank: int, world_size: int, local_rank: int = 0)
     - Calling connect_ranks twice with same ranks doesn't cause errors
     - State remains consistent
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     buffer = create_buffer(rank, world_size)
 
@@ -415,11 +414,11 @@ def _test_connect_idempotent_fn(rank: int, world_size: int, local_rank: int = 0)
                 "status_after": mask_status_2.cpu().tolist(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -450,7 +449,7 @@ def _test_incremental_connect_fn(rank: int, world_size: int, local_rank: int = 0
     - Connect subset of ranks, then connect more
     - All connected ranks show as unmasked
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     buffer = create_buffer(rank, world_size)
 
@@ -506,11 +505,11 @@ def _test_incremental_connect_fn(rank: int, world_size: int, local_rank: int = 0
                 "all_connected": all_connected,
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -541,7 +540,7 @@ def _test_barrier_after_connect_fn(rank: int, world_size: int, local_rank: int =
     - buffer.barrier() completes without error after connect
     - All ranks reach the barrier
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     buffer = create_buffer(rank, world_size)
 
@@ -566,11 +565,11 @@ def _test_barrier_after_connect_fn(rank: int, world_size: int, local_rank: int =
         buffer.destroy()
 
         return {"passed": True, "metrics": {"barrier_time_ms": barrier_time_ms}}
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 

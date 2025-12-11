@@ -24,11 +24,9 @@ Usage:
 
 import argparse
 import json
-import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
@@ -65,8 +63,8 @@ def parse_json_results(data: Dict) -> List[TestResult]:
         total = len(rank_results)
 
         # Aggregate metrics across ranks
-        metrics = {}
-        metric_values = {}
+        metrics: Dict[str, PerformanceMetric] = {}
+        metric_values: Dict[str, List[float]] = {}
 
         for r in rank_results:
             if r.get("passed") and r.get("metrics"):
@@ -157,7 +155,7 @@ def generate_markdown_report(
     lines.append("")
 
     # Group by test type
-    test_types = {}
+    test_types: Dict[str, List[TestResult]] = {}
     for result in results:
         test_type = result.test_name.split("_")[0]
         if test_type not in test_types:

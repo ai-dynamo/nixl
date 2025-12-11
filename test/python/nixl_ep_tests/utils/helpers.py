@@ -21,7 +21,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Any, Callable, List, Optional, Union
 
 import numpy as np
 import torch
@@ -45,7 +45,7 @@ def init_dist(local_rank: int, num_local_ranks: int):
     if "device_id" in sig.parameters:
         # noinspection PyTypeChecker
         params["device_id"] = torch.device(
-            f"cuda:0"
+            "cuda:0"
         )  # TODO: restore to local_rank once ucx fixes lane-selection
     dist.init_process_group(**params)
     torch.set_default_dtype(torch.bfloat16)
@@ -240,7 +240,7 @@ def bench_kineto(
 
     # Return average kernel durations
     units = {"ms": 1e3, "us": 1e6}
-    kernel_durations = []
+    kernel_durations: List[Any] = []
     for name in kernel_names:
         for line in prof_lines:
             if name in line:

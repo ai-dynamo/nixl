@@ -12,8 +12,7 @@ import logging
 import os
 import sys
 import time
-from dataclasses import dataclass, field
-from functools import partial
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
@@ -32,12 +31,12 @@ sys.path.insert(0, ELASTIC_DIR)
 # Use our own test_rank_server for tests (has barrier support)
 # Falls back to elastic/rank_server for compatibility
 try:
-    from utils.test_rank_server import RankClient, RankServer, start_test_server
+    from utils.test_rank_server import RankClient, start_test_server
 
     _USE_TEST_RANK_SERVER = True
 except ImportError:
     try:
-        from test_rank_server import RankClient, RankServer, start_test_server
+        from test_rank_server import RankClient, start_test_server
 
         _USE_TEST_RANK_SERVER = True
     except ImportError:
@@ -141,7 +140,6 @@ def discover_gpu_nic_topology():
             gpu_idx = int(match.group(1))
 
             # Find best NIC for this GPU (lowest priority = best connection)
-            best_nic_name = None
             best_nic_device = None
             best_priority = 100
 
@@ -154,7 +152,6 @@ def discover_gpu_nic_topology():
                     priority = connection_priority.get(conn_type, 50)
                     if priority < best_priority:
                         best_priority = priority
-                        best_nic_name = nic_name
                         best_nic_device = nic_legend.get(nic_name)
 
             if best_nic_device:
@@ -252,7 +249,7 @@ def create_buffer(
     rank: int,
     world_size: int,
     num_experts_per_rank: int = 8,
-    num_rdma_bytes: int = None,
+    num_rdma_bytes: Optional[int] = None,
     nvlink_backend: str = "ipc",
     enable_shrink: bool = True,
     hidden: int = 4096,
@@ -290,7 +287,7 @@ def worker_fn(
     etcd_server: str,
     rank_server_addr: str,
     gpu_nic_topology: dict,
-    extra_kwargs: dict = None,
+    extra_kwargs: Optional[Dict[Any, Any]] = None,
     rank_server_port: int = 9998,
 ):
     """Worker function executed by each spawned process."""
@@ -368,7 +365,7 @@ def worker_fn(
         result_queue.put(
             TestResult(
                 rank=report_rank,
-                test_name=test_fn.__name__ if test_fn else "unknown",
+                test_name=test_fn.__name__ if test_fn is not None else "unknown",
                 passed=False,
                 error=f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}",
             )
@@ -376,7 +373,7 @@ def worker_fn(
         if rank_client:
             try:
                 rank_client.release_rank()
-            except:
+            except Exception:
                 pass
 
 
@@ -591,7 +588,7 @@ def run_multiprocess_test(
         while not result_queue.empty():
             try:
                 results.append(result_queue.get_nowait())
-            except:
+            except Exception:
                 break
 
         # Add timeout results for missing ranks
@@ -720,8 +717,8 @@ def sync_all_ranks(
     world_size: int,
     barrier_name: str,
     timeout: float = 60.0,
-    server_addr: str = None,
-    port: int = None,
+    server_addr: Optional[str] = None,
+    port: Optional[int] = None,
 ):
     """Synchronize all ranks at a named barrier point."""
     global _RANK_SERVER_ADDR, _RANK_SERVER_PORT

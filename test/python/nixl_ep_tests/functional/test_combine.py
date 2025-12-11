@@ -17,7 +17,6 @@ These tests verify:
 
 import os
 import sys
-import time
 
 import pytest
 import torch
@@ -26,7 +25,7 @@ import torch
 TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TESTS_DIR)
 
-from utils.mp_runner import (
+from utils.mp_runner import (  # noqa: E402
     all_passed,
     create_buffer,
     print_results,
@@ -75,7 +74,7 @@ def _test_combine_basic_fn(rank: int, world_size: int, local_rank: int = 0):
     - combine() completes without error
     - Output has correct shape [num_tokens, hidden]
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -143,11 +142,11 @@ def _test_combine_basic_fn(rank: int, world_size: int, local_rank: int = 0):
                 "output_dtype": str(combined_x.dtype),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -176,7 +175,7 @@ def _test_combine_weighted_fn(rank: int, world_size: int, local_rank: int = 0):
     - Output matches expected weighted combination
     - Using identity expert computation for verification
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -249,11 +248,11 @@ def _test_combine_weighted_fn(rank: int, world_size: int, local_rank: int = 0):
                 "has_nan": torch.isnan(combined_x).any().item(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -284,7 +283,7 @@ def _test_combine_logfmt_fn(rank: int, world_size: int, local_rank: int = 0):
     - Combine completes with logfmt option
     - Output has reasonable values
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -340,11 +339,11 @@ def _test_combine_logfmt_fn(rank: int, world_size: int, local_rank: int = 0):
             "passed": correct_shape and not has_nan,
             "metrics": {"has_nan": has_nan, "correct_shape": correct_shape},
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -375,7 +374,7 @@ def _test_combine_zero_copy_fn(rank: int, world_size: int, local_rank: int = 0):
     - zero_copy mode works with get_next_combine_buffer
     - Output is correct
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -438,11 +437,11 @@ def _test_combine_zero_copy_fn(rank: int, world_size: int, local_rank: int = 0):
                 "combine_buffer_shape": list(combine_buffer.shape),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -473,7 +472,7 @@ def _test_combine_async_fn(rank: int, world_size: int, local_rank: int = 0):
     - Async combine returns valid event
     - Event can be waited on
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -520,11 +519,11 @@ def _test_combine_async_fn(rank: int, world_size: int, local_rank: int = 0):
         buffer.destroy()
 
         return {"passed": event_valid, "metrics": {"event_valid": event_valid}}
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -553,7 +552,7 @@ def _test_combine_out_param_fn(rank: int, world_size: int, local_rank: int = 0):
     - Result is written to provided output tensor
     - Output tensor has expected values
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -617,11 +616,11 @@ def _test_combine_out_param_fn(rank: int, world_size: int, local_rank: int = 0):
                 ),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -652,7 +651,7 @@ def _test_combine_hook_fn(rank: int, world_size: int, local_rank: int = 0):
     - Combine returns callable hook
     - Hook can be called to complete receive
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -700,11 +699,11 @@ def _test_combine_hook_fn(rank: int, world_size: int, local_rank: int = 0):
         buffer.destroy()
 
         return {"passed": hook_callable, "metrics": {"hook_callable": hook_callable}}
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 

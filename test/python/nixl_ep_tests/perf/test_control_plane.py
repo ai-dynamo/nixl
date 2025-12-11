@@ -40,7 +40,7 @@ import pytest
 TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TESTS_DIR)
 
-from utils.mp_runner import (
+from utils.mp_runner import (  # noqa: E402
     TestResult,
     all_passed,
     print_results,
@@ -91,7 +91,7 @@ def _test_init_latency_fn(
     """
     import torch
 
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     latencies = []
 
@@ -167,7 +167,7 @@ def _test_connect_latency_fn(
     """
     import torch
 
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     latencies = []
     other_ranks = [r for r in range(world_size) if r != rank]
@@ -254,7 +254,7 @@ def _test_disconnect_latency_fn(
     """
     import torch
 
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     latencies = []
     other_ranks = [r for r in range(world_size) if r != rank]
@@ -343,7 +343,7 @@ def _test_destroy_latency_fn(
     """
     import torch
 
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     latencies = []
     other_ranks = [r for r in range(world_size) if r != rank]
@@ -431,7 +431,7 @@ def _test_full_cycle_latency_fn(
     """
     import torch
 
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     init_latencies = []
     connect_latencies = []
@@ -643,18 +643,20 @@ def collect_all_results(
     all_results: Dict[int, Dict[str, List[TestResult]]], world_size: int
 ) -> Dict:
     """Collect all results into a structured format for JSON export."""
-    output = {
+    output: Dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "world_size": world_size,
         "results": {},
     }
 
+    results_dict: Dict[int, Dict[str, Any]] = {}
     for num_experts, test_results in all_results.items():
-        output["results"][num_experts] = {}
+        results_dict[num_experts] = {}
         for test_name, results in test_results.items():
             rank0 = next((r for r in results if r.rank == 0), None)
             if rank0 and rank0.metrics:
-                output["results"][num_experts][test_name] = rank0.metrics
+                results_dict[num_experts][test_name] = rank0.metrics
+    output["results"] = results_dict
 
     return output
 
@@ -730,13 +732,13 @@ def main():
     else:
         tests_to_run = [args.test]
 
-    sys.stderr.write(f"\n{'#'*70}\n")
-    sys.stderr.write(f"# NIXL EP Control Plane Performance Tests\n")
+    sys.stderr.write("\n" + "#" * 70 + "\n")
+    sys.stderr.write("# NIXL EP Control Plane Performance Tests\n")
     sys.stderr.write(f"# Ranks: {args.num_processes}\n")
     sys.stderr.write(f"# Experts/rank: {expert_counts} (total = experts × ranks)\n")
     sys.stderr.write(f"# Tests: {tests_to_run}\n")
     sys.stderr.write(f"# Warmup: {args.warmup}, Measure: {args.rounds}\n")
-    sys.stderr.write(f"{'#'*70}\n\n")
+    sys.stderr.write("#" * 70 + "\n\n")
 
     all_results = {}
 
@@ -845,7 +847,8 @@ def main():
                     total += reconnect_avg
 
             # Format values (show "-" if not measured)
-            fmt = lambda v: f"{v:<12.2f}" if v is not None else f"{'-':<12}"
+            def fmt(v):
+                return f"{v:<12.2f}" if v is not None else f"{'-':<12}"
 
             sys.stderr.write(
                 f"{num_experts:<10} "

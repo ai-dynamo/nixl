@@ -39,7 +39,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Union
 
 # ============================================================================
 # Data Models
@@ -110,7 +110,7 @@ def get_git_info() -> tuple:
             .decode()
             .strip()[:12]
         )
-    except:
+    except Exception:
         commit = "unknown"
 
     try:
@@ -121,14 +121,14 @@ def get_git_info() -> tuple:
             .decode()
             .strip()
         )
-    except:
+    except Exception:
         branch = "unknown"
 
     try:
         # Check if working directory is dirty
         result = subprocess.run(["git", "diff", "--quiet"], stderr=subprocess.DEVNULL)
         dirty = result.returncode != 0
-    except:
+    except Exception:
         dirty = False
 
     return commit, branch, dirty
@@ -140,7 +140,7 @@ def get_cuda_version() -> str:
         import torch
 
         return torch.version.cuda or "unknown"
-    except:
+    except Exception:
         return "unknown"
 
 
@@ -150,7 +150,7 @@ def get_num_gpus() -> int:
         import torch
 
         return torch.cuda.device_count()
-    except:
+    except Exception:
         return 0
 
 
@@ -186,14 +186,14 @@ class ResultsCollector:
     3. Default: tests/perf/results/
     """
 
-    def __init__(self, results_dir: str = None):
+    def __init__(self, results_dir: Optional[str] = None):
         if results_dir is None:
             # Check environment variable
             results_dir = os.environ.get("NIXL_RESULTS_DIR")
 
         if results_dir is None:
             # Default to tests/perf/results/
-            self.results_dir = Path(__file__).parent / "results"
+            self.results_dir: Path = Path(__file__).parent / "results"
         else:
             self.results_dir = Path(results_dir)
 
@@ -263,7 +263,7 @@ class ResultsCollector:
         self.results.append(result)
         return result
 
-    def save(self, filename: str = None) -> str:
+    def save(self, filename: Optional[str] = None) -> str:
         """
         Save results to JSON file.
 
@@ -320,17 +320,17 @@ class ResultsAggregator:
     Aggregates results from multiple runs for analysis and CI/CD.
     """
 
-    def __init__(self, results_dir: str = None):
+    def __init__(self, results_dir: Optional[str] = None):
         if results_dir is None:
-            self.results_dir = Path(__file__).parent / "results"
+            self.results_dir: Path = Path(__file__).parent / "results"
         else:
             self.results_dir = Path(results_dir)
 
         self.raw_dir = self.results_dir / "raw"
 
-    def load_all_results(self) -> List[Dict]:
+    def load_all_results(self) -> List[Dict[str, Any]]:
         """Load all results from raw directory"""
-        results = []
+        results: List[Dict[str, Any]] = []
 
         if not self.raw_dir.exists():
             return results
@@ -377,7 +377,9 @@ class ResultsAggregator:
 
         return results
 
-    def export_csv(self, output_path: str = None, append: bool = False) -> str:
+    def export_csv(
+        self, output_path: Optional[Union[str, Path]] = None, append: bool = False
+    ) -> str:
         """
         Export all results to CSV.
 
@@ -388,19 +390,20 @@ class ResultsAggregator:
         Returns:
             Path to CSV file
         """
+        csv_path: Path
         if output_path is None:
-            output_path = self.results_dir / "history.csv"
+            csv_path = self.results_dir / "history.csv"
         else:
-            output_path = Path(output_path)
+            csv_path = Path(output_path)
 
         results = self.load_all_results()
 
         if not results:
             sys.stderr.write("No results to export\n")
-            return str(output_path)
+            return str(csv_path)
 
         # Get all unique columns
-        all_columns = set()
+        all_columns: Set[str] = set()
         for r in results:
             all_columns.update(r.keys())
 
@@ -437,21 +440,21 @@ class ResultsAggregator:
             + metric_columns
         )
 
-        mode = "a" if append and output_path.exists() else "w"
-        write_header = not (append and output_path.exists())
+        mode = "a" if append and csv_path.exists() else "w"
+        write_header = not (append and csv_path.exists())
 
-        with open(output_path, mode, newline="") as f:
+        with open(csv_path, mode, newline="") as f:
             writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
             if write_header:
                 writer.writeheader()
             writer.writerows(results)
 
-        sys.stderr.write(f"Exported {len(results)} results to {output_path}\n")
-        return str(output_path)
+        sys.stderr.write(f"Exported {len(results)} results to {csv_path}\n")
+        return str(csv_path)
 
-    def list_runs(self, last_n: int = None) -> List[Dict]:
+    def list_runs(self, last_n: Optional[int] = None) -> List[Dict[str, Any]]:
         """List all runs with summary"""
-        runs = []
+        runs: List[Dict[str, Any]] = []
 
         if not self.raw_dir.exists():
             return runs
@@ -480,7 +483,9 @@ class ResultsAggregator:
 
         return runs
 
-    def get_latest_metrics(self, test_type: str = None, test_name: str = None) -> Dict:
+    def get_latest_metrics(
+        self, test_type: Optional[str] = None, test_name: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Get latest metrics for comparison"""
         results = self.load_all_results()
 
@@ -503,9 +508,9 @@ class ResultsAggregator:
 
 
 def ci_check_regression(
-    baseline_commit: str = None,
+    baseline_commit: Optional[str] = None,
     threshold_percent: float = 10.0,
-    results_dir: str = None,
+    results_dir: Optional[str] = None,
 ) -> bool:
     """
     Check for performance regression against baseline.
@@ -648,8 +653,8 @@ def main():
         "--threshold", type=float, default=10.0, help="Regression threshold percentage"
     )
 
-    # Summary command
-    summary_parser = subparsers.add_parser("summary", help="Show summary of latest run")
+    # Summary command (no arguments needed)
+    subparsers.add_parser("summary", help="Show summary of latest run")
 
     args = parser.parse_args()
 

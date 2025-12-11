@@ -170,11 +170,11 @@ def run_connect_test():
                 "passed": True,
                 "metrics": {"mask_status": mask_status.cpu().tolist()},
             }
-        except Exception as e:
+        except Exception:
             if buffer:
                 try:
                     buffer.destroy()
-                except:
+                except Exception:
                     pass
             raise
 
@@ -204,7 +204,7 @@ def main():
         try:
             success, results = run_connect_test()
             if success:
-                sys.stderr.write(f"Result: PASS (8/8)\n")
+                sys.stderr.write("Result: PASS (8/8)\n")
                 passes += 1
             else:
                 failed_ranks = [r.rank for r in results if not r.passed]

@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,7 +23,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_RESULTS_DIR = os.environ.get("NIXL_TEST_RESULTS_DIR", "./results")
 
 
-def get_git_info(repo_path: str) -> Dict[str, str]:
+def get_git_info(repo_path: str) -> Dict[str, Any]:
     """
     Get git repository information.
 
@@ -53,7 +52,7 @@ def get_git_info(repo_path: str) -> Dict[str, str]:
                 .strip()
             )
             repo_name = remote.split("/")[-1].replace(".git", "")
-        except:
+        except Exception:
             repo_name = os.path.basename(repo_path)
 
         # Get branch
@@ -137,7 +136,7 @@ def get_environment_info() -> Dict[str, str]:
         info["gpu_count"] = torch.cuda.device_count()
         if torch.cuda.is_available():
             info["gpu_name"] = torch.cuda.get_device_name(0)
-    except:
+    except Exception:
         pass
 
     # Get SLURM info if available
@@ -168,7 +167,7 @@ class ResultsReporter:
     def __init__(
         self,
         results_dir: str = DEFAULT_RESULTS_DIR,
-        nixl_ep_repo: str = None,
+        nixl_ep_repo: Optional[str] = None,
         run_id: Optional[str] = None,
     ):
         # Default to the repo containing this file
@@ -281,7 +280,7 @@ class ResultsReporter:
         filepath = self.results_dir / filename
 
         # Get all unique keys across all results
-        all_keys = set()
+        all_keys: set[str] = set()
         for r in self.results:
             all_keys.update(r.keys())
 

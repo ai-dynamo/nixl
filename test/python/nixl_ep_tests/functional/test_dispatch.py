@@ -16,9 +16,7 @@ These tests verify:
 """
 
 import os
-import random
 import sys
-import time
 
 import pytest
 import torch
@@ -27,7 +25,7 @@ import torch
 TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TESTS_DIR)
 
-from utils.mp_runner import (
+from utils.mp_runner import (  # noqa: E402
     all_passed,
     create_buffer,
     print_results,
@@ -60,7 +58,7 @@ def _test_dispatch_bf16_fn(rank: int, world_size: int, local_rank: int = 0):
     - recv_x has correct shape and dtype (bfloat16)
     - recv_count is returned
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -128,11 +126,11 @@ def _test_dispatch_bf16_fn(rank: int, world_size: int, local_rank: int = 0):
                 "recv_count_sum": packed_recv_count.sum().item(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -162,7 +160,7 @@ def _test_dispatch_fp8_fn(rank: int, world_size: int, local_rank: int = 0):
     - FP8 tensor has correct dtype (float8_e4m3fn)
     - Scales tensor is returned with correct shape
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -236,11 +234,11 @@ def _test_dispatch_fp8_fn(rank: int, world_size: int, local_rank: int = 0):
                 ),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -268,9 +266,8 @@ def _test_dispatch_round_scale_fn(rank: int, world_size: int, local_rank: int = 
     Validates:
     - Scales are powers of 2 when round_scale=True
     """
-    import math
 
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -325,11 +322,11 @@ def _test_dispatch_round_scale_fn(rank: int, world_size: int, local_rank: int = 
             "error": "; ".join(errors) if errors else None,
             "metrics": {"round_scale_applied": scales_valid},
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -359,7 +356,7 @@ def _test_dispatch_ue8m0_fn(rank: int, world_size: int, local_rank: int = 0):
     Validates:
     - Scales have packed int format when use_ue8m0=True
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -421,11 +418,11 @@ def _test_dispatch_ue8m0_fn(rank: int, world_size: int, local_rank: int = 0):
                 )
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -456,7 +453,7 @@ def _test_dispatch_no_expert_fn(rank: int, world_size: int, local_rank: int = 0)
     - Dispatch handles gracefully when all selections are -1
     - No crash
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -504,11 +501,11 @@ def _test_dispatch_no_expert_fn(rank: int, world_size: int, local_rank: int = 0)
                 "total_recv": packed_recv_count.sum().item(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -538,7 +535,7 @@ def _test_dispatch_recv_count_fn(rank: int, world_size: int, local_rank: int = 0
     Validates:
     - recv_count[i] matches the number of tokens routed to expert i
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -588,9 +585,9 @@ def _test_dispatch_recv_count_fn(rank: int, world_size: int, local_rank: int = 0
             global_expert_id = local_expert_start + e
             expected_counts[e] = (topk_idx == global_expert_id).sum().item()
 
-        # Compare with actual counts
-        actual_counts = packed_recv_count.cpu()
-        expected_counts_cpu = expected_counts.cpu()
+        # Compare with actual counts (variables kept for debugging)
+        _ = packed_recv_count.cpu()  # noqa: F841
+        _ = expected_counts.cpu()  # noqa: F841
 
         # Note: Due to multi-rank communication, we receive from all ranks
         # So actual_counts includes tokens from other ranks too
@@ -609,11 +606,11 @@ def _test_dispatch_recv_count_fn(rank: int, world_size: int, local_rank: int = 0
                 "recv_counts": packed_recv_count.cpu().tolist(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -644,7 +641,7 @@ def _test_dispatch_async_fn(rank: int, world_size: int, local_rank: int = 0):
     - Dispatch returns immediately with valid event
     - Event can be waited on
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -687,11 +684,11 @@ def _test_dispatch_async_fn(rank: int, world_size: int, local_rank: int = 0):
         buffer.destroy()
 
         return {"passed": event_valid, "metrics": {"event_valid": event_valid}}
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -722,7 +719,7 @@ def _test_dispatch_hook_fn(rank: int, world_size: int, local_rank: int = 0):
     - Dispatch returns callable hook
     - Hook can be called to complete receive
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -766,11 +763,11 @@ def _test_dispatch_hook_fn(rank: int, world_size: int, local_rank: int = 0):
         buffer.destroy()
 
         return {"passed": hook_callable, "metrics": {"hook_callable": hook_callable}}
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -799,7 +796,7 @@ def _test_dispatch_cumulative_stats_fn(rank: int, world_size: int, local_rank: i
     - cumulative_local_expert_recv_stats is updated after dispatch
     - Values increment with each dispatch
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -870,11 +867,11 @@ def _test_dispatch_cumulative_stats_fn(rank: int, world_size: int, local_rank: i
                 "increased": stats_increased,
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -907,10 +904,10 @@ if __name__ == "__main__":
     os.environ["NIXL_TEST_NUM_PROCESSES"] = str(args.num_processes)
 
     tests = {
-        "bf16": (test_dispatch_bf16_fn, "F-DISP-01: BF16 dispatch"),
-        "fp8": (test_dispatch_fp8_fn, "F-DISP-02: FP8 dispatch"),
+        "bf16": (_test_dispatch_bf16_fn, "F-DISP-01: BF16 dispatch"),
+        "fp8": (_test_dispatch_fp8_fn, "F-DISP-02: FP8 dispatch"),
         "round_scale": (_test_dispatch_round_scale_fn, "F-DISP-03: round_scale"),
-        "ue8m0": (test_dispatch_ue8m0_fn, "F-DISP-04: use_ue8m0"),
+        "ue8m0": (_test_dispatch_ue8m0_fn, "F-DISP-04: use_ue8m0"),
         "no_expert": (_test_dispatch_no_expert_fn, "F-DISP-05: No expert selected"),
         "recv_count": (_test_dispatch_recv_count_fn, "F-DISP-06: recv_count accuracy"),
         "async": (_test_dispatch_async_fn, "F-DISP-07: Async dispatch"),

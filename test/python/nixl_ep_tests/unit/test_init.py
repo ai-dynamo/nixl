@@ -10,7 +10,6 @@ Test IDs: U-INIT-01 through U-INIT-06
 import os
 
 import pytest
-import torch
 
 
 class TestBufferInitialization:

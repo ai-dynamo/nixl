@@ -24,7 +24,7 @@ import torch
 TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TESTS_DIR)
 
-from utils.mp_runner import (
+from utils.mp_runner import (  # noqa: E402
     all_passed,
     create_buffer,
     print_results,
@@ -64,7 +64,7 @@ def _test_e2e_round_trip_fn(rank: int, world_size: int, local_rank: int = 0):
     - Complete round-trip data integrity
     - Using identity expert (output = input), result should equal weighted input
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -126,7 +126,7 @@ def _test_e2e_round_trip_fn(rank: int, world_size: int, local_rank: int = 0):
         correct_shape = combined_x.shape == (num_tokens, hidden)
 
         # Simplified check: output exists and is reasonable
-        output_reasonable = not has_nan and combined_x.abs().mean() > 0
+        _ = not has_nan and combined_x.abs().mean() > 0  # noqa: F841
 
         # For proper verification with identity expert:
         # If we mask invalid selections and weight properly:
@@ -148,11 +148,11 @@ def _test_e2e_round_trip_fn(rank: int, world_size: int, local_rank: int = 0):
                 "output_mean": combined_x.abs().mean().item(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -185,7 +185,7 @@ def _test_e2e_multiple_cycles_fn(
     - Buffer can be reused across multiple cycles
     - No memory corruption between cycles
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -269,11 +269,11 @@ def _test_e2e_multiple_cycles_fn(
                 "max_cycle_ms": max(cycle_times),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass  # Already destroyed or invalid
         raise
 
@@ -307,7 +307,7 @@ def _test_e2e_incremental_connect_fn(rank: int, world_size: int, local_rank: int
     Note: True elastic scale-up requires coordination across processes.
     This test simulates the pattern by connecting incrementally.
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -407,11 +407,11 @@ def _test_e2e_incremental_connect_fn(rank: int, world_size: int, local_rank: int
                 "phase2_ok": phase2_ok,
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -455,7 +455,7 @@ def _test_e2e_planned_scale_down_fn(rank: int, world_size: int, local_rank: int 
     - Leaving ranks exit without crashing
     - Staying ranks continue operating with updated routing
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -482,7 +482,7 @@ def _test_e2e_planned_scale_down_fn(rank: int, world_size: int, local_rank: int 
         ranks_staying = list(range(num_remaining))
 
         am_leaving = rank in ranks_leaving
-        am_staying = rank in ranks_staying
+        _ = rank in ranks_staying  # noqa: F841 - am_staying for debugging
 
         # Connect all
         buffer.connect_ranks(other_ranks)
@@ -609,11 +609,11 @@ def _test_e2e_planned_scale_down_fn(rank: int, world_size: int, local_rank: int 
                 "mask_status": mask_status.cpu().tolist(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 
@@ -658,7 +658,7 @@ def _test_e2e_auto_mask_scale_down_fn(rank: int, world_size: int, local_rank: in
     - Dispatch/combine skip masked ranks without timeout
     - Operations complete even with stale routing
     """
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     num_experts_per_rank = DEFAULT_NUM_EXPERTS_PER_RANK
     hidden = DEFAULT_HIDDEN
@@ -685,7 +685,7 @@ def _test_e2e_auto_mask_scale_down_fn(rank: int, world_size: int, local_rank: in
         ranks_staying = list(range(num_remaining))
 
         am_leaving = rank in ranks_leaving
-        am_staying = rank in ranks_staying
+        _ = rank in ranks_staying  # noqa: F841 - am_staying for debugging
 
         # Connect all
         buffer.connect_ranks(other_ranks)
@@ -807,11 +807,11 @@ def _test_e2e_auto_mask_scale_down_fn(rank: int, world_size: int, local_rank: in
                 "mask_status": mask_status.cpu().tolist(),
             },
         }
-    except Exception as e:
+    except Exception:
         if buffer is not None:
             try:
                 buffer.destroy()
-            except:
+            except Exception:
                 pass
         raise
 

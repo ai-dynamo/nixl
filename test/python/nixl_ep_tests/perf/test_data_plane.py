@@ -33,9 +33,7 @@ import argparse
 import json
 import os
 import sys
-import time
 from datetime import datetime
-from functools import partial
 from typing import Any, Dict, List
 
 import pytest
@@ -44,11 +42,9 @@ import pytest
 TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TESTS_DIR)
 
-from utils.mp_runner import (
+from utils.mp_runner import (  # noqa: E402
     TestResult,
-    all_passed,
     create_buffer,
-    print_results,
     run_multiprocess_test,
     sync_all_ranks,
 )
@@ -101,7 +97,7 @@ def _test_dispatch_throughput_fn(
     import numpy as np
     import torch
 
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     total_experts = num_experts_per_rank * world_size
 
@@ -235,10 +231,9 @@ def _test_combine_throughput_fn(
     import numpy as np
     import torch
 
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     total_experts = num_experts_per_rank * world_size
-    num_local_experts = num_experts_per_rank
 
     # Create buffer
     buffer = create_buffer(
@@ -407,10 +402,9 @@ def _test_e2e_throughput_fn(
     import numpy as np
     import torch
 
-    import nixl_ep
+    import nixl_ep  # noqa: F401
 
     total_experts = num_experts_per_rank * world_size
-    num_local_experts = num_experts_per_rank
 
     # Create buffer
     buffer = create_buffer(
@@ -593,7 +587,9 @@ def print_throughput_results(test_name: str, results: List[TestResult]):
         return
 
     # Get first result's config
-    first_metrics = next((r.metrics for r in results if r.passed and r.metrics), {})
+    first_metrics: Dict[str, Any] = next(
+        (r.metrics for r in results if r.passed and r.metrics), {}
+    )
     if first_metrics:
         sys.stderr.write(
             f"Config: {first_metrics.get('num_tokens', '?')} tokens, "
@@ -607,17 +603,17 @@ def print_throughput_results(test_name: str, results: List[TestResult]):
     latency = aggregate_metrics(results, "avg_latency_us")
     bandwidth = aggregate_metrics(results, "bandwidth_gbps")
 
-    sys.stderr.write(f"\nThroughput (tokens/sec):\n")
+    sys.stderr.write("\nThroughput (tokens/sec):\n")
     sys.stderr.write(f"  Avg: {tokens['avg']:,.0f}\n")
     sys.stderr.write(f"  Min: {tokens['min']:,.0f}\n")
     sys.stderr.write(f"  Max: {tokens['max']:,.0f}\n")
 
-    sys.stderr.write(f"\nLatency (μs):\n")
+    sys.stderr.write("\nLatency (μs):\n")
     sys.stderr.write(f"  Avg: {latency['avg']:,.1f}\n")
     sys.stderr.write(f"  Min: {latency['min']:,.1f}\n")
     sys.stderr.write(f"  Max: {latency['max']:,.1f}\n")
 
-    sys.stderr.write(f"\nBandwidth (GB/s):\n")
+    sys.stderr.write("\nBandwidth (GB/s):\n")
     sys.stderr.write(f"  Avg: {bandwidth['avg']:.2f}\n")
     sys.stderr.write(f"  Min: {bandwidth['min']:.2f}\n")
     sys.stderr.write(f"  Max: {bandwidth['max']:.2f}\n")
@@ -1006,7 +1002,7 @@ Examples:
             progress_log.write(f"Total tests: {len(all_results)}\n")
             progress_log.write(f"{'='*80}\n")
             progress_log.close()
-        except:
+        except Exception:
             pass
 
     if collector:

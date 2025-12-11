@@ -200,9 +200,7 @@ def main():
         sys.stderr.write("\n")
         sys.stderr.write("=" * 60 + "\n")
         try:
-            success = test_repeated_buffer_creation(
-                backend=backend, num_rounds=args.rounds
-            )
+            test_repeated_buffer_creation(backend=backend, num_rounds=args.rounds)
             results[backend] = "PASS"
         except Exception as e:
             sys.stderr.write("\n")
