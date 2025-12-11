@@ -15,27 +15,14 @@
  * limitations under the License.
  */
 
-#ifndef QUEUE_FACTORY_IMPL_H
-#define QUEUE_FACTORY_IMPL_H
+#include "buffer_exporter.h"
+#include "telemetry/telemetry_plugin.h"
+#include "telemetry/telemetry_exporter.h"
 
-#include "posix_queue.h"
+// Plugin type alias for convenience
+using buffer_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryBufferExporter>;
 
-namespace QueueFactory {
-std::unique_ptr<nixlPosixQueue>
-createPosixAioQueue(int num_entries, nixl_xfer_op_t operation);
-
-std::unique_ptr<nixlPosixQueue>
-createUringQueue(int num_entries, nixl_xfer_op_t operation);
-
-std::unique_ptr<nixlPosixQueue>
-createLinuxAioQueue(int num_entries, nixl_xfer_op_t operation);
-
-bool
-isPosixAioAvailable();
-bool
-isLinuxAioAvailable();
-bool
-isUringAvailable();
-}; // namespace QueueFactory
-
-#endif // QUEUE_FACTORY_IMPL_H
+nixlTelemetryPlugin *
+createStaticBUFFERPlugin() {
+    return buffer_exporter_plugin_t::create(nixlTelemetryPluginApiVersionV1, "buffer", "1.0.0");
+}

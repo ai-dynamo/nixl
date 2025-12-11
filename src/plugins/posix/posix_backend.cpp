@@ -111,6 +111,10 @@ namespace {
             if (custom_params->count("use_posix_aio") > 0) {
                 const auto &value = custom_params->at("use_posix_aio");
                 if (value == "true" || value == "1") {
+                    if (!QueueFactory::isPosixAioAvailable()) {
+                        NIXL_ERROR << "posix_aio backend requested but not available at runtime";
+                        return queue_t::UNSUPPORTED;
+                    }
                     return queue_t::POSIXAIO;
                 }
             }
@@ -122,7 +126,13 @@ namespace {
         if (QueueFactory::isUringAvailable()) {
             return queue_t::URING;
         }
-        return queue_t::POSIXAIO;
+        if (QueueFactory::isPosixAioAvailable()) {
+            return queue_t::POSIXAIO;
+        }
+
+        // Should never reach here. At least one of the queues should be available.
+        NIXL_ASSERT(false);
+        return queue_t::UNSUPPORTED;
     }
 }
 

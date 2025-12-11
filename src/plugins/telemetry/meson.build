@@ -13,26 +13,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[build-system]
-requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest", "build", "setuptools>=80.9.0"]
-build-backend = "mesonpy"
-
-[project]
-name = "nixl-cu12"
-version = "0.8.0"
-description = "NIXL Python API"
-readme = "README.md"
-license = "Apache-2.0"
-license-files = ["LICENSE"]
-requires-python = ">=3.10"
-authors = [
-  {name = "NIXL Developers", email = "nixl-developers@nvidia.com"}
-]
-
-dependencies = ["torch", "numpy"]
-
-[tool.isort]
-profile = "black"
-
-[tool.meson-python.args]
-setup = ["-Dinstall_headers=false"]
+subdir('prometheus')

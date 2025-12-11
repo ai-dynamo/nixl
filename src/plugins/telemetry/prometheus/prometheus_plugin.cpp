@@ -15,27 +15,22 @@
  * limitations under the License.
  */
 
-#ifndef QUEUE_FACTORY_IMPL_H
-#define QUEUE_FACTORY_IMPL_H
+#include "prometheus_exporter.h"
+#include "telemetry/telemetry_plugin.h"
+#include "telemetry/telemetry_exporter.h"
 
-#include "posix_queue.h"
+// Plugin type alias for convenience
+using prometheus_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryPrometheusExporter>;
 
-namespace QueueFactory {
-std::unique_ptr<nixlPosixQueue>
-createPosixAioQueue(int num_entries, nixl_xfer_op_t operation);
+// Plugin initialization function - must be extern "C" for dynamic loading
+extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
+nixl_telemetry_plugin_init() {
+    return prometheus_exporter_plugin_t::create(
+        nixlTelemetryPluginApiVersionV1, "prometheus", "1.0.0");
+}
 
-std::unique_ptr<nixlPosixQueue>
-createUringQueue(int num_entries, nixl_xfer_op_t operation);
-
-std::unique_ptr<nixlPosixQueue>
-createLinuxAioQueue(int num_entries, nixl_xfer_op_t operation);
-
-bool
-isPosixAioAvailable();
-bool
-isLinuxAioAvailable();
-bool
-isUringAvailable();
-}; // namespace QueueFactory
-
-#endif // QUEUE_FACTORY_IMPL_H
+// Plugin cleanup function
+extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT void
+nixl_telemetry_plugin_fini() {
+    // Nothing to clean up for prometheus exporter
+}
