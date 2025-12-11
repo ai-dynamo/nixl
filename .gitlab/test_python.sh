@@ -40,20 +40,33 @@ export NIXL_PREFIX=${INSTALL_DIR}
 # Raise exceptions for logging errors
 export NIXL_DEBUG_LOGGING=yes
 
+if [ -n "$VIRTUAL_ENV" ] && grep -q '^uv =' "$VIRTUAL_ENV/pyvenv.cfg" 2>/dev/null; then
+    pip3="uv pip"
+else
+    pip3="python3 -m pip"
+fi
+
+# Install build dependencies
+if [ -n "$VIRTUAL_ENV" ] ; then
+    # Install full build dependencies in venv
+    $pip3 install --break-system-packages meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
+else
+    # Install minimal build dependencies in system python
+    $pip3 install --break-system-packages tomlkit
+fi
 # Set the correct wheel name based on the CUDA version
 cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
 case "$cuda_major" in
     12|13) echo "CUDA $cuda_major detected" ;;
     *) echo "Error: Unsupported CUDA version $cuda_major"; exit 1 ;;
 esac
-pip3 install --break-system-packages tomlkit
 ./contrib/tomlutil.py --wheel-name "nixl-cu${cuda_major}" pyproject.toml
 # Control ninja parallelism during pip build to prevent OOM (NPROC from common.sh)
-pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
-pip3 install --break-system-packages dist/nixl-*none-any.whl
-pip3 install --break-system-packages pytest
-pip3 install --break-system-packages pytest-timeout
-pip3 install --break-system-packages zmq
+$pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
+$pip3 install --break-system-packages dist/nixl-*none-any.whl
+$pip3 install --break-system-packages pytest
+$pip3 install --break-system-packages pytest-timeout
+$pip3 install --break-system-packages zmq
 
 # Add user pip packages to PATH
 export PATH="$HOME/.local/bin:$PATH"
