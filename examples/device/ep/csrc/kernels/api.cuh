@@ -71,8 +71,8 @@ struct gpu_nixl_ctx {
         return remote_counter_reqs[dest_rank];
     }
 
-    __device__ inline size_t remote_counter_offset_get(int local_rank, int local_expert_idx) {
-        return (local_expert_idx * num_ranks + local_rank) * sizeof(uint64_t);
+    __device__ inline size_t remote_counter_offset_get(int local_expert_idx) {
+        return (local_expert_idx * num_ranks + rank) * sizeof(uint64_t);
     }
 
     __device__ inline nixlGpuXferReqH remote_barrier_get(int dest_rank) {
