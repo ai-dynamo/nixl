@@ -91,7 +91,7 @@ if $TEST_LIBFABRIC ; then
     ./bin/nixl_example LIBFABRIC
 fi
 ./bin/nixl_etcd_example
-# TODO: Remove UCX_GDR_COPY_SHARED_MD=n once NIXL uses a version of UCX withUCX#11049.
+# TODO: Remove UCX_GDR_COPY_SHARED_MD=n once UCX is fixed.
 UCX_GDR_COPY_SHARED_MD=n ./bin/ucx_backend_test
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
