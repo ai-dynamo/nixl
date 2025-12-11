@@ -59,7 +59,7 @@ sleep 5
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
 
-DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 --check_consistency"
+DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4"
 
 run_nixlbench() {
     args="$@"
@@ -96,15 +96,16 @@ fi
 for op_type in READ WRITE; do
     for initiator in $seg_types; do
         for target in $seg_types; do
-            run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+            run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
         done
     done
 done
 
 for op_type in READ WRITE; do
-    run_nixlbench_one_worker --backend POSIX --op_type $op_type
+    run_nixlbench_one_worker --backend POSIX --op_type $op_type --check_consistency
 done
 
+# UCCL has a bug for data validation
 if $HAS_GPU ; then
     for op_type in READ WRITE; do
         for initiator in $seg_types; do
