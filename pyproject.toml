@@ -36,3 +36,20 @@ profile = "black"
 
 [tool.meson-python.args]
 setup = ["-Dinstall_headers=false"]
+
+[tool.pytest.ini_options]
+markers = [
+    "functional: Functional tests for NIXL EP Buffer",
+    "unit: Unit tests for Buffer methods",
+    "perf: Performance tests",
+    "combine: Tests for combine operations",
+    "dispatch: Tests for dispatch operations",
+    "connection: Tests for connection management",
+    "masking: Tests for mask buffer operations",
+    "e2e: End-to-end tests",
+    "elastic: Elastic scaling tests",
+    "bugs: Bug reproduction tests",
+]
+filterwarnings = [
+    "ignore::pytest.PytestCollectionWarning",
+]
