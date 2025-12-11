@@ -1688,7 +1688,10 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
         ret = NIXL_SUCCESS;
     }
 
-    if (ret != NIXL_SUCCESS)
+    if (ret == NIXL_ERR_NOT_FOUND)
+        NIXL_INFO << __FUNCTION__ << ": remote metadata for agent '" << remote_agent
+                  << "' not found.";
+    else if (ret != NIXL_SUCCESS)
         NIXL_ERROR_FUNC << "error invalidating remote metadata for agent '" << remote_agent
                         << "' with status " << ret;
     return ret;
