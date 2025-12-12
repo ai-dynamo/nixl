@@ -34,54 +34,50 @@ enum nixl_telemetry_stat_status_t {
 // Contains pointers to corresponding backend engine and its handler, and populated
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
 class nixlXferReqH {
-    private:
-        nixlBackendEngine* engine         = nullptr;
-        nixlBackendReqH*   backendHandle  = nullptr;
+private:
+    nixlBackendEngine *engine = nullptr;
+    nixlBackendReqH *backendHandle = nullptr;
 
-        nixl_meta_dlist_t* initiatorDescs = nullptr;
-        nixl_meta_dlist_t* targetDescs    = nullptr;
+    std::shared_ptr<nixl_meta_dlist_t> initiatorDescs;
+    std::shared_ptr<nixl_meta_dlist_t> targetDescs;
 
-        std::string        remoteAgent;
-        nixl_blob_t        notifMsg;
-        bool               hasNotif       = false;
+    std::string remoteAgent;
+    nixl_blob_t notifMsg;
+    bool hasNotif = false;
 
-        nixl_xfer_op_t     backendOp;
-        nixl_status_t      status;
+    nixl_xfer_op_t backendOp;
+    nixl_status_t status;
 
-        nixl_xfer_telem_t telemetry;
+    nixl_xfer_telem_t telemetry;
 
-    public:
-        inline nixlXferReqH() { }
+public:
+    inline nixlXferReqH() {}
 
-        inline ~nixlXferReqH() {
-            // delete checks for nullptr itself
-            delete initiatorDescs;
-            delete targetDescs;
-            if (backendHandle != nullptr)
-                engine->releaseReqH(backendHandle);
-        }
+    inline ~nixlXferReqH() {
+        // shared_ptr handles cleanup automatically
+        if (backendHandle != nullptr) engine->releaseReqH(backendHandle);
+    }
 
-        void
-        updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry,
-                           nixl_telemetry_stat_status_t stat_status);
+    void
+    updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry,
+                       nixl_telemetry_stat_status_t stat_status);
 
-        friend class nixlAgent;
+    friend class nixlAgent;
 };
 
 class nixlDlistH {
-    private:
-        std::unordered_map<nixlBackendEngine*, nixl_meta_dlist_t*> descs;
+private:
+    std::unordered_map<nixlBackendEngine *, std::shared_ptr<nixl_meta_dlist_t>> descs;
 
-        std::string        remoteAgent;
-        bool               isLocal;
+    std::string remoteAgent;
+    bool isLocal;
 
-    public:
-        inline nixlDlistH() { }
+public:
+    inline nixlDlistH() {}
 
-        inline ~nixlDlistH() {
-            for (auto & elm : descs)
-                delete elm.second;
-        }
+    inline ~nixlDlistH() {
+        // shared_ptr handles cleanup automatically
+    }
 
     friend class nixlAgent;
 };
