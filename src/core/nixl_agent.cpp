@@ -629,7 +629,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     }
 
     for (auto & backend : *backend_set) {
-        handle->descs[backend] = new nixl_meta_dlist_t(descs.getType());
+        handle->descs[backend] = std::make_shared<nixl_meta_dlist_t>(descs.getType());
         if (init_side)
             ret = data->memorySection->populate(
                        descs, backend, *(handle->descs[backend]));
@@ -639,7 +639,6 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         if (ret == NIXL_SUCCESS) {
             count++;
         } else {
-            delete handle->descs[backend];
             handle->descs.erase(backend);
         }
     }
@@ -725,8 +724,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixl_meta_dlist_t* local_descs  = local_side->descs.at(backend);
-    nixl_meta_dlist_t* remote_descs = remote_side->descs.at(backend);
+    auto local_descs  = local_side->descs.at(backend);
+    auto remote_descs = remote_side->descs.at(backend);
     size_t total_bytes = 0;
 
     if ((desc_count == 0) || (remote_indices.size() == 0) ||
@@ -767,18 +766,25 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     }
 
     std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>();
-    handle->initiatorDescs = new nixl_meta_dlist_t(local_descs->getType(), desc_count);
-
-    handle->targetDescs = new nixl_meta_dlist_t(remote_descs->getType(), desc_count);
 
     if (extra_params && extra_params->skipDescMerge) {
+        // Optimization: Share the descriptor list pointers directly, avoiding allocation and copying
+        handle->initiatorDescs = local_side->descs.at(backend);
+        handle->targetDescs = remote_side->descs.at(backend);
+    } else {
+        // Allocate new descriptor lists for merging
+        handle->initiatorDescs = std::make_shared<nixl_meta_dlist_t>(local_descs->getType(), desc_count);
+        handle->targetDescs = std::make_shared<nixl_meta_dlist_t>(remote_descs->getType(), desc_count);
+
         for (int i=0; i<desc_count; ++i) {
             (*handle->initiatorDescs)[i] =
                                      (*local_descs)[local_indices[i]];
             (*handle->targetDescs)[i] =
                                      (*remote_descs)[remote_indices[i]];
         }
-    } else {
+    }
+
+    if (!(extra_params && extra_params->skipDescMerge)) {
         int i = 0, j = 0; //final list size
         while (i<(desc_count)) {
             nixlMetaDesc local_desc1  = (*local_descs) [local_indices[i]];
@@ -914,9 +920,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
     std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>();
-    handle->initiatorDescs = new nixl_meta_dlist_t(local_descs.getType());
+    handle->initiatorDescs = std::make_shared<nixl_meta_dlist_t>(local_descs.getType());
 
-    handle->targetDescs = new nixl_meta_dlist_t(remote_descs.getType());
+    handle->targetDescs = std::make_shared<nixl_meta_dlist_t>(remote_descs.getType());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.

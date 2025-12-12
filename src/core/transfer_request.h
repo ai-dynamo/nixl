@@ -38,8 +38,8 @@ class nixlXferReqH {
         nixlBackendEngine* engine         = nullptr;
         nixlBackendReqH*   backendHandle  = nullptr;
 
-        nixl_meta_dlist_t* initiatorDescs = nullptr;
-        nixl_meta_dlist_t* targetDescs    = nullptr;
+        std::shared_ptr<nixl_meta_dlist_t> initiatorDescs;
+        std::shared_ptr<nixl_meta_dlist_t> targetDescs;
 
         std::string        remoteAgent;
         nixl_blob_t        notifMsg;
@@ -54,9 +54,7 @@ class nixlXferReqH {
         inline nixlXferReqH() { }
 
         inline ~nixlXferReqH() {
-            // delete checks for nullptr itself
-            delete initiatorDescs;
-            delete targetDescs;
+            // shared_ptr handles cleanup automatically
             if (backendHandle != nullptr)
                 engine->releaseReqH(backendHandle);
         }
@@ -70,7 +68,7 @@ class nixlXferReqH {
 
 class nixlDlistH {
     private:
-        std::unordered_map<nixlBackendEngine*, nixl_meta_dlist_t*> descs;
+        std::unordered_map<nixlBackendEngine*, std::shared_ptr<nixl_meta_dlist_t>> descs;
 
         std::string        remoteAgent;
         bool               isLocal;
@@ -79,8 +77,7 @@ class nixlDlistH {
         inline nixlDlistH() { }
 
         inline ~nixlDlistH() {
-            for (auto & elm : descs)
-                delete elm.second;
+            // shared_ptr handles cleanup automatically
         }
 
     friend class nixlAgent;
