@@ -323,7 +323,7 @@ public:
             connections_.insert(conn);
             break;
         case NIXL_SUCCESS:
-            // Nothing to do
+            connections_.insert(conn);
             break;
         default:
             // Error. Release all previously initiated ops and exit:
