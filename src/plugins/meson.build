@@ -25,6 +25,10 @@ if enabled_plugins.get('POSIX')
     subdir('posix')
 endif
 
+if enabled_plugins.get('NULL')
+    subdir('null')
+endif
+
 if enabled_plugins.get('OBJ')
     subdir('obj')
 endif

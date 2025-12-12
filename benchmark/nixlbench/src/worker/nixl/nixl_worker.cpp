@@ -259,6 +259,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             std::cout << "    Device " << dev.device_id << " [" << dev.device_type
                       << "]: " << dev.device_path << " (" << dev.security_flags << ")" << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_NULL)) {
+        std::cout << "NULL backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
         std::cout << "UCCL backend" << std::endl;
         backend_params["in_python"] = "0";
