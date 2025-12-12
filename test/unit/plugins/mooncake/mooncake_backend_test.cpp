@@ -487,8 +487,9 @@ test_intra_agent_transfer(bool p_thread, nixlBackendEngine *mooncake, nixl_mem_t
 
     std::cout << std::endl << std::endl;
     std::cout << "****************************************************" << std::endl;
-    std::cout << "   Intra-agent memory transfer test: " << "P-Thr=" << (p_thread ? "ON" : "OFF")
-              << ", " << memType2Str(mem_type) << std::endl;
+    std::cout << "   Intra-agent memory transfer test: "
+              << "P-Thr=" << (p_thread ? "ON" : "OFF") << ", " << memType2Str(mem_type)
+              << std::endl;
     std::cout << "****************************************************" << std::endl;
     std::cout << std::endl << std::endl;
 
@@ -728,7 +729,7 @@ main() {
     for (int i = 0; i < 2; i++) {
         // Test local memory to local memory transfer
         //  std::cout << "thread_on" <<i<<thread_on[i]<<endl;
-         test_intra_agent_transfer(thread_on[i], mooncake[i][0], DRAM_SEG);
+        test_intra_agent_transfer(thread_on[i], mooncake[i][0], DRAM_SEG);
 #ifdef HAVE_CUDA
         if (n_vram_dev > 0) {
             test_intra_agent_transfer(thread_on[i], mooncake[i][0], VRAM_SEG);
@@ -780,13 +781,13 @@ main() {
 #endif
     }
 
-// #ifdef HAVE_CUDA
+    // #ifdef HAVE_CUDA
     // if (n_vram_dev > 1) {
-        // Test if registering on a different GPU fails correctly
-        // allocateWrongGPUTest(mooncake[0][0], 1);
-        // std::cout << "Verified registration on wrong GPU fails correctly\n";
+    // Test if registering on a different GPU fails correctly
+    // allocateWrongGPUTest(mooncake[0][0], 1);
+    // std::cout << "Verified registration on wrong GPU fails correctly\n";
     // }
-// #endif
+    // #endif
 
     // Deallocate Mooncake engines
     for (int i = 0; i < 2; i++) {
