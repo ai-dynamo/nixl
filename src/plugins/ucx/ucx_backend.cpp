@@ -364,6 +364,7 @@ public:
     status() {
         if (requests_.empty()) {
             /* No pending transmissions */
+            connections_.clear();
             return NIXL_SUCCESS;
         }
 
