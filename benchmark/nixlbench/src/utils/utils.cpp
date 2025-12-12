@@ -47,7 +47,7 @@ DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 DEFINE_string(
     backend,
     XFERBENCH_BACKEND_UCX,
-    "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
+    "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI, NULL] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]. Note: Storage backends always use DRAM locally.");
@@ -542,7 +542,8 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_NULL == xferBenchConfig::backend);
 }
 /**********
  * xferBench Utils
