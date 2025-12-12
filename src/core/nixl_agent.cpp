@@ -1345,6 +1345,49 @@ nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
 }
 
 nixl_status_t
+nixlAgent::getMappedPtrs(const nixlDlistH *dlist_hndl,
+                         std::vector<void *> &ptrs,
+                         const nixl_opt_args_t *extra_params) const {
+    ptrs.clear();
+    if (!dlist_hndl) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_LOCK_GUARD(data->lock);
+
+    nixlBackendEngine *backend = nullptr;
+
+    if (extra_params && extra_params->backends.size() > 0) {
+        for (auto &elm : extra_params->backends) {
+            if (dlist_hndl->descs.count(elm->engine) > 0) {
+                backend = elm->engine;
+                break;
+            }
+        }
+    } else {
+        for (auto &bknd : dlist_hndl->descs) {
+            backend = bknd.first;
+            break;
+        }
+    }
+
+    if (!backend) {
+        NIXL_ERROR_FUNC << "could not find a backend in the specified or "
+                           "available list of backends for the prepped Dlist";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    nixl_meta_dlist_t *meta_dlist = dlist_hndl->descs.at(backend);
+
+    nixl_opt_b_args_t opt_args;
+    if (extra_params && extra_params->customParam.length() > 0) {
+        opt_args.customParam = extra_params->customParam;
+    }
+
+    return backend->getMappedPtrs(*meta_dlist, ptrs, &opt_args);
+}
+
+nixl_status_t
 nixlAgent::getNotifs(nixl_notifs_t &notif_map,
                      const nixl_opt_args_t* extra_params) {
     notif_list_t    bknd_notif_list;

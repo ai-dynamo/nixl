@@ -388,6 +388,26 @@ class nixlAgent {
         nixl_status_t
         releasedDlistH (nixlDlistH* dlist_hndl) const;
 
+        /**
+         * @brief  Retrieve pointers mapped into the local virtual address space for
+         *         all memory regions described by descriptors in a prepared list.
+         *
+         *         If the descriptor refers to remote memory, this attempts to return a valid
+         *         local virtual address that maps to the remote address.
+         *         For descriptors where mapping is not supported, the corresponding pointer
+         *         will be nullptr.
+         *
+         * @param  dlist_hndl    Prepared descriptor list handle
+         * @param  ptrs [out]    Output vector of pointers (one per descriptor in the list).
+         *                       Will be resized to match descriptor count.
+         * @param  extra_params  Optional extra parameters in getting the mapped pointers.
+         * @return nixl_status_t NIXL_SUCCESS if the query completed successfully.
+         *                       Individual pointers may be nullptr if mapping is not supported.
+         */
+        nixl_status_t
+        getMappedPtrs(const nixlDlistH *dlist_hndl,
+                      std::vector<void *> &ptrs,
+                      const nixl_opt_args_t *extra_params = nullptr) const;
 
         /*** Notification Handling ***/
 

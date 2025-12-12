@@ -34,4 +34,21 @@ rkey::unpackUcpRkey(const nixlUcxEp &ep, const void *rkey_buffer) {
     }
     return rkey;
 }
+
+void *
+rkey::getPtr(uint64_t raddr) const {
+    void *ptr = nullptr;
+    const ucs_status_t status = ucp_rkey_ptr(rkey_.get(), raddr, &ptr);
+
+    if (status == UCS_OK) {
+        return ptr;
+    }
+
+    if (status == UCS_ERR_UNREACHABLE) {
+        return nullptr;
+    }
+
+    throw std::runtime_error(std::string("Failed to get pointer from UCX rkey: ") +
+                             ucs_status_string(status));
+}
 } // namespace nixl::ucx

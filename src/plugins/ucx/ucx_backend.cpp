@@ -1743,6 +1743,32 @@ nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta,
     }
 }
 
+nixl_status_t
+nixlUcxEngine::getMappedPtrs(const nixl_meta_dlist_t &meta_dlist,
+                             std::vector<void *> &ptrs,
+                             const nixl_opt_b_args_t *opt_args) const {
+    ptrs.resize(meta_dlist.descCount(), nullptr);
+
+    const auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
+    const size_t worker_id = opt_worker_id.value_or(getWorkerId());
+
+    for (int i = 0; i < meta_dlist.descCount(); ++i) {
+        const nixlMetaDesc &desc = meta_dlist[i];
+        const auto *ucx_meta = static_cast<const nixlUcxPublicMetadata *>(desc.metadataP);
+
+        try {
+            const auto &rkey_obj = ucx_meta->getRkey(worker_id);
+            ptrs[i] = rkey_obj.getPtr(desc.addr);
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << "getMappedPtrs failed for descriptor " << i << ": " << e.what();
+            return NIXL_ERR_BACKEND;
+        }
+    }
+
+    return NIXL_SUCCESS;
+}
+
 int nixlUcxEngine::progress() {
     // TODO: add listen for connection handling if necessary
     int ret = 0;

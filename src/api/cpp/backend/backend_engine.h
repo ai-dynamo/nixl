@@ -183,6 +183,15 @@ class nixlBackendEngine {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 
+        // Retrieve pointers mapped into the local virtual address space for
+        // all memory regions described by descriptors in a prepared list.
+        virtual nixl_status_t
+        getMappedPtrs(const nixl_meta_dlist_t &meta_dlist,
+                      std::vector<void *> &ptrs,
+                      const nixl_opt_b_args_t *opt_args = nullptr) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
         // *** Needs to be implemented if supportsRemote() is true *** //
 
         // Gets serialized form of public metadata

@@ -208,6 +208,11 @@ public:
                   void *signal,
                   const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
+    nixl_status_t
+    getMappedPtrs(const nixl_meta_dlist_t &meta_dlist,
+                  std::vector<void *> &ptrs,
+                  const nixl_opt_b_args_t *opt_args = nullptr) const override;
+
     int
     progress();
 

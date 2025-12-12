@@ -37,6 +37,9 @@ public:
         return rkey_.get();
     }
 
+    [[nodiscard]] void *
+    getPtr(uint64_t raddr) const;
+
 private:
     [[nodiscard]] static ucp_rkey_h
     unpackUcpRkey(const nixlUcxEp &, const void *rkey_buffer);
