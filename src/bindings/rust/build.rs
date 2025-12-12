@@ -84,6 +84,34 @@ fn get_nixl_libs() -> Option<Vec<pkg_config::Library>> {
     }
 }
 
+/// Check if NIXL library is available on the system
+fn check_nixl_available() -> bool {
+    // First try pkg-config
+    if pkg_config::probe_library("nixl").is_ok() {
+        return true;
+    }
+
+    // Fall back to checking common library paths
+    let nixl_root_path =
+        env::var("NIXL_PREFIX").unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
+    let arch = get_arch();
+
+    // Check various possible library locations
+    let possible_paths = [
+        format!("{}/lib/{}-linux-gnu/libnixl.so", nixl_root_path, arch),
+        format!("{}/lib64/libnixl.so", nixl_root_path),
+        format!("{}/lib/libnixl.so", nixl_root_path),
+    ];
+
+    for path in &possible_paths {
+        if std::path::Path::new(path).exists() {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     let nixl_root_path =
         env::var("NIXL_PREFIX").unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
@@ -233,25 +261,37 @@ fn create_builder() -> cc::Build {
 fn run_build(use_stub_api: bool) {
     let mut cc_builder = create_builder();
 
-    if !use_stub_api {
-        let no_fallback = env::var("NIXL_NO_STUBS_FALLBACK")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-
-        if let Err(e) = build_nixl(&mut cc_builder) {
-            if !no_fallback {
-                println!(
-                    "cargo:warning=NIXL build failed: {}, falling back to stub API",
-                    e
-                );
-                let mut stub_builder = create_builder();
-                build_stubs(&mut stub_builder);
-            } else {
-                panic!("Failed to build NIXL: {}", e);
-            }
-        }
-    } else {
+    if use_stub_api {
         build_stubs(&mut cc_builder);
+        return;
+    }
+
+    let no_fallback = env::var("NIXL_NO_STUBS_FALLBACK")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    // Check if NIXL is available before attempting to build
+    if !check_nixl_available() {
+        if no_fallback {
+            panic!("NIXL library not found and NIXL_NO_STUBS_FALLBACK is set");
+        }
+        println!("cargo:warning=NIXL library not found, building with stub API");
+        build_stubs(&mut cc_builder);
+        return;
+    }
+
+    // Try to build with NIXL
+    if let Err(e) = build_nixl(&mut cc_builder) {
+        if !no_fallback {
+            println!(
+                "cargo:warning=NIXL build failed: {}, falling back to stub API",
+                e
+            );
+            let mut stub_builder = create_builder();
+            build_stubs(&mut stub_builder);
+        } else {
+            panic!("Failed to build NIXL: {}", e);
+        }
     }
 }
 

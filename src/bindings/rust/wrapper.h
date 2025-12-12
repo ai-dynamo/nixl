@@ -16,9 +16,18 @@
  */
 #pragma once
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
+// Use built-in compiler types to avoid system header dependencies
+typedef __SIZE_TYPE__ size_t;
+typedef __UINT64_TYPE__ uint64_t;
+typedef __INT64_TYPE__ int64_t;
+typedef __UINT16_TYPE__ uint16_t;
+typedef __UINTPTR_TYPE__ uintptr_t;
+
+#ifndef __cplusplus
+typedef _Bool bool;
+#define true 1
+#define false 0
+#endif
 
 #ifdef __cplusplus
 extern "C" {
