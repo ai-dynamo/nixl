@@ -452,6 +452,9 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
 
     if (ucp_version >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");
+    } else {
+        NIXL_WARN << "UCX version " << major_version << "." << minor_version << "."
+                  << release_number << " is less than 1.19, support is limited";
     }
 
     std::string elem;
