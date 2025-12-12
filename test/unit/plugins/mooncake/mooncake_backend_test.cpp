@@ -780,13 +780,13 @@ main() {
 #endif
     }
 
-// #ifdef HAVE_CUDA
-//     if (n_vram_dev > 1) {
-//         // Test if registering on a different GPU fails correctly
-//         allocateWrongGPUTest(mooncake[0][0], 1);
-//         std::cout << "Verified registration on wrong GPU fails correctly\n";
-//     }
-// #endif
+#ifdef HAVE_CUDA
+    if (n_vram_dev > 1) {
+        // Test if registering on a different GPU fails correctly
+        // allocateWrongGPUTest(mooncake[0][0], 1);
+        // std::cout << "Verified registration on wrong GPU fails correctly\n";
+    }
+#endif
 
     // Deallocate Mooncake engines
     for (int i = 0; i < 2; i++) {
