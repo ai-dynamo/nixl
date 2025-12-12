@@ -217,7 +217,17 @@ nixl_status_t nixlPosixBackendReqH::prepXfer() {
 }
 
 nixl_status_t nixlPosixBackendReqH::checkXfer() {
-    return queue->checkCompleted();
+    nixl_status_t status = queue->checkCompleted();
+
+    if (status == NIXL_IN_PROG) {
+        // Submit more IOs to maintain target outstanding count
+        nixl_status_t submit_status = queue->submit(local, remote);
+        if (submit_status == NIXL_ERR_BACKEND || submit_status == NIXL_ERR_NOT_ALLOWED) {
+            return submit_status;
+        }
+    }
+
+    return status;
 }
 
 nixl_status_t nixlPosixBackendReqH::postXfer() {
