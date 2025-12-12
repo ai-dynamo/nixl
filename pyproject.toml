@@ -19,7 +19,7 @@ build-backend = "mesonpy"
 
 [project]
 name = "nixl-cu12"
-version = "0.8.0"
+version = "0.9.0"
 description = "NIXL Python API"
 readme = "README.md"
 license = "MIT AND Apache-2.0"

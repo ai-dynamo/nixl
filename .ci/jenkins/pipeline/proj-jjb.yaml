@@ -269,7 +269,7 @@
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
-          description: "NIXL version to use (tag like 0.8.0, branch name, or commit hash)"
+          description: "NIXL version to use (tag like 0.9.0, branch name, or commit hash)"
       - string:
           name: "UCX_VERSION"
           default: "v1.20.x"
