@@ -253,10 +253,6 @@ export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgcon
 export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
 export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 
-# Disabling CUDA IPC not to use NVLINK, as it slows down local
-# UCX transfers and can cause contention with local collectives.
-export UCX_TLS=^cuda_ipc
-
 # shellcheck disable=SC2086
 meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
 ninja -j"$NPROC" -C nixl_build && ninja -j"$NPROC" -C nixl_build install
