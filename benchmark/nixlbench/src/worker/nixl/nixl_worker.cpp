@@ -1250,6 +1250,7 @@ execTransfer(nixlAgent *agent,
 
         // Setup transfer parameters
         nixl_opt_args_t params;
+        params.skipDescMerge = true; // Enable optimization to avoid allocation and copying
         std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
         if (!xferBenchConfig::isStorageBackend()) {
             params.notifMsg = "0xBEEF";
