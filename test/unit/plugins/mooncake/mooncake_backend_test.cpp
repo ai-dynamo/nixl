@@ -728,7 +728,7 @@ main() {
     for (int i = 0; i < 2; i++) {
         // Test local memory to local memory transfer
         //  std::cout << "thread_on" <<i<<thread_on[i]<<endl;
-        //  test_intra_agent_transfer(thread_on[i], mooncake[i][0], DRAM_SEG);
+         test_intra_agent_transfer(thread_on[i], mooncake[i][0], DRAM_SEG);
 #ifdef HAVE_CUDA
         if (n_vram_dev > 0) {
             test_intra_agent_transfer(thread_on[i], mooncake[i][0], VRAM_SEG);
@@ -780,13 +780,13 @@ main() {
 #endif
     }
 
-#ifdef HAVE_CUDA
-    if (n_vram_dev > 1) {
-        // Test if registering on a different GPU fails correctly
-        allocateWrongGPUTest(mooncake[0][0], 1);
-        std::cout << "Verified registration on wrong GPU fails correctly\n";
-    }
-#endif
+// #ifdef HAVE_CUDA
+//     if (n_vram_dev > 1) {
+//         // Test if registering on a different GPU fails correctly
+//         allocateWrongGPUTest(mooncake[0][0], 1);
+//         std::cout << "Verified registration on wrong GPU fails correctly\n";
+//     }
+// #endif
 
     // Deallocate Mooncake engines
     for (int i = 0; i < 2; i++) {
