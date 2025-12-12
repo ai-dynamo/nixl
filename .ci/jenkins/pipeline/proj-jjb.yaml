@@ -60,8 +60,8 @@
         currentBuild.description = githubHelper.getBuildDescription()
         try {{
             // Trigger the actual build and test jobs in parallel
-            parallel build: {{
-                def buildJob = 'nixl-ci-build'
+            parallel 'non-gpu': {{
+                def buildJob = 'nixl-ci-non-gpu'
                 def run = build job: buildJob, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
@@ -72,8 +72,8 @@
                 }} else {{
                     error("${{buildJob}} FAILED: ${{jobUrl}}")
                 }}
-            }}, test: {{
-                def buildJob = 'nixl-ci-test'
+            }}, 'gpu': {{
+                def buildJob = 'nixl-ci-gpu'
                 def run = build job: buildJob, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
@@ -98,7 +98,7 @@
 
 # Template for the main build job that performs the actual build process
 - job-template:
-    name: "{jjb_proj}-build"      # Will be expanded to 'nixl-ci-build'
+    name: "{jjb_proj}-non-gpu"      # Will be expanded to 'nixl-ci-non-gpu'
     project-type: pipeline
     disabled: false
     properties:
@@ -111,7 +111,7 @@
         - inject:
             keep-system-variables: true
             properties-content: |
-              jjb_proj={jjb_proj}-build
+              jjb_proj={jjb_proj}-non-gpu
     description: Do NOT edit this job through the Web GUI !
     concurrent: true
     sandbox: true
@@ -160,7 +160,7 @@
 
 # Template for the main test job that performs the actual test process
 - job-template:
-    name: "{jjb_proj}-test"      # Will be expanded to 'nixl-ci-test'
+    name: "{jjb_proj}-gpu"      # Will be expanded to 'nixl-ci-gpu'
     project-type: pipeline
     disabled: false
     properties:
@@ -173,7 +173,7 @@
         - inject:
             keep-system-variables: true
             properties-content: |
-              jjb_proj={jjb_proj}-test
+              jjb_proj={jjb_proj}-gpu
     description: Do NOT edit this job through the Web GUI !
     concurrent: true
     sandbox: true
@@ -333,6 +333,6 @@
     jjb_gh_url: 'https://github.com/ai-dynamo/nixl'  # GitHub web URL
     jobs:
         - "{jjb_proj}-dispatcher"  # Create dispatcher job
-        - "{jjb_proj}-build"       # Create build job
+        - "{jjb_proj}-non-gpu"       # Create non-gpu job
         - "{jjb_proj}-build-container"  # Create container builder job
-        - "{jjb_proj}-test"        # Create test job
+        - "{jjb_proj}-gpu"        # Create gpu job
