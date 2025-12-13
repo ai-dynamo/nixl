@@ -59,6 +59,9 @@ sleep 5
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
 
+# TODO: Remove UCX_GDR_COPY_SHARED_MD=n once UCX is fixed.
+export UCX_GDR_COPY_SHARED_MD=n
+
 DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4"
 
 run_nixlbench() {
