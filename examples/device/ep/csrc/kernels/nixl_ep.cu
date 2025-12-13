@@ -301,7 +301,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                                rank, local_expert_idx, src_rank, poll_count, current_value);
                     }
                 }
-                num_recv_tokens = current_value - 1;
+                current_value == 0 ? num_recv_tokens = 0 : num_recv_tokens = current_value - 1;
             }
 
             // Mask rank if timeout
