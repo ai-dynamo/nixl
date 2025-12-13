@@ -240,7 +240,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
             if (p2p_counter == nullptr) {
                 nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(dst_rank);
                 /* WARNING: original counter value is negative, I chose different encoding since our counters are uint64_ts */
-                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, num_tokens_sent + 1, nixl_ctx.remote_counter_offset_get(dst_expert_local_idx), dst_expert_local_idx % nixl_ctx.num_channels) == NIXL_IN_PROG); 
+                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, num_tokens_sent + 1, nixl_ctx.remote_counter_offset_get(dst_expert_local_idx), dst_expert_local_idx % nixl_ctx.num_channels) == NIXL_IN_PROG);
             } else {
                 /* WARNING: original counter value is negative, I chose different encoding since our counters are uint64_ts */
                 st_release_sys_global(p2p_counter, static_cast<uint64_t>(num_tokens_sent + 1));
@@ -783,7 +783,7 @@ combine(void* combined_x,
                 uint64_t *p2p_counter = nixl_ctx.counter_p2p_ptr_get(local_expert_idx, dst_rank);
                 if (p2p_counter == nullptr) {
                     nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(dst_rank);
-                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, 1, nixl_ctx.remote_counter_offset_get(local_expert_idx), local_expert_idx % nixl_ctx.num_channels) == NIXL_IN_PROG); 
+                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, 1, nixl_ctx.remote_counter_offset_get(local_expert_idx), local_expert_idx % nixl_ctx.num_channels) == NIXL_IN_PROG);
                 } else {
                     st_release_sys_global(p2p_counter, 1);
                 }
