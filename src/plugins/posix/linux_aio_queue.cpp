@@ -27,8 +27,6 @@ linuxAioQueue::linuxAioQueue(int num_entries, nixl_xfer_op_t operation)
     : io_ctx(io_context_t()),
       ios(num_entries),
       num_entries(num_entries),
-      num_ios_to_submit(0),
-      num_ios_to_complete(0),
       operation(operation) {
     if (num_entries <= 0) {
         throw std::runtime_error("Invalid number of entries for AIO queue");
@@ -52,37 +50,26 @@ linuxAioQueue::~linuxAioQueue() {
 }
 
 nixl_status_t
-linuxAioQueue::submit(const nixl_meta_dlist_t &, const nixl_meta_dlist_t &) {
-    if (!num_ios_to_submit) {
-        return NIXL_IN_PROG;
-    }
-
-    if (num_ios_to_complete) {
-        NIXL_ERROR << "previously submitted IO is not yet complete";
-        return NIXL_ERR_NOT_ALLOWED;
-    }
-
-    int ret = io_submit(io_ctx, num_ios_to_submit, ios_to_submit.data());
-    if (ret != num_ios_to_submit) {
-        if (ret < 0) {
-            NIXL_ERROR << absl::StrFormat("linux_aio submit failed: %s", nixl_strerror(-ret));
-        } else {
-            NIXL_ERROR << absl::StrFormat(
-                "linux_aio submit failed. Partial submission: %d/%d", num_ios_to_submit, ret);
-        }
+linuxAioQueue::submitBatch(int start_idx, int count, int &submitted_count) {
+    // Submit the batch starting from start_idx
+    int ret = io_submit(io_ctx, count, &ios_to_submit[start_idx]);
+    if (ret < 0) {
+        NIXL_ERROR << absl::StrFormat("linux_aio submit failed: %s", nixl_strerror(-ret));
+        submitted_count = 0;
         return NIXL_ERR_BACKEND;
     }
 
-    num_ios_to_complete = ret;
-    return NIXL_IN_PROG;
+    // io_submit can return partial submissions
+    submitted_count = ret;
+    if (ret != count) {
+        NIXL_ERROR << absl::StrFormat("linux_aio submit partial: %d/%d", ret, count);
+    }
+
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
 linuxAioQueue::checkCompleted() {
-    if (!num_ios_to_complete) {
-        return NIXL_SUCCESS;
-    }
-
     struct io_event events[32];
     int rc;
     struct timespec timeout = {0, 0};
@@ -100,9 +87,19 @@ linuxAioQueue::checkCompleted() {
         }
     }
 
-    num_ios_to_complete -= rc;
+    num_ios_outstanding -= rc;
+    if (!num_ios_outstanding) {
+        // No outstanding IOs, check if we need to submit more
+        if (num_ios_submitted_total < num_ios_to_submit) {
+            // More IOs to submit, signal to caller to submit more
+            return NIXL_IN_PROG;
+        }
+        // All IOs submitted and completed
+        num_ios_submitted_total = 0;
+        return NIXL_SUCCESS;
+    }
 
-    return num_ios_to_complete ? NIXL_IN_PROG : NIXL_SUCCESS;
+    return NIXL_IN_PROG; // Continue until all IOs are submitted and completed
 }
 
 nixl_status_t

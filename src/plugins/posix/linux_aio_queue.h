@@ -31,8 +31,6 @@ private:
     std::vector<struct iocb> ios; // Array of I/Os
     int num_entries; // Total number of entries expected
     std::vector<struct iocb *> ios_to_submit; // Array of I/Os to submit
-    int num_ios_to_submit; // Total number of entries to submit
-    int num_ios_to_complete; // Total number of entries to complete
     nixl_xfer_op_t operation; // Whether this is a read operation
 
     // Delete copy and move operations
@@ -47,7 +45,7 @@ public:
     linuxAioQueue(int num_entries, nixl_xfer_op_t operation);
     ~linuxAioQueue();
     nixl_status_t
-    submit(const nixl_meta_dlist_t &, const nixl_meta_dlist_t &) override;
+    submitBatch(int start_idx, int count, int &submitted_count) override;
     nixl_status_t
     checkCompleted() override;
     nixl_status_t

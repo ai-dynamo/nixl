@@ -24,19 +24,29 @@
 
 // Abstract base class for async I/O operations
 class nixlPosixQueue {
-    public:
-        virtual ~nixlPosixQueue() = default;
-        virtual nixl_status_t
-        submit (const nixl_meta_dlist_t &local, const nixl_meta_dlist_t &remote) = 0;
-        virtual nixl_status_t checkCompleted() = 0;
-        virtual nixl_status_t prepIO(int fd, void* buf, size_t len, off_t offset) = 0;
+protected:
+    int num_ios_to_submit = 0;
+    int num_ios_submitted_total = 0;
+    int num_ios_outstanding = 0;
+    static constexpr int MAX_IO_OUTSTANDING = 16;
 
-        enum class queue_t {
-            AIO,
-            URING,
-            POSIXAIO,
-            UNSUPPORTED,
-        };
+public:
+    virtual ~nixlPosixQueue() = default;
+    virtual nixl_status_t
+    submitBatch(int start_idx, int count, int &submitted_count) = 0;
+    virtual nixl_status_t
+    checkCompleted() = 0;
+    virtual nixl_status_t
+    prepIO(int fd, void *buf, size_t len, off_t offset) = 0;
+    nixl_status_t
+    submit(const nixl_meta_dlist_t &local, const nixl_meta_dlist_t &remote);
+
+    enum class queue_t {
+        AIO,
+        URING,
+        POSIXAIO,
+        UNSUPPORTED,
+    };
 };
 
 #endif // POSIX_QUEUE_H
