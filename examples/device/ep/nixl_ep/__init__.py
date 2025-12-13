@@ -18,6 +18,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
+
 from .buffer import Buffer
 from .utils import EventOverlap
 from . import nixl_ep_cpp as _nixl_ep_cpp
