@@ -240,7 +240,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
             if (p2p_counter == nullptr) {
                 nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(dst_rank);
                 /* WARNING: original counter value is negative, I chose different encoding since our counters are uint64_ts */
-                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, num_tokens_sent + 1, nixl_ctx.remote_counter_offset_get(dst_expert_local_idx), dst_expert_local_idx % nixl_ctx.num_channels) == NIXL_IN_PROG); 
+                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, num_tokens_sent + 1, nixl_ctx.remote_counter_offset_get(dst_expert_local_idx), dst_expert_local_idx % nixl_ctx.num_channels) == NIXL_IN_PROG);
             } else {
                 /* WARNING: original counter value is negative, I chose different encoding since our counters are uint64_ts */
                 st_release_sys_global(p2p_counter, static_cast<uint64_t>(num_tokens_sent + 1));
@@ -783,7 +783,7 @@ combine(void* combined_x,
                 uint64_t *p2p_counter = nixl_ctx.counter_p2p_ptr_get(local_expert_idx, dst_rank);
                 if (p2p_counter == nullptr) {
                     nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(dst_rank);
-                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, 1, nixl_ctx.remote_counter_offset_get(local_expert_idx), local_expert_idx % nixl_ctx.num_channels) == NIXL_IN_PROG); 
+                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, 1, nixl_ctx.remote_counter_offset_get(local_expert_idx), local_expert_idx % nixl_ctx.num_channels) == NIXL_IN_PROG);
                 } else {
                     st_release_sys_global(p2p_counter, 1);
                 }
@@ -1106,7 +1106,7 @@ void clean_mask_buffer(int* mask_buffer_ptr, int num_ranks, cudaStream_t stream)
 }
 
 template <int kNumThreads>
-__global__ void barrier(int thread_id, int rank, int num_ranks, 
+__global__ void barrier(int thread_id, int rank, int num_ranks,
                                         int* mask_buffer_ptr, int* sync_buffer_ptr, ep_kernels::gpu_nixl_ctx nixl_ctx) {
     EP_DEVICE_ASSERT(kNumThreads >= num_ranks);
     if (thread_id == 0) atomicAdd(sync_buffer_ptr + rank, -1);
@@ -1118,7 +1118,7 @@ __global__ void barrier(int thread_id, int rank, int num_ranks,
         const auto dst_ptr = reinterpret_cast<uint64_t>(sync_buffer_ptr + rank);
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
             if (rank != dst_rank) {
-                nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(dst_rank); 
+                nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(dst_rank);
                 nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(barrier_req, 0, rank*sizeof(int), dst_rank*sizeof(int), sizeof(int), 0);
             } else {
                 st_release_sys_global(reinterpret_cast<int*>(dst_ptr), cnt);
