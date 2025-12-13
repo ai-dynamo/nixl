@@ -106,6 +106,10 @@ private:
     std::shared_ptr<asioThreadPoolExecutor> executor_;
     std::shared_ptr<iS3Client> s3Client_;
     std::unordered_map<uint64_t, std::string> devIdToObjKey_;
+    // Store ETags from multipart uploads, indexed by upload_id
+    // Each upload_id can have multiple ETags (one per part uploaded)
+    mutable std::unordered_map<std::string, std::vector<std::string>> uploadIdToETags_;
+    mutable std::mutex etagsMutex_; // Protect concurrent access to ETags map
 };
 
 #endif // OBJ_BACKEND_H
