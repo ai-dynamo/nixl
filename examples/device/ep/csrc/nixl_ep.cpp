@@ -937,7 +937,7 @@ void Buffer::_nixl_ep_cleanup(const std::vector<int>& ranks) {
 
 void Buffer::_nixl_ep_counters_cleanup(const std::vector<int>& ranks) {
     for (int remote_rank : ranks) {
-        EP_HOST_ASSERT(remote_rank != rank); 
+        EP_HOST_ASSERT(remote_rank != rank);
 
         // Clean up remote counter requests (double buffering)
         if (nixl_ctx->cpu_remote_counter_reqs_0[remote_rank] != nullptr) {
@@ -949,7 +949,7 @@ void Buffer::_nixl_ep_counters_cleanup(const std::vector<int>& ranks) {
             nixl_ctx->cpu_remote_counter_reqs_0[remote_rank] = nullptr;
             nixl_ctx->gpu_remote_counter_reqs_0[remote_rank] = nullptr;
         }
-        
+
         if (nixl_ctx->cpu_remote_counter_reqs_1[remote_rank] != nullptr) {
 #ifndef EP_REMOVE_ONCE
             nixl_agent_info->agent->releaseGpuXferReq(nixl_ctx->gpu_remote_counter_reqs_1[remote_rank]);
@@ -973,11 +973,11 @@ void Buffer::_nixl_ep_counters_cleanup(const std::vector<int>& ranks) {
 void Buffer::_nixl_ep_batches_cleanup(const std::vector<int>& ranks) {
     for (int remote_rank : ranks) {
         if (remote_rank == rank) continue;
-        
+
         // Clean up cpu_batch_reqs and gpu_batch_reqs
-        if (remote_rank < nixl_ctx->cpu_batch_reqs.size() && 
+        if (remote_rank < nixl_ctx->cpu_batch_reqs.size() &&
             nixl_ctx->cpu_batch_reqs[remote_rank] != nullptr) {
-            
+
             // Release GPU transfer request first
             if (nixl_ctx->gpu_batch_reqs[remote_rank] != nullptr) {
 #ifndef EP_REMOVE_ONCE
@@ -985,12 +985,12 @@ void Buffer::_nixl_ep_batches_cleanup(const std::vector<int>& ranks) {
 #endif
                 nixl_ctx->gpu_batch_reqs[remote_rank] = nullptr;
             }
-            
+
             // Release CPU transfer request
 #ifndef EP_REMOVE_ONCE
             nixl_status_t status = nixl_agent_info->agent->releaseXferReq(nixl_ctx->cpu_batch_reqs[remote_rank]);
             if (status != NIXL_SUCCESS) {
-                printf("[WARNING] %s: Failed to release CPU batch xfer req for rank %d, status: %d\n", 
+                printf("[WARNING] %s: Failed to release CPU batch xfer req for rank %d, status: %d\n",
                         __func__, remote_rank, status);
             }
 #endif
