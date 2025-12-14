@@ -15,7 +15,7 @@
 # Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
 
 
-job: nixl-ci-test
+job: nixl-ci-gpu
 
 # Fail job if one of the steps fails or continue
 failFast: false
