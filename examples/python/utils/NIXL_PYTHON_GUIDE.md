@@ -10,6 +10,7 @@ A practical guide to common NIXL Python API patterns and best practices.
 2. [Polling for Transfer Status](#polling-for-transfer-status)
 3. [Using Notifications](#using-notifications)
 4. [Backpressure and Flow Control](#backpressure-and-flow-control)
+5. [Metadata Exchange](#metadata-exchange)
 
 ---
 
@@ -309,13 +310,74 @@ if seq != expected_sequence:
 
 ---
 
+## Metadata Exchange
+
+NIXL examples support two methods for metadata exchange:
+
+### Method 1: TCP Server (Default)
+
+A simple TCP key-value server for local testing. Used by default in the examples.
+
+```python
+from utils import (
+    publish_agent_metadata,
+    retrieve_agent_metadata,
+    publish_descriptors,
+    retrieve_descriptors,
+    start_server,
+)
+
+# Start TCP server (usually in main process)
+start_server(9998)
+
+# Publish metadata
+publish_agent_metadata(agent, "my_metadata_key")
+publish_descriptors(agent, xfer_descs, "my_descriptors_key")
+
+# Retrieve from another process
+remote_name = retrieve_agent_metadata(agent, "remote_metadata_key")
+remote_descs = retrieve_descriptors(agent, "remote_descriptors_key")
+```
+
+### Method 2: NIXL Built-in (etcd)
+
+NIXL has built-in support for metadata exchange via etcd. To use:
+
+1. Set the `NIXL_ETCD_ENDPOINTS` environment variable:
+   ```bash
+   export NIXL_ETCD_ENDPOINTS="http://localhost:2379"
+   ```
+
+2. Use the `use_nixl_builtin=True` parameter:
+   ```python
+   # Publish
+   publish_agent_metadata(agent, "my_label", use_nixl_builtin=True)
+   
+   # Retrieve (must specify remote agent name)
+   retrieve_agent_metadata(
+       agent, "remote_label",
+       use_nixl_builtin=True,
+       remote_agent_name="remote_agent"
+   )
+   ```
+
+### Comparison
+
+| Feature | TCP Server | NIXL Built-in (etcd) |
+|---------|-----------|---------------------|
+| **Setup** | Start server in code | External etcd service |
+| **Scalability** | Single node | Distributed |
+| **Use case** | Local testing | Production deployments |
+| **Dependencies** | None | etcd cluster |
+
+---
+
 ## Related Examples
 
-| Example | Description |
-|---------|-------------|
-| `nixl_api_2proc.py` | Basic two-process transfers (both modes) |
-| `nixl_sender_receiver.py` | High-throughput streaming with backpressure |
-| `nixl_api_example.py` | Single-process loopback |
+| Example | Description | Location |
+|---------|-------------|----------|
+| `nixl_api_2proc.py` | Basic two-process transfers (both modes) | `../2proc/` |
+| `nixl_sender_receiver.py` | High-throughput streaming with backpressure | `../send_recv/` |
 
 ---
 

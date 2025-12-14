@@ -16,26 +16,36 @@
 # limitations under the License.
 
 """
-NIXL Sender-Receiver Example: Queue-Based Flow Control
+NIXL Sender-Receiver Example: Streaming Mode with Backpressure
 
-Demonstrates a producer-consumer pattern using head/tail pointers with RDMA WRITE operations.
-The sender fills a circular queue of buffers, and the receiver consumes them, with bandwidth reporting.
+Demonstrates a high-throughput producer-consumer pattern using:
+- Sequence numbers in buffer headers for data arrival detection
+- Notification-based backpressure to prevent buffer overruns
+- Pre-created transfer handles for minimal per-transfer overhead
+
+Usage:
+    python3 nixl_sender_receiver.py              # Use TCP server for metadata
+    python3 nixl_sender_receiver.py --use-etcd   # Use NIXL's built-in etcd
 """
 
-import ctypes
+import argparse
 import os
 import sys
 import time
 from multiprocessing import Process
 
-import numpy as np
-import tcp_server
-from nixl_memory_utils import read_data, read_uint8, read_uint64, write_data, write_uint8, write_uint64
-from nixl_metadata_utils import (
+# Add parent directory to path for utils import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from utils import (
+    clear_metadata,
     publish_agent_metadata,
     publish_descriptors,
+    read_uint64,
     retrieve_agent_metadata,
     retrieve_descriptors,
+    start_server,
+    write_uint64,
 )
 
 import nixl._utils as nixl_utils
@@ -48,6 +58,11 @@ NUM_BUFFERS = 64  # Queue size
 BUFFER_SIZE = 16 * 1024 * 1024  # 16MB - larger = more efficient RDMA
 NUM_TRANSFERS = 1000  # Many transfers to amortize overhead
 
+
+def use_etcd():
+    """Check if etcd mode is enabled (via environment variable for multiprocessing)"""
+    return os.environ.get("NIXL_USE_ETCD", "0") == "1"
+
 # Backpressure configuration
 PROGRESS_UPDATE_INTERVAL = max(1, NUM_BUFFERS // 4)  # Receiver sends progress every N messages
 BACKPRESSURE_THRESHOLD = NUM_BUFFERS - 4  # Sender checks backpressure when this far ahead
@@ -56,9 +71,10 @@ BACKPRESSURE_THRESHOLD = NUM_BUFFERS - 4  # Sender checks backpressure when this
 # Define offsets within the memory allocation (using uint8 for head/tail to save space)
 HEAD_OFFSET = 0              # Head pointer at offset 0 (1 byte for uint8, values 0-NUM_BUFFERS)
 TAIL_OFFSET = 1              # Tail pointer at offset 1 (1 byte for uint8, values 0-NUM_BUFFERS)
-BUFFER_BASE_OFFSET = 2       # Buffers start at offset 2 
+BUFFER_BASE_OFFSET = 2       # Buffers start at offset 2
 BUFFER_ENTRY_SIZE = BUFFER_SIZE  # Each buffer's size (in bytes)
 TOTAL_MEMORY_SIZE = BUFFER_BASE_OFFSET + NUM_BUFFERS * BUFFER_ENTRY_SIZE
+
 
 def get_buffer_offset(i):
     """Return the offset for buffer i within the memory allocation"""
@@ -91,11 +107,42 @@ def receiver_process():
         write_uint64(buffer_base_addr + i * BUFFER_ENTRY_SIZE, 0xFFFFFFFFFFFFFFFF)
 
     # Exchange metadata and descriptors
-    publish_agent_metadata(receiver_agent, "receiver_metadata")
-    publish_descriptors(receiver_agent, buffers_xfer_descs, "receiver_buffers_desc")
-    
-    # Retrieve sender's metadata
-    sender_name = retrieve_agent_metadata(receiver_agent, "sender_metadata", role_name="receiver")
+    if use_etcd():
+        # Publish receiver metadata
+        publish_agent_metadata(receiver_agent, "receiver_metadata",
+                               use_nixl_builtin=True, reg_descs=memory_reg_descs)
+        # Fetch sender metadata (for bidirectional notifications)
+        sender_name = retrieve_agent_metadata(receiver_agent, "sender_metadata",
+                                              role_name="receiver", use_nixl_builtin=True,
+                                              remote_agent_name="sender")
+        if not sender_name:
+            logger.error("[receiver] Failed to retrieve sender metadata")
+            return
+
+        # Exchange: receiver keeps sending READY until sender's READY arrives,
+        # then sends DESCS. Sender keeps sending READY until DESCS arrives.
+        logger.info("[receiver] Waiting for sender READY (retrying)...")
+        got_ready = False
+        while not got_ready:
+            # Keep sending our READY so sender knows we're alive
+            receiver_agent.send_notif("sender", b"READY")
+            # Check for sender's READY
+            notifs = receiver_agent.get_new_notifs()
+            if "sender" in notifs and b"READY" in notifs["sender"]:
+                got_ready = True
+            else:
+                time.sleep(0.01)
+        logger.info("[receiver] Got sender READY, sending descriptors")
+
+        # Now send DESCS - sender is waiting for this
+        serialized_descs = receiver_agent.get_serialized_descs(buffers_xfer_descs)
+        receiver_agent.send_notif("sender", b"DESCS:" + serialized_descs)
+        logger.info("[receiver] Sent buffer descriptors to sender")
+    else:
+        publish_agent_metadata(receiver_agent, "receiver_metadata")
+        publish_descriptors(receiver_agent, buffers_xfer_descs, "receiver_buffers_desc")
+        sender_name = retrieve_agent_metadata(receiver_agent, "sender_metadata", role_name="receiver")
+
     if not sender_name:
         return
 
@@ -117,7 +164,7 @@ def receiver_process():
     while transfers_received < NUM_TRANSFERS:
         buffer_idx = transfers_received % NUM_BUFFERS
         buffer_offset = buffer_base_addr + (buffer_idx * BUFFER_ENTRY_SIZE)
-        
+
         # Poll until we see the expected sequence number in the buffer header
         t0 = time.perf_counter()
         while True:
@@ -172,7 +219,7 @@ def receiver_process():
         logger.info(f"[receiver] ✓ No buffer overrun (0 mismatches)")
     else:
         logger.error(f"[receiver] ⚠️  BUFFER OVERRUN: {sequence_mismatches} mismatches!")
-    
+
     # Timing breakdown
     logger.info(f"[receiver] Timing breakdown:")
     logger.info(f"  Poll for data:  {time_poll*1000:.2f} ms ({time_poll/actual_transfer_time*100:.1f}%)")
@@ -209,14 +256,50 @@ def sender_process():
     logger.info(f"[sender] Allocated buffers at 0x{buffers_addr:x}, size {buffers_size} bytes")
 
     # Exchange metadata
-    publish_agent_metadata(sender_agent, "sender_metadata")
+    if use_etcd():
+        # Publish sender metadata first
+        publish_agent_metadata(sender_agent, "sender_metadata",
+                               use_nixl_builtin=True, reg_descs=buffers_reg_descs)
+        # Fetch receiver metadata (for bidirectional notifications)
+        receiver_name = retrieve_agent_metadata(sender_agent, "receiver_metadata",
+                                                role_name="sender", use_nixl_builtin=True,
+                                                remote_agent_name="receiver")
+        if not receiver_name:
+            logger.error("[sender] Failed to retrieve receiver metadata")
+            return
 
-    # Retrieve receiver's buffer descriptors
-    receiver_name = retrieve_agent_metadata(sender_agent, "receiver_metadata", role_name="sender")
+        # Exchange: sender keeps sending READY until DESCS arrives
+        # (DESCS is proof that receiver got our READY)
+        logger.info("[sender] Waiting for receiver descriptors (sending READY)...")
+        receiver_buffers_descs = None
+        ready_count = 0
+        while receiver_buffers_descs is None:
+            # Send READY periodically (not every iteration to avoid flooding)
+            if ready_count % 5 == 0:
+                sender_agent.send_notif("receiver", b"READY")
+            ready_count += 1
+            # Check for receiver's DESCS (check a few times before sleeping)
+            for _ in range(3):
+                notifs = sender_agent.get_new_notifs()
+                if "receiver" in notifs:
+                    for msg in notifs["receiver"]:
+                        if msg.startswith(b"DESCS:"):
+                            serialized_descs = msg[6:]  # Remove "DESCS:" prefix
+                            receiver_buffers_descs = sender_agent.deserialize_descs(serialized_descs)
+                            logger.info("[sender] Received buffer descriptors from receiver")
+                            break
+                if receiver_buffers_descs is not None:
+                    break
+            if receiver_buffers_descs is None:
+                time.sleep(0.01)
+    else:
+        publish_agent_metadata(sender_agent, "sender_metadata")
+        receiver_name = retrieve_agent_metadata(sender_agent, "receiver_metadata", role_name="sender")
+        receiver_buffers_descs = retrieve_descriptors(sender_agent, "receiver_buffers_desc")
+
     if not receiver_name:
         return
 
-    receiver_buffers_descs = retrieve_descriptors(sender_agent, "receiver_buffers_desc")
     logger.info(f"[sender] Connected to {receiver_name}")
 
     # Create transfer handles for each buffer slot
@@ -233,7 +316,7 @@ def sender_process():
     for i in range(NUM_BUFFERS):
         handle = sender_agent.make_prepped_xfer("WRITE", local_buffers_prep, [i], remote_buffers_prep, [i], f"BUF_{i}".encode())
         buffer_xfer_handles.append(handle)
-    
+
     logger.info(f"[sender] Ready to transfer {NUM_BUFFERS} buffer slots ({BUFFER_SIZE / (1024 * 1024):.1f} MB each)")
     logger.info("[sender] Initialized, starting main loop")
 
@@ -247,7 +330,7 @@ def sender_process():
     # Performance tracking
     start_time = time.time()
     first_transfer_time = None
-    
+
     # Timing breakdown
     time_write_header = 0
     time_transfer_buffer = 0
@@ -257,7 +340,7 @@ def sender_process():
     while transfers_sent < NUM_TRANSFERS:
         buffer_idx = transfers_sent % NUM_BUFFERS
         buffer_xfer_handle = buffer_xfer_handles[buffer_idx]
-        
+
         # Backpressure check: if we're too far ahead of receiver, wait for progress
         t0 = time.perf_counter()
         ahead_count = transfers_sent - receiver_progress
@@ -279,7 +362,7 @@ def sender_process():
                     backpressure_waits += 1
                     time.sleep(0.0001)  # 100us sleep to avoid busy spinning
         time_backpressure += time.perf_counter() - t0
-        
+
         # Wait if this buffer's previous transfer is still in progress
         t0 = time.perf_counter()
         try:
@@ -288,7 +371,7 @@ def sender_process():
         except Exception:
             pass  # Handle never used yet - ready to transfer
         time_wait_buffer += time.perf_counter() - t0
-        
+
         # Write sequence number to buffer header
         buffer_offset = buffers_addr + (buffer_idx * BUFFER_SIZE)
         t0 = time.perf_counter()
@@ -354,7 +437,7 @@ def sender_process():
     logger.info(f"[sender] Bandwidth: {bandwidth_mbps:.2f} MB/s")
     logger.info(f"[sender] Send-only time: {send_time:.3f}s ({send_bandwidth:.2f} MB/s)")
     logger.info(f"[sender] Backpressure: {backpressure_checks} checks, {backpressure_waits * 0.1:.1f}ms wait, max ahead: {max_ahead}/{NUM_BUFFERS}")
-    
+
     # Timing breakdown
     logger.info(f"[sender] Timing breakdown:")
     logger.info(f"  Write header:     {time_write_header*1000:.2f} ms ({time_write_header/actual_transfer_time*100:.1f}%)")
@@ -380,7 +463,8 @@ def run_test(num_buffers, buffer_size, num_transfers):
     BUFFER_SIZE = buffer_size
     NUM_TRANSFERS = num_transfers
 
-    tcp_server.clear_metadata("127.0.0.1", 9998)
+    if not use_etcd():
+        clear_metadata("127.0.0.1", 9998)
 
     receiver_proc = Process(target=receiver_process)
     sender_proc = Process(target=sender_process)
@@ -403,16 +487,52 @@ def run_test(num_buffers, buffer_size, num_transfers):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="NIXL Sender-Receiver Example")
+    parser.add_argument("--use-etcd", action="store_true",
+                        help="Use NIXL's built-in etcd for metadata exchange (requires NIXL built with etcd support and NIXL_ETCD_ENDPOINTS env var)")
+    args = parser.parse_args()
+
+    # Set environment variable so child processes can see it
+    if args.use_etcd:
+        os.environ["NIXL_USE_ETCD"] = "1"
+
     if "NIXL_PLUGIN_DIR" not in os.environ:
         logger.error("[main] NIXL_PLUGIN_DIR not set")
         sys.exit(1)
 
-    # Start TCP server
-    try:
-        tcp_server.start_server(9998)
-        time.sleep(0.2)
-    except OSError:
-        pass  # Server may already be running
+    if use_etcd():
+        # Set default etcd endpoint if not defined
+        if not os.environ.get("NIXL_ETCD_ENDPOINTS"):
+            os.environ["NIXL_ETCD_ENDPOINTS"] = "http://127.0.0.1:2379"
+            logger.info("[main] Using default etcd endpoint: http://127.0.0.1:2379")
+
+        # Verify etcd is running
+        import urllib.request
+        try:
+            with urllib.request.urlopen(os.environ["NIXL_ETCD_ENDPOINTS"] + "/version", timeout=2) as resp:
+                if resp.status == 200:
+                    logger.info("[main] etcd is running, using NIXL built-in etcd for metadata exchange")
+        except Exception as e:
+            logger.error(f"[main] etcd not available at {os.environ['NIXL_ETCD_ENDPOINTS']}: {e}")
+            sys.exit(1)
+
+        # Clear stale metadata from previous runs
+        import subprocess
+        result = subprocess.run(
+            ["etcdctl", "del", "--prefix", "/nixl/"],
+            env={**os.environ, "ETCDCTL_API": "3"},
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            logger.info(f"[main] Cleared {result.stdout.strip()} stale etcd keys")
+    else:
+        # Start TCP server
+        try:
+            start_server(9998)
+            time.sleep(0.2)
+        except OSError:
+            pass  # Server may already be running
+        logger.info("[main] Using TCP server for metadata exchange")
 
     logger.info(f"[main] Starting sender-receiver: queue_size={NUM_BUFFERS}, num_transfers={NUM_TRANSFERS}, buffer_size={BUFFER_SIZE}")
     success = run_test(NUM_BUFFERS, BUFFER_SIZE, NUM_TRANSFERS)
@@ -424,3 +544,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -19,6 +19,7 @@
 Simple TCP server for NIXL metadata exchange.
 
 Provides a lightweight key-value store for exchanging metadata between processes.
+This is used when NIXL's built-in etcd support is not available.
 """
 
 import json
@@ -61,21 +62,6 @@ class MetadataHandler(StreamRequestHandler):
                     response = {"status": "OK", "value": value}
                 else:
                     response = {"status": "ERROR", "message": f"Key '{key}' not found"}
-
-            elif cmd == "GET_ALL":
-                # Get all metadata: {"cmd": "GET_ALL"}
-                with _lock:
-                    response = {"status": "OK", "data": dict(_metadata)}
-
-            elif cmd == "DELETE":
-                # Delete metadata: {"cmd": "DELETE", "key": "..."}
-                key = request.get("key")
-                with _lock:
-                    if key in _metadata:
-                        del _metadata[key]
-                        response = {"status": "OK"}
-                    else:
-                        response = {"status": "ERROR", "message": f"Key '{key}' not found"}
 
             elif cmd == "CLEAR":
                 # Clear all metadata: {"cmd": "CLEAR"}
@@ -146,28 +132,6 @@ def get_metadata(key, server="127.0.0.1", port=9998):
     return None
 
 
-def get_all_metadata(server="127.0.0.1", port=9998):
-    """Get all metadata"""
-    s = socket.create_connection((server, port))
-    request = {"cmd": "GET_ALL"}
-    s.sendall((json.dumps(request) + "\n").encode())
-    response = json.loads(s.recv(4096).decode().strip())
-    s.close()
-    if response.get("status") == "OK":
-        return response.get("data", {})
-    return {}
-
-
-def delete_metadata(key, server="127.0.0.1", port=9998):
-    """Delete a metadata key"""
-    s = socket.create_connection((server, port))
-    request = {"cmd": "DELETE", "key": key}
-    s.sendall((json.dumps(request) + "\n").encode())
-    response = json.loads(s.recv(4096).decode().strip())
-    s.close()
-    return response.get("status") == "OK"
-
-
 def clear_metadata(server="127.0.0.1", port=9998):
     """Clear all metadata"""
     s = socket.create_connection((server, port))
@@ -176,3 +140,4 @@ def clear_metadata(server="127.0.0.1", port=9998):
     response = json.loads(s.recv(4096).decode().strip())
     s.close()
     return response.get("status") == "OK"
+
