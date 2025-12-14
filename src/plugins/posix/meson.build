@@ -13,52 +13,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Try to find liburing (optional) - first try pkg-config
-uring_dep = dependency('liburing', required: false)
+if not has_posix_plugin
+    message('POSIX plugin will be disabled: no supported file APIs found')
+    subdir_done()
+endif
+
 plugin_deps = [nixl_infra, nixl_common_dep, file_utils_interface]
 
-# Define base source files - conditionally include uring_queue.cpp
+# Define base source files
 posix_sources = [
     'posix_backend.cpp',
     'posix_backend.h',
     'posix_plugin.cpp',
-    'queue_factory_impl.cpp',
-    'aio_queue.cpp'  # Always include AIO source since it's required
+    'queue_factory_impl.cpp'
 ]
 
-# If libaio is not found, skip building the POSIX plugin entirely
-if posix_aio
-    message('Correct libaio found, Building POSIX plugin')
-    compile_defs = ['-DHAVE_LIBAIO']
-    plugin_link_args = ['-laio']
-    plugin_deps += [ aio_dep ]
-elif rt_dep.found()
-    message('Compat AIO library found')
-    compile_defs = ['-DHAVE_LIBAIO']
-    plugin_link_args = ['-lrt']
-    plugin_deps += [ rt_dep ]
-else
-    subdir_done()
-endif
+has_api = false
+compile_defs = []
+plugin_link_args = []
 
-have_uring = uring_dep.found()
-if have_uring
-    compile_defs += ['-DHAVE_LIBURING']
-    posix_sources += ['uring_queue.cpp']
-    plugin_deps += [uring_dep]
-    plugin_link_args += ['-luring']
-    message('liburing found, adding io_uring support')
-else
-    message('liburing not found, building with AIO support only')
-endif
-
-if linux_aio
+if has_linux_aio
     compile_defs += ['-DHAVE_LINUXAIO']
     posix_sources += ['linux_aio_queue.cpp']
-    plugin_link_args += ['-laio']
-    message('Linux AIO found, adding Linux AIO support')
+    plugin_deps += [ linux_aio_dep ]
+    message('Linux AIO found')
+    has_api = true
 else
-    message('Linux AIO not found, building with POSIX AIO support only')
+    warning('Linux AIO not found')
+endif
+
+if has_io_uring
+    compile_defs += ['-DHAVE_LIBURING']
+    posix_sources += ['uring_queue.cpp']
+    plugin_deps += [ io_uring_dep ]
+    message('liburing found, adding io_uring support')
+else
+    warning('liburing not found')
+endif
+
+if has_posix_aio
+    compile_defs += ['-DHAVE_LIBAIO']
+    posix_sources += ['aio_queue.cpp']
+    plugin_deps += [ rt_dep ]
+    message('POSIX AIO found, adding POSIX AIO support')
+else
+    message('POSIX AIO not found')
 endif
 
 if 'POSIX' in static_plugins

@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Using globally defined aio_dep and paio variables from the root meson.build
-if posix_aio or linux_aio or rt_dep.found()
+# Using globally defined has_posix_plugin from the root meson.build
+if has_posix_plugin
     # Get Abseil dependencies
     absl_log_dep = dependency('absl_log', required: true)
 
