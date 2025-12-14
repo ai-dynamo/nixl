@@ -14,7 +14,7 @@ python/
 │   ├── nixl_sender_receiver.py
 │   └── README.md
 │
-├── utils/                      # Shared utilities for examples
+├── nixl_utils/                      # Shared utilities for examples
 │   ├── __init__.py
 │   ├── tcp_server.py
 │   ├── memory_utils.py
@@ -60,8 +60,8 @@ python3 basic_two_peers.py --mode initiator --ip 127.0.0.1 --port 5555
 
 ## Documentation
 
-- **API Patterns Guide**: `utils/NIXL_PYTHON_GUIDE.md`
-- **Utilities Reference**: `utils/README.md`
+- **API Patterns Guide**: `nixl_utils/NIXL_PYTHON_GUIDE.md`
+- **Utilities Reference**: `nixl_utils/README.md`
 - **Example READMEs**: Each folder has its own README
 
 ## Metadata Exchange

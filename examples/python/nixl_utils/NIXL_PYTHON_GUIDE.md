@@ -319,7 +319,7 @@ NIXL examples support two methods for metadata exchange:
 A simple TCP key-value server for local testing. Used by default in the examples.
 
 ```python
-from utils import (
+from nixl_utils import (
     publish_agent_metadata,
     retrieve_agent_metadata,
     publish_descriptors,

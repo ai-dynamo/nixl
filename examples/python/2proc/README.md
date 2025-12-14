@@ -167,7 +167,7 @@ while initiator_agent.check_xfer_state(xfer_handle_1) != "DONE":
 
 ## Utility Functions
 
-Located in `../utils/`:
+Located in `../nixl_utils/`:
 
 ### From `metadata_utils.py`
 
@@ -218,9 +218,9 @@ Located in `../utils/`:
 
 ## References
 
-- **General Guide**: `../utils/NIXL_PYTHON_GUIDE.md` - Transfer modes, polling, notifications
+- **General Guide**: `../nixl_utils/NIXL_PYTHON_GUIDE.md` - Transfer modes, polling, notifications
 - **Advanced Example**: `../send_recv/` - Streaming with backpressure
-- **Utility Functions**: `../utils/`
+- **Utility Functions**: `../nixl_utils/`
 
 ---
 

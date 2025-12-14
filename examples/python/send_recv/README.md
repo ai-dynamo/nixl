@@ -167,7 +167,7 @@ while transfers_sent < NUM_TRANSFERS:
 
 ## Utility Functions
 
-Located in `../utils/`:
+Located in `../nixl_utils/`:
 
 ### `metadata_utils.py`
 
@@ -195,9 +195,9 @@ Located in `../utils/`:
 
 ## References
 
-- **General Guide**: `../utils/NIXL_PYTHON_GUIDE.md` - Transfer modes, polling, notifications, backpressure
+- **General Guide**: `../nixl_utils/NIXL_PYTHON_GUIDE.md` - Transfer modes, polling, notifications, backpressure
 - **Simple Example**: `../2proc/` - Basic two-process transfers
-- **Utility Functions**: `../utils/`
+- **Utility Functions**: `../nixl_utils/`
 
 ---
 

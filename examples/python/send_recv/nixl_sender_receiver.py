@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import nixl._utils as nixl_utils  # noqa: E402
 from nixl._api import nixl_agent, nixl_agent_config  # noqa: E402
 from nixl.logging import get_logger  # noqa: E402
-from utils import (  # noqa: E402
+from nixl_utils import (  # noqa: E402
     clear_metadata,
     publish_agent_metadata,
     publish_descriptors,
@@ -250,17 +250,17 @@ def receiver_process():
     # Timing breakdown
     logger.info("[receiver] Timing breakdown:")
     logger.info(
-        f"  Poll for data:  {time_poll*1000:.2f} ms ({time_poll/actual_transfer_time*100:.1f}%)"
+        f"  Poll for data:  {time_poll * 1000:.2f} ms ({time_poll / actual_transfer_time * 100:.1f}%)"
     )
     logger.info(
-        f"  Verify:         {time_verify*1000:.2f} ms ({time_verify/actual_transfer_time*100:.1f}%)"
+        f"  Verify:         {time_verify * 1000:.2f} ms ({time_verify / actual_transfer_time * 100:.1f}%)"
     )
     logger.info(
-        f"  Send notifs:    {time_notify*1000:.2f} ms ({time_notify/actual_transfer_time*100:.1f}%)"
+        f"  Send notifs:    {time_notify * 1000:.2f} ms ({time_notify / actual_transfer_time * 100:.1f}%)"
     )
     total_measured = time_poll + time_verify + time_notify
     logger.info(
-        f"  Other/overhead: {(actual_transfer_time-total_measured)*1000:.2f} ms ({(actual_transfer_time-total_measured)/actual_transfer_time*100:.1f}%)"
+        f"  Other/overhead: {(actual_transfer_time - total_measured) * 1000:.2f} ms ({(actual_transfer_time - total_measured) / actual_transfer_time * 100:.1f}%)"
     )
 
     # Wait a bit for sender to finish its final checks before cleanup
@@ -523,22 +523,22 @@ def sender_process():
     # Timing breakdown
     logger.info("[sender] Timing breakdown:")
     logger.info(
-        f"  Write header:     {time_write_header*1000:.2f} ms ({time_write_header/actual_transfer_time*100:.1f}%)"
+        f"  Write header:     {time_write_header * 1000:.2f} ms ({time_write_header / actual_transfer_time * 100:.1f}%)"
     )
     logger.info(
-        f"  Transfer buffer:  {time_transfer_buffer*1000:.2f} ms ({time_transfer_buffer/actual_transfer_time*100:.1f}%)"
+        f"  Transfer buffer:  {time_transfer_buffer * 1000:.2f} ms ({time_transfer_buffer / actual_transfer_time * 100:.1f}%)"
     )
     logger.info(
-        f"  Wait for buffer:  {time_wait_buffer*1000:.2f} ms ({time_wait_buffer/actual_transfer_time*100:.1f}%)"
+        f"  Wait for buffer:  {time_wait_buffer * 1000:.2f} ms ({time_wait_buffer / actual_transfer_time * 100:.1f}%)"
     )
     logger.info(
-        f"  Backpressure:     {time_backpressure*1000:.2f} ms ({time_backpressure/actual_transfer_time*100:.1f}%)"
+        f"  Backpressure:     {time_backpressure * 1000:.2f} ms ({time_backpressure / actual_transfer_time * 100:.1f}%)"
     )
     total_measured = (
         time_write_header + time_transfer_buffer + time_wait_buffer + time_backpressure
     )
     logger.info(
-        f"  Other/overhead:   {(actual_transfer_time-total_measured)*1000:.2f} ms ({(actual_transfer_time-total_measured)/actual_transfer_time*100:.1f}%)"
+        f"  Other/overhead:   {(actual_transfer_time - total_measured) * 1000:.2f} ms ({(actual_transfer_time - total_measured) / actual_transfer_time * 100:.1f}%)"
     )
 
     # Cleanup
