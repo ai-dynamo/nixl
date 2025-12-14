@@ -243,7 +243,7 @@ For 2+ node tests:
 export MASTER_ADDR=$(hostname -i)
 source /workspace/nixl/examples/device/ep/scripts/reset_etcd.sh
 
-# On Node 2+ (workers)  
+# On Node 2+ (workers)
 export MASTER_ADDR=<node1-ip>
 export NIXL_ETCD_ENDPOINTS=http://$MASTER_ADDR:2379
 # Don't start local etcd - use Node 1's

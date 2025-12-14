@@ -179,7 +179,7 @@ import time
 def my_test_fn(rank, world_size, num_experts=8, **kwargs):
     """Worker function run on each GPU."""
     start = time.time()
-    
+
     try:
         # Create buffer
         buffer = create_buffer(
@@ -187,25 +187,25 @@ def my_test_fn(rank, world_size, num_experts=8, **kwargs):
             world_size=world_size,
             num_experts_per_rank=num_experts
         )
-        
+
         # Wait for all ranks
         sync_all_ranks("buffer_created")
-        
+
         # Do test operations...
         other_ranks = [r for r in range(world_size) if r != rank]
         buffer.connect_ranks(other_ranks)
-        
+
         sync_all_ranks("connected")
-        
+
         # Cleanup
         buffer.destroy()
-        
+
         return TestResult(
             rank=rank,
             passed=True,
             duration_ms=(time.time() - start) * 1000
         )
-        
+
     except Exception as e:
         return TestResult(
             rank=rank,
@@ -223,7 +223,7 @@ if __name__ == "__main__":
         test_name="My Test",
         test_kwargs={'num_experts': 8}
     )
-    
+
     print(f"Passed: {sum(1 for r in results if r.passed)}/8")
 ```
 

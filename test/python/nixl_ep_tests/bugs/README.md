@@ -35,7 +35,7 @@ python3 bugs/test_bug_01_segfault.py
 python3 bugs/test_bug_02_rcache.py --num-processes=8 --experts=16 --runs=3 --timeout=300
 
 # BUG-03: gdr_copy warning (run back-to-back to trigger)
-for i in {1..3}; do 
+for i in {1..3}; do
   python3 bugs/test_bug_03_gdr_copy.py --num-processes=8
 done 2>&1 | tee /tmp/bug03.log
 echo "gdr_copy warnings: $(grep -c 'UCX.*WARN.*rcache gdr_copy' /tmp/bug03.log)"
@@ -51,10 +51,10 @@ echo "invalidateRemoteMD warnings: $(grep -c 'invalidateRemoteMD.*NIXL_ERR_NOT_F
 
 ### BUG-01: NIXL Segfault on Repeated Buffer Creation
 
-**Severity**: 🔴 Critical  
-**Component**: NIXL library (C++)  
-**File**: `test_bug_01_segfault.py`  
-**Status**: Open - needs NIXL team fix  
+**Severity**: 🔴 Critical
+**Component**: NIXL library (C++)
+**File**: `test_bug_01_segfault.py`
+**Status**: Open - needs NIXL team fix
 
 #### Description
 Creating a second `nixl_ep.Buffer` instance after calling `destroy()` on the first one causes a segmentation fault. This prevents running multiple warmup/measurement rounds in performance tests.
@@ -74,7 +74,7 @@ Segmentation fault (core dumped)
 ```
 
 #### Root Cause Analysis
-The NIXL C++ library appears to have global state that is not properly reset after `destroy()`. 
+The NIXL C++ library appears to have global state that is not properly reset after `destroy()`.
 
 **Tested**: Bug affects ALL nvlink backends (`nixl`, `ipc`, `none`) - confirmed Dec 2025.
 This rules out backend-specific causes and points to core NIXL library issue.
@@ -104,10 +104,10 @@ Use `--warmup=0 --rounds=1` in performance tests to ensure only one buffer is cr
 
 ### BUG-02: UCX rcache Assertion Failure
 
-**Severity**: 🔴 Critical  
-**Component**: UCX library  
-**File**: `test_bug_02_rcache.py`  
-**Status**: Open - needs UCX team investigation  
+**Severity**: 🔴 Critical
+**Component**: UCX library
+**File**: `test_bug_02_rcache.py`
+**Status**: Open - needs UCX team investigation
 
 #### Description
 The UCX library's region cache (rcache) occasionally fails an assertion during buffer cleanup, causing the process to abort. This appears to be a reference counting issue in UCX's memory registration cache.
@@ -153,10 +153,10 @@ This suggests a specific memory layout or region count triggers the bug.
 
 ### BUG-03: UCX rcache gdr_copy Warning
 
-**Severity**: 🟡 Low (cosmetic)  
-**Component**: UCX library  
-**File**: `test_bug_03_gdr_copy.py`  
-**Status**: Open - needs investigation  
+**Severity**: 🟡 Low (cosmetic)
+**Component**: UCX library
+**File**: `test_bug_03_gdr_copy.py`
+**Status**: Open - needs investigation
 
 #### Description
 UCX emits a warning about memory regions remaining in the LRU list after operations complete. This indicates leftover memory registration entries but does not affect functionality.
@@ -195,10 +195,10 @@ None needed - this is a cosmetic warning that doesn't affect correctness.
 
 ### BUG-04: NIXL invalidateRemoteMD Warning
 
-**Severity**: 🟡 Low (cosmetic)  
-**Component**: NIXL library  
-**File**: `test_bug_04_invalidate.py`  
-**Status**: Open - NIXL/NIXL_EP issue  
+**Severity**: 🟡 Low (cosmetic)
+**Component**: NIXL library
+**File**: `test_bug_04_invalidate.py`
+**Status**: Open - NIXL/NIXL_EP issue
 
 #### Description
 When multiple ranks call `destroy()` simultaneously, NIXL emits warnings about failing to invalidate remote metadata. This is a race condition in the distributed cleanup protocol.
@@ -251,10 +251,10 @@ Ignore these warnings in test output validation.
 
 ### BUG-05: Intermittent CUDA Error During connect_ranks()
 
-**Severity**: 🟠 Medium  
-**Component**: NIXL EP / UCX / etcd (unclear)  
-**File**: `test_bug_05_connect_cuda_error.py`  
-**Status**: Open - needs investigation  
+**Severity**: 🟠 Medium
+**Component**: NIXL EP / UCX / etcd (unclear)
+**File**: `test_bug_05_connect_cuda_error.py`
+**Status**: Open - needs investigation
 
 #### Description
 Intermittent "CUDA error: invalid argument" failures during `connect_ranks()` when running tests back-to-back. Different ranks fail each time; re-running usually succeeds.
