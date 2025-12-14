@@ -40,20 +40,33 @@ export NIXL_PREFIX=${INSTALL_DIR}
 # Raise exceptions for logging errors
 export NIXL_DEBUG_LOGGING=yes
 
+if [ -n "$VIRTUAL_ENV" ] && grep -q '^uv =' "$VIRTUAL_ENV/pyvenv.cfg" 2>/dev/null; then
+    pip3="uv pip"
+else
+    pip3="python3 -m pip"
+fi
+
+# Install build dependencies
+if [ -n "$VIRTUAL_ENV" ] ; then
+    # Install full build dependencies in venv
+    $pip3 install --break-system-packages meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
+else
+    # Install minimal build dependencies in system python
+    $pip3 install --break-system-packages tomlkit
+fi
 # Set the correct wheel name based on the CUDA version
 cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
 case "$cuda_major" in
     12|13) echo "CUDA $cuda_major detected" ;;
     *) echo "Error: Unsupported CUDA version $cuda_major"; exit 1 ;;
 esac
-pip3 install --break-system-packages tomlkit
 ./contrib/tomlutil.py --wheel-name "nixl-cu${cuda_major}" pyproject.toml
 # Control ninja parallelism during pip build to prevent OOM (NPROC from common.sh)
-pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
-pip3 install --break-system-packages dist/nixl-*none-any.whl
-pip3 install --break-system-packages pytest
-pip3 install --break-system-packages pytest-timeout
-pip3 install --break-system-packages zmq
+$pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
+$pip3 install --break-system-packages dist/nixl-*none-any.whl
+$pip3 install --break-system-packages pytest
+$pip3 install --break-system-packages pytest-timeout
+$pip3 install --break-system-packages zmq
 
 # Add user pip packages to PATH
 export PATH="$HOME/.local/bin:$PATH"
@@ -88,19 +101,23 @@ python3 test/python/prep_xfer_perf.py array
 
 echo "==== Running python examples ===="
 cd examples/python
-python3 nixl_api_example.py
 python3 partial_md_example.py --init-port "$(get_next_tcp_port)" --target-port "$(get_next_tcp_port)"
 python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
-# Running telemetry for the last test
 basic_two_peers_port=$(get_next_tcp_port)
-mkdir -p /tmp/telemetry_test
-
 python3 basic_two_peers.py --mode="target" --ip=127.0.0.1 --port="$basic_two_peers_port"&
 sleep 5
-NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
 python3 basic_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$basic_two_peers_port"
+
+# Running telemetry for the last test
+expanded_two_peers_port=$(get_next_tcp_port)
+mkdir -p /tmp/telemetry_test
+
+python3 expanded_two_peers.py --mode="target" --ip=127.0.0.1 --port="$expanded_two_peers_port"&
+sleep 5
+NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
+python3 expanded_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$expanded_two_peers_port"
 
 python3 telemetry_reader.py --telemetry_path /tmp/telemetry_test/initiator &
 telePID=$!

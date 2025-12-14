@@ -75,6 +75,14 @@ void InitializeNixlLogging()
     absl::SetStderrThreshold(settings.min_severity);
     absl::InitializeLog();
 
+#ifdef NIXL_VERSION
+    NIXL_INFO << "NIXL version: " << NIXL_VERSION
+#ifdef NIXL_GIT_HASH
+              << " (git: " << NIXL_GIT_HASH << ")"
+#endif
+        ;
+#endif
+
     if (invalid_env_var) {
         NIXL_WARN << "Invalid NIXL_LOG_LEVEL environment variable, using default log level: " << kDefaultLogLevel;
     }

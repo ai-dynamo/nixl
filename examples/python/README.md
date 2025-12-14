@@ -52,6 +52,16 @@ Demonstrates:
 - Circular buffer management
 - Sequence number verification
 
+## Other Examples
+
+- `basic_two_peers.py`: Simple two-peer example showing registration, metadata exchange, a single READ, notification, verification, and teardown.
+- `expanded_two_peers.py`: Comprehensive example with parallel READs (prepped), parallel WRITEs (initialized), reposting READs, notification patterns, and minimal layout sharing.
+- `nixl_gds_example.py`: GPU Direct Storage integration—buffer-to-file write and read-back verification.
+- `partial_md_example.py`: Shows handling of partial metadata updates and retrying initialize_xfer.
+- `query_mem_example.py`: Demonstrates querying backend memory/storage details for registered regions.
+- `telemetry_reader.py`: Example for fetching and validating transfer telemetry.
+- `remote_storage_example/`: Client-server peer-to-peer storage pipeline with supporting utilities and diagrams.
+
 ## Documentation
 
 - **Utilities Guide**: `utils/README.md`
@@ -80,4 +90,3 @@ See `utils/NIXL_PYTHON_GUIDE.md` for details.
 
 SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
-

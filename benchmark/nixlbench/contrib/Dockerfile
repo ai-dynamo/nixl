@@ -189,6 +189,8 @@ RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click t
 RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
     FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \
     uv pip install $FLAGS torch torchvision torchaudio
+# Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
+RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
 COPY --from=nixl . /workspace/nixl
 COPY --from=nixlbench . /workspace/nixlbench

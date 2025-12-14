@@ -31,6 +31,8 @@ std::unique_ptr<nixlPosixQueue>
 createLinuxAioQueue(int num_entries, nixl_xfer_op_t operation);
 
 bool
+isPosixAioAvailable();
+bool
 isLinuxAioAvailable();
 bool
 isUringAvailable();
