@@ -21,7 +21,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import numpy as np
 import torch
@@ -240,7 +240,7 @@ def bench_kineto(
 
     # Return average kernel durations
     units = {"ms": 1e3, "us": 1e6}
-    kernel_durations: List[Any] = []
+    kernel_durations: List[Union[float, List[float]]] = []
     for name in kernel_names:
         for line in prof_lines:
             if name in line:

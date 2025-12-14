@@ -64,7 +64,7 @@ def parse_json_results(data: Dict) -> List[TestResult]:
 
         # Aggregate metrics across ranks
         metrics: Dict[str, PerformanceMetric] = {}
-        metric_values: Dict[str, List[float]] = {}
+        metric_values: Dict[str, List[float]] = dict()
 
         for r in rank_results:
             if r.get("passed") and r.get("metrics"):
@@ -155,7 +155,7 @@ def generate_markdown_report(
     lines.append("")
 
     # Group by test type
-    test_types: Dict[str, List[TestResult]] = {}
+    test_types: Dict[str, List[TestResult]] = dict()
     for result in results:
         test_type = result.test_name.split("_")[0]
         if test_type not in test_types:

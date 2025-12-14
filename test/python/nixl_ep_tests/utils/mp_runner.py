@@ -13,7 +13,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 import torch
 import torch.multiprocessing as mp
@@ -249,8 +249,8 @@ def create_buffer(
     rank: int,
     world_size: int,
     num_experts_per_rank: int = 8,
-    num_rdma_bytes: Optional[int] = None,
-    nvlink_backend: str = "ipc",
+    num_rdma_bytes: int | None = None,
+    nvlink_backend: Literal["nixl", "ipc", "none"] = "ipc",
     enable_shrink: bool = True,
     hidden: int = 4096,
     num_tokens: int = 512,
@@ -287,7 +287,7 @@ def worker_fn(
     etcd_server: str,
     rank_server_addr: str,
     gpu_nic_topology: dict,
-    extra_kwargs: Optional[Dict[Any, Any]] = None,
+    extra_kwargs: Dict[Any, Any] | None = None,
     rank_server_port: int = 9998,
 ):
     """Worker function executed by each spawned process."""
@@ -365,7 +365,7 @@ def worker_fn(
         result_queue.put(
             TestResult(
                 rank=report_rank,
-                test_name=test_fn.__name__ if test_fn is not None else "unknown",
+                test_name=test_fn.__name__,
                 passed=False,
                 error=f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}",
             )
@@ -717,8 +717,8 @@ def sync_all_ranks(
     world_size: int,
     barrier_name: str,
     timeout: float = 60.0,
-    server_addr: Optional[str] = None,
-    port: Optional[int] = None,
+    server_addr: str | None = None,
+    port: int | None = None,
 ):
     """Synchronize all ranks at a named barrier point."""
     global _RANK_SERVER_ADDR, _RANK_SERVER_PORT

@@ -587,9 +587,11 @@ def print_throughput_results(test_name: str, results: List[TestResult]):
         return
 
     # Get first result's config
-    first_metrics: Dict[str, Any] = next(
-        (r.metrics for r in results if r.passed and r.metrics), {}
-    )
+    first_metrics: Dict[str, Any] = {}
+    for r in results:
+        if r.passed and r.metrics:
+            first_metrics = r.metrics
+            break
     if first_metrics:
         sys.stderr.write(
             f"Config: {first_metrics.get('num_tokens', '?')} tokens, "

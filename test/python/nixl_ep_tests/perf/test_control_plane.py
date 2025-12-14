@@ -641,7 +641,7 @@ def format_single_op_results(
 
 def collect_all_results(
     all_results: Dict[int, Dict[str, List[TestResult]]], world_size: int
-) -> Dict:
+) -> Dict[str, Any]:
     """Collect all results into a structured format for JSON export."""
     output: Dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
@@ -650,10 +650,16 @@ def collect_all_results(
     }
 
     results_dict: Dict[int, Dict[str, Any]] = {}
-    for num_experts, test_results in all_results.items():
+    for num_experts in all_results:
+        test_results = all_results[num_experts]
         results_dict[num_experts] = {}
-        for test_name, results in test_results.items():
-            rank0 = next((r for r in results if r.rank == 0), None)
+        for test_name in test_results:
+            results = test_results[test_name]
+            rank0 = None
+            for r in results:
+                if r.rank == 0:
+                    rank0 = r
+                    break
             if rank0 and rank0.metrics:
                 results_dict[num_experts][test_name] = rank0.metrics
     output["results"] = results_dict

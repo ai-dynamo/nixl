@@ -265,16 +265,18 @@ class RankClient:
             (local_rank, global_rank)
         """
         if self.global_rank is not None and self.local_rank is not None:
-            return self.local_rank, self.global_rank
+            return (self.local_rank, self.global_rank)
 
         hostname = os.uname().nodename
         response = self._send_command(f"GET_RANK {hostname}")
 
         parts = response.split()
         if len(parts) >= 2:
-            self.local_rank = int(parts[0])
-            self.global_rank = int(parts[1])
-            return self.local_rank, self.global_rank
+            local_rank = int(parts[0])
+            global_rank = int(parts[1])
+            self.local_rank = local_rank
+            self.global_rank = global_rank
+            return (local_rank, global_rank)
         else:
             raise RuntimeError(f"Unexpected response from server: {response}")
 

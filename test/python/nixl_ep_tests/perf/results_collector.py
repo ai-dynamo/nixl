@@ -39,7 +39,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Set, Tuple, Union
 
 # ============================================================================
 # Data Models
@@ -100,7 +100,7 @@ class TestResult:
 # ============================================================================
 
 
-def get_git_info() -> tuple:
+def get_git_info() -> Tuple[str, str, bool]:
     """Get current git commit, branch, and dirty status"""
     try:
         commit = (
@@ -186,16 +186,17 @@ class ResultsCollector:
     3. Default: tests/perf/results/
     """
 
-    def __init__(self, results_dir: Optional[str] = None):
-        if results_dir is None:
+    def __init__(self, results_dir: str | None = None):
+        results_dir_str = results_dir
+        if results_dir_str is None:
             # Check environment variable
-            results_dir = os.environ.get("NIXL_RESULTS_DIR")
+            results_dir_str = os.environ.get("NIXL_RESULTS_DIR")
 
-        if results_dir is None:
+        if results_dir_str is None:
             # Default to tests/perf/results/
             self.results_dir: Path = Path(__file__).parent / "results"
         else:
-            self.results_dir = Path(results_dir)
+            self.results_dir = Path(results_dir_str)
 
         self.raw_dir = self.results_dir / "raw"
         self.raw_dir.mkdir(parents=True, exist_ok=True)
@@ -263,7 +264,7 @@ class ResultsCollector:
         self.results.append(result)
         return result
 
-    def save(self, filename: Optional[str] = None) -> str:
+    def save(self, filename: str | None = None) -> str:
         """
         Save results to JSON file.
 
@@ -320,7 +321,7 @@ class ResultsAggregator:
     Aggregates results from multiple runs for analysis and CI/CD.
     """
 
-    def __init__(self, results_dir: Optional[str] = None):
+    def __init__(self, results_dir: str | None = None):
         if results_dir is None:
             self.results_dir: Path = Path(__file__).parent / "results"
         else:
@@ -378,7 +379,7 @@ class ResultsAggregator:
         return results
 
     def export_csv(
-        self, output_path: Optional[Union[str, Path]] = None, append: bool = False
+        self, output_path: Union[str, Path] | None = None, append: bool = False
     ) -> str:
         """
         Export all results to CSV.
@@ -452,7 +453,7 @@ class ResultsAggregator:
         sys.stderr.write(f"Exported {len(results)} results to {csv_path}\n")
         return str(csv_path)
 
-    def list_runs(self, last_n: Optional[int] = None) -> List[Dict[str, Any]]:
+    def list_runs(self, last_n: int | None = None) -> List[Dict[str, Any]]:
         """List all runs with summary"""
         runs: List[Dict[str, Any]] = []
 
@@ -484,7 +485,7 @@ class ResultsAggregator:
         return runs
 
     def get_latest_metrics(
-        self, test_type: Optional[str] = None, test_name: Optional[str] = None
+        self, test_type: str | None = None, test_name: str | None = None
     ) -> Dict[str, Any]:
         """Get latest metrics for comparison"""
         results = self.load_all_results()
@@ -508,9 +509,9 @@ class ResultsAggregator:
 
 
 def ci_check_regression(
-    baseline_commit: Optional[str] = None,
+    baseline_commit: str | None = None,
     threshold_percent: float = 10.0,
-    results_dir: Optional[str] = None,
+    results_dir: str | None = None,
 ) -> bool:
     """
     Check for performance regression against baseline.

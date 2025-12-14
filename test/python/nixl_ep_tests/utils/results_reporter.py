@@ -14,7 +14,10 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Union
+
+# Git info type has mixed str and bool values
+GitInfo = Dict[str, Union[str, bool]]
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +26,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_RESULTS_DIR = os.environ.get("NIXL_TEST_RESULTS_DIR", "./results")
 
 
-def get_git_info(repo_path: str) -> Dict[str, Any]:
+def get_git_info(repo_path: str) -> GitInfo:
     """
     Get git repository information.
 
@@ -167,8 +170,8 @@ class ResultsReporter:
     def __init__(
         self,
         results_dir: str = DEFAULT_RESULTS_DIR,
-        nixl_ep_repo: Optional[str] = None,
-        run_id: Optional[str] = None,
+        nixl_ep_repo: str | None = None,
+        run_id: str | None = None,
     ):
         # Default to the repo containing this file
         if nixl_ep_repo is None:
@@ -212,7 +215,7 @@ class ResultsReporter:
             "repo": self.git_info["repo"],
             "branch": self.git_info["branch"],
             "sha_short": self.git_info["sha_short"],
-            "commit_msg": self.git_info["commit_msg"][:80],  # Truncate
+            "commit_msg": str(self.git_info["commit_msg"])[:80],  # Truncate
             "dirty": self.git_info["dirty"],
             # Environment
             "hostname": self.env_info.get("hostname", ""),
@@ -280,7 +283,7 @@ class ResultsReporter:
         filepath = self.results_dir / filename
 
         # Get all unique keys across all results
-        all_keys: set[str] = set()
+        all_keys: Set[str] = set()
         for r in self.results:
             all_keys.update(r.keys())
 
