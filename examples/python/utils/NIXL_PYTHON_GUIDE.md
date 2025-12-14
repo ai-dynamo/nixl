@@ -135,13 +135,13 @@ buffer_handles = [
 for i in range(NUM_TRANSFERS):
     buffer_idx = i % NUM_BUFFERS
     handle = buffer_handles[buffer_idx]
-    
+
     # Only wait if this buffer's previous transfer is still active
     while agent.check_xfer_state(handle) == "PROC":
         pass  # Spin-wait (or use time.sleep for lower CPU)
-    
+
     # Prepare data in buffer...
-    
+
     # Start transfer (don't wait)
     agent.transfer(handle)
 ```
@@ -248,9 +248,9 @@ PROGRESS_INTERVAL = 16  # Send update every 16 messages
 
 while transfers_received < NUM_TRANSFERS:
     # ... receive and process data ...
-    
+
     transfers_received += 1
-    
+
     # Send progress update periodically
     if transfers_received % PROGRESS_INTERVAL == 0:
         agent.send_notif(sender_name, f"P:{transfers_received}".encode())
@@ -269,7 +269,7 @@ while transfers_sent < NUM_TRANSFERS:
         for msg in notifs[receiver_name]:
             if msg.startswith(b"P:"):
                 receiver_progress = int(msg[2:])
-    
+
     # Apply backpressure if too far ahead
     if (transfers_sent - receiver_progress) >= BACKPRESSURE_THRESHOLD:
         # Wait for receiver to catch up
@@ -280,7 +280,7 @@ while transfers_sent < NUM_TRANSFERS:
                     if msg.startswith(b"P:"):
                         receiver_progress = int(msg[2:])
             time.sleep(0.0001)  # Brief sleep
-    
+
     # Safe to send
     agent.transfer(buffer_handles[transfers_sent % NUM_BUFFERS])
     transfers_sent += 1
@@ -352,7 +352,7 @@ NIXL has built-in support for metadata exchange via etcd. To use:
    ```python
    # Publish
    publish_agent_metadata(agent, "my_label", use_nixl_builtin=True)
-   
+
    # Retrieve (must specify remote agent name)
    retrieve_agent_metadata(
        agent, "remote_label",

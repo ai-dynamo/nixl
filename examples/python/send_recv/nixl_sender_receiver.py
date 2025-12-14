@@ -37,7 +37,10 @@ from multiprocessing import Process
 # Add parent directory to path for utils import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils import (
+import nixl._utils as nixl_utils  # noqa: E402
+from nixl._api import nixl_agent, nixl_agent_config  # noqa: E402
+from nixl.logging import get_logger  # noqa: E402
+from utils import (  # noqa: E402
     clear_metadata,
     publish_agent_metadata,
     publish_descriptors,
@@ -47,10 +50,6 @@ from utils import (
     start_server,
     write_uint64,
 )
-
-import nixl._utils as nixl_utils
-from nixl._api import nixl_agent, nixl_agent_config
-from nixl.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -63,15 +62,20 @@ def use_etcd():
     """Check if etcd mode is enabled (via environment variable for multiprocessing)"""
     return os.environ.get("NIXL_USE_ETCD", "0") == "1"
 
+
 # Backpressure configuration
-PROGRESS_UPDATE_INTERVAL = max(1, NUM_BUFFERS // 4)  # Receiver sends progress every N messages
-BACKPRESSURE_THRESHOLD = NUM_BUFFERS - 4  # Sender checks backpressure when this far ahead
+PROGRESS_UPDATE_INTERVAL = max(
+    1, NUM_BUFFERS // 4
+)  # Receiver sends progress every N messages
+BACKPRESSURE_THRESHOLD = (
+    NUM_BUFFERS - 4
+)  # Sender checks backpressure when this far ahead
 
 
 # Define offsets within the memory allocation (using uint8 for head/tail to save space)
-HEAD_OFFSET = 0              # Head pointer at offset 0 (1 byte for uint8, values 0-NUM_BUFFERS)
-TAIL_OFFSET = 1              # Tail pointer at offset 1 (1 byte for uint8, values 0-NUM_BUFFERS)
-BUFFER_BASE_OFFSET = 2       # Buffers start at offset 2
+HEAD_OFFSET = 0  # Head pointer at offset 0 (1 byte for uint8, values 0-NUM_BUFFERS)
+TAIL_OFFSET = 1  # Tail pointer at offset 1 (1 byte for uint8, values 0-NUM_BUFFERS)
+BUFFER_BASE_OFFSET = 2  # Buffers start at offset 2
 BUFFER_ENTRY_SIZE = BUFFER_SIZE  # Each buffer's size (in bytes)
 TOTAL_MEMORY_SIZE = BUFFER_BASE_OFFSET + NUM_BUFFERS * BUFFER_ENTRY_SIZE
 
@@ -96,10 +100,15 @@ def receiver_process():
     receiver_agent.register_memory(memory_reg_descs)
 
     # Create buffer descriptors (sender will RDMA write to these)
-    buffers_xfer_desc = [(memory_addr + BUFFER_BASE_OFFSET + i * BUFFER_ENTRY_SIZE, BUFFER_SIZE, 0) for i in range(NUM_BUFFERS)]
+    buffers_xfer_desc = [
+        (memory_addr + BUFFER_BASE_OFFSET + i * BUFFER_ENTRY_SIZE, BUFFER_SIZE, 0)
+        for i in range(NUM_BUFFERS)
+    ]
     buffers_xfer_descs = receiver_agent.get_xfer_descs(buffers_xfer_desc, "DRAM")
 
-    logger.info(f"[receiver] Allocated shared memory at 0x{memory_addr:x}, size {TOTAL_MEMORY_SIZE} bytes")
+    logger.info(
+        f"[receiver] Allocated shared memory at 0x{memory_addr:x}, size {TOTAL_MEMORY_SIZE} bytes"
+    )
 
     # Initialize all buffer headers to -1 (invalid sequence number)
     buffer_base_addr = memory_addr + BUFFER_BASE_OFFSET
@@ -109,12 +118,20 @@ def receiver_process():
     # Exchange metadata and descriptors
     if use_etcd():
         # Publish receiver metadata
-        publish_agent_metadata(receiver_agent, "receiver_metadata",
-                               use_nixl_builtin=True, reg_descs=memory_reg_descs)
+        publish_agent_metadata(
+            receiver_agent,
+            "receiver_metadata",
+            use_nixl_builtin=True,
+            reg_descs=memory_reg_descs,
+        )
         # Fetch sender metadata (for bidirectional notifications)
-        sender_name = retrieve_agent_metadata(receiver_agent, "sender_metadata",
-                                              role_name="receiver", use_nixl_builtin=True,
-                                              remote_agent_name="sender")
+        sender_name = retrieve_agent_metadata(
+            receiver_agent,
+            "sender_metadata",
+            role_name="receiver",
+            use_nixl_builtin=True,
+            remote_agent_name="sender",
+        )
         if not sender_name:
             logger.error("[receiver] Failed to retrieve sender metadata")
             return
@@ -141,7 +158,9 @@ def receiver_process():
     else:
         publish_agent_metadata(receiver_agent, "receiver_metadata")
         publish_descriptors(receiver_agent, buffers_xfer_descs, "receiver_buffers_desc")
-        sender_name = retrieve_agent_metadata(receiver_agent, "sender_metadata", role_name="receiver")
+        sender_name = retrieve_agent_metadata(
+            receiver_agent, "sender_metadata", role_name="receiver"
+        )
 
     if not sender_name:
         return
@@ -181,7 +200,9 @@ def receiver_process():
         # Verify sequence - mismatch means buffer overrun!
         t0 = time.perf_counter()
         if seq != transfers_received:
-            logger.error(f"[receiver] Mismatch! Expected {transfers_received}, got {seq}")
+            logger.error(
+                f"[receiver] Mismatch! Expected {transfers_received}, got {seq}"
+            )
             sequence_mismatches += 1
         time_verify += time.perf_counter() - t0
 
@@ -210,23 +231,37 @@ def receiver_process():
         actual_transfer_time = total_time
 
     total_bytes = transfers_received * BUFFER_SIZE
-    bandwidth_mbps = (total_bytes / actual_transfer_time) / (1024 * 1024) if actual_transfer_time > 0 else 0
+    bandwidth_mbps = (
+        (total_bytes / actual_transfer_time) / (1024 * 1024)
+        if actual_transfer_time > 0
+        else 0
+    )
 
-    logger.info(f"[receiver] Completed {transfers_received} transfers in {actual_transfer_time:.3f}s")
+    logger.info(
+        f"[receiver] Completed {transfers_received} transfers in {actual_transfer_time:.3f}s"
+    )
     logger.info(f"[receiver] Bandwidth: {bandwidth_mbps:.2f} MB/s")
     logger.info(f"[receiver] Progress updates sent: {progress_updates_sent}")
     if sequence_mismatches == 0:
-        logger.info(f"[receiver] ✓ No buffer overrun (0 mismatches)")
+        logger.info("[receiver] ✓ No buffer overrun (0 mismatches)")
     else:
         logger.error(f"[receiver] ⚠️  BUFFER OVERRUN: {sequence_mismatches} mismatches!")
 
     # Timing breakdown
-    logger.info(f"[receiver] Timing breakdown:")
-    logger.info(f"  Poll for data:  {time_poll*1000:.2f} ms ({time_poll/actual_transfer_time*100:.1f}%)")
-    logger.info(f"  Verify:         {time_verify*1000:.2f} ms ({time_verify/actual_transfer_time*100:.1f}%)")
-    logger.info(f"  Send notifs:    {time_notify*1000:.2f} ms ({time_notify/actual_transfer_time*100:.1f}%)")
+    logger.info("[receiver] Timing breakdown:")
+    logger.info(
+        f"  Poll for data:  {time_poll*1000:.2f} ms ({time_poll/actual_transfer_time*100:.1f}%)"
+    )
+    logger.info(
+        f"  Verify:         {time_verify*1000:.2f} ms ({time_verify/actual_transfer_time*100:.1f}%)"
+    )
+    logger.info(
+        f"  Send notifs:    {time_notify*1000:.2f} ms ({time_notify/actual_transfer_time*100:.1f}%)"
+    )
     total_measured = time_poll + time_verify + time_notify
-    logger.info(f"  Other/overhead: {(actual_transfer_time-total_measured)*1000:.2f} ms ({(actual_transfer_time-total_measured)/actual_transfer_time*100:.1f}%)")
+    logger.info(
+        f"  Other/overhead: {(actual_transfer_time-total_measured)*1000:.2f} ms ({(actual_transfer_time-total_measured)/actual_transfer_time*100:.1f}%)"
+    )
 
     # Wait a bit for sender to finish its final checks before cleanup
     time.sleep(0.5)
@@ -253,17 +288,27 @@ def sender_process():
     buffers_reg_descs = sender_agent.get_reg_descs(buffers_reg_desc, "DRAM")
     sender_agent.register_memory(buffers_reg_descs)
 
-    logger.info(f"[sender] Allocated buffers at 0x{buffers_addr:x}, size {buffers_size} bytes")
+    logger.info(
+        f"[sender] Allocated buffers at 0x{buffers_addr:x}, size {buffers_size} bytes"
+    )
 
     # Exchange metadata
     if use_etcd():
         # Publish sender metadata first
-        publish_agent_metadata(sender_agent, "sender_metadata",
-                               use_nixl_builtin=True, reg_descs=buffers_reg_descs)
+        publish_agent_metadata(
+            sender_agent,
+            "sender_metadata",
+            use_nixl_builtin=True,
+            reg_descs=buffers_reg_descs,
+        )
         # Fetch receiver metadata (for bidirectional notifications)
-        receiver_name = retrieve_agent_metadata(sender_agent, "receiver_metadata",
-                                                role_name="sender", use_nixl_builtin=True,
-                                                remote_agent_name="receiver")
+        receiver_name = retrieve_agent_metadata(
+            sender_agent,
+            "receiver_metadata",
+            role_name="sender",
+            use_nixl_builtin=True,
+            remote_agent_name="receiver",
+        )
         if not receiver_name:
             logger.error("[sender] Failed to retrieve receiver metadata")
             return
@@ -285,8 +330,12 @@ def sender_process():
                     for msg in notifs["receiver"]:
                         if msg.startswith(b"DESCS:"):
                             serialized_descs = msg[6:]  # Remove "DESCS:" prefix
-                            receiver_buffers_descs = sender_agent.deserialize_descs(serialized_descs)
-                            logger.info("[sender] Received buffer descriptors from receiver")
+                            receiver_buffers_descs = sender_agent.deserialize_descs(
+                                serialized_descs
+                            )
+                            logger.info(
+                                "[sender] Received buffer descriptors from receiver"
+                            )
                             break
                 if receiver_buffers_descs is not None:
                     break
@@ -294,8 +343,12 @@ def sender_process():
                 time.sleep(0.01)
     else:
         publish_agent_metadata(sender_agent, "sender_metadata")
-        receiver_name = retrieve_agent_metadata(sender_agent, "receiver_metadata", role_name="sender")
-        receiver_buffers_descs = retrieve_descriptors(sender_agent, "receiver_buffers_desc")
+        receiver_name = retrieve_agent_metadata(
+            sender_agent, "receiver_metadata", role_name="sender"
+        )
+        receiver_buffers_descs = retrieve_descriptors(
+            sender_agent, "receiver_buffers_desc"
+        )
 
     if not receiver_name:
         return
@@ -303,9 +356,15 @@ def sender_process():
     logger.info(f"[sender] Connected to {receiver_name}")
 
     # Create transfer handles for each buffer slot
-    local_buffer_list = [(buffers_addr + i * BUFFER_SIZE, BUFFER_SIZE, 0) for i in range(NUM_BUFFERS)]
-    local_buffers_prep = sender_agent.prep_xfer_dlist("NIXL_INIT_AGENT", local_buffer_list, "DRAM")
-    remote_buffers_prep = sender_agent.prep_xfer_dlist(receiver_name, receiver_buffers_descs, "DRAM")
+    local_buffer_list = [
+        (buffers_addr + i * BUFFER_SIZE, BUFFER_SIZE, 0) for i in range(NUM_BUFFERS)
+    ]
+    local_buffers_prep = sender_agent.prep_xfer_dlist(
+        "NIXL_INIT_AGENT", local_buffer_list, "DRAM"
+    )
+    remote_buffers_prep = sender_agent.prep_xfer_dlist(
+        receiver_name, receiver_buffers_descs, "DRAM"
+    )
 
     if not local_buffers_prep or not remote_buffers_prep:
         logger.error("[sender] Failed to create prep lists")
@@ -314,10 +373,19 @@ def sender_process():
     # Pre-create transfer handles for each buffer slot
     buffer_xfer_handles = []
     for i in range(NUM_BUFFERS):
-        handle = sender_agent.make_prepped_xfer("WRITE", local_buffers_prep, [i], remote_buffers_prep, [i], f"BUF_{i}".encode())
+        handle = sender_agent.make_prepped_xfer(
+            "WRITE",
+            local_buffers_prep,
+            [i],
+            remote_buffers_prep,
+            [i],
+            f"BUF_{i}".encode(),
+        )
         buffer_xfer_handles.append(handle)
 
-    logger.info(f"[sender] Ready to transfer {NUM_BUFFERS} buffer slots ({BUFFER_SIZE / (1024 * 1024):.1f} MB each)")
+    logger.info(
+        f"[sender] Ready to transfer {NUM_BUFFERS} buffer slots ({BUFFER_SIZE / (1024 * 1024):.1f} MB each)"
+    )
     logger.info("[sender] Initialized, starting main loop")
 
     # Main loop - send with sequence numbers and backpressure support
@@ -404,7 +472,9 @@ def sender_process():
                             receiver_progress = progress
 
         if transfers_sent % 100 == 0:
-            logger.info(f"[sender] Sent {transfers_sent}/{NUM_TRANSFERS} (receiver at {receiver_progress})")
+            logger.info(
+                f"[sender] Sent {transfers_sent}/{NUM_TRANSFERS} (receiver at {receiver_progress})"
+            )
 
     # Record send completion time (before waiting for in-flight)
     send_end_time = time.time()
@@ -427,25 +497,49 @@ def sender_process():
         actual_transfer_time = total_time
 
     total_bytes = transfers_sent * BUFFER_SIZE
-    bandwidth_mbps = (total_bytes / actual_transfer_time) / (1024 * 1024) if actual_transfer_time > 0 else 0
+    bandwidth_mbps = (
+        (total_bytes / actual_transfer_time) / (1024 * 1024)
+        if actual_transfer_time > 0
+        else 0
+    )
 
     # Calculate send-only time (before waiting for completion)
-    send_time = send_end_time - first_transfer_time if first_transfer_time else total_time
+    send_time = (
+        send_end_time - first_transfer_time if first_transfer_time else total_time
+    )
     send_bandwidth = (total_bytes / send_time) / (1024 * 1024) if send_time > 0 else 0
 
-    logger.info(f"[sender] Completed {transfers_sent} transfers in {actual_transfer_time:.3f}s")
+    logger.info(
+        f"[sender] Completed {transfers_sent} transfers in {actual_transfer_time:.3f}s"
+    )
     logger.info(f"[sender] Bandwidth: {bandwidth_mbps:.2f} MB/s")
-    logger.info(f"[sender] Send-only time: {send_time:.3f}s ({send_bandwidth:.2f} MB/s)")
-    logger.info(f"[sender] Backpressure: {backpressure_checks} checks, {backpressure_waits * 0.1:.1f}ms wait, max ahead: {max_ahead}/{NUM_BUFFERS}")
+    logger.info(
+        f"[sender] Send-only time: {send_time:.3f}s ({send_bandwidth:.2f} MB/s)"
+    )
+    logger.info(
+        f"[sender] Backpressure: {backpressure_checks} checks, {backpressure_waits * 0.1:.1f}ms wait, max ahead: {max_ahead}/{NUM_BUFFERS}"
+    )
 
     # Timing breakdown
-    logger.info(f"[sender] Timing breakdown:")
-    logger.info(f"  Write header:     {time_write_header*1000:.2f} ms ({time_write_header/actual_transfer_time*100:.1f}%)")
-    logger.info(f"  Transfer buffer:  {time_transfer_buffer*1000:.2f} ms ({time_transfer_buffer/actual_transfer_time*100:.1f}%)")
-    logger.info(f"  Wait for buffer:  {time_wait_buffer*1000:.2f} ms ({time_wait_buffer/actual_transfer_time*100:.1f}%)")
-    logger.info(f"  Backpressure:     {time_backpressure*1000:.2f} ms ({time_backpressure/actual_transfer_time*100:.1f}%)")
-    total_measured = time_write_header + time_transfer_buffer + time_wait_buffer + time_backpressure
-    logger.info(f"  Other/overhead:   {(actual_transfer_time-total_measured)*1000:.2f} ms ({(actual_transfer_time-total_measured)/actual_transfer_time*100:.1f}%)")
+    logger.info("[sender] Timing breakdown:")
+    logger.info(
+        f"  Write header:     {time_write_header*1000:.2f} ms ({time_write_header/actual_transfer_time*100:.1f}%)"
+    )
+    logger.info(
+        f"  Transfer buffer:  {time_transfer_buffer*1000:.2f} ms ({time_transfer_buffer/actual_transfer_time*100:.1f}%)"
+    )
+    logger.info(
+        f"  Wait for buffer:  {time_wait_buffer*1000:.2f} ms ({time_wait_buffer/actual_transfer_time*100:.1f}%)"
+    )
+    logger.info(
+        f"  Backpressure:     {time_backpressure*1000:.2f} ms ({time_backpressure/actual_transfer_time*100:.1f}%)"
+    )
+    total_measured = (
+        time_write_header + time_transfer_buffer + time_wait_buffer + time_backpressure
+    )
+    logger.info(
+        f"  Other/overhead:   {(actual_transfer_time-total_measured)*1000:.2f} ms ({(actual_transfer_time-total_measured)/actual_transfer_time*100:.1f}%)"
+    )
 
     # Cleanup
     for handle in buffer_xfer_handles:
@@ -488,8 +582,11 @@ def run_test(num_buffers, buffer_size, num_transfers):
 
 def main():
     parser = argparse.ArgumentParser(description="NIXL Sender-Receiver Example")
-    parser.add_argument("--use-etcd", action="store_true",
-                        help="Use NIXL's built-in etcd for metadata exchange (requires NIXL built with etcd support and NIXL_ETCD_ENDPOINTS env var)")
+    parser.add_argument(
+        "--use-etcd",
+        action="store_true",
+        help="Use NIXL's built-in etcd for metadata exchange (requires NIXL built with etcd support and NIXL_ETCD_ENDPOINTS env var)",
+    )
     args = parser.parse_args()
 
     # Set environment variable so child processes can see it
@@ -508,20 +605,29 @@ def main():
 
         # Verify etcd is running
         import urllib.request
+
         try:
-            with urllib.request.urlopen(os.environ["NIXL_ETCD_ENDPOINTS"] + "/version", timeout=2) as resp:
+            with urllib.request.urlopen(
+                os.environ["NIXL_ETCD_ENDPOINTS"] + "/version", timeout=2
+            ) as resp:
                 if resp.status == 200:
-                    logger.info("[main] etcd is running, using NIXL built-in etcd for metadata exchange")
+                    logger.info(
+                        "[main] etcd is running, using NIXL built-in etcd for metadata exchange"
+                    )
         except Exception as e:
-            logger.error(f"[main] etcd not available at {os.environ['NIXL_ETCD_ENDPOINTS']}: {e}")
+            logger.error(
+                f"[main] etcd not available at {os.environ['NIXL_ETCD_ENDPOINTS']}: {e}"
+            )
             sys.exit(1)
 
         # Clear stale metadata from previous runs
         import subprocess
+
         result = subprocess.run(
             ["etcdctl", "del", "--prefix", "/nixl/"],
             env={**os.environ, "ETCDCTL_API": "3"},
-            capture_output=True, text=True
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0 and result.stdout.strip():
             logger.info(f"[main] Cleared {result.stdout.strip()} stale etcd keys")
@@ -534,7 +640,9 @@ def main():
             pass  # Server may already be running
         logger.info("[main] Using TCP server for metadata exchange")
 
-    logger.info(f"[main] Starting sender-receiver: queue_size={NUM_BUFFERS}, num_transfers={NUM_TRANSFERS}, buffer_size={BUFFER_SIZE}")
+    logger.info(
+        f"[main] Starting sender-receiver: queue_size={NUM_BUFFERS}, num_transfers={NUM_TRANSFERS}, buffer_size={BUFFER_SIZE}"
+    )
     success = run_test(NUM_BUFFERS, BUFFER_SIZE, NUM_TRANSFERS)
     if success:
         logger.info("[main] ✓ Success!")
@@ -544,4 +652,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

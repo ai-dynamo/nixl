@@ -53,4 +53,3 @@ def read_uint64(addr):
     char_buffer = (ctypes.c_char * 8).from_address(addr)
     arr = np.frombuffer(char_buffer, dtype=np.uint64, count=1)
     return int(arr[0])
-

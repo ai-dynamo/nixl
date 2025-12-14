@@ -32,7 +32,10 @@ from multiprocessing import Process
 # Add parent directory to path for utils import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils import (
+import nixl._utils as nixl_utils  # noqa: E402
+from nixl._api import nixl_agent, nixl_agent_config  # noqa: E402
+from nixl.logging import get_logger  # noqa: E402
+from utils import (  # noqa: E402
     clear_metadata,
     publish_agent_metadata,
     publish_descriptors,
@@ -40,10 +43,6 @@ from utils import (
     retrieve_descriptors,
     start_server,
 )
-
-import nixl._utils as nixl_utils
-from nixl._api import nixl_agent, nixl_agent_config
-from nixl.logging import get_logger
 
 # Configure logging
 logger = get_logger(__name__)
@@ -79,15 +78,23 @@ def target_process():
     # Publish metadata and descriptors
     if use_etcd():
         # etcd mode: publish agent metadata, then exchange descriptors via notifications
-        publish_agent_metadata(target_agent, "target_meta",
-                               use_nixl_builtin=True, reg_descs=target_reg_descs)
+        publish_agent_metadata(
+            target_agent,
+            "target_meta",
+            use_nixl_builtin=True,
+            reg_descs=target_reg_descs,
+        )
         logger.info("[target] Published metadata via NIXL etcd")
 
         # Fetch initiator's metadata so we can send notifications to them
         logger.info("[target] Waiting for initiator metadata...")
-        initiator_name = retrieve_agent_metadata(target_agent, "initiator_meta",
-                                                  role_name="target", use_nixl_builtin=True,
-                                                  remote_agent_name="initiator")
+        initiator_name = retrieve_agent_metadata(
+            target_agent,
+            "initiator_meta",
+            role_name="target",
+            use_nixl_builtin=True,
+            remote_agent_name="initiator",
+        )
         if not initiator_name:
             logger.error("[target] Failed to fetch initiator metadata")
             return
@@ -148,7 +155,10 @@ def initiator_process():
     initiator_addr2 = initiator_addr + buf_size
 
     initiator_addrs = [(initiator_addr, buf_size, 0), (initiator_addr2, buf_size, 0)]
-    initiator_strings = [(initiator_addr, buf_size, 0, "a"), (initiator_addr2, buf_size, 0, "b")]
+    initiator_strings = [
+        (initiator_addr, buf_size, 0, "a"),
+        (initiator_addr2, buf_size, 0, "b"),
+    ]
 
     initiator_reg_descs = initiator_agent.get_reg_descs(initiator_strings, "DRAM")
     initiator_xfer_descs = initiator_agent.get_xfer_descs(initiator_addrs, "DRAM")
@@ -161,14 +171,22 @@ def initiator_process():
     if use_etcd():
         # etcd mode: publish our metadata first, then fetch target's metadata
         # Both sides need each other's metadata for bidirectional notifications
-        publish_agent_metadata(initiator_agent, "initiator_meta",
-                               use_nixl_builtin=True, reg_descs=initiator_reg_descs)
+        publish_agent_metadata(
+            initiator_agent,
+            "initiator_meta",
+            use_nixl_builtin=True,
+            reg_descs=initiator_reg_descs,
+        )
         logger.info("[initiator] Published metadata via NIXL etcd")
 
         # Fetch target's metadata
-        remote_name = retrieve_agent_metadata(initiator_agent, "target_meta",
-                                              role_name="initiator", use_nixl_builtin=True,
-                                              remote_agent_name="target")
+        remote_name = retrieve_agent_metadata(
+            initiator_agent,
+            "target_meta",
+            role_name="initiator",
+            use_nixl_builtin=True,
+            remote_agent_name="target",
+        )
         if not remote_name:
             logger.error("[initiator] Failed to retrieve target metadata from etcd")
             return
@@ -191,7 +209,9 @@ def initiator_process():
                     for msg in notifs["target"]:
                         if msg.startswith(b"DESCS:"):
                             serialized_descs = msg[6:]  # Remove "DESCS:" prefix
-                            target_xfer_descs = initiator_agent.deserialize_descs(serialized_descs)
+                            target_xfer_descs = initiator_agent.deserialize_descs(
+                                serialized_descs
+                            )
                             logger.info("[initiator] Received descriptors from target")
                             break
                 if target_xfer_descs is not None:
@@ -200,7 +220,9 @@ def initiator_process():
                 time.sleep(0.01)
     else:
         # TCP mode: retrieve metadata and descriptors from server
-        remote_name = retrieve_agent_metadata(initiator_agent, "target_meta", role_name="initiator")
+        remote_name = retrieve_agent_metadata(
+            initiator_agent, "target_meta", role_name="initiator"
+        )
         target_xfer_descs = retrieve_descriptors(initiator_agent, "target_descs")
 
     if not remote_name:
@@ -238,7 +260,9 @@ def initiator_process():
     # Transfer 2: prep transfer mode
     logger.info("[initiator] Starting transfer 2 (WRITE)...")
     local_prep_handle = initiator_agent.prep_xfer_dlist(
-        "NIXL_INIT_AGENT", [(initiator_addr, buf_size, 0), (initiator_addr2, buf_size, 0)], "DRAM"
+        "NIXL_INIT_AGENT",
+        [(initiator_addr, buf_size, 0), (initiator_addr2, buf_size, 0)],
+        "DRAM",
     )
     remote_prep_handle = initiator_agent.prep_xfer_dlist(
         remote_name, target_xfer_descs, "DRAM"
@@ -285,8 +309,11 @@ def initiator_process():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NIXL Two-Process Example")
-    parser.add_argument("--use-etcd", action="store_true",
-                        help="Use NIXL's built-in etcd for metadata exchange (requires NIXL built with etcd support and NIXL_ETCD_ENDPOINTS env var)")
+    parser.add_argument(
+        "--use-etcd",
+        action="store_true",
+        help="Use NIXL's built-in etcd for metadata exchange (requires NIXL built with etcd support and NIXL_ETCD_ENDPOINTS env var)",
+    )
     args = parser.parse_args()
 
     # Set environment variable so child processes can see it
@@ -303,20 +330,29 @@ if __name__ == "__main__":
 
         # Verify etcd is running
         import urllib.request
+
         try:
-            with urllib.request.urlopen(os.environ["NIXL_ETCD_ENDPOINTS"] + "/version", timeout=2) as resp:
+            with urllib.request.urlopen(
+                os.environ["NIXL_ETCD_ENDPOINTS"] + "/version", timeout=2
+            ) as resp:
                 if resp.status == 200:
-                    logger.info("[main] etcd is running, using NIXL built-in etcd for metadata exchange")
+                    logger.info(
+                        "[main] etcd is running, using NIXL built-in etcd for metadata exchange"
+                    )
         except Exception as e:
-            logger.error(f"[main] etcd not available at {os.environ['NIXL_ETCD_ENDPOINTS']}: {e}")
+            logger.error(
+                f"[main] etcd not available at {os.environ['NIXL_ETCD_ENDPOINTS']}: {e}"
+            )
             sys.exit(1)
 
         # Clear stale metadata from previous runs
         import subprocess
+
         result = subprocess.run(
             ["etcdctl", "del", "--prefix", "/nixl/"],
             env={**os.environ, "ETCDCTL_API": "3"},
-            capture_output=True, text=True
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0 and result.stdout.strip():
             logger.info(f"[main] Cleared {result.stdout.strip()} stale etcd keys")
@@ -346,5 +382,6 @@ if __name__ == "__main__":
     if target_proc.exitcode == 0 and initiator_proc.exitcode == 0:
         logger.info("[main] ✓ Test Complete - Both processes succeeded!")
     else:
-        logger.error(f"[main] ✗ Process error - Target: {target_proc.exitcode}, Initiator: {initiator_proc.exitcode}")
-
+        logger.error(
+            f"[main] ✗ Process error - Target: {target_proc.exitcode}, Initiator: {initiator_proc.exitcode}"
+        )

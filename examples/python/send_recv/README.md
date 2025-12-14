@@ -131,14 +131,14 @@ for i in range(NUM_BUFFERS):
 ```python
 while transfers_received < NUM_TRANSFERS:
     buffer_idx = transfers_received % NUM_BUFFERS
-    
+
     # Poll until expected sequence number appears
     while read_uint64(buffer_addr) != transfers_received:
         pass
-    
+
     # Verify and process
     transfers_received += 1
-    
+
     # Send progress notification periodically
     if transfers_received % PROGRESS_INTERVAL == 0:
         receiver_agent.send_notif(sender_name, f"P:{transfers_received}".encode())
@@ -153,11 +153,11 @@ while transfers_sent < NUM_TRANSFERS:
         while (transfers_sent - receiver_progress) >= THRESHOLD:
             notifs = sender_agent.get_new_notifs()
             # Update receiver_progress from notifications...
-    
+
     # Prepare buffer with sequence number
     buffer_idx = transfers_sent % NUM_BUFFERS
     write_uint64(buffer_addr, transfers_sent)
-    
+
     # RDMA WRITE buffer to receiver
     sender_agent.transfer(buffer_handles[buffer_idx])
     transfers_sent += 1

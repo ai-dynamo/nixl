@@ -31,9 +31,9 @@ import base64
 import os
 import time
 
-from . import tcp_server
-
 from nixl.logging import get_logger
+
+from . import tcp_server
 
 logger = get_logger(__name__)
 
@@ -79,12 +79,14 @@ def publish_agent_metadata(
             logger.debug(f"Published metadata via NIXL built-in API with label '{key}'")
         except Exception as e:
             if "NOT_SUPPORTED" in str(e):
-                logger.error("NIXL was built without etcd support. Use TCP mode instead (remove --use-etcd)")
+                logger.error(
+                    "NIXL was built without etcd support. Use TCP mode instead (remove --use-etcd)"
+                )
             raise
     else:
         # Use TCP server
         metadata = agent.get_agent_metadata()
-        metadata_b64 = base64.b64encode(metadata).decode('utf-8')
+        metadata_b64 = base64.b64encode(metadata).decode("utf-8")
         tcp_server.set_metadata(key, metadata_b64, host, port)
         logger.debug(f"Published metadata to TCP server with key '{key}'")
 
@@ -119,7 +121,9 @@ def retrieve_agent_metadata(
 
     if use_nixl_builtin:
         if not remote_agent_name:
-            logger.error(f"[{role_name}] remote_agent_name required for NIXL built-in mode")
+            logger.error(
+                f"[{role_name}] remote_agent_name required for NIXL built-in mode"
+            )
             return None
 
         # Use NIXL's built-in fetch_remote_metadata
@@ -128,7 +132,9 @@ def retrieve_agent_metadata(
             agent.fetch_remote_metadata(remote_agent_name, label=key)
         except Exception as e:
             if "NOT_SUPPORTED" in str(e):
-                logger.error("NIXL was built without etcd support. Use TCP mode instead (remove --use-etcd)")
+                logger.error(
+                    "NIXL was built without etcd support. Use TCP mode instead (remove --use-etcd)"
+                )
             raise
 
         # Wait for metadata to be available
@@ -155,12 +161,12 @@ def retrieve_agent_metadata(
             logger.error(f"[{role_name}] Timeout waiting for {key}")
             return None
 
-        metadata = base64.b64decode(metadata_b64.encode('utf-8'))
+        metadata = base64.b64decode(metadata_b64.encode("utf-8"))
         remote_name = agent.add_remote_agent(metadata)
 
         # Convert bytes to string if needed
         if isinstance(remote_name, bytes):
-            remote_name = remote_name.decode('utf-8')
+            remote_name = remote_name.decode("utf-8")
 
         logger.info(f"[{role_name}] Loaded remote agent: {remote_name}")
         return remote_name
@@ -188,7 +194,7 @@ def publish_descriptors(
         port: TCP server port
     """
     serialized = agent.get_serialized_descs(xfer_descs)
-    serialized_b64 = base64.b64encode(serialized).decode('utf-8')
+    serialized_b64 = base64.b64encode(serialized).decode("utf-8")
     tcp_server.set_metadata(key, serialized_b64, host, port)
 
 
@@ -218,6 +224,5 @@ def retrieve_descriptors(
     if not serialized_b64:
         return None
 
-    serialized = base64.b64decode(serialized_b64.encode('utf-8'))
+    serialized = base64.b64decode(serialized_b64.encode("utf-8"))
     return agent.deserialize_descs(serialized)
-

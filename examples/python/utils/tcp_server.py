@@ -140,4 +140,3 @@ def clear_metadata(server="127.0.0.1", port=9998):
     response = json.loads(s.recv(4096).decode().strip())
     s.close()
     return response.get("status") == "OK"
-
