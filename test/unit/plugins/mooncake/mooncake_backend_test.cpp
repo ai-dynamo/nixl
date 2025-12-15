@@ -781,6 +781,9 @@ main() {
 #endif
     }
 
+    // The following allocateWrongGPUTest is temporarily commented
+    // because it attempts to register VRAM on a different GPU and expects 
+    // NIXL_ERR_NOT_SUPPORTED, which is not supported in current backend 
     // #ifdef HAVE_CUDA
     // if (n_vram_dev > 1) {
     // Test if registering on a different GPU fails correctly

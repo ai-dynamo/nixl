@@ -219,7 +219,7 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   $SUDO bash dependencies.sh && \
   mkdir build && cd build && \
   cmake .. -DBUILD_SHARED_LIBS=ON -DUSE_CUDA=ON&& \
-  make -j && \
+  make -j"$NPROC" && \
   $SUDO make install && \
   $SUDO ldconfig
 )
