@@ -37,6 +37,10 @@ if 'OBJ' in static_plugins
     nixl_lib_deps += [ obj_backend_interface ]
 endif
 
+if 'OBS_OBJ' in static_plugins
+    nixl_lib_deps += [ obs_obj_backend_interface ]
+endif
+
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]

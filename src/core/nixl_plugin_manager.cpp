@@ -667,6 +667,10 @@ void nixlPluginManager::registerBuiltinPlugins() {
     NIXL_REGISTER_STATIC_PLUGIN(Backend, OBJ)
 #endif
 
+#ifdef STATIC_PLUGIN_OBS_OBJ
+    NIXL_REGISTER_STATIC_PLUGIN(OBS_OBJ)
+#endif
+
 #ifdef STATIC_PLUGIN_MOONCAKE
     NIXL_REGISTER_STATIC_PLUGIN(Backend, MOONCAKE)
 #endif

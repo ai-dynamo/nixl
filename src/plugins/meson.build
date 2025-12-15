@@ -64,6 +64,10 @@ if enabled_plugins.get('GDS_MT')
     endif
 endif
 
+if cuda_dep.found() and not disable_gds_backend
+    subdir('obs_obj')
+endif
+
 cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
 if enabled_plugins.get('MOONCAKE')

@@ -71,6 +71,7 @@ int main(int argc, char** argv) {
                                      "MOCK_BACKEND",
                                      "GPUNETIO",
                                      "OBJ",
+                                     "OBS_OBJ",
                                      "GDS_MT",
                                      "LIBFABRIC",
                                      "GUSLI",

@@ -117,7 +117,7 @@ public:
     bool
     checkObjectExists(std::string_view key) override;
 
-private:
+protected:
     std::unique_ptr<Aws::SDKOptions, std::function<void(Aws::SDKOptions *)>> awsOptions_;
     std::unique_ptr<Aws::S3::S3Client> s3Client_;
     Aws::String bucketName_;
