@@ -533,19 +533,26 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             throw std::runtime_error("fi_ep_bind av failed for rail " + std::to_string(rail_id));
         }
 
-        // Disable shared memory transfers for EFA provider to fix same-agent transfers
-        bool optval = false;
-        ret = fi_setopt(&endpoint->fid,
-                        FI_OPT_ENDPOINT,
-                        FI_OPT_SHARED_MEMORY_PERMITTED,
-                        &optval,
-                        sizeof(optval));
-        if (ret && ret != -FI_ENOSYS) {
-            NIXL_WARN << "fi_setopt FI_OPT_SHARED_MEMORY_PERMITTED failed for rail " << rail_id
-                      << ": " << fi_strerror(-ret) << " - continuing anyway";
-        } else if (ret == 0) {
-            NIXL_DEBUG << "Successfully disabled shared memory transfers for rail " << rail_id;
+#ifdef HAVE_FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV
+        if (provider_name == "efa") {
+            // Disable unsolicited write recv for EFA RDM to reduce CQ overflow likelihood
+            const bool use_unsolicited_write_recv = false; // Set to false to disable the feature
+            ret = fi_setopt(&endpoint->fid,
+                            FI_OPT_ENDPOINT,
+                            FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV,
+                            &use_unsolicited_write_recv,
+                            sizeof(use_unsolicited_write_recv));
+            if (ret && ret != -FI_ENOSYS && ret != -FI_ENOPROTOOPT) {
+                NIXL_WARN << "fi_setopt FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV failed for rail "
+                          << rail_id << ": " << fi_strerror(-ret) << " - continuing anyway";
+            } else if (ret == 0) {
+                NIXL_INFO << "Successfully disabled unsolicited write recv for rail " << rail_id;
+            } else if (ret == -FI_ENOSYS || ret == -FI_ENOPROTOOPT) {
+                NIXL_DEBUG << "FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV not supported for rail "
+                           << rail_id << " (provider: " << provider_name << ") - skipping";
+            }
         }
+#endif
 
         // Enable endpoint for this rail
         ret = fi_enable(endpoint);
@@ -791,7 +798,7 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) co
         // Local read completions (fi_readdata) - use context
         return processLocalTransferCompletion(comp, "read");
 
-    } else if (flags & FI_REMOTE_WRITE) {
+    } else if (flags & FI_REMOTE_WRITE || flags & FI_REMOTE_CQ_DATA) {
         // Remote write completions (from fi_writedata) - use immediate data
         return processRemoteWriteCompletion(comp);
 

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.8.0',
+project('nixl', 'CPP', version: '0.9.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -79,15 +79,25 @@ dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
-# Check for POSIX AIO support for the POSIX plugin and test (it is part of GLIBC)
-posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
-
 # Check for libaio (for LINUX AIO plugin and test)
-aio_dep = cpp.find_library('aio', required: false)
-linux_aio = false
-if aio_dep.found()
-    linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [aio_dep])
+has_linux_aio = false
+linux_aio_dep = cpp.find_library('aio', required: false)
+if linux_aio_dep.found()
+    has_linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [linux_aio_dep])
 endif
+
+# Check for liburing
+has_io_uring = false
+io_uring_dep = dependency('liburing', required: false)
+if io_uring_dep.found()
+    has_io_uring = cpp.has_function('io_uring_queue_init_params', prefix: '#include <liburing.h>',  dependencies: [io_uring_dep])
+endif
+
+# Check for POSIX aio
+has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', dependencies: [rt_dep])
+
+# Check whether the POSIX plugin is enabled
+has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
 # Forced to ignore this error due to:
 # https://github.com/abseil/abseil-cpp/issues/1779
@@ -312,7 +322,7 @@ if get_option('buildtype') == 'debug'
     run_command('truncate', '-s 0', plugfile, check: true)
 endif
 
-nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core')
+nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry')
 nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')

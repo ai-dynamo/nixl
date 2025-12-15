@@ -674,4 +674,5 @@ void nixlPluginManager::registerBuiltinPlugins() {
 #ifdef STATIC_PLUGIN_HF3FS
     NIXL_REGISTER_STATIC_PLUGIN(Backend, HF3FS)
 #endif
+    NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
 }
