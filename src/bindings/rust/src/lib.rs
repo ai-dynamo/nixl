@@ -68,7 +68,7 @@ use bindings::{
     nixl_capi_make_xfer_req, nixl_capi_get_local_partial_md,
     nixl_capi_send_local_partial_md, nixl_capi_query_xfer_backend, nixl_capi_opt_args_set_ip_addr,
     nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry,
-    nixl_capi_create_params, nixl_capi_params_add
+    nixl_capi_create_params, nixl_capi_params_add, nixl_capi_is_stub
 };
 
 // Re-export status codes
@@ -559,4 +559,8 @@ impl NixlRegistration for SystemStorage {
         self.handle = Some(handle);
         Ok(())
     }
+}
+
+pub fn is_stub() -> bool {
+    unsafe { nixl_capi_is_stub() }
 }
