@@ -47,6 +47,13 @@ repos:
         args: ["--toml", "pyproject.toml"]
         exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*\.md|.*\.rs$|src/utils/serdes/serdes.h)
 
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v17.0.6
+    hooks:
+      - id: clang-format
+        files: \.(cpp|h|hpp|cc)$
+        args: ["-i"]
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0
     hooks:
