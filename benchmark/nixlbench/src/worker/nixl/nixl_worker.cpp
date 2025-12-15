@@ -116,6 +116,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL) ||
         xferBenchConfig::isStorageBackend()) {
         backend_name = xferBenchConfig::backend;
     } else {
@@ -258,12 +259,16 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             std::cout << "    Device " << dev.device_id << " [" << dev.device_type
                       << "]: " << dev.device_path << " (" << dev.security_flags << ")" << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
+        std::cout << "UCCL backend" << std::endl;
+        backend_params["in_python"] = "0";
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
     }
 
-    agent->createBackend(backend_name, backend_params, backend_engine);
+    CHECK_NIXL_ERROR(agent->createBackend(backend_name, backend_params, backend_engine),
+                     "createBackend failed!");
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
@@ -308,15 +313,8 @@ iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list, nixl_xfer_dlis
     }
 }
 
-
-enum class AllocationType { POSIX_MEMALIGN, CALLOC, MALLOC };
-
 static bool
-allocateXferMemory(size_t buffer_size,
-                   void **addr,
-                   std::optional<AllocationType> allocation_type = std::nullopt,
-                   std::optional<size_t> num = 1) {
-
+allocateXferMemory(size_t buffer_size, void **addr) {
     if (!addr) {
         std::cerr << "Invalid address" << std::endl;
         return false;
@@ -325,38 +323,18 @@ allocateXferMemory(size_t buffer_size,
         std::cerr << "Invalid buffer size" << std::endl;
         return false;
     }
-    AllocationType type = allocation_type.value_or(AllocationType::MALLOC);
-
-    if (type == AllocationType::POSIX_MEMALIGN) {
-        if (xferBenchConfig::page_size == 0) {
-            std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
-            return false;
-        }
-        int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
-        if (rc != 0 || !*addr) {
-            std::cerr << "Failed to allocate " << buffer_size
-                      << " bytes of page-aligned DRAM memory" << std::endl;
-            return false;
-        }
-        memset(*addr, 0, buffer_size);
-    } else if (type == AllocationType::CALLOC) {
-        *addr = calloc(num.value_or(1), buffer_size);
-        if (!*addr) {
-            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory"
-                      << std::endl;
-            return false;
-        }
-    } else if (type == AllocationType::MALLOC) {
-        *addr = malloc(buffer_size);
-        if (!*addr) {
-            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory"
-                      << std::endl;
-            return false;
-        }
-    } else {
-        std::cerr << "Invalid allocation type" << std::endl;
+    if (xferBenchConfig::page_size == 0) {
+        std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
         return false;
     }
+
+    int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
+    if (rc != 0 || !*addr) {
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of page-aligned DRAM memory"
+                  << std::endl;
+        return false;
+    }
+    memset(*addr, 0, buffer_size);
     return true;
 }
 
@@ -364,12 +342,7 @@ std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     void *addr;
 
-    AllocationType type = AllocationType::CALLOC;
-    if (xferBenchConfig::storage_enable_direct) {
-        type = AllocationType::POSIX_MEMALIGN;
-    }
-
-    if (!allocateXferMemory(buffer_size, &addr, type)) {
+    if (!allocateXferMemory(buffer_size, &addr)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
         return std::nullopt;
     }
@@ -576,13 +549,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
     // Fill up with data
     void *buf;
-    AllocationType type = AllocationType::MALLOC;
-
-    if (xferBenchConfig::storage_enable_direct) {
-        type = AllocationType::POSIX_MEMALIGN;
-    }
-
-    if (!allocateXferMemory(buffer_size, &buf, type) || !buf) {
+    if (!allocateXferMemory(buffer_size, &buf)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
         return std::nullopt;
     }
@@ -860,8 +827,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
         iov_lists.push_back(iov_list);
 
-        /* Workaround for a GUSLI registration bug which resets memory to 0 */
-        if (seg_type == DRAM_SEG) {
+        /*
+         * Workaround for a GUSLI registration bug which resets memory to 0, this initialization
+         * is only needed when validating data. It was moved from the initBasicDescDram function to
+         * here to avoid memsetting the memory again.
+         */
+        if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
             for (auto &iov : iov_list) {
                 if (isInitiator()) {
                     memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);

@@ -32,6 +32,8 @@ UCX_VERSION=${UCX_VERSION:-v1.20.x}
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
+# UCCL_COMMIT_SHA is the commit SHA of UCCL.
+UCCL_COMMIT_SHA="1465751bf2f2c8cec7616c4a36a3a18504877870"
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
@@ -85,6 +87,9 @@ $SUDO apt-get -qq install -y python3-dev \
                              libcpprest-dev \
                              libaio-dev \
                              liburing-dev \
+                             libelf-dev \
+                             libgflags-dev \
+                             patchelf \
                              meson \
                              ninja-build \
                              pkg-config \
@@ -117,7 +122,7 @@ fi
 # Add DOCA repository and install packages
 ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
 MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb
+wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb
 $SUDO dpkg -i doca-host.deb
 $SUDO apt-get update
 $SUDO apt-get upgrade -y
@@ -144,7 +149,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
 ( \
   cd openucx-ucx* && \
   ./autogen.sh && \
-  ./configure \
+  ./contrib/configure-release-mt \
           --prefix="${UCX_INSTALL_DIR}" \
           --enable-shared \
           --disable-static \
@@ -154,8 +159,7 @@ curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
           --enable-devel-headers \
           --with-verbs \
           --with-dm \
-          ${UCX_CUDA_BUILD_ARGS} \
-          --enable-mt && \
+          ${UCX_CUDA_BUILD_ARGS} && \
         make -j && \
         make -j install-strip && \
         $SUDO ldconfig \
@@ -219,6 +223,21 @@ rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
   $SUDO make install && \
   $SUDO ldconfig
 )
+
+if $HAS_GPU; then
+  ( \
+    cd /tmp && \
+    git clone https://github.com/uccl-project/uccl.git && \
+    cd uccl && git checkout -q "${UCCL_COMMIT_SHA}" && \
+    cd p2p && \
+    pip3 install pybind11 --break-system-packages && \
+    make -j2 && \
+    $SUDO make install && \
+    $SUDO ldconfig
+  )
+else
+    echo "No NVIDIA GPU(s) detected. Skipping UCCL installation."
+fi
 
 ( \
   cd /tmp &&

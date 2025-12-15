@@ -18,7 +18,7 @@ ARG BASE_IMAGE
 ARG BASE_IMAGE_TAG
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
-ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG DEFAULT_PYTHON_VERSION="3.14"
 ARG ARCH="x86_64"
 ARG UCX_REF="v1.20.x"
 ARG LIBFABRIC_VERSION="v1.21.0"
@@ -105,7 +105,8 @@ RUN cd /workspace && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
-    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=17 && \
+    make -j$(nproc) && make install
 
 # The base image libcurl is linked against openssl 1.x, so we need to build from source
 # in order to use openssl 3.x. This is needed to build aws-sdk-cpp.
@@ -152,10 +153,10 @@ RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.
     rm rustup-init && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-RUN wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host-3.1.0-091000_25.07_rhel89.${ARCH}.rpm && \
-    rpm -i doca-host-3.1.0-091000_25.07_rhel89.${ARCH}.rpm && \
+RUN wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host-3.2.0-125000_25.10_rhel8.${ARCH}.rpm -O doca-host.rpm && \
+    rpm -i doca-host.rpm && \
     dnf install -y libnl3-devel && \
-    cd /usr/share/doca-host-3.1.0/repo/Packages/ && \
+    cd /usr/share/doca-host-3.2.0/repo/Packages/ && \
     rpm -ivh --nodeps doca-sdk-common-*rpm && \
     rpm -ivh --nodeps doca-sdk-rdma-*rpm && \
     rpm -ivh --nodeps doca-sdk-verbs-*rpm && \
@@ -188,7 +189,8 @@ RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && 			     \
      git checkout $UCX_REF &&	     \
-     ./autogen.sh && ./configure     \
+     ./autogen.sh && \
+     ./contrib/configure-release-mt  \
          --enable-shared             \
          --disable-static            \
          --disable-doxygen-doc       \
@@ -199,8 +201,7 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --with-gdrcopy=/usr/local   \
-         --with-efa                  \
-         --enable-mt &&              \
+         --with-efa  &&              \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
@@ -243,6 +244,8 @@ RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click s
 # Install PyTorch
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     uv pip install torch torchvision torchaudio
+# Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
+RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
@@ -266,10 +269,11 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
-ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12,3.13"
+ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+    export UV_INDEX_STRATEGY=unsafe-best-match && \
     mkdir -p dist && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         export PATH=$VIRTUAL_ENV/bin:$PATH && \

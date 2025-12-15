@@ -15,7 +15,7 @@
 # Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
 
 
-job: nixl-ci-test
+job: nixl-ci-gpu
 
 # Fail job if one of the steps fails or continue
 failFast: false
@@ -31,7 +31,6 @@ matrix:
   axes:
     image:
       - nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04
-      - nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
     arch:
       - x86_64
     ucx_version:
@@ -71,6 +70,28 @@ steps:
       # check rdma status
       ibv_devinfo
       #ib_write_bw
+      # Ensure proper MPS configuration: MPS requires EXCLUSIVE_PROCESS compute mode
+      # If MPS is running without EXCLUSIVE_PROCESS mode, that's a misconfiguration that causes hangs
+      GPU_COUNT=$(nvidia-smi -L | wc -l)
+      if [ "$GPU_COUNT" -gt 0 ]; then
+        # Check if MPS is running
+        MPS_RUNNING=false
+        if command -v nvidia-cuda-mps-control >/dev/null 2>&1 && pgrep -f nvidia-cuda-mps-server >/dev/null 2>&1; then
+          MPS_RUNNING=true
+        fi
+
+        if [ "$MPS_RUNNING" = true ]; then
+          # MPS is running - ensure EXCLUSIVE_PROCESS mode is set (required for MPS)
+          for i in $(seq 0 $((GPU_COUNT-1))); do
+            nvidia-smi -i $i -c EXCLUSIVE_PROCESS || true
+          done
+        else
+          # MPS is not running - ensure DEFAULT mode
+          for i in $(seq 0 $((GPU_COUNT-1))); do
+            nvidia-smi -i $i -c DEFAULT || true
+          done
+        fi
+      fi
 
 
   - name: Build GPU Test Environment

@@ -55,7 +55,7 @@ $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
 $ git checkout v1.20.x
 $ ./autogen.sh
-$ ./configure                          \
+$ ./contrib/configure-release-mt       \
     --enable-shared                    \
     --disable-static                   \
     --disable-doxygen-doc              \
@@ -65,8 +65,7 @@ $ ./configure                          \
     --with-cuda=<cuda install>         \
     --with-verbs                       \
     --with-dm                          \
-    --with-gdrcopy=<gdrcopy install>   \
-    --enable-mt
+    --with-gdrcopy=<gdrcopy install>
 $ make -j
 $ make -j install-strip
 $ ldconfig
@@ -145,6 +144,13 @@ Common build options:
 - `disable_gds_backend`: Disable GDS backend (default: false)
 - `cudapath_inc`, `cudapath_lib`: Custom CUDA paths
 - `static_plugins`: Comma-separated list of plugins to build statically
+- `enable_plugins`: Comma-separated list of plugins to build (e.g. `-Denable_plugins=UCX,POSIX`). Cannot be used with `disable_plugins`.
+- `disable_plugins`: Comma-separated list of plugins to exclude (e.g. `-Ddisable_plugins=GDS`). Cannot be used with `enable_plugins`.
+
+#### Environment Variables
+
+There are a few environment variables that can be set to configure the build:
+- `NIXL_NO_STUBS_FALLBACK`: If not set or 0, build NIXL stub library if the library build fails
 
 ### Building Documentation
 

@@ -408,8 +408,12 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
 nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                bool prog_thread,
                                unsigned long num_workers,
-                               nixl_thread_sync_t sync_mode) {
+                               nixl_thread_sync_t sync_mode,
+                               const std::string &engine_config) {
     ucp_params_t ucp_params;
+    unsigned major_version, minor_version, release_number;
+    ucp_get_version(&major_version, &minor_version, &release_number);
+    unsigned ucp_version = UCP_VERSION(major_version, minor_version);
 
     // With strict synchronization model nixlAgent serializes access to backends, with more
     // permissive models backends need to account for concurrent access and ensure their internal
@@ -441,19 +445,28 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         config.modifyAlways ("NET_DEVICES", devs_str.c_str());
     }
 
-    unsigned major_version, minor_version, release_number;
-    ucp_get_version(&major_version, &minor_version, &release_number);
-
     config.modify("ADDRESS_VERSION", "v2");
     config.modify("RNDV_THRESH", "inf");
     config.modify("MAX_RMA_RAILS", "2");
+    config.modify("IB_PCI_RELAXED_ORDERING", "try");
 
-    unsigned ucp_version = UCP_VERSION(major_version, minor_version);
     if (ucp_version >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");
     } else {
         NIXL_WARN << "UCX version is less than 1.19, CUDA support is limited, "
                   << "including the lack of support for multi-GPU within a single process.";
+    }
+
+    std::string elem;
+    std::stringstream stream(engine_config);
+
+    while (std::getline(stream, elem, ',')) {
+        std::string_view elem_view = elem;
+        size_t pos = elem_view.find('=');
+
+        if (pos != std::string::npos) {
+            config.modify(elem_view.substr(0, pos), elem_view.substr(pos + 1));
+        }
     }
 
     const auto status = ucp_init (&ucp_params, config.getUcpConfig(), &ctx);

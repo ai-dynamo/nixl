@@ -815,7 +815,8 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     : nixlBackendEngine(&init_params),
-      sharedWorkerIndex_(1) {
+      sharedWorkerIndex_(1),
+      progressThreadEnabled_(init_params.enableProgTh) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -839,8 +840,12 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
         err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
     }
 
+    const auto engine_config_it = custom_params->find("engine_config");
+    const auto engine_config =
+        (engine_config_it != custom_params->end()) ? engine_config_it->second : "";
+
     uc = std::make_unique<nixlUcxContext>(
-        devs, init_params.enableProgTh, num_workers, init_params.syncMode);
+        devs, init_params.enableProgTh, num_workers, init_params.syncMode, engine_config);
 
     for (size_t i = 0; i < num_workers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
@@ -1365,6 +1370,10 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    if (!progressThreadEnabled_) {
+        NIXL_WARN << "Progress thread must be enabled for GPU transfer requests";
+    }
+
     auto remoteMd = static_cast<nixlUcxPublicMetadata *>(remote_descs[0].metadataP);
     if (!remoteMd || !remoteMd->conn) {
         NIXL_ERROR << "No connection found in remote metadata";
@@ -1391,7 +1400,8 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
     }
 
     try {
-        gpu_req_hndl = nixl::ucx::createGpuXferReq(*ep, local_mems, remote_rkeys, remote_addrs);
+        gpu_req_hndl = nixl::ucx::createGpuXferReq(
+            *ep, *getWorker(workerId), local_mems, remote_rkeys, remote_addrs);
         NIXL_TRACE << "Created device memory list: ep=" << ep->getEp() << " handle=" << gpu_req_hndl
                    << " worker_id=" << workerId << " num_elements=" << local_mems.size();
         return NIXL_SUCCESS;

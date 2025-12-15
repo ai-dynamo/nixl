@@ -297,6 +297,8 @@ private:
 
     mutable std::optional<size_t> gpuSignalSize_;
 
+    const bool progressThreadEnabled_;
+
     /* Notifications */
     notif_list_t notifMainList;
 

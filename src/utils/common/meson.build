@@ -29,12 +29,20 @@ nixl_common_deps = [
     dependency('asio', required: true),
 ]
 
+# Get git commit hash
+git_hash = run_command('git', 'rev-parse', '--short=8', 'HEAD', check: false, capture: true)
+git_commit = git_hash.returncode() == 0 ? git_hash.stdout().strip() : 'unknown'
+
 # Define a shared library for common utilities
 nixl_common_lib = shared_library('nixl_common',
     'nixl_log.cpp',
     'uuid_v4.cpp',
     dependencies: nixl_common_deps,
     include_directories: nixl_common_inc,
+    cpp_args: [
+        '-DNIXL_VERSION="' + meson.project_version() + '"',
+        '-DNIXL_GIT_HASH="' + git_commit + '"'
+    ],
     install: true,
 )
 

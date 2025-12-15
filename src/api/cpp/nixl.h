@@ -168,9 +168,10 @@ class nixlAgent {
          *           - For remote descriptors: it is set to the remote name, indicating
          *             that this is remote side preparation to be used for remote_side handle.
          *           - For loopback descriptors, it is set to local agent's name, indicating that
-         *             this is for a loopback (local) transfer to be uued for remote_side handle
+         *             this is for a loopback (local) transfer to be used for remote_side handle
          *         If a list of backends hints is provided (via extra_params), the preparation
-         *         is limited to the specified backends.
+         *         is limited to the specified backends. The preparation succeeds if there exists
+         *         at least one backend that can handle all elements in the descriptor list.
          *
          * @param  agent_name       Agent name as a string for preparing xfer handle
          * @param  descs            The descriptor list to be prepared for transfer requests
@@ -325,6 +326,10 @@ class nixlAgent {
          * @param  req_hndl     [in]  Transfer request obtained from makeXferReq/createXferReq
          * @param  gpu_req_hndl [out] GPU transfer request handle
          * @return nixl_status_t Error code if call was not successful
+         *
+         * @note   This call may block until the associated connection is established.
+         * @note   Requires progress thread to be enabled (enableProgTh=true) when creating the
+         *         backend.
          */
         nixl_status_t
         createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const;
