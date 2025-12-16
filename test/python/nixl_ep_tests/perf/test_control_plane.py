@@ -90,9 +90,8 @@ def _test_init_latency_fn(
 
     Times: Buffer() + update_memory_buffers()
     """
-    import torch
-
     import nixl_ep
+    import torch
 
     latencies = []
 
@@ -170,9 +169,8 @@ def _test_connect_latency_fn(
 
     Times: connect_ranks([all other ranks])
     """
-    import torch
-
     import nixl_ep
+    import torch
 
     latencies = []
     other_ranks = [r for r in range(world_size) if r != rank]
@@ -261,9 +259,8 @@ def _test_disconnect_latency_fn(
 
     Note: This will show invalidateRemoteMD warnings which are expected.
     """
-    import torch
-
     import nixl_ep
+    import torch
 
     latencies = []
     other_ranks = [r for r in range(world_size) if r != rank]
@@ -354,9 +351,8 @@ def _test_destroy_latency_fn(
 
     Times: destroy() after full connect cycle
     """
-    import torch
-
     import nixl_ep
+    import torch
 
     latencies = []
     other_ranks = [r for r in range(world_size) if r != rank]
@@ -446,9 +442,8 @@ def _test_full_cycle_latency_fn(
     1. Tests the reconnect path (important for elastic scenarios)
     2. Leaves buffer in connected state before destroy (reduces race conditions)
     """
-    import torch
-
     import nixl_ep
+    import torch
 
     init_latencies = []
     connect_latencies = []

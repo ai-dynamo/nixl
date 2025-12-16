@@ -103,9 +103,8 @@ def test_repeated_buffer_creation(backend: str = "ipc", num_rounds: int = 3):
     EXPECTED BEFORE FIX: Segfault during round 2's update_memory_buffers()
     EXPECTED AFTER FIX: All rounds complete successfully
     """
-    import torch
-
     import nixl_ep
+    import torch
 
     # Use GPU 0
     torch.cuda.set_device(0)

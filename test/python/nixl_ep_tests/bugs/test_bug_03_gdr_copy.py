@@ -113,9 +113,8 @@ def _test_gdr_copy_warning_fn(
     EXPECTED BEFORE FIX: ~30% chance of "rcache gdr_copy" warning in stderr
     EXPECTED AFTER FIX: No warnings
     """
-    import torch
-
     import nixl_ep
+    import torch
 
     # Note: setup_worker_environment already sets CUDA_VISIBLE_DEVICES to local_rank
     # so only device 0 is visible. Don't call set_device(local_rank) - that would fail!

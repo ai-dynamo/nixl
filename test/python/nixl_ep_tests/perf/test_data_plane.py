@@ -93,10 +93,9 @@ def _test_dispatch_throughput_fn(
 
     Uses CUDA events for precise GPU timing (matches elastic.py methodology).
     """
+    import nixl_ep
     import numpy as np
     import torch
-
-    import nixl_ep
 
     total_experts = num_experts_per_rank * world_size
 
@@ -233,10 +232,9 @@ def _test_combine_throughput_fn(
     Note: Combine requires a dispatch first to get a handle, so we measure
     the dispatch+combine cycle and subtract the dispatch time.
     """
+    import nixl_ep
     import numpy as np
     import torch
-
-    import nixl_ep
 
     total_experts = num_experts_per_rank * world_size
 
@@ -410,10 +408,9 @@ def _test_e2e_throughput_fn(
     - No intermediate sync between dispatch and combine
     - Pre-allocated simulated_gemm_x (no compute in timing loop)
     """
+    import nixl_ep
     import numpy as np
     import torch
-
-    import nixl_ep
 
     total_experts = num_experts_per_rank * world_size
 

@@ -162,7 +162,6 @@ def buffer_multi_rank(cuda_available, buffer_params, dist_info):
         pytest.skip("Not running in distributed mode (use mpirun)")
 
     import torch.distributed as dist
-
     from nixl_ep import Buffer
 
     rank = dist_info["rank"]

@@ -124,9 +124,8 @@ def _test_invalidate_warning_basic_fn(
     EXPECTED BEFORE FIX: Multiple "invalidateRemoteMD: NIXL_ERR_NOT_FOUND" warnings
     EXPECTED AFTER FIX: No warnings
     """
-    import torch
-
     import nixl_ep
+    import torch
 
     # Note: setup_worker_environment already sets CUDA_VISIBLE_DEVICES to local_rank
     # so only device 0 is visible. Don't call set_device(local_rank) - that would fail!
@@ -205,9 +204,8 @@ def _test_invalidate_warning_with_reconnect_fn(
 
     EXPECTED: Fewer warnings than basic scenario
     """
-    import torch
-
     import nixl_ep
+    import torch
 
     # Note: setup_worker_environment already sets CUDA_VISIBLE_DEVICES to local_rank
     # so only device 0 is visible. Don't call set_device(local_rank) - that would fail!

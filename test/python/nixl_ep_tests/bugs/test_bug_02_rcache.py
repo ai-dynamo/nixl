@@ -120,9 +120,8 @@ def _test_rcache_16_experts_fn(
     EXPECTED BEFORE FIX: ~30% chance of 'rcache.c:477 Assertion' crash
     EXPECTED AFTER FIX: Always succeeds
     """
-    import torch
-
     import nixl_ep
+    import torch
 
     # Note: setup_worker_environment already sets CUDA_VISIBLE_DEVICES to local_rank
     # so only device 0 is visible. Don't call set_device(local_rank) - that would fail!

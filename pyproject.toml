@@ -33,6 +33,7 @@ dependencies = ["torch", "numpy"]
 
 [tool.isort]
 profile = "black"
+known_third_party = ["nixl_ep"]
 
 [tool.meson-python.args]
 setup = ["-Dinstall_headers=false"]
