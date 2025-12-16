@@ -44,7 +44,6 @@ sys.path.insert(0, TESTS_DIR)
 
 from utils.mp_runner import (  # noqa: E402
     TestResult,
-    create_buffer,
     run_multiprocess_test,
     sync_all_ranks,
 )
@@ -97,18 +96,24 @@ def _test_dispatch_throughput_fn(
     import numpy as np
     import torch
 
-    import nixl_ep  # noqa: F401
+    import nixl_ep
 
     total_experts = num_experts_per_rank * world_size
 
-    # Create buffer
-    buffer = create_buffer(
-        rank,
-        world_size,
-        num_experts_per_rank=num_experts_per_rank,
-        hidden=hidden,
-        num_tokens=num_tokens,
+    # Create nixl_ep.Buffer directly
+    num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
+        num_tokens, hidden, world_size, total_experts
+    )
+    buffer = nixl_ep.Buffer(
+        rank=rank,
         nvlink_backend=nvlink_backend,
+        explicitly_destroy=True,
+        enable_shrink=True,
+    )
+    buffer.update_memory_buffers(
+        num_ranks=world_size,
+        num_experts_per_rank=num_experts_per_rank,
+        num_rdma_bytes=num_rdma_bytes,
     )
 
     sync_all_ranks(rank, world_size, "dp_init")
@@ -231,18 +236,24 @@ def _test_combine_throughput_fn(
     import numpy as np
     import torch
 
-    import nixl_ep  # noqa: F401
+    import nixl_ep
 
     total_experts = num_experts_per_rank * world_size
 
-    # Create buffer
-    buffer = create_buffer(
-        rank,
-        world_size,
-        num_experts_per_rank=num_experts_per_rank,
-        hidden=hidden,
-        num_tokens=num_tokens,
+    # Create nixl_ep.Buffer directly
+    num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
+        num_tokens, hidden, world_size, total_experts
+    )
+    buffer = nixl_ep.Buffer(
+        rank=rank,
         nvlink_backend=nvlink_backend,
+        explicitly_destroy=True,
+        enable_shrink=True,
+    )
+    buffer.update_memory_buffers(
+        num_ranks=world_size,
+        num_experts_per_rank=num_experts_per_rank,
+        num_rdma_bytes=num_rdma_bytes,
     )
 
     sync_all_ranks(rank, world_size, "comb_init")
@@ -402,18 +413,24 @@ def _test_e2e_throughput_fn(
     import numpy as np
     import torch
 
-    import nixl_ep  # noqa: F401
+    import nixl_ep
 
     total_experts = num_experts_per_rank * world_size
 
-    # Create buffer
-    buffer = create_buffer(
-        rank,
-        world_size,
-        num_experts_per_rank=num_experts_per_rank,
-        hidden=hidden,
-        num_tokens=num_tokens,
+    # Create nixl_ep.Buffer directly
+    num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
+        num_tokens, hidden, world_size, total_experts
+    )
+    buffer = nixl_ep.Buffer(
+        rank=rank,
         nvlink_backend=nvlink_backend,
+        explicitly_destroy=True,
+        enable_shrink=True,
+    )
+    buffer.update_memory_buffers(
+        num_ranks=world_size,
+        num_experts_per_rank=num_experts_per_rank,
+        num_rdma_bytes=num_rdma_bytes,
     )
 
     sync_all_ranks(rank, world_size, "e2e_init")
@@ -578,9 +595,9 @@ def print_throughput_results(test_name: str, results: List[TestResult]):
     passed = sum(1 for r in results if r.passed)
     total = len(results)
 
-    sys.stderr.write(f"\n{'='*70}\n")
+    sys.stderr.write(f"\n{'=' * 70}\n")
     sys.stderr.write(f"{test_name}\n")
-    sys.stderr.write(f"{'='*70}\n")
+    sys.stderr.write(f"{'=' * 70}\n")
     sys.stderr.write(f"Status: {passed}/{total} ranks passed\n")
 
     if passed == 0:
@@ -747,7 +764,7 @@ Examples:
 
             # Create new progress log file
             progress_log = open(progress_log_path, "w")
-            progress_log.write(f"{'='*80}\n")
+            progress_log.write(f"{'=' * 80}\n")
             progress_log.write(f"NIXL EP Data Plane Performance Test Run #{log_num}\n")
             progress_log.write(f"Started: {datetime.now().isoformat()}\n")
             progress_log.write(
@@ -756,11 +773,11 @@ Examples:
             progress_log.write(
                 f"Tokens: {token_counts}, Hidden: {hidden_dims}, Experts/rank: {expert_counts}\n"
             )
-            progress_log.write(f"{'='*80}\n\n")
+            progress_log.write(f"{'=' * 80}\n\n")
             progress_log.write(
                 f"{'Time':<10} | {'Test':<35} | {'Status':<6} | {'BW (GB/s)':<10} | {'Lat (μs)':<10}\n"
             )
-            progress_log.write(f"{'-'*80}\n")
+            progress_log.write(f"{'-' * 80}\n")
             progress_log.flush()
             sys.stderr.write(f"[CI/CD] Progress log: {progress_log_path}\n")
         except Exception as e:
@@ -781,12 +798,12 @@ Examples:
                     config_key = f"{test_name}_t{num_tokens}_h{hidden}_e{num_experts}"
 
                     total_experts = num_experts * args.num_processes
-                    sys.stderr.write(f"\n{'='*70}\n")
+                    sys.stderr.write(f"\n{'=' * 70}\n")
                     sys.stderr.write(f"Running: {description}\n")
                     sys.stderr.write(
                         f"Config: {num_tokens} tokens, {hidden} hidden, {num_experts} experts/rank ({total_experts} total)\n"
                     )
-                    sys.stderr.write(f"{'='*70}\n")
+                    sys.stderr.write(f"{'=' * 70}\n")
 
                     results = run_multiprocess_test(
                         test_fn=test_fn,
@@ -980,9 +997,9 @@ Examples:
 
             # Format throughput nicely
             if avg_throughput >= 1_000_000:
-                tput_str = f"{avg_throughput/1_000_000:.2f}M tok/s"
+                tput_str = f"{avg_throughput / 1_000_000:.2f}M tok/s"
             elif avg_throughput >= 1_000:
-                tput_str = f"{avg_throughput/1_000:.1f}K tok/s"
+                tput_str = f"{avg_throughput / 1_000:.1f}K tok/s"
             else:
                 tput_str = f"{avg_throughput:.0f} tok/s"
 
@@ -999,10 +1016,10 @@ Examples:
     # Close progress log and print final status
     if progress_log:
         try:
-            progress_log.write(f"\n{'='*80}\n")
+            progress_log.write(f"\n{'=' * 80}\n")
             progress_log.write(f"Test run completed: {datetime.now().isoformat()}\n")
             progress_log.write(f"Total tests: {len(all_results)}\n")
-            progress_log.write(f"{'='*80}\n")
+            progress_log.write(f"{'=' * 80}\n")
             progress_log.close()
         except Exception:
             pass

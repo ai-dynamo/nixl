@@ -120,13 +120,13 @@ def get_metric_unit(metric_name: str) -> str:
 def format_number(value: float, precision: int = 2) -> str:
     """Format a number with appropriate precision."""
     if value >= 1_000_000:
-        return f"{value/1_000_000:.{precision}f}M"
+        return f"{value / 1_000_000:.{precision}f}M"
     elif value >= 1_000:
-        return f"{value/1_000:.{precision}f}K"
+        return f"{value / 1_000:.{precision}f}K"
     elif value >= 1:
         return f"{value:.{precision}f}"
     else:
-        return f"{value:.{precision+2}f}"
+        return f"{value:.{precision + 2}f}"
 
 
 def generate_markdown_report(

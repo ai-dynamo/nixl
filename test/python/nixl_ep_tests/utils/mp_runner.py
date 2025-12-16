@@ -626,10 +626,10 @@ def print_results(results: List[TestResult], verbose: bool = True):
     passed = sum(1 for r in results if r.passed)
     total = len(results)
 
-    sys.stderr.write(f"\n{'='*60}\n")
+    sys.stderr.write(f"\n{'=' * 60}\n")
     sys.stderr.write(f"Test: {results[0].test_name if results else 'unknown'}\n")
     sys.stderr.write(f"Result: {passed}/{total} ranks passed\n")
-    sys.stderr.write(f"{'='*60}\n")
+    sys.stderr.write(f"{'=' * 60}\n")
 
     if verbose:
         for r in results:

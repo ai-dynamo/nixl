@@ -92,7 +92,7 @@ def _test_init_latency_fn(
     """
     import torch
 
-    import nixl_ep  # noqa: F401
+    import nixl_ep
 
     latencies = []
 
@@ -110,7 +110,10 @@ def _test_init_latency_fn(
         start = time.perf_counter()
 
         buffer = nixl_ep.Buffer(
-            rank=rank, nvlink_backend=nvlink_backend, explicitly_destroy=True, enable_shrink=True
+            rank=rank,
+            nvlink_backend=nvlink_backend,
+            explicitly_destroy=True,
+            enable_shrink=True,
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
@@ -169,7 +172,7 @@ def _test_connect_latency_fn(
     """
     import torch
 
-    import nixl_ep  # noqa: F401
+    import nixl_ep
 
     latencies = []
     other_ranks = [r for r in range(world_size) if r != rank]
@@ -184,7 +187,10 @@ def _test_connect_latency_fn(
     for i in range(warmup_rounds + measure_rounds):
         # Create buffer
         buffer = nixl_ep.Buffer(
-            rank=rank, nvlink_backend=nvlink_backend, explicitly_destroy=True, enable_shrink=True
+            rank=rank,
+            nvlink_backend=nvlink_backend,
+            explicitly_destroy=True,
+            enable_shrink=True,
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
@@ -257,7 +263,7 @@ def _test_disconnect_latency_fn(
     """
     import torch
 
-    import nixl_ep  # noqa: F401
+    import nixl_ep
 
     latencies = []
     other_ranks = [r for r in range(world_size) if r != rank]
@@ -272,7 +278,10 @@ def _test_disconnect_latency_fn(
     for i in range(warmup_rounds + measure_rounds):
         # Create buffer
         buffer = nixl_ep.Buffer(
-            rank=rank, nvlink_backend=nvlink_backend, explicitly_destroy=True, enable_shrink=True
+            rank=rank,
+            nvlink_backend=nvlink_backend,
+            explicitly_destroy=True,
+            enable_shrink=True,
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
@@ -347,7 +356,7 @@ def _test_destroy_latency_fn(
     """
     import torch
 
-    import nixl_ep  # noqa: F401
+    import nixl_ep
 
     latencies = []
     other_ranks = [r for r in range(world_size) if r != rank]
@@ -362,7 +371,10 @@ def _test_destroy_latency_fn(
     for i in range(warmup_rounds + measure_rounds):
         # Create buffer
         buffer = nixl_ep.Buffer(
-            rank=rank, nvlink_backend=nvlink_backend, explicitly_destroy=True, enable_shrink=True
+            rank=rank,
+            nvlink_backend=nvlink_backend,
+            explicitly_destroy=True,
+            enable_shrink=True,
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
@@ -436,7 +448,7 @@ def _test_full_cycle_latency_fn(
     """
     import torch
 
-    import nixl_ep  # noqa: F401
+    import nixl_ep
 
     init_latencies = []
     connect_latencies = []
@@ -462,7 +474,10 @@ def _test_full_cycle_latency_fn(
         start = time.perf_counter()
 
         buffer = nixl_ep.Buffer(
-            rank=rank, nvlink_backend=nvlink_backend, explicitly_destroy=True, enable_shrink=True
+            rank=rank,
+            nvlink_backend=nvlink_backend,
+            explicitly_destroy=True,
+            enable_shrink=True,
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
@@ -583,11 +598,11 @@ def format_cycle_results(results: List[TestResult], num_experts: int, world_size
     m = rank0.metrics
     total_experts = num_experts * world_size
     lines = [
-        f"\n{'='*70}",
+        f"\n{'=' * 70}",
         f"Control Plane Performance: {num_experts} experts/rank × {world_size} ranks = {total_experts} total",
-        f"{'='*70}",
+        f"{'=' * 70}",
         f"{'Operation':<15} {'Avg (ms)':<12} {'Min (ms)':<12} {'Max (ms)':<12}",
-        f"{'-'*70}",
+        f"{'-' * 70}",
     ]
 
     for op in ["init", "connect", "disconnect", "reconnect", "destroy"]:
@@ -598,10 +613,10 @@ def format_cycle_results(results: List[TestResult], num_experts: int, world_size
             )
 
     if "total_avg_ms" in m:
-        lines.append(f"{'-'*70}")
+        lines.append(f"{'-' * 70}")
         lines.append(f"{'TOTAL':<15} {m['total_avg_ms']:<12.2f}")
 
-    lines.append(f"{'='*70}")
+    lines.append(f"{'=' * 70}")
     return "\n".join(lines)
 
 
@@ -803,13 +818,13 @@ def main():
                 print_results(results)
 
     # Summary table
-    sys.stderr.write(f"\n{'='*105}\n")
+    sys.stderr.write(f"\n{'=' * 105}\n")
     sys.stderr.write("SUMMARY: Control Plane Latencies (ms) by Expert Count\n")
-    sys.stderr.write(f"{'='*105}\n")
+    sys.stderr.write(f"{'=' * 105}\n")
     sys.stderr.write(
         f"{'Exp/Rank':<10} {'Total':<8} {'Init':<12} {'Connect':<12} {'Disconnect':<12} {'Reconnect':<12} {'Destroy':<12} {'Total(ms)':<12}\n"
     )
-    sys.stderr.write(f"{'-'*105}\n")
+    sys.stderr.write(f"{'-' * 105}\n")
 
     for num_experts in expert_counts:
         expert_results = all_results.get(num_experts, {})
@@ -881,7 +896,7 @@ def main():
                 f"{fmt(total)}\n"
             )
 
-    sys.stderr.write(f"{'='*105}\n")
+    sys.stderr.write(f"{'=' * 105}\n")
     sys.stderr.write("Parameters:\n")
     sys.stderr.write(f"  Ranks: {args.num_processes}\n")
     sys.stderr.write(f"  NVLink backend: {args.nvlink_backend}\n")
@@ -891,7 +906,7 @@ def main():
     sys.stderr.write(f"  Tests: {tests_to_run}\n")
     sys.stderr.write(f"  Warmup: {args.warmup} rounds, Measure: {args.rounds} rounds\n")
     sys.stderr.write(f"  Timeout: {args.timeout}s\n")
-    sys.stderr.write(f"{'='*105}\n\n")
+    sys.stderr.write(f"{'=' * 105}\n\n")
 
     # Save results to JSON if requested
     if args.output:

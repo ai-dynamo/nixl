@@ -678,9 +678,9 @@ def main():
     elif args.command == "list":
         runs = agg.list_runs(args.last)
         if runs:
-            sys.stderr.write(f"\n{'='*80}\n")
+            sys.stderr.write(f"\n{'=' * 80}\n")
             sys.stderr.write(f"Recent Test Runs (last {len(runs)})\n")
-            sys.stderr.write(f"{'='*80}\n")
+            sys.stderr.write(f"{'=' * 80}\n")
             for run in runs:
                 sys.stderr.write(
                     f"  {run['timestamp'][:19]}  {run['git_commit']}  {run['hostname']:15}  {run['results']}\n"

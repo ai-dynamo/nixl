@@ -108,11 +108,7 @@ import pytest
 # Add parent directories to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.mp_runner import (  # noqa: E402
-    create_buffer,
-    run_multiprocess_test,
-    sync_all_ranks,
-)
+from utils.mp_runner import run_multiprocess_test, sync_all_ranks  # noqa: E402
 
 
 @pytest.mark.skip(reason="Not run directly")
@@ -130,7 +126,7 @@ def _test_invalidate_warning_basic_fn(
     """
     import torch
 
-    import nixl_ep  # noqa: F401 - imported for side effects
+    import nixl_ep
 
     # Note: setup_worker_environment already sets CUDA_VISIBLE_DEVICES to local_rank
     # so only device 0 is visible. Don't call set_device(local_rank) - that would fail!
@@ -139,8 +135,22 @@ def _test_invalidate_warning_basic_fn(
         f"[Rank {rank}] Starting invalidateRemoteMD test (basic scenario)\n"
     )
 
-    # Use shared create_buffer helper for consistency with other tests
-    buffer = create_buffer(rank, world_size, num_experts_per_rank=num_experts)
+    # Create nixl_ep.Buffer directly
+    total_experts = num_experts * world_size
+    num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
+        512, 4096, world_size, total_experts
+    )
+    buffer = nixl_ep.Buffer(
+        rank=rank,
+        nvlink_backend="ipc",
+        explicitly_destroy=True,
+        enable_shrink=True,
+    )
+    buffer.update_memory_buffers(
+        num_ranks=world_size,
+        num_experts_per_rank=num_experts,
+        num_rdma_bytes=num_rdma_bytes,
+    )
 
     sync_all_ranks(rank, world_size, "init")
     sys.stderr.write(f"[Rank {rank}] Buffer created\n")
@@ -197,7 +207,7 @@ def _test_invalidate_warning_with_reconnect_fn(
     """
     import torch
 
-    import nixl_ep  # noqa: F401 - imported for side effects
+    import nixl_ep
 
     # Note: setup_worker_environment already sets CUDA_VISIBLE_DEVICES to local_rank
     # so only device 0 is visible. Don't call set_device(local_rank) - that would fail!
@@ -206,8 +216,22 @@ def _test_invalidate_warning_with_reconnect_fn(
         f"[Rank {rank}] Starting invalidateRemoteMD test (with reconnect)\n"
     )
 
-    # Use shared create_buffer helper for consistency with other tests
-    buffer = create_buffer(rank, world_size, num_experts_per_rank=num_experts)
+    # Create nixl_ep.Buffer directly
+    total_experts = num_experts * world_size
+    num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
+        512, 4096, world_size, total_experts
+    )
+    buffer = nixl_ep.Buffer(
+        rank=rank,
+        nvlink_backend="ipc",
+        explicitly_destroy=True,
+        enable_shrink=True,
+    )
+    buffer.update_memory_buffers(
+        num_ranks=world_size,
+        num_experts_per_rank=num_experts,
+        num_rdma_bytes=num_rdma_bytes,
+    )
 
     sync_all_ranks(rank, world_size, "init")
     sys.stderr.write(f"[Rank {rank}] Buffer created\n")

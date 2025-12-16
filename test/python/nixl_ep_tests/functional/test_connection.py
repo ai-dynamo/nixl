@@ -625,9 +625,9 @@ if __name__ == "__main__":
 
     if args.test == "all":
         for name, (fn, desc) in tests.items():
-            sys.stderr.write(f"\n{'='*60}\n")
+            sys.stderr.write(f"\n{'=' * 60}\n")
             sys.stderr.write(f"Running: {desc}\n")
-            sys.stderr.write(f"{'='*60}\n")
+            sys.stderr.write(f"{'=' * 60}\n")
             results = run_multiprocess_test(
                 fn, num_processes=args.num_processes, etcd_server=args.etcd_server
             )
