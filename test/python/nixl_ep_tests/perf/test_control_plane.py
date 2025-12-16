@@ -83,6 +83,7 @@ def _test_init_latency_fn(
     hidden: int = DEFAULT_HIDDEN,
     warmup_rounds: int = DEFAULT_WARMUP_ROUNDS,
     measure_rounds: int = DEFAULT_MEASURE_ROUNDS,
+    nvlink_backend: str = "ipc",
 ):
     """
     P-CTRL-01: Measure Buffer initialization latency.
@@ -109,7 +110,7 @@ def _test_init_latency_fn(
         start = time.perf_counter()
 
         buffer = nixl_ep.Buffer(
-            rank=rank, nvlink_backend="ipc", explicitly_destroy=True, enable_shrink=True
+            rank=rank, nvlink_backend=nvlink_backend, explicitly_destroy=True, enable_shrink=True
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
@@ -159,6 +160,7 @@ def _test_connect_latency_fn(
     hidden: int = DEFAULT_HIDDEN,
     warmup_rounds: int = DEFAULT_WARMUP_ROUNDS,
     measure_rounds: int = DEFAULT_MEASURE_ROUNDS,
+    nvlink_backend: str = "ipc",
 ):
     """
     P-CTRL-02: Measure connect_ranks() latency.
@@ -182,7 +184,7 @@ def _test_connect_latency_fn(
     for i in range(warmup_rounds + measure_rounds):
         # Create buffer
         buffer = nixl_ep.Buffer(
-            rank=rank, nvlink_backend="ipc", explicitly_destroy=True, enable_shrink=True
+            rank=rank, nvlink_backend=nvlink_backend, explicitly_destroy=True, enable_shrink=True
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
@@ -244,6 +246,7 @@ def _test_disconnect_latency_fn(
     hidden: int = DEFAULT_HIDDEN,
     warmup_rounds: int = DEFAULT_WARMUP_ROUNDS,
     measure_rounds: int = DEFAULT_MEASURE_ROUNDS,
+    nvlink_backend: str = "ipc",
 ):
     """
     P-CTRL-03: Measure disconnect_ranks() latency.
@@ -269,7 +272,7 @@ def _test_disconnect_latency_fn(
     for i in range(warmup_rounds + measure_rounds):
         # Create buffer
         buffer = nixl_ep.Buffer(
-            rank=rank, nvlink_backend="ipc", explicitly_destroy=True, enable_shrink=True
+            rank=rank, nvlink_backend=nvlink_backend, explicitly_destroy=True, enable_shrink=True
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
@@ -335,6 +338,7 @@ def _test_destroy_latency_fn(
     hidden: int = DEFAULT_HIDDEN,
     warmup_rounds: int = DEFAULT_WARMUP_ROUNDS,
     measure_rounds: int = DEFAULT_MEASURE_ROUNDS,
+    nvlink_backend: str = "ipc",
 ):
     """
     P-CTRL-04: Measure destroy() latency.
@@ -358,7 +362,7 @@ def _test_destroy_latency_fn(
     for i in range(warmup_rounds + measure_rounds):
         # Create buffer
         buffer = nixl_ep.Buffer(
-            rank=rank, nvlink_backend="ipc", explicitly_destroy=True, enable_shrink=True
+            rank=rank, nvlink_backend=nvlink_backend, explicitly_destroy=True, enable_shrink=True
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
@@ -419,6 +423,7 @@ def _test_full_cycle_latency_fn(
     hidden: int = DEFAULT_HIDDEN,
     warmup_rounds: int = DEFAULT_WARMUP_ROUNDS,
     measure_rounds: int = DEFAULT_MEASURE_ROUNDS,
+    nvlink_backend: str = "ipc",
 ):
     """
     P-CTRL-05: Measure full control plane cycle.
@@ -457,7 +462,7 @@ def _test_full_cycle_latency_fn(
         start = time.perf_counter()
 
         buffer = nixl_ep.Buffer(
-            rank=rank, nvlink_backend="ipc", explicitly_destroy=True, enable_shrink=True
+            rank=rank, nvlink_backend=nvlink_backend, explicitly_destroy=True, enable_shrink=True
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
@@ -722,6 +727,13 @@ def main():
         default=300.0,
         help="Test timeout in seconds (default: 300)",
     )
+    parser.add_argument(
+        "--nvlink-backend",
+        type=str,
+        default="ipc",
+        choices=["ipc", "nixl", "none"],
+        help="NVLink backend to use (default: ipc)",
+    )
 
     args = parser.parse_args()
 
@@ -741,6 +753,7 @@ def main():
     sys.stderr.write("\n" + "#" * 70 + "\n")
     sys.stderr.write("# NIXL EP Control Plane Performance Tests\n")
     sys.stderr.write(f"# Ranks: {args.num_processes}\n")
+    sys.stderr.write(f"# NVLink backend: {args.nvlink_backend}\n")
     sys.stderr.write(f"# Experts/rank: {expert_counts} (total = experts × ranks)\n")
     sys.stderr.write(f"# Tests: {tests_to_run}\n")
     sys.stderr.write(f"# Warmup: {args.warmup}, Measure: {args.rounds}\n")
@@ -767,6 +780,7 @@ def main():
                 num_experts_per_rank=num_experts,
                 warmup_rounds=args.warmup,
                 measure_rounds=args.rounds,
+                nvlink_backend=args.nvlink_backend,
             )
 
             all_results[num_experts][test_key] = results
@@ -870,6 +884,7 @@ def main():
     sys.stderr.write(f"{'='*105}\n")
     sys.stderr.write("Parameters:\n")
     sys.stderr.write(f"  Ranks: {args.num_processes}\n")
+    sys.stderr.write(f"  NVLink backend: {args.nvlink_backend}\n")
     sys.stderr.write(
         f"  Experts/rank: {expert_counts} (total: {[e * args.num_processes for e in expert_counts]})\n"
     )
