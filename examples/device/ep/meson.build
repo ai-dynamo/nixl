@@ -77,10 +77,6 @@ nixl_ep_inc_dirs = [
 doca_build_deps = []
 if doca_gpunetio_dep.found()
     doca_build_deps = [doca_gpunetio_dep]
-    doca_inc_dirs = doca_gpunetio_dep.get_pkgconfig_variable('includedir').split(':')
-    foreach inc : doca_inc_dirs
-        nixl_ep_inc_dirs += include_directories(inc)
-    endforeach
 endif
 
 nixl_ep_cpp_args = [
