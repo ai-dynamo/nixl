@@ -436,8 +436,8 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
     std::lock_guard<std::mutex> lock(connection_state_mutex_);
 
     NIXL_DEBUG << "Loading remote info for agent: " << remote_agent
-               << ", info length=" << remote_conn_info.length()
-               << ", info (hex): " << LibfabricUtils::hexdump(remote_conn_info.data());
+               << ", info length=" << remote_conn_info.length() << ", info (hex): "
+               << LibfabricUtils::hexdump(remote_conn_info.data(), remote_conn_info.length());
 
     if (remote_conn_info.empty()) {
         NIXL_ERROR << "Empty remote connection info received";
@@ -640,11 +640,11 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
                << " data rails and " << conn_info->control_ep_names_.size() << " control rails";
     for (size_t i = 0; i < conn_info->src_ep_names_.size(); ++i) {
         NIXL_DEBUG << "Data rail " << i << ": "
-                   << LibfabricUtils::hexdump(conn_info->src_ep_names_[i]);
+                   << LibfabricUtils::hexdump(conn_info->src_ep_names_[i], LF_EP_NAME_MAX_LEN);
     }
     for (size_t i = 0; i < conn_info->control_ep_names_.size(); ++i) {
         NIXL_DEBUG << "Control rail " << i << ": "
-                   << LibfabricUtils::hexdump(conn_info->control_ep_names_[i]);
+                   << LibfabricUtils::hexdump(conn_info->control_ep_names_[i], LF_EP_NAME_MAX_LEN);
     }
     NIXL_DEBUG << "Agent index: " << it->second->agent_index_;
     if (!conn_info) {
