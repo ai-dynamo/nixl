@@ -87,17 +87,18 @@ public:
     void
     reserve(size_t size) {
         requests_.reserve(size);
+        NIXL_ASSERT(connections_.empty());
     }
 
     nixl_status_t
     append(nixl_status_t status, nixlUcxReq req, ucx_connection_ptr_t conn) {
-        connections_.insert(conn);
         switch (status) {
         case NIXL_IN_PROG:
             requests_.push_back(req);
+            connections_.insert(conn);
             break;
         case NIXL_SUCCESS:
-            // Nothing to do
+            connections_.insert(conn);
             break;
         default:
             // Error. Release all previously initiated ops and exit:
@@ -138,6 +139,7 @@ public:
     status() {
         if (requests_.empty()) {
             /* No pending transmissions */
+            connections_.clear();
             return NIXL_SUCCESS;
         }
 
@@ -175,6 +177,9 @@ public:
         }
 
         requests_.resize(incomplete_reqs);
+        if (requests_.empty()) {
+            connections_.clear();
+        }
         return out_ret;
     }
 
