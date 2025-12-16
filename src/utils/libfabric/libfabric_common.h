@@ -167,7 +167,7 @@ std::pair<std::string, std::vector<std::string>>
 getAvailableNetworkDevices();
 // String utilities
 std::string
-hexdump(const void *data);
+hexdump(const void *data, size_t size);
 } // namespace LibfabricUtils
 
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_COMMON_H

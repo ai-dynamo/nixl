@@ -96,12 +96,11 @@ getAvailableNetworkDevices() {
 }
 
 std::string
-hexdump(const void *data) {
-    static constexpr uint HEXDUMP_MAX_LENGTH = 56;
+hexdump(const void *data, size_t size) {
     std::stringstream ss;
-    ss.str().reserve(HEXDUMP_MAX_LENGTH * 3);
+    ss.str().reserve(size * 3);
     const unsigned char *bytes = static_cast<const unsigned char *>(data);
-    for (size_t i = 0; i < HEXDUMP_MAX_LENGTH; ++i) {
+    for (size_t i = 0; i < size; ++i) {
         ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytes[i]) << " ";
     }
     return ss.str();
