@@ -269,16 +269,31 @@ void Buffer::_nixl_agents_connect(const std::vector<int>& ranks) {
         nixl_agent_info->remote_agent_names[remote_rank] = std::to_string(remote_rank);
     }
 
+    // Fire all fetch requests in parallel
     for (int remote_rank : ranks) {
-        nixl_status_t fetch_status = nixl_agent_info->agent->fetchRemoteMD(nixl_agent_info->remote_agent_names[remote_rank]);
+        nixl_status_t fetch_status = nixl_agent_info->agent->fetchRemoteMD(
+            nixl_agent_info->remote_agent_names[remote_rank]);
         if (fetch_status != NIXL_SUCCESS) {
-            throw std::runtime_error("Failed to fetch metadata for remote agent " + std::to_string(remote_rank) +
-                                    ", status: " + std::to_string(fetch_status));
+            throw std::runtime_error("Failed to fetch metadata for remote agent " +
+                std::to_string(remote_rank) + ", status: " + std::to_string(fetch_status));
         }
+    }
 
-        // Wait for remote metadata to be available
-        nixl_xfer_dlist_t empty_descs(VRAM_SEG);
-        while (nixl_agent_info->agent->checkRemoteMD(std::to_string(remote_rank), empty_descs) != NIXL_SUCCESS) {
+    // Wait for all remote metadata to be available
+    std::vector<bool> peer_ready(max_num_ranks, false);
+    int peers_remaining = static_cast<int>(ranks.size());
+
+    while (peers_remaining > 0) {
+        for (int remote_rank : ranks) {
+            if (peer_ready[remote_rank]) continue;
+
+            nixl_xfer_dlist_t empty_descs(VRAM_SEG);
+            if (nixl_agent_info->agent->checkRemoteMD(std::to_string(remote_rank), empty_descs) == NIXL_SUCCESS) {
+                peer_ready[remote_rank] = true;
+                peers_remaining--;
+            }
+        }
+        if (peers_remaining > 0) {
             sleep_ms(10);
         }
     }
