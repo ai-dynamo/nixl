@@ -59,7 +59,6 @@ struct NixlPeerInfo {
     ino_t ipc_namespace_inode;
     void *rdma_buffer_ptr;
     uint64_t *counters_buffer_ptr;
-    uint64_t *wireup_ptr;
     cudaIpcMemHandle_t rdma_ipc_handle;
     cudaIpcMemHandle_t counters_ipc_handle;
     int* sync_buffer_ptr;
@@ -134,7 +133,6 @@ private:
     std::unique_ptr<NixlAgentInfo> nixl_agent_info;
     std::vector<NixlPeerInfo> nixl_peer_info;
     uint64_t *counters_buffer_ptr = nullptr;
-    uint64_t *wireup_buffer_ptr = nullptr;
     NixlPeerInfo my_peer_info;
     uint64_t num_counters;
     uint64_t max_num_ranks;
@@ -148,7 +146,6 @@ private:
     void _nixl_agents_disconnect(const std::vector<int>& ranks);
     void _nixl_agents_peer_info_gather(std::vector<int>& ranks);
     void _nixl_agents_peer_info_cleanup(const std::vector<int>& ranks);
-    void _nixl_agents_wireup(std::vector<int>& ranks);
 
     /* NIXL EP private funcs */
     void _nixl_ep_init(const std::vector<int>& ranks);
