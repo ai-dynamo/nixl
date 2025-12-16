@@ -664,8 +664,9 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
         return serialize_status;
     }
 
-    nixlLibfabricReq *control_request = rail_manager.getControlRail(control_rail_id)
-                                            .allocateControlRequest(serialized_conn_info.length());
+    nixlLibfabricReq *control_request =
+        rail_manager.getControlRail(control_rail_id)
+            .allocateControlRequest(serialized_conn_info.length(), LibfabricUtils::getNextXferId());
     if (!control_request) {
         NIXL_ERROR << "Failed to allocate control request for connection establishment";
         return NIXL_ERR_BACKEND;
@@ -993,13 +994,12 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Use pre-allocated BinaryNotification from handle and set xfer_id
+    // Set up BinaryNotification with counter-based matching
     backend_handle->binary_notif.xfer_id = LibfabricUtils::getNextXferId();
     backend_handle->binary_notif.expected_completions =
         0; // Will be incremented during transfer submission
 
-    NIXL_DEBUG << "Using pre-allocated BinaryNotification with XFER_ID="
-               << backend_handle->binary_notif.xfer_id;
+    NIXL_DEBUG << "Using BinaryNotification with XFER_ID=" << backend_handle->binary_notif.xfer_id;
 
     nixlLibfabricReq::OpType op_type;
     int desc_count = local.descCount();
@@ -1180,8 +1180,9 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
     const size_t control_rail_id = 0; // Only use control rail 0 for notifications
 
     // Allocate control request for notification
-    nixlLibfabricReq *control_request = rail_manager.getControlRail(control_rail_id)
-                                            .allocateControlRequest(sizeof(BinaryNotification));
+    nixlLibfabricReq *control_request =
+        rail_manager.getControlRail(control_rail_id)
+            .allocateControlRequest(sizeof(BinaryNotification), LibfabricUtils::getNextXferId());
     if (!control_request) {
         NIXL_ERROR << "Failed to allocate control request for notification";
         return NIXL_ERR_BACKEND;
@@ -1322,7 +1323,8 @@ nixlLibfabricEngine::postShutdownCompletion() {
         const size_t control_rail_id = 0;
         const size_t shutdown_msg_len = 8; // "SHUTDOWN" length
         nixlLibfabricReq *control_request =
-            rail_manager.getControlRail(control_rail_id).allocateControlRequest(shutdown_msg_len);
+            rail_manager.getControlRail(control_rail_id)
+                .allocateControlRequest(shutdown_msg_len, LibfabricUtils::getNextXferId());
         if (!control_request) {
             NIXL_ERROR << "Failed to allocate control request for shutdown";
             return;
@@ -1486,7 +1488,8 @@ nixlLibfabricEngine::processConnectionRequest(uint16_t agent_idx,
     // Allocate control request
     const size_t control_rail_id = 0;
     nixlLibfabricReq *control_request =
-        rail_manager.getControlRail(control_rail_id).allocateControlRequest(ep_name_len);
+        rail_manager.getControlRail(control_rail_id)
+            .allocateControlRequest(ep_name_len, LibfabricUtils::getNextXferId());
     if (!control_request) {
         NIXL_ERROR << "Failed to allocate control request for connection ACK";
         return NIXL_ERR_BACKEND;
