@@ -1,0 +1,240 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+ARG BASE_IMAGE
+ARG BASE_IMAGE_TAG
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG ARCH="x86_64"
+ARG UCX_REF="v1.19.0"
+
+RUN yum groupinstall -y 'Development Tools' &&  \
+    dnf config-manager --set-enabled powertools && \
+    dnf install -y epel-release && \
+    dnf install -y \
+    boost \
+    boost-devel \
+    clang-devel \
+    gcc-toolset-11 \
+    cmake \
+    dkms \
+    flex \
+    gflags \
+    glibc-headers \
+    gcc-c++ \
+    libaio \
+    libaio-devel \
+    libtool-ltdl \
+    ninja-build \
+    openssl \
+    openssl-devel \
+    protobuf-compiler \
+    protobuf-c-devel \
+    protobuf-devel \
+    libibverbs \
+    libibverbs-devel \
+    rdma-core \
+    rdma-core-devel \
+    libibumad \
+    libibumad-devel \
+    numactl-devel \
+    librdmacm-devel \
+    wget \
+    zlib
+
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+ENV LD_LIBRARY_PATH=/opt/rh/gcc-toolset-11/root/usr/lib64:$LD_LIBRARY_PATH
+ENV PKG_CONFIG_PATH="/opt/rh/gcc-toolset-11/root/usr/lib64/pkgconfig:${PKG_CONFIG_PATH}"
+
+# Build OpenSSL 3.x
+RUN yum install -y perl-IPC-Cmd perl-Test-Simple perl-Data-Dumper
+RUN cd /tmp && \
+    wget -q https://www.openssl.org/source/openssl-3.0.16.tar.gz && \
+    tar -xzf openssl-3.0.16.tar.gz && \
+    cd openssl-3.0.16 && \
+    ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3 \
+        shared zlib linux-$ARCH && \
+    make -j$(nproc) && \
+    make install_sw && \
+    echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
+    echo "/usr/local/openssl3/lib" >> /etc/ld.so.conf.d/openssl3.conf && \
+    ldconfig && \
+    rm -rf /tmp/openssl-3.0.16*
+
+# Set environment variables to use the new OpenSSL
+ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:/usr/local/openssl3/lib/pkgconfig:$PKG_CONFIG_PATH"
+ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:/usr/local/openssl3/lib:$LD_LIBRARY_PATH"
+ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
+ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64:/usr/local/openssl3/lib"
+ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
+
+WORKDIR /workspace
+
+RUN git clone --recurse-submodules -b v1.73.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+    cd grpc && \
+    mkdir -p cmake/build && \
+    cd cmake/build && \
+    cmake -DgRPC_INSTALL=ON \
+    -DgRPC_BUILD_TESTS=OFF \
+    -DBUILD_SHARED_LIBS=ON \
+    -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DgRPC_SSL_PROVIDER=package ../.. && \
+    make -j$(nproc) && \
+    make install
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
+
+RUN cd /workspace && \
+    git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+    cd etcd-cpp-apiv3 && \
+    sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
+    mkdir build && cd build && \
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install
+
+# The base image libcurl is linked against openssl 1.x, so we need to build from source
+# in order to use openssl 3.x. This is needed to build aws-sdk-cpp.
+RUN wget https://curl.se/download/curl-8.5.0.tar.gz && \
+    tar xzf curl-8.5.0.tar.gz && cd curl-8.5.0 && \
+    ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --enable-shared && \
+    make -j$(nproc) && make install
+
+RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581
+RUN mkdir aws_sdk_build && cd aws_sdk_build && \
+    export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
+    export CFLAGS="-I/usr/local/openssl3/include" && \
+    export CXXFLAGS="-I/usr/local/openssl3/include" && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_PREFIX_PATH="/usr/local/openssl3;/usr/local" \
+        -DCURL_LIBRARY=/usr/local/lib/libcurl.so \
+        -DCURL_INCLUDE_DIR=/usr/local/include \
+        -DOPENSSL_USE_STATIC_LIBS=OFF && \
+    make -j${NPROC:-$(nproc)} && make install
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH \
+    RUST_VERSION=1.86.0 \
+    RUSTARCH=${ARCH}-unknown-linux-gnu
+
+RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" && \
+    chmod +x rustup-init && \
+    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${RUSTARCH} && \
+    case "$ARCH" in \
+        aarch64) RUSTUP_SHA256="c64b33db2c6b9385817ec0e49a84bcfe018ed6e328fe755c3c809580cc70ce7a" ;; \
+        x86_64) RUSTUP_SHA256="a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f" ;; \
+        *) echo "Unsupported architecture for Rust: $ARCH" && exit 1 ;; \
+    esac && \
+    echo "$RUSTUP_SHA256 *rustup-init" | sha256sum -c - && \
+    rm rustup-init && \
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+
+RUN wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host-3.1.0-091000_25.07_rhel89.${ARCH}.rpm && \
+    rpm -i doca-host-3.1.0-091000_25.07_rhel89.${ARCH}.rpm && \
+    dnf install -y libnl3-devel && \
+    cd /usr/share/doca-host-3.1.0/repo/Packages/ && \
+    rpm -ivh --nodeps doca-sdk-common-*rpm && \
+    rpm -ivh --nodeps doca-sdk-rdma-*rpm && \
+    rpm -ivh --nodeps doca-sdk-verbs-*rpm && \
+    rpm -ivh --nodeps doca-sdk-gpunetio-*rpm && \
+    # Check that gpunetio development package is installed correctly
+    pkg-config --cflags --libs doca-gpunetio
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+ENV CUDA_PATH=/usr/local/cuda
+
+WORKDIR /workspace/nixl
+ENV VIRTUAL_ENV=/workspace/nixl/.venv
+RUN uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION && \
+    uv pip install --upgrade meson pybind11 patchelf truststore
+
+RUN rm -rf /usr/lib/ucx
+RUN rm -rf /opt/hpcx/ucx
+
+RUN cd /workspace && \
+    git clone --depth 1 https://github.com/NVIDIA/gdrcopy.git && \
+    cd gdrcopy && \
+    git fetch --tags --depth=1 && \
+    latest_tag=$(git describe --tags "$(git rev-list --tags --max-count=1)") && \
+    git checkout "$latest_tag" && \
+    cd packages && \
+    CUDA=/usr/local/cuda ./build-rpm-packages.sh && \
+    rpm -Uvh gdrcopy-kmod-*.el8.noarch.rpm && \
+    rpm -Uvh gdrcopy-*.el8.$ARCH.rpm && \
+    rpm -Uvh gdrcopy-devel-*.el8.noarch.rpm
+
+RUN cd /usr/local/src && \
+     git clone https://github.com/openucx/ucx.git && \
+     cd ucx && 			     \
+     git checkout $UCX_REF &&	     \
+     ./autogen.sh && ./configure     \
+         --enable-shared             \
+         --disable-static            \
+         --disable-doxygen-doc       \
+         --enable-optimizations      \
+         --enable-cma                \
+         --enable-devel-headers      \
+         --with-cuda=/usr/local/cuda \
+         --with-verbs                \
+         --with-dm                   \
+         --with-gdrcopy=/usr/local   \
+         --with-efa                  \
+         --enable-mt &&              \
+     make -j &&                      \
+     make -j install-strip &&        \
+     ldconfig
+
+RUN dnf install -y python3.11-devel python3.12-devel
+
+COPY . /workspace/nixl
+
+RUN rm -rf build && \
+    mkdir build && \
+    uv run meson setup build/ --prefix=/usr/local/nixl --buildtype=release \
+    -Dcudapath_lib="/usr/local/cuda/lib64" \
+    -Dcudapath_inc="/usr/local/cuda/include" && \
+    cd build && \
+    ninja && \
+    ninja install
+
+ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/plugins:$LD_LIBRARY_PATH
+ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib64/plugins
+
+RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
+    ldconfig
+
+# Create the wheel
+# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
+ARG WHL_PYTHON_VERSIONS="3.9,3.10,3.11,3.12"
+ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
+RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
+    for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
+        ./contrib/build-wheel.sh \
+            --python-version $PYTHON_VERSION \
+            --platform $WHL_PLATFORM \
+            --ucx-plugins-dir /usr/lib64/ucx \
+            --nixl-plugins-dir $NIXL_PLUGIN_DIR \
+            --output-dir dist || exit 1; \
+    done
+
+RUN uv pip install dist/nixl-*cp${DEFAULT_PYTHON_VERSION//./}*.whl
