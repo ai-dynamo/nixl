@@ -586,21 +586,29 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                    << " control requests, " << NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL
                    << " data requests for rail " << rail_id;
 
-        // Post initial receive using new resource management system
-        nixlLibfabricReq *recv_req = allocateControlRequest(NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE,
-                                                            LibfabricUtils::getNextXferId());
-        if (!recv_req) {
-            NIXL_ERROR << "Failed to allocate request for initial receive on rail " << rail_id;
-            throw std::runtime_error("Failed to allocate request for initial receive on rail " +
-                                     std::to_string(rail_id));
+        // Post initial pool of receives using new resource management system
+        NIXL_INFO << "Pre-posting " << NIXL_LIBFABRIC_RECV_POOL_SIZE << " recv requests for rail "
+                  << rail_id;
+
+        for (size_t i = 0; i < NIXL_LIBFABRIC_RECV_POOL_SIZE; ++i) {
+            nixlLibfabricReq *recv_req = allocateControlRequest(
+                NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE, LibfabricUtils::getNextXferId());
+            if (!recv_req) {
+                NIXL_ERROR << "Failed to allocate request for recv " << i << " on rail " << rail_id;
+                throw std::runtime_error("Failed to allocate request for recv pool on rail " +
+                                         std::to_string(rail_id));
+            }
+            status = postRecv(recv_req);
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed to post recv " << i << " on rail " << rail_id;
+                releaseRequest(recv_req);
+                throw std::runtime_error("Failed to post recv pool on rail " +
+                                         std::to_string(rail_id));
+            }
         }
-        status = postRecv(recv_req);
-        if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Failed to post initial receive on rail " << rail_id;
-            releaseRequest(recv_req);
-            throw std::runtime_error("Failed to post initial receive on rail " +
-                                     std::to_string(rail_id));
-        }
+
+        NIXL_INFO << "Successfully pre-posted " << NIXL_LIBFABRIC_RECV_POOL_SIZE
+                  << " recv requests for rail " << rail_id;
         NIXL_TRACE << "Successfully initialized rail " << rail_id;
     }
     catch (...) {

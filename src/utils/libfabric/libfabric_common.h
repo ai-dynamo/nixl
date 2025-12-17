@@ -44,9 +44,10 @@
 #define LF_EP_NAME_MAX_LEN 56
 
 // Request pool configuration constants
-#define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 1024 // SEND/RECV operations (1:1 with buffers)
+#define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // SEND/RECV operations (1:1 with buffers)
 #define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/read operations (no buffers)
 #define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192
+#define NIXL_LIBFABRIC_RECV_POOL_SIZE 1024 // Number of recv requests to pre-post per rail
 
 // Retry configuration constants
 #define NIXL_LIBFABRIC_MAX_RETRIES 10
@@ -99,16 +100,42 @@
      (((uint64_t)(seq_id) & NIXL_SEQ_ID_MASK) << NIXL_SEQ_ID_SHIFT))
 
 /**
- * @brief Binary notification format with counter-based matching
+ * @brief Binary notification header containing all metadata fields
+ *
+ * This structure contains all notification metadata except the message payload.
+ * Used to calculate the optimal fragment size automatically.
+ */
+struct BinaryNotificationHeader {
+    char agent_name[1024]; // Fixed-size agent name (null-terminated)
+    uint32_t message_length; // Actual length of message data in this fragment
+    uint32_t total_message_length; // Total length of complete message (all fragments)
+    uint16_t notif_xfer_id; // 16-bit notif_xfer_id for matching notifications
+    uint16_t notif_seq_id; // Fragment index
+    uint16_t notif_seq_len; // Total number of fragments
+    uint32_t expected_completions; // Total write requests for this xfer_id
+} __attribute__((packed));
+
+/**
+ * @brief Binary notification format with completions verfications and notification fragmentation
+ * support
  *
  * This structure provides a fixed-size, binary format for notifications
+ * with support for multi-fragment messages. The message field size is automatically
+ * calculated to maximize usage of the control message buffer.
+ *
+ * @note The __attribute__((packed)) ensures consistent byte layout across platforms,
+ *       preventing padding-related data corruption during network serialization.
  */
 struct BinaryNotification {
-    char agent_name[256]; // Fixed-size agent name (null-terminated)
-    char message[1024]; // Fixed-size message (binary data, not null-terminated)
-    uint32_t message_length; // Actual length of message data
-    uint16_t xfer_id; // 16-bit postXfer ID (unique per postXfer call)
-    uint32_t expected_completions; // Total write requests for this xfer_id
+    BinaryNotificationHeader header; // All metadata fields
+    // Message payload - size calculated to fill control message buffer
+    char message[NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE - sizeof(BinaryNotificationHeader)];
+
+    /** @brief Get the fragment size (compile-time constant) */
+    static constexpr size_t
+    getFragmentSize() {
+        return NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE - sizeof(BinaryNotificationHeader);
+    }
 
     /** @brief Clear all fields to zero */
     void
@@ -119,33 +146,33 @@ struct BinaryNotification {
     /** @brief Set agent name with bounds checking */
     void
     setAgentName(const std::string &name) {
-        strncpy(agent_name, name.c_str(), sizeof(agent_name) - 1);
-        agent_name[sizeof(agent_name) - 1] = '\0';
+        strncpy(header.agent_name, name.c_str(), sizeof(header.agent_name) - 1);
+        header.agent_name[sizeof(header.agent_name) - 1] = '\0';
     }
 
     /** @brief Set message with bounds checking and proper binary data handling */
     void
     setMessage(const std::string &msg) {
-        message_length = std::min(msg.length(), sizeof(message));
-        memcpy(message, msg.data(), message_length);
+        header.message_length = std::min(msg.length(), sizeof(message));
+        memcpy(message, msg.data(), header.message_length);
         // Zero out remaining space for consistency
-        if (message_length < sizeof(message)) {
-            memset(message + message_length, 0, sizeof(message) - message_length);
+        if (header.message_length < sizeof(message)) {
+            memset(message + header.message_length, 0, sizeof(message) - header.message_length);
         }
     }
 
     /** @brief Get agent name as string */
     std::string
     getAgentName() const {
-        return std::string(agent_name);
+        return std::string(header.agent_name);
     }
 
     /** @brief Get message as string using stored length for proper binary data handling */
     std::string
     getMessage() const {
-        return std::string(message, message_length);
+        return std::string(message, header.message_length);
     }
-};
+} __attribute__((packed));
 
 // Global XFER_ID management
 namespace LibfabricUtils {
