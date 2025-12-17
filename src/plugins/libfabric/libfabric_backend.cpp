@@ -1387,29 +1387,26 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
 
         {
             std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
-
-            // Create composite key for O(1) lookup
             auto it = pending_notifications_.find(xfer_id);
-
-            if (it != pending_notifications_.end()) {
-                // Case 1: Writes already arrived - update placeholder with real values
-                it->second.remote_agent = remote_name; // Update agent name from notification
-                it->second.message = msg;
-                it->second.expected_completions = expected_completions;
-
-                NIXL_DEBUG << "Updated placeholder notification for agent " << remote_name
-                           << " XFER_ID " << xfer_id
-                           << " expected_completions=" << expected_completions
-                           << " received_completions=" << it->second.received_completions;
-            } else {
-                // Case 2: Notification arrived first - create a pending notification entry
-                PendingNotification pending_notif(remote_name, msg, xfer_id, expected_completions);
+            if (it == pending_notifications_.end()) {
+                PendingNotification pending_notif(xfer_id);
                 pending_notifications_[xfer_id] = pending_notif;
 
                 NIXL_DEBUG << "Created pending notification for agent " << remote_name
                            << " xfer_id=" << xfer_id
                            << " expected_completions=" << expected_completions;
             }
+
+            // Update placeholder with real values
+            pending_notifications_[xfer_id].remote_agent = remote_name;
+            pending_notifications_[xfer_id].message = msg;
+            pending_notifications_[xfer_id].expected_completions = expected_completions;
+
+            NIXL_DEBUG << "Updated placeholder notification for agent " << remote_name
+                       << " notif_xfer_id " << xfer_id
+                       << " expected_completions=" << expected_completions
+                       << " received_completions="
+                       << pending_notifications_[xfer_id].received_completions;
         }
 
         // Check if any notifications can now be completed (after releasing the lock)
@@ -1523,27 +1520,21 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id) {
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
         auto it = pending_notifications_.find(xfer_id);
-
-        if (it != pending_notifications_.end()) {
-            // Case 1: Notification already exists (message arrived first or placeholder exists)
-            it->second.received_completions++;
-
-            NIXL_DEBUG << "Incremented received count for XFER_ID " << xfer_id << ": "
-                       << it->second.received_completions << "/" << it->second.expected_completions;
-        } else {
-            // Case 2: Write arrived before notification - create placeholder with INT_MAX
-            PendingNotification placeholder;
-            placeholder.remote_agent = ""; // Empty until notification arrives
-            placeholder.message = ""; // Empty until notification arrives
-            placeholder.post_xfer_id = xfer_id;
-            placeholder.expected_completions = INT_MAX; // Sentinel value
-            placeholder.received_completions = 1; // Start with this completion
-
+        if (it == pending_notifications_.end()) {
+            PendingNotification placeholder(xfer_id);
             pending_notifications_[xfer_id] = placeholder;
-
-            NIXL_DEBUG << "Created placeholder notification for posted_xfer_id " << xfer_id
+            pending_notifications_[xfer_id].remote_agent = "";
+            pending_notifications_[xfer_id].message = "";
+            pending_notifications_[xfer_id].expected_completions = INT_MAX;
+            pending_notifications_[xfer_id].received_completions = 0;
+            NIXL_DEBUG << "Created placeholder notification for notif_xfer_id " << xfer_id
                        << " (write arrived first)";
         }
+
+        pending_notifications_[xfer_id].received_completions++;
+        NIXL_DEBUG << "Incremented received count for notif_xfer_id " << xfer_id << ": "
+                   << pending_notifications_[xfer_id].received_completions << "/"
+                   << pending_notifications_[xfer_id].expected_completions;
     }
 
     // Check if any notifications can now be completed (after releasing the lock)
