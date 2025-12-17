@@ -148,8 +148,9 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     const std::vector<size_t> &remote_selected_endpoints,
     const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
     uint16_t agent_idx,
+    uint16_t xfer_id,
     std::function<void()> completion_callback,
-    BinaryNotification *binary_notif) {
+    std::function<void()> submission_callback) {
     if (selected_rails.empty()) {
         NIXL_ERROR << "No rails selected for transfer";
         return NIXL_ERR_INVALID_PARAM;
@@ -166,8 +167,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             remote_selected_endpoints[counter_value % remote_selected_endpoints.size()];
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
-        nixlLibfabricReq *req =
-            data_rails_[rail_id]->allocateDataRequest(op_type, LibfabricUtils::getNextXferId());
+        nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
         if (!req) {
             NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
             return NIXL_ERR_BACKEND;
@@ -197,8 +197,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         if (op_type == nixlLibfabricReq::WRITE) {
             // Generate next SEQ_ID for this specific write operation
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
-            uint64_t imm_data = NIXL_MAKE_IMM_DATA(
-                NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, binary_notif->xfer_id, seq_id);
+            uint64_t imm_data =
+                NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
             status = data_rails_[rail_id]->postWrite(req->local_addr,
                                                      req->chunk_size,
                                                      fi_mr_desc(req->local_mr),
@@ -225,7 +225,10 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             return status;
         }
 
-        binary_notif->expected_completions++;
+        // Call submission callback to track submitted request
+        if (submission_callback) {
+            submission_callback();
+        }
 
         NIXL_DEBUG << "Round-robin: submitted single request on rail " << rail_id << " for "
                    << transfer_size << " bytes, XFER_ID=" << req->xfer_id;
@@ -243,8 +246,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
             if (current_chunk_size == 0) break;
             // Allocate request
-            nixlLibfabricReq *req =
-                data_rails_[rail_id]->allocateDataRequest(op_type, LibfabricUtils::getNextXferId());
+            nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
             if (!req) {
                 NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
                 return NIXL_ERR_BACKEND;
@@ -278,8 +280,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             if (op_type == nixlLibfabricReq::WRITE) {
                 // Generate next SEQ_ID for this specific transfer operation
                 uint8_t seq_id = LibfabricUtils::getNextSeqId();
-                uint64_t imm_data = NIXL_MAKE_IMM_DATA(
-                    NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, binary_notif->xfer_id, seq_id);
+                uint64_t imm_data =
+                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
                 status = data_rails_[rail_id]->postWrite(req->local_addr,
                                                          req->chunk_size,
                                                          fi_mr_desc(req->local_mr),
@@ -306,16 +308,15 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                 return status;
             }
 
-            binary_notif->expected_completions++;
+            // Call submission callback to track submitted request
+            if (submission_callback) {
+                submission_callback();
+            }
         }
-        NIXL_DEBUG << "Striping: submitted "
-                   << (binary_notif ? binary_notif->expected_completions : 0) << " requests for "
-                   << transfer_size << " bytes";
+        NIXL_DEBUG << "Striping: submitted requests for " << transfer_size << " bytes";
     }
 
-    NIXL_DEBUG << "Successfully submitted "
-               << (binary_notif ? binary_notif->expected_completions : 0) << " requests for "
-               << transfer_size << " bytes";
+    NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
 
     return NIXL_SUCCESS;
 }

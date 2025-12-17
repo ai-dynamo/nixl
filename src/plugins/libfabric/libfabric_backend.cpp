@@ -197,6 +197,12 @@ nixlLibfabricBackendH::increment_completed_requests() {
                << submitted_requests_.load();
 }
 
+void
+nixlLibfabricBackendH::increment_submitted_requests() {
+    size_t submitted = submitted_requests_.fetch_add(1);
+    NIXL_DEBUG << "Request submitted, total submitted: " << submitted;
+}
+
 size_t
 nixlLibfabricBackendH::get_completed_requests_count() const {
     return completed_requests_.load();
@@ -994,12 +1000,9 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Set up BinaryNotification with counter-based matching
-    backend_handle->binary_notif.xfer_id = LibfabricUtils::getNextXferId();
-    backend_handle->binary_notif.expected_completions =
-        0; // Will be incremented during transfer submission
-
-    NIXL_DEBUG << "Using BinaryNotification with XFER_ID=" << backend_handle->binary_notif.xfer_id;
+    // Allocate xfer_id once in prepXfer
+    backend_handle->post_xfer_id = LibfabricUtils::getNextXferId();
+    backend_handle->binary_notif.xfer_id = backend_handle->post_xfer_id;
 
     nixlLibfabricReq::OpType op_type;
     int desc_count = local.descCount();
@@ -1010,8 +1013,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     op_type = (operation == NIXL_WRITE) ? nixlLibfabricReq::WRITE : nixlLibfabricReq::READ;
 
     // Set initial submit request count to maximum possible requests for this xfer.
-    size_t max_possible_requests = desc_count * rail_manager.getNumDataRails();
-    backend_handle->init_request_tracking(max_possible_requests);
+    // size_t max_possible_requests = desc_count * rail_manager.getNumDataRails();
+    backend_handle->init_request_tracking(0);
 
     // Core transfer submission to process each descriptor with direct submission
     for (int desc_idx = 0; desc_idx < desc_count; ++desc_idx) {
@@ -1054,10 +1057,13 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             remote_md->remote_selected_endpoints_,
             conn_it->second->rail_remote_addr_list_,
             conn_it->second->agent_index_,
+            backend_handle->post_xfer_id,
             [backend_handle]() {
                 backend_handle->increment_completed_requests();
             }, // Completion callback
-            &(backend_handle->binary_notif) // Populate BinaryNotification
+            [backend_handle]() {
+                backend_handle->increment_submitted_requests();
+            } // Submission callback
         );
 
         if (status != NIXL_SUCCESS) {
@@ -1067,23 +1073,19 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         }
 
         NIXL_DEBUG << "Successfully processed descriptor " << desc_idx << " with "
-                   << backend_handle->binary_notif.expected_completions << " requests submitted";
+                   << backend_handle->get_total_requests_used() << " requests submitted so far";
     }
 
-    NIXL_DEBUG << "Processing complete: submitted "
-               << backend_handle->binary_notif.expected_completions << " requests from "
-               << desc_count << " descriptors"
-               << " with " << backend_handle->binary_notif.expected_completions
-               << " total XFER_IDs";
+    NIXL_DEBUG << "Processing complete: submitted " << backend_handle->get_total_requests_used()
+               << " requests from " << desc_count << " descriptors";
 
     // For same-agent transfers, we need to set the total to 0 since we bypassed all rail operations
     if (remote_agent == localAgent) {
         backend_handle->adjust_total_requests(0);
         NIXL_DEBUG << "Same-agent transfer: adjusted total requests to 0 (all handled via memcpy)";
-    } else {
-        // Adjust to actual request count after all submissions complete
-        backend_handle->adjust_total_requests(backend_handle->binary_notif.expected_completions);
     }
+
+    backend_handle->binary_notif.expected_completions = backend_handle->get_total_requests_used();
 
     // Send notification immediately after successful request submission
     if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_WRITE) {
@@ -1092,9 +1094,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             NIXL_ERROR << "Failed to send notification";
             return notif_status;
         }
-        NIXL_DEBUG << "Notification sent immediately with XFER_ID="
-                   << backend_handle->binary_notif.xfer_id << ", expected_completions: "
-                   << backend_handle->binary_notif.expected_completions;
+        NIXL_DEBUG << "Notification sent immediately with XFER_ID=" << backend_handle->post_xfer_id
+                   << ", expected_completions: " << backend_handle->get_total_requests_used();
     }
 
     // Progress data rails to kick off transfers
