@@ -303,7 +303,10 @@ def estimate_compute_time(
     H = model_config.hidden_size
     L = model_config.num_layers
 
-    # Attention: 4 * B * S² * H per layer (Q·Kᵀ and Attn·V)
+    # Attention score computation: 4 * B * S² * H per layer (Q·Kᵀ and Attn·V)
+    # Note: excludes QKV and output projections (8 * B * S * H² per layer).
+    # These are linear ops like MLP but omitted here for simplicity since
+    # they are relatively small compared to MLP (8H² vs 16H²).
     attn_flop = 4 * B * S**2 * H * L
 
     # MLP: 16 * B * S * H² per layer (H→4H and 4H→H projections)
