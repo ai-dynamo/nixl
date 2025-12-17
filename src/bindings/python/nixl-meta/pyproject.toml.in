@@ -22,7 +22,7 @@ name = "nixl"
 version = "@VERSION@"
 description = "NIXL Python API meta package for CUDA variants"
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT AND Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [
