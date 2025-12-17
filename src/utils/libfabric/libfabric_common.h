@@ -47,6 +47,7 @@
 #define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 1024 // SEND/RECV operations (1:1 with buffers)
 #define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/read operations (no buffers)
 #define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192
+#define NIXL_LIBFABRIC_RECV_POOL_SIZE 128 // Number of recv requests to pre-post per rail
 
 // Notification fragmentation constants
 #define NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE 1024 // Size of BinaryNotification.message field
