@@ -137,6 +137,7 @@ private:
     std::atomic<size_t> submitted_requests_; // Total number of submitted requests
 
 public:
+    uint16_t post_xfer_id;
     const nixl_xfer_op_t operation_;
     const std::string remote_agent_;
     bool has_notif;
@@ -157,6 +158,10 @@ public:
     /** Atomically increment completed request count */
     void
     increment_completed_requests();
+
+    /** Atomically increment submitted request count */
+    void
+    increment_submitted_requests();
 
     /** Get current count of completed requests */
     size_t
