@@ -1407,44 +1407,29 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
     NIXL_TRACE << "Received notification from " << remote_name << " msg: " << msg
                << " XFER_ID=" << xfer_id << " expected_completions: " << expected_completions;
 
-    // Check if this is a transfer notification that needs completions matching
-    if (expected_completions > 0) {
-        NIXL_DEBUG << "Transfer notification with expected_completions=" << expected_completions
-                   << ", for XFER_ID " << xfer_id;
+    {
+        std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
+        auto it = pending_notifications_.find(xfer_id);
+        if (it == pending_notifications_.end()) {
+            PendingNotification pending_notif(xfer_id);
+            pending_notifications_[xfer_id] = pending_notif;
 
-        {
-            std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
-            auto it = pending_notifications_.find(xfer_id);
-            if (it == pending_notifications_.end()) {
-                PendingNotification pending_notif(xfer_id);
-                pending_notifications_[xfer_id] = pending_notif;
-
-                NIXL_DEBUG << "Created pending notification for agent " << remote_name
-                           << " xfer_id=" << xfer_id
-                           << " expected_completions=" << expected_completions;
-            }
-
-            // Update placeholder with real values
-            pending_notifications_[xfer_id].remote_agent = remote_name;
-            pending_notifications_[xfer_id].message = msg;
-            pending_notifications_[xfer_id].expected_completions = expected_completions;
-
-            NIXL_DEBUG << "Updated placeholder notification for agent " << remote_name
-                       << " notif_xfer_id " << xfer_id
-                       << " expected_completions=" << expected_completions
-                       << " received_completions="
-                       << pending_notifications_[xfer_id].received_completions;
+            NIXL_DEBUG << "Created pending notification for agent " << remote_name
+                       << " xfer_id=" << xfer_id << " expected_completions=" << expected_completions;
         }
 
-        // Check if any notifications can now be completed (after releasing the lock)
-        checkPendingNotifications();
-    } else {
-        // Regular notification without expected completions - process immediately
-        NIXL_TRACE << "Regular notification (expected_completions=0), processing immediately";
-        std::lock_guard<std::mutex> lock(notif_mutex_);
-        notifMainList_.push_back({remote_name, msg});
-        NIXL_TRACE << "Regular notification processed immediately: " << msg;
+        // Update placeholder with real values
+        pending_notifications_[xfer_id].remote_agent = remote_name;
+        pending_notifications_[xfer_id].message = msg;
+        pending_notifications_[xfer_id].expected_completions = expected_completions;
+
+        NIXL_DEBUG << "Updated notification for agent " << remote_name
+                    << " notif_xfer_id " << xfer_id << " expected_completions=" << expected_completions
+                    << " received_completions=" << pending_notifications_[xfer_id].received_completions;
     }
+
+    // Check if any notifications can now be completed (after releasing the lock)
+    checkPendingNotifications();
 }
 
 void
