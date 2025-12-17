@@ -21,9 +21,6 @@
 #include <algorithm>
 #include <absl/strings/str_format.h>
 
-#define MAX_IO_SUBMIT_BATCH_SIZE 64
-#define MAX_IO_CHECK_COMPLETED_BATCH_SIZE 64
-
 struct nixlPosixLinuxAioIO {
 public:
     nixlPosixIOQueueDoneCb clb_;
@@ -36,8 +33,6 @@ public:
     nixlPosixLinuxAioIOQueue(uint32_t max_ios);
 
     virtual nixl_status_t
-    post(void) override;
-    virtual nixl_status_t
     enqueue(int fd,
             void *buf,
             size_t len,
@@ -45,17 +40,15 @@ public:
             bool read,
             nixlPosixIOQueueDoneCb clb,
             void *ctx) override;
-    virtual nixl_status_t
-    poll(void) override;
     virtual ~nixlPosixLinuxAioIOQueue() override;
 
 protected:
     nixlPosixLinuxAioIO *
     getBufInfo(struct iocb *io);
     nixl_status_t
-    doSubmit(void);
+    submitBatch(uint32_t to_submit, uint32_t &submitted_ios) override;
     nixl_status_t
-    doCheckCompleted(void);
+    checkCompleted(uint32_t &completed_ios) override;
 
 private:
     io_context_t io_ctx_; // I/O context
@@ -103,24 +96,22 @@ nixlPosixLinuxAioIOQueue::~nixlPosixLinuxAioIOQueue() {
 }
 
 nixl_status_t
-nixlPosixLinuxAioIOQueue::doSubmit(void) {
-    struct iocb *ios[MAX_IO_SUBMIT_BATCH_SIZE];
-    nixlPosixLinuxAioIO *to_submit[MAX_IO_SUBMIT_BATCH_SIZE];
+nixlPosixLinuxAioIOQueue::submitBatch(uint32_t to_submit, uint32_t &submitted_ios) {
+    struct iocb *ios[MAX_OUTSTANDING_IOS];
+    nixlPosixLinuxAioIO *ios_to_submit[MAX_OUTSTANDING_IOS];
 
-    if (ios_to_submit_.empty()) {
-        return NIXL_SUCCESS; // No blocks to submit
-    }
+    assert(!ios_to_submit_.empty());
+    assert(ios_to_submit_.size() >= to_submit);
 
-    int num_ios = std::min(MAX_IO_SUBMIT_BATCH_SIZE, (int)ios_to_submit_.size());
-    for (int i = 0; i < num_ios; i++) {
+    for (uint32_t i = 0; i < to_submit; i++) {
         nixlPosixLinuxAioIO *io = ios_to_submit_.front();
         ios_to_submit_.pop_front();
 
         ios[i] = &io->io_;
-        to_submit[i] = io;
+        ios_to_submit[i] = io;
     }
 
-    int ret = io_submit(io_ctx_, num_ios, ios);
+    int ret = io_submit(io_ctx_, to_submit, ios);
     if (ret < 0) {
         if (ret == -EAGAIN) {
             ret = 0; // 0 were submitted, we will try again later
@@ -130,27 +121,26 @@ nixlPosixLinuxAioIOQueue::doSubmit(void) {
         }
     }
 
-    for (int i = num_ios - 1; i >= ret; i--) {
+    submitted_ios = ret;
+
+    for (int i = to_submit - 1; i >= ret; i--) {
         // If not submitted, push back to the front of the list
-        nixlPosixLinuxAioIO *io = to_submit[i];
+        nixlPosixLinuxAioIO *io = ios_to_submit[i];
         ios_to_submit_.push_front(io);
     }
 
-    return ios_to_submit_.empty() ? NIXL_SUCCESS : NIXL_IN_PROG;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlPosixLinuxAioIOQueue::doCheckCompleted(void) {
-    struct io_event events[MAX_IO_CHECK_COMPLETED_BATCH_SIZE];
-    std::list<nixlPosixLinuxAioIO *> completed_ios;
+nixlPosixLinuxAioIOQueue::checkCompleted(uint32_t &completed_ios) {
+    struct io_event events[MAX_OUTSTANDING_IOS];
     int rc;
     struct timespec timeout = {0, 0};
 
-    if (free_ios_.size() == max_ios_) {
-        return NIXL_SUCCESS; // All ios are free, no ios in flight
-    }
+    completed_ios = 0;
 
-    rc = io_getevents(io_ctx_, 0, MAX_IO_CHECK_COMPLETED_BATCH_SIZE, events, &timeout);
+    rc = io_getevents(io_ctx_, 0, MAX_OUTSTANDING_IOS, events, &timeout);
     if (rc < 0) {
         NIXL_ERROR << "io_getevents error: " << rc;
         return NIXL_ERR_BACKEND;
@@ -169,38 +159,11 @@ nixlPosixLinuxAioIOQueue::doCheckCompleted(void) {
             io->clb_(io->ctx_, events[i].res, 0);
         }
 
-        completed_ios.push_back(io);
+        free_ios_.push_back(io);
+        completed_ios++;
     }
 
-    if (!completed_ios.empty()) {
-        free_ios_.splice(free_ios_.end(), completed_ios);
-    }
-
-    if (free_ios_.size() == max_ios_) {
-        return NIXL_SUCCESS; // All ios are free now
-    }
-
-    return NIXL_IN_PROG; // Some blocks are in flight, need to check again
-}
-
-nixl_status_t
-nixlPosixLinuxAioIOQueue::post(void) {
-    nixl_status_t status = doSubmit();
-    if (status < 0) {
-        return status;
-    }
-
-    return NIXL_IN_PROG;
-}
-
-nixl_status_t
-nixlPosixLinuxAioIOQueue::poll(void) {
-    nixl_status_t status = doSubmit();
-    if (status < 0) {
-        return status;
-    }
-
-    return doCheckCompleted();
+    return NIXL_SUCCESS;
 }
 
 std::unique_ptr<nixlPosixIOQueue>

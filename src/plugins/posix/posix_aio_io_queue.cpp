@@ -35,8 +35,6 @@ public:
     nixlPosixAioIOQueue(uint32_t max_ios) : nixlPosixIOQueueImpl<nixlPosixAioIO>(max_ios) {}
 
     virtual nixl_status_t
-    post(void) override;
-    virtual nixl_status_t
     enqueue(int fd,
             void *buf,
             size_t len,
@@ -44,15 +42,13 @@ public:
             bool read,
             nixlPosixIOQueueDoneCb clb,
             void *ctx) override;
-    virtual nixl_status_t
-    poll(void) override;
     virtual ~nixlPosixAioIOQueue() override;
 
 protected:
     nixl_status_t
-    doSubmit(void);
+    submitBatch(uint32_t to_submit, uint32_t &submitted_ios) override;
     nixl_status_t
-    doCheckCompleted(void);
+    checkCompleted(uint32_t &completed_ios) override;
 
     std::list<nixlPosixAioIO *> ios_in_flight_;
 };
@@ -95,13 +91,11 @@ nixlPosixAioIOQueue::enqueue(int fd,
 }
 
 nixl_status_t
-nixlPosixAioIOQueue::doSubmit(void) {
-    if (ios_to_submit_.empty()) {
-        return NIXL_SUCCESS; // No blocks to submit
-    }
+nixlPosixAioIOQueue::submitBatch(uint32_t to_submit, uint32_t &submitted_ios) {
+    assert(!ios_to_submit_.empty());
+    assert(ios_to_submit_.size() >= to_submit);
 
-    int num_ios = std::min(MAX_IO_SUBMIT_BATCH_SIZE, (int)ios_to_submit_.size());
-    for (int i = 0; i < num_ios; i++) {
+    for (uint32_t i = 0; i < to_submit; i++) {
         nixlPosixAioIO *io = ios_to_submit_.front();
         ios_to_submit_.pop_front();
 
@@ -119,18 +113,19 @@ nixlPosixAioIOQueue::doSubmit(void) {
         }
 
         ios_in_flight_.push_back(io);
+        submitted_ios++;
     }
 
-    return ios_to_submit_.empty() ? NIXL_SUCCESS : NIXL_IN_PROG;
+
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlPosixAioIOQueue::doCheckCompleted(void) {
-    if (ios_in_flight_.empty()) {
-        return NIXL_SUCCESS; // No blocks in flight
-    }
+nixlPosixAioIOQueue::checkCompleted(uint32_t &completed_ios) {
+    assert(!ios_in_flight_.empty());
 
-    int num_ios = std::min(MAX_IO_CHECK_COMPLETED_BATCH_SIZE, (int)ios_in_flight_.size());
+    completed_ios = 0;
+
     for (auto it = ios_in_flight_.begin(); it != ios_in_flight_.end();) {
         nixlPosixAioIO *io = *it;
         int status = aio_error(&io->aio_);
@@ -156,32 +151,10 @@ nixlPosixAioIOQueue::doCheckCompleted(void) {
 
         it++;
 
-        num_ios--;
-        if (num_ios == 0) {
-            break;
-        }
+        completed_ios++;
     }
 
-    return ios_in_flight_.empty() ? NIXL_SUCCESS : NIXL_IN_PROG;
-}
-
-nixl_status_t
-nixlPosixAioIOQueue::post(void) {
-    nixl_status_t status = doSubmit();
-    if (status < 0) {
-        return status;
-    }
-    return NIXL_IN_PROG;
-}
-
-nixl_status_t
-nixlPosixAioIOQueue::poll(void) {
-    nixl_status_t status = doSubmit();
-    if (status < 0) {
-        return status;
-    }
-
-    return doCheckCompleted();
+    return NIXL_SUCCESS;
 }
 
 std::unique_ptr<nixlPosixIOQueue>

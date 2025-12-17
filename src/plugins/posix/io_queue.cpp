@@ -18,13 +18,16 @@
 #include "io_queue.h"
 
 #ifdef HAVE_LIBAIO
-std::unique_ptr<nixlPosixIOQueue> nixlPosixAioIOQueueCreate(uint32_t max_ios);
+std::unique_ptr<nixlPosixIOQueue>
+nixlPosixAioIOQueueCreate(uint32_t max_ios);
 #endif
 #ifdef HAVE_LIBURING
-std::unique_ptr<nixlPosixIOQueue> nixlPosixIoUringIOQueueCreate(uint32_t max_ios);
+std::unique_ptr<nixlPosixIOQueue>
+nixlPosixIoUringIOQueueCreate(uint32_t max_ios);
 #endif
 #ifdef HAVE_LINUXAIO
-std::unique_ptr<nixlPosixIOQueue> nixlPosixLinuxAioIOQueueCreate(uint32_t max_ios);
+std::unique_ptr<nixlPosixIOQueue>
+nixlPosixLinuxAioIOQueueCreate(uint32_t max_ios);
 #endif
 
 static const struct {
@@ -44,6 +47,7 @@ static const struct {
 
 const uint32_t nixlPosixIOQueue::MIN_IOS = 64;
 const uint32_t nixlPosixIOQueue::MAX_IOS = 1024 * 64;
+const uint32_t nixlPosixIOQueue::MAX_OUTSTANDING_IOS = 16;
 
 std::unique_ptr<nixlPosixIOQueue>
 nixlPosixIOQueue::instantiate(std::string_view io_queue_type, uint32_t max_ios) {

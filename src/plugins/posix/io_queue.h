@@ -64,20 +64,88 @@ protected:
     uint32_t max_ios_;
     static const uint32_t MIN_IOS;
     static const uint32_t MAX_IOS;
+    static const uint32_t MAX_OUTSTANDING_IOS;
 };
 
 template<typename Entry> class nixlPosixIOQueueImpl : public nixlPosixIOQueue {
 public:
-    nixlPosixIOQueueImpl(uint32_t max_ios) : nixlPosixIOQueue(max_ios), ios_(max_ios_) {
+    nixlPosixIOQueueImpl(uint32_t max_ios)
+        : nixlPosixIOQueue(max_ios),
+          ios_(max_ios_),
+          num_ios_outstanding_(0) {
         for (uint32_t i = 0; i < max_ios_; i++) {
             free_ios_.push_back(&ios_[i]);
         }
     }
 
+    virtual nixl_status_t
+    post(void) override {
+        return submit();
+    }
+
+    virtual nixl_status_t
+    poll(void) override {
+        nixl_status_t status = submit();
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+
+        if (num_ios_outstanding_ == 0) {
+            return NIXL_SUCCESS; // No blocks in flight
+        }
+
+        return complete();
+    }
+
 protected:
+    nixl_status_t
+    submit(void) {
+        if (ios_to_submit_.empty()) {
+            return NIXL_SUCCESS; // No blocks to submit
+        }
+
+        assert(num_ios_outstanding_ <= MAX_OUTSTANDING_IOS);
+
+        // Calculate how many more we can submit to reach target outstanding
+        size_t slots_available = MAX_OUTSTANDING_IOS - num_ios_outstanding_;
+        if (slots_available == 0) {
+            return NIXL_SUCCESS; // No slots available
+        }
+
+        uint32_t to_submit = std::min(ios_to_submit_.size(), slots_available);
+        uint32_t submitted_ios = 0;
+
+        nixl_status_t status = submitBatch(to_submit, submitted_ios);
+        num_ios_outstanding_ += submitted_ios;
+
+        return status;
+    }
+
+    nixl_status_t
+    complete(void) {
+        uint32_t completed_ios = 0;
+        nixl_status_t status = checkCompleted(completed_ios);
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+
+        assert(completed_ios <= num_ios_outstanding_);
+        num_ios_outstanding_ -= completed_ios;
+
+        return NIXL_SUCCESS;
+    }
+
+    virtual nixl_status_t
+    submitBatch(uint32_t to_submit, uint32_t &submitted_ios) = 0;
+    virtual nixl_status_t
+    checkCompleted(uint32_t &completed_ios) = 0;
+
     std::vector<Entry> ios_;
     std::list<Entry *> free_ios_;
     std::list<Entry *> ios_to_submit_;
+
+private:
+    uint32_t num_ios_outstanding_;
 };
 
 
