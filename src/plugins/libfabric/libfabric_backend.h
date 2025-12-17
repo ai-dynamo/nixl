@@ -230,22 +230,20 @@ private:
     struct PendingNotification {
         std::string remote_agent;
         std::string message;
-        uint16_t post_xfer_id;
+        uint16_t notif_xfer_id;
         uint32_t expected_completions; // Expected transfer requests for this post_xfer_id
         uint32_t received_completions; // Actual remote transfer completions received for this
                                        // post_xfer_id
 
         // Default constructor for map operations
-        PendingNotification() : post_xfer_id(0), expected_completions(0), received_completions(0) {}
+        PendingNotification()
+            : notif_xfer_id(0),
+              expected_completions(0),
+              received_completions(0) {}
 
-        PendingNotification(const std::string &agent,
-                            const std::string &msg,
-                            uint16_t xfer_id,
-                            uint32_t expected_cnt = 0)
-            : remote_agent(agent),
-              message(msg),
-              post_xfer_id(xfer_id),
-              expected_completions(expected_cnt),
+        PendingNotification(uint16_t xfer_id)
+            : notif_xfer_id(xfer_id),
+              expected_completions(0),
               received_completions(0) {}
     };
 
