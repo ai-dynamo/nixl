@@ -14,7 +14,7 @@
 # limitations under the License.
 
 [build-system]
-requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest"]
+requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest", "build", "truststore", "setuptools>=80.9.0"]
 build-backend = "mesonpy"
 
 [project]
