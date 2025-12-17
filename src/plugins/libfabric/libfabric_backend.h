@@ -142,7 +142,7 @@ public:
     const std::string remote_agent_;
     bool has_notif;
 
-    BinaryNotification binary_notif; // Direct BinaryNotification instance
+    std::vector<BinaryNotification> binary_notifs; // Vector of BinaryNotification for fragmentation
 
     nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent);
     ~nixlLibfabricBackendH();
@@ -261,7 +261,10 @@ private:
                           const std::vector<std::array<char, 56>> &control_rail_endpoints);
     // Private notification implementation with unified binary notification system
     nixl_status_t
-    notifSendPriv(const std::string &remote_agent, BinaryNotification &binary_notification) const;
+    notifSendPriv(const std::string &remote_agent,
+                  std::vector<BinaryNotification> &binary_notifications,
+                  uint16_t xfer_id,
+                  uint32_t expected_completions) const;
 #ifdef HAVE_CUDA
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;

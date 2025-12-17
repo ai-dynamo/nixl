@@ -170,12 +170,12 @@ nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op, const std::strin
       submitted_requests_(0),
       operation_(op),
       remote_agent_(remote_agent) {
-    // Initialize BinaryNotification
-    binary_notif.clear();
+    // Initialize BinaryNotification vector
+    binary_notifs.clear();
 
     NIXL_DEBUG << " handle constructor called, address: " << this
                << " total_requests_used=" << submitted_requests_.load()
-               << " BinaryNotification initialized";
+               << " BinaryNotification vector initialized";
 }
 
 nixlLibfabricBackendH::~nixlLibfabricBackendH() {
@@ -940,9 +940,11 @@ nixlLibfabricEngine::prepXfer(const nixl_xfer_op_t &operation,
     // Set agent name and message in BinaryNotification during prepXfer
     if (opt_args && opt_args->hasNotif) {
         backend_handle->has_notif = true;
-        backend_handle->binary_notif.setAgentName(localAgent);
-        backend_handle->binary_notif.setMessage(opt_args->notifMsg);
-        backend_handle->binary_notif.expected_completions = 0;
+        // Initialize with one notification for now (fragmentation will be handled later)
+        backend_handle->binary_notifs.resize(1);
+        backend_handle->binary_notifs[0].setAgentName(localAgent);
+        backend_handle->binary_notifs[0].setMessage(opt_args->notifMsg);
+        backend_handle->binary_notifs[0].expected_completions = 0;
         NIXL_DEBUG << "Setting notification message: " << opt_args->notifMsg;
     }
 
@@ -1002,7 +1004,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // Allocate xfer_id once in prepXfer
     backend_handle->post_xfer_id = LibfabricUtils::getNextXferId();
-    backend_handle->binary_notif.xfer_id = backend_handle->post_xfer_id;
 
     nixlLibfabricReq::OpType op_type;
     int desc_count = local.descCount();
@@ -1085,11 +1086,12 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         NIXL_DEBUG << "Same-agent transfer: adjusted total requests to 0 (all handled via memcpy)";
     }
 
-    backend_handle->binary_notif.expected_completions = backend_handle->get_total_requests_used();
-
     // Send notification immediately after successful request submission
     if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_WRITE) {
-        nixl_status_t notif_status = notifSendPriv(remote_agent, backend_handle->binary_notif);
+        nixl_status_t notif_status = notifSendPriv(remote_agent,
+                                                   backend_handle->binary_notifs,
+                                                   backend_handle->post_xfer_id,
+                                                   backend_handle->get_total_requests_used());
         if (notif_status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to send notification";
             return notif_status;
@@ -1109,8 +1111,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     // For very small transfers we can check for local completions immediately.
     if (backend_handle->is_completed()) {
         if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
-            backend_handle->binary_notif.expected_completions = 0;
-            nixl_status_t notif_status = notifSendPriv(remote_agent, backend_handle->binary_notif);
+            nixl_status_t notif_status = notifSendPriv(
+                remote_agent, backend_handle->binary_notifs, backend_handle->post_xfer_id, 0);
             if (notif_status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to send notification";
                 return notif_status;
@@ -1137,9 +1139,10 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
     if (backend_handle->is_completed()) {
         NIXL_DEBUG << "Data transfer completed successfully";
         if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
-            backend_handle->binary_notif.expected_completions = 0;
-            nixl_status_t notif_status =
-                notifSendPriv(backend_handle->remote_agent_, backend_handle->binary_notif);
+            nixl_status_t notif_status = notifSendPriv(backend_handle->remote_agent_,
+                                                       backend_handle->binary_notifs,
+                                                       backend_handle->post_xfer_id,
+                                                       0);
             if (notif_status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to send notification";
                 return notif_status;
@@ -1167,10 +1170,12 @@ nixlLibfabricEngine::releaseReqH(nixlBackendReqH *handle) const {
     return NIXL_SUCCESS;
 }
 
-// notifSendPriv that accept control request
+// notifSendPriv that accepts vector of BinaryNotifications for fragmentation support
 nixl_status_t
 nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
-                                   BinaryNotification &binary_notification) const {
+                                   std::vector<BinaryNotification> &binary_notifications,
+                                   uint16_t xfer_id,
+                                   uint32_t expected_completions) const {
     auto it = connections_.find(remote_agent);
     if (it == connections_.end()) {
         NIXL_ERROR << "No connection found for agent: " << remote_agent;
@@ -1180,35 +1185,56 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
     auto connection = it->second;
     const size_t control_rail_id = 0; // Only use control rail 0 for notifications
 
-    // Allocate control request for notification
-    nixlLibfabricReq *control_request =
-        rail_manager.getControlRail(control_rail_id)
-            .allocateControlRequest(sizeof(BinaryNotification), LibfabricUtils::getNextXferId());
-    if (!control_request) {
-        NIXL_ERROR << "Failed to allocate control request for notification";
-        return NIXL_ERR_BACKEND;
+    NIXL_DEBUG << "Sending " << binary_notifications.size() << " notification fragments";
+
+    // Get a single xfer_id for all notification fragments
+    uint16_t notification_xfer_id = LibfabricUtils::getNextXferId();
+
+    // Send each notification fragment
+    for (size_t i = 0; i < binary_notifications.size(); ++i) {
+        auto &binary_notification = binary_notifications[i];
+
+        // Set xfer_id and expected_completions for this notification
+        binary_notification.xfer_id = xfer_id;
+        binary_notification.expected_completions = expected_completions;
+
+        // Allocate control request for this notification fragment using the same xfer_id
+        nixlLibfabricReq *control_request =
+            rail_manager.getControlRail(control_rail_id)
+                .allocateControlRequest(sizeof(BinaryNotification), notification_xfer_id);
+        if (!control_request) {
+            NIXL_ERROR << "Failed to allocate control request for notification fragment " << i;
+            return NIXL_ERR_BACKEND;
+        }
+
+        // Copy BinaryNotification to control request buffer
+        memcpy(control_request->buffer, &binary_notification, sizeof(BinaryNotification));
+
+        // Set the correct buffer size for the notification
+        control_request->buffer_size = sizeof(BinaryNotification);
+
+        NIXL_DEBUG << "Sending binary notification fragment " << i << "/"
+                   << binary_notifications.size()
+                   << " Message: " << binary_notification.getMessage()
+                   << " xfer_id: " << binary_notification.xfer_id
+                   << " expected_completions: " << binary_notification.expected_completions
+                   << " notification_xfer_id: " << notification_xfer_id;
+
+        nixl_status_t status = rail_manager.postControlMessage(
+            nixlLibfabricRailManager::ControlMessageType::NOTIFICATION,
+            control_request,
+            connection->control_rail_remote_addr_list_[control_rail_id][0],
+            connection->agent_index_);
+
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "postControlMessage failed on control rail " << control_rail_id
+                       << " for fragment " << i;
+            return NIXL_ERR_BACKEND;
+        }
     }
 
-    // Copy BinaryNotification to control request buffer
-    memcpy(control_request->buffer, &binary_notification, sizeof(BinaryNotification));
-
-    // Set the correct buffer size for the notification
-    control_request->buffer_size = sizeof(BinaryNotification);
-
-    NIXL_DEBUG << "Sending binary notification control request"
-               << " Message: " << binary_notification.getMessage()
-               << " expected_completions: " << binary_notification.expected_completions;
-    nixl_status_t status = rail_manager.postControlMessage(
-        nixlLibfabricRailManager::ControlMessageType::NOTIFICATION,
-        control_request,
-        connection->control_rail_remote_addr_list_[control_rail_id][0],
-        connection->agent_index_);
-
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "postControlMessage failed on control rail " << control_rail_id;
-        return NIXL_ERR_BACKEND;
-    }
-
+    NIXL_DEBUG << "Successfully sent all " << binary_notifications.size()
+               << " notification fragments";
     return NIXL_SUCCESS;
 }
 
@@ -1220,7 +1246,8 @@ nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string
     binary_notif.setAgentName(localAgent);
     binary_notif.setMessage(msg);
 
-    return notifSendPriv(remote_agent, binary_notif);
+    std::vector<BinaryNotification> notifications = {binary_notif};
+    return notifSendPriv(remote_agent, notifications, 0, 0);
 }
 
 nixl_status_t
