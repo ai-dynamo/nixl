@@ -48,6 +48,9 @@
 #define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/read operations (no buffers)
 #define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192
 
+// Notification fragmentation constants
+#define NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE 1024 // Size of BinaryNotification.message field
+
 // Retry configuration constants
 #define NIXL_LIBFABRIC_MAX_RETRIES 10
 #define NIXL_LIBFABRIC_EFA_RETRY_DELAY_US 100
@@ -105,9 +108,12 @@
  */
 struct BinaryNotification {
     char agent_name[256]; // Fixed-size agent name (null-terminated)
-    char message[1024]; // Fixed-size message (binary data, not null-terminated)
-    uint32_t message_length; // Actual length of message data
-    uint16_t xfer_id; // 16-bit postXfer ID (unique per postXfer call)
+    char message[NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE]; // Fixed-size message (binary data, not null-terminated)
+    uint32_t message_length; // Actual length of message data in this fragment
+    uint32_t total_message_length; // Total length of complete message (all fragments)
+    uint16_t notif_xfer_id; // 16-bit notif_xfer_id for matching notifications
+    uint16_t notif_seq_id; // Fragment index
+    uint16_t notif_seq_len; // Total number of fragments
     uint32_t expected_completions; // Total write requests for this xfer_id
 
     /** @brief Clear all fields to zero */
