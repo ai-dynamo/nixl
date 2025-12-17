@@ -31,6 +31,20 @@ posix_sources = [
 has_api = false
 compile_defs = []
 plugin_link_args = []
+# If libaio is not found, skip building the POSIX plugin entirely
+if posix_aio
+    message('Correct libaio found, Building POSIX plugin')
+    compile_defs = ['-DHAVE_LIBAIO']
+    plugin_link_args = ['-lrt']
+    plugin_deps += [ rt_dep ]
+elif rt_dep.found()
+    message('Compat AIO library found')
+    compile_defs = ['-DHAVE_LIBAIO']
+    plugin_link_args = ['-lrt']
+    plugin_deps += [ rt_dep ]
+else
+    subdir_done()
+endif
 
 if has_linux_aio
     compile_defs += ['-DHAVE_LINUXAIO']
