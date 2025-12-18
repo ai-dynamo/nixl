@@ -50,7 +50,7 @@
 #define NIXL_LIBFABRIC_RECV_POOL_SIZE 128 // Number of recv requests to pre-post per rail
 
 // Notification fragmentation constants
-#define NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE 1024 // Size of BinaryNotification.message field
+#define NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE 256 // Size of BinaryNotification.message field
 
 // Retry configuration constants
 #define NIXL_LIBFABRIC_MAX_RETRIES 10
@@ -103,9 +103,13 @@
      (((uint64_t)(seq_id) & NIXL_SEQ_ID_MASK) << NIXL_SEQ_ID_SHIFT))
 
 /**
- * @brief Binary notification format with counter-based matching
+ * @brief Binary notification format with completions verfications and notification fragmentation support
  *
  * This structure provides a fixed-size, binary format for notifications
+ * with support for multi-fragment messages.
+ *
+ * @note The __attribute__((packed)) ensures consistent byte layout across platforms,
+ *       preventing padding-related data corruption during network serialization.
  */
 struct BinaryNotification {
     char agent_name[256]; // Fixed-size agent name (null-terminated)
@@ -152,7 +156,7 @@ struct BinaryNotification {
     getMessage() const {
         return std::string(message, message_length);
     }
-};
+} __attribute__((packed));
 
 // Global XFER_ID management
 namespace LibfabricUtils {
