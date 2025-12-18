@@ -691,6 +691,8 @@ class SequentialCTPerftest(CTPerftest):
                 self.n_iters,
             )
             iter_metadata = results["metadata"]["iters"][iter_idx]
+            # Global barrier before iteration (matches old code behavior)
+            dist_rt.barrier(timeout_sec=None)
             iter_metadata["start_ts"] = time.time()
 
             # Per-TP timing for this iteration
@@ -711,8 +713,13 @@ class SequentialCTPerftest(CTPerftest):
                 has_storage = tp.storage_ops and self.my_rank in tp.storage_ops
 
                 # Skip if this rank has no role in this TP
-                if not is_sender and not is_receiver and not has_storage:
-                    continue
+                # For RDMA-only (no storage), only senders participate (matches old behavior)
+                if tp.storage_ops:
+                    if not is_sender and not is_receiver and not has_storage:
+                        continue
+                else:
+                    if not is_sender:
+                        continue
 
                 logger.debug(
                     "[Rank %d] Running TP %d/%d",
@@ -721,7 +728,8 @@ class SequentialCTPerftest(CTPerftest):
                     len(rdma_handles_by_tp),
                 )
                 # Barrier ensures all participating ranks start together
-                self._barrier_tp(tp, senders_only=False)
+                # For RDMA-only, use senders_only=True (matches old behavior)
+                self._barrier_tp(tp, senders_only=not tp.storage_ops)
 
                 # Step 1: Storage READ
                 read_h = storage_read_handles_by_tp[tp_idx]
@@ -732,9 +740,8 @@ class SequentialCTPerftest(CTPerftest):
 
                 # Step 2: Compute sleep
                 if (is_sender or has_storage) and tp.compute_time_sec:
-                    start = time.time()
                     time.sleep(tp.compute_time_sec)
-                    iter_compute[tp_idx] = time.time() - start
+                    iter_compute[tp_idx] = tp.compute_time_sec
 
                 # Step 3: Storage WRITE
                 write_h = storage_write_handles_by_tp[tp_idx]
@@ -743,15 +750,20 @@ class SequentialCTPerftest(CTPerftest):
                     self._run_tp(write_h, blocking=True)
                     iter_storage_write[tp_idx] = time.time() - start
 
-                # Step 4: RDMA transfer - barrier ensures all ranks finished storage before transfer
-                self._barrier_tp(tp, senders_only=False, include_storage=True)
+                # Step 4: RDMA transfer
+                # Extra barrier only needed if storage ops (to sync after storage writes)
+                if tp.storage_ops:
+                    self._barrier_tp(tp, senders_only=False, include_storage=True)
                 if is_sender or is_receiver:
                     start = time.time()
                     self._run_tp(rdma_h, blocking=True)
                     end = time.time()
                     iter_rdma[tp_idx] = end - start
-                    rdma_start_ts[tp_idx] = start
-                    rdma_end_ts[tp_idx] = end
+                    # Only senders record timestamps (matches old behavior)
+                    # With storage, all participants record
+                    if is_sender or tp.storage_ops:
+                        rdma_start_ts[tp_idx] = start
+                        rdma_end_ts[tp_idx] = end
 
                 if tp.sleep_after_launch_sec:
                     time.sleep(tp.sleep_after_launch_sec)

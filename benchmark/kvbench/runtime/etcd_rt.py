@@ -149,7 +149,6 @@ class _EtcdDistUtils(_RTUtils):
                     raise TimeoutError(
                         f"[Rank {self.rank}] ROOT - Barrier {key} timed out after {timeout_sec:.3f} seconds, current value: {current_val}, waiting for val={len(ranks)} (i.e all the ranks have entered the barrier), (ranks: {ranks})"
                     )
-                time.sleep(0.01)
         else:
             my_index = ranks.index(self.rank)
             # Fan in - count from 1 to len(ranks)
@@ -160,14 +159,12 @@ class _EtcdDistUtils(_RTUtils):
                     raise TimeoutError(
                         f"[Rank {self.rank}] Barrier {key} timed out after {timeout_sec} seconds, current value: {self.client.get(key)}, waiting for val={my_index} (i.e rank {ranks[my_index - 1]} entered barrier), (ranks: {ranks})"
                     )
-                time.sleep(0.01)
             # Fan out - wait for root to set 0 again
             while not self._get_int_val(key) == 0:
                 if timeout_sec and time.time() - start_time > timeout_sec:
                     raise TimeoutError(
                         f"[Rank {self.rank}] Barrier {key} timed out after {timeout_sec} seconds, current value: {self.client.get(key)}, waiting for val={group_size} (i.e all the ranks have entered the barrier), (ranks: {ranks})"
                     )
-                time.sleep(0.01)
 
     def get_rank(self) -> int:
         return self.rank
@@ -199,7 +196,6 @@ class _EtcdDistUtils(_RTUtils):
                     raise TimeoutError(
                         f"[Rank {self.rank}] allgather_obj timeout waiting for rank {dest_rank} after {timeout_sec}s"
                     )
-                time.sleep(0.01)
                 val = self.client.get(key)[0]
             result[dest_rank] = pickle.loads(val)
 
@@ -227,7 +223,6 @@ class _EtcdDistUtils(_RTUtils):
                     raise TimeoutError(
                         f"[Rank {self.rank}] alltoall_obj timeout waiting for rank {src_rank} after {timeout_sec}s"
                     )
-                time.sleep(0.01)
                 val = self.client.get(key)[0]
             result[src_rank] = pickle.loads(val)
 
@@ -256,7 +251,6 @@ class _EtcdDistUtils(_RTUtils):
                         raise TimeoutError(
                             f"[Rank {self.rank}] all_reduce timeout waiting for rank {dest_rank} after {timeout_sec}s"
                         )
-                    time.sleep(0.01)
                     val = self.client.get(f"{self.prefix}/all_reduce/{dest_rank}")[0]
                 all_vals.append(pickle.loads(val))
 
@@ -283,7 +277,6 @@ class _EtcdDistUtils(_RTUtils):
                 raise TimeoutError(
                     f"[Rank {self.rank}] all_reduce timeout waiting for result after {timeout_sec}s"
                 )
-            time.sleep(0.01)
             val = self.client.get(f"{self.prefix}/all_reduce/result")[0]
         final_val = pickle.loads(val)
 
