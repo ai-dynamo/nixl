@@ -167,8 +167,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             remote_selected_endpoints[counter_value % remote_selected_endpoints.size()];
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
-        nixlLibfabricReq *req =
-            data_rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
+        nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
         if (!req) {
             NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
             return NIXL_ERR_BACKEND;
@@ -198,8 +197,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         if (op_type == nixlLibfabricReq::WRITE) {
             // Generate next SEQ_ID for this specific write operation
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
-            uint64_t imm_data = NIXL_MAKE_IMM_DATA(
-                NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
+            uint64_t imm_data =
+                NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
             status = data_rails_[rail_id]->postWrite(req->local_addr,
                                                      req->chunk_size,
                                                      fi_mr_desc(req->local_mr),
@@ -247,8 +246,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
             if (current_chunk_size == 0) break;
             // Allocate request
-            nixlLibfabricReq *req =
-                data_rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
+            nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
             if (!req) {
                 NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
                 return NIXL_ERR_BACKEND;
@@ -282,8 +280,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             if (op_type == nixlLibfabricReq::WRITE) {
                 // Generate next SEQ_ID for this specific transfer operation
                 uint8_t seq_id = LibfabricUtils::getNextSeqId();
-                uint64_t imm_data = NIXL_MAKE_IMM_DATA(
-                    NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
+                uint64_t imm_data =
+                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
                 status = data_rails_[rail_id]->postWrite(req->local_addr,
                                                          req->chunk_size,
                                                          fi_mr_desc(req->local_mr),
