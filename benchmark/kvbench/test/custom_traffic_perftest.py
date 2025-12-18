@@ -52,8 +52,12 @@ class NixlBuffer:
         shards=1,
         fill_value=0,
         dtype: torch.dtype = torch.int8,
+        backends: (
+            list[str] | None
+        ) = None,  # Additional backends to register with (e.g., ["POSIX"])
     ):
         self.nixl_agent = nixl_agent
+        self._backends = backends
         if mem_type in ("cuda", "vram"):
             device = torch.device("cuda")
         elif mem_type in ("cpu", "dram"):
@@ -111,9 +115,16 @@ class NixlBuffer:
             self.buf,
         )
         self.reg_descs = nixl_agent.get_reg_descs(self.buf)
+        # First register with default backend (UCX for RDMA)
         assert (
             nixl_agent.register_memory(self.reg_descs) is not None
         ), "Failed to register memory"
+        # Also register with additional backends if specified (e.g., POSIX for storage)
+        if self._backends:
+            assert (
+                nixl_agent.register_memory(self.reg_descs, backends=self._backends)
+                is not None
+            ), f"Failed to register memory with backends {self._backends}"
 
     def get_chunk(self, size, offset):
         if offset + size > self.size:
@@ -123,6 +134,10 @@ class NixlBuffer:
         return self.buf[offset : offset + size]
 
     def destroy(self):
+        # Deregister from additional backends first
+        if self._backends:
+            self.nixl_agent.deregister_memory(self.reg_descs, backends=self._backends)
+        # Deregister from default backend
         self.nixl_agent.deregister_memory(self.reg_descs)
         # Delete the raw buffer (buf is just a view into it)
         if hasattr(self._raw_buf, "is_cuda") and self._raw_buf.is_cuda:

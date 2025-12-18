@@ -115,9 +115,13 @@ class SequentialCTPerftest(CTPerftest):
         self._has_storage = any(tp.storage_ops for tp in traffic_patterns)
         self._storage_backend: Optional[StorageBackend] = None
         self._storage_handles: Dict[str, StorageHandle] = {}
+        self._storage_nixl_backend: Optional[str] = (
+            None  # Backend for buffer registration
+        )
 
         if self._has_storage and storage_path:
             nixl_backend = storage_nixl_backend or "POSIX"
+            self._storage_nixl_backend = nixl_backend
             use_direct_io = storage_direct_io or nixl_backend in ("GDS", "GDS_MT")
             logger.info(
                 "[Rank %d] Storage: %s, backend=%s, O_DIRECT=%s",
@@ -192,18 +196,29 @@ class SequentialCTPerftest(CTPerftest):
                 max_dst_by_mem_type[tp.mem_type], tp.total_dst_size(self.my_rank)
             )
 
+        # If storage is enabled, also register buffers with storage backend
+        storage_backends = (
+            [self._storage_nixl_backend] if self._storage_nixl_backend else None
+        )
+
         for mem_type, size in max_src_by_mem_type.items():
             if not size:
                 continue
             self.send_buf_by_mem_type[mem_type] = NixlBuffer(
-                size, mem_type=mem_type, nixl_agent=self.nixl_agent
+                size,
+                mem_type=mem_type,
+                nixl_agent=self.nixl_agent,
+                backends=storage_backends,
             )
 
         for mem_type, size in max_dst_by_mem_type.items():
             if not size:
                 continue
             self.recv_buf_by_mem_type[mem_type] = NixlBuffer(
-                size, mem_type=mem_type, nixl_agent=self.nixl_agent
+                size,
+                mem_type=mem_type,
+                nixl_agent=self.nixl_agent,
+                backends=storage_backends,
             )
 
     def _destroy_buffers(self):
@@ -447,62 +462,85 @@ class SequentialCTPerftest(CTPerftest):
 
     def _print_summary(
         self,
-        total_storage_read_time: List[float],
-        total_compute_time: List[float],
-        total_storage_write_time: List[float],
-        total_rdma_time: List[float],
+        results: Dict[str, Any],
         isolated_read_ms: List[float],
         isolated_write_ms: List[float],
         isolated_rdma_ms: List[float],
-        tp_sizes_gb: List[float],
     ) -> None:
         """Print benchmark summary table (rank 0 only).
 
-        Shows average times per TP across all iterations, isolated latencies,
-        and calculated bandwidth.
+        Uses cross-rank aggregated data from iter_results for accurate averages.
 
         Args:
-            total_storage_read_time: Accumulated read time (seconds) per TP
-            total_compute_time: Accumulated compute time (seconds) per TP
-            total_storage_write_time: Accumulated write time (seconds) per TP
-            total_rdma_time: Accumulated RDMA time (seconds) per TP
+            results: Full results dict with iterations_results
             isolated_read_ms: Isolated read latencies (ms) per TP
             isolated_write_ms: Isolated write latencies (ms) per TP
             isolated_rdma_ms: Isolated RDMA latencies (ms) per TP
-            tp_sizes_gb: Data size (GB) per TP
         """
         if self.my_rank != 0:
             return
 
+        n_tps = len(self.traffic_patterns)
+        n_iters = len(results["iterations_results"])
+
         logger.info("═" * 80)
-        logger.info("BENCHMARK SUMMARY (%d iterations)", self.n_iters)
+        logger.info("BENCHMARK SUMMARY (%d iterations)", n_iters)
         headers = [
             "TP",
             "Size(GB)",
-            "Read",
-            "Compute",
-            "Write",
-            "RDMA",
-            "Iso.Rd",
-            "Iso.Wr",
-            "Iso.RDMA",
-            "BW(GB/s)",
+            "Read(ms)",
+            "Write(ms)",
+            "RDMA(ms)",
+            "Iso.Rd(ms)",
+            "Iso.Wr(ms)",
+            "Iso.RDMA(ms)",
+            "Rd(GB/s)",
+            "Wr(GB/s)",
+            "RDMA(GB/s)",
         ]
         data = []
 
-        for tp_idx in range(len(self.traffic_patterns)):
-            avg_read = total_storage_read_time[tp_idx] / self.n_iters * 1e3
-            avg_compute = total_compute_time[tp_idx] / self.n_iters * 1e3
-            avg_write = total_storage_write_time[tp_idx] / self.n_iters * 1e3
-            avg_rdma = total_rdma_time[tp_idx] / self.n_iters * 1e3
-            avg_bw = tp_sizes_gb[tp_idx] / (avg_rdma / 1e3) if avg_rdma > 0 else 0
+        for tp_idx in range(n_tps):
+            # Average across iterations using cross-rank aggregated data
+            avg_read = (
+                sum(
+                    results["iterations_results"][i][tp_idx]["storage_read_avg_ms"]
+                    for i in range(n_iters)
+                )
+                / n_iters
+            )
+            avg_write = (
+                sum(
+                    results["iterations_results"][i][tp_idx]["storage_write_avg_ms"]
+                    for i in range(n_iters)
+                )
+                / n_iters
+            )
+            avg_rdma = (
+                sum(
+                    results["iterations_results"][i][tp_idx]["latency"] or 0
+                    for i in range(n_iters)
+                )
+                / n_iters
+            )
+            avg_rdma_bw = (
+                sum(
+                    results["iterations_results"][i][tp_idx]["mean_bw"]
+                    for i in range(n_iters)
+                )
+                / n_iters
+            )
+            size_gb = results["iterations_results"][0][tp_idx]["size"]
+
+            # Calculate BW for each type (GB/s = size_gb / time_sec)
+            read_bw = size_gb / (avg_read / 1e3) if avg_read > 0 else 0
+            write_bw = size_gb / (avg_write / 1e3) if avg_write > 0 else 0
 
             data.append(
                 [
                     tp_idx,
-                    f"{tp_sizes_gb[tp_idx]:.3f}",
+                    f"{size_gb:.3f}",
                     f"{avg_read:.1f}" if avg_read > 0 else "-",
-                    f"{avg_compute:.1f}" if avg_compute > 0 else "-",
                     f"{avg_write:.1f}" if avg_write > 0 else "-",
                     f"{avg_rdma:.1f}" if avg_rdma > 0 else "-",
                     (
@@ -520,7 +558,9 @@ class SequentialCTPerftest(CTPerftest):
                         if isolated_rdma_ms[tp_idx] > 0
                         else "-"
                     ),
-                    f"{avg_bw:.1f}",
+                    f"{read_bw:.1f}" if read_bw > 0 else "-",
+                    f"{write_bw:.1f}" if write_bw > 0 else "-",
+                    f"{avg_rdma_bw:.1f}" if avg_rdma_bw > 0 else "-",
                 ]
             )
         logger.info("\n%s", tabulate(data, headers=headers))
@@ -676,7 +716,6 @@ class SequentialCTPerftest(CTPerftest):
             n_tps,
         )
         total_storage_read_time = [0.0] * n_tps
-        total_compute_time = [0.0] * n_tps
         total_storage_write_time = [0.0] * n_tps
         total_rdma_time = [0.0] * n_tps
         tp_sizes_gb = [
@@ -697,7 +736,6 @@ class SequentialCTPerftest(CTPerftest):
 
             # Per-TP timing for this iteration
             iter_storage_read = [0.0] * n_tps
-            iter_compute = [0.0] * n_tps
             iter_storage_write = [0.0] * n_tps
             iter_rdma = [0.0] * n_tps
             rdma_start_ts: List[Optional[float]] = [None] * n_tps
@@ -738,10 +776,9 @@ class SequentialCTPerftest(CTPerftest):
                     self._run_tp(read_h, blocking=True)
                     iter_storage_read[tp_idx] = time.time() - start
 
-                # Step 2: Compute sleep
+                # Step 2: Compute sleep (simulates GPU work, not measured)
                 if (is_sender or has_storage) and tp.compute_time_sec:
                     time.sleep(tp.compute_time_sec)
-                    iter_compute[tp_idx] = tp.compute_time_sec
 
                 # Step 3: Storage WRITE
                 write_h = storage_write_handles_by_tp[tp_idx]
@@ -771,7 +808,6 @@ class SequentialCTPerftest(CTPerftest):
             # Accumulate totals across iterations
             for i in range(n_tps):
                 total_storage_read_time[i] += iter_storage_read[i]
-                total_compute_time[i] += iter_compute[i]
                 total_storage_write_time[i] += iter_storage_write[i]
                 total_rdma_time[i] += iter_rdma[i]
 
@@ -779,7 +815,6 @@ class SequentialCTPerftest(CTPerftest):
             iter_metadata["tps_start_ts"] = rdma_start_ts[:]
             iter_metadata["tps_end_ts"] = rdma_end_ts[:]
             iter_metadata["storage_read_times"] = iter_storage_read[:]
-            iter_metadata["compute_times"] = iter_compute[:]
             iter_metadata["storage_write_times"] = iter_storage_write[:]
             iter_metadata["rdma_times"] = iter_rdma[:]
 
@@ -880,36 +915,83 @@ class SequentialCTPerftest(CTPerftest):
                             default=None,
                         ),
                         # Storage metrics (cross-rank aggregated)
+                        # Use MAX for workload latency (matches isolated measurement)
+                        # Pipeline is limited by slowest rank
                         "storage_read_min_ms": min(read_times_ms, default=0),
                         "storage_read_max_ms": max(read_times_ms, default=0),
-                        "storage_read_avg_ms": (
-                            sum(read_times_ms) / len(read_times_ms)
-                            if read_times_ms
-                            else 0
-                        ),
+                        "storage_read_avg_ms": max(
+                            read_times_ms, default=0
+                        ),  # MAX for consistency with isolated
                         "storage_write_min_ms": min(write_times_ms, default=0),
                         "storage_write_max_ms": max(write_times_ms, default=0),
-                        "storage_write_avg_ms": (
-                            sum(write_times_ms) / len(write_times_ms)
-                            if write_times_ms
-                            else 0
-                        ),
+                        "storage_write_avg_ms": max(
+                            write_times_ms, default=0
+                        ),  # MAX for consistency with isolated
                         "isolated_read_ms": isolated_read_latencies_ms[tp_idx],
                         "isolated_write_ms": isolated_write_latencies_ms[tp_idx],
                     }
                 )
             results["iterations_results"].append(iter_results)
 
+            # Per-iteration logging with all metrics
+            if self.my_rank == 0:
+                headers = [
+                    "Size(GB)",
+                    "Read(ms)",
+                    "Write(ms)",
+                    "RDMA(ms)",
+                    "Iso.Rd(ms)",
+                    "Iso.Wr(ms)",
+                    "Iso.RDMA(ms)",
+                    "Rd(GB/s)",
+                    "Wr(GB/s)",
+                    "RDMA(GB/s)",
+                ]
+                data = []
+                for i in range(len(self.traffic_patterns)):
+                    # Get cross-rank max for this iteration (from iter_results)
+                    ir = iter_results[i]
+                    size = tp_sizes_gb[i]
+                    read_ms = ir["storage_read_avg_ms"]
+                    write_ms = ir["storage_write_avg_ms"]
+                    # Calculate BW (GB/s = size_gb / time_sec)
+                    read_bw = size / (read_ms / 1e3) if read_ms > 0 else 0
+                    write_bw = size / (write_ms / 1e3) if write_ms > 0 else 0
+                    data.append(
+                        [
+                            size,
+                            read_ms if read_ms > 0 else None,
+                            write_ms if write_ms > 0 else None,
+                            rdma_latencies_ms[i],
+                            (
+                                ir["isolated_read_ms"]
+                                if ir["isolated_read_ms"] > 0
+                                else None
+                            ),
+                            (
+                                ir["isolated_write_ms"]
+                                if ir["isolated_write_ms"] > 0
+                                else None
+                            ),
+                            isolated_rdma_latencies_ms[i],
+                            read_bw if read_bw > 0 else None,
+                            write_bw if write_bw > 0 else None,
+                            ir["mean_bw"],
+                        ]
+                    )
+                logger.info(
+                    "Iteration %d/%d\n%s",
+                    iter_idx + 1,
+                    self.n_iters,
+                    tabulate(data, headers=headers, floatfmt=".3f", missingval="-"),
+                )
+
         # SUMMARY (rank 0 only) - print benchmark results table
         self._print_summary(
-            total_storage_read_time,
-            total_compute_time,
-            total_storage_write_time,
-            total_rdma_time,
+            results,
             isolated_read_latencies_ms,
             isolated_write_latencies_ms,
             isolated_rdma_latencies_ms,
-            tp_sizes_gb,
         )
 
         # CLEANUP
