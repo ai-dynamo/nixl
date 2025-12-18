@@ -274,11 +274,12 @@ private:
                           const std::vector<std::array<char, 56>> &control_rail_endpoints);
 
     // Private notification implementation with unified binary notification system
-    nixl_status_t notifSendPriv(const std::string &remote_agent,
-                                 std::vector<BinaryNotification> &binary_notifications,
-                                 uint32_t total_message_length,
-                                 uint16_t notif_xfer_id,
-                                 uint32_t expected_completions) const;
+    nixl_status_t
+    notifSendPriv(const std::string &remote_agent,
+                  std::vector<BinaryNotification> &binary_notifications,
+                  uint32_t total_message_length,
+                  uint16_t notif_xfer_id,
+                  uint32_t expected_completions) const;
 
     // Private function to fragment notification messages to binary notifications
     std::vector<BinaryNotification>

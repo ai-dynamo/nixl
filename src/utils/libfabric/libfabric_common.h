@@ -103,7 +103,8 @@
      (((uint64_t)(seq_id) & NIXL_SEQ_ID_MASK) << NIXL_SEQ_ID_SHIFT))
 
 /**
- * @brief Binary notification format with completions verfications and notification fragmentation support
+ * @brief Binary notification format with completions verfications and notification fragmentation
+ * support
  *
  * This structure provides a fixed-size, binary format for notifications
  * with support for multi-fragment messages.
@@ -113,7 +114,8 @@
  */
 struct BinaryNotification {
     char agent_name[256]; // Fixed-size agent name (null-terminated)
-    char message[NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE]; // Fixed-size message (binary data, not null-terminated)
+    char message[NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE]; // Fixed-size message (binary data, not
+                                                             // null-terminated)
     uint32_t message_length; // Actual length of message data in this fragment
     uint32_t total_message_length; // Total length of complete message (all fragments)
     uint16_t notif_xfer_id; // 16-bit notif_xfer_id for matching notifications

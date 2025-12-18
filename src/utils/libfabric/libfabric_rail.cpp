@@ -587,12 +587,12 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                    << " data requests for rail " << rail_id;
 
         // Post initial pool of receives using new resource management system
-        NIXL_INFO << "Pre-posting " << NIXL_LIBFABRIC_RECV_POOL_SIZE 
-                  << " recv requests for rail " << rail_id;
-        
+        NIXL_INFO << "Pre-posting " << NIXL_LIBFABRIC_RECV_POOL_SIZE << " recv requests for rail "
+                  << rail_id;
+
         for (size_t i = 0; i < NIXL_LIBFABRIC_RECV_POOL_SIZE; ++i) {
-            nixlLibfabricReq *recv_req = allocateControlRequest(NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE,
-                                                                LibfabricUtils::getNextXferId());
+            nixlLibfabricReq *recv_req = allocateControlRequest(
+                NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE, LibfabricUtils::getNextXferId());
             if (!recv_req) {
                 NIXL_ERROR << "Failed to allocate request for recv " << i << " on rail " << rail_id;
                 throw std::runtime_error("Failed to allocate request for recv pool on rail " +
@@ -606,8 +606,8 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                                          std::to_string(rail_id));
             }
         }
-        
-        NIXL_INFO << "Successfully pre-posted " << NIXL_LIBFABRIC_RECV_POOL_SIZE 
+
+        NIXL_INFO << "Successfully pre-posted " << NIXL_LIBFABRIC_RECV_POOL_SIZE
                   << " recv requests for rail " << rail_id;
         NIXL_TRACE << "Successfully initialized rail " << rail_id;
     }

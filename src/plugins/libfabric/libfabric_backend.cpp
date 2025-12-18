@@ -941,15 +941,13 @@ nixlLibfabricEngine::prepXfer(const nixl_xfer_op_t &operation,
     // Set agent name and message in BinaryNotification during prepXfer
     if (opt_args && opt_args->hasNotif) {
         backend_handle->has_notif = true;
-        
+
         // Use common fragmentation helper function
         backend_handle->binary_notifs = fragmentNotificationMessage(
-            opt_args->notifMsg,
-            localAgent,
-            backend_handle->total_notif_msg_len
-        );
-        
-        NIXL_DEBUG << "prepXfer: Fragmented notification into " << backend_handle->binary_notifs.size()
+            opt_args->notifMsg, localAgent, backend_handle->total_notif_msg_len);
+
+        NIXL_DEBUG << "prepXfer: Fragmented notification into "
+                   << backend_handle->binary_notifs.size()
                    << " fragments, total_length=" << backend_handle->total_notif_msg_len;
     }
 
@@ -1191,38 +1189,39 @@ nixlLibfabricEngine::fragmentNotificationMessage(const std::string &message,
                                                  const std::string &agent_name,
                                                  uint32_t &total_message_length) const {
     std::vector<BinaryNotification> fragments;
-    
+
     // Calculate fragmentation based on NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE
     total_message_length = static_cast<uint32_t>(message.length());
-    size_t num_fragments = (total_message_length + NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE - 1) / 
-                           NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE;
-    
+    size_t num_fragments = (total_message_length + NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE - 1) /
+        NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE;
+
     // Resize vector to hold all fragments
     fragments.resize(num_fragments);
-    
+
     NIXL_DEBUG << "Fragmenting notification message: total_length=" << total_message_length
                << " bytes, num_fragments=" << num_fragments
                << ", fragment_size=" << NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE;
-    
+
     // Split message into fragments
     for (size_t frag_idx = 0; frag_idx < num_fragments; ++frag_idx) {
         size_t offset = frag_idx * NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE;
-        size_t fragment_len = std::min(static_cast<size_t>(NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE), 
-                                      total_message_length - offset);
-        
+        size_t fragment_len =
+            std::min(static_cast<size_t>(NIXL_LIBFABRIC_NOTIFICATION_FRAGMENT_SIZE),
+                     total_message_length - offset);
+
         // Extract fragment substring
         std::string fragment_msg = message.substr(offset, fragment_len);
-        
+
         // Set fragment fields
         fragments[frag_idx].setAgentName(agent_name);
         fragments[frag_idx].setMessage(fragment_msg);
-        
-        NIXL_DEBUG << "Fragment " << frag_idx << "/" << num_fragments
-                   << ": offset=" << offset << ", length=" << fragment_len;
+
+        NIXL_DEBUG << "Fragment " << frag_idx << "/" << num_fragments << ": offset=" << offset
+                   << ", length=" << fragment_len;
     }
-    
+
     NIXL_DEBUG << "Notification fragmentation complete: " << num_fragments << " fragments created";
-    
+
     return fragments;
 }
 
@@ -1271,7 +1270,8 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
         // Set the correct buffer size for the notification
         control_request->buffer_size = sizeof(BinaryNotification);
 
-        NIXL_DEBUG << "Sending binary notification fragment " << seq_id << "/" << binary_notifications.size()
+        NIXL_DEBUG << "Sending binary notification fragment " << seq_id << "/"
+                   << binary_notifications.size()
                    << " Message: " << binary_notification.getMessage()
                    << " notif_xfer_id: " << binary_notification.notif_xfer_id
                    << " notif_seq_id: " << binary_notification.notif_seq_id
@@ -1298,9 +1298,9 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                    << " expected=" << total_message_length;
         return NIXL_ERR_BACKEND;
     }
-    
-    NIXL_DEBUG << "Successfully sent all " << binary_notifications.size() << " notification fragments"
-               << " total_length=" << total_message_length;
+
+    NIXL_DEBUG << "Successfully sent all " << binary_notifications.size()
+               << " notification fragments" << " total_length=" << total_message_length;
     return NIXL_SUCCESS;
 }
 
@@ -1308,15 +1308,12 @@ nixl_status_t
 nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
     // Use common fragmentation helper function
     uint32_t total_msg_len = 0;
-    std::vector<BinaryNotification> notifications = fragmentNotificationMessage(
-        msg,
-        localAgent,
-        total_msg_len
-    );
-    
+    std::vector<BinaryNotification> notifications =
+        fragmentNotificationMessage(msg, localAgent, total_msg_len);
+
     NIXL_DEBUG << "genNotif: Fragmented notification into " << notifications.size()
                << " fragments, total_length=" << total_msg_len;
-    
+
     return notifSendPriv(remote_agent, notifications, total_msg_len, 0, 0);
 }
 
@@ -1477,9 +1474,8 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
     uint32_t expected_completions = binary_notif->expected_completions;
 
     NIXL_TRACE << "Received notification from " << remote_name << " msg: " << msg
-               << " notif_xfer_id=" << notif_xfer_id
-               << " notif_seq_id=" << notif_seq_id << "/" << notif_seq_len
-               << " expected_completions: " << expected_completions;
+               << " notif_xfer_id=" << notif_xfer_id << " notif_seq_id=" << notif_seq_id << "/"
+               << notif_seq_len << " expected_completions: " << expected_completions;
 
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
@@ -1521,11 +1517,11 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
         pending_notifications_[notif_xfer_id].expected_completions = expected_completions;
 
         NIXL_DEBUG << "Stored fragment for agent " << remote_name
-                    << " notif_xfer_id=" << notif_xfer_id
-                    << " fragment " << notif_seq_id << "/" << notif_seq_len
-                    << " received_msg_fragments=" << pending_notifications_[notif_xfer_id].received_msg_fragments
-                    << " expected_completions=" << expected_completions
-                    << " received_completions=" << pending_notifications_[notif_xfer_id].received_completions;
+                   << " notif_xfer_id=" << notif_xfer_id << " fragment " << notif_seq_id << "/"
+                   << notif_seq_len << " received_msg_fragments="
+                   << pending_notifications_[notif_xfer_id].received_msg_fragments
+                   << " expected_completions=" << expected_completions << " received_completions="
+                   << pending_notifications_[notif_xfer_id].received_completions;
     }
 
     // Check if any notifications can now be completed (after releasing the lock)
@@ -1664,18 +1660,20 @@ nixlLibfabricEngine::checkPendingNotifications() {
     auto it = pending_notifications_.begin();
     while (it != pending_notifications_.end()) {
         // Check BOTH conditions: fragments complete AND writes complete
-        bool fragments_complete = (it->second.received_msg_fragments >= it->second.expected_msg_fragments);
+        bool fragments_complete =
+            (it->second.received_msg_fragments >= it->second.expected_msg_fragments);
         bool writes_complete = (it->second.received_completions >= it->second.expected_completions);
 
         if (fragments_complete && writes_complete) {
             NIXL_TRACE << "Notification complete: fragments=" << it->second.received_msg_fragments
                        << "/" << it->second.expected_msg_fragments
-                       << " writes=" << it->second.received_completions
-                       << "/" << it->second.expected_completions;
+                       << " writes=" << it->second.received_completions << "/"
+                       << it->second.expected_completions;
 
             // Reassemble message from fragments
             std::string complete_message;
-            for (const auto& fragment : it->second.message_fragments) {
+            complete_message.reserve(it->second.total_message_length);
+            for (const auto &fragment : it->second.message_fragments) {
                 complete_message.append(fragment);
             }
 
