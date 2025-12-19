@@ -108,7 +108,7 @@ def main():
     )
     logger.debug("distance: %d", tensors[shape_len].data_ptr() - tensors[0].data_ptr())
     logger.debug("nelement: %d", tensors.nelement())
-    reg_descs = agent.get_reg_descs(tensors, "VRAM")
+    reg_descs = agent.get_reg_descs(tensors)
     success = agent.register_memory(reg_descs)
 
     if not success:  # Same as reg_descs if successful.

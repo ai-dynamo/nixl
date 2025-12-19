@@ -108,14 +108,13 @@ def main():
         tensor_size * args.layers, dtype=torch.bfloat16, device=device
     )
 
-    # size_in_bytes = tensors[0].nelement() * tensors[0].element_size() * len(tensors)
     size_in_bytes = tensors.nelement() * tensors.element_size()
     logger.info("Client Tensors in MB: %d", size_in_bytes / 1024 / 1024)
 
     block_len = shape_len * tensors.element_size()  # bytes of tensor
     logger.debug("block_len: %d", block_len)
 
-    reg_descs = agent.get_reg_descs(tensors, "VRAM")
+    reg_descs = agent.get_reg_descs(tensors)
 
     success = agent.register_memory(reg_descs)
     if not success:  # Same as reg_descs if successful
@@ -177,7 +176,7 @@ def main():
     logger.debug("target_descs: %s", target_descs)
     logger.debug("target descCount: %d", target_descs.descCount())
     logger.debug("target isEmpty: %s", target_descs.isEmpty())
-    remote_prep_handle = agent.prep_xfer_dlist("server", target_descs, "VRAM")
+    remote_prep_handle = agent.prep_xfer_dlist("server", target_descs)
 
     assert local_prep_handle != 0
     assert remote_prep_handle != 0
@@ -195,7 +194,6 @@ def main():
             num_blocks,
             seq,
         )
-        # agent.send_notif("server", str(seq).encode())
 
     # Verify data after read.
     # for i, tensor in enumerate(tensors):
