@@ -26,7 +26,6 @@
 #include <condition_variable>
 #include <atomic>
 #include <chrono>
-#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -170,7 +169,7 @@ public:
 
     /** Get total number of requests used for this transfer */
     size_t
-    get_total_requests_used() const;
+    get_submitted_requests_count() const;
 
     /** Adjust total request count to actual value after submissions complete */
     void
@@ -232,13 +231,13 @@ private:
         std::string remote_agent;
         std::vector<std::string> message_fragments; // Store each fragment separately
         uint16_t notif_xfer_id;
-        uint32_t expected_completions; // Expected transfer requests for this post_xfer_id
+        uint32_t expected_completions; // Expected transfer requests for this notif_xfer_id
         uint32_t received_completions; // Actual remote transfer completions received for this
-                                       // post_xfer_id
+                                       // notif_xfer_id
         uint16_t expected_msg_fragments; // Total fragments expected (from notif_seq_len)
         uint16_t received_msg_fragments; // Fragments received so far
         uint32_t total_message_length; // Total length of complete message (all fragments)
-        bool buffer_resized; // Flag to track if vector was initialized
+        bool buffer_resized; // Flag to track if message_fragments is initialized
 
         // Default constructor for map operations
         PendingNotification()
@@ -261,7 +260,7 @@ private:
     };
 
     // O(1) lookup with postXferID key
-    std::map<uint16_t, PendingNotification> pending_notifications_;
+    std::unordered_map<uint16_t, PendingNotification> pending_notifications_;
 
     // Connection management helpers
     nixl_status_t
