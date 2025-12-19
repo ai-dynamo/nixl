@@ -1509,3 +1509,8 @@ nixlLibfabricRail::findRequestFromContext(void *context) const {
     NIXL_ERROR << "No request found for context " << context << " on rail " << rail_id;
     return nullptr;
 }
+
+fi_info *
+nixlLibfabricRail::getRailInfo() const {
+    return info;
+}

@@ -375,6 +375,9 @@ public:
     nixlLibfabricReq *
     findRequestFromContext(void *context) const;
 
+    fi_info *
+    getRailInfo() const;
+
 private:
     // Core libfabric resources
     struct fi_info *info; // from rail_infos[rail_id]
