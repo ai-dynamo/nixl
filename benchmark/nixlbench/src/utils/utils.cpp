@@ -48,13 +48,13 @@ struct xferBenchParamInfo {
 
 // Define command line parameters
 #define NB_ARG_STRING(param_name, def_val, help_text) \
-    { .name = #param_name, .help = help_text, .type = XBPT_STRING, .def_value = def_val }
+    {.name = #param_name, .help = help_text, .type = XBPT_STRING, .def_value = def_val}
 #define NB_ARG_BOOL(param_name, def_val, help_text) \
-    { .name = #param_name, .help = help_text, .type = XBPT_BOOL, .def_value = (bool)def_val }
+    {.name = #param_name, .help = help_text, .type = XBPT_BOOL, .def_value = (bool)def_val}
 #define NB_ARG_UINT64(param_name, def_val, help_text) \
-    { .name = #param_name, .help = help_text, .type = XBPT_UINT64, .def_value = (uint64_t)def_val }
+    {.name = #param_name, .help = help_text, .type = XBPT_UINT64, .def_value = (uint64_t)def_val}
 #define NB_ARG_INT32(param_name, def_val, help_text) \
-    { .name = #param_name, .help = help_text, .type = XBPT_INT32, .def_value = (int32_t)def_val }
+    {.name = #param_name, .help = help_text, .type = XBPT_INT32, .def_value = (int32_t)def_val}
 
 /**********
  * xferBench Config
