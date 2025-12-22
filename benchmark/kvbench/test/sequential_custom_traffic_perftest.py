@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from runtime.etcd_rt import etcd_dist_utils as dist_rt
 from tabulate import tabulate
 
-from nixl._api import nixl_agent
+from nixl._api import nixl_agent, nixl_agent_config
 from nixl.logging import get_logger
 
 logger = get_logger(__name__)
@@ -96,7 +96,16 @@ class SequentialCTPerftest(CTPerftest):
         self.warmup_iters = warmup_iters
 
         logger.debug("[Rank %d] Initializing Nixl agent", self.my_rank)
-        self.nixl_agent = nixl_agent(f"{self.my_rank}")
+        # Check if storage is enabled - need to control backend creation order
+        has_storage = any(tp.storage_ops for tp in traffic_patterns) and storage_path
+        if has_storage:
+            # Don't auto-create UCX - we'll create GDS first, then UCX
+            # This avoids UCX/GDS conflicts on systems without UMR QP support
+            config = nixl_agent_config(backends=[])
+            self.nixl_agent = nixl_agent(f"{self.my_rank}", config)
+        else:
+            # No storage, default UCX auto-creation is fine
+            self.nixl_agent = nixl_agent(f"{self.my_rank}")
 
         for tp in self.traffic_patterns:
             self._check_tp_config(tp)
@@ -136,6 +145,9 @@ class SequentialCTPerftest(CTPerftest):
                 nixl_backend=nixl_backend,
                 use_direct_io=use_direct_io,
             )
+            # Now create UCX backend (after GDS to avoid UMR QP conflicts)
+            self.nixl_agent.create_backend("UCX")
+            logger.debug("[Rank %d] Created UCX backend after storage", self.my_rank)
         elif self._has_storage:
             logger.warning(
                 "[Rank %d] Storage ops in TPs but no storage_path", self.my_rank
@@ -398,10 +410,7 @@ class SequentialCTPerftest(CTPerftest):
             # Global barrier ensures TPs don't overlap
             dist_rt.barrier()
 
-            is_participant = (
-                self.my_rank in tp.senders_ranks()
-                or self.my_rank in tp.receivers_ranks()
-            )
+            is_participant = self.my_rank in tp.senders_ranks()
             if not is_participant:
                 continue
 
@@ -651,13 +660,18 @@ class SequentialCTPerftest(CTPerftest):
             for i in range(len(self.traffic_patterns))
         ]
 
+        # Combined handles per TP: (rdma, read, write) - each can be empty []
+        tp_handles = list(
+            zip(
+                rdma_handles_by_tp,
+                storage_read_handles_by_tp,
+                storage_write_handles_by_tp,
+            )
+        )
+
         # WARMUP - Storage then RDMA
         logger.info("[Rank %d] Warming up (%d iters)", self.my_rank, self.warmup_iters)
-        for tp_idx in range(len(self.traffic_patterns)):
-            read_h, write_h = (
-                storage_read_handles_by_tp[tp_idx],
-                storage_write_handles_by_tp[tp_idx],
-            )
+        for rdma_h, read_h, write_h in tp_handles:
             for _ in range(self.warmup_iters):
                 if read_h:
                     self._run_tp(read_h, blocking=True)
@@ -667,7 +681,7 @@ class SequentialCTPerftest(CTPerftest):
         # RDMA warmup: only warmup connections to destinations we haven't warmed yet.
         # This optimization skips redundant warmup when multiple TPs share destinations.
         warmed: set[int] = set()
-        for tp_idx, rdma_h in enumerate(rdma_handles_by_tp):
+        for tp_idx, (rdma_h, _, _) in enumerate(tp_handles):
             if not rdma_h:
                 continue
             tp = self.traffic_patterns[tp_idx]
@@ -742,65 +756,60 @@ class SequentialCTPerftest(CTPerftest):
             rdma_end_ts: List[Optional[float]] = [None] * n_tps
 
             # Execute each TP sequentially: READ → COMPUTE → WRITE → RDMA
-            # Each rank participates if it has any role: sender, receiver, or storage.
+            # Each rank participates if it has any role: sender or storage.
             # Sequential execution ensures TPs don't overlap and timing is accurate.
-            for tp_idx, rdma_h in enumerate(rdma_handles_by_tp):
+            for tp_idx, (rdma_h, read_h, write_h) in enumerate(tp_handles):
                 tp = self.traffic_patterns[tp_idx]
                 is_sender = self.my_rank in tp.senders_ranks()
-                is_receiver = self.my_rank in tp.receivers_ranks()
                 has_storage = tp.storage_ops and self.my_rank in tp.storage_ops
 
                 # Skip if this rank has no role in this TP
-                # For RDMA-only (no storage), only senders participate (matches old behavior)
+                # For RDMA-only (no storage), only senders participate
                 if tp.storage_ops:
-                    if not is_sender and not is_receiver and not has_storage:
+                    if not is_sender and not has_storage:
                         continue
                 else:
                     if not is_sender:
                         continue
 
+                # Barrier ensures all participating ranks start together
+                # Includes senders + storage participants (not receivers)
+                self._barrier_tp(tp, senders_only=True)
+
                 logger.debug(
                     "[Rank %d] Running TP %d/%d",
                     self.my_rank,
                     tp_idx,
-                    len(rdma_handles_by_tp),
+                    len(tp_handles),
                 )
-                # Barrier ensures all participating ranks start together
-                # For RDMA-only, use senders_only=True (matches old behavior)
-                self._barrier_tp(tp, senders_only=not tp.storage_ops)
 
                 # Step 1: Storage READ
-                read_h = storage_read_handles_by_tp[tp_idx]
                 if read_h and has_storage:
                     start = time.time()
                     self._run_tp(read_h, blocking=True)
-                    iter_storage_read[tp_idx] = time.time() - start
+                    # Extra barrier ensures all storage reads complete before sleep
+                    if tp.storage_ops:
+                        self._barrier_tp(tp, senders_only=False, include_storage=True)
 
-                # Step 2: Compute sleep (simulates GPU work, not measured)
-                if (is_sender or has_storage) and tp.compute_time_sec:
+                # Step 2: Compute sleep (simulates GPU work between storage and RDMA)
+                if tp.compute_time_sec:
                     time.sleep(tp.compute_time_sec)
 
                 # Step 3: Storage WRITE
-                write_h = storage_write_handles_by_tp[tp_idx]
                 if write_h and has_storage:
                     start = time.time()
                     self._run_tp(write_h, blocking=True)
                     iter_storage_write[tp_idx] = time.time() - start
+                    # No need to barrier here because storage writes are independent of RDMA
 
                 # Step 4: RDMA transfer
-                # Extra barrier only needed if storage ops (to sync after storage writes)
-                if tp.storage_ops:
-                    self._barrier_tp(tp, senders_only=False, include_storage=True)
-                if is_sender or is_receiver:
+                if is_sender:
                     start = time.time()
                     self._run_tp(rdma_h, blocking=True)
                     end = time.time()
                     iter_rdma[tp_idx] = end - start
-                    # Only senders record timestamps (matches old behavior)
-                    # With storage, all participants record
-                    if is_sender or tp.storage_ops:
-                        rdma_start_ts[tp_idx] = start
-                        rdma_end_ts[tp_idx] = end
+                    rdma_start_ts[tp_idx] = start
+                    rdma_end_ts[tp_idx] = end
 
                 if tp.sleep_after_launch_sec:
                     time.sleep(tp.sleep_after_launch_sec)
