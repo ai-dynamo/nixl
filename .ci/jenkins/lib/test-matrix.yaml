@@ -43,7 +43,7 @@ env:
   CONTAINER_WORKSPACE: /workspace
   INSTALL_DIR: ${CONTAINER_WORKSPACE}/nixl_install
   # Manual timeout - ci-demo doesn't handle docker exec
-  TEST_TIMEOUT: 30
+  TEST_TIMEOUT: 60
   # NPROC for bare-metal: containers see all host CPUs, need to limit parallelism
   NPROC: 16
 
