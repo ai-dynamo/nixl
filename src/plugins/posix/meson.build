@@ -25,6 +25,7 @@ posix_sources = [
     'posix_backend.cpp',
     'posix_backend.h',
     'posix_plugin.cpp',
+    'posix_queue.cpp',
     'queue_factory_impl.cpp'
 ]
 

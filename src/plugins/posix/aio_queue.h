@@ -30,8 +30,7 @@ class aioQueue : public nixlPosixQueue {
         std::vector<struct aiocb> aiocbs;  // Array of AIO control blocks
         int num_entries;                   // Total number of entries expected
         std::vector<bool> completed; // Track completed I/Os
-        int num_completed;                 // Number of completed operations
-        int num_submitted;                 // Track number of submitted I/Os
+        int num_completed; // Number of completed operations
         nixl_xfer_op_t operation;          // Whether this is a read operation
 
         // Delete copy and move operations
@@ -44,7 +43,7 @@ class aioQueue : public nixlPosixQueue {
         aioQueue(int num_entries, nixl_xfer_op_t operation);
         ~aioQueue();
         nixl_status_t
-        submit (const nixl_meta_dlist_t &, const nixl_meta_dlist_t &) override;
+        submitBatch(int start_idx, int count, int &submitted_count) override;
         nixl_status_t checkCompleted() override;
         nixl_status_t prepIO(int fd, void* buf, size_t len, off_t offset) override;
 };
