@@ -26,7 +26,6 @@
 #include <condition_variable>
 #include <atomic>
 #include <chrono>
-#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -137,11 +136,13 @@ private:
     std::atomic<size_t> submitted_requests_; // Total number of submitted requests
 
 public:
+    uint16_t post_xfer_id;
     const nixl_xfer_op_t operation_;
     const std::string remote_agent_;
     bool has_notif;
+    uint32_t total_notif_msg_len; // Total length of notification message across all fragments
 
-    BinaryNotification binary_notif; // Direct BinaryNotification instance
+    std::vector<BinaryNotification> binary_notifs; // Vector of BinaryNotification for fragmentation
 
     nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent);
     ~nixlLibfabricBackendH();
@@ -158,13 +159,17 @@ public:
     void
     increment_completed_requests();
 
+    /** Atomically increment submitted request count */
+    void
+    increment_submitted_requests();
+
     /** Get current count of completed requests */
     size_t
     get_completed_requests_count() const;
 
     /** Get total number of requests used for this transfer */
     size_t
-    get_total_requests_used() const;
+    get_submitted_requests_count() const;
 
     /** Adjust total request count to actual value after submissions complete */
     void
@@ -224,28 +229,38 @@ private:
     // Notification Queuing
     struct PendingNotification {
         std::string remote_agent;
-        std::string message;
-        uint16_t post_xfer_id;
-        uint32_t expected_completions; // Expected transfer requests for this post_xfer_id
+        std::vector<std::string> message_fragments; // Store each fragment separately
+        uint16_t notif_xfer_id;
+        uint32_t expected_completions; // Expected transfer requests for this notif_xfer_id
         uint32_t received_completions; // Actual remote transfer completions received for this
-                                       // post_xfer_id
+                                       // notif_xfer_id
+        uint16_t expected_msg_fragments; // Total fragments expected (from notif_seq_len)
+        uint16_t received_msg_fragments; // Fragments received so far
+        uint32_t total_message_length; // Total length of complete message (all fragments)
+        bool buffer_resized; // Flag to track if message_fragments is initialized
 
         // Default constructor for map operations
-        PendingNotification() : post_xfer_id(0), expected_completions(0), received_completions(0) {}
+        PendingNotification()
+            : notif_xfer_id(0),
+              expected_completions(0),
+              received_completions(0),
+              expected_msg_fragments(0),
+              received_msg_fragments(0),
+              total_message_length(0),
+              buffer_resized(false) {}
 
-        PendingNotification(const std::string &agent,
-                            const std::string &msg,
-                            uint16_t xfer_id,
-                            uint32_t expected_cnt = 0)
-            : remote_agent(agent),
-              message(msg),
-              post_xfer_id(xfer_id),
-              expected_completions(expected_cnt),
-              received_completions(0) {}
+        PendingNotification(uint16_t xfer_id)
+            : notif_xfer_id(xfer_id),
+              expected_completions(0),
+              received_completions(0),
+              expected_msg_fragments(0),
+              received_msg_fragments(0),
+              total_message_length(0),
+              buffer_resized(false) {}
     };
 
     // O(1) lookup with postXferID key
-    std::map<uint16_t, PendingNotification> pending_notifications_;
+    std::unordered_map<uint16_t, PendingNotification> pending_notifications_;
 
     // Connection management helpers
     nixl_status_t
@@ -256,9 +271,20 @@ private:
     createAgentConnection(const std::string &agent_name,
                           const std::vector<std::array<char, 56>> &data_rail_endpoints,
                           const std::vector<std::array<char, 56>> &control_rail_endpoints);
+
     // Private notification implementation with unified binary notification system
     nixl_status_t
-    notifSendPriv(const std::string &remote_agent, BinaryNotification &binary_notification) const;
+    notifSendPriv(const std::string &remote_agent,
+                  std::vector<BinaryNotification> &binary_notifications,
+                  uint32_t total_message_length,
+                  uint16_t notif_xfer_id,
+                  uint32_t expected_completions) const;
+
+    // Private function to fragment notification messages to binary notifications
+    std::vector<BinaryNotification>
+    fragmentNotificationMessage(const std::string &message,
+                                const std::string &agent_name,
+                                uint32_t &total_message_length) const;
 #ifdef HAVE_CUDA
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;

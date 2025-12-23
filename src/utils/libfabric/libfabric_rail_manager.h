@@ -182,8 +182,9 @@ public:
                              const std::vector<size_t> &remote_selected_endpoints,
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t agent_idx,
+                             uint16_t xfer_id,
                              std::function<void()> completion_callback,
-                             BinaryNotification *binary_notif);
+                             std::function<void()> submission_callback);
     /** Determine if striping should be used for given transfer size
      * @param transfer_size Size of the transfer in bytes
      * @return true if striping should be used, false for round-robin

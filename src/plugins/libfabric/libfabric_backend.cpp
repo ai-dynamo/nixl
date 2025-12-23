@@ -169,13 +169,14 @@ nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op, const std::strin
     : completed_requests_(0),
       submitted_requests_(0),
       operation_(op),
-      remote_agent_(remote_agent) {
-    // Initialize BinaryNotification
-    binary_notif.clear();
+      remote_agent_(remote_agent),
+      total_notif_msg_len(0) {
+    // Initialize BinaryNotification vector
+    binary_notifs.clear();
 
     NIXL_DEBUG << " handle constructor called, address: " << this
                << " total_requests_used=" << submitted_requests_.load()
-               << " BinaryNotification initialized";
+               << " BinaryNotification vector initialized";
 }
 
 nixlLibfabricBackendH::~nixlLibfabricBackendH() {
@@ -197,13 +198,19 @@ nixlLibfabricBackendH::increment_completed_requests() {
                << submitted_requests_.load();
 }
 
+void
+nixlLibfabricBackendH::increment_submitted_requests() {
+    size_t submitted = submitted_requests_.fetch_add(1);
+    NIXL_DEBUG << "Request submitted, total submitted: " << submitted;
+}
+
 size_t
 nixlLibfabricBackendH::get_completed_requests_count() const {
     return completed_requests_.load();
 }
 
 size_t
-nixlLibfabricBackendH::get_total_requests_used() const {
+nixlLibfabricBackendH::get_submitted_requests_count() const {
     return submitted_requests_.load();
 }
 
@@ -436,8 +443,8 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
     std::lock_guard<std::mutex> lock(connection_state_mutex_);
 
     NIXL_DEBUG << "Loading remote info for agent: " << remote_agent
-               << ", info length=" << remote_conn_info.length()
-               << ", info (hex): " << LibfabricUtils::hexdump(remote_conn_info.data());
+               << ", info length=" << remote_conn_info.length() << ", info (hex): "
+               << LibfabricUtils::hexdump(remote_conn_info.data(), remote_conn_info.length());
 
     if (remote_conn_info.empty()) {
         NIXL_ERROR << "Empty remote connection info received";
@@ -640,11 +647,11 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
                << " data rails and " << conn_info->control_ep_names_.size() << " control rails";
     for (size_t i = 0; i < conn_info->src_ep_names_.size(); ++i) {
         NIXL_DEBUG << "Data rail " << i << ": "
-                   << LibfabricUtils::hexdump(conn_info->src_ep_names_[i]);
+                   << LibfabricUtils::hexdump(conn_info->src_ep_names_[i], LF_EP_NAME_MAX_LEN);
     }
     for (size_t i = 0; i < conn_info->control_ep_names_.size(); ++i) {
         NIXL_DEBUG << "Control rail " << i << ": "
-                   << LibfabricUtils::hexdump(conn_info->control_ep_names_[i]);
+                   << LibfabricUtils::hexdump(conn_info->control_ep_names_[i], LF_EP_NAME_MAX_LEN);
     }
     NIXL_DEBUG << "Agent index: " << it->second->agent_index_;
     if (!conn_info) {
@@ -664,8 +671,9 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
         return serialize_status;
     }
 
-    nixlLibfabricReq *control_request = rail_manager.getControlRail(control_rail_id)
-                                            .allocateControlRequest(serialized_conn_info.length());
+    nixlLibfabricReq *control_request =
+        rail_manager.getControlRail(control_rail_id)
+            .allocateControlRequest(serialized_conn_info.length(), LibfabricUtils::getNextXferId());
     if (!control_request) {
         NIXL_ERROR << "Failed to allocate control request for connection establishment";
         return NIXL_ERR_BACKEND;
@@ -933,10 +941,14 @@ nixlLibfabricEngine::prepXfer(const nixl_xfer_op_t &operation,
     // Set agent name and message in BinaryNotification during prepXfer
     if (opt_args && opt_args->hasNotif) {
         backend_handle->has_notif = true;
-        backend_handle->binary_notif.setAgentName(localAgent);
-        backend_handle->binary_notif.setMessage(opt_args->notifMsg);
-        backend_handle->binary_notif.expected_completions = 0;
-        NIXL_DEBUG << "Setting notification message: " << opt_args->notifMsg;
+
+        // Use common fragmentation helper function
+        backend_handle->binary_notifs = fragmentNotificationMessage(
+            opt_args->notifMsg, localAgent, backend_handle->total_notif_msg_len);
+
+        NIXL_DEBUG << "prepXfer: Fragmented notification into "
+                   << backend_handle->binary_notifs.size()
+                   << " fragments, total_length=" << backend_handle->total_notif_msg_len;
     }
 
     handle = backend_handle; // Assign to base class pointer
@@ -993,13 +1005,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Use pre-allocated BinaryNotification from handle and set xfer_id
-    backend_handle->binary_notif.xfer_id = LibfabricUtils::getNextXferId();
-    backend_handle->binary_notif.expected_completions =
-        0; // Will be incremented during transfer submission
-
-    NIXL_DEBUG << "Using pre-allocated BinaryNotification with XFER_ID="
-               << backend_handle->binary_notif.xfer_id;
+    // Allocate xfer_id once in prepXfer
+    backend_handle->post_xfer_id = LibfabricUtils::getNextXferId();
 
     nixlLibfabricReq::OpType op_type;
     int desc_count = local.descCount();
@@ -1009,9 +1016,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     op_type = (operation == NIXL_WRITE) ? nixlLibfabricReq::WRITE : nixlLibfabricReq::READ;
 
-    // Set initial submit request count to maximum possible requests for this xfer.
-    size_t max_possible_requests = desc_count * rail_manager.getNumDataRails();
-    backend_handle->init_request_tracking(max_possible_requests);
+    // Initialize submittted and completed request count to 0 for each postXfer.
+    backend_handle->init_request_tracking(0);
 
     // Core transfer submission to process each descriptor with direct submission
     for (int desc_idx = 0; desc_idx < desc_count; ++desc_idx) {
@@ -1054,10 +1060,13 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             remote_md->remote_selected_endpoints_,
             conn_it->second->rail_remote_addr_list_,
             conn_it->second->agent_index_,
+            backend_handle->post_xfer_id,
             [backend_handle]() {
                 backend_handle->increment_completed_requests();
             }, // Completion callback
-            &(backend_handle->binary_notif) // Populate BinaryNotification
+            [backend_handle]() {
+                backend_handle->increment_submitted_requests();
+            } // Submission callback
         );
 
         if (status != NIXL_SUCCESS) {
@@ -1067,34 +1076,33 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         }
 
         NIXL_DEBUG << "Successfully processed descriptor " << desc_idx << " with "
-                   << backend_handle->binary_notif.expected_completions << " requests submitted";
+                   << backend_handle->get_submitted_requests_count()
+                   << " requests submitted so far";
     }
 
     NIXL_DEBUG << "Processing complete: submitted "
-               << backend_handle->binary_notif.expected_completions << " requests from "
-               << desc_count << " descriptors"
-               << " with " << backend_handle->binary_notif.expected_completions
-               << " total XFER_IDs";
+               << backend_handle->get_submitted_requests_count() << " requests from " << desc_count
+               << " descriptors";
 
     // For same-agent transfers, we need to set the total to 0 since we bypassed all rail operations
     if (remote_agent == localAgent) {
         backend_handle->adjust_total_requests(0);
         NIXL_DEBUG << "Same-agent transfer: adjusted total requests to 0 (all handled via memcpy)";
-    } else {
-        // Adjust to actual request count after all submissions complete
-        backend_handle->adjust_total_requests(backend_handle->binary_notif.expected_completions);
     }
 
     // Send notification immediately after successful request submission
     if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_WRITE) {
-        nixl_status_t notif_status = notifSendPriv(remote_agent, backend_handle->binary_notif);
+        nixl_status_t notif_status = notifSendPriv(remote_agent,
+                                                   backend_handle->binary_notifs,
+                                                   backend_handle->total_notif_msg_len,
+                                                   backend_handle->post_xfer_id,
+                                                   backend_handle->get_submitted_requests_count());
         if (notif_status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to send notification";
             return notif_status;
         }
-        NIXL_DEBUG << "Notification sent immediately with XFER_ID="
-                   << backend_handle->binary_notif.xfer_id << ", expected_completions: "
-                   << backend_handle->binary_notif.expected_completions;
+        NIXL_DEBUG << "Notification sent immediately with XFER_ID=" << backend_handle->post_xfer_id
+                   << ", expected_completions: " << backend_handle->get_submitted_requests_count();
     }
 
     // Progress data rails to kick off transfers
@@ -1108,8 +1116,11 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     // For very small transfers we can check for local completions immediately.
     if (backend_handle->is_completed()) {
         if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
-            backend_handle->binary_notif.expected_completions = 0;
-            nixl_status_t notif_status = notifSendPriv(remote_agent, backend_handle->binary_notif);
+            nixl_status_t notif_status = notifSendPriv(remote_agent,
+                                                       backend_handle->binary_notifs,
+                                                       backend_handle->total_notif_msg_len,
+                                                       backend_handle->post_xfer_id,
+                                                       0);
             if (notif_status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to send notification";
                 return notif_status;
@@ -1136,9 +1147,11 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
     if (backend_handle->is_completed()) {
         NIXL_DEBUG << "Data transfer completed successfully";
         if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
-            backend_handle->binary_notif.expected_completions = 0;
-            nixl_status_t notif_status =
-                notifSendPriv(backend_handle->remote_agent_, backend_handle->binary_notif);
+            nixl_status_t notif_status = notifSendPriv(backend_handle->remote_agent_,
+                                                       backend_handle->binary_notifs,
+                                                       backend_handle->total_notif_msg_len,
+                                                       backend_handle->post_xfer_id,
+                                                       0);
             if (notif_status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to send notification";
                 return notif_status;
@@ -1166,10 +1179,55 @@ nixlLibfabricEngine::releaseReqH(nixlBackendReqH *handle) const {
     return NIXL_SUCCESS;
 }
 
-// notifSendPriv that accept control request
+/****************************************
+ * Notification Functions
+ *****************************************/
+
+std::vector<BinaryNotification>
+nixlLibfabricEngine::fragmentNotificationMessage(const std::string &message,
+                                                 const std::string &agent_name,
+                                                 uint32_t &total_message_length) const {
+    std::vector<BinaryNotification> fragments;
+
+    // Get max notiication fragment size
+    const size_t fragment_size = BinaryNotification::getFragmentSize();
+    total_message_length = static_cast<uint32_t>(message.length());
+    size_t num_fragments = (total_message_length + fragment_size - 1) / fragment_size;
+
+    // Resize vector to hold all fragments
+    fragments.resize(num_fragments);
+
+    NIXL_DEBUG << "Fragmenting notification message: total_length=" << total_message_length
+               << " bytes, num_fragments=" << num_fragments << ", fragment_size=" << fragment_size;
+
+    // Split message into fragments
+    for (size_t frag_idx = 0; frag_idx < num_fragments; ++frag_idx) {
+        size_t offset = frag_idx * fragment_size;
+        size_t fragment_len = std::min(fragment_size, total_message_length - offset);
+
+        // Extract fragment substring
+        std::string fragment_msg = message.substr(offset, fragment_len);
+
+        // Set fragment fields
+        fragments[frag_idx].setAgentName(agent_name);
+        fragments[frag_idx].setMessage(fragment_msg);
+
+        NIXL_DEBUG << "Fragment " << frag_idx << "/" << num_fragments << ": offset=" << offset
+                   << ", length=" << fragment_len;
+    }
+
+    NIXL_DEBUG << "Notification fragmentation complete: " << num_fragments << " fragments created";
+
+    return fragments;
+}
+
+// notifSendPriv that accepts vector of BinaryNotifications for fragmentation support
 nixl_status_t
 nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
-                                   BinaryNotification &binary_notification) const {
+                                   std::vector<BinaryNotification> &binary_notifications,
+                                   uint32_t total_message_length,
+                                   uint16_t notif_xfer_id,
+                                   uint32_t expected_completions) const {
     auto it = connections_.find(remote_agent);
     if (it == connections_.end()) {
         NIXL_ERROR << "No connection found for agent: " << remote_agent;
@@ -1179,46 +1237,81 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
     auto connection = it->second;
     const size_t control_rail_id = 0; // Only use control rail 0 for notifications
 
-    // Allocate control request for notification
-    nixlLibfabricReq *control_request = rail_manager.getControlRail(control_rail_id)
-                                            .allocateControlRequest(sizeof(BinaryNotification));
-    if (!control_request) {
-        NIXL_ERROR << "Failed to allocate control request for notification";
+    NIXL_DEBUG << "Sending " << binary_notifications.size() << " notification fragments"
+               << " total_message_length=" << total_message_length;
+
+    uint32_t actual_msg_length = 0;
+    // Send each notification fragment
+    for (size_t seq_id = 0; seq_id < binary_notifications.size(); ++seq_id) {
+        auto &binary_notification = binary_notifications[seq_id];
+
+        // Set fragmentation fields for this notification
+        binary_notification.header.notif_xfer_id = notif_xfer_id;
+        binary_notification.header.expected_completions = expected_completions;
+        binary_notification.header.notif_seq_id = static_cast<uint16_t>(seq_id);
+        binary_notification.header.notif_seq_len =
+            static_cast<uint16_t>(binary_notifications.size());
+        binary_notification.header.total_message_length = total_message_length;
+
+        // Allocate control request for this notification fragment using the same xfer_id
+        nixlLibfabricReq *control_request =
+            rail_manager.getControlRail(control_rail_id)
+                .allocateControlRequest(sizeof(BinaryNotification), notif_xfer_id);
+
+        if (!control_request) {
+            NIXL_ERROR << "Failed to allocate control request for notification fragment " << seq_id;
+            return NIXL_ERR_BACKEND;
+        }
+
+        // Copy BinaryNotification to control request buffer
+        memcpy(control_request->buffer, &binary_notification, sizeof(BinaryNotification));
+        control_request->buffer_size = sizeof(BinaryNotification);
+
+        NIXL_DEBUG << "Sending binary notification fragment " << seq_id << "/"
+                   << binary_notifications.size()
+                   << " Message: " << binary_notification.getMessage()
+                   << " notif_xfer_id: " << binary_notification.header.notif_xfer_id
+                   << " notif_seq_id: " << binary_notification.header.notif_seq_id
+                   << " notif_seq_len: " << binary_notification.header.notif_seq_len
+                   << " expected_completions: " << binary_notification.header.expected_completions;
+
+        nixl_status_t status = rail_manager.postControlMessage(
+            nixlLibfabricRailManager::ControlMessageType::NOTIFICATION,
+            control_request,
+            connection->control_rail_remote_addr_list_[control_rail_id][0],
+            connection->agent_index_);
+
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "postControlMessage failed on control rail " << control_rail_id
+                       << " for fragment " << seq_id;
+            return NIXL_ERR_BACKEND;
+        }
+        actual_msg_length += binary_notification.header.message_length;
+    }
+
+    // Validate that actual message length matches expected total
+    if (actual_msg_length != total_message_length) {
+        NIXL_ERROR << "Message length mismatch: actual=" << actual_msg_length
+                   << " expected=" << total_message_length;
         return NIXL_ERR_BACKEND;
     }
 
-    // Copy BinaryNotification to control request buffer
-    memcpy(control_request->buffer, &binary_notification, sizeof(BinaryNotification));
-
-    // Set the correct buffer size for the notification
-    control_request->buffer_size = sizeof(BinaryNotification);
-
-    NIXL_DEBUG << "Sending binary notification control request"
-               << " Message: " << binary_notification.getMessage()
-               << " expected_completions: " << binary_notification.expected_completions;
-    nixl_status_t status = rail_manager.postControlMessage(
-        nixlLibfabricRailManager::ControlMessageType::NOTIFICATION,
-        control_request,
-        connection->control_rail_remote_addr_list_[control_rail_id][0],
-        connection->agent_index_);
-
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "postControlMessage failed on control rail " << control_rail_id;
-        return NIXL_ERR_BACKEND;
-    }
-
+    NIXL_DEBUG << "Successfully sent all " << binary_notifications.size()
+               << " notification fragments" << " total_length=" << total_message_length;
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
-    // Create BinaryNotification directly in the control buffer
-    BinaryNotification binary_notif;
-    binary_notif.clear();
-    binary_notif.setAgentName(localAgent);
-    binary_notif.setMessage(msg);
+    // Use common fragmentation helper function
+    uint32_t total_msg_len = 0;
+    std::vector<BinaryNotification> notifications =
+        fragmentNotificationMessage(msg, localAgent, total_msg_len);
 
-    return notifSendPriv(remote_agent, binary_notif);
+    NIXL_DEBUG << "genNotif: Fragmented notification into " << notifications.size()
+               << " fragments, total_length=" << total_msg_len;
+
+    return notifSendPriv(remote_agent, notifications, total_msg_len, 0, 0);
 }
 
 nixl_status_t
@@ -1322,7 +1415,8 @@ nixlLibfabricEngine::postShutdownCompletion() {
         const size_t control_rail_id = 0;
         const size_t shutdown_msg_len = 8; // "SHUTDOWN" length
         nixlLibfabricReq *control_request =
-            rail_manager.getControlRail(control_rail_id).allocateControlRequest(shutdown_msg_len);
+            rail_manager.getControlRail(control_rail_id)
+                .allocateControlRequest(shutdown_msg_len, LibfabricUtils::getNextXferId());
         if (!control_request) {
             NIXL_ERROR << "Failed to allocate control request for shutdown";
             return;
@@ -1371,53 +1465,64 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
 
     std::string remote_name = binary_notif->getAgentName();
     std::string msg = binary_notif->getMessage();
-    uint16_t xfer_id = binary_notif->xfer_id;
-    uint32_t expected_completions = binary_notif->expected_completions;
+    uint16_t notif_xfer_id = binary_notif->header.notif_xfer_id;
+    uint16_t notif_seq_id = binary_notif->header.notif_seq_id;
+    uint16_t notif_seq_len = binary_notif->header.notif_seq_len;
+    uint32_t expected_completions = binary_notif->header.expected_completions;
 
     NIXL_TRACE << "Received notification from " << remote_name << " msg: " << msg
-               << " XFER_ID=" << xfer_id << " expected_completions: " << expected_completions;
+               << " notif_xfer_id=" << notif_xfer_id << " notif_seq_id=" << notif_seq_id << "/"
+               << notif_seq_len << " expected_completions: " << expected_completions;
 
-    // Check if this is a transfer notification that needs completions matching
-    if (expected_completions > 0) {
-        NIXL_DEBUG << "Transfer notification with expected_completions=" << expected_completions
-                   << ", for XFER_ID " << xfer_id;
+    {
+        std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
+        auto it = pending_notifications_.find(notif_xfer_id);
+        if (it == pending_notifications_.end()) {
+            PendingNotification pending_notif(notif_xfer_id);
+            pending_notifications_[notif_xfer_id] = pending_notif;
 
-        {
-            std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
-
-            // Create composite key for O(1) lookup
-            auto it = pending_notifications_.find(xfer_id);
-
-            if (it != pending_notifications_.end()) {
-                // Case 1: Writes already arrived - update placeholder with real values
-                it->second.remote_agent = remote_name; // Update agent name from notification
-                it->second.message = msg;
-                it->second.expected_completions = expected_completions;
-
-                NIXL_DEBUG << "Updated placeholder notification for agent " << remote_name
-                           << " XFER_ID " << xfer_id
-                           << " expected_completions=" << expected_completions
-                           << " received_completions=" << it->second.received_completions;
-            } else {
-                // Case 2: Notification arrived first - create a pending notification entry
-                PendingNotification pending_notif(remote_name, msg, xfer_id, expected_completions);
-                pending_notifications_[xfer_id] = pending_notif;
-
-                NIXL_DEBUG << "Created pending notification for agent " << remote_name
-                           << " xfer_id=" << xfer_id
-                           << " expected_completions=" << expected_completions;
-            }
+            NIXL_DEBUG << "Created pending notification for agent " << remote_name
+                       << " notif_xfer_id=" << notif_xfer_id
+                       << " expected_completions=" << expected_completions
+                       << " expected_msg_fragments=" << notif_seq_len;
         }
 
-        // Check if any notifications can now be completed (after releasing the lock)
-        checkPendingNotifications();
-    } else {
-        // Regular notification without expected completions - process immediately
-        NIXL_TRACE << "Regular notification (expected_completions=0), processing immediately";
-        std::lock_guard<std::mutex> lock(notif_mutex_);
-        notifMainList_.push_back({remote_name, msg});
-        NIXL_TRACE << "Regular notification processed immediately: " << msg;
+        // Initialize fragment vector on first fragment
+        if (!pending_notifications_[notif_xfer_id].buffer_resized) {
+            pending_notifications_[notif_xfer_id].message_fragments.resize(notif_seq_len);
+            pending_notifications_[notif_xfer_id].expected_msg_fragments = notif_seq_len;
+            pending_notifications_[notif_xfer_id].buffer_resized = true;
+        }
+
+        // Validate fragment index
+        if (notif_seq_id >= notif_seq_len) {
+            NIXL_ERROR << "Invalid fragment sequence: notif_seq_id=" << notif_seq_id
+                       << " >= notif_seq_len=" << notif_seq_len;
+            return;
+        }
+
+        // Check for duplicate fragment
+        if (!pending_notifications_[notif_xfer_id].message_fragments[notif_seq_id].empty()) {
+            NIXL_WARN << "Duplicate fragment received: notif_seq_id=" << notif_seq_id;
+            return;
+        }
+
+        // Store fragment
+        pending_notifications_[notif_xfer_id].message_fragments[notif_seq_id] = msg;
+        pending_notifications_[notif_xfer_id].received_msg_fragments++;
+        pending_notifications_[notif_xfer_id].remote_agent = remote_name;
+        pending_notifications_[notif_xfer_id].expected_completions = expected_completions;
+
+        NIXL_DEBUG << "Stored fragment for agent " << remote_name
+                   << " notif_xfer_id=" << notif_xfer_id << " fragment " << notif_seq_id << "/"
+                   << notif_seq_len << " received_msg_fragments="
+                   << pending_notifications_[notif_xfer_id].received_msg_fragments
+                   << " expected_completions=" << expected_completions << " received_completions="
+                   << pending_notifications_[notif_xfer_id].received_completions;
     }
+
+    // Check if any notifications can now be completed (after releasing the lock)
+    checkPendingNotifications();
 }
 
 void
@@ -1486,7 +1591,8 @@ nixlLibfabricEngine::processConnectionRequest(uint16_t agent_idx,
     // Allocate control request
     const size_t control_rail_id = 0;
     nixlLibfabricReq *control_request =
-        rail_manager.getControlRail(control_rail_id).allocateControlRequest(ep_name_len);
+        rail_manager.getControlRail(control_rail_id)
+            .allocateControlRequest(ep_name_len, LibfabricUtils::getNextXferId());
     if (!control_request) {
         NIXL_ERROR << "Failed to allocate control request for connection ACK";
         return NIXL_ERR_BACKEND;
@@ -1519,27 +1625,22 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id) {
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
         auto it = pending_notifications_.find(xfer_id);
-
-        if (it != pending_notifications_.end()) {
-            // Case 1: Notification already exists (message arrived first or placeholder exists)
-            it->second.received_completions++;
-
-            NIXL_DEBUG << "Incremented received count for XFER_ID " << xfer_id << ": "
-                       << it->second.received_completions << "/" << it->second.expected_completions;
-        } else {
-            // Case 2: Write arrived before notification - create placeholder with INT_MAX
-            PendingNotification placeholder;
-            placeholder.remote_agent = ""; // Empty until notification arrives
-            placeholder.message = ""; // Empty until notification arrives
-            placeholder.post_xfer_id = xfer_id;
-            placeholder.expected_completions = INT_MAX; // Sentinel value
-            placeholder.received_completions = 1; // Start with this completion
-
+        if (it == pending_notifications_.end()) {
+            PendingNotification placeholder(xfer_id);
             pending_notifications_[xfer_id] = placeholder;
-
-            NIXL_DEBUG << "Created placeholder notification for posted_xfer_id " << xfer_id
+            pending_notifications_[xfer_id].remote_agent = "";
+            pending_notifications_[xfer_id].expected_completions = INT_MAX;
+            pending_notifications_[xfer_id].received_completions = 0;
+            pending_notifications_[xfer_id].expected_msg_fragments = 1; // Default to 1 fragment
+            pending_notifications_[xfer_id].received_msg_fragments = 0;
+            NIXL_DEBUG << "Created placeholder notification for notif_xfer_id " << xfer_id
                        << " (write arrived first)";
         }
+
+        pending_notifications_[xfer_id].received_completions++;
+        NIXL_DEBUG << "Incremented received count for notif_xfer_id " << xfer_id << ": "
+                   << pending_notifications_[xfer_id].received_completions << "/"
+                   << pending_notifications_[xfer_id].expected_completions;
     }
 
     // Check if any notifications can now be completed (after releasing the lock)
@@ -1555,18 +1656,31 @@ nixlLibfabricEngine::checkPendingNotifications() {
     std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
     auto it = pending_notifications_.begin();
     while (it != pending_notifications_.end()) {
-        // Check if transfer is complete by checking if all the remote completions for
-        // the xfer_id are received.
-        if (it->second.received_completions >= it->second.expected_completions) {
-            NIXL_TRACE << "Received all remote completions for queued notification, processing now";
+        // Check BOTH conditions: fragments complete AND writes complete
+        bool fragments_complete =
+            (it->second.received_msg_fragments >= it->second.expected_msg_fragments);
+        bool writes_complete = (it->second.received_completions >= it->second.expected_completions);
+
+        if (fragments_complete && writes_complete) {
+            NIXL_TRACE << "Notification complete: fragments=" << it->second.received_msg_fragments
+                       << "/" << it->second.expected_msg_fragments
+                       << " writes=" << it->second.received_completions << "/"
+                       << it->second.expected_completions;
+
+            // Reassemble message from fragments
+            std::string complete_message;
+            complete_message.reserve(it->second.total_message_length);
+            for (const auto &fragment : it->second.message_fragments) {
+                complete_message.append(fragment);
+            }
 
             // Move notification to main list (need to acquire notif_mutex_)
             {
                 std::lock_guard<std::mutex> notif_lock(notif_mutex_);
-                notifMainList_.push_back({it->second.remote_agent, it->second.message});
+                notifMainList_.push_back({it->second.remote_agent, complete_message});
             }
 
-            NIXL_TRACE << "Processed queued notification: " << it->second.message;
+            NIXL_TRACE << "Processed queued notification: " << complete_message;
 
             // Remove from pending list
             it = pending_notifications_.erase(it);
