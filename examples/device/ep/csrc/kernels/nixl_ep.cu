@@ -1109,7 +1109,7 @@ void clean_mask_buffer(int* mask_buffer_ptr, int num_ranks, cudaStream_t stream)
 }
 
 template <int kNumThreads>
-__global__ void barrier(int thread_id, int rank, int num_ranks,
+__forceinline__ __device__ void barrier(int thread_id, int rank, int num_ranks,
                                         int* mask_buffer_ptr, int* sync_buffer_ptr, ep_kernels::gpu_nixl_ctx nixl_ctx) {
     EP_DEVICE_ASSERT(kNumThreads >= num_ranks);
     if (thread_id == 0) atomicAdd(sync_buffer_ptr + rank, -1);
@@ -1118,18 +1118,13 @@ __global__ void barrier(int thread_id, int rank, int num_ranks,
     int cnt = sync_buffer_ptr[rank];
     if (thread_id < num_ranks && thread_id != rank) {
         const auto dst_rank = thread_id;
-        const auto dst_ptr = reinterpret_cast<uint64_t>(sync_buffer_ptr + rank);
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
-            if (rank != dst_rank) {
-                nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(0, dst_rank);
-                nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(barrier_req, 0, rank*sizeof(int), dst_rank*sizeof(int), sizeof(int), 0);
-            } else {
-                st_release_sys_global(reinterpret_cast<int*>(dst_ptr), cnt);
-            }
+            nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(0, dst_rank);
+            nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(barrier_req, 0, rank*sizeof(int), rank*sizeof(int), sizeof(int), 0);
 
             auto start_time = clock64();
             uint64_t wait_recv_cost = 0;
-            while (ld_acquire_sys_global(reinterpret_cast<int*>(dst_ptr)) != cnt   // remote is not ready
+            while (ld_acquire_sys_global(reinterpret_cast<int*>(sync_buffer_ptr + dst_rank)) != cnt // remote is not ready
                    && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES               // not timeout
             );
             // Mask rank if timeout
@@ -1144,10 +1139,16 @@ __global__ void barrier(int thread_id, int rank, int num_ranks,
     __syncthreads();
 }
 
+template <int kNumThreads>
+__global__ void barrier_kernel(int* mask_buffer_ptr, int* sync_buffer_ptr, ep_kernels::gpu_nixl_ctx nixl_ctx) {
+    const auto thread_id = static_cast<int>(threadIdx.x);
+    barrier<kNumThreads>(thread_id, nixl_ctx.rank, nixl_ctx.num_ranks, mask_buffer_ptr, sync_buffer_ptr, nixl_ctx);
+}
+
 void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, int* sync_buffer_ptr, cudaStream_t stream) {
     constexpr int kNumThreads = 32;
     SETUP_LAUNCH_CONFIG(1, kNumThreads, stream);
-    LAUNCH_KERNEL(&cfg, barrier<kNumThreads>, 0, nixl_ctx.rank, nixl_ctx.num_ranks, mask_buffer_ptr, sync_buffer_ptr, nixl_ctx);
+    LAUNCH_KERNEL(&cfg, barrier_kernel<kNumThreads>, mask_buffer_ptr, sync_buffer_ptr, nixl_ctx);
 }
 } // namespace ep_kernels
 
