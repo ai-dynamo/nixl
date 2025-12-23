@@ -410,7 +410,11 @@ class SequentialCTPerftest(CTPerftest):
             # Global barrier ensures TPs don't overlap
             dist_rt.barrier()
 
-            is_participant = self.my_rank in tp.senders_ranks()
+            # Check if this rank participates in RDMA (sender OR receiver)
+            is_participant = (
+                self.my_rank in tp.senders_ranks()
+                or self.my_rank in tp.receivers_ranks()
+            )
             if not is_participant:
                 continue
 
@@ -756,25 +760,23 @@ class SequentialCTPerftest(CTPerftest):
             rdma_end_ts: List[Optional[float]] = [None] * n_tps
 
             # Execute each TP sequentially: READ → COMPUTE → WRITE → RDMA
-            # Each rank participates if it has any role: sender or storage.
+            # Each rank participates if it has any role: sender, receiver, or storage.
             # Sequential execution ensures TPs don't overlap and timing is accurate.
             for tp_idx, (rdma_h, read_h, write_h) in enumerate(tp_handles):
                 tp = self.traffic_patterns[tp_idx]
                 is_sender = self.my_rank in tp.senders_ranks()
+                is_receiver = self.my_rank in tp.receivers_ranks()
                 has_storage = tp.storage_ops and self.my_rank in tp.storage_ops
 
                 # Skip if this rank has no role in this TP
-                # For RDMA-only (no storage), only senders participate
-                if tp.storage_ops:
-                    if not is_sender and not has_storage:
-                        continue
-                else:
-                    if not is_sender:
-                        continue
+                # Participants: senders + receivers (for RDMA) + storage ranks
+                is_rdma_participant = is_sender or is_receiver
+                if not is_rdma_participant and not has_storage:
+                    continue
 
                 # Barrier ensures all participating ranks start together
-                # Includes senders + storage participants (not receivers)
-                self._barrier_tp(tp, senders_only=True)
+                # Includes senders + receivers + storage participants
+                self._barrier_tp(tp, senders_only=False)
 
                 logger.debug(
                     "[Rank %d] Running TP %d/%d",
@@ -787,9 +789,8 @@ class SequentialCTPerftest(CTPerftest):
                 if read_h and has_storage:
                     start = time.time()
                     self._run_tp(read_h, blocking=True)
-                    # Extra barrier ensures all storage reads complete before sleep
-                    if tp.storage_ops:
-                        self._barrier_tp(tp, senders_only=False, include_storage=True)
+                    iter_storage_read[tp_idx] = time.time() - start
+                    # Note: No barrier here - storage ranks sync independently
 
                 # Step 2: Compute sleep (simulates GPU work between storage and RDMA)
                 if tp.compute_time_sec:
@@ -813,6 +814,9 @@ class SequentialCTPerftest(CTPerftest):
 
                 if tp.sleep_after_launch_sec:
                     time.sleep(tp.sleep_after_launch_sec)
+
+                # Barrier at end of TP ensures all participants sync before next TP
+                self._barrier_tp(tp, senders_only=False)
 
             # Accumulate totals across iterations
             for i in range(n_tps):
