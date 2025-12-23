@@ -636,10 +636,6 @@ def main():
 
     args = parser.parse_args()
 
-    # TODO_Itay: remove this once NIXL supports NVLink on multiple workers
-    assert (
-        args.nvlink_backend != "nixl"
-    ), "NIXL does not support NVLink on multiple workers yet"
     rank_server_process = None
     if not args.rank_server:
         print("Starting rank server locally", flush=True)
