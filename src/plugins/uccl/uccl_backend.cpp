@@ -273,7 +273,7 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
 
     if (mem_reg_info_.count(mem.addr)) {
         auto priv = mem_reg_info_[mem.addr];
-        NIXL_DEBUG << "Registering memory: " << mem.addr << ", len:  " << mem.len;
+        NIXL_DEBUG << "Registering memory: " << std::hex << mem.addr << ", len:  " << mem.len;
         priv->ref_cnt++;
         out = priv;
         return NIXL_SUCCESS;
