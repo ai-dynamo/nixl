@@ -307,7 +307,8 @@ public:
                            << " (rev " << response.value().modified_index() << ")";
                 return NIXL_SUCCESS;
             } else {
-                NIXL_ERROR << "Failed to fetch key: " << metadata_key << " from etcd: " << response.error_message();
+                NIXL_INFO << "Failed to fetch key: " << metadata_key
+                          << " from etcd: " << response.error_message();
                 return NIXL_ERR_NOT_FOUND;
             }
         }
