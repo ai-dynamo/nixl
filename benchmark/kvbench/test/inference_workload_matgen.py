@@ -13,7 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Utils to generate matrices that represent the communication patterns of an inference workload
+"""Utils to generate matrices that represent the communication patterns of an inference workload.
+
+Generates rank-to-rank RDMA communication matrices for disaggregated prefill/decode.
+Each matrix represents one LLM forward pass with compute time estimation.
 
 Disclaimers:
 - For now there is only support for TP and CP
@@ -38,24 +41,29 @@ python inference_workload_matgen.py generate \
     --min-isl 1000 \
     --max-isl 128000 \
     --max-batch-mem 100000000000 \
-    --hidden-size 16384 \
-    --num-layers 126 \
-    --num-heads 128 \
-    --num-kv-heads 8 \
-    --dtype-size 2 \
-OR instead of hidden-size/num-layers/etc.. Use a preconfigured model:
-    --model llama-405b
+    --model llama-405b \
+    --prefix-hit-rate 0.75
+
+With --prefix-hit-rate specified, the metadata.yaml includes storage configuration.
+Storage files are created by kvbench at runtime (not by matgen).
 """
 
 from dataclasses import dataclass
 from itertools import cycle
 from os import PathLike
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import yaml
-from tqdm import tqdm
+
+try:
+    from tqdm import tqdm
+except ImportError:
+
+    def tqdm(x, **kwargs):
+        return x
+
 
 from nixl.logging import get_logger
 
@@ -77,7 +85,6 @@ class ModelConfig:
         return self.hidden_size // self.num_heads
 
     def bytes_per_token(self):
-        # return 2 * self.hidden_size * self.num_layers * self.dtype_size * self.num_heads
         if self.num_kv_heads is not None:
             return (
                 2
@@ -145,7 +152,6 @@ class Batch:
 
     def kv_cache_size(self, model_config: ModelConfig):
         """KV cache size in bytes"""
-
         return sum(model_config.kv_cache_size(req.isl) for req in self.user_requests)
 
     @property
@@ -162,6 +168,7 @@ class TransferMatrix:
     matrix: np.ndarray
     compute_time: float
     isl: int
+    sender_ranks: List[int]  # Which ranks are senders in this matrix
 
 
 def gen_batches(
@@ -207,9 +214,18 @@ def gen_matrices_and_compute_time(
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
 ) -> List[TransferMatrix]:
-    """
+    """Generate communication matrices for all batches.
+
     Args:
-        - batches: List of batches
+        batches: List of batches
+        prefill_workers: List of prefill worker rank groups
+        decode_workers: List of decode worker rank groups
+        model_config: Model configuration
+        prefill_worker_config: Prefill worker configuration
+        decode_worker_config: Decode worker configuration
+
+    Returns:
+        List of TransferMatrix objects
     """
     # For now, every prefill worker is bound to a single decode worker
     assert len(prefill_workers) == len(
@@ -228,6 +244,7 @@ def gen_matrices_and_compute_time(
 
     for batch in tqdm(batches, desc="Generating matrices"):
         prefill_worker, decode_worker = next(workers_pool)
+
         mat = gen_matrix(
             batch,
             world_size,
@@ -240,8 +257,12 @@ def gen_matrices_and_compute_time(
 
         compute_time = estimate_compute_time(batch, model_config, prefill_worker_config)
         matrix_obj = TransferMatrix(
-            matrix=mat, compute_time=compute_time, isl=batch.total_isl
+            matrix=mat,
+            compute_time=compute_time,
+            isl=batch.total_isl,
+            sender_ranks=prefill_worker,
         )
+
         matrices.append(matrix_obj)
 
     return matrices
@@ -256,6 +277,11 @@ def gen_matrix(
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
 ):
+    """Generate rank-to-rank RDMA communication matrix for a batch.
+
+    Matrix layout: world_size x world_size
+    Each entry [i,j] = bytes sent from rank i to rank j
+    """
     kv_size = batch.kv_cache_size(model_config)
     kv_slice_size = (
         kv_size
@@ -274,11 +300,13 @@ def gen_matrix(
 
     mat = np.zeros((world_size, world_size))
 
+    # Prefill → Decode RDMA transfers
     dst_iter = iter(decode_worker)
     for rank in prefill_worker:
         for _ in range(num_peers):
             dst = next(dst_iter)
             mat[rank, dst] = buf_size
+
     return mat
 
 
@@ -344,12 +372,21 @@ def main(
     model_config: ModelConfig,
     results_dir: Optional[PathLike] = None,
     rail_optimized: bool = False,
+    prefix_hit_rate: Optional[float] = None,
 ):
-    """
+    """Generate communication matrices for inference workload.
+
     Args:
-        - prefill_gpus: List of GPUs ranks that are used for prefill
-        - rail_optimized: Whether to reorder the decode workers to match rail-optimized communication (assumption: 8 nic per nodes, nic 0 is connected to nic 0 and 4 of other nodes, 1 to 1/5 etc)
-            Only supported for 4 GPUs per prefill worker and 8 GPUs per decode worker
+        num_user_requests: Number of user requests to simulate
+        task_config: Task configuration
+        num_prefill_gpus: Number of GPUs for prefill
+        num_decode_gpus: Number of GPUs for decode
+        prefill_worker_config: Prefill worker configuration
+        decode_worker_config: Decode worker configuration
+        model_config: Model configuration
+        results_dir: Directory to save results
+        rail_optimized: Whether to reorder decode workers for rail-optimized communication
+        prefix_hit_rate: Fraction of KV cache to read from storage (0.0-1.0)
 
     Returns:
         matrices
@@ -427,29 +464,61 @@ def main(
     results_dir = results_dir or Path(f"matrices_{world_size}ranks")
     results_dir = Path(results_dir)
     logger.info("Saving %d matrices to %s", len(matrices), results_dir)
-    results_dir.mkdir(parents=True, exist_ok=True)
 
+    # Create directories
+    matrices_dir = results_dir / "matrices"
+    matrices_dir.mkdir(parents=True, exist_ok=True)
+
+    storage_enabled = prefix_hit_rate is not None
+    hit_rate = prefix_hit_rate if prefix_hit_rate is not None else 0.0
+
+    if storage_enabled:
+        logger.info(
+            "Storage enabled with prefix_hit_rate=%.1f%%",
+            hit_rate * 100,
+        )
+
+    # Build metadata
     metadata: dict[str, Any] = {
         "traffic_patterns": [],
     }
 
     for idx, matrix in enumerate(tqdm(matrices, desc="Saving matrices")):
-        # Save matrix to npy file
-        matrix_path = results_dir / f"matrix_{idx}.txt"
+        # Save matrix to txt file
+        matrix_path = matrices_dir / f"matrix_{idx}.txt"
         with open(matrix_path, "w") as f:
             for row in matrix.matrix:
                 f.write(" ".join(f"{format_size(val)}" for val in row) + "\n")
 
-        # Add metadata
-        metadata["traffic_patterns"].append(
-            {
-                "matrix_file": matrix_path.absolute().as_posix(),
-                "sleep_before_launch_sec": matrix.compute_time,
-                "metadata": {
-                    "isl": matrix.isl,
-                },
-            }
-        )
+        # Build traffic pattern entry
+        tp_entry: Dict[str, Any] = {
+            "matrix_file": f"matrices/matrix_{idx}.txt",
+            # Compute time reduced by prefix hit rate (if storage enabled)
+            "sleep_before_launch_sec": matrix.compute_time * (1 - hit_rate),
+            "metadata": {
+                "isl": matrix.isl,
+            },
+        }
+
+        # Add per-rank storage requirements if enabled (array format)
+        if storage_enabled:
+            world_size = matrix.matrix.shape[0]
+            read_sizes: List[int] = [0] * world_size
+            write_sizes: List[int] = [0] * world_size
+
+            for rank in matrix.sender_ranks:
+                transfer_size = int(matrix.matrix[rank].sum())
+                if transfer_size > 0:
+                    read_sizes[rank] = int(transfer_size * hit_rate)
+                    write_sizes[rank] = int(transfer_size * (1 - hit_rate))
+
+            if any(read_sizes) or any(write_sizes):
+                tp_entry["storage"] = {
+                    "read": read_sizes,
+                    "write": write_sizes,
+                }
+
+        metadata["traffic_patterns"].append(tp_entry)
 
     # Save metadata to YAML
     metadata_path = results_dir / "metadata.yaml"
@@ -567,6 +636,12 @@ if __name__ == "__main__":
         help="Whether to use rail optimization",
     )
     @click.option("--ppn", default=8, type=int, help="Number of GPUs per node")
+    @click.option(
+        "--prefix-hit-rate",
+        type=float,
+        default=None,
+        help="Prefix hit rate (0.0-1.0). Enables storage when specified. 0.0=write-only, 1.0=read-only.",
+    )
     def generate(
         num_user_requests,
         batch_size,
@@ -592,6 +667,7 @@ if __name__ == "__main__":
         max_batch_mem,
         rail_optimized,
         ppn,
+        prefix_hit_rate,
     ):
         """Generate communication matrices for given configuration"""
 
@@ -635,6 +711,7 @@ if __name__ == "__main__":
             model_config=model_config,
             results_dir=results_dir,
             rail_optimized=rail_optimized,
+            prefix_hit_rate=prefix_hit_rate,
         )
 
     cli()
