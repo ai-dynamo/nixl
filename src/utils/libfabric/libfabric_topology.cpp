@@ -156,9 +156,15 @@ nixlLibfabricTopology::getEfaDevicesForGPUPci(const std::string &pci_bus_id) con
                        << normalized_id << ")";
             return it->second;
         }
+        // PCI ID parsed successfully but not found in mapping
+        NIXL_WARN << "PCI bus ID " << pci_bus_id << " (normalized to " << normalized_id
+                  << ") not found in GPU-EFA mapping, returning all devices";
+    } else {
+        // Failed to parse PCI bus ID format
+        NIXL_WARN << "Failed to parse PCI bus ID format: " << pci_bus_id
+                  << ", returning all devices";
     }
 
-    NIXL_WARN << "No EFA devices found for PCI bus ID " << pci_bus_id << ", returning all devices";
     return all_devices;
 }
 
@@ -178,10 +184,10 @@ nixlLibfabricTopology::printTopologyInfo() const {
     for (size_t i = 0; i < all_devices.size(); ++i) {
         NIXL_TRACE << "  [" << i << "] " << all_devices[i];
     }
-    NIXL_TRACE << "PCI → EFA mapping:";
+    NIXL_TRACE << "GPU-PCI → EFA mapping:";
     for (const auto &pair : pci_to_efa_devices) {
         std::stringstream ss;
-        ss << "  PCI " << pair.first << " → [";
+        ss << "  GPU-PCI " << pair.first << " → [";
         for (size_t i = 0; i < pair.second.size(); ++i) {
             if (i > 0) ss << ", ";
             ss << pair.second[i];
@@ -565,7 +571,6 @@ nixlLibfabricTopology::buildFallbackMapping() {
     NIXL_WARN << "Using fallback: all GPUs will use all available EFA devices";
     return NIXL_SUCCESS;
 }
-
 
 // hwloc helper methods
 

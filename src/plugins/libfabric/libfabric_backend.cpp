@@ -752,7 +752,6 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
 #ifdef HAVE_CUDA
     // Handle CUDA memory registration with GPU Direct RDMA support
     if (nixl_mem == VRAM_SEG) {
-
         // For multi-GPU support, skip CUDA address workaround
         if (cuda_addr_wa_) {
             bool need_restart;

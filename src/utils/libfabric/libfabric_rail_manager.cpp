@@ -445,7 +445,6 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         struct fid_mr *mr;
         uint64_t key;
         // Pass gpu_id parameter to individual rail's registerMemory calls
-        // For VRAM, this is not used since we already selected rails based on PCI bus ID
         nixl_status_t status =
             data_rails_[rail_idx]->registerMemory(buffer, length, mem_type, gpu_id, &mr, &key);
         if (status != NIXL_SUCCESS) {
