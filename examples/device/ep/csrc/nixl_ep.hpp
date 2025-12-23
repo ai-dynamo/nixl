@@ -30,6 +30,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/pytypes.h>
 #include <torch/types.h>
+#include <optional>
 #include <tuple>
 #include <vector>
 #include <string>
@@ -142,7 +143,7 @@ private:
 
     /* Common private funcs */
     void _nixl_agent_init();
-    void _nixl_agents_connect(const std::vector<int>& ranks);
+    void _nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds = {});
     void _nixl_agents_disconnect(const std::vector<int>& ranks);
     void _nixl_agents_peer_info_gather(std::vector<int>& ranks);
     void _nixl_agents_peer_info_cleanup(const std::vector<int>& ranks);
@@ -167,7 +168,7 @@ public:
 
     void update_memory_buffers(int num_ranks, int64_t num_rdma_bytes);
 
-    void connect_ranks(const std::vector<int>& remote_ranks_list);
+    void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);
 
@@ -213,6 +214,8 @@ public:
     void query_mask_buffer(const torch::Tensor& mask_status);
 
     void clean_mask_buffer();
+
+    std::string get_local_metadata() const;
 };
 
 } // namespace nixl_ep
