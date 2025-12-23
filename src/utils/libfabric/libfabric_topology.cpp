@@ -178,10 +178,10 @@ nixlLibfabricTopology::printTopologyInfo() const {
     for (size_t i = 0; i < all_devices.size(); ++i) {
         NIXL_TRACE << "  [" << i << "] " << all_devices[i];
     }
-    NIXL_TRACE << "PCI → EFA mapping:";
+    NIXL_TRACE << "GPU-PCI → EFA mapping:";
     for (const auto &pair : pci_to_efa_devices) {
         std::stringstream ss;
-        ss << "  PCI " << pair.first << " → [";
+        ss << "  GPU-PCI " << pair.first << " → [";
         for (size_t i = 0; i < pair.second.size(); ++i) {
             if (i > 0) ss << ", ";
             ss << pair.second[i];
