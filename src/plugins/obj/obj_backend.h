@@ -18,8 +18,8 @@
 #ifndef OBJ_BACKEND_H
 #define OBJ_BACKEND_H
 
-#include "obj_executor.h"
-#include "obj_s3_client.h"
+#include "s3_client/s3_executor.h"
+#include "s3_client/s3_client.h"
 #include <string>
 #include <memory>
 #include <unordered_map>

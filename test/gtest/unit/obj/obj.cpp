@@ -22,9 +22,9 @@
 #include <vector>
 #include <functional>
 
-#include "obj_s3_client.h"
+#include "s3_client/s3_client.h"
 #include "obj_backend.h"
-#include "obj_executor.h"
+#include "s3_client/s3_executor.h"
 
 namespace gtest::obj {
 

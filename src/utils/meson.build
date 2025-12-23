@@ -20,6 +20,7 @@ if ucx_dep.found()
 endif
 subdir('stream')
 subdir('file')
+subdir('s3_client')
 
 if libfabric_dep.found()
     subdir('libfabric')

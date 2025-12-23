@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "obj_s3_client.h"
+#include "s3_client.h"
 #include <optional>
 #include <string>
 #include <stdexcept>
