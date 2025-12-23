@@ -273,7 +273,8 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
 
     if (mem_reg_info_.count(mem.addr)) {
         auto priv = mem_reg_info_[mem.addr];
-        NIXL_DEBUG << "Registering memory: " << std::hex << mem.addr << ", len: " << std::dec << mem.len;
+        NIXL_DEBUG << "Registering memory: " << std::hex << mem.addr << ", len: " << std::dec
+                   << mem.len;
         priv->ref_cnt++;
         out = priv;
         return NIXL_SUCCESS;
@@ -423,16 +424,15 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         uintptr_t remote_addr = remote[i].addr;
 
         NIXL_DEBUG << "prepXfer iovec[" << i << "]: local[i].addr=" << std::hex << local_addr
-                   << ", lmd->addr=" << std::hex << lmd->addr
-                   << ", lmd->mr_id=" << std::dec << lmd->mr_id << ", remote[i].addr=" << std::hex
-                   << remote_addr << ", rmd->addr=" << std::hex << rmd->addr
-                   << ", rmd->mr_id=" << std::dec << rmd->mr_id;
+                   << ", lmd->addr=" << std::hex << lmd->addr << ", lmd->mr_id=" << std::dec
+                   << lmd->mr_id << ", remote[i].addr=" << std::hex << remote_addr
+                   << ", rmd->addr=" << std::hex << rmd->addr << ", rmd->mr_id=" << std::dec
+                   << rmd->mr_id;
 
         // Validate the local address is registered
         auto local_mem_iter = mem_reg_info_.find((uint64_t)lmd->addr);
         if (local_mem_iter == mem_reg_info_.end()) {
-            NIXL_ERROR << "Local memory not registered for address:" << std::hex
-                       << lmd->addr;
+            NIXL_ERROR << "Local memory not registered for address:" << std::hex << lmd->addr;
             return NIXL_ERR_BACKEND;
         }
 
@@ -578,8 +578,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         // Validate the local address is registered
         auto local_mem_iter = mem_reg_info_.find((uint64_t)lmd->addr);
         if (local_mem_iter == mem_reg_info_.end()) {
-            NIXL_ERROR << "Local memory not registered for base address: " << std::hex
-                       << lmd->addr;
+            NIXL_ERROR << "Local memory not registered for base address: " << std::hex << lmd->addr;
             return NIXL_ERR_BACKEND;
         }
 
