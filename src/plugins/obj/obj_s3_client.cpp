@@ -26,6 +26,8 @@
 #include <aws/s3/model/GetObjectResult.h>
 #include <aws/s3/model/HeadObjectRequest.h>
 #include <aws/s3/model/HeadObjectResult.h>
+#include <aws/s3/model/UploadPartRequest.h>
+#include <aws/s3/model/UploadPartResult.h>
 #include <aws/core/http/Scheme.h>
 #include <aws/core/http/HttpResponse.h>
 #include <aws/core/auth/AWSCredentials.h>
@@ -35,6 +37,7 @@
 #include <aws/core/utils/memory/stl/AWSStringStream.h>
 #include <absl/strings/str_format.h>
 #include "nixl_types.h"
+#include "common/nixl_log.h"
 
 namespace {
 
@@ -199,12 +202,29 @@ awsS3Client::putObjectAsync(std::string_view key,
 
     s3Client_->PutObjectAsync(
         request,
-        [callback, preallocated_stream_buf, data_stream](
+        [callback, preallocated_stream_buf, data_stream, key = std::string(key), len = data_len](
             const Aws::S3::S3Client *client,
             const Aws::S3::Model::PutObjectRequest &req,
             const Aws::S3::Model::PutObjectOutcome &outcome,
             const std::shared_ptr<const Aws::Client::AsyncCallerContext> &context) {
-            callback(outcome.IsSuccess());
+            if (outcome.IsSuccess()) {
+                NIXL_DEBUG << absl::StrFormat("PUT SUCCESS: key=%s, size=%zu bytes", key, len);
+                callback(true);
+            } else {
+                const auto &error = outcome.GetError();
+                std::string error_msg = absl::StrFormat("PUT FAILED: key=%s, size=%zu bytes\n"
+                                                        "  Error Code: %d\n"
+                                                        "  Error Message: %s\n"
+                                                        "  HTTP Status: %d\n"
+                                                        "  Request ID: %s\n" key,
+                                                        len,
+                                                        static_cast<int>(error.GetErrorType()),
+                                                        error.GetMessage().c_str(),
+                                                        static_cast<int>(error.GetResponseCode()),
+                                                        error.GetRequestId().c_str());
+                NIXL_ERROR << error_msg;
+                callback(false);
+            }
         },
         nullptr);
 }
@@ -230,12 +250,32 @@ awsS3Client::getObjectAsync(std::string_view key,
 
     s3Client_->GetObjectAsync(
         request,
-        [callback,
-         stream_factory](const Aws::S3::S3Client *client,
-                         const Aws::S3::Model::GetObjectRequest &req,
-                         const Aws::S3::Model::GetObjectOutcome &outcome,
-                         const std::shared_ptr<const Aws::Client::AsyncCallerContext> &context) {
-            callback(outcome.IsSuccess());
+        [callback, stream_factory, key = std::string(key), len = data_len, off = offset](
+            const Aws::S3::S3Client *client,
+            const Aws::S3::Model::GetObjectRequest &req,
+            const Aws::S3::Model::GetObjectOutcome &outcome,
+            const std::shared_ptr<const Aws::Client::AsyncCallerContext> &context) {
+            if (outcome.IsSuccess()) {
+                NIXL_DEBUG << absl::StrFormat(
+                    "GET SUCCESS: key=%s, size=%zu bytes, offset=%zu", key, len, off);
+                callback(true);
+            } else {
+                const auto &error = outcome.GetError();
+                std::string error_msg =
+                    absl::StrFormat("GET FAILED: key=%s, size=%zu bytes, offset=%zu\n"
+                                    "  Error Code: %d\n"
+                                    "  Error Message: %s\n"
+                                    "  HTTP Status: %d\n"
+                                    "  Request ID: %s\n" key,
+                                    len,
+                                    off,
+                                    static_cast<int>(error.GetErrorType()),
+                                    error.GetMessage().c_str(),
+                                    static_cast<int>(error.GetResponseCode()),
+                                    error.GetRequestId().c_str());
+                NIXL_ERROR << error_msg;
+                callback(false);
+            }
         },
         nullptr);
 }
@@ -246,11 +286,89 @@ awsS3Client::checkObjectExists(std::string_view key) {
     request.WithBucket(bucketName_).WithKey(Aws::String(key));
 
     auto outcome = s3Client_->HeadObject(request);
-    if (outcome.IsSuccess())
+    if (outcome.IsSuccess()) {
+        NIXL_DEBUG << absl::StrFormat("Object exists: %s", std::string(key));
         return true;
-    else if (outcome.GetError().GetResponseCode() == Aws::Http::HttpResponseCode::NOT_FOUND)
+    } else if (outcome.GetError().GetResponseCode() == Aws::Http::HttpResponseCode::NOT_FOUND) {
+        NIXL_DEBUG << absl::StrFormat("Object not found: %s", std::string(key));
         return false;
-    else
+    } else {
+        const auto &error = outcome.GetError();
+        NIXL_ERROR << absl::StrFormat("HEAD FAILED: key=%s\n"
+                                      "  Error Code: %d\n"
+                                      "  Error Message: %s\n"
+                                      "  HTTP Status: %d",
+                                      std::string(key),
+                                      static_cast<int>(error.GetErrorType()),
+                                      error.GetMessage().c_str(),
+                                      static_cast<int>(error.GetResponseCode()));
         throw std::runtime_error("Failed to check if object exists: " +
                                  outcome.GetError().GetMessage());
+    }
+}
+
+void
+awsS3Client::uploadPartAsync(std::string_view key,
+                             std::string_view upload_id,
+                             int part_number,
+                             uintptr_t data_ptr,
+                             size_t data_len,
+                             upload_part_callback_t callback) {
+    Aws::S3::Model::UploadPartRequest request;
+    request.WithBucket(bucketName_)
+        .WithKey(Aws::String(key))
+        .WithUploadId(Aws::String(upload_id))
+        .WithPartNumber(part_number);
+
+    auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf>(
+        "UploadPartStreamBuf", reinterpret_cast<unsigned char *>(data_ptr), data_len);
+    auto data_stream =
+        Aws::MakeShared<Aws::IOStream>("UploadPartInputStream", preallocated_stream_buf.get());
+    request.SetBody(data_stream);
+
+    s3Client_->UploadPartAsync(
+        request,
+        [callback,
+         preallocated_stream_buf,
+         data_stream,
+         key = std::string(key),
+         upload_id = std::string(upload_id),
+         part_number,
+         len = data_len](const Aws::S3::S3Client *client,
+                         const Aws::S3::Model::UploadPartRequest &req,
+                         const Aws::S3::Model::UploadPartOutcome &outcome,
+                         const std::shared_ptr<const Aws::Client::AsyncCallerContext> &context) {
+            if (outcome.IsSuccess()) {
+                const auto &result = outcome.GetResult();
+                std::string etag = result.GetETag();
+                NIXL_DEBUG << absl::StrFormat("UPLOAD PART SUCCESS: key=%s, upload_id=%s, "
+                                              "part=%d, size=%zu bytes, etag=%s",
+                                              key,
+                                              upload_id,
+                                              part_number,
+                                              len,
+                                              etag);
+                callback(true, etag);
+            } else {
+                const auto &error = outcome.GetError();
+                std::string error_msg = absl::StrFormat(
+                    "UPLOAD PART FAILED: key=%s, upload_id=%s, part=%d, size=%zu bytes\n"
+                    "  Error Code: %d\n"
+                    "  Error Message: %s\n"
+                    "  HTTP Status: %d\n"
+                    "  Request ID: %s\n"
+                    "  Tip: Check upload_id is valid and part_number is 1-10000",
+                    key,
+                    upload_id,
+                    part_number,
+                    len,
+                    static_cast<int>(error.GetErrorType()),
+                    error.GetMessage().c_str(),
+                    static_cast<int>(error.GetResponseCode()),
+                    error.GetRequestId().c_str());
+                NIXL_ERROR << error_msg;
+                callback(false, "");
+            }
+        },
+        nullptr);
 }
