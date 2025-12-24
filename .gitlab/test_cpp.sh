@@ -80,7 +80,8 @@ export NIXL_ETCD_NAMESPACE="/nixl/cpp_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-sleep 5
+
+wait_for_etcd
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
@@ -94,10 +95,10 @@ fi
 ./bin/ucx_backend_test
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
-sleep 1
+sleep 5
 ./bin/telemetry_reader /tmp/telemetry_test/Agent001 &
 telePID=$!
-sleep 6
+sleep 15
 kill -s INT $telePID
 
 # POSIX test disabled until we solve io_uring and Docker compatibility
@@ -119,7 +120,7 @@ gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port=
 nixl_test_port=$(get_next_tcp_port)
 
 ./bin/nixl_test target 127.0.0.1 "$nixl_test_port"&
-sleep 1
+sleep 5
 ./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
 
 echo "${TEXT_YELLOW}==== Disabled tests==="

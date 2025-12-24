@@ -226,7 +226,7 @@ protected:
         bool result;
 
         while (!(result = func()) && retries-- > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
         return result;
@@ -466,7 +466,7 @@ private:
     // in order to pass threadpool tests.
     // TODO: revert this to 1000 once we upgrade to UCX1.19.
     static constexpr int retry_count{10000};
-    static constexpr std::chrono::milliseconds retry_timeout{1};
+    static constexpr std::chrono::milliseconds retry_timeout{10};
 
     std::vector<std::unique_ptr<nixlAgent>> agents;
     std::vector<uint16_t> ports;

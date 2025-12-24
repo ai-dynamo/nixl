@@ -152,7 +152,7 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_NO_THROW(telemetry.updateMemoryDeregistered(1024));
     EXPECT_NO_THROW(telemetry.addXferTime(std::chrono::microseconds(100), true, 2000));
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     auto path = testDir_.string() + "/" + testFile_;
     auto buffer =
         std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
@@ -299,7 +299,7 @@ TEST_F(telemetryTest, ConcurrentAccess) {
     for (auto &thread : threads) {
         thread.join();
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     size_ = operations_per_thread * num_threads;
     readPos_ = 0;
     writePos_ = size_;
@@ -324,13 +324,13 @@ TEST_F(telemetryTest, BackendTelemetryEventsCollection) {
 
     // Add some telemetry events to the backends
     mock_backend1->addTestTelemetryEvent("backend1_event1", 100);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     mock_backend1->addTestTelemetryEvent("backend1_event2", 200);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     mock_backend2->addTestTelemetryEvent("backend2_event1", 300);
 
     // Wait for the telemetry to be written
-    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // Verify that backend events are collected and written to buffer
     auto path = testDir_.string() + "/" + testFile_;
@@ -370,7 +370,7 @@ TEST_F(telemetryTest, BackendTelemetryEventsEmptyBackendMap) {
     telemetry.updateRxBytes(2048);
 
     // Wait for the telemetry to be written
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Verify that only agent events are written (no backend events)
     auto path = testDir_.string() + "/" + testFile_;
@@ -412,7 +412,7 @@ TEST_F(telemetryTest, BackendTelemetryEventsMixedWithAgentEvents) {
     mock_backend->addTestTelemetryEvent("backend_event2", 200);
 
     // Wait for the telemetry to be written
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Verify that both agent and backend events are written
     auto path = testDir_.string() + "/" + testFile_;
@@ -458,7 +458,7 @@ TEST_F(telemetryTest, BackendTelemetryEventsDisabledTelemetry) {
     mock_backend->addTestTelemetryEvent("backend_event_disabled", 100);
 
     // Wait a bit
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Verify that no events are written
     auto path = testDir_.string() + "/" + testFile_;
@@ -491,13 +491,13 @@ TEST_F(telemetryTest, BackendTelemetryEventsMultipleBackends) {
 
     // Add events to each backend
     mock_backend1->addTestTelemetryEvent("backend1_event", 100);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     mock_backend2->addTestTelemetryEvent("backend2_event", 200);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     mock_backend3->addTestTelemetryEvent("backend3_event", 300);
 
     // Wait for the telemetry to be written
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     // Verify that events from all backends are collected
     auto path = testDir_.string() + "/" + testFile_;

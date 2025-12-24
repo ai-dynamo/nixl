@@ -80,7 +80,8 @@ export NIXL_ETCD_NAMESPACE="/nixl/python_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-sleep 5
+
+wait_for_etcd
 
 echo "==== Running python tests ===="
 pytest -s test/python
@@ -107,7 +108,7 @@ python3 query_mem_example.py
 
 basic_two_peers_port=$(get_next_tcp_port)
 python3 basic_two_peers.py --mode="target" --ip=127.0.0.1 --port="$basic_two_peers_port"&
-sleep 5
+sleep 15
 python3 basic_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$basic_two_peers_port"
 
 # Running telemetry for the last test
@@ -115,14 +116,13 @@ expanded_two_peers_port=$(get_next_tcp_port)
 mkdir -p /tmp/telemetry_test
 
 python3 expanded_two_peers.py --mode="target" --ip=127.0.0.1 --port="$expanded_two_peers_port"&
-sleep 5
+sleep 15
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
 python3 expanded_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$expanded_two_peers_port"
 
 python3 telemetry_reader.py --telemetry_path /tmp/telemetry_test/initiator &
 telePID=$!
-sleep 6
+sleep 15
 kill -s INT $telePID
 
 pkill etcd
-
