@@ -482,7 +482,7 @@ class Buffer:
             f"NIXL_EP/{rank}" for rank in remote_ranks if rank != self.rank
         ]
         if remote_md_keys:
-            self.tcp_store_group.wait(remote_md_keys, timedelta(seconds=30))
+            self.tcp_store_group.wait(remote_md_keys, timedelta(seconds=300))
 
         remote_mds = []
         for rank in remote_ranks:
