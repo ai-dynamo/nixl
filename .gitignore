@@ -21,3 +21,15 @@ cufile.log
 
 # Asio
 subprojects/asio-*
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# pytest
+.pytest_cache/
+.coverage
+
+# etcd data
+default.etcd/.cursorrules

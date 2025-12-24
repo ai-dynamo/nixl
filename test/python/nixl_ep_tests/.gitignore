@@ -1,0 +1,32 @@
+# Test results and artifacts
+results/
+perf/results/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# pytest cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment config (user-specific)
+env_config.sh
+
+# etcd data directory (created by tests)
+default.etcd/
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+

@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+
+# Multi-rank support
+mpi4py>=3.1.0
+# NIXL EP Test Dependencies
+
+# Core testing
+pytest>=7.0.0
+pytest-benchmark>=4.0.0
+
+# Reporting
+pytest-html>=3.2.0
+pytest-json-report>=1.5.0
+pytest-timeout>=2.0.0
+
+# PyTorch (should match nixl_ep requirements)
+# torch>=2.0.0  # Uncomment or adjust version as needed
+
+# Optional: for async test support
+# pytest-asyncio>=0.21.0
