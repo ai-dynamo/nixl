@@ -47,6 +47,14 @@ repos:
         args: ["--toml", "pyproject.toml"]
         exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*\.md|.*\.rs$|src/utils/serdes/serdes.h)
 
+  - repo: local
+    hooks:
+      - id: staged-clang-format
+        name: clang-format
+        entry: git clang-format
+        language: system
+        files: \.(cpp|h|hpp|cc|c|cxx|cu|cuh)$
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0
     hooks:
