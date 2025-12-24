@@ -185,6 +185,11 @@ private:
     std::unordered_map<std::string, int> connMap;
     std::unordered_map<std::string, struct nixlDocaNotif *> notifMap;
 
+    // Whether to swap (htonl) mkeys before handing to GPU. Default: true.
+    bool swap_keys_config = true;
+    // Extra debug dump controls (env-driven)
+    bool debug_dump = false;
+
     pthread_t server_thread_id;
 
     class nixlDocaBckndReq : public nixlBackendReqH {

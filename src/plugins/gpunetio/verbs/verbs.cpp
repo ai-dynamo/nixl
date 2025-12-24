@@ -463,8 +463,23 @@ mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, s
         if (ibmr == nullptr) throw std::invalid_argument("Failed to create mr");
     }
 
-    lkey = htobe32(ibmr->lkey);
-    rkey = htobe32(ibmr->rkey);
+//    lkey = htobe32(ibmr->lkey);
+//    rkey = htobe32(ibmr->rkey);
+        lkey = ibmr->lkey;
+    rkey = ibmr->rkey;
+
+    const char *env_dbg = getenv("NIXL_GPUNETIO_DEBUG_DUMP");
+    //bool dbg = (env_dbg && (!strcmp(env_dbg, "1") || !strcmp(env_dbg, "true")));
+    if (env_dbg) {
+        std::ostringstream oss;
+        oss << "[dbg] MR path: " << (dmabuf_fd >= 0 ? "dmabuf" : "peermem/ibv_reg_mr")
+            << ", addr 0x" << std::hex << std::uppercase << (uintptr_t)addr << std::dec
+            << " len 0x" << std::hex << (uint64_t)tot_size << std::dec
+            << " lkey 0x" << std::hex << (uint32_t)lkey << std::dec
+            << " rkey 0x" << std::hex << (uint32_t)rkey << std::dec;
+        NIXL_INFO << oss.str();
+    }
+
 }
 
 mr::mr(void *addr_, size_t tot_size_, uint32_t rkey_)
