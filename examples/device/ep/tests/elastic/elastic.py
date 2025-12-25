@@ -30,6 +30,7 @@ from typing import cast
 
 import nixl_ep
 import rank_server
+import store_group
 import torch
 from plan import Plan
 
@@ -43,6 +44,9 @@ from utils import (  # noqa: E402
     hash_tensor,
     per_token_cast_back,
 )
+
+TCP_STORE_PORT = 9999
+RANK_SERVER_PORT = 10000
 
 
 def handle_sigterm(
@@ -438,9 +442,8 @@ def test_main(
 
 
 def worker(torch_rank: int, args: argparse.Namespace):
-    rank_client = rank_server.RankClient(
-        args.rank_server if args.rank_server else "127.0.0.1"
-    )
+    server_addr = args.tcp_server if args.tcp_server else "127.0.0.1"
+    rank_client = rank_server.RankClient(server_addr, RANK_SERVER_PORT)
     local_rank, global_rank, last_active_phase = rank_client.get_rank()
     plan = Plan(
         args.plan,
@@ -466,8 +469,10 @@ def worker(torch_rank: int, args: argparse.Namespace):
     torch.set_default_device("cuda")
     torch.cuda.set_device(0)
 
-    # Initialize NIXL
-    os.environ["NIXL_ETCD_ENDPOINTS"] = args.etcd_server
+    tcp_store = store_group.create_client_store(
+        master_addr=server_addr,
+        port=TCP_STORE_PORT,
+    )
 
     # Initialize nixl_ep buffer
     num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
@@ -484,6 +489,7 @@ def worker(torch_rank: int, args: argparse.Namespace):
         nvlink_backend=args.nvlink_backend,
         explicitly_destroy=True,
         enable_shrink=True,
+        tcp_store_group=tcp_store,
     )
     buffer.update_memory_buffers(
         num_ranks=max_num_ranks,
@@ -584,6 +590,11 @@ def worker(torch_rank: int, args: argparse.Namespace):
     print(f"global_rank={global_rank}, local_rank={local_rank} -> done", flush=True)
 
 
+def run_server():
+    _store = store_group.create_master_store(port=TCP_STORE_PORT)  # noqa: F841
+    rank_server.start_server(port=RANK_SERVER_PORT)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Elastic EP Test")
     parser.add_argument(
@@ -602,15 +613,9 @@ def main():
     parser.add_argument("--hidden-dim", type=int, default=7168, help="Hidden dimension")
     parser.add_argument("--num-topk", type=int, default=8, help="Number of topk")
     parser.add_argument(
-        "--etcd-server",
+        "--tcp-server",
         type=str,
-        default="http://127.0.0.1:2379",
-        help="ETCD server address for NIXL (default: http://127.0.0.1:2379)",
-    )
-    parser.add_argument(
-        "--rank-server",
-        type=str,
-        help="Rank server address. If not set, a rank server will be started locally and will be killed after all the workers launched in this run are finished.",
+        help="TCP server address (for both TCPStore and rank server). If not set, both will be started locally.",
     )
     parser.add_argument("--kineto", action="store_true", help="Enable kineto profiling")
     parser.add_argument(
@@ -622,14 +627,12 @@ def main():
 
     args = parser.parse_args()
 
-    rank_server_process = None
-    if not args.rank_server:
-        print("Starting rank server locally", flush=True)
-        rank_server_process = torch.multiprocessing.Process(
-            target=rank_server.start_server, daemon=True
-        )
-        rank_server_process.start()
+    if not args.tcp_server:
+        print("Starting TCPStore and rank server locally", flush=True)
+        server_process = torch.multiprocessing.Process(target=run_server, daemon=True)
+        server_process.start()
         time.sleep(0.5)
+
     if args.num_processes == 1:
         worker(0, args)
         return
