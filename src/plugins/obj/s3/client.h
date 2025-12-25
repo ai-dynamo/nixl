@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef OBJ_S3_CLIENT_H
-#define OBJ_S3_CLIENT_H
+#ifndef OBJ_PLUGIN_S3_CLIENT_H
+#define OBJ_PLUGIN_S3_CLIENT_H
 
 #include <functional>
 #include <memory>
@@ -123,4 +123,4 @@ private:
     Aws::String bucketName_;
 };
 
-#endif // OBJ_S3_CLIENT_H
+#endif // OBJ_PLUGIN_S3_CLIENT_H

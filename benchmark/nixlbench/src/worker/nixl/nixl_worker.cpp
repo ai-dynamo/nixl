@@ -220,7 +220,13 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             backend_params["endpoint_override"] = xferBenchConfig::obj_endpoint_override;
         }
 
-        std::cout << "OBJ backend" << std::endl;
+        if (xferBenchConfig::obj_crt_min_limit > 0) {
+            backend_params["crtMinLimit"] = std::to_string(xferBenchConfig::obj_crt_min_limit);
+            std::cout << "OBJ backend with S3 CRT client enabled for objects >= "
+                      << xferBenchConfig::obj_crt_min_limit << " bytes" << std::endl;
+        } else {
+            std::cout << "OBJ backend with S3 CRT client disabled" << std::endl;
+        }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
         if (!xferBenchConfig::storage_enable_direct) {

@@ -20,6 +20,7 @@ if ucx_dep.found()
 endif
 subdir('stream')
 subdir('file')
+subdir('object')
 
 if libfabric_dep.found()
     subdir('libfabric')

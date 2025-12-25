@@ -16,6 +16,7 @@
  */
 
 #include "obj_backend.h"
+#include "s3_crt/client.h"
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include <absl/strings/str_format.h>
@@ -25,6 +26,7 @@
 #include <vector>
 #include <chrono>
 #include <algorithm>
+#include <limits>
 
 namespace {
 
@@ -33,6 +35,24 @@ getNumThreads(nixl_b_params_t *custom_params) {
     return custom_params && custom_params->count("num_threads") > 0 ?
         std::stoul(custom_params->at("num_threads")) :
         std::max(1u, std::thread::hardware_concurrency() / 2);
+}
+
+size_t
+getCrtMinLimit(nixl_b_params_t *custom_params) {
+    if (!custom_params) return std::numeric_limits<size_t>::max();
+
+    auto it = custom_params->find("crtMinLimit");
+    if (it != custom_params->end()) {
+        try {
+            return std::stoull(it->second);
+        }
+        catch (const std::exception &e) {
+            NIXL_WARN << "Invalid crtMinLimit value: " << it->second
+                      << ", using default (CRT disabled)";
+            return std::numeric_limits<size_t>::max();
+        }
+    }
+    return std::numeric_limits<size_t>::max(); // Disabled by default
 }
 
 bool
@@ -117,18 +137,29 @@ public:
 nixlObjEngine::nixlObjEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       executor_(std::make_shared<asioThreadPoolExecutor>(getNumThreads(init_params->customParams))),
-      s3Client_(std::make_shared<awsS3Client>(init_params->customParams, executor_)) {
-    NIXL_INFO << "Object storage backend initialized with S3 client wrapper";
+      s3Client_(std::make_shared<awsS3Client>(init_params->customParams, executor_)),
+      s3CrtClient_(std::make_shared<awsS3CrtClient>(init_params->customParams, executor_)),
+      crtMinLimit_(getCrtMinLimit(init_params->customParams)) {
+    NIXL_INFO << "Object storage backend initialized with dual S3 clients";
+    if (crtMinLimit_ < std::numeric_limits<size_t>::max()) {
+        NIXL_INFO << "S3 CRT client enabled for objects >= " << crtMinLimit_ << " bytes";
+    } else {
+        NIXL_INFO << "S3 CRT client disabled (no crtMinLimit set)";
+    }
 }
 
-// Used for testing to inject a mock S3 client dependency
+// Used for testing to inject mock S3 client dependencies
 nixlObjEngine::nixlObjEngine(const nixlBackendInitParams *init_params,
-                             std::shared_ptr<iS3Client> s3_client)
+                             std::shared_ptr<iS3Client> s3_client,
+                             std::shared_ptr<awsS3CrtClient> s3_crt_client)
     : nixlBackendEngine(init_params),
       executor_(std::make_shared<asioThreadPoolExecutor>(std::thread::hardware_concurrency())),
-      s3Client_(s3_client) {
-    s3Client_->setExecutor(executor_);
-    NIXL_INFO << "Object storage backend initialized with injected S3 client";
+      s3Client_(s3_client),
+      s3CrtClient_(s3_crt_client),
+      crtMinLimit_(getCrtMinLimit(init_params->customParams)) {
+    if (s3Client_) s3Client_->setExecutor(executor_);
+    if (s3CrtClient_) s3CrtClient_->setExecutor(executor_);
+    NIXL_INFO << "Object storage backend initialized with injected S3 clients";
 }
 
 nixlObjEngine::~nixlObjEngine() {
@@ -226,18 +257,53 @@ nixlObjEngine::postXfer(const nixl_xfer_op_t &operation,
         size_t data_len = local_desc.len;
         size_t offset = remote_desc.addr;
 
+        // Select client based on data size vs threshold
+        bool use_crt = (s3CrtClient_ && data_len >= crtMinLimit_);
+
+        NIXL_DEBUG << "Transfer " << i << ": size=" << data_len << " bytes, using "
+                   << (use_crt ? "S3 CRT" : "S3 Standard") << " client";
+
         // S3 client interface signals completion via a callback, but NIXL API polls request handle
         // for the status code. Use future/promise pair to bridge the gap.
-        if (operation == NIXL_WRITE)
-            s3Client_->putObjectAsync(
-                obj_key_search->second, data_ptr, data_len, offset, [status_promise](bool success) {
-                    status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
-                });
-        else
-            s3Client_->getObjectAsync(
-                obj_key_search->second, data_ptr, data_len, offset, [status_promise](bool success) {
-                    status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
-                });
+        if (operation == NIXL_WRITE) {
+            if (use_crt)
+                s3CrtClient_->putObjectAsync(obj_key_search->second,
+                                             data_ptr,
+                                             data_len,
+                                             offset,
+                                             [status_promise](bool success) {
+                                                 status_promise->set_value(
+                                                     success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
+                                             });
+            else
+                s3Client_->putObjectAsync(obj_key_search->second,
+                                          data_ptr,
+                                          data_len,
+                                          offset,
+                                          [status_promise](bool success) {
+                                              status_promise->set_value(success ? NIXL_SUCCESS :
+                                                                                  NIXL_ERR_BACKEND);
+                                          });
+        } else {
+            if (use_crt)
+                s3CrtClient_->getObjectAsync(obj_key_search->second,
+                                             data_ptr,
+                                             data_len,
+                                             offset,
+                                             [status_promise](bool success) {
+                                                 status_promise->set_value(
+                                                     success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
+                                             });
+            else
+                s3Client_->getObjectAsync(obj_key_search->second,
+                                          data_ptr,
+                                          data_len,
+                                          offset,
+                                          [status_promise](bool success) {
+                                              status_promise->set_value(success ? NIXL_SUCCESS :
+                                                                                  NIXL_ERR_BACKEND);
+                                          });
+        }
     }
 
     return NIXL_IN_PROG;
