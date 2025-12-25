@@ -478,20 +478,12 @@ class Buffer:
         nixl_metadata_bytes = self.runtime.get_local_metadata()
         self.tcp_store_group.set(md_key, nixl_metadata_bytes)
 
-        remote_md_keys = [
-            f"NIXL_EP/{rank}" for rank in remote_ranks if rank != self.rank
-        ]
+        remote_md_keys = [f"NIXL_EP/{rank}" for rank in remote_ranks]
         if remote_md_keys:
             self.tcp_store_group.wait(remote_md_keys, timedelta(seconds=300))
-
-        remote_mds = []
-        for rank in remote_ranks:
-            if rank != self.rank:
-                remote_md_key = f"NIXL_EP/{rank}"
-                remote_md_bytes = self.tcp_store_group.get(remote_md_key)
-                remote_mds.append(remote_md_bytes)
-            else:
-                remote_mds.append(b"")
+            remote_mds = self.tcp_store_group.multi_get(remote_md_keys)
+        else:
+            remote_mds = []
 
         try:
             yield remote_mds
