@@ -163,11 +163,11 @@ public:
     void
     increment_submitted_requests();
 
-    /** Get current count of completed requests */
+    /** Get current count of requests completed as part of this transfer */
     size_t
     get_completed_requests_count() const;
 
-    /** Get total number of requests used for this transfer */
+    /** Get total number of requests submitted as part of this transfer */
     size_t
     get_submitted_requests_count() const;
 
@@ -237,17 +237,6 @@ private:
         uint16_t expected_msg_fragments; // Total fragments expected (from notif_seq_len)
         uint16_t received_msg_fragments; // Fragments received so far
         uint32_t total_message_length; // Total length of complete message (all fragments)
-        bool buffer_resized; // Flag to track if message_fragments is initialized
-
-        // Default constructor for map operations
-        PendingNotification()
-            : notif_xfer_id(0),
-              expected_completions(0),
-              received_completions(0),
-              expected_msg_fragments(0),
-              received_msg_fragments(0),
-              total_message_length(0),
-              buffer_resized(false) {}
 
         PendingNotification(uint16_t xfer_id)
             : notif_xfer_id(xfer_id),
@@ -255,8 +244,7 @@ private:
               received_completions(0),
               expected_msg_fragments(0),
               received_msg_fragments(0),
-              total_message_length(0),
-              buffer_resized(false) {}
+              total_message_length(0) {}
     };
 
     // O(1) lookup with postXferID key
@@ -281,10 +269,11 @@ private:
                   uint32_t expected_completions) const;
 
     // Private function to fragment notification messages to binary notifications
-    std::vector<BinaryNotification>
+    void
     fragmentNotificationMessage(const std::string &message,
                                 const std::string &agent_name,
-                                uint32_t &total_message_length) const;
+                                uint32_t &total_message_length,
+                                std::vector<BinaryNotification> &fragments_out) const;
 #ifdef HAVE_CUDA
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;
