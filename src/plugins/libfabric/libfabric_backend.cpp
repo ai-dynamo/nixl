@@ -198,12 +198,6 @@ nixlLibfabricBackendH::increment_completed_requests() {
                << submitted_requests_.load();
 }
 
-void
-nixlLibfabricBackendH::increment_submitted_requests() {
-    size_t submitted = submitted_requests_.fetch_add(1);
-    NIXL_DEBUG << "Request submitted, total submitted: " << submitted;
-}
-
 size_t
 nixlLibfabricBackendH::get_completed_requests_count() const {
     return completed_requests_.load();
@@ -215,7 +209,7 @@ nixlLibfabricBackendH::get_submitted_requests_count() const {
 }
 
 void
-nixlLibfabricBackendH::adjust_total_requests(size_t actual_count) {
+nixlLibfabricBackendH::adjust_total_submitted_requests(size_t actual_count) {
     submitted_requests_.store(actual_count);
     NIXL_DEBUG << "Adjusted total requests to actual count: " << actual_count;
 }
@@ -1017,8 +1011,11 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     op_type = (operation == NIXL_WRITE) ? nixlLibfabricReq::WRITE : nixlLibfabricReq::READ;
 
-    // Initialize submittted and completed request count to 0 for each postXfer.
-    backend_handle->init_request_tracking(0);
+    // Set initial submit request count to maximum possible requests for this xfer.
+    size_t max_possible_requests = desc_count * rail_manager.getNumDataRails();
+    backend_handle->init_request_tracking(max_possible_requests);
+
+    size_t total_submitted = 0;
 
     // Core transfer submission to process each descriptor with direct submission
     for (int desc_idx = 0; desc_idx < desc_count; ++desc_idx) {
@@ -1050,6 +1047,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         // Use descriptor's specific target address
         uint64_t remote_target_addr = remote[desc_idx].addr;
 
+        size_t submitted_count = 0;
         nixl_status_t status = rail_manager.prepareAndSubmitTransfer(
             op_type,
             transfer_addr,
@@ -1065,10 +1063,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             [backend_handle]() {
                 backend_handle->increment_completed_requests();
             }, // Completion callback
-            [backend_handle]() {
-                backend_handle->increment_submitted_requests();
-            } // Submission callback
-        );
+            submitted_count);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx << " GPU "
@@ -1076,19 +1071,24 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             return status;
         }
 
+        // Add submitted requests to the total count
+        total_submitted += submitted_count;
+
         NIXL_DEBUG << "Successfully processed descriptor " << desc_idx << " with "
-                   << backend_handle->get_submitted_requests_count()
-                   << " requests submitted so far";
+                   << submitted_count << " requests submitted (accumulated: " << total_submitted
+                   << ")";
     }
 
-    NIXL_DEBUG << "Processing complete: submitted "
-               << backend_handle->get_submitted_requests_count() << " requests from " << desc_count
-               << " descriptors";
+    NIXL_DEBUG << "Processing complete: submitted " << total_submitted << " requests from "
+               << desc_count << " descriptors" << " for xfer_id" << backend_handle->post_xfer_id;
 
-    // For same-agent transfers, we need to set the total to 0 since we bypassed all rail operations
+    // For same-agent transfers, override to 0 since we bypassed all rail operations
     if (remote_agent == localAgent) {
-        backend_handle->adjust_total_requests(0);
+        backend_handle->adjust_total_submitted_requests(0);
         NIXL_DEBUG << "Same-agent transfer: adjusted total requests to 0 (all handled via memcpy)";
+    } else {
+        // Adjust to actual request count after all submissions complete
+        backend_handle->adjust_total_submitted_requests(total_submitted);
     }
 
     // Send notification immediately after successful request submission

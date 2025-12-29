@@ -150,7 +150,10 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     uint16_t agent_idx,
     uint16_t xfer_id,
     std::function<void()> completion_callback,
-    std::function<void()> submission_callback) {
+    size_t &submitted_count_out) {
+    // Initialize output parameter
+    submitted_count_out = 0;
+
     if (selected_rails.empty()) {
         NIXL_ERROR << "No rails selected for transfer";
         return NIXL_ERR_INVALID_PARAM;
@@ -224,10 +227,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             return status;
         }
 
-        // Call submission callback to track submitted request
-        if (submission_callback) {
-            submission_callback();
-        }
+        // Track submitted request
+        submitted_count_out = 1;
 
         NIXL_DEBUG << "Round-robin: submitted single request on rail " << rail_id << " for "
                    << transfer_size << " bytes, XFER_ID=" << req->xfer_id;
@@ -306,12 +307,11 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                 return status;
             }
 
-            // Call submission callback to track submitted request
-            if (submission_callback) {
-                submission_callback();
-            }
+            // Track submitted request
+            submitted_count_out++;
         }
-        NIXL_DEBUG << "Striping: submitted requests for " << transfer_size << " bytes";
+        NIXL_DEBUG << "Striping: submitted " << submitted_count_out << " requests for "
+                   << transfer_size << " bytes";
     }
 
     NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";

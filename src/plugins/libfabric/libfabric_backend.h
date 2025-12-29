@@ -159,10 +159,6 @@ public:
     void
     increment_completed_requests();
 
-    /** Atomically increment submitted request count */
-    void
-    increment_submitted_requests();
-
     /** Get current count of requests completed as part of this transfer */
     size_t
     get_completed_requests_count() const;
@@ -171,9 +167,9 @@ public:
     size_t
     get_submitted_requests_count() const;
 
-    /** Adjust total request count to actual value after submissions complete */
+    /** Adjust total submitted request count to actual value after submissions complete */
     void
-    adjust_total_requests(size_t actual_count);
+    adjust_total_submitted_requests(size_t actual_count);
 };
 
 class nixlLibfabricEngine : public nixlBackendEngine {

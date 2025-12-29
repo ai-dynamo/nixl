@@ -167,8 +167,9 @@ public:
      * @param remote_selected_endpoints Selected remote endpoints, where remote keys are registered
      * @param dest_addrs Destination addresses for each rail
      * @param agent_idx Remote agent index for immediate data
+     * @param xfer_id Transfer ID for tracking
      * @param completion_callback Callback for completion notification
-     * @param binary_notif Binary notification to populate with XFER_IDs
+     * @param submitted_count_out Number of requests successfully submitted
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
@@ -184,7 +185,7 @@ public:
                              uint16_t agent_idx,
                              uint16_t xfer_id,
                              std::function<void()> completion_callback,
-                             std::function<void()> submission_callback);
+                             size_t &submitted_count_out);
     /** Determine if striping should be used for given transfer size
      * @param transfer_size Size of the transfer in bytes
      * @return true if striping should be used, false for round-robin
