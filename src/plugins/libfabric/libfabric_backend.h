@@ -237,6 +237,7 @@ private:
         uint16_t expected_msg_fragments; // Total fragments expected (from notif_seq_len)
         uint16_t received_msg_fragments; // Fragments received so far
         uint32_t total_message_length; // Total length of complete message (all fragments)
+        uint16_t agent_name_length; // Length of agent_name in combined payload
 
         PendingNotification(uint16_t xfer_id)
             : notif_xfer_id(xfer_id),
@@ -244,7 +245,8 @@ private:
               received_completions(0),
               expected_msg_fragments(0),
               received_msg_fragments(0),
-              total_message_length(0) {}
+              total_message_length(0),
+              agent_name_length(0) {}
     };
 
     // O(1) lookup with postXferID key
