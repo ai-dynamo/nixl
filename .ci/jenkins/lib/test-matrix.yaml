@@ -25,7 +25,7 @@ timeout_minutes: 240
 # label is defined at jenkins slave configuration, we want to run the job on a gpu agent and be able to esaly replace it without having to change this file
 runs_on_agents:
   - {nodeLabel: 'H100'}
-  # - {nodeLabel: 'DGX'}
+  - {nodeLabel: 'DGX'}
 
 matrix:
   axes:
@@ -43,7 +43,7 @@ env:
   CONTAINER_WORKSPACE: /workspace
   INSTALL_DIR: ${CONTAINER_WORKSPACE}/nixl_install
   # Manual timeout - ci-demo doesn't handle docker exec
-  TEST_TIMEOUT: 30
+  TEST_TIMEOUT: 60
   # NPROC for bare-metal: containers see all host CPUs, need to limit parallelism
   NPROC: 16
 
