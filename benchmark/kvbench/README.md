@@ -30,6 +30,40 @@ NIXL KVBench provides two main categories of functionality:
 1. **KVBench Commands**: Test KV cache transfers across various LLM architectures with different access patterns (block and layer approaches)
 2. **CTP Commands**: Custom Traffic Performance Testing for measuring asymmetric traffic patterns using transfer matrices
 
+### Design Philosophy
+
+KVBench is a **generic multi-rank benchmark framework** that separates concerns:
+
+| Component | Role | Example |
+|-----------|------|---------|
+| **Workload Generators** | Create YAML configs for specific applications | `matgen` (LLM workloads) |
+| **KVBench Framework** | Execute any valid YAML with RDMA + Storage + Compute | `sequential-ct-perftest` |
+| **Storage Backends** | Pluggable I/O implementations | POSIX, GDS, GDS_MT |
+
+This design allows:
+- **Portable configs**: YAML specifies "what" (bytes), not "where" (paths)
+- **Multiple workload types**: LLM inference, database patterns, custom scenarios
+- **Backend flexibility**: Choose storage backend at runtime via CLI
+
+KVBench simulates real application workloads combining:
+- Storage I/O (read/write per rank)
+- Network transfers (RDMA)
+- Compute simulation (sleep)
+
+### Execution Flow Per Traffic Pattern
+
+```
+Each Rank:
+  ┌─────────────────────────────────────┐
+  │ 1. STORAGE READ (blocking)          │  Read cached data from file
+  │ 2. COMPUTE (sleep)                  │  Simulate reduced compute time
+  │ 3. STORAGE WRITE (blocking)         │  Write new KV cache to file
+  │ 4. RDMA TRANSFER (blocking)         │  Send/receive data to other ranks
+  └─────────────────────────────────────┘
+```
+
+Each operation is timed independently.
+
 ## Supported LLM Architectures
 - DeepSeek R1
 - LLama 3.1
@@ -155,6 +189,9 @@ Specific to CTP (Custom Traffic Performance) commands:
 | `--verify-buffers / --no-verify-buffers` | Verify buffer contents after transfer (default: False) |
 | `--print-recv-buffers / --no-print-recv-buffers` | Print received buffer contents (default: False) |
 | `--json-output-path` | Path to save JSON output (sequential-ct-perftest only) |
+| `--storage-backend` | Storage backend: POSIX, GDS, GDS_MT (default: POSIX) |
+| `--storage-path` | Base path for storage files (default: `<config_dir>/storage`) |
+| `--storage-direct-io / --no-storage-direct-io` | Enable O_DIRECT for storage I/O (auto-enabled for GDS) |
 
 ## Command Descriptions
 
@@ -314,22 +351,40 @@ traffic_pattern:
 **Sequential CT Perftest Configuration** (multiple traffic patterns):
 ```yaml
 traffic_patterns:
-- matrix_file: /path/to/matrices/matrix_0.txt
-  metadata:
-    isl: 38328
-  sleep_after_launch_sec: 16.480753057792
-- matrix_file: /path/to/matrices/matrix_1.txt
-  metadata:
-    isl: 25034
-  sleep_after_launch_sec: 71.875102179328
+  # RDMA only (no storage)
+  - matrix_file: /path/to/matrices/matrix_0.txt
+    mem_type: cuda
+    sleep_before_launch_sec: 0.01
+    metadata:
+      description: "RDMA transfer only"
+
+  # RDMA + Storage (75% cache hit)
+  - matrix_file: /path/to/matrices/matrix_1.txt
+    mem_type: cpu
+    sleep_before_launch_sec: 0.005
+    storage:
+      read:  [1572864, 1572864, 0, 0]  # Ranks 0,1 read 1.5MB each
+      write: [524288, 524288, 0, 0]    # Ranks 0,1 write 0.5MB each
+    metadata:
+      prefix_hit_rate: 0.75
+
+  # Storage only (no RDMA) - matrix_file is optional
+  - mem_type: cpu
+    storage:
+      read:  [1M, 1M, 1M, 1M, 1M, 1M, 1M, 1M]   # All 8 ranks read 1MB
+      write: [1M, 1M, 1M, 1M, 1M, 1M, 1M, 1M]   # All 8 ranks write 1MB
 ```
 
 **Traffic Pattern Parameters**:
-- `matrix_file`: File containing the transfer matrix (required)
+- `matrix_file`: File containing the transfer matrix (optional, omit for storage-only)
+- `matrix`: Inline matrix as 2D array (alternative to matrix_file)
+- `mem_type`: Memory type - "cuda", "vram", "cpu", "dram" (required)
+- `sleep_before_launch_sec`: Seconds to sleep (compute simulation) before RDMA (default: 0)
+- `storage`: Per-rank storage requirements (optional, enables storage I/O)
+- `storage.read`: Array of read sizes per rank (index = rank, use 0 to skip)
+- `storage.write`: Array of write sizes per rank (index = rank, use 0 to skip)
+- `metadata`: Arbitrary metadata (informational, not used by kvbench)
 - `shards`: Number of chunks to shard the buffer into (default: 1)
-- `mem_type`: Memory type, currently supports "cuda" (default: "cuda") (Use `CUDA_VISIBLE_DEVICES` to control the GPU device)
-- `xfer_op`: Transfer operation, "READ" or "WRITE" (default: "WRITE")
-- `sleep_after_launch_sec`: Seconds to sleep before running pattern (default: 0)
 
 **Matrix File Format**:
 Matrix cells are separated by whitespaces and contain either bytes as integers or standard units (K, M, G).
@@ -373,6 +428,14 @@ python main.py sequential-ct-perftest ./config.yaml
 python main.py sequential-ct-perftest ./config.yaml \
     --verify-buffers \
     --json-output-path ./results.json
+
+# With storage simulation (use matgen with --prefix-hit-rate)
+# See docs/storage-simulation.md for full documentation
+python test/inference_workload_matgen.py generate \
+    --model llama-405b --prefix-hit-rate 0.75 --results-dir ./workload
+python main.py sequential-ct-perftest ./workload/metadata.yaml \
+    --storage-backend POSIX \
+    --storage-path /tmp/kvbench_storage
 
 # With debug logging
 python main.py --debug sequential-ct-perftest ./config.yaml \
@@ -419,8 +482,10 @@ python main.py --debug ct-perftest ./config.yaml \
 - [ ] Support more memory types beyond CUDA
 - [ ] Optimize transfer preparation performance
 
-## Developer Guides
-For more detailed information, please refer to the following documentation:
+## Documentation Quick Reference
+
+### Developer Guides
+- [Storage Simulation](docs/storage-simulation.md) - Guide for simulating KV cache storage with prefix caching
 - [Tutorial with GDS](docs/tutorial-gds.md) - Quick tutorial for running NIXLBench with GDS
 - [Creating a Model Configuration](docs/creating-a-model-config.md) - Guide for creating model configuration files
 - [Adding a New Model Architecture](docs/adding-a-new-model-architecture.md) - Instructions for extending KVBench with new model architectures
