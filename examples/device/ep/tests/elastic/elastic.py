@@ -466,20 +466,6 @@ def worker(torch_rank: int, args: argparse.Namespace):
     torch.set_default_device("cuda")
     torch.cuda.set_device(0)
 
-    # Initialize UCX
-    pxb_nics = [
-        "mlx5_0",
-        "mlx5_3",
-        "mlx5_4",
-        "mlx5_5",
-        "mlx5_6",
-        "mlx5_9",
-        "mlx5_10",
-        "mlx5_11",
-    ]
-    tcp_nics = ",ibp154s0,ibp192s0,ibp206s0,ibp220s0,ibp94s0"
-    os.environ["UCX_NET_DEVICES"] = f"cuda0-{pxb_nics[local_rank]}:1" + tcp_nics
-
     # Initialize NIXL
     os.environ["NIXL_ETCD_ENDPOINTS"] = args.etcd_server
 
