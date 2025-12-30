@@ -16,7 +16,7 @@ kubernetes:
   requests: "{memory: 8Gi, cpu: 4000m}"
 
 runs_on_dockers:
-  - { name: "podman-v5.6.2", url: "quay.io/podman/stable:v5.6.2", privileged: true }
+  - { name: "podman-v5.7.1", url: "quay.io/podman/stable:v5.7.1", privileged: true }
 
 # Build matrix
 matrix:
@@ -58,8 +58,10 @@ steps:
   - name: Prepare
     run: |
       # Setup podman and dependencies
-      rm -f /etc/containers/storage.conf
+      set -x
+      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
       podman system reset -f || true
+      podman info
       ln -sfT $(type -p podman) /usr/bin/docker
       yum install -y gettext
 

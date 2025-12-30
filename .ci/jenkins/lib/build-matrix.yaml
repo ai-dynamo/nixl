@@ -37,7 +37,7 @@ runs_on_dockers:
   - { name: "ubuntu24.04-cuda12-dl-base", url: "nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04" }
   - { name: "ubuntu24.04-cuda13-dl-base", url: "nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04" }
   - { name: "ubuntu22.04-cuda-dl-base", url: "nvidia/cuda:13.0.1-devel-ubuntu22.04" }
-  - { name: "podman-v5.6.2", url: "quay.io/podman/stable:v5.6.2", category: 'tool', privileged: true }
+  - { name: "podman-v5.7.1", url: "quay.io/podman/stable:v5.7.1", category: 'tool', privileged: true }
 
 matrix:
   axes:
@@ -85,7 +85,10 @@ steps:
     containerSelector: "{ name: 'podman.*' }"
     run: |
       # change storage driver to improve build performance
-      rm -f /etc/containers/storage.conf ; podman system reset -f || true
+      set -x
+      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
+      podman system reset -f || true
+      podman info
       # symlink podman to docker - scripts works with docker commands
       ln -sfT $(type -p podman) /usr/bin/docker
       contrib/build-container.sh --build-type debug --no-cache
