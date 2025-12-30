@@ -126,7 +126,7 @@ nixl_status_t
 nixlMooncakeEngine::loadRemoteConnInfo(const std::string &remote_agent,
                                        const std::string &remote_conn_info) {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto segment_id = openSegment(engine_, remote_conn_info.c_str());
+    auto segment_id = openSegmentNoCache(engine_, remote_conn_info.c_str());
     if (segment_id < 0) return NIXL_ERR_BACKEND;
     connected_agents_[remote_agent].segment_id = segment_id;
     return NIXL_SUCCESS;
