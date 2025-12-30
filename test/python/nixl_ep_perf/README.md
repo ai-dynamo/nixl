@@ -1,6 +1,8 @@
-# NIXL EP Data Plane Performance Tests
+# NIXL EP Performance Tests
 
-Measures throughput and latency of NIXL EP Buffer dispatch/combine operations.
+Performance tests for NIXL EP Buffer:
+- **Data Plane**: dispatch/combine throughput and latency
+- **Control Plane**: init/connect/disconnect/destroy latency
 
 ## Prerequisites
 
@@ -79,12 +81,45 @@ Latency (μs):     avg=519.3, min=519.1, max=519.5
 
 *Config: 128 tokens, 7168 hidden, topk=8, 288 experts (36/rank), 8 GPUs*
 
+## Control Plane Tests
+
+Measures latency of control plane operations (init, connect, disconnect, destroy).
+
+```bash
+# Full cycle (init → connect → disconnect → reconnect → destroy)
+python3 test_control_plane.py --num-processes=8
+
+# Specific expert counts
+python3 test_control_plane.py --num-processes=8 --experts-per-rank=8,32
+
+# Single operation
+python3 test_control_plane.py --num-processes=8 --test=connect
+```
+
+### Example Output
+
+```
+======================================================================
+Control Plane: 8 experts/rank x 8 ranks = 64 total
+======================================================================
+Operation       Avg (ms)     Min (ms)     Max (ms)
+----------------------------------------------------------------------
+init            150.23       148.15       152.31
+connect         245.67       242.33       248.91
+disconnect      12.45        11.23        13.67
+reconnect       198.34       195.12       201.56
+destroy         85.12        83.45        86.79
+----------------------------------------------------------------------
+TOTAL           691.81
+======================================================================
+```
+
 ## Files
 
 | File | Description |
 |------|-------------|
-| `test_data_plane.py` | Main test with dispatch/combine/e2e modes |
+| `test_data_plane.py` | Data plane test (dispatch/combine/e2e) |
+| `test_control_plane.py` | Control plane test (init/connect/disconnect/destroy) |
 | `mp_runner.py` | Multi-process test runner |
 | `rank_server.py` | Coordination server for distributed tests |
-
 
