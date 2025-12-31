@@ -24,6 +24,15 @@
 
 #define ENABLE_DEBUG 0
 
+// Expose at runtime whether device code was compiled to expect pre-swapped mkeys
+__device__ __constant__ int __doca_mkey_swapped = DOCA_GPUNETIO_VERBS_MKEY_SWAPPED;
+
+extern "C" int doca_query_mkey_swapped() {
+    int v = 0;
+    if (cudaMemcpyFromSymbol(&v, __doca_mkey_swapped, sizeof(v)) != cudaSuccess) return -1;
+    return v;
+}
+
 __device__ inline void
 nixl_gpunetio_dev_cq_print_cqe_err(struct mlx5_cqe64 *cqe64) {
     struct mlx5_err_cqe_ex *err_cqe = (struct mlx5_err_cqe_ex *)cqe64;
@@ -37,6 +46,15 @@ nixl_gpunetio_dev_cq_print_cqe_err(struct mlx5_cqe64 *cqe64) {
            err_cqe->hw_synd_type,
            err_cqe->wqe_counter,
            err_cqe->s_wqe_opcode_qpn);
+}
+
+__device__ static __forceinline__ uint32_t
+nixl_prepare_mkey(uint32_t key, uint8_t stored_swapped) {
+#if DOCA_GPUNETIO_VERBS_MKEY_SWAPPED == 1
+    return stored_swapped ? key : doca_gpu_dev_verbs_bswap32(key);
+#else
+    return stored_swapped ? doca_gpu_dev_verbs_bswap32(key) : key;
+#endif
 }
 
 /**
@@ -118,15 +136,30 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
         wqe_idx = base_wqe_idx + idx;
         wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
 
+        uint32_t rkey = nixl_prepare_mkey(
+            xferReqRing[pos].rkey[idx], xferReqRing[pos].keys_are_swapped);
+        uint32_t lkey = nixl_prepare_mkey(
+            xferReqRing[pos].lkey[idx], xferReqRing[pos].keys_are_swapped);
+
         doca_gpu_dev_verbs_wqe_prepare_read(qp,
                                             wqe_ptr,
                                             wqe_idx,
                                             cflag,
                                             (uint64_t)(xferReqRing[pos].rbuf[idx]),
-                                            xferReqRing[pos].rkey[idx],
+                                            rkey,
                                             (uint64_t)(xferReqRing[pos].lbuf[idx]),
-                                            xferReqRing[pos].lkey[idx],
+                                            lkey,
                                             xferReqRing[pos].size[idx]);
+#if ENABLE_DEBUG == 1
+        if (qp->need_dump == false) {
+            printf("prepare_read raddr %lx rkey %x laddr %lx lkey %x size %ld\n",
+                   (uint64_t)(xferReqRing[pos].rbuf[idx]),
+                   rkey,
+                   (uint64_t)(xferReqRing[pos].lbuf[idx]),
+                   lkey,
+                   (uint64_t)xferReqRing[pos].size[idx]);
+        }
+#endif
     }
     __syncthreads();
 
@@ -135,12 +168,15 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
             wqe_idx++;
             wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
 
+            uint32_t dump_lkey = nixl_prepare_mkey(
+                xferReqRing[pos].lkey[tot_wqe - 1], xferReqRing[pos].keys_are_swapped);
+
             doca_gpu_dev_verbs_wqe_prepare_dump(qp,
                                                 wqe_ptr,
                                                 wqe_idx,
                                                 DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE,
                                                 (uint64_t)(xferReqRing[pos].lbuf[tot_wqe - 1]),
-                                                xferReqRing[pos].lkey[tot_wqe - 1],
+                                                dump_lkey,
                                                 1);
         }
         doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, wqe_idx);
@@ -183,12 +219,16 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
         wqe_idx = base_wqe_idx + idx;
         wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
 
+        uint32_t rkey = nixl_prepare_mkey(
+            xferReqRing[pos].rkey[idx], xferReqRing[pos].keys_are_swapped);
+        uint32_t lkey = nixl_prepare_mkey(
+            xferReqRing[pos].lkey[idx], xferReqRing[pos].keys_are_swapped);
 #if ENABLE_DEBUG == 1
         printf("prepare_write radd %lx rkey %x ladd %lx lkey %x size %ld\n",
                (uint64_t)(xferReqRing[pos].rbuf[idx]),
-               xferReqRing[pos].rkey[idx],
+               rkey,
                (uint64_t)(xferReqRing[pos].lbuf[idx]),
-               xferReqRing[pos].lkey[idx],
+               lkey,
                (uint64_t)xferReqRing[pos].size[idx]);
 #endif
         doca_gpu_dev_verbs_wqe_prepare_write(qp,
@@ -198,9 +238,9 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
                                              cflag,
                                              0,
                                              (uint64_t)(xferReqRing[pos].rbuf[idx]),
-                                             xferReqRing[pos].rkey[idx],
+                                             rkey,
                                              (uint64_t)(xferReqRing[pos].lbuf[idx]),
-                                             xferReqRing[pos].lkey[idx],
+                                             lkey,
                                              xferReqRing[pos].size[idx]);
     }
     __syncthreads();
@@ -273,12 +313,15 @@ kernel_progress(struct docaXferCompletion *completion_list,
                                        completion_list[index].xferReqRingGpu->has_notif_msg_idx),
                                    (int)completion_list[index].xferReqRingGpu->msg_sz);
 #endif
+                            uint32_t notif_lkey = nixl_prepare_mkey(
+                                completion_list[index].xferReqRingGpu->lkey_notif,
+                                completion_list[index].xferReqRingGpu->keys_are_swapped);
                             doca_gpu_dev_verbs_send(
                                 completion_list[index].xferReqRingGpu->qp_notif,
                                 doca_gpu_dev_verbs_addr{
                                     .addr = (uint64_t)(completion_list[index]
                                                            .xferReqRingGpu->lbuf_notif),
-                                    .key = completion_list[index].xferReqRingGpu->lkey_notif},
+                                    .key = notif_lkey},
                                 completion_list[index].xferReqRingGpu->msg_sz,
                                 &out_ticket);
 
@@ -344,11 +387,13 @@ kernel_progress(struct docaXferCompletion *completion_list,
                 for (int idx = 0; idx < DOCA_MAX_NOTIF_INFLIGHT; idx++) {
                     struct mlx5_wqe_data_seg *rwqe_ptr =
                         doca_gpu_dev_verbs_get_rwqe_ptr(notif_fill->qp_gpu, idx);
+                    uint32_t fill_lkey =
+                        nixl_prepare_mkey(notif_fill->msg_lkey, notif_fill->keys_are_swapped);
                     doca_gpu_dev_verbs_wqe_prepare_recv(
                         notif_fill->qp_gpu,
                         rwqe_ptr,
                         (uint64_t)(notif_fill->msg_buf + (notif_fill->msg_size * idx)),
-                        notif_fill->msg_lkey,
+                        fill_lkey,
                         notif_fill->msg_size);
                 }
 
@@ -367,10 +412,12 @@ kernel_progress(struct docaXferCompletion *completion_list,
     if (blockIdx.x == 2) {
         while (DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0) {
             if (DOCA_GPUNETIO_VOLATILE(notif_send_gpu->qp_gpu) != nullptr) {
+                uint32_t send_lkey =
+                    nixl_prepare_mkey(notif_send_gpu->msg_lkey, notif_send_gpu->keys_are_swapped);
                 doca_gpu_dev_verbs_send(
                     notif_send_gpu->qp_gpu,
                     doca_gpu_dev_verbs_addr{.addr = (uint64_t)notif_send_gpu->msg_buf,
-                                            .key = notif_send_gpu->msg_lkey},
+                                            .key = send_lkey},
                     notif_send_gpu->msg_size,
                     &out_ticket);
 
@@ -379,7 +426,7 @@ kernel_progress(struct docaXferCompletion *completion_list,
                 printf("Notif correctly sent %ld addr %lx msg_lkey %x qp %p size %d\n",
                        out_ticket,
                        notif_send_gpu->msg_buf,
-                       notif_send_gpu->msg_lkey,
+                       send_lkey,
                        (void *)notif_send_gpu->qp_gpu,
                        (int)notif_send_gpu->msg_size);
 #endif
@@ -469,3 +516,4 @@ doca_kernel_progress(cudaStream_t stream,
 
     return DOCA_SUCCESS;
 }
+
