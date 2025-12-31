@@ -26,9 +26,12 @@ Usage:
 
 import argparse
 import logging
+import os
 import time
-from typing import Any, Dict, List
+from datetime import timedelta
+from typing import Any, Dict, List, Optional
 
+import torch.distributed as dist
 from mp_runner import TestResult, run_multiprocess_test, sync_all_ranks
 
 # Setup logging
@@ -54,6 +57,7 @@ def _run_control_plane_test(
     warmup_rounds: int = DEFAULT_WARMUP,
     measure_rounds: int = DEFAULT_ROUNDS,
     nvlink_backend: str = "ipc",
+    use_tcp_store: bool = False,
     **kwargs,
 ) -> Dict[str, Any]:
     """
@@ -63,8 +67,25 @@ def _run_control_plane_test(
         test_mode: "init", "connect", "disconnect", "destroy", or "cycle" (all phases)
         warmup_rounds: Number of warmup rounds (default: 0 due to repeated cycle bug)
         measure_rounds: Number of measurement rounds (default: 1)
+        use_tcp_store: Use TCPStore for metadata exchange instead of etcd
     """
     import nixl_ep
+
+    # Setup TCPStore if requested
+    tcp_store: Optional[dist.TCPStore] = None
+    if use_tcp_store:
+        master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
+        master_port = int(os.environ.get("MASTER_PORT", "29500"))
+        # Use a different port for TCPStore to avoid conflicts with torchrun
+        tcp_store_port = master_port + 1000
+        is_master = rank == 0
+        tcp_store = dist.TCPStore(
+            host_name=master_addr,
+            port=tcp_store_port,
+            world_size=world_size,
+            is_master=is_master,
+            timeout=timedelta(seconds=60),
+        )
 
     other_ranks = [r for r in range(world_size) if r != rank]
     num_experts = num_experts_per_rank * world_size
@@ -82,6 +103,7 @@ def _run_control_plane_test(
             warmup_rounds,
             measure_rounds,
             nvlink_backend,
+            tcp_store,
         )
     else:
         return _run_single_op(
@@ -94,6 +116,7 @@ def _run_control_plane_test(
             warmup_rounds,
             measure_rounds,
             nvlink_backend,
+            tcp_store,
         )
 
 
@@ -107,6 +130,7 @@ def _run_single_op(
     warmup_rounds: int,
     measure_rounds: int,
     nvlink_backend: str,
+    tcp_store: Optional[dist.TCPStore] = None,
 ) -> Dict[str, Any]:
     """Run a single control plane operation test."""
     import nixl_ep
@@ -133,6 +157,8 @@ def _run_single_op(
                 num_experts_per_rank=num_experts_per_rank,
                 num_rdma_bytes=num_rdma_bytes,
             )
+            if tcp_store is not None:
+                buffer.set_tcp_store_group(tcp_store)
 
             torch.cuda.synchronize()
             if is_measure:
@@ -153,6 +179,8 @@ def _run_single_op(
                 num_experts_per_rank=num_experts_per_rank,
                 num_rdma_bytes=num_rdma_bytes,
             )
+            if tcp_store is not None:
+                buffer.set_tcp_store_group(tcp_store)
             sync_all_ranks(rank, world_size, f"connect_pre_{i}")
 
             torch.cuda.synchronize()
@@ -181,6 +209,8 @@ def _run_single_op(
                 num_experts_per_rank=num_experts_per_rank,
                 num_rdma_bytes=num_rdma_bytes,
             )
+            if tcp_store is not None:
+                buffer.set_tcp_store_group(tcp_store)
             sync_all_ranks(rank, world_size, f"disconnect_pre_connect_{i}")
             if other_ranks:
                 buffer.connect_ranks(other_ranks)
@@ -213,6 +243,8 @@ def _run_single_op(
                 num_experts_per_rank=num_experts_per_rank,
                 num_rdma_bytes=num_rdma_bytes,
             )
+            if tcp_store is not None:
+                buffer.set_tcp_store_group(tcp_store)
             sync_all_ranks(rank, world_size, f"destroy_pre_connect_{i}")
             if other_ranks:
                 buffer.connect_ranks(other_ranks)
@@ -254,6 +286,7 @@ def _run_full_cycle(
     warmup_rounds: int,
     measure_rounds: int,
     nvlink_backend: str,
+    tcp_store: Optional[dist.TCPStore] = None,
 ) -> Dict[str, Any]:
     """Run full control plane cycle: init → connect → disconnect → reconnect → destroy."""
     import nixl_ep
@@ -284,6 +317,8 @@ def _run_full_cycle(
             num_experts_per_rank=num_experts_per_rank,
             num_rdma_bytes=num_rdma_bytes,
         )
+        if tcp_store is not None:
+            buffer.set_tcp_store_group(tcp_store)
 
         torch.cuda.synchronize()
         if is_measure:
@@ -483,6 +518,11 @@ def main():
         action="store_true",
         help="Skip GPU-NIC topology discovery",
     )
+    parser.add_argument(
+        "--use-tcp-store",
+        action="store_true",
+        help="Use TCPStore for metadata exchange instead of etcd",
+    )
 
     args = parser.parse_args()
 
@@ -492,11 +532,14 @@ def main():
     else:
         expert_counts = DEFAULT_EXPERT_COUNTS
 
+    metadata_exchange = "TCPStore" if args.use_tcp_store else "etcd"
+
     logger.info("=" * 70)
     logger.info("NIXL EP Control Plane Performance Test")
     logger.info("=" * 70)
     logger.info("Ranks: %d", args.num_processes)
     logger.info("NVLink backend: %s", args.nvlink_backend)
+    logger.info("Metadata exchange: %s", metadata_exchange)
     logger.info("Experts/rank: %s", expert_counts)
     logger.info("Test: %s", args.test)
     logger.info("Warmup: %d, Measure: %d rounds", args.warmup, args.rounds)
@@ -523,6 +566,7 @@ def main():
             warmup_rounds=args.warmup,
             measure_rounds=args.rounds,
             nvlink_backend=args.nvlink_backend,
+            use_tcp_store=args.use_tcp_store,
         )
 
         passed = sum(1 for r in results if r.passed)
