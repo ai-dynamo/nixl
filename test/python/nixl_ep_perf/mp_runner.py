@@ -311,6 +311,9 @@ def run_multiprocess_test(
         if clean_etcd:
             clean_etcd_state(etcd_server)
 
+    # Pass use_tcp_store to the test function via kwargs
+    kwargs["use_tcp_store"] = use_tcp_store
+
     # Discover topology once (skip if --skip-nic-discovery is set)
     gpu_nic_topology = None
     if skip_nic_discovery:
