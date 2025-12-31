@@ -287,6 +287,7 @@ def run_multiprocess_test(
     clean_etcd: bool = True,
     rank_server_port: int = 9998,
     skip_nic_discovery: bool = False,
+    use_tcp_store: bool = False,
     **kwargs,
 ) -> List[TestResult]:
     """
@@ -296,16 +297,19 @@ def run_multiprocess_test(
         test_fn: Function receiving (rank, world_size, local_rank, **kwargs)
         num_processes: Number of processes to spawn
         timeout: Timeout in seconds
+        use_tcp_store: If True, skip etcd check (using TCPStore instead)
         **kwargs: Passed to test_fn
 
     Returns:
         List of TestResult, one per rank
     """
-    if not check_etcd_running(etcd_server):
-        raise RuntimeError(f"etcd is not running at {etcd_server}")
+    # Skip etcd check when using TCPStore for metadata exchange
+    if not use_tcp_store:
+        if not check_etcd_running(etcd_server):
+            raise RuntimeError(f"etcd is not running at {etcd_server}")
 
-    if clean_etcd:
-        clean_etcd_state(etcd_server)
+        if clean_etcd:
+            clean_etcd_state(etcd_server)
 
     # Discover topology once (skip if --skip-nic-discovery is set)
     gpu_nic_topology = None
