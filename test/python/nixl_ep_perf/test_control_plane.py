@@ -31,6 +31,7 @@ import time
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
+import store_group
 import torch.distributed as dist
 from mp_runner import TestResult, run_multiprocess_test, sync_all_ranks
 
@@ -75,16 +76,12 @@ def _run_control_plane_test(
     tcp_store: Optional[dist.TCPStore] = None
     if use_tcp_store:
         master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
-        master_port = int(os.environ.get("MASTER_PORT", "29500"))
-        # Use a different port for TCPStore to avoid conflicts with torchrun
-        tcp_store_port = master_port + 1000
-        is_master = rank == 0
-        tcp_store = dist.TCPStore(
-            host_name=master_addr,
+        tcp_store_port = kwargs.get("tcp_store_port", 9999)
+        # Each worker creates a client connection to the shared TCPStore server
+        tcp_store = store_group.create_client_store(
+            master_addr=master_addr,
             port=tcp_store_port,
-            world_size=world_size,
-            is_master=is_master,
-            timeout=timedelta(seconds=60),
+            timeout_sec=60.0,
         )
 
     other_ranks = [r for r in range(world_size) if r != rank]

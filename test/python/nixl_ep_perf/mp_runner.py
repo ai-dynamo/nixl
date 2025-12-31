@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
+import store_group
 import torch
 import torch.multiprocessing as mp
 from rank_server import RankClient, start_server
@@ -286,6 +287,7 @@ def run_multiprocess_test(
     timeout: float = 120.0,
     clean_etcd: bool = True,
     rank_server_port: int = 9998,
+    tcp_store_port: int = 9999,
     skip_nic_discovery: bool = False,
     use_tcp_store: bool = False,
     **kwargs,
@@ -298,13 +300,29 @@ def run_multiprocess_test(
         num_processes: Number of processes to spawn
         timeout: Timeout in seconds
         use_tcp_store: If True, skip etcd check (using TCPStore instead)
+        tcp_store_port: Port for TCPStore server (default: 9999)
         **kwargs: Passed to test_fn
 
     Returns:
         List of TestResult, one per rank
     """
-    # Skip etcd check when using TCPStore for metadata exchange
-    if not use_tcp_store:
+    # Start TCPStore server if requested
+    tcp_store_process = None
+    if use_tcp_store:
+        logger.info(f"Starting TCPStore server on port {tcp_store_port}")
+
+        def run_tcp_store_server():
+            _store = store_group.create_master_store(port=tcp_store_port)
+            # Keep server alive
+            import signal
+            signal.pause()
+
+        tcp_store_process = mp.Process(target=run_tcp_store_server, daemon=True)
+        tcp_store_process.start()
+        time.sleep(1.0)
+        kwargs["tcp_store_port"] = tcp_store_port
+    else:
+        # Only check etcd when not using TCPStore
         if not check_etcd_running(etcd_server):
             raise RuntimeError(f"etcd is not running at {etcd_server}")
 
@@ -397,6 +415,9 @@ def run_multiprocess_test(
         if server_process and server_process.is_alive():
             server_process.terminate()
             server_process.join(timeout=2)
+        if tcp_store_process and tcp_store_process.is_alive():
+            tcp_store_process.terminate()
+            tcp_store_process.join(timeout=2)
 
 
 # ============================================================================
