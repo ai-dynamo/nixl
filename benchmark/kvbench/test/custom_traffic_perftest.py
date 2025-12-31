@@ -529,7 +529,9 @@ class CTPerftest:
             ), f"Size of vector {r} is not the same as matrix[r][{self.my_rank}], got {full_recv_buf.size(0)}"
 
     def _get_tp_total_size(self, tp: TrafficPattern) -> int:
-        """Return total size of matrix in bytes"""
+        """Return total size of matrix in bytes (0 if no matrix)"""
+        if tp.matrix is None:
+            return 0
         return np.sum(tp.matrix, axis=(0, 1)) * tp.dtype.itemsize
 
     def run(

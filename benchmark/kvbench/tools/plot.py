@@ -742,7 +742,7 @@ def plot_read(log_file, title, outfile, max_y, max_x):
         isos = []
         for tp in iter_results:
             if iter_idx == 0:
-                sizes.append(tp.get("size", 0))
+                size = tp.get("size", 0) or tp.get("storage_read_size_gb", 0); sizes.append(size)
             lats.append(tp.get("storage_read_avg_ms", 0))
             isos.append(tp.get("isolated_read_ms", 0))
         latencies_by_iter.append(lats)
@@ -846,7 +846,7 @@ def plot_write(log_file, title, outfile, max_y, max_x):
         isos = []
         for tp in iter_results:
             if iter_idx == 0:
-                sizes.append(tp.get("size", 0))
+                size = tp.get("size", 0) or tp.get("storage_write_size_gb", 0); sizes.append(size)
             lats.append(tp.get("storage_write_avg_ms", 0))
             isos.append(tp.get("isolated_write_ms", 0))
         latencies_by_iter.append(lats)
@@ -947,8 +947,8 @@ def bw_read(log_file, title, outfile, max_y, max_x):
         iso_bws = []
         for tp in iter_results:
             if iter_idx == 0:
-                sizes.append(tp.get("size", 0))
-            size = tp.get("size", 0)
+                size_x = tp.get("size", 0) or tp.get("storage_read_size_gb", 0); sizes.append(size_x)
+            size = tp.get("size", 0) or tp.get("storage_read_size_gb", 0)
             read_ms = tp.get("storage_read_avg_ms", 0)
             iso_read_ms = tp.get("isolated_read_ms", 0)
             bws.append(size / (read_ms / 1000) if read_ms > 0 else 0)
@@ -1051,8 +1051,8 @@ def bw_write(log_file, title, outfile, max_y, max_x):
         iso_bws = []
         for tp in iter_results:
             if iter_idx == 0:
-                sizes.append(tp.get("size", 0))
-            size = tp.get("size", 0)
+                size_x = tp.get("size", 0) or tp.get("storage_write_size_gb", 0); sizes.append(size_x)
+            size = tp.get("size", 0) or tp.get("storage_write_size_gb", 0)
             write_ms = tp.get("storage_write_avg_ms", 0)
             iso_write_ms = tp.get("isolated_write_ms", 0)
             bws.append(size / (write_ms / 1000) if write_ms > 0 else 0)

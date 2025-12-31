@@ -20,7 +20,7 @@ Each matrix represents one LLM forward pass with compute time estimation.
 
 Disclaimers:
 - For now there is only support for TP and CP
-- The compute time estimation is very naive and assumes 36 TFlops (h100)
+- The compute time estimation is naive (configurable via --flops-per-gpu, default 1000 TFLOPS for H100)
 - The batching is very naive and just aggregates requests into batches until it exceeds max_batch_mem or batch_size
 
 Example usage:
@@ -213,6 +213,7 @@ def gen_matrices_and_compute_time(
     model_config: ModelConfig,
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
+    flops_per_gpu: float = 1000 * 1e12,
 ) -> List[TransferMatrix]:
     """Generate communication matrices for all batches.
 
@@ -255,7 +256,7 @@ def gen_matrices_and_compute_time(
             decode_worker_config,
         )
 
-        compute_time = estimate_compute_time(batch, model_config, prefill_worker_config)
+        compute_time = estimate_compute_time(batch, model_config, prefill_worker_config, flops_per_gpu)
         matrix_obj = TransferMatrix(
             matrix=mat,
             compute_time=compute_time,
@@ -314,7 +315,7 @@ def estimate_compute_time(
     batch: Batch,
     model_config: ModelConfig,
     worker_config: WorkerConfig,
-    flops_per_gpu: float = 36 * 1e12,  # 36 TFlops (h100)
+    flops_per_gpu: float = 1000 * 1e12,  # 1000 TFlops (H100 FP16, conservative)
 ):
     """Estimate the compute time of a batch, in seconds.
 
@@ -373,6 +374,7 @@ def main(
     results_dir: Optional[PathLike] = None,
     rail_optimized: bool = False,
     prefix_hit_rate: Optional[float] = None,
+    flops_per_gpu: float = 1000 * 1e12,
 ):
     """Generate communication matrices for inference workload.
 
@@ -458,6 +460,7 @@ def main(
         model_config,
         prefill_worker_config,
         decode_worker_config,
+        flops_per_gpu,
     )
 
     # Save matrices and metadata to files
@@ -637,6 +640,12 @@ if __name__ == "__main__":
     )
     @click.option("--ppn", default=8, type=int, help="Number of GPUs per node")
     @click.option(
+        "--flops-per-gpu",
+        type=float,
+        default=1000e12,
+        help="GPU FLOPS for compute time estimation (default: 1000 TFLOPS for H100 FP16)",
+    )
+    @click.option(
         "--prefix-hit-rate",
         type=float,
         default=None,
@@ -667,6 +676,7 @@ if __name__ == "__main__":
         max_batch_mem,
         rail_optimized,
         ppn,
+        flops_per_gpu,
         prefix_hit_rate,
     ):
         """Generate communication matrices for given configuration"""
@@ -712,6 +722,7 @@ if __name__ == "__main__":
             results_dir=results_dir,
             rail_optimized=rail_optimized,
             prefix_hit_rate=prefix_hit_rate,
+            flops_per_gpu=flops_per_gpu,
         )
 
     cli()
