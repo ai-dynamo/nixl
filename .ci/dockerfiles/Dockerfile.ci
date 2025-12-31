@@ -32,16 +32,20 @@ ARG _GID=30
 ARG _LOGIN=svc-nixl
 ARG _GROUP=hardware
 ARG _HOME=/home/$_LOGIN
-ARG WORKSPACE=/workspace
-
+ARG ARCH=x86_64
+ARG NIXL_INSTALL_DIR
+ARG PRE_INSTALLED_ENV
+ARG PRE_INSTALLED_NIXL_ENV
+ARG PRE_INSTALLED_UCX_ENV
+ARG UCX_VERSION=v1.20.x
 # Labels for documentation
 LABEL maintainer="NVIDIA NIXL Team"
-LABEL description="GPU test environment for NIXL development"
+LABEL description="Test environment for NIXL development"
 LABEL version="1.0"
 
 # Update package list and install required packages in one layer
 RUN apt-get update && \
-    apt-get install -y sudo python3 python3-pip \
+    apt-get install -y sudo python3 python3-pip kmod \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -53,20 +57,15 @@ RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \
     mkdir -p "${_HOME}" && \
     chown -R "${_UID}":"${_GID}" "${_HOME}"
 
+RUN mkdir -p ${NIXL_INSTALL_DIR} && chown -R "${_UID}":"${_GID}" ${NIXL_INSTALL_DIR}
+COPY --chown="${_UID}":"${_GID}" .ci/scripts/ /.ci/scripts/
+COPY --chown="${_UID}":"${_GID}" .gitlab/build.sh /.gitlab/build.sh
+
 # Configure sudo access
 RUN mkdir -p /etc/sudoers.d && \
     echo "${_LOGIN} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${_LOGIN} && \
     chmod 440 /etc/sudoers.d/${_LOGIN} && \
     chown root:root /etc/sudoers.d/${_LOGIN}
-
-# Create and set permissions for workspace directory
-RUN mkdir -p ${WORKSPACE} && chmod 777 ${WORKSPACE}
-
-# Copy workspace into container (workaround for files disappearing from workspace)
-COPY --chown="${_UID}":"${_GID}" . ${WORKSPACE}
-
-# Set working directory
-WORKDIR ${_HOME}
 
 # Switch to non-root user
 USER ${_LOGIN}
@@ -75,5 +74,11 @@ USER ${_LOGIN}
 ENV HOME=${_HOME}
 ENV USER=${_LOGIN}
 
+RUN /.gitlab/build.sh ${NIXL_INSTALL_DIR}
+RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
+# Set working directory
+WORKDIR ${_HOME}
+
+ENTRYPOINT ["/bin/bash", "-c", "exec \"$@\"", "--"]
 # Default command
 CMD ["/bin/bash"]
